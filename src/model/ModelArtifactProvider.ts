@@ -1,3 +1,4 @@
+import { MODEL_ARTIFACT_PROVIDER_IDENTITY } from "./ModelArtifactProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { ModelArtifactPort } from "../application/model/ModelArtifactPort.js";
 import {
@@ -40,23 +41,18 @@ import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
   ModelFormatFailure,
-  rejectPickle,
   MODEL_REPORT_BYTES,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
-export const MODEL_ARTIFACT_PROVIDER_IDENTITY = {
-  id: "model-artifact",
-  name: "REA model header reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_model_artifact";
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
 export class ModelArtifactProvider implements ModelArtifactPort {
@@ -183,7 +179,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           { cause: primary },
         );
       else if (isSelectedRegularFileError(primary))
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+        error = selectedFileTargetError(input.path, primary, cause);
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
           cause,
@@ -254,7 +250,6 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     const reader = new ModelHeaderReader(file, Number(initial.size), signal);
     const first = await reader.take(4);
-    if (first.equals(Buffer.from([0x50, 0x4b, 3, 4]))) rejectPickle();
     const format = first.equals(Buffer.from("GGUF")) ? "gguf" : "safetensors";
     const partial: ModelArtifactPartial = {
       kind: "model-artifact-partial",

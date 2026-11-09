@@ -95,6 +95,82 @@ const fixture = async (
   return { root, target, producer, client };
 };
 
+it.each([
+  new Error("HTTP 404: fixture response"),
+  new ProviderAdapterError("ida", "transport", {
+    diagnostics: { reason: "fixture response" },
+  }),
+  new AnalysisTimeoutError("ida_mcp_connect", 1000),
+  new AnalysisProtocolError("Malformed MCP response"),
+  new AnalysisResourceConstraintError(
+    "ida_mcp_connect",
+    "transport",
+    "fixture limit",
+    { max_response_bytes: 1 },
+  ),
+])(
+  "retains the selected HTTP endpoint on a connection failure",
+  async (cause) => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const producer = new RecordingIdaMcp(target, "attached");
+    vi.spyOn(producer, "connect").mockRejectedValue(cause);
+    const selected = "HTTP://LOCALHOST:01234/mcp?cursor=kept";
+    const client = new IdaSessionClient(
+      {
+        url: selected,
+        headers: { Authorization: "Bearer fixture-secret" },
+        mode: "attached",
+        timeoutMs: 1000,
+      },
+      target,
+      producer,
+    );
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected connection failure");
+    expect(result.error.diagnostics).toMatchObject({ endpoint: selected });
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      "fixture-secret",
+    );
+    await client.close();
+  },
+);
+
+it.each([
+  "fixture-secret",
+  "fixture%2Dsecret",
+  "fixture%2dsecret",
+  "%66%69%78%74%75%72%65-secret",
+])(
+  "redacts a known transport credential in the selected endpoint: %s",
+  async (encoded) => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const producer = new RecordingIdaMcp(target, "attached");
+    vi.spyOn(producer, "connect").mockRejectedValue(
+      new Error("fixture failure"),
+    );
+    const client = new IdaSessionClient(
+      {
+        url: `http://localhost:1234/mcp?token=${encoded}&cursor=keep`,
+        headers: { Authorization: "Bearer fixture-secret" },
+        mode: "attached",
+        timeoutMs: 1000,
+      },
+      target,
+      producer,
+    );
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected connection failure");
+    const output = JSON.stringify(projectAnalysisError(result.error));
+    expect(output).not.toContain("fixture-secret");
+    expect(output).not.toContain(encoded);
+    expect(output).toContain("http://localhost:1234/mcp?token=");
+    expect(output).toContain("&cursor=keep");
+    await client.close();
+  },
+);
+
 it.each(["initialize", "transport"])(
   "preserves producer outcome facts when attributing a cached %s failure",
   async (operation) => {
@@ -118,7 +194,6 @@ it.each(["initialize", "transport"])(
     const connect = vi.spyOn(producer, "connect").mockRejectedValue(source);
     for (const requested of ["list_procedures", "list_strings"] as const) {
       const result = await client.execute(requested, {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected startup failure");
       expect(result.error).toBeInstanceOf(ProviderAdapterError);
       expect(result.error).toMatchObject({
@@ -205,7 +280,9 @@ describe("headless IDA producer pagination", () => {
         classification: null,
         body: {
           available: false,
-          reason: "IDA MCP does not report complete function body ranges.",
+          reason: expect.stringMatching(
+            /does not report complete function body ranges/iu,
+          ),
         },
       },
       native_api: null,
@@ -1134,7 +1211,6 @@ describe("IDA compatibility profile mismatch", () => {
     const { producer, client } = await fixture("attached", 1000, "native");
     producer.tools = [];
     const result = await client.execute("health", {});
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected incompatible native catalog");
     expect(projectAnalysisError(result.error).details).toMatchObject({
       diagnostics: {
@@ -1860,9 +1936,11 @@ describe("headless IDA cleanup verification", () => {
   });
   it("releases a privately owned worker after malformed open output using verified session inventory", async () => {
     const { producer, client, root } = await fixture("headless");
+    let ownedId: string | undefined;
     producer.beforeCall = async (name, args) => {
       if (name === "idb_open") {
-        producer.database = z.string().parse(args.preferred_session_id);
+        ownedId = z.string().parse(args.preferred_session_id);
+        producer.database = ownedId;
         producer.inputPath = z.string().parse(args.input_path);
       }
     };
@@ -1875,9 +1953,10 @@ describe("headless IDA cleanup verification", () => {
         : undefined;
     expect((await client.execute("health", {})).ok).toBe(false);
     expect((await client.close()).ok).toBe(true);
+    expect(ownedId).toEqual(expect.any(String));
     expect(
       producer.calls.find(({ name }) => name === "idb_close")?.args.database,
-    ).toMatch(/^rea-/u);
+    ).toBe(ownedId);
     expect(await readdir(root)).toEqual(["target.elf"]);
   });
 });
@@ -1932,7 +2011,6 @@ it.each(["unavailable", "malformed"] as const)(
         throw new Error("inventory unavailable");
     };
     const result = await client.close();
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained cleanup");
     expect(result.error).not.toHaveProperty("diagnostics.upstream_sessions");
   },
@@ -2000,7 +2078,7 @@ it("binds retained transport diagnostics to the requested operation and recovery
       operation: "list_procedures",
       diagnostics: {
         reason: "upstream closed",
-        recovery: expect.stringContaining("docs/ida-provider.md"),
+        recovery: expect.stringContaining("docs/providers/ida-provider.md"),
       },
       captured_output: { stderr: "IDA diagnostic" },
     },

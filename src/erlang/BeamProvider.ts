@@ -1,5 +1,7 @@
+import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -29,13 +31,6 @@ import {
 } from "../domain/erlang/beam.js";
 import { err, ok } from "../domain/result.js";
 import { BeamCapacityFailure, parseErlangBeam } from "./BeamParser.js";
-
-/** Bundled format reader identity; module names are separate observed facts. */
-export const ERLANG_BEAM_PROVIDER_IDENTITY = {
-  id: "rea-erlang-beam",
-  name: "REA Erlang BEAM reader",
-  version: "1",
-} as const;
 
 const OPERATION = "inspect_erlang_beam";
 
@@ -160,13 +155,17 @@ const beamFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

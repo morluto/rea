@@ -153,7 +153,7 @@ export const BUN_LATEST_VERSION_COMMAND: readonly string[] = [
 ];
 
 /** npm view arguments for dist-tags.latest, scoped to the owning prefix when known. */
-export const npmLatestVersionCommand = (
+const npmLatestVersionCommand = (
   installation: NpmInstallation | undefined,
 ): readonly string[] => [
   "npm",
@@ -171,9 +171,7 @@ export const npmLatestVersionCommand = (
  * Read one latest version from `npm view --json`.
  * npm 11 emits a JSON string. npm 12 emits that string as a one-element array.
  */
-export const parseNpmLatestVersion = (
-  metadata: string,
-): Result<string, string> => {
+const parseNpmLatestVersion = (metadata: string): Result<string, string> => {
   const decoded = safeParseJson(metadata);
   if (!decoded.ok) return err(decoded.error);
   const version = readNpmLatestVersion(decoded.value);
@@ -193,7 +191,7 @@ const nonemptyVersion = (value: string): string | undefined =>
   value.length === 0 ? undefined : value;
 
 /** Classify `npm view` or `bun info` output as a version or a lookup failure. */
-export const npmReleaseLookup = (
+const npmReleaseLookup = (
   response: Result<string, string>,
 ): Result<string, ReleaseLookupFailure> => {
   if (!response.ok) return err({ kind: "unavailable", detail: response.error });
@@ -246,7 +244,7 @@ export const systemUpdateHost = (
   const commands = new UpdateCommandRunner();
   const requireOutput = async (command: readonly string[]): Promise<string> => {
     const result = await commands.runProbe(command, environment);
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw new Error(result.error.detail);
     return result.value;
   };
   return {
@@ -271,7 +269,11 @@ export const systemUpdateHost = (
           context.workingDirectory,
         );
         if (!version.ok)
-          return err({ kind: "unavailable", detail: version.error });
+          return err({
+            kind: "package-manager-unavailable",
+            manager: "bun",
+            detail: version.error.detail,
+          });
         const bunVersion = valid(version.value);
         // bun info was introduced in 1.2.17; older releases reserve the command.
         if (bunVersion === null || lt(bunVersion, "1.2.17"))
@@ -280,16 +282,21 @@ export const systemUpdateHost = (
             detail: `REA updates for Bun global installations require Bun 1.2.17 or later; bun --version returned ${JSON.stringify(version.value)}. Upgrade Bun manually, then rerun rea update.`,
           });
       }
-      return npmReleaseLookup(
-        await commands.runProbe(
-          installation?.manager === "bun"
-            ? BUN_LATEST_VERSION_COMMAND
-            : npmLatestVersionCommand(installation),
-          context.environment,
-          "structured",
-          context.workingDirectory,
-        ),
+      const result = await commands.runProbe(
+        installation?.manager === "bun"
+          ? BUN_LATEST_VERSION_COMMAND
+          : npmLatestVersionCommand(installation),
+        context.environment,
+        "structured",
+        context.workingDirectory,
       );
+      if (!result.ok && result.error.kind === "launch")
+        return err({
+          kind: "package-manager-unavailable",
+          manager: installation?.manager ?? "npm",
+          detail: result.error.detail,
+        });
+      return npmReleaseLookup(result.ok ? result : err(result.error.detail));
     },
     installVersion: async (installation, version, output) => {
       const context = packageManagerContext(installation, environment);
@@ -301,21 +308,26 @@ export const systemUpdateHost = (
       );
       return result.ok ? ok(undefined) : result;
     },
-    installedVersion: (installation) =>
-      commands.runProbe(
+    installedVersion: async (installation) => {
+      const result = await commands.runProbe(
         [
           process.execPath,
           join(installation.packageRoot, "scripts", "rea.mjs"),
           "--version",
         ],
         environment,
-      ),
+      );
+      return result.ok ? result : err(result.error.detail);
+    },
     planMaintenance: (installation) =>
       planIntegrationMaintenance(
         home ?? homeDirectoryFromEnvironment(environment, process.platform),
         join(installation.packageRoot, "scripts", "rea.mjs"),
         environment,
-        (command) => commands.runProbe(command, environment),
+        async (command) => {
+          const result = await commands.runProbe(command, environment);
+          return result.ok ? result : err(result.error.detail);
+        },
         resources,
       ),
     close: async () => {

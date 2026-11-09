@@ -106,6 +106,18 @@ cliTest(
         detail: "Zip64 EOCD record extends beyond its locator",
       },
       {
+        at: recordOffset + 4,
+        value: 43,
+        diagnosticOffset: recordOffset + 4,
+        detail: "invalid Zip64 EOCD record size",
+      },
+      {
+        at: recordOffset + 4,
+        value: 45,
+        diagnosticOffset: recordOffset + 4,
+        detail: "invalid Zip64 EOCD record size",
+      },
+      {
         at: locatorOffset + 16,
         value: 0,
         diagnosticOffset: locatorOffset + 16,

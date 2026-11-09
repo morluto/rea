@@ -2,12 +2,9 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
-import { z } from "zod";
 
-import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -34,9 +31,9 @@ const packetCaptureAvailability = async (
     arguments: {},
   });
   if (response.isError === true) throw new Error("binary_session failed");
-  const parsed = z
-    .object({ result: sessionProvider })
-    .parse(response.structuredContent).result;
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    response.structuredContent,
+  ).result;
   return expandToolAvailability(parsed.tool_availability).find(
     (tool) => tool.name === name,
   );

@@ -120,8 +120,8 @@ cliTest(
     const original = [
       "# Caller configuration",
       "mcp_servers:",
-      "  rea:",
-      "    command: rea",
+      "  rea: # Registration explanation",
+      "    command: rea # Launcher explanation",
       "    args: [mcp]",
       "    env:",
       "      CALLER_SETTING: keep exactly",
@@ -183,6 +183,8 @@ cliTest(
       mcp_servers: { rea: { command: "rea" } },
     });
     expect(configured).toContain("# Curated for this client.");
+    expect(configured).toContain("# Registration explanation");
+    expect(configured).toContain("# Launcher explanation");
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
     expect(
       (await run(["doctor", "--client", "hermes", "--skill=false", "--json"]))
@@ -532,7 +534,7 @@ for (const selection of [
 
 for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
   cliTest(
-    `Hermes preview distinguishes missing and existing overrides: ${layout}`,
+    `Hermes preview resolves existing ancestors for missing and existing overrides: ${layout}`,
     async ({ cli }) => {
       const home = await createTestTempDirectory(
         "rea-hermes-missing-override-",
@@ -577,13 +579,28 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
         expect(plan.json).toMatchObject({
           status: "planned",
           plannedActions: expect.arrayContaining([
-            expect.objectContaining({ target: join(selected, "config.yaml") }),
             expect.objectContaining({
+              id: "configure_client:hermes",
+              kind: "configure_client",
+              target: join(selected, "config.yaml"),
+              operation: usesNative ? "update" : "create",
+              ...(usesNative ? { backupPath: `${config}.rea.backup` } : {}),
+            }),
+            expect.objectContaining({
+              id: "install_skill:hermes",
+              kind: "install_skill",
               target: join(selected, "skills", "reverse-engineer-anything"),
+              operation: "install",
             }),
           ]),
           appliedActions: [],
         });
+        if (!usesNative)
+          expect(plan.json).not.toMatchObject({
+            plannedActions: expect.arrayContaining([
+              expect.objectContaining({ backupPath: expect.any(String) }),
+            ]),
+          });
         if (!exists)
           await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
         for (const directory of [native, root, profile]) {

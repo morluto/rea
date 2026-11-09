@@ -27,6 +27,7 @@ import {
   ghidraJavaEnvironment,
   discoverGhidraInstallationOnPath,
   inspectGhidraInstallation,
+  systemGhidraInstallationHost,
   type GhidraInstallationHost,
 } from "./GhidraInstallation.js";
 import {
@@ -917,7 +918,7 @@ describe("Ghidra malformed property admission", () => {
           name: "version",
           status: "failed",
           code: "version_unresolved",
-          detail: expect.stringContaining("Malformed Unicode escape"),
+          detail: expect.stringContaining("malformed_unicode_escape"),
         }),
         expect.objectContaining({
           name: "java",
@@ -1731,6 +1732,212 @@ describe("Ghidra Java probe os.arch extraction", () => {
     });
   });
 });
+
+it("enumerates installed opt aliases without requiring a Homebrew executable", async () => {
+  const root = await createTestTempDirectory("rea-ghidra-opt-aliases-");
+  try {
+    await mkdir(join(root, "openjdk@21"));
+    await mkdir(join(root, "unrelated"));
+    const systemHost = systemGhidraInstallationHost();
+    expect(systemHost.directoryEntries?.(root).toSorted()).toEqual([
+      "openjdk@21",
+      "unrelated",
+    ]);
+    expect(systemHost.directoryEntries?.(join(root, "absent"))).toEqual([]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it.each(["arm64", "x64"] as const)(
+  "discovers installed versioned Homebrew Java on macOS %s",
+  async (architecture) => {
+    const prefix = architecture === "arm64" ? "/opt/homebrew" : "/usr/local";
+    const command = `${prefix}/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home/bin/java`;
+    const commands: string[] = [];
+    const inspection = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: { PATH: "/usr/bin" },
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture,
+      },
+      host({
+        directoryEntries: (directory) =>
+          directory === `${prefix}/opt`
+            ? ["openjdk@21", "unrelated", "openjdk@21/../foreign"]
+            : [],
+        executable: (candidate) =>
+          candidate === "/usr/bin/java" ||
+          candidate === command ||
+          candidate.endsWith("/mac_x86_64/decompile") ||
+          host().executable(candidate),
+        probeJava: (candidate) => {
+          commands.push(candidate);
+          return candidate === command
+            ? javaProbeOk({
+                ...JAVA,
+                home: command.slice(0, -9),
+                osName: "Mac OS X",
+                osArch: architecture === "arm64" ? "aarch64" : "x86_64",
+              })
+            : missingJavaProbe;
+        },
+      }),
+    );
+    expect(commands).toEqual(["/usr/bin/java", command]);
+    expect(inspection.status).toBe("available");
+    expect(inspection.javaCommand).toBe(command);
+  },
+);
+
+it.each([
+  ["arm64", true, "/opt/homebrew", "/usr/local"],
+  ["x64", true, "/usr/local", "/opt/homebrew"],
+  ["arm64", false, "/opt/homebrew", "/usr/local"],
+  ["x64", false, "/usr/local", "/opt/homebrew"],
+] as const)(
+  "orders installed Homebrew Java candidates on macOS %s with PATH Java %s",
+  async (architecture, pathJava, preferred, other) => {
+    const suffix = "/libexec/openjdk.jdk/Contents/Home/bin/java";
+    const candidates = [
+      `${preferred}/opt/openjdk${suffix}`,
+      `${preferred}/opt/openjdk@21${suffix}`,
+      `${preferred}/opt/openjdk@25${suffix}`,
+      `${other}/opt/openjdk${suffix}`,
+      `${other}/opt/openjdk@21${suffix}`,
+      `${other}/opt/openjdk@25${suffix}`,
+    ];
+    for (const selected of [0, 1, 2, 3, undefined]) {
+      const commands: string[] = [];
+      const inspection = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: { PATH: pathJava ? "/usr/bin" : "/empty-bin" },
+          installDir: INSTALL,
+          platform: "darwin",
+          architecture,
+        },
+        host({
+          readText: () =>
+            "application.version=12.1.4\napplication.java.min=21\napplication.java.max=25\n",
+          directoryEntries: () => ["openjdk@25", "openjdk@21"],
+          executable: (candidate) =>
+            (pathJava && candidate === "/usr/bin/java") ||
+            candidates.includes(candidate) ||
+            candidate.endsWith("/mac_x86_64/decompile") ||
+            host().executable(candidate),
+          probeJava: (command) => {
+            commands.push(command);
+            return selected !== undefined && command === candidates[selected]
+              ? javaProbeOk({
+                  ...JAVA,
+                  home: command.slice(0, -9),
+                  major: selected === 2 ? 25 : 21,
+                  version: selected === 2 ? "25.0.1" : JAVA.version,
+                  osName: "Mac OS X",
+                  osArch: architecture === "arm64" ? "aarch64" : "x86_64",
+                })
+              : missingJavaProbe;
+          },
+        }),
+      );
+      expect(commands).toEqual([
+        ...(pathJava ? ["/usr/bin/java"] : []),
+        ...candidates.slice(
+          0,
+          selected === undefined ? undefined : selected + 1,
+        ),
+      ]);
+      expect(inspection.status).toBe(
+        selected === undefined ? "unavailable" : "available",
+      );
+      if (selected !== undefined)
+        expect(inspection.javaCommand).toBe(candidates[selected]);
+    }
+  },
+);
+
+it.each([
+  "explicit",
+  "path",
+  "missing",
+  "wrong version",
+  "wrong architecture",
+  "cancelled",
+] as const)(
+  "preserves Java selection and admission during versioned discovery: %s",
+  async (scenario) => {
+    const directoryEntries = vi.fn(() => [
+      "openjdk@17",
+      "openjdk@21",
+      "openjdk@999",
+      "openjdk@21/../foreign",
+    ]);
+    const keg =
+      "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home/bin/java";
+    const commands: string[] = [];
+    const controller = new AbortController();
+    const result = inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: { PATH: "/usr/bin" },
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+        signal: controller.signal,
+        ...(scenario === "explicit" ? { javaHome: "/selected-jdk" } : {}),
+      },
+      host({
+        readText: () =>
+          "application.version=12.1.4\napplication.java.min=21\napplication.java.max=21\n",
+        directoryEntries,
+        executable: (candidate) =>
+          candidate === "/usr/bin/java" ||
+          candidate === keg ||
+          host().executable(candidate),
+        probeJava: (command) => {
+          commands.push(command);
+          if (scenario === "cancelled" && command === keg) {
+            controller.abort("controlled cancellation");
+            throw new AnalysisCancelledError("ghidra:installation");
+          }
+          if (
+            scenario === "explicit" ||
+            scenario === "missing" ||
+            (scenario !== "path" && command !== keg)
+          )
+            return missingJavaProbe;
+          return javaProbeOk({
+            ...JAVA,
+            home: "/selected-jdk",
+            major: scenario === "wrong version" ? 17 : 21,
+            version: scenario === "wrong version" ? "17.0.1" : "21.0.11",
+            osName: "Mac OS X",
+            osArch: scenario === "wrong architecture" ? "x86_64" : "aarch64",
+          });
+        },
+      }),
+    );
+    if (scenario === "cancelled") {
+      await expect(result).rejects.toBeInstanceOf(AnalysisCancelledError);
+    } else {
+      const inspection = await result;
+      expect(inspection.status).toBe(
+        scenario === "path" ? "available" : "unavailable",
+      );
+      if (scenario === "wrong version" || scenario === "wrong architecture")
+        expect(inspection.javaCommand).toBe(keg);
+    }
+    if (scenario === "explicit" || scenario === "path") {
+      expect(directoryEntries).not.toHaveBeenCalled();
+      expect(commands).toEqual([
+        scenario === "explicit" ? "/selected-jdk/bin/java" : "/usr/bin/java",
+      ]);
+    } else expect(commands).toEqual(["/usr/bin/java", keg]);
+  },
+);
 
 it("explains the macOS keg-only JDK case without probing an unselected installation", async () => {
   const probed: string[] = [];

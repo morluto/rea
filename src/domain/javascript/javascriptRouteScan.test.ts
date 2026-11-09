@@ -13,8 +13,8 @@ import {
   routePath,
 } from "./javascriptRoutePaths.js";
 
-const analyze = (source: string, budget?: number) => {
-  const file = parseJavaScriptSource(source);
+const analyze = (source: string, budget?: number, sourcePath?: string) => {
+  const file = parseJavaScriptSource(source, sourcePath);
   if (file === null) throw new Error("fixture must parse");
   const index = complete(
     indexJavaScriptBindingsWithReceiversSteps(file.program),
@@ -118,6 +118,196 @@ it.each([
     }),
   ]);
 });
+
+it.each([
+  ["var INDEX=true;globalThis.INDEX=false;", "INDEX"],
+  ['var INDEX=true;window["INDEX"]=false;', "INDEX"],
+  ["var INDEX=true;const host=globalThis;host.INDEX=false;", "INDEX"],
+  ["var INDEX=false;globalThis.INDEX=true;", "INDEX"],
+  ["var INDEX=true;const FLAG=INDEX;", "FLAG"],
+  ["var INDEX=true;", "(INDEX as boolean)"],
+  [
+    "export type Marker = string;var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+  ],
+] as const)(
+  "keeps script program-var index proofs unknown: %s %s",
+  (prefix, flag) => {
+    const facts = analyze(
+      `${prefix}createBrowserRouter([{index:${flag},children:[{path:'child'}]},{path:'/known'}]);`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/child",
+      "/known",
+    ]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("index-route flag"),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  "var routes=[{path:'/reports'}];createBrowserRouter(routes);",
+  "var ROUTES=[{path:'/reports',children:[{path:'child'}]}];createBrowserRouter(ROUTES);",
+] as const)(
+  "keeps a program-var route configuration readable while disclosing the gap: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(
+      expect.arrayContaining(["/reports"]),
+    );
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("unisolated program variable"),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  "var PATH='/a';globalThis.PATH='/b';createBrowserRouter([{path:PATH}]);",
+  "var PATH='/a';const host=globalThis;host.PATH='/b';createBrowserRouter([{path:PATH}]);",
+  "var PATH='/a';createBrowserRouter([{path:PATH}]);",
+] as const)(
+  "never asserts an unisolated program-var parent segment: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates).toEqual([]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("parent segment is unknown"),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);",
+  "var PATH='/reports/stale';const ALIAS=(PATH as string);createBrowserRouter([{path:ALIAS},{path:'/reports'}]);",
+  "var PATH='/reports/stale';createBrowserRouter([{route:PATH,component:View},{path:'/reports'}]);",
+  "var PATH='/reports/stale';defineRoutes({stale:{_$:PATH},known:{_$:'/reports'}});",
+  "var TARGET='/reports/stale';router.push(TARGET);createBrowserRouter([{path:'/reports'}]);",
+  "var TARGET='/reports/stale';const NAV={pathname:TARGET};router.push(NAV);createBrowserRouter([{path:'/reports'}]);",
+] as const)(
+  "does not re-admit an unisolated route value as an independent constant: %s",
+  (source) => {
+    const facts = analyze(source + "const independent='/reports/help';");
+    expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+      "/reports",
+      "/reports/help",
+    ]);
+    expect(
+      facts.candidates.find(({ path }) => path === "/reports/help"),
+    ).toMatchObject({
+      mechanism: "route-string-constant",
+    });
+    expect(facts.unresolved).not.toEqual([]);
+  },
+);
+
+it.each([
+  "var SHARED={query:{path:'/data',Component:View}};const HOLD=SHARED;router.push({pathname:'/reports',query:HOLD.query});",
+  "var SHARED={query:{path:'/data'}};router.push({pathname:'/reports',query:SHARED.query});",
+] as const)(
+  "never promotes unisolated navigation data to a route: %s",
+  (source) => {
+    // The slot is data, not a route record. Rejecting its runtime identity must
+    // not release the object back to the independent route-literal scan.
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/reports"]);
+    expect(facts.candidates.some(({ path }) => path === "/data")).toBe(false);
+  },
+);
+
+it("keeps unrelated routes that share the unisolated data object", () => {
+  // Rejecting the runtime identity must not claim the whole source object:
+  // the sibling route property is independent data and stays reported.
+  const facts = analyze(
+    "var SHARED={query:{path:'/data',Component:View},route:{path:'/independent',Component:View}};const HOLD=SHARED;router.push({pathname:'/reports',query:HOLD.query});",
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/reports",
+  ]);
+});
+
+it("keeps literal child routes that an unisolated children array carries", () => {
+  // The parent proof is unknown, but the child records are still source-owned.
+  // Only the ancestry is in doubt, so the literal paths must stay reported next
+  // to the interpretation gap instead of disappearing with the parent.
+  const facts = analyze(
+    "var children=[{path:'/kept',Component:View}];const config={path:'/parent',children};",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/parent",
+    "/kept",
+  ]);
+  expect(facts.unresolved.map(({ reason }) => reason)).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("unisolated program variable"),
+    ]),
+  );
+});
+
+it.each([
+  "var TARGET='/t';globalThis.TARGET='/u';router.push(TARGET);",
+  "var NAV={pathname:'/x'};globalThis.NAV={pathname:'/y'};router.push(NAV);",
+] as const)(
+  "never asserts an unisolated program-var navigation destination: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates).toEqual([]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("unisolated program variable"),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  ["const PATH='/a';globalThis.PATH='/b';", "routes.js"],
+  ["var PATH='/a';globalThis.PATH='/b';", "routes.mjs"],
+] as const)("keeps a proven segment proof: %s %s", (prefix, path) => {
+  const facts = analyze(
+    `${prefix}createBrowserRouter([{path:PATH}]);`,
+    undefined,
+    path,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/a"]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it.each([
+  ["const INDEX=true;globalThis.INDEX=false;", ""],
+  ["let INDEX=true;globalThis.INDEX=false;", ""],
+  ["export {};var INDEX=true;globalThis.INDEX=false;", ""],
+  ["function make(){var INDEX=true;globalThis.INDEX=false;", "}make();"],
+] as const)(
+  "preserves lexical, module and function-local index proofs: %s",
+  (prefix, suffix) => {
+    const facts = analyze(
+      `${prefix}createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);${suffix}`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/", "/child"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+
+it.each(["routes.cjs", "routes.cts", "routes.mjs", "routes.mts"])(
+  "preserves parser-proven runtime isolation for %s",
+  (path) => {
+    const facts = analyze(
+      "var INDEX=true;globalThis.INDEX=false;createBrowserRouter([{index:INDEX}]);",
+      undefined,
+      path,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
 
 it("keeps a known false index flag absent", () => {
   const facts = analyze(
@@ -797,6 +987,22 @@ it.each(["app/(.)photo/_private/page.tsx", "app/_private/(.)photo/page.tsx"])(
     ).toBeUndefined();
   },
 );
+
+it("tests long literals for page-shaped Next paths in linear time", () => {
+  const classify = (value: string) =>
+    classifyNextAppRoutePath(value, {
+      kind: "source-literal",
+      runtime: "unknown",
+    })?.kind;
+  const started = performance.now();
+  expect(classify("app/".repeat(64_000))).toBeUndefined();
+  expect(classify(`app/${"x/page?".repeat(32_000)}\nend`)).toBeUndefined();
+  expect(performance.now() - started).toBeLessThan(1_000);
+  expect(classify("lib/app/a\nb/page.tsx")).toBe("unknown");
+  expect(classify("app/page-a\nb.js?v=1")).toBe("unknown");
+  expect(classify("app/x/page?first\nsecond")).toBeUndefined();
+  expect(classify("app/x/page.tsx/extra")).toBeUndefined();
+});
 
 it("keeps the already-covered aliased binary fragment excluded", () => {
   const facts = analyze(

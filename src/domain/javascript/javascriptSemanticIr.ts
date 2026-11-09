@@ -11,6 +11,8 @@ import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutio
 
 /** One exact module origin followed through imports, requires, or aliases. */
 export interface JavaScriptModuleOrigin {
+  /** An unbound require whose CommonJS wrapper is not established. */
+  readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly specifier: string;
   readonly importedPath: readonly string[];
@@ -80,6 +82,8 @@ export interface JavaScriptSemanticBinding {
   readonly mutable: boolean;
   readonly definitions: readonly JavaScriptSemanticDefinition[];
   readonly value: JavaScriptSemanticValue;
+  /** Value at the single initializer, before later member effects. */
+  readonly initializerValue?: JavaScriptSemanticValue;
   readonly provenance: JavaScriptBindingProvenance;
 }
 
@@ -126,6 +130,8 @@ export interface JavaScriptSemanticCallSite {
   readonly callerCallableId: string | null;
   readonly location: JavaScriptSourceRange;
   readonly calleeLocation: JavaScriptSourceRange;
+  /** The call's value appears in an enclosing expression or return. */
+  readonly resultUsed: boolean;
   readonly resolution: "exact" | "ambiguous" | "unresolved";
   readonly calleeCallableIds: readonly string[];
   readonly arguments: readonly JavaScriptSemanticCallArgument[];
@@ -138,6 +144,10 @@ export interface JavaScriptSemanticCallArgument {
   /** Unwrapped value expression; null for a spread or non-expression slot. */
   readonly valueExpressionLocation: JavaScriptSourceRange | null;
   readonly spread: boolean;
+  /** Direct scalar syntax, before runtime evaluation; omitted for other expressions. */
+  readonly literal?: string | number | boolean | null;
+  /** A direct literal was omitted under a semantic resource bound. */
+  readonly literalResourceLimit?: "primitive-bytes";
 }
 
 /** One positional argument that may initialize one local parameter binding. */
@@ -256,6 +266,7 @@ export interface JavaScriptSemanticEventOperation {
 
 /** One timer scheduling or cancellation candidate. */
 export interface JavaScriptSemanticTimerOperation {
+  readonly builtinAuthority?: "candidate";
   readonly timerId: string;
   readonly kind: "schedule" | "cancel";
   readonly method:
@@ -276,6 +287,7 @@ export interface JavaScriptSemanticTimerOperation {
 
 /** One explicit asynchronous node:child_process creation candidate. */
 export interface JavaScriptSemanticChildProcessSpawn {
+  readonly builtinAuthority?: "candidate";
   readonly processId: string;
   readonly method: "spawn" | "exec" | "execFile" | "fork";
   readonly location: JavaScriptSourceRange;
@@ -291,6 +303,7 @@ export interface JavaScriptSemanticChildProcessSpawn {
 
 /** One exit/error listener or signal operation linked to child candidates. */
 export interface JavaScriptSemanticChildProcessInteraction {
+  readonly builtinAuthority?: "candidate";
   readonly interactionId: string;
   readonly kind: "listener" | "signal";
   readonly method: "on" | "once" | "addListener" | "kill";
@@ -306,6 +319,7 @@ export interface JavaScriptSemanticChildProcessInteraction {
 
 /** One environment, argv, file, or default configuration source. */
 export interface JavaScriptSemanticConfigurationOperation {
+  readonly builtinAuthority?: "candidate";
   readonly configId: string;
   readonly kind: "environment" | "argv" | "file" | "default";
   readonly location: JavaScriptSourceRange;
@@ -320,6 +334,7 @@ export interface JavaScriptSemanticConfigurationOperation {
 
 /** One request construction or response-consumer candidate. */
 export interface JavaScriptSemanticRequestOperation {
+  readonly builtinAuthority?: "candidate";
   readonly requestId: string;
   readonly kind: "request" | "response-consumer";
   readonly method:
@@ -364,6 +379,7 @@ export interface JavaScriptSemanticBoundaryOperation {
 
 /** One explicit built-in resource acquisition or release candidate. */
 export interface JavaScriptSemanticResourceOperation {
+  readonly builtinAuthority?: "candidate";
   readonly resourceId: string;
   readonly kind: "acquire" | "release";
   readonly method:
@@ -410,6 +426,8 @@ export interface JavaScriptSemanticFrontier {
 
 /** Static import/export relationship retained for cross-file composition. */
 export interface JavaScriptSemanticModuleLink {
+  /** The literal request is observed, but its CommonJS wrapper is unknown. */
+  readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly kind:
     | "import"
@@ -435,6 +453,25 @@ export interface JavaScriptSemanticAssignmentFlow {
   readonly ownerCallableId: string | null;
 }
 
+/** Syntactic inputs to one operator result; this is influence, not identity. */
+export interface JavaScriptSemanticExpressionFlow {
+  readonly location: JavaScriptSourceRange;
+  readonly operator: string;
+  readonly operands: readonly {
+    readonly location: JavaScriptSourceRange;
+    readonly kind: "reference" | "expression" | "literal" | "unsupported";
+    readonly conditional: boolean;
+    readonly literal?: string | number | boolean | null;
+  }[];
+  readonly ownerCallableId: string | null;
+}
+
+/** A direct identifier declaration initialized by an operator expression. */
+export interface JavaScriptSemanticInitializerFlow {
+  readonly target: JavaScriptSourceRange;
+  readonly source: JavaScriptSourceRange;
+}
+
 /** Provider-neutral JavaScript semantic IR. */
 export interface JavaScriptSemanticIr {
   readonly schema: "JavaScriptSemanticIR";
@@ -458,6 +495,13 @@ export interface JavaScriptSemanticIr {
   readonly boundaryOperations: readonly JavaScriptSemanticBoundaryOperation[];
   readonly resourceOperations: readonly JavaScriptSemanticResourceOperation[];
   readonly assignmentFlows: readonly JavaScriptSemanticAssignmentFlow[];
+  readonly expressionFlows: readonly JavaScriptSemanticExpressionFlow[];
+  readonly initializerFlows: readonly JavaScriptSemanticInitializerFlow[];
+  readonly literalReturns: readonly {
+    readonly location: JavaScriptSourceRange;
+    readonly value: string | number | boolean | null;
+  }[];
+  readonly expressionFlowsTruncated: boolean;
   readonly objectOperations: readonly JavaScriptSemanticObjectOperation[];
   readonly functionFingerprints: readonly JavaScriptSemanticFunctionFingerprint[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
@@ -488,6 +532,10 @@ export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
   boundaryOperations: [],
   resourceOperations: [],
   assignmentFlows: [],
+  expressionFlows: [],
+  initializerFlows: [],
+  literalReturns: [],
+  expressionFlowsTruncated: false,
   objectOperations: [],
   functionFingerprints: [],
   frontiers: [],

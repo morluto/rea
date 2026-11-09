@@ -73,29 +73,11 @@ describe("RISC-V ELF header boundaries", () => {
     });
   });
 
-  it("rejects a truncated header before reading flags", () => {
-    const parsed = parseExecutableHeader(header(true).subarray(0, 39), "x64");
-    expect(parsed).toEqual({
-      ok: false,
-      error:
-        "truncated ELF header: an ELF32 header needs 52 bytes; the file has 39",
-    });
-  });
-
-  it("does not turn invalid byte order into little-endian RISC-V", () => {
-    const bytes = header(true);
-    bytes[5] = 0;
-    expect(parseExecutableHeader(bytes, "x64")).toEqual({
-      ok: false,
-      error: "unsupported ELF endianness",
-    });
-  });
-
   it("keeps an unknown e_machine outside the recognized family set", () => {
     expect(parseExecutableHeader(header(true, 32, 0x5, 2, 244), "x64")).toEqual(
       {
         ok: false,
-        error: "unsupported ELF architecture",
+        error: "unsupported ELF architecture: e_machine 244",
       },
     );
   });

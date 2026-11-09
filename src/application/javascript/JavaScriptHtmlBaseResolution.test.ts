@@ -140,9 +140,7 @@ describe("HTML base href empty segments", () => {
   it("keeps an above-root base escape when the reference also climbs", () => {
     expect(resolve("../app.js", "../../")).toMatchObject({
       resolution_status: "rejected",
-      limitations: [
-        "The resolved candidate escapes the canonical artifact root.",
-      ],
+      limitations: [expect.stringMatching(/escapes.*artifact root/iu)],
     });
   });
 });
@@ -160,9 +158,7 @@ describe("HTML base href path syntax", () => {
   it("still confines a base href that escapes the artifact root", () => {
     expect(resolve("app.js", "/a/../../secret/")).toMatchObject({
       resolution_status: "rejected",
-      limitations: [
-        "The resolved candidate escapes the canonical artifact root.",
-      ],
+      limitations: [expect.stringMatching(/escapes.*artifact root/iu)],
     });
   });
   it("reports an external base href as external rather than malformed", () => {

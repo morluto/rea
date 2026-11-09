@@ -331,7 +331,7 @@ const fetchOne = async (
     return emptySourceMapItem(
       request,
       "policy_filtered",
-      "Declared source-map URL is outside the approved exact origins.",
+      "Declared source-map URL must be a credential-free HTTP(S) URL on an approved exact origin.",
     );
   let effectiveUrl: string | null = null;
   let completedResponseIdentity: ResponseIdentity | undefined;
@@ -349,7 +349,7 @@ const fetchOne = async (
       return emptySourceMapItem(
         request,
         "policy_filtered",
-        "A source-map redirect left the approved exact origins.",
+        "Each source-map redirect must be a credential-free HTTP(S) URL on an approved exact origin.",
         effectiveUrl,
       );
     const { response, fetchedUrl } = fetched;
@@ -666,7 +666,7 @@ const normalizeSourceMap = (
     return emptySourceMapItem(
       request,
       "fetch_failed",
-      "Source-map response text exceeds the 32 MiB source-map output budget; JSON parsing and source-map decoding were not attempted.",
+      "JSON-escaped response text and map metadata would exceed the remaining space in the shared 32 MiB source-map output budget; JSON parsing and source-map decoding were not attempted.",
       fetchedUrl,
       responseIdentity,
     );

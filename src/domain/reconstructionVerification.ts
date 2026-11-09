@@ -60,7 +60,10 @@ export const verifyReconstruction = (
       { cause: parsedSpecification.error },
     );
   const specification = parsedSpecification.data;
-  const bundleResult = readEvidenceBundle(bundleInput);
+  const bundleResult = readEvidenceBundle(bundleInput, {
+    operation: "verify_reconstruction",
+    path: ["evidence_bundle"],
+  });
   if (!bundleResult.ok) throw bundleResult.error;
   const bundle = bundleResult.value;
   const records = new Map(
@@ -233,7 +236,10 @@ const readValidatedSourceFacts = (
       );
       functionSources.push({
         evidence_id: source.evidence_id,
-        callCoverageBlockers: callCoverage.blockers,
+        callCoverageBlockers: [
+          ...callCoverage.blockers,
+          ...callCoverage.discoveryLimitations,
+        ],
         callCoverageDiagnostics: callCoverage.diagnostics,
       });
     } else {
