@@ -416,3 +416,69 @@ it("preserves the caller reason when a completed iNES read observes cancellation
     await handle.close();
   }
 });
+
+it.each(["classification", "hash", "region"] as const)(
+  "preserves physical failure and concurrent cancellation through %s inventory",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-ines-inventory-io-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const sample = await open(path, "r");
+    const prototype = Object.getPrototypeOf(sample) as FileHandle;
+    await sample.close();
+    const originalRead = prototype.read;
+    const originalStat = prototype.stat;
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("inventory descriptor failure"), {
+      code: "EIO",
+    });
+    let afterRead = false;
+    let statCount = 0;
+    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
+      this: FileHandle,
+      ...args
+    ) {
+      const arguments_: readonly unknown[] = args;
+      const position = arguments_[3];
+      if (
+        phase === "region" &&
+        afterRead &&
+        (typeof position === "number" || typeof position === "bigint") &&
+        Number(position) === 16
+      ) {
+        controller.abort("caller stopped");
+        throw physical;
+      }
+      const value = await originalRead.call(this, ...args);
+      afterRead = true;
+      return value;
+    });
+    const stat = vi.spyOn(prototype, "stat").mockImplementation(async function (
+      this: FileHandle,
+      ...args
+    ) {
+      if (
+        afterRead &&
+        ++statCount ===
+          (phase === "classification" ? 2 : phase === "hash" ? 3 : -1)
+      ) {
+        controller.abort("caller stopped");
+        throw physical;
+      }
+      return originalStat.call(this, ...args);
+    });
+    try {
+      const failure = await inventoryArtifact(path, {
+        signal: controller.signal,
+      }).catch((cause: unknown) => cause);
+      expect(controller.signal.aborted).toBe(true);
+      expect(failure).not.toMatchObject({ reason: "cancelled" });
+      if (phase === "region")
+        expect(failure).toMatchObject({ reason: "io", cause: physical });
+      else expect(failure).toBe(physical);
+    } finally {
+      read.mockRestore();
+      stat.mockRestore();
+    }
+  },
+);

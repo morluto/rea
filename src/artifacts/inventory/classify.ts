@@ -22,6 +22,7 @@ import {
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
+  RegularFileOperationCancelled,
   sameRegularFileState,
 } from "../../filesystem/RegularFile.js";
 import type { FileHandle } from "node:fs/promises";
@@ -244,7 +245,14 @@ const classifyRootFormat = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    abortIfNeeded(signal);
+    if (cause instanceof RegularFileOperationCancelled)
+      throw new ArtifactReaderFailure(
+        "cancelled",
+        "Artifact inventory cancelled",
+        {
+          cause: cause.reason,
+        },
+      );
     if (cause instanceof RegularFileChangedError)
       throw new ArtifactReaderFailure(
         "integrity",

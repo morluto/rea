@@ -8,6 +8,7 @@ import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
+  RegularFileOperationCancelled,
   NonRegularFileReadError,
   RegularFileAdmissionFailure,
   openRegularFile,
@@ -161,7 +162,14 @@ export const hashStableRootArtifactHandle = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    abortIfNeeded(signal);
+    if (cause instanceof RegularFileOperationCancelled)
+      throw new ArtifactReaderFailure(
+        "cancelled",
+        "Artifact inventory cancelled",
+        {
+          cause: cause.reason,
+        },
+      );
     if (cause instanceof RegularFileChangedError)
       throw new ArtifactReaderFailure(
         "integrity",
