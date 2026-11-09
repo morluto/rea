@@ -117,9 +117,11 @@ export const erlangBeamSchema = z.strictObject({
     .nullable(),
   module: z.string().nullable(),
   coverage: z.strictObject({
-    status: z.literal("complete"),
+    // "partial" when bytes trail the declared FOR1 form and go unexamined.
+    status: z.enum(["complete", "partial"]),
     examined_chunks: uint,
     atoms: uint,
+    trailing_bytes: uint,
   }),
   limitations: z.array(z.string()),
 });

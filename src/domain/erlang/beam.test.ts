@@ -68,7 +68,12 @@ it("rejects extra caller arguments and admits a BEAM form with no tables", () =>
     lambdas: null,
     code: null,
     module: null,
-    coverage: { status: "complete", examined_chunks: 0, atoms: 0 },
+    coverage: {
+      status: "complete",
+      examined_chunks: 0,
+      atoms: 0,
+      trailing_bytes: 0,
+    },
     limitations: ["No atom table was present."],
   });
   expect(report.atoms).toBeNull();
