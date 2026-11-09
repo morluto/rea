@@ -44,7 +44,10 @@ import {
   AnalysisResourceConstraintError,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutPartialObservation,
+} from "../domain/analysisErrorProjection.js";
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
@@ -61,6 +64,8 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
+import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
+import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";
 import {
@@ -192,7 +197,11 @@ const partitionSdkDiagnostic = (
       );
     } else {
       for (const issue of group) mapped.push(issue);
-      remaining.push(diagnostic.slice(start, offset));
+      const explainedByIssues =
+        raw.code === "unrecognized_keys" &&
+        group.length > 0 &&
+        group.every((item) => item.message !== undefined);
+      if (!explainedByIssues) remaining.push(diagnostic.slice(start, offset));
     }
   }
   if (offset !== diagnostic.length) return undefined;
@@ -298,6 +307,10 @@ export interface StandardToolRegistration {
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
+  private readonly registrations = new Map<string, RegisteredTool>();
+  private progressiveCatalog: ProgressiveToolCatalog | undefined;
+  private catalogChangeDepth = 0;
+  private catalogChanged = false;
   analysisSettings: AnalysisSettings | undefined;
   /** Transport-owned Evidence uses the same lifetime as application writes. */
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
@@ -307,7 +320,42 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   get catalogIdentity(): ReturnType<typeof createCatalogIdentity> {
     if (this.identity === undefined)
       throw new Error("MCP catalog identity has not been configured");
-    return this.identity;
+    return this.progressiveCatalog?.identity ?? this.identity;
+  }
+
+  /** Install discovery after canonical registrations, before connecting. */
+  enableProgressiveCatalog(): void {
+    if (this.progressiveCatalog !== undefined) return;
+    const catalog = new ProgressiveToolCatalog(
+      this.registrations,
+      this.catalogIdentity,
+      (change) => {
+        this.catalogChangeDepth++;
+        try {
+          change();
+        } finally {
+          this.catalogChangeDepth--;
+          if (this.catalogChangeDepth === 0 && this.catalogChanged) {
+            this.catalogChanged = false;
+            super.sendToolListChanged();
+          }
+        }
+      },
+      () => this.delivery,
+    );
+    this.progressiveCatalog = catalog;
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers.
+    super.registerTool(name, config, (input, context) => {
+      context.mcpReq.signal.throwIfAborted();
+      return catalog.discover(input);
+    });
+  }
+
+  override sendToolListChanged(): void {
+    if (this.catalogChangeDepth > 0) this.catalogChanged = true;
+    else super.sendToolListChanged();
   }
 
   /** Attach the process-owned session only after lazy runtime construction. */
@@ -462,11 +510,20 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     config: StandardToolRegistration,
     callback: ToolCallback<StandardSchemaWithJSON | undefined>,
   ): RegisteredTool {
-    return super.registerTool(name, config as never, callback as never);
+    const registered = super.registerTool(
+      name,
+      config as never,
+      callback as never,
+    );
+    this.registrations.set(name, registered);
+    return registered;
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
+    // HTTP reuses the analysis server after draining the previous transport.
+    // Reset visibility while disconnected, before the next initialize/list.
+    if (!this.isConnected()) this.progressiveCatalog?.reset();
     return super.connect(
       new ErrorEvidenceTransport(
         transport,
@@ -882,7 +939,11 @@ class ErrorEvidenceTransport implements Transport {
             }
           : { retention: recorded === undefined ? "unavailable" : "failed" }),
         ...(recorded !== undefined && !recorded.ok
-          ? { retention_error: projectAnalysisError(recorded.error) }
+          ? {
+              retention_error: projectAnalysisErrorWithoutPartialObservation(
+                recorded.error,
+              ),
+            }
           : {}),
       },
       targetContent,
@@ -978,9 +1039,12 @@ class ErrorEvidenceTransport implements Transport {
         "The MCP tool arguments exceed the configured input element allowance; schema validation and tool execution did not start.",
         { max_input_elements: this.maximumInputElements },
         {
-          remediationAction: this.evidenceReferenceAlternatives.has(tool)
-            ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
-            : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
+          remediationAction:
+            tool === "inspect_analysis_view"
+              ? 'If using inline Evidence, save the Evidence record as a local JSON file and use source {"kind":"evidence-file","path":"..."}; if it is retained, use its retained-evidence ID. Otherwise reduce the combined array elements and object members, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+              : this.evidenceReferenceAlternatives.has(tool)
+                ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+                : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
         },
       );
       const result = this.delivery.toErrorToolResult(error, targetContent);
@@ -998,6 +1062,7 @@ class ErrorEvidenceTransport implements Transport {
             validation.issues,
             validation.input,
             this.delivery.resultBudgetBytes,
+            tool,
           );
     const projectionLimited = validation !== undefined && groups === undefined;
     const summary = `The arguments for MCP tool ${tool} do not match its advertised input schema.`;

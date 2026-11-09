@@ -78,7 +78,7 @@ export const resolveProcessScenarioRuntimePaths = async (
  * continues past denied directories, and an existing file without execute
  * permission remains an invalid selection.
  */
-export const resolveExecutable = async (
+const resolveExecutable = async (
   command: string,
   workingDirectory: string,
   searchPath: string | undefined,

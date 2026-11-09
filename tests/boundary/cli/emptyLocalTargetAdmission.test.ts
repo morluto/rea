@@ -64,6 +64,7 @@ const commands: readonly (readonly string[])[] = [
   ["read-bytes", "0x1000"],
   ["address-to-file-offset", "0x1000"],
   ["trace-native-values", "main"],
+  ["inspect-native-data-type", "--type", "/MyStruct"],
   ["inspect-native-instruction", "0x1000"],
   ["resolve-native-call-targets", "0x1000"],
   ["inspect-native-dispatch-metadata"],
@@ -94,7 +95,7 @@ it.each(commands)(
   "rejects an empty or NUL %s target before resolution and admits explicit .",
   async (command, ...rest) => {
     const { serve, runs } = registry();
-    // docs/cli.md: an empty string never selects the working directory.
+    // docs/getting-started/cli.md: an empty string never selects the working directory.
     expect(await serve([command, "", ...rest])).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [

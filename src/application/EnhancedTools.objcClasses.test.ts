@@ -444,7 +444,6 @@ describe("EnhancedTools cancellation ownership", () => {
       controller.signal,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Pre-cancelled observation was accepted");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);

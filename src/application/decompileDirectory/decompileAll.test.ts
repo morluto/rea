@@ -138,6 +138,7 @@ const harness = (options?: {
     Record<string, "error" | "timeout" | "empty" | "null">
   >;
   readonly info?: "ok" | "unavailable" | "error";
+  readonly listLimitations?: readonly string[];
   readonly listProfile?: typeof profile;
   readonly subject?: boolean;
   readonly mismatch?: string;
@@ -173,6 +174,9 @@ const harness = (options?: {
               {
                 analysisProfile: options?.listProfile ?? profile,
                 ...(options?.subject === false ? {} : { subject }),
+                ...(options?.listLimitations === undefined
+                  ? {}
+                  : { limitations: options.listLimitations }),
               },
             ),
           ),
@@ -376,6 +380,87 @@ describe("decompile_all manifest", () => {
     await expect(
       readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).resolves.toContain(sentinel);
+  });
+});
+
+describe("decompile_all inventory limitations", () => {
+  const directory = useOutputDirectory();
+
+  const readIndex = async (root: string) =>
+    decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(join(root, DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+      ),
+    );
+
+  it("keeps the latest selection's limitations without attaching them to historical files", async () => {
+    const created = await run(
+      harness({ listLimitations: ["first inventory limitation"] }).tools,
+      directory(),
+      { name: "Foo::", limit: 1 },
+    );
+    if (!created.ok) throw created.error;
+    expect(created.value).toMatchObject({
+      inventory_limitations: ["first inventory limitation"],
+      counts: { selected: 2, excluded: 1, requested: 1, remaining: 1 },
+    });
+    const firstIndex = await readIndex(directory());
+    expect(firstIndex.latest_run).toEqual({
+      resume: false,
+      selected: 2,
+      excluded: 1,
+      selection: {
+        name: "Foo::",
+        namespace: null,
+        address_start: null,
+        address_end: null,
+        limit: 1,
+      },
+      inventory_limitations: ["first inventory limitation"],
+    });
+    expect(firstIndex.limitations).toEqual([]);
+    expect(firstIndex.functions).toHaveLength(1);
+    expect(firstIndex.functions[0]?.limitations).toContain(
+      "terminal call may cut the body",
+    );
+    expect(firstIndex.functions[0]?.limitations).not.toContain(
+      "first inventory limitation",
+    );
+
+    const resumed = await run(
+      harness({ listLimitations: ["second inventory limitation"] }).tools,
+      directory(),
+      { resume: true, name: "Bar::" },
+    );
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      inventory_limitations: ["second inventory limitation"],
+      counts: { selected: 1, excluded: 2, requested: 1, remaining: 0 },
+    });
+    const resumedIndex = await readIndex(directory());
+    expect(resumedIndex.latest_run).toMatchObject({
+      resume: true,
+      selected: 1,
+      excluded: 2,
+      selection: { name: "Bar::" },
+      inventory_limitations: ["second inventory limitation"],
+    });
+    expect(
+      resumedIndex.functions.map((record) => record.address).sort(),
+    ).toEqual(["0x1000", "0x3000"]);
+    expect(
+      resumedIndex.functions.every((record) =>
+        record.limitations?.includes("terminal call may cut the body"),
+      ),
+    ).toBe(true);
+    expect(
+      resumedIndex.functions.every(
+        (record) =>
+          !record.limitations?.includes("first inventory limitation") &&
+          !record.limitations?.includes("second inventory limitation"),
+      ),
+    ).toBe(true);
+    expect(resumedIndex.limitations).toEqual([]);
   });
 });
 
@@ -1329,9 +1414,9 @@ describe("decompile_all journal recovery", () => {
     expect(limitations).toContainEqual(
       expect.stringContaining("terminal call may cut the body"),
     );
-    expect(limitations.at(-1)).toBe(
-      "33 per-item provider limitation observations were omitted from this answer; each function's record in decompile-index.json keeps the caveats of the observations it used.",
-    );
+    expect(limitations.at(-1)).toContain("33 per-item provider limitation");
+    expect(limitations.at(-1)).toContain("decompile-index.json");
+    expect(limitations.at(-1)).toContain("decompile-journal.jsonl");
     const last = await readFile(
       join(directory(), "functions/0x1130.c"),
       "utf8",
@@ -1728,6 +1813,38 @@ describe("decompile_all repeated output failures", () => {
         (record) => record.address === procedures[5]?.address,
       )?.status,
     ).toBe("written");
+  });
+
+  it("keeps counting output_io failures across external functions", async () => {
+    const mixed = Array.from({ length: 11 }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `f${index.toString()}`,
+    }));
+    const at = (parity: number) =>
+      mixed.filter((_, index) => index % 2 === parity);
+    expect(
+      (await run(harness({ procedures: mixed }).tools, directory())).ok,
+    ).toBe(true);
+    // Locals cannot be read back; externals have no file to resume from.
+    await blockFiles(at(0).map(({ address }) => address));
+    for (const { address } of at(1))
+      await rm(join(directory(), `functions/${address}.c`));
+    const stopped = await run(
+      harness({
+        procedures: mixed,
+        external: at(1).map(({ address }) => address),
+      }).tools,
+      directory(),
+      { resume: true },
+    );
+    expect(stopped.ok).toBe(false);
+    if (stopped.ok) return;
+    expect(stopped.error).toBeInstanceOf(AnalysisOutputError);
+    expect(stopped.error.diagnostics).toMatchObject({
+      failed: 5,
+      external: 4,
+      consecutive_output_io: 5,
+    });
   });
 
   it("does not stop when a verified file interrupts the failures", async () => {

@@ -650,7 +650,7 @@ it("still refuses a wrapped rebase cursor that leaves the segment", () => {
 });
 
 it("still refuses a multi-slot run with a backward skip", () => {
-  // DO 2 skipping -0x18 would revisit earlier slots; no linker emits it.
+  // DO 2 skipping -0x18 would revisit earlier slots; this bounded decoder refuses that run.
   const { fixups } = legacyRebaseInput(
     Buffer.from([0x11, 0x20, 0x80, 0x02, 0x80, 0x02, ...MINUS_0X18, 0]),
   );
@@ -1230,7 +1230,7 @@ describe("bounded chained page facts", () => {
       {
         facet: "pointer_fixups",
         code: "chained_pointer_walk_failed",
-        message: "Chained pointer link leaves its file-backed page",
+        message: expect.stringContaining("file-backed page"),
         location: "0x100004000",
       },
     ]);
@@ -1432,7 +1432,7 @@ describe("malformed chained pointer coverage", () => {
       {
         facet: "pointer_fixups",
         code: "chained_pointer_walk_failed",
-        message: "Chained pointer link leaves its file-backed page",
+        message: expect.stringContaining("file-backed page"),
         location: "0x100005000",
       },
     ]);

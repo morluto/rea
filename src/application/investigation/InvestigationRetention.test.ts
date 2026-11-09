@@ -11,7 +11,13 @@ import {
   updateUnknownInputSchema,
   type ResidualUnknown,
 } from "../../domain/residualUnknown.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
+import { ok } from "../../domain/result.js";
+import { admitCompletedAnalysis } from "./admitCompletedAnalysis.js";
+import { recordEvidenceSources } from "./recordEvidenceSources.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
+import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 
 const provider = { id: "fixture", name: "Retention fixture", version: "1" };
 const observe = (index: number, path = "/fixture") =>
@@ -56,6 +62,39 @@ const recordCost = (evidence: Evidence): number => {
   if (!result.ok) throw result.error;
   return records.statistics().retainedRepresentationBytes;
 };
+
+it("returns only authenticated Evidence when a completed record exceeds retention capacity", () => {
+  const evidence = observe(7);
+  const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
+  const refused = records.recordEvidence(evidence);
+  if (refused.ok) throw new Error("Expected retention refusal");
+  expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(refused.error.partialObservation).toEqual({
+    kind: "unretained-evidence",
+    evidence,
+  });
+  expect(isImmutableJsonSnapshot(refused.error.partialObservation)).toBe(true);
+  expect(records.hasEvidence(evidence.evidence_id)).toBe(false);
+  const invalid = records.recordEvidence({
+    ...evidence,
+    normalized_result: "tampered",
+  });
+  if (invalid.ok) throw new Error("Expected integrity refusal");
+  expect(invalid.error._tag).toBe("EvidenceIntegrityError");
+  expect(invalid.error.partialObservation).toBeUndefined();
+  const mutable = createEvidence(undefined, provider, {
+    operation: "health",
+    parameters: {},
+    result: { value: 1 },
+  });
+  const noHeadroom = new InvestigationRecords({
+    availableAuthenticationBytes: () => 0,
+  }).recordEvidence(mutable);
+  if (noHeadroom.ok)
+    throw new Error("Expected authentication headroom refusal");
+  expect(noHeadroom.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(noHeadroom.error.partialObservation).toBeUndefined();
+});
 
 it("admits exact capacity, rejects cumulative growth atomically, and releases accounting on clear", () => {
   const first = observe(1);
@@ -295,4 +334,65 @@ it("reads statistics without asking either bundle-export path to copy retained f
   });
   expect(detached).not.toHaveBeenCalled();
   expect(borrowed).not.toHaveBeenCalled();
+});
+
+it("preserves the completed observation's path when a retained semantic ID has different display metadata", () => {
+  const earlier = observe(7, "/original/file");
+  const current = observe(7, "/selected/file");
+  expect(current.evidence_id).toBe(earlier.evidence_id);
+  const records = new InvestigationRecords({
+    maximumRepresentationBytes: recordCost(earlier),
+  });
+  expect(records.recordEvidence(earlier).ok).toBe(true);
+  const result = recordEvidenceSources(
+    records.recordEvidence.bind(records),
+    [observe(8)],
+    {
+      evidence: current,
+      evidenceForAnalysis: records.evidenceForAnalysis.bind(records),
+    },
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected source publication failure");
+  expect(result.error.sourcePublicationRecovery?.completed).toMatchObject({
+    kind: "unretained-evidence",
+    evidence: {
+      evidence_id: current.evidence_id,
+      subject: { local_path: "/selected/file" },
+    },
+  });
+});
+
+it("accounts for the generated subject limitation before admitting a subjectless observation", () => {
+  const observation = {
+    provider,
+    result: { value: 1 },
+    rawResult: null,
+    limitations: ["source limit"],
+    locations: [],
+    subject: null,
+  } as const;
+  let admitted: ReturnType<typeof estimateJsonStorage> | undefined;
+  const result = admitCompletedAnalysis(
+    "health",
+    {},
+    observation,
+    (input, _operation, additional) => {
+      const estimate = estimateJsonStorage(input);
+      admitted = {
+        valueBytes: estimate.valueBytes + additional.valueBytes,
+        serializedUtf16Bytes:
+          estimate.serializedUtf16Bytes + additional.serializedUtf16Bytes,
+      };
+      return ok(undefined);
+    },
+  );
+  expect(result.ok).toBe(true);
+  const actual = estimateJsonStorage(
+    createAnalysisExecutionEvidence("health", {}, observation, "observed"),
+  );
+  expect(admitted?.valueBytes).toBeGreaterThanOrEqual(actual.valueBytes);
+  expect(admitted?.serializedUtf16Bytes).toBeGreaterThanOrEqual(
+    actual.serializedUtf16Bytes,
+  );
 });

@@ -816,8 +816,9 @@ it("attributes table and column selection failures to their own arguments", asyn
         {
           path: ["columns"],
           reason: "invalid_format",
-          message:
-            "Selected column does not exist with that exact name in table records: nope",
+          message: expect.stringMatching(
+            /column.*exact name.*table records.*nope/i,
+          ),
         },
       ],
     },

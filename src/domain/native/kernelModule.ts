@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
@@ -197,7 +197,7 @@ const signatureSchema = z.strictObject({
 
 /** Complete bounded inspection of one relocatable Linux kernel module. */
 export const inspectKernelModuleInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF kernel module or a compressed .ko container",
   ),
   max_file_bytes: z
@@ -258,7 +258,11 @@ export const kernelModuleSchema = z.strictObject({
   exit_text: sizedSectionSchema.nullable(),
   signature: signatureSchema.nullable(),
   coverage: z.strictObject({
-    status: z.enum(["complete", "not_applicable", "unsupported"]),
+    status: z
+      .enum(["complete", "partial", "not_applicable", "unsupported"])
+      .describe(
+        "Whether the supported inspection examined the declared facts; omitted or undecodable facts make coverage partial.",
+      ),
     examined_entries: uint,
   }),
   limitations: z.array(z.string()),
