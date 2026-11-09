@@ -237,6 +237,7 @@ describe("parseNugetPackage: asset layout", () => {
         member("buildTransitive/net8.0/Example.targets"),
         member("buildMultiTargeting/net8.0/Example.targets"),
         member("contentFiles/any/any/readme.txt"),
+        member("tools/net8.0/any/MyTool.dll"),
         member("tools/install.ps1"),
         member("readme.md"),
       ]),
@@ -284,6 +285,11 @@ describe("parseNugetPackage: asset layout", () => {
     expect(byPath.get("contentFiles/any/any/readme.txt")?.kind).toBe(
       "content-files",
     );
+    // A .NET tool's payload keeps the TFM from `tools/<tfm>/any/`.
+    expect(byPath.get("tools/net8.0/any/MyTool.dll")).toMatchObject({
+      kind: "tools",
+      target_framework: "net8.0",
+    });
     expect(byPath.get("tools/install.ps1")?.kind).toBe("tools");
     expect(byPath.get("readme.md")?.kind).toBe("other");
     // A `lib/` file with no framework folder has no framework to report.
