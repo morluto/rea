@@ -1765,9 +1765,11 @@ export class BinarySession
     const run: SessionRun = { client, route, runId };
     const started = await client.execute("health", {});
     if (started.ok) {
+      const providerSelection = selectionProvenanceForRoute(route);
       this.#active = {
         ...previous,
         profile: route.profile,
+        ...(providerSelection === undefined ? {} : { providerSelection }),
         ...run,
         nativeSourceAdmitted: false,
       };

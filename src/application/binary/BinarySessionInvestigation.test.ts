@@ -213,6 +213,31 @@ it("records the selected session's provider provenance with every admitted obser
   }
 });
 
+it("attributes an imported bundle to the recording session's provider selection", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // A bundle built by the provider run itself, as `runDirectAnalysis`
+    // imports at `DirectAnalysis`: same record identity, no attribution.
+    const foreign = createEvidenceBundle([observation("provider_run")]);
+    expect(foreign.records[0]?.provider_selection).toBeUndefined();
+    const imported = session.importEvidenceBundle(foreign);
+    if (!imported.ok) throw imported.error;
+    const [record] = session.exportEvidenceBundle().records;
+    // Semantic identity is unchanged; only the session metadata is stamped.
+    expect(record?.evidence_id).toBe(foreign.records[0]?.evidence_id);
+    expect(record?.operation).toBe("provider_run");
+    expect(record?.provider_selection).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
 it("preserves records through failed disposal and clears them only after its owned cleanup succeeds", async () => {
   const [target] = await createBinarySessionTargets();
   const client = new ControllableAnalysisClient();

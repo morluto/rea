@@ -10,7 +10,11 @@ import {
 } from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
+import {
+  createImmutableEvidenceBundle,
+  evidenceBundleForTarget,
+  safeParseImmutableEvidenceBundle,
+} from "../../domain/evidenceBundle.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -57,6 +61,31 @@ import {
 
 const SNAPSHOT_MUTATION_RECOVERY =
   "Export session observations through export_evidence_bundle if needed. Close the active target without saving a snapshot, then reopen it before importing or saving a snapshot.";
+
+/**
+ * Import replaces a same-ID record's presentation metadata, and
+ * `provider_selection` is part of that metadata, so importing a bundle built
+ * by a provider run would drop the attribution the recording session already
+ * stamped onto its own record and leave the caller holding an unattributed
+ * copy. Re-attribute every record here, where both import paths converge.
+ * Without an active selection the bundle passes through unchanged — there is
+ * nothing to attribute it to, and dropping the caller's metadata would be a
+ * loss, not a correction.
+ */
+const attributeImportedProviderSelection = (
+  bundle: unknown,
+  providerSelection: ProviderSelectionProvenance | undefined,
+): unknown => {
+  if (providerSelection === undefined) return bundle;
+  const authenticated = safeParseImmutableEvidenceBundle(bundle);
+  if (!authenticated.ok) return bundle;
+  return createImmutableEvidenceBundle(
+    authenticated.value.records.map((record) =>
+      withEvidenceProviderSelection(record, providerSelection),
+    ),
+    authenticated.value.unknowns,
+  );
+};
 
 /** A missing replay prerequisite is not an Evidence integrity failure. */
 const snapshotUnavailable = (reason: string) =>
@@ -221,7 +250,11 @@ export abstract class BinarySessionRecords {
   ): Result<EvidenceImportReceipt, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("import_evidence_bundle"));
-    const imported = this.#records.mergeEvidenceBundle(bundle);
+    const importable = attributeImportedProviderSelection(
+      bundle,
+      this.activeAnalysisBinding()?.providerSelection,
+    );
+    const imported = this.#records.mergeEvidenceBundle(importable);
     if (!imported.ok) return imported;
     this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
     if (imported.value.changed) this.#emitSnapshotChanged();
@@ -320,7 +353,11 @@ export abstract class BinarySessionRecords {
           ? undefined
           : { target: active.target, profile },
       (bundle) => {
-        const imported = this.#records.mergeEvidenceBundle(bundle);
+        const importable = attributeImportedProviderSelection(
+          bundle,
+          active?.providerSelection,
+        );
+        const imported = this.#records.mergeEvidenceBundle(importable);
         if (!imported.ok) return imported;
         this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
         return ok(imported.value.recordsAdded);
