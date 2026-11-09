@@ -80,6 +80,24 @@ describe("build secrets", () => {
     expect(found(Buffer.from(ACCENTED).toString("hex"))).toEqual(["licence"]);
   });
 
+  it("finds mixed Unicode JSON escapes in values, keys, nested strings and gzip", () => {
+    const encoded = "e-Cl\\u00e9-\\u00dcn\\u00efcode-Fake-9";
+    const encodedAscii = "\\u0065-Cl\\u00e9-Ünïcode-Fake-9";
+    for (const text of [
+      `{"password":"${encoded}"}`,
+      `{"${encoded}":true}`,
+      `{"password":"${encodedAscii}"}`,
+      JSON.stringify({ nested: `{"password":"${encoded}"}` }),
+      `{"padding":"${"x".repeat(8187)}${encoded}"}`,
+    ]) {
+      expect(found(text)).toContain("licence");
+      expect(found(gzipSync(Buffer.from(text)))).toContain("licence");
+    }
+    expect(
+      found('{"password":"e-Cl\\u00e9-\\u00dcn\\u00efcode-Fake-X"}'),
+    ).not.toContain("licence");
+  });
+
   it("finds and redacts declared form-encoded secrets without altering unmarked values", () => {
     const value = "e-Fake!Password~42 a";
     const secrets = [{ handle: "master", value }];

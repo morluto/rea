@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
 import { gunzip, isGzip } from "./gzipDocument.js";
+import { decodeStateText, jsonStringChunks } from "./stateFormats.js";
 
 /** A secret's handle: the name of one file in the build host's secrets folder. */
 export const buildSecretHandleSchema = z
@@ -111,6 +112,65 @@ const holds = (bytes: Uint8Array, spellings: readonly Buffer[]): boolean => {
   return spellings.some((spelling) => haystack.includes(spelling));
 };
 
+/** Search decoded JSON strings, including Unicode escapes, without retaining whole string values. */
+const jsonEscapedSecrets = (
+  bytes: Uint8Array,
+  secrets: readonly KnownSecret[],
+): Set<string> => {
+  const found = new Set<string>();
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);
+  if (!buffer.includes(Buffer.from("\\u"))) return found;
+  const text = decodeStateText(bytes);
+  if (text === undefined) return found;
+  const longest = secrets.reduce(
+    (max, { value }) => Math.max(max, value.length),
+    0,
+  );
+  let window = "";
+  let nestedWindow = "";
+  let pending = "";
+  const scan = (chunk: string, nested: boolean) => {
+    const joined = (nested ? nestedWindow : window) + chunk;
+    for (const { handle, value } of secrets)
+      if (!found.has(handle) && joined.includes(value)) found.add(handle);
+    const tail = joined.slice(-Math.max(longest - 1, 0));
+    if (nested) nestedWindow = tail;
+    else window = tail;
+  };
+  const nested = (chunk: string, end: boolean) => {
+    const source = pending + chunk;
+    let at = 0;
+    let decoded = "";
+    while (at < source.length) {
+      if (!end && source[at] === "\\" && source.length - at < 6) break;
+      if (
+        source[at] === "\\" &&
+        source[at + 1] === "u" &&
+        /^[0-9a-fA-F]{4}$/u.test(source.slice(at + 2, at + 6))
+      ) {
+        decoded += String.fromCharCode(
+          Number.parseInt(source.slice(at + 2, at + 6), 16),
+        );
+        at += 6;
+      } else decoded += source[at++] ?? "";
+    }
+    pending = source.slice(at);
+    scan(decoded, true);
+  };
+  for (const chunk of jsonStringChunks(text, Math.max(8192, longest))) {
+    if (chunk.first) {
+      nested("", true);
+      window = "";
+      nestedWindow = "";
+      pending = "";
+    }
+    scan(chunk.text, false);
+    nested(chunk.text, false);
+  }
+  nested("", true);
+  return found;
+};
+
 /** What a scan reads inside a gzip file: its document, or why it has none; undefined for bytes that are not gzip. */
 export type GzipInside = ReturnType<typeof gunzip> | undefined;
 
@@ -127,9 +187,14 @@ export const secretsIn = (
   const scanned = secrets.filter(({ value }) => isScannableSecret(value));
   if (scanned.length === 0) return [];
   const inside = inner ?? gzipInside(bytes);
+  const json = jsonEscapedSecrets(bytes, scanned);
+  if (inside?.ok === true)
+    for (const handle of jsonEscapedSecrets(inside.value, scanned))
+      json.add(handle);
   return scanned.flatMap(({ handle, value }) => {
     const spellings = byteSpellings(value);
-    return holds(bytes, spellings) ||
+    return json.has(handle) ||
+      holds(bytes, spellings) ||
       (inside?.ok === true && holds(inside.value, spellings))
       ? [handle]
       : [];
