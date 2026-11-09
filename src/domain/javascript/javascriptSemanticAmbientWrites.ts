@@ -85,14 +85,18 @@ const ambientPathEffectCaches = new WeakMap<
   AmbientPathEffectCache
 >();
 
-/** Query retained ambient effects at a selected read, preserving unknown timing. */
-export const semanticAmbientPathMayHaveChangedAt = (
+const semanticAmbientEffectsMayHaveChangedAt = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   path: readonly string[],
+  scope: "path" | "subtree",
   invocation?: t.Node,
 ): boolean => {
-  if (!state.ambientWrites.covers(path) && !state.ambientEscapes.covers(path))
+  if (
+    scope === "path" &&
+    !state.ambientWrites.covers(path) &&
+    !state.ambientEscapes.covers(path)
+  )
     return false;
   let cache = ambientPathEffectCaches.get(state);
   if (
@@ -106,12 +110,19 @@ export const semanticAmbientPathMayHaveChangedAt = (
     };
     ambientPathEffectCaches.set(state, cache);
   }
-  const key = JSON.stringify(path);
+  const key = JSON.stringify([scope, path]);
   let effects = cache.byPath.get(key);
   if (effects === undefined) {
     const matches = (
       effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
-    ): boolean => ambientEffectCovers(effect, path);
+    ): boolean =>
+      scope === "path"
+        ? ambientEffectCovers(effect, path)
+        : effect.path
+            .slice(0, path.length)
+            .every((key, index) =>
+              semanticPropertyPathKeyMatches(key, path[index]!),
+            );
     effects = [
       ...state.ambientWriteEffects.filter(matches),
       ...state.ambientEscapeEffects.filter(matches),
@@ -126,6 +137,30 @@ export const semanticAmbientPathMayHaveChangedAt = (
       semanticEffectTiming(read, effect.node, state) !== "after",
   );
 };
+
+/** Query retained ambient effects at a selected read, preserving unknown timing. */
+export const semanticAmbientPathMayHaveChangedAt = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  invocation?: t.Node,
+): boolean =>
+  semanticAmbientEffectsMayHaveChangedAt(read, state, path, "path", invocation);
+
+/** Check an object's whole surface, including descendant accessors and aliases. */
+export const semanticAmbientObjectMayHaveChangedAt = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  invocation?: t.Node,
+): boolean =>
+  semanticAmbientEffectsMayHaveChangedAt(
+    read,
+    state,
+    path,
+    "subtree",
+    invocation,
+  );
 
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,

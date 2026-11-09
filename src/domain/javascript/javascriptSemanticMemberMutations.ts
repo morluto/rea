@@ -4,6 +4,7 @@ import {
   createAmbientPathResolver,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
+import { isIntrinsicNonEscapingArrayCall } from "./javascriptSemanticArrayOperations.js";
 import { isIntrinsicNonEscapingMapCall } from "./javascriptSemanticMapOperations.js";
 import { isIntrinsicNonEscapingXhrOpen } from "./javascriptNetworkRequests.js";
 import {
@@ -361,9 +362,11 @@ export function* collectSemanticMemberMutationsSteps(
     index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
   ): boolean | undefined => {
     const map = isIntrinsicNonEscapingMapCall(node, state, index);
-    return map === false
-      ? isIntrinsicNonEscapingXhrOpen(node, state, index)
-      : map;
+    if (map !== false) return map;
+    const xhr = isIntrinsicNonEscapingXhrOpen(node, state, index);
+    return xhr === false
+      ? isIntrinsicNonEscapingArrayCall(node, state, index)
+      : xhr;
   };
   const deferredIntrinsicReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
@@ -1851,7 +1854,7 @@ export function* collectSemanticMemberMutationsSteps(
         reference,
       );
     }
-    // Proven native Map and pristine XHR calls do not expose their receivers.
+    // Proven native Map and pristine XHR/Array calls do not expose receivers.
     // Settle genuine effects first, then replay every unproven receiver escape.
     // Keep proven sites until convergence: later propagated effects can revoke them.
     let receiverIndex = 0;
