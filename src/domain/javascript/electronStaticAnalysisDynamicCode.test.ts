@@ -19,7 +19,7 @@ describe("node:vm bytecode cache boundaries", () => {
     expect(analysis.electron.dynamic_code).toEqual([
       expect.objectContaining({
         api: "vm.Script",
-        execution: "cached-data",
+        cached_data_status: "declared",
         cached_data: {
           source_path: "preload.bundle.cache",
           source_resolution_context: "filesystem-expression",
@@ -40,7 +40,7 @@ describe("node:vm bytecode cache boundaries", () => {
     expect(analysis.electron.dynamic_code).toEqual([
       expect.objectContaining({
         api: "vm.compileFunction",
-        execution: "cached-data",
+        cached_data_status: "declared",
         cached_data: expect.objectContaining({
           source_path: null,
           source_expression: "loadCache()",
@@ -49,7 +49,7 @@ describe("node:vm bytecode cache boundaries", () => {
     ]);
   });
 
-  it("keeps compilations without a bytecode cache as non-cache executions", () => {
+  it("keeps compilations without a bytecode cache as compilations without declared cachedData", () => {
     const analysis = analyze(`
       const vm = require("node:vm");
       new vm.Script("./main.js");
@@ -57,7 +57,7 @@ describe("node:vm bytecode cache boundaries", () => {
     expect(analysis.electron.dynamic_code).toEqual([
       expect.objectContaining({
         api: "vm.Script",
-        execution: "no-cached-data",
+        cached_data_status: "absent",
       }),
     ]);
   });
@@ -70,4 +70,22 @@ describe("node:vm bytecode cache boundaries", () => {
     `);
     expect(analysis.electron.dynamic_code ?? []).toEqual([]);
   });
+});
+
+it("preserves unknown options and conservative constant-option reads without claiming execution", () => {
+  for (const [source, status] of [
+    ['new vm.Script("x", options);', "unknown"],
+    [
+      'const options = { cachedData: "./cache" }; new vm.Script("x", options);',
+      "unknown",
+    ],
+    ['new vm.Script("x", { cachedData: value, ...options });', "unknown"],
+    ['new vm.Script("x", { ...options, cachedData: value });', "declared"],
+  ]) {
+    const result = analyze('const vm = require("node:vm"); ' + source);
+    expect(result.electron.dynamic_code?.[0], source).toMatchObject({
+      cached_data_status: status,
+      cached_data: { source_path: null },
+    });
+  }
 });

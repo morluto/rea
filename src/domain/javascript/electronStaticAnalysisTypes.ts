@@ -271,18 +271,15 @@ export type ElectronDynamicCodeSource =
     };
 
 /**
- * One `node:vm` compilation that executes code the analyzer never saw as
- * source: `new vm.Script(...)` and `vm.compileFunction(...)`. A `cachedData`
- * option makes V8 deserialize previously compiled bytecode, so the executing
- * logic can live entirely inside an opaque snapshot.
+ * Source syntax for one node:vm compilation. Cache declaration does not establish
+ * accepted bytes or runtime execution.
  */
 export interface ElectronDynamicCodeFinding {
   readonly api: "vm.Script" | "vm.compileFunction";
   /**
-   * `cached-data`: V8 deserializes cached bytecode supplied by `cachedData`.
-   * `no-cached-data`: the call compiles source the analyzer may still reach.
+   * Whether cachedData is declared, proven absent, or unresolved in options.
    */
-  readonly execution: "cached-data" | "no-cached-data";
+  readonly cached_data_status: "declared" | "absent" | "unknown";
   /** The option or positional argument naming the backing cache artifact. */
   readonly cached_data: ElectronDynamicCodeSource;
   /**

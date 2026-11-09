@@ -428,11 +428,13 @@ const graphLimitations = (
           "Native member names are requested by JavaScript syntax and are not verified binary exports in this workflow.",
         ]
       : []),
-    ...(context.analysis.files.some(
-      ({ javascript }) => (javascript?.electron.dynamic_code ?? []).length > 0,
+    ...(context.analysis.files.some(({ javascript }) =>
+      (javascript?.electron.dynamic_code ?? []).some(
+        (site) => site.cached_data_status !== "absent",
+      ),
     )
       ? [
-          "A node:vm call with cachedData executes compiled bytecode that is not analyzed source; logic inside that snapshot is unknown rather than absent.",
+          "A node:vm compilation may receive cachedData; static syntax does not establish cache acceptance or execution, and possible cached logic remains unknown rather than absent.",
         ]
       : []),
     ...(coverage === "complete"

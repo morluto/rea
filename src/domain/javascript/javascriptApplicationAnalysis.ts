@@ -59,7 +59,7 @@ const electronBoundarySummarySchema = z.strictObject({
   /** Absent in evidence produced before protocol registrations were reported. */
   protocol_registrations: countSchema.exactOptional(),
   /** `node:vm` compilations whose logic may live in an opaque bytecode cache. */
-  v8_cached_data_executions: countSchema.exactOptional(),
+  v8_cached_data_compilations: countSchema.exactOptional(),
   /**
    * Whether the Electron boundary surface was actually recovered. `empty` means
    * an analyzed source names Electron but no boundary fact was recovered, so the

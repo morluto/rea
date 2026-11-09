@@ -32,7 +32,7 @@ const vmFixture = async (source: string): Promise<string> => {
   return root;
 };
 
-describe("V8 cached data execution boundaries", () => {
+describe("V8 cached data compilation boundaries", () => {
   it("projects an explicit unknown for the bytecode handoff", async () => {
     const result = await reconstructJavaScriptArtifact({
       input_path: await vmFixture(WRAPPER),
@@ -43,20 +43,22 @@ describe("V8 cached data execution boundaries", () => {
         kind === "unknown" &&
         observations.some(
           ({ properties }) =>
-            properties.execution_boundary === "v8-cached-data",
+            properties.compilation_boundary === "v8-cached-data",
         ),
     );
     expect(unknown).toHaveLength(1);
     expect(unknown[0]?.observations[0]?.properties).toMatchObject({
       api: "vm.Script",
-      execution: "cached-data",
+      cached_data_status: "declared",
       cache_path: "preload.bundle.cache",
-      resolved_cache_path: "preload.bundle.cache",
+      resolved_cache_path: null,
+      candidate_cache_path: "preload.bundle.cache",
+      resolution_status: "unavailable",
       source_expression: "sourcePlaceholder",
     });
     expect(unknown[0]?.observations[0]?.evidence.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("opaque cachedData bytecode"),
+        expect.stringContaining("does not establish valid cache bytes"),
       ]),
     );
     expect(
@@ -84,23 +86,59 @@ describe("V8 cached data execution boundaries", () => {
       graph.nodes.filter(({ observations }) =>
         observations.some(
           ({ properties }) =>
-            properties.execution_boundary === "v8-cached-data",
+            properties.compilation_boundary === "v8-cached-data",
         ),
       ),
     ).toEqual([]);
+    expect(graph.limitations.some((note) => note.includes("cachedData"))).toBe(
+      false,
+    );
   });
 });
 
 describe("V8 cached data summary", () => {
-  it("counts cachedData executions without claiming an empty preload", async () => {
+  it("counts cachedData declarations without claiming an empty preload", async () => {
     const result = await analyzeJavaScriptApplication({
       input_path: await vmFixture(WRAPPER),
     });
     if (!result.ok) throw result.error;
     expect(parseEvidence(result.value)).toMatchObject({
       normalized_result: {
-        summary: expect.objectContaining({ v8_cached_data_executions: 1 }),
+        summary: expect.objectContaining({ v8_cached_data_compilations: 1 }),
       },
     });
   });
+});
+
+it("keeps missing, dynamic and arbitrary cachedData sources distinct", async () => {
+  for (const [options, status, path] of [
+    [
+      '{ cachedData: fs.readFileSync("./missing.cache") }',
+      "declared",
+      "./missing.cache",
+    ],
+    ["getOptions()", "unknown", null],
+    ['{ cachedData: "./preload.bundle.cache" }', "declared", null],
+  ] as const) {
+    const root = await vmFixture(
+      `const fs = require("node:fs"); const vm = require("node:vm"); new vm.Script("void 0", ${options});`,
+    );
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+    const observation = graph.nodes
+      .flatMap((node) => node.observations)
+      .find(
+        ({ properties }) =>
+          properties.compilation_boundary === "v8-cached-data",
+      );
+    if (options.includes('cachedData: "'))
+      expect(observation?.properties.cache_expression).toBe(
+        '"./preload.bundle.cache"',
+      );
+    expect(observation?.properties).toMatchObject({
+      cached_data_status: status,
+      cache_path: path,
+      resolved_cache_path: null,
+    });
+  }
 });

@@ -1,3 +1,4 @@
+import { resolveElectronOptionObject } from "./electronStaticOptionObjects.js";
 import * as t from "@babel/types";
 
 import { compositeKey } from "../unicodeCodePointOrder.js";
@@ -5,7 +6,10 @@ import type {
   ElectronDynamicCodeFinding,
   ElectronDynamicCodeSource,
 } from "./electronStaticAnalysisTypes.js";
-import { electronStaticValue } from "./electronStaticAnalysisValues.js";
+import {
+  boundedExpression,
+  electronStaticValue,
+} from "./electronStaticAnalysisValues.js";
 import { builtinDataEffectCallablePath } from "./javascriptSemanticDataEffectHelpers.js";
 import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 import {
@@ -139,7 +143,17 @@ function* addCompilation(input: DynamicCodeInput): Generator<void, void> {
   const lookup =
     options === undefined
       ? ({ status: "missing" } as const)
-      : staticObjectProperty(options, "cachedData");
+      : (() => {
+          const resolved = resolveElectronOptionObject(
+            options,
+            options,
+            input.index,
+            ["cachedData"],
+          );
+          return resolved === undefined
+            ? { status: "dynamic" as const }
+            : staticObjectProperty(resolved, "cachedData");
+        })();
   const cachedData: ElectronDynamicCodeSource =
     lookup.status === "explicit"
       ? sourceOf(input, lookup.value)
@@ -162,8 +176,12 @@ function* addCompilation(input: DynamicCodeInput): Generator<void, void> {
     node,
     value: {
       api,
-      execution:
-        lookup.status === "explicit" ? "cached-data" : "no-cached-data",
+      cached_data_status:
+        lookup.status === "explicit"
+          ? "declared"
+          : lookup.status === "missing"
+            ? "absent"
+            : "unknown",
       cached_data: cachedData,
       source_text: electronStaticValue(
         context.source,
@@ -182,20 +200,19 @@ const sourceOf = (
 ): ElectronDynamicCodeSource => {
   // `cachedData = fs.readFileSync(<path>)` names the cache through the read's
   // own argument; the call itself is not a path expression.
-  const fact = staticFileExpressionPath(
-    cachePathExpression(
-      input.index,
-      stableExpression(input.index, node) ?? node,
-    ),
-    input.context.pathIntrinsics,
+  const path = cachePathExpression(
+    input.index,
+    stableExpression(input.index, node) ?? node,
   );
+  const fact =
+    path === undefined
+      ? undefined
+      : staticFileExpressionPath(path, input.context.pathIntrinsics);
   return fact === undefined
     ? {
         source_path: null,
         source_resolution_context: null,
-        source_expression:
-          electronStaticValue(input.context.source, node).expression ??
-          "[missing-expression]",
+        source_expression: boundedExpression(input.context.source, node),
       }
     : {
         source_path: fact.path,
@@ -208,20 +225,20 @@ const sourceOf = (
 const cachePathExpression = (
   index: JavaScriptBindingIndex,
   node: t.Node,
-): t.Node => {
+): t.Node | undefined => {
   const expression = unwrapJavaScriptExpression(node).node;
-  if (!t.isCallExpression(expression)) return expression;
+  if (!t.isCallExpression(expression)) return undefined;
   const read = builtinDataEffectCallablePath(
     expression.callee,
     index.bindings,
     ["fs", "fs/promises"],
   );
   const target =
-    read?.at(-1) === "readFileSync" || read?.at(-1) === "readFile"
+    read?.at(-1) === "readFileSync"
       ? argumentNode(expression.arguments[0])
       : undefined;
   return target === undefined
-    ? expression
+    ? undefined
     : unwrapJavaScriptExpression(target).node;
 };
 

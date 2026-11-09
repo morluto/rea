@@ -12,7 +12,6 @@ import {
 import { astObservationEvidence } from "./JavaScriptArtifactGraphEvidence.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import {
-  addElectronAstEdge,
   addElectronInferenceEdge,
   electronFindingSourceNode,
   electronObservationIdentity,
@@ -26,8 +25,8 @@ interface DynamicCodeInput {
   readonly coverage: JavaScriptArtifactGraphCoverage;
 }
 
-const BYTECODE_EXECUTION_LIMITATION =
-  "V8 compiled this code from opaque cachedData bytecode. Declarations, contextBridge APIs, IPC calls and other logic inside that snapshot are not in the analyzed source and are not reported as absent.";
+const CACHED_DATA_COMPILATION_LIMITATION =
+  "Source syntax declares or may supply cachedData to a V8 compilation API. Static analysis does not establish valid cache bytes, V8 acceptance, or execution; logic inside a possible cache remains unknown.";
 
 /**
  * Project `node:vm` compilations. A `cachedData` handoff becomes an explicit
@@ -48,7 +47,7 @@ export const addElectronDynamicCodeBoundaries = (
 
 const addDynamicCodeSite = (input: DynamicCodeInput): void => {
   const { context, file, value, coverage } = input;
-  if (value.execution !== "cached-data") return;
+  if (value.cached_data_status === "absent") return;
   const source = electronFindingSourceNode(
     context,
     file,
@@ -76,40 +75,48 @@ const addDynamicCodeSite = (input: DynamicCodeInput): void => {
         label: cache.source_path ?? cache.source_expression,
         properties: {
           api: value.api,
-          execution: value.execution,
+          cached_data_status: value.cached_data_status,
           cache_path: cache.source_path,
           cache_expression: cache.source_expression,
-          resolved_cache_path: resolved,
+          resolved_cache_path: resolved?.resolved_path ?? null,
+          resolution_status: resolved?.resolution_status ?? null,
+          resolution_context: resolved?.resolution_context ?? null,
+          candidate_cache_path: resolved?.candidate_path ?? null,
+          resolution_limitations: resolved?.limitations ?? [],
           source_text: value.source_text.value,
           source_expression: value.source_text.expression,
-          execution_boundary: "v8-cached-data",
+          compilation_boundary: "v8-cached-data",
         },
         evidence: astObservationEvidence({
           sha256: file.sha256,
           path: file.path,
           range: value.location,
-          operation: "observe-v8-cached-data-execution",
+          operation: "observe-v8-cached-data-compilation",
           coverage,
-          limitations: [BYTECODE_EXECUTION_LIMITATION],
+          limitations: [CACHED_DATA_COMPILATION_LIMITATION],
         }),
       },
     ],
   });
-  addElectronAstEdge(context, {
+  addElectronInferenceEdge(context, {
     source,
     target: node,
     file,
     range: value.location,
     coverage,
     relation: "loads",
-    operation: "execute-v8-cached-data",
+    operation: "associate-v8-cached-data-compilation",
     properties: {
       api: value.api,
       cache_path: cache.source_path,
       cache_expression: cache.source_expression,
-      resolved_cache_path: resolved,
+      resolved_cache_path: resolved?.resolved_path ?? null,
+      resolution_status: resolved?.resolution_status ?? null,
+      resolution_context: resolved?.resolution_context ?? null,
+      candidate_cache_path: resolved?.candidate_path ?? null,
+      resolution_limitations: resolved?.limitations ?? [],
     },
-    limitations: [BYTECODE_EXECUTION_LIMITATION],
+    limitations: [CACHED_DATA_COMPILATION_LIMITATION],
   });
 };
 
@@ -122,7 +129,7 @@ const resolveCache = (
   context: JavaScriptArtifactGraphContext,
   file: JavaScriptArtifactFile,
   cache: ElectronDynamicCodeSource,
-): string | null => {
+) => {
   if (cache.source_path === null) return null;
   const resolved = resolveArtifactPathByContext({
     declaredPath: cache.source_path,
@@ -131,7 +138,8 @@ const resolveCache = (
     files: context.filesByPath,
     jsonDocuments: context.analysis.jsonDocuments,
     directoryPaths: context.directoryPaths,
-    moduleKind: "require",
-  }).resolved_path;
-  return resolved ?? cache.source_path;
+    unanalyzedFiles: context.unanalyzedFiles,
+    runtimePathKind: "exact-file",
+  });
+  return resolved;
 };

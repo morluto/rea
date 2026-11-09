@@ -348,11 +348,11 @@ export const summarizeElectronBoundaries = (
         }),
     ).length,
     native_addon_bindings: nativeBindings.length,
-    v8_cached_data_executions: javascript.reduce(
+    v8_cached_data_compilations: javascript.reduce(
       (count, { electron }) =>
         count +
         (electron.dynamic_code ?? []).filter(
-          ({ execution }) => execution === "cached-data",
+          ({ cached_data_status }) => cached_data_status === "declared",
         ).length,
       0,
     ),

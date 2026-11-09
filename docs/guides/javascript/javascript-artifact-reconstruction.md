@@ -515,6 +515,18 @@ If fingerprint construction reaches its structural
 bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.
 
+## Cached-data compilation boundaries
+
+A `node:vm` compilation reports whether `cachedData` is declared, absent or
+unknown. Source syntax alone does not establish valid cache bytes, V8 acceptance
+or execution. The summary counts declared compilations, not executions.
+
+Only a proven synchronous filesystem read supplies a cache path. Other supplied
+values retain their bounded source expression. Declared paths, exact-file lookup
+status, candidate paths and resolution limitations remain separate; an unresolved
+path never becomes a resolved file. Opaque inventoried cache bytes can remain
+unavailable to the JavaScript resolver even when their occurrence is known.
+
 ## Authority and unknowns
 
 API identity is a derivation: a familiar method or property name does not

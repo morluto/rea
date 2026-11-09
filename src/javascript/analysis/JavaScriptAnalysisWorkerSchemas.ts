@@ -307,7 +307,7 @@ const electron = z
           .strictObject({
             ...findingContext,
             api: z.enum(["vm.Script", "vm.compileFunction"]),
-            execution: z.enum(["cached-data", "no-cached-data"]),
+            cached_data_status: z.enum(["declared", "absent", "unknown"]),
             cached_data: z.union([
               z.strictObject({
                 source_path: z.string(),
