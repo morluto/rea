@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -52,34 +52,29 @@ export const findDotnetBundleHeader = async (
   abortIfNeeded(signal);
   let tail = Buffer.alloc(0);
   if (markerSearchEnd === 0) return undefined;
-  try {
-    for await (const value of readFileHandleChunks(handle, {
-      end: markerSearchEnd - 1,
-      signal,
-    })) {
-      abortIfNeeded(signal);
-      const chunk: Buffer = value;
-      const bytes = Buffer.concat([tail, chunk]);
-      for (
-        let index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE);
-        index >= 0;
-        index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE, index + 1)
-      ) {
-        if (index < 8) continue;
-        const offset = bytes.readBigUInt64LE(index - 8);
-        // HostWriter.IsBundle uses the first apphost marker. Later markers may
-        // belong to embedded native apphosts, whose coordinates are not this host's.
-        if (offset === 0n) return undefined;
-        if (offset > BigInt(size - 12))
-          fail(".NET bundle header is outside the host file");
-        return Number(offset);
-      }
-      // A complete marker already examined must not be examined again.
-      tail = bytes.subarray(Math.max(0, bytes.length - 39));
-    }
-  } catch (cause) {
+  for await (const value of readArtifactFileChunks(handle, {
+    end: markerSearchEnd - 1,
+    signal,
+  })) {
     abortIfNeeded(signal);
-    throw cause;
+    const chunk: Buffer = value;
+    const bytes = Buffer.concat([tail, chunk]);
+    for (
+      let index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE);
+      index >= 0;
+      index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE, index + 1)
+    ) {
+      if (index < 8) continue;
+      const offset = bytes.readBigUInt64LE(index - 8);
+      // HostWriter.IsBundle uses the first apphost marker. Later markers may
+      // belong to embedded native apphosts, whose coordinates are not this host's.
+      if (offset === 0n) return undefined;
+      if (offset > BigInt(size - 12))
+        fail(".NET bundle header is outside the host file");
+      return Number(offset);
+    }
+    // A complete marker already examined must not be examined again.
+    tail = bytes.subarray(Math.max(0, bytes.length - 39));
   }
   return undefined;
 };
@@ -223,17 +218,13 @@ class BundleCursor {
       let read = 0;
       while (read < this.#cache.length) {
         abortIfNeeded(this.signal);
-        const reply = await this.handle
-          .read(
-            this.#cache,
-            read,
-            this.#cache.length - read,
-            this.#cacheOffset + read,
-          )
-          .catch((cause: unknown) => {
-            abortIfNeeded(this.signal);
-            throw cause;
-          });
+        const reply = await this.handle.read(
+          this.#cache,
+          read,
+          this.#cache.length - read,
+          this.#cacheOffset + read,
+        );
+        abortIfNeeded(this.signal);
         if (reply.bytesRead === 0) fail("Truncated .NET bundle manifest");
         read += reply.bytesRead;
       }
