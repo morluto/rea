@@ -47,6 +47,7 @@ interface BinarySessionStatusInput {
   readonly cleanupRetry?: AnalysisCleanupRetry;
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
+  readonly refreshCandidates?: boolean;
 }
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -66,6 +67,7 @@ export const binarySessionStatus = async ({
   cleanupRetry,
   detail = "complete",
   signal,
+  refreshCandidates = false,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
   const routeCapabilities = (
     bundleResourceRoot === undefined
@@ -108,11 +110,24 @@ export const binarySessionStatus = async ({
             provider: providerSummary(route.binding.identity),
             selection_source: route.binding.selectionSource,
             analysis_profile: structuredClone(route.binding.profile),
+            ...(route.binding.releaseVerification === undefined
+              ? {}
+              : {
+                  release_verification: structuredClone(
+                    route.binding.releaseVerification,
+                  ),
+                }),
           };
   const analysisProviderCandidates =
     bundleResourceRoot !== undefined
       ? []
-      : (await router.candidateStatuses(route, signal)).map((candidate) =>
+      : (
+          await router.candidateStatuses(route, {
+            ...(signal === undefined ? {} : { signal }),
+            ...(target === undefined ? {} : { target }),
+            refresh: refreshCandidates,
+          })
+        ).map((candidate) =>
           detail === "summary"
             ? {
                 provider: providerSummary(candidate.provider),
@@ -146,6 +161,12 @@ export const binarySessionStatus = async ({
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
+    analysis_provider_candidates_observed:
+      bundleResourceRoot !== undefined
+        ? "not_applicable"
+        : route.selection === undefined || refreshCandidates
+          ? "status_request"
+          : "target_selection",
     analysis_run:
       runId === undefined
         ? null
@@ -417,6 +438,7 @@ export const providerCapabilitySets = (
       const key = JSON.stringify([
         effects,
         limitations,
+        descriptor.nativeValueFlow ?? null,
         descriptor.independentDecompile ?? null,
         status.available,
         status.reason,
@@ -430,6 +452,9 @@ export const providerCapabilitySets = (
           operations: [descriptor.operation],
           effects,
           limitations,
+          ...(descriptor.nativeValueFlow === undefined
+            ? {}
+            : { native_value_flow: descriptor.nativeValueFlow }),
           ...(descriptor.independentDecompile === undefined
             ? {}
             : { independent_decompile: descriptor.independentDecompile }),

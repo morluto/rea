@@ -133,3 +133,12 @@ fields and diagnostics are collected. A header exceeding 8 KiB per line,
 `record_id` derives from the record's offset in the decoded stream, its ordinal,
 its type and its `WARC-Record-ID`, so the identifier is stable across runs of the
 same bytes and distinct for repeated records at different offsets.
+
+## Retain the complete inventory with a summary
+
+Use `--detail summary --evidence_output /absolute/new-evidence.bundle.json`
+for counts, artifact identity and source coverage in the reply. The bundle
+retains the complete parent Evidence, including the inventoried records and
+diagnostics. The summary names that parent and its digest. Complete summary
+projection does not imply complete source coverage; format limits, omissions
+and unsupported content remain explicit in `source_coverage`.

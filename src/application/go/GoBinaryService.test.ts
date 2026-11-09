@@ -264,3 +264,88 @@ it.each([
       expect(reason.cleanupIncomplete).toBe(true);
   },
 );
+
+it("validates string_literals input options and output invariants", async () => {
+  let calls = 0;
+  const service = new GoBinaryService({
+    close: async () => {},
+    identity,
+    inspect: () => {
+      calls += 1;
+      return Promise.resolve(ok(report));
+    },
+  });
+  for (const invalidInput of [
+    { path: report.artifact.path, max_string_literals: 10 },
+    {
+      path: report.artifact.path,
+      include_string_literals: false,
+      max_string_literals: 10,
+    },
+    {
+      path: report.artifact.path,
+      include_string_literals: true,
+      max_string_literals: 0,
+    },
+    {
+      path: report.artifact.path,
+      include_string_literals: true,
+      max_string_literals: 10_001,
+    },
+  ]) {
+    const refused = await service.inspect(invalidInput);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toBeInstanceOf(AnalysisInputError);
+  }
+  expect(calls).toBe(0);
+
+  const baseLiterals: NonNullable<GoBinary["string_literals"]> = {
+    evidence_kind: "inferred",
+    discovered_count: 2,
+    aggregate_bytes: 10,
+    max_items: 100,
+    truncated: false,
+    items: [
+      {
+        value: "alpha",
+        location: { offset: 64, bytes: 5 },
+        first_header_offset: 256,
+        reference_count: 1,
+      },
+      {
+        value: "bravo",
+        location: { offset: 69, bytes: 5 },
+        first_header_offset: 272,
+        reference_count: 2,
+      },
+    ],
+  };
+
+  for (const malformedStrings of [
+    { ...baseLiterals, aggregate_bytes: 9 },
+    { ...baseLiterals, discovered_count: 3, truncated: false },
+    {
+      ...baseLiterals,
+      items: [baseLiterals.items[1]!, baseLiterals.items[0]!],
+    },
+    {
+      ...baseLiterals,
+      items: [
+        { ...baseLiterals.items[0]!, first_header_offset: 1020 },
+        baseLiterals.items[1]!,
+      ],
+    },
+  ]) {
+    const out = await new GoBinaryService({
+      close: async () => {},
+      identity,
+      inspect: () =>
+        Promise.resolve(ok({ ...report, string_literals: malformedStrings })),
+    }).inspect({
+      path: report.artifact.path,
+      include_string_literals: true,
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toBeInstanceOf(AnalysisOutputError);
+  }
+});

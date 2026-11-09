@@ -16,6 +16,10 @@ import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
 } from "./OptionalObservationProviders.js";
+import type {
+  CommandProviderLaunchFailures,
+  ReverseEngineeringOperation,
+} from "./reverse/ReverseEngineeringService.js";
 
 import {
   expandProviderCapabilities,
@@ -24,7 +28,6 @@ import {
   toolAvailabilitySummaryInventory,
   TOOL_ANNOTATION_NAMES,
   TOOL_EFFECT_NAMES,
-  type ProviderCapability,
   type ToolAvailabilityInventory,
   type ToolAvailabilitySummaryInventory,
   type ToolAvailability,
@@ -71,7 +74,7 @@ const statusSchema = z.object({
 
 type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 
-type ProviderDescriptor = ProviderCapability;
+type ProviderDescriptor = ReturnType<typeof expandProviderCapabilities>[number];
 type UnavailableDescriptor = Extract<ProviderDescriptor, { available: false }>;
 
 /** Optional integrations whose verified hosts exclude some platforms. */
@@ -102,6 +105,7 @@ export type AvailabilityPolicy = {
   readonly evmLimiterAvailability?: ProviderAvailability;
   readonly processCaptureEnabled: boolean;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
+  readonly commandProviderFailures?: CommandProviderLaunchFailures;
   readonly binaryLayoutEnabled?: boolean;
   readonly recordedCrashEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
@@ -310,6 +314,22 @@ export const buildCapabilityInventory = (
     const facts = {
       name: contract.name,
       surface: contract.kind,
+      ...(contract.name === "trace_native_values"
+        ? {
+            value_flow_support: (() => {
+              const source = descriptors.get("analyze_function");
+              return source?.native_value_flow === undefined
+                ? {
+                    status: "unknown" as const,
+                    provider_id: source?.provider.id ?? null,
+                  }
+                : {
+                    ...source.native_value_flow,
+                    provider_id: source.provider.id,
+                  };
+            })(),
+          }
+        : {}),
       ...(availability.defaultModeAvailable === undefined
         ? {}
         : { default_mode_available: availability.defaultModeAvailable }),
@@ -377,6 +397,9 @@ export function compactToolAvailability(
       available: entry.available,
       reason: entry.reason,
       remediation: entry.remediation,
+      ...(entry.value_flow_support === undefined
+        ? {}
+        : { value_flow_support: entry.value_flow_support }),
       ...(entry.default_mode_available === undefined
         ? {}
         : { default_mode_available: entry.default_mode_available }),
@@ -885,8 +908,16 @@ const providerAvailability = ({
   descriptors,
   kind,
   name,
+  policy,
 }: AvailabilityContext): Availability => {
   if (kind === "enhanced") return composedAvailability(name, descriptors);
+  const launchFailure =
+    policy.commandProviderFailures?.[name as ReverseEngineeringOperation];
+  if (launchFailure !== undefined)
+    return {
+      reason: "provider_unavailable",
+      remediation: launchFailure.remediation,
+    };
   const descriptor = descriptors.get(name);
   if (
     descriptor === undefined &&
@@ -933,13 +964,38 @@ const composedAvailability = (
       reason: "provider_missing",
       remediation: "No provider composition is declared for this operation.",
     };
-  return "modes" in requirements
-    ? availabilityForModes(
-        requirements.modes,
-        requirements.defaultMode,
-        descriptors,
-      )
-    : composedAvailabilityFor(requirements, descriptors).availability;
+  const result =
+    "modes" in requirements
+      ? availabilityForModes(
+          requirements.modes,
+          requirements.defaultMode,
+          descriptors,
+        )
+      : composedAvailabilityFor(requirements, descriptors).availability;
+  if (name !== "trace_native_values") return result;
+  const source = descriptors.get("analyze_function");
+  if (source?.available !== true) return result;
+  if (source.native_value_flow?.status === "unavailable")
+    return {
+      reason:
+        result.reason === "provider_unavailable" ||
+        result.reason === "unsupported_host"
+          ? result.reason
+          : "provider_missing",
+      remediation: `${source.native_value_flow.reason} Select a provider that can report native value-flow observations; cross-function tracing also needs call-target resolution.${(result.reason === "provider_unavailable" || result.reason === "unsupported_host") && result.remediation !== null ? ` ${result.remediation}` : ""}`,
+    };
+  if (
+    result.reason === "provider_missing" &&
+    descriptors.get("resolve_native_call_targets") === undefined
+  )
+    return {
+      ...result,
+      remediation:
+        source.native_value_flow?.status === "supported"
+          ? "A direct trace may still return local value-flow observations with call-resolution unknowns. Configure a provider with resolve_native_call_targets for call resolution and cross-function tracing."
+          : "Value-flow support is undeclared. A direct trace may return partial results or an unknown. Configure a provider with resolve_native_call_targets for call resolution and cross-function tracing.",
+    };
+  return result;
 };
 
 /** Evaluate source groups once so discovery and missing-operation facts agree. */

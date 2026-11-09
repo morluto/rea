@@ -145,7 +145,13 @@ it.each(["full", "compact"] as const)(
     expect(summary.evidence.normalized_result).toMatchObject({
       kind: "summary",
       parent_operation: "trace_application_feature",
-      artifact: null,
+      artifact:
+        parent.subject === null
+          ? null
+          : {
+              path: parent.subject.local_path,
+              sha256: parent.subject.digest.sha256,
+            },
       summary: {
         trace_id: full.trace_id,
         source_evidence_id: full.source_evidence_id,

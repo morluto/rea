@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { constants as osConstants } from "node:os";
 import type { BigIntStats, Stats } from "node:fs";
-import { lstat, open, stat, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
 
 import { settleChangeTimeBaseline } from "./ChangeTimeBaseline.js";
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
@@ -33,6 +33,41 @@ export class NonRegularFileReadError extends Error {
     this.code = directory ? "EISDIR" : "ENOTFILE";
   }
 }
+
+/** O_NOFOLLOW refused a selected leaf observed as a symbolic link. */
+export class RejectedRegularFileSymlink extends Error {
+  readonly code = "ELOOP";
+  constructor(
+    readonly path: string,
+    readonly resolvedPath: string | undefined,
+    cause: unknown,
+  ) {
+    super(`Selected path is a symbolic link and is not admitted: ${path}`, {
+      cause,
+    });
+    this.name = "RejectedRegularFileSymlink";
+  }
+}
+
+/** Resolve recovery only when the selected path currently names a regular file. */
+export const resolvedRegularFile = async (
+  path: string,
+  fileSystem: {
+    readonly realpath?: (path: string) => Promise<string>;
+    readonly lstat: (
+      path: string,
+    ) => Promise<{ isFile(): boolean; isSymbolicLink(): boolean }>;
+  } = { realpath, lstat },
+): Promise<string | undefined> => {
+  try {
+    const resolved = await fileSystem.realpath?.(path);
+    if (resolved === undefined) return undefined;
+    const target = await fileSystem.lstat(resolved);
+    return target.isFile() && !target.isSymbolicLink() ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 /** Admission failed and the opened descriptor could not be confirmed closed. */
 export class RegularFileAdmissionFailure extends Error {
@@ -124,6 +159,20 @@ export const openRegularFile = async (
       (constants.O_NOCTTY ?? 0) |
       (options.symlinks === "reject" ? (constants.O_NOFOLLOW ?? 0) : 0),
   ).catch(async (cause: unknown) => {
+    if (
+      options.symlinks === "reject" &&
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "ELOOP"
+    ) {
+      const named = await lstat(path).catch(() => undefined);
+      if (named?.isSymbolicLink())
+        throw new RejectedRegularFileSymlink(
+          path,
+          await resolvedRegularFile(path),
+          cause,
+        );
+    }
     const nonRegular = await nonRegularOpenFailure(
       path,
       options.symlinks,
