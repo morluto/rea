@@ -11,16 +11,10 @@ import {
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 
-/** Prove path and URL intrinsic identity before applying native semantics. */
-export const createStaticPathIntrinsicQuery = (
-  index: JavaScriptBindingIndex,
-): JavaScriptStaticPathIntrinsicQuery => {
-  const facts = new WeakMap<t.Node, Map<string, boolean>>();
-  const nativeMethod = (
-    callee: t.Node,
-    method: string,
-    modules: readonly string[],
-  ): boolean => {
+/** Prove an unchanged Node built-in export through the shared mutation owner. */
+export const createNodeBuiltinExportQuery =
+  (index: JavaScriptBindingIndex) =>
+  (callee: t.Node, method: string, modules: readonly string[]): boolean => {
     const provenance = evaluateSemanticExpressionProvenance(
       callee,
       index.bindings,
@@ -42,6 +36,13 @@ export const createStaticPathIntrinsicQuery = (
           path[1] === method))
     );
   };
+
+/** Prove path and URL intrinsic identity before applying native semantics. */
+export const createStaticPathIntrinsicQuery = (
+  index: JavaScriptBindingIndex,
+  nativeMethod = createNodeBuiltinExportQuery(index),
+): JavaScriptStaticPathIntrinsicQuery => {
+  const facts = new WeakMap<t.Node, Map<string, boolean>>();
   const sourceFile = (node: t.Node | undefined): boolean => {
     if (node === undefined) return false;
     node = unwrapJavaScriptExpression(node).node;
