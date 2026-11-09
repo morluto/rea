@@ -7,8 +7,9 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { parseJavaScriptSource } from "../../../../src/domain/javascript/javascriptSourceParser.js";
 import { staticPath } from "../../../../src/domain/javascript/javascriptStaticAnalysisHelpers.js";
-import { analyzeJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
 
 const urlCases = [
@@ -130,11 +131,14 @@ describe("JavaScript file URL paths", () => {
   });
 
   it("does not URL-decode literal filesystem punctuation", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const source = `
       const path = require('node:path');
       const {BrowserWindow} = require('electron');
       new BrowserWindow({webPreferences:{preload:path.join(__dirname,"preload%20?#.cjs")}});
-    `);
+    `;
+    const parsed = parseJavaScriptSource(source, "main.cjs");
+    if (parsed === null) throw new Error("Expected authored CommonJS source");
+    const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.electron.browser_windows).toHaveLength(1);
     expect(analysis.electron.browser_windows[0]?.preload_path).toBe(
