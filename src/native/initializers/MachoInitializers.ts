@@ -1,3 +1,4 @@
+import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
   MachoLoadCommandCursor,
@@ -15,7 +16,10 @@ import {
   type NativeInitializerSlice,
   type NativeInitializerInspection,
 } from "../../domain/native/nativeInitializers.js";
-import { parsePointerFixups, type PointerFixups } from "../AppleMachoFixups.js";
+import {
+  parsePointerFixupsSteps,
+  type PointerFixups,
+} from "../AppleMachoFixups.js";
 import { parseMachoLayout } from "../AppleMachoSelection.js";
 import {
   BinaryFormatFailure,
@@ -89,28 +93,37 @@ const note = (scan: MachoScan, message: string): void => {
  * get null, and {@link uncheckedFixupReason} decides whether their stored
  * words can still be trusted.
  */
-const layoutFixups = (
+const layoutFixups = async (
   scan: MachoScan,
   bits: 32 | 64,
   little: boolean,
   cpu: number,
-): { readonly fixups: PointerFixups | null; readonly base: bigint | null } => {
+  signal?: AbortSignal,
+): Promise<{
+  readonly fixups: PointerFixups | null;
+  readonly base: bigint | null;
+}> => {
   const architecture =
     cpu === 0x0100000c ? "arm64" : cpu === 0x01000007 ? "x86_64" : null;
   if (bits !== 64 || !little || architecture === null)
     return { fixups: null, base: null };
   try {
     const layout = parseMachoLayout(scan.bytes, architecture);
-    return {
-      fixups: parsePointerFixups(
-        scan.bytes,
-        layout.fixups,
-        layout.segments,
-        layout.baseAddress,
-      ),
-      base: layout.baseAddress,
-    };
+    const steps = parsePointerFixupsSteps(
+      scan.bytes,
+      layout.fixups,
+      layout.segments,
+      layout.baseAddress,
+    );
+    let next = steps.next();
+    while (!next.done) {
+      await immediate();
+      assertArtifactReadActive(signal);
+      next = steps.next();
+    }
+    return { fixups: next.value, base: layout.baseAddress };
   } catch (cause) {
+    assertArtifactReadActive(signal);
     note(
       scan,
       cause instanceof Error
@@ -732,11 +745,11 @@ const SECTIONS = [
 ] as const;
 
 /** Decode Mach-O initializer and finalizer slots for one selected thin slice. */
-export const readMachoInitializers = (
+export const readMachoInitializers = async (
   image: MachoInitializerImage,
   page: InitializerPage,
   signal?: AbortSignal,
-): NativeInitializerInspection => {
+): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
   const container = readMachoImage(image.bytes);
   const header = readMachoLoadCommandTableHeader(
@@ -764,7 +777,7 @@ export const readMachoInitializers = (
   const object = header.value.fileType === MH_OBJECT;
   const decoded = object
     ? { fixups: null, base: null }
-    : layoutFixups(scan, container.bits, little, cpu);
+    : await layoutFixups(scan, container.bits, little, cpu, signal);
   const unchecked = object
     ? null
     : uncheckedFixupReason(scan, little, decoded.fixups !== null);

@@ -758,11 +758,11 @@ const markRebaseLocation = (
 };
 
 /** Interpret one bounded LC_DYLD_INFO rebase stream into file-backed membership. */
-const readRebaseStream = (
+function* readRebaseStreamSteps(
   image: FixupImage,
   range: FixupCommands["rebases"][number],
   index: { bitmap: Uint8Array | null; workRemaining: number },
-): void => {
+): Generator<void, void, void> {
   const { bytes, segments } = image;
   const end = range.offset + range.size;
   if (
@@ -778,7 +778,8 @@ const readRebaseStream = (
   let segmentIndex = -1;
   let segmentOffset = 0n;
   let type = 0;
-  const addRun = (count: bigint, skip: bigint): void => {
+  let visits = 0;
+  function* addRun(count: bigint, skip: bigint): Generator<void, void, void> {
     if (count === 0n) return;
     if (type === 0 || type > 3)
       throw new RangeError(`Unsupported legacy rebase type ${type}`);
@@ -804,6 +805,7 @@ const readRebaseStream = (
     for (let indexOffset = 0n; indexOffset < admitted; indexOffset++) {
       const fileOffset = Number(firstFileOffset + indexOffset * stride);
       markRebaseLocation(index, fileOffset, fact, bytes.length);
+      if (++visits % 4096 === 0) yield;
     }
     index.workRemaining -= Number(admitted);
     if (admitted < count)
@@ -813,8 +815,10 @@ const readRebaseStream = (
     // dyld advances after the final record too; that cursor may legally be
     // one past the segment because it is only bounds-checked on the next emit.
     segmentOffset += count * stride;
-  };
+  }
+  let opcodes = 0;
   while (cursor.at < end) {
+    if (++opcodes % 4096 === 0) yield;
     if (index.workRemaining === 0)
       throw new RangeError(
         "Legacy rebase parsing exceeded the source-derived work budget",
@@ -848,17 +852,17 @@ const readRebaseStream = (
         segmentOffset += BigInt(immediate) * REBASE_POINTER_SIZE;
         break;
       case 0x50: // REBASE_OPCODE_DO_REBASE_IMM_TIMES
-        addRun(BigInt(immediate), 0n);
+        yield* addRun(BigInt(immediate), 0n);
         break;
       case 0x60: {
         // REBASE_OPCODE_DO_REBASE_ULEB_TIMES
         const count = uleb(bytes, cursor, end, "rebase", index);
-        addRun(count, 0n);
+        yield* addRun(count, 0n);
         break;
       }
       case 0x70: {
         // REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB
-        addRun(1n, 0n);
+        yield* addRun(1n, 0n);
         segmentOffset += uleb(bytes, cursor, end, "rebase", index);
         break;
       }
@@ -866,7 +870,7 @@ const readRebaseStream = (
         // REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB
         const count = uleb(bytes, cursor, end, "rebase", index);
         const skip = uleb(bytes, cursor, end, "rebase", index);
-        addRun(count, skip);
+        yield* addRun(count, skip);
         break;
       }
       default:
@@ -875,7 +879,7 @@ const readRebaseStream = (
         );
     }
   }
-};
+}
 
 /** Read loader-owned membership without interpreting a stored pointer word. */
 const legacyRebaseState = (
@@ -927,10 +931,10 @@ const resolveLegacyRebase = (
   };
 };
 
-const parseLegacyRebases = (
+function* parseLegacyRebasesSteps(
   image: FixupImage,
   streams: FixupCommands["rebases"],
-): RebaseFacts => {
+): Generator<void, RebaseFacts, void> {
   // Dyld does not require pointer alignment here, so up to one starting byte
   // per source byte is possible. Bound opcode scanning plus slot visits by 2N.
   const workBudget = Math.min(Number.MAX_SAFE_INTEGER, image.bytes.length * 2);
@@ -943,7 +947,7 @@ const parseLegacyRebases = (
   let unreadBytes = 0;
   for (const stream of streams) {
     try {
-      readRebaseStream(image, stream, index);
+      yield* readRebaseStreamSteps(image, stream, index);
       decoded++;
     } catch (cause: unknown) {
       failures.push(
@@ -963,7 +967,7 @@ const parseLegacyRebases = (
     unreadBytes,
     complete: failures.length === 0,
   };
-};
+}
 
 const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
   let value = 0n;
@@ -1288,14 +1292,14 @@ const hasUnresolvedLegacyBytes = (
 };
 
 /** Build pointer decoding for one slice from its fixup load commands. */
-export const parsePointerFixups = (
+export function* parsePointerFixupsSteps(
   bytes: Buffer,
   commands: FixupCommands,
   segments: readonly Segment[],
   baseAddress: bigint,
-): PointerFixups => {
+): Generator<void, PointerFixups, void> {
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
-  const rebases = parseLegacyRebases(image, commands.rebases);
+  const rebases = yield* parseLegacyRebasesSteps(image, commands.rebases);
   const binds = parseLegacyBinds(image, commands.binds);
   if (commands.chained !== null) {
     return chainedFixups(image, commands.chained, rebases, binds);
@@ -1368,4 +1372,18 @@ export const parsePointerFixups = (
       return rebase ?? rawPointer(raw);
     },
   };
+}
+
+/** Synchronous adapter for callers that cannot yield between batches. */
+export const parsePointerFixups = (
+  bytes: Buffer,
+  commands: FixupCommands,
+  segments: readonly Segment[],
+  baseAddress: bigint,
+): PointerFixups => {
+  const steps = parsePointerFixupsSteps(bytes, commands, segments, baseAddress);
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+  }
 };

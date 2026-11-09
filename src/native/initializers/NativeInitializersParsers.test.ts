@@ -959,6 +959,27 @@ describe("Unreadable symbol names", () => {
 });
 
 describe("Mach-O fixup sources", () => {
+  it("yields and cancels while expanding legacy rebase runs", async () => {
+    const bytes = machoArm64LegacyRebaseInitializers();
+    const run = Buffer.from([0x11, 0x21, 0, 0x60, 0x80, 0x10]);
+    const stream = Buffer.concat([
+      ...Array.from({ length: 12 }, () => run),
+      Buffer.from([0]),
+    ]);
+    stream.copy(bytes, 0x3300);
+    bytes.writeUInt32LE(stream.length, 548);
+    const controller = new AbortController();
+    setImmediate(() => controller.abort(new Error("cancel during rebase")));
+    await expect(
+      readNativeInitializers(
+        bytes,
+        artifact(bytes),
+        { path: "/artifacts/image", offset: 0, limit: 64 },
+        controller.signal,
+      ),
+    ).rejects.toThrow(ArtifactReaderFailure);
+  });
+
   it("labels an LC_DYLD_INFO rebase as a legacy rebase, not a chained fixup", async () => {
     const report = await read(machoArm64LegacyRebaseInitializers());
     expect(report.status).toBe("parsed");
