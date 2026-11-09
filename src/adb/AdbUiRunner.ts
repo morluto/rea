@@ -457,7 +457,7 @@ export class AdbUiRunner {
           new AnalysisCapabilityUnavailableError(
             "adb",
             operation,
-            `${parsed.error.reason}. Install and start the UI Automator runner on ${serial}; see docs/adb-ui-automation.md.`,
+            `${parsed.error.reason}. Install and start the UI Automator runner on ${serial}; see docs/guides/android/adb-ui-automation.md.`,
             options,
           ),
         );

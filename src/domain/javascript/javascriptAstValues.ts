@@ -1,7 +1,27 @@
 import * as t from "@babel/types";
+
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+
+/** Computed definition keys use the surrounding evaluation environment. */
+export const javaScriptComputedDefinitionKey = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  (t.isObjectMethod(parent) ||
+    t.isClassMethod(parent) ||
+    t.isClassProperty(parent) ||
+    t.isClassAccessorProperty(parent)) &&
+  parent.computed &&
+  parent.key === child;
+
+/** Class decorators and computed definition keys use the enclosing environment. */
+export const javaScriptDefinitionExpression = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  t.isDecorator(child) || javaScriptComputedDefinitionKey(parent, child);
 
 /** Type-only class fields neither initialize own slots nor shadow inherited members. */
 export const isRuntimeJavaScriptClassProperty = (
@@ -220,7 +240,7 @@ const PROPERTYLESS_BINARY = new Set([
 ]);
 
 /** Operator results are primitive even when their value is not statically known. */
-const primitiveOwnKeys = (
+export const primitiveOwnKeys = (
   node: t.Node,
   isNullish?: (node: t.Node) => boolean,
 ): "indices" | "none" | null => {
@@ -320,63 +340,70 @@ const appendStaticObjectMembers = (
     const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(
       property.argument,
     );
-    if (t.isObjectExpression(spread)) {
-      const nextDepth = depth + wrappers + 1;
-      // Copying a getter can run code that changes another source key.
-      if (
-        nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT ||
-        spread.properties.some((entry) =>
-          t.isObjectMethod(entry, { kind: "get" }),
-        )
-      ) {
-        members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
-        continue;
-      }
-      appendStaticObjectMembers(members, spread, nextDepth, isNullish);
-      continue;
-    }
-    if (t.isArrayExpression(spread)) {
-      let firstSpread = -1;
-      let hasElements = false;
-      for (let index = 0; index < spread.elements.length; index++) {
-        const element = spread.elements[index];
-        if (element == null) continue;
-        hasElements = true;
-        if (t.isSpreadElement(element)) {
-          firstSpread = index;
-          break;
-        }
-      }
-      // Literal arrays own only present indices. A spread can shift later
-      // indices, but never adds named keys to the array under construction.
-      if (hasElements)
-        members.push({
-          kind: "array-indices",
-          elements: spread.elements,
-          firstSpread,
-        });
-      continue;
-    }
-    const primitive = primitiveOwnKeys(spread, isNullish);
-    if (primitive === "indices") {
-      const literal = readExactJavaScriptLiteral(spread);
-      const length =
-        literal.found && typeof literal.value === "string"
-          ? literal.value.length
-          : null;
-      // Retain indexed writes without expanding strings or synthesizing properties.
-      if (length !== 0) members.push({ kind: "primitive-indices", length });
-      continue;
-    }
-    if (
-      primitive === "none" ||
-      t.isFunctionExpression(spread) ||
-      t.isArrowFunctionExpression(spread) ||
-      t.isRegExpLiteral(spread)
-    )
-      continue;
-    members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+    appendEnumerableSourceMembers(members, spread, depth + wrappers, isNullish);
   }
+};
+
+/** Copy own enumerable facts; inherited properties and prototype syntax are not writes. */
+const appendEnumerableSourceMembers = (
+  members: StaticObjectMember[],
+  source: t.Node,
+  depth: number,
+  isNullish?: (node: t.Node) => boolean,
+): void => {
+  const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(source);
+  if (t.isObjectExpression(spread)) {
+    const nextDepth = depth + wrappers + 1;
+    if (
+      nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT ||
+      spread.properties.some((entry) =>
+        t.isObjectMethod(entry, { kind: "get" }),
+      )
+    ) {
+      members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+      return;
+    }
+    appendStaticObjectMembers(members, spread, nextDepth, isNullish);
+    return;
+  }
+  if (t.isArrayExpression(spread)) {
+    let firstSpread = -1;
+    let hasElements = false;
+    for (let index = 0; index < spread.elements.length; index++) {
+      const element = spread.elements[index];
+      if (element == null) continue;
+      hasElements = true;
+      if (t.isSpreadElement(element)) {
+        firstSpread = index;
+        break;
+      }
+    }
+    if (hasElements)
+      members.push({
+        kind: "array-indices",
+        elements: spread.elements,
+        firstSpread,
+      });
+    return;
+  }
+  const primitive = primitiveOwnKeys(spread, isNullish);
+  if (primitive === "indices") {
+    const literal = readExactJavaScriptLiteral(spread);
+    const length =
+      literal.found && typeof literal.value === "string"
+        ? literal.value.length
+        : null;
+    if (length !== 0) members.push({ kind: "primitive-indices", length });
+    return;
+  }
+  if (
+    primitive === "none" ||
+    t.isFunctionExpression(spread) ||
+    t.isArrowFunctionExpression(spread) ||
+    t.isRegExpLiteral(spread)
+  )
+    return;
+  members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
 };
 
 const staticObjectMembers = (
@@ -444,13 +471,58 @@ const readStaticObjectProperty = (
   return prototypeMaySupply ? { status: "dynamic" } : { status: "missing" };
 };
 
-/** Parse ordered members once for related property queries within one boundary. */
+/** Index effective keys once for related property queries within one boundary. */
 export const staticObjectPropertyReader = (
   object: t.Node | undefined,
   isNullish?: (node: t.Node) => boolean,
+): ((name: string) => StaticObjectProperty) =>
+  indexStaticObjectProperties(staticObjectPropertySource(object, isNullish));
+
+/** Index values copied by object spread or Object.assign, excluding inheritance. */
+export const staticObjectCopyPropertyReader = (
+  source: t.Node | undefined,
+  isNullish?: (node: t.Node) => boolean,
 ): ((name: string) => StaticObjectProperty) => {
-  const source = staticObjectPropertySource(object, isNullish);
-  return (name) => readStaticObjectProperty(source, name);
+  if (source === undefined) return indexStaticObjectProperties("missing");
+  const members: StaticObjectMember[] = [];
+  appendEnumerableSourceMembers(members, source, 0, isNullish);
+  return indexStaticObjectProperties(members);
+};
+
+const indexStaticObjectProperties = (
+  source: StaticObjectPropertySource,
+): ((name: string) => StaticObjectProperty) => {
+  if (typeof source === "string") return () => ({ status: source });
+  const properties = new Map<string, StaticObjectProperty>();
+  let fallback: "missing" | "dynamic" = "missing";
+  let hasIndexedSpread = false;
+  for (let index = source.length - 1; index >= 0; index--) {
+    const member = source[index]!;
+    if (member.kind === "prototype-setter") {
+      if (member.prototype === "unknown") fallback = "dynamic";
+    } else if (
+      member.kind === "primitive-indices" ||
+      member.kind === "array-indices"
+    ) {
+      hasIndexedSpread = true;
+    } else if (member.kind === "unknown" || member.key === null) {
+      fallback = "dynamic";
+      break;
+    } else if (!properties.has(member.key)) {
+      const { property, key } = member;
+      const value = objectDataPropertyValue(property);
+      properties.set(
+        key,
+        value === undefined
+          ? { status: "dynamic" }
+          : { status: "explicit", property, value },
+      );
+    }
+  }
+  return (name) =>
+    hasIndexedSpread && semanticArrayIndex(name) !== null
+      ? readStaticObjectProperty(source, name)
+      : (properties.get(name) ?? { status: fallback });
 };
 
 /** Find the effective explicit property, preserving unresolved overrides. */
@@ -460,6 +532,28 @@ export const staticObjectProperty = (
   isNullish?: (node: t.Node) => boolean,
 ): StaticObjectProperty =>
   readStaticObjectProperty(staticObjectPropertySource(object, isNullish), name);
+
+/** Prove a literal's effective own member is a method, independent of its prototype. */
+export const staticObjectOwnMethodReader = (
+  object: t.Node,
+): ((name: string) => boolean) => {
+  if (!t.isObjectExpression(object)) return () => false;
+  const methods = new Map<string, boolean>();
+  const members = staticObjectMembers(object, 0);
+  for (let index = members.length - 1; index >= 0; index--) {
+    const member = members[index]!;
+    if (member.kind === "prototype-setter") continue;
+    if (member.kind === "unknown") break;
+    if (member.kind !== "property") continue;
+    if (member.key === null) break;
+    if (!methods.has(member.key))
+      methods.set(
+        member.key,
+        t.isObjectMethod(member.property) && member.property.kind === "method",
+      );
+  }
+  return (name) => methods.get(name) === true;
+};
 
 export type StaticObjectPropertyNames =
   | { readonly status: "missing" | "dynamic" }

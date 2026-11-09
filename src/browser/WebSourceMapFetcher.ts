@@ -666,7 +666,7 @@ const normalizeSourceMap = (
     return emptySourceMapItem(
       request,
       "fetch_failed",
-      "Source-map response text exceeds the 32 MiB source-map output budget; JSON parsing and source-map decoding were not attempted.",
+      "JSON-escaped response text and map metadata would exceed the remaining space in the shared 32 MiB source-map output budget; JSON parsing and source-map decoding were not attempted.",
       fetchedUrl,
       responseIdentity,
     );

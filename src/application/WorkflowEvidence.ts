@@ -3,7 +3,10 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
-import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
+import {
+  workflowAnalysisProfile,
+  workflowAnalysisProfileParameters,
+} from "./WorkflowAnalysisProfile.js";
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
@@ -20,6 +23,8 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
+  MISSING_EVIDENCE_SUBJECT_LIMITATION,
+  evidenceEnvelopeForAdmission,
   type Evidence,
   type EvidenceLocation,
 } from "../domain/evidence.js";
@@ -29,9 +34,16 @@ import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import { EvidenceLedger } from "./investigation/EvidenceLedger.js";
 import {
   recordEvidenceSources,
+  retainAnalysisResultSources,
   withEvidenceSources,
   type AnalysisResultWithSources,
 } from "./investigation/recordEvidenceSources.js";
+import { preserveCompletedSourceEvidence } from "./investigation/sourcePublicationRecovery.js";
+import {
+  admitInvestigationAuthentication,
+  type RecoveryAdmission,
+} from "./investigation/InvestigationRetention.js";
+import { estimateJsonStorage } from "./JsonAuthenticationHeadroom.js";
 import { workflowUnknownInput } from "./investigation/WorkflowUnknown.js";
 import {
   renderSourceLimitations,
@@ -63,7 +75,7 @@ const DECOMPILE_ALL_LIMITATIONS: ComposedLimitationBudget = {
   perItemOperations: new Set(["procedure_info", "procedure_pseudo_code"]),
   maxDistinct: 8,
   retainedIn:
-    "each function's record in decompile-index.json keeps the caveats of the observations it used",
+    "decompile-index.json keeps the latest record for each function; decompile-journal.jsonl keeps each attempt and its caveats",
 };
 
 /** The caveat budget for a composed workflow, when it has one. */
@@ -204,8 +216,12 @@ export const executeComposedWorkflow = async (
   );
 };
 
+/** Scope of the exact-address reference lookups composed by trace_feature. */
+export const TRACE_FEATURE_REFERENCE_LIMITATION =
+  "Reference queries cover only each matched start address, not interior bytes of strings and procedures. Empty references and truncated: false do not establish complete reference coverage.";
+
 /** Build the shared Evidence record for a successful composed binary workflow. */
-export const createWorkflowEvidence = (input: {
+export interface WorkflowEvidenceInput {
   readonly target: BinaryTarget | undefined;
   readonly operation: AnalysisOperation;
   readonly parameters: Readonly<Record<string, JsonValue>>;
@@ -213,7 +229,20 @@ export const createWorkflowEvidence = (input: {
   readonly upstreamProfile: AnalysisProfileCommitment | undefined;
   readonly upstreamLimitations: readonly string[];
   readonly upstreamEvidenceLinks?: readonly string[];
-}): Evidence =>
+}
+
+const WORKFLOW_DERIVATION_LIMITATION = "Derived by an REA composed workflow.";
+
+const workflowLimitations = (
+  operation: AnalysisOperation,
+): readonly string[] =>
+  operation === "trace_feature"
+    ? [WORKFLOW_DERIVATION_LIMITATION, TRACE_FEATURE_REFERENCE_LIMITATION]
+    : [WORKFLOW_DERIVATION_LIMITATION];
+
+export const createWorkflowEvidence = (
+  input: WorkflowEvidenceInput,
+): Evidence =>
   createEvidence(input.target, REA_WORKFLOW_PROVIDER, {
     operation: input.operation,
     parameters: input.parameters,
@@ -231,13 +260,135 @@ export const createWorkflowEvidence = (input: {
       ? {}
       : { evidenceLinks: input.upstreamEvidenceLinks }),
     limitations: [
-      "Derived by an REA composed workflow.",
+      ...workflowLimitations(input.operation),
       ...input.upstreamLimitations,
     ],
     ...(input.operation === "batch_decompile"
       ? { locations: batchProcedureLocations(input.result) }
       : {}),
   });
+
+const admitWorkflowRecovery = (
+  observation: ComposedWorkflowObservation,
+  evidenceInput: Pick<
+    WorkflowEvidenceInput,
+    "target" | "operation" | "parameters" | "upstreamProfile"
+  >,
+  admitRecovery: RecoveryAdmission,
+) => {
+  const admissionInput = {
+    operation: evidenceInput.operation,
+    parameters: evidenceInput.parameters,
+    target:
+      evidenceInput.target === undefined
+        ? null
+        : {
+            path: evidenceInput.target.path,
+            sha256: evidenceInput.target.sha256,
+            format: evidenceInput.target.format,
+            architecture: evidenceInput.target.architecture ?? null,
+          },
+    profile: evidenceInput.upstreamProfile ?? null,
+    result: observation.result,
+    limitations: observation.limitations,
+    links: observation.evidenceLinks ?? [],
+  };
+  // The completed result can also generate a location per batch item and
+  // the workflow profile embeds the upstream profile. Admit these copies
+  // before constructing or hashing the recovery Evidence.
+  const shell = evidenceEnvelopeForAdmission(
+    evidenceInput.target,
+    REA_WORKFLOW_PROVIDER,
+    {
+      operation: evidenceInput.operation,
+      parameters: {},
+      result: null,
+      ...(evidenceInput.upstreamProfile === undefined
+        ? {}
+        : {
+            analysisProfile: {
+              provider: REA_WORKFLOW_PROVIDER,
+              parameters: workflowAnalysisProfileParameters(
+                null,
+                evidenceInput.operation,
+              ),
+              digest: "0".repeat(64),
+            },
+          }),
+      confidence: "derived",
+      limitations: workflowLimitations(evidenceInput.operation),
+      locations: [],
+      evidenceLinks: [],
+    },
+  );
+  const additional = estimateJsonStorage([
+    observation.result,
+    evidenceInput.upstreamProfile ?? null,
+    shell,
+    ...(evidenceInput.target === undefined
+      ? [MISSING_EVIDENCE_SUBJECT_LIMITATION]
+      : []),
+  ]);
+  return admitRecovery(admissionInput, evidenceInput.operation, additional);
+};
+
+/** Experimental shared recovery of a workflow that completed before source admission. */
+export const retainComposedWorkflowSources = (
+  recordEvidence: Parameters<typeof retainAnalysisResultSources>[1],
+  result: Awaited<ReturnType<typeof executeComposedWorkflow>>,
+  evidenceInput: Omit<
+    WorkflowEvidenceInput,
+    "result" | "upstreamLimitations" | "upstreamEvidenceLinks"
+  >,
+  evidenceForAnalysis?: (id: string) => Evidence | undefined,
+  admitRecovery: RecoveryAdmission = (input, operation, additional) =>
+    admitInvestigationAuthentication(input, operation, {}, additional),
+): ReturnType<
+  typeof retainAnalysisResultSources<{
+    readonly result: JsonValue;
+    readonly limitations: readonly string[];
+    readonly cachePolicy?: "live";
+    readonly evidenceLinks?: readonly string[];
+  }>
+> => {
+  const retained = retainAnalysisResultSources(
+    evidenceInput.operation,
+    recordEvidence,
+    result,
+  );
+  if (result.ok && !retained.ok) {
+    const admitted = admitWorkflowRecovery(
+      result.value,
+      evidenceInput,
+      admitRecovery,
+    );
+    if (!admitted.ok) {
+      retained.error.retainSourcePublication({
+        kind: "omitted",
+        reason:
+          admitted.error._tag === "AnalysisResourceConstraintError"
+            ? "insufficient-authentication-headroom"
+            : "recovery-input-invalid",
+        source_closure: "not-established",
+      });
+      return retained;
+    }
+    const evidence = createWorkflowEvidence({
+      ...evidenceInput,
+      result: result.value.result,
+      upstreamLimitations: result.value.limitations,
+      ...(result.value.evidenceLinks === undefined
+        ? {}
+        : { upstreamEvidenceLinks: result.value.evidenceLinks }),
+    });
+    preserveCompletedSourceEvidence(
+      retained.error,
+      evidence,
+      evidenceForAnalysis,
+    );
+  }
+  return retained;
+};
 
 /** Retain a stopped workflow's admitted observation as partial workflow Evidence on its failure. */
 export const retainPartialWorkflowEvidence = (
@@ -246,8 +397,30 @@ export const retainPartialWorkflowEvidence = (
     Parameters<typeof createWorkflowEvidence>[0],
     "target" | "operation" | "parameters" | "upstreamProfile"
   >,
+  admitRecovery: RecoveryAdmission = (input, operation, additional) =>
+    admitInvestigationAuthentication(input, operation, {}, additional),
 ): void => {
-  if (outcome.ok || outcome.partial === undefined) return;
+  if (
+    outcome.ok ||
+    outcome.partial === undefined ||
+    outcome.error.partialObservation !== undefined
+  )
+    return;
+  const admitted = admitWorkflowRecovery(
+    outcome.partial,
+    context,
+    admitRecovery,
+  );
+  if (!admitted.ok) {
+    outcome.error.retainPartialObservation({
+      kind: "omitted-observation",
+      reason:
+        admitted.error._tag === "AnalysisResourceConstraintError"
+          ? "insufficient-authentication-headroom"
+          : "recovery-input-invalid",
+    });
+    return;
+  }
   const evidence = createWorkflowEvidence({
     ...context,
     result: outcome.partial.result,

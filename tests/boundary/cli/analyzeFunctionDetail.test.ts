@@ -98,6 +98,9 @@ it("summary delivery returns the compact view and writes a bundle inspect-analys
     parseEvidence(out.summary).normalized_result,
   );
   expect(h.runDirectAnalysis).toHaveBeenCalledOnce();
+  expect(h.runDirectAnalysis.mock.calls[0]?.[3]).toMatchObject({
+    includeEvidenceSources: true,
+  });
   expect(summary.kind).toBe("summary");
   expect(out.evidence_bundle.bytes).toBeGreaterThan(0);
   expect((await stat(destination)).size).toBeGreaterThan(0);

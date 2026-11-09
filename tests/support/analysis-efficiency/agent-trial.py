@@ -12,32 +12,13 @@ import tempfile
 import time
 
 from codex_context import capture_tool_context
-
-
-def file_digest(path):
-    digest = hashlib.sha256()
-    with path.open('rb') as data:
-        for chunk in iter(lambda: data.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def runtime_fingerprint(root):
-    files = []
-    for name in ['dist', 'bridge']:
-        for path in sorted((root / name).rglob('*')):
-            if path.is_symlink():
-                raise ValueError('Runtime fingerprint does not follow symlinks')
-            if path.is_file():
-                files.append({'path': path.relative_to(root).as_posix(), 'sha256': file_digest(path)})
-    files.sort(key=lambda row: row['path'])
-    text = json.dumps(files, separators=(',', ':'), ensure_ascii=False)
-    return files, hashlib.sha256(text.encode()).hexdigest()
+from runtime_identity import file_digest, runtime_fingerprint
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['direct', 'client-code'], default='direct')
+    parser.add_argument('--mode', choices=['direct', 'client-code'], default='client-code',
+                        help='client-code enables code_mode_host; direct is a host-disabled diagnostic')
     parser.add_argument('--runtime-root', type=Path, required=True)
     parser.add_argument('--revision', required=True)
     parser.add_argument('--prompt', type=Path, required=True)
@@ -49,12 +30,24 @@ def main():
     parser.add_argument('--codex', default='/usr/bin/codex')
     parser.add_argument('--providers', type=Path)
     parser.add_argument('--enabled-tools', type=Path)
+    parser.add_argument('--catalog-load', action='store_true',
+                        help='Measure a no-tool response with identical instructions across catalogs')
+    parser.add_argument('--no-mcp', action='store_true',
+                        help='No-server control; requires --catalog-load')
+    parser.add_argument('--profile-parent', type=Path,
+                        help='External disposable-profile parent (default: cache beside the source Codex home)')
     parser.add_argument('--authority', choices=['static', 'browser'], default='static')
+    parser.add_argument('--include-account-tools', action='store_true',
+                        help='Allow account apps/plugins; default isolates REA from their catalogs')
     parser.add_argument('--capture-tool-context', action='store_true',
                         help='Retain owned tool/usage items; excludes account/ambient state')
     parser.add_argument('--guide-enabled-tools', action='store_true',
                         help='Opt-in exact-name discovery guidance for selected REA tools')
     args = parser.parse_args()
+    if args.no_mcp and not args.catalog_load:
+        parser.error('--no-mcp requires --catalog-load')
+    if args.catalog_load and (args.guide_enabled_tools or args.artifact_path):
+        parser.error('--catalog-load excludes tool guidance and artifact tasks')
     if args.guide_enabled_tools and args.enabled_tools is None:
         parser.error('--guide-enabled-tools requires --enabled-tools')
     enabled_tools = None
@@ -101,7 +94,13 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     runtime_files, runtime_digest = runtime_fingerprint(repository)
     (args.output / 'runtime-files.json').write_text(json.dumps(runtime_files))
-    profile = Path(tempfile.mkdtemp(prefix='profile-', dir=args.output))
+    # Output artifacts may live inside a checkout. Execution must not: Codex
+    # discovers ancestor AGENTS.md and skills independently of its user config.
+    profile_parent = (args.profile_parent or source_auth_home.parent / '.cache' / 'rea-agent-trials').resolve()
+    if any(profile_parent.is_relative_to(root.resolve()) for root in [repository, driver_repository]):
+        raise ValueError('--profile-parent must be outside the runtime and driver checkouts')
+    profile_parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    profile = Path(tempfile.mkdtemp(prefix='profile-', dir=profile_parent))
     trial_codex_home = profile / 'codex'
     account = profile / 'account'
     workspace = profile / 'workspace'
@@ -156,28 +155,40 @@ def main():
             'return only their metadata. Preserve the original analyst question, '
             'dependency order and source Evidence.'
         )
+    if args.catalog_load:
+        instruction = (
+            'This is a catalog loading measurement. Do not call any tools, search, '
+            'or delegate. Reply with exactly the text requested by the user.'
+        )
     quote = json.dumps
+    # A disposable CODEX_HOME does not disable account-connected apps. Keep
+    # the requested feature policy identical in the config and its receipt.
+    features = {
+        'multi_agent': False, 'shell_snapshot': False, 'shell_tool': False,
+        'unified_exec': False, 'code_mode_host': args.mode == 'client-code',
+        'apps': args.include_account_tools, 'plugins': args.include_account_tools,
+    }
     config = '\n'.join([
         'approval_policy = "never"', 'sandbox_mode = "read-only"',
         'web_search = "disabled"', 'model = ' + quote(args.model),
         'model_reasoning_effort = ' + quote(args.reasoning),
         'developer_instructions = ' + quote(instruction),
-        '[features]', 'multi_agent = false', 'shell_snapshot = false',
-        'shell_tool = false', 'unified_exec = false',
-        'code_mode = ' + ('true' if args.mode == 'client-code' else 'false'),
-        'code_mode_only = ' + ('true' if args.mode == 'client-code' else 'false'),
+        '[features]',
+        *[name + ' = ' + str(enabled).lower() for name, enabled in features.items()],
         '[history]', 'persistence = "none"',
-        '[mcp_servers.rea]', 'command = ' + quote(node),
-        'args = ' + quote(command_args), 'startup_timeout_sec = 60',
-        'tool_timeout_sec = 600',
-        *([] if enabled_tools is None else ['enabled_tools = ' + quote(enabled_tools)]),
-        '[mcp_servers.rea.env]',
-        *[key + ' = ' + quote(value) for key, value in provider_env.items()],
     ]) + '\n'
+    if not args.no_mcp:
+        config += '\n'.join([
+            '[mcp_servers.rea]', 'required = true', 'command = ' + quote(node),
+            'args = ' + quote(command_args), 'startup_timeout_sec = 60',
+            'tool_timeout_sec = 600',
+            *([] if enabled_tools is None else ['enabled_tools = ' + quote(enabled_tools)]),
+            '[mcp_servers.rea.env]',
+            *[key + ' = ' + quote(value) for key, value in provider_env.items()],
+        ]) + '\n'
     # MCP read-only hints cover normal static tools. Explicitly authorize only
     # the session-opening primitive needed by the requested native tasks.
-    config += '[mcp_servers.rea.tools.open_binary]\napproval_mode = "approve"\n'
-    for tool in ['analyze_javascript_application', 'inspect_analysis_view',
+    approved_tools = ['open_binary', 'analyze_javascript_application', 'inspect_analysis_view',
                  'inspect_android_package', 'search_android_classes',
                  'inspect_android_class', 'inspect_android_method',
                  'inspect_firmware_regions', 'inspect_managed_artifact',
@@ -199,8 +210,10 @@ def main():
                  'import_evidence_bundle', 'list_unknowns', 'verify_unknown_resolution',
                  'record_unknown', 'update_unknown', 'reset_investigation', 'binary_session',
                  'capture_browser_scenario',
-                 'resolve_containing_procedure', 'analyze_function', 'close_binary']:
-        config += '[mcp_servers.rea.tools.' + tool + ']\napproval_mode = "approve"\n'
+                 'resolve_containing_procedure', 'analyze_function', 'close_binary']
+    if not args.no_mcp:
+        for tool in approved_tools:
+            config += '[mcp_servers.rea.tools.' + tool + ']\napproval_mode = "approve"\n'
     try:
         if source_auth.exists():
             shutil.copyfile(source_auth, auth)
@@ -220,10 +233,13 @@ def main():
             'mode': args.mode, 'model': args.model, 'reasoning': args.reasoning,
             'capture_tool_context': args.capture_tool_context,
             'guide_enabled_tools': args.guide_enabled_tools,
+            'catalog_load': args.catalog_load, 'mcp_enabled': not args.no_mcp,
             'driver_commit': subprocess.check_output(
                 ['git', 'rev-parse', 'HEAD'], cwd=driver_repository, text=True).strip(),
             'runtime_revision': args.revision,
             'runtime_root': str(repository),
+            'workspace': str(workspace),
+            'workspace_isolated_from_runtime': not workspace.is_relative_to(repository.resolve()),
             'selected_artifact_path': args.artifact_path,
             'selected_artifact_sha256_before': target_digest,
             'enabled_tools': enabled_tools,
@@ -233,7 +249,7 @@ def main():
             'package_lock_sha256': file_digest(repository / 'package-lock.json'),
             'experiment_sources_sha256': {
                 name: hashlib.sha256((experiment / name).read_bytes()).hexdigest()
-                for name in ['agent-trial.py', 'codex_context.py', 'provider-environment.json']
+                for name in ['agent-trial.py', 'codex_context.py', 'runtime_identity.py', 'provider-environment.json']
             },
             'developer_instructions': instruction,
             'developer_instructions_sha256': hashlib.sha256(instruction.encode()).hexdigest(),
@@ -245,9 +261,7 @@ def main():
                 provider_env.get('PATH', os.environ.get('PATH', '')).encode()).hexdigest(),
             'provider_environment_policy_sha256': hashlib.sha256(
                 provider_policy_text.encode()).hexdigest(),
-            'features': {'shell_tool': False, 'unified_exec': False,
-                         'multi_agent': False, 'code_mode': args.mode == 'client-code',
-                         'code_mode_only': args.mode == 'client-code'},
+            'features': features,
         }, indent=2) + '\n')
         invocation = [args.codex, '--no-daemon', 'exec', '--strict-config',
                       *([] if args.capture_tool_context else ['--ephemeral']),
@@ -290,9 +304,17 @@ def main():
                         ).encode()),
                     })
         final_target_digest = file_digest(Path(args.artifact_path)) if args.artifact_path else None
+        try:
+            _, final_runtime_digest = runtime_fingerprint(repository)
+        except OSError:
+            final_runtime_digest = None
         summary = {
             'mode': args.mode, 'requested_model': args.model, 'reasoning': args.reasoning,
             'runtime_revision': args.revision,
+            'runtime_files_sha256_before': runtime_digest,
+            'runtime_files_sha256_after': final_runtime_digest,
+            'runtime_bytes_unchanged': runtime_digest == final_runtime_digest,
+            'catalog_load': args.catalog_load, 'mcp_enabled': not args.no_mcp,
             'capture_tool_context_requested': args.capture_tool_context,
             'selected_artifact_sha256_before': target_digest,
             'selected_artifact_sha256_after': final_target_digest,
@@ -315,7 +337,7 @@ def main():
             # Capture failure must never prevent copied-credential cleanup.
             shutil.rmtree(profile)
             (args.output / 'cleanup.json').write_text(json.dumps({'profile_removed': not profile.exists()}) + '\n')
-    raise SystemExit(124 if timeout else exit_code)
+    raise SystemExit(124 if timeout else 125 if final_runtime_digest != runtime_digest else exit_code)
 
 
 if __name__ == '__main__':

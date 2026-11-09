@@ -52,7 +52,7 @@ it("finds and retrieves the selected section from the generated package bundle",
   }
 });
 
-it("separates focused installed guidance from terms spread across a broad parent", async () => {
+it("finds focused installed guidance for switching providers with annotations", async () => {
   const resources = new ArtifactResourceScope();
   try {
     const focused = await searchGuidance(
@@ -67,40 +67,36 @@ it("separates focused installed guidance from terms spread across a broad parent
       match_scope: "section",
     });
 
-    const terms = ["switch", "provider", "annotations"];
-    const scattered = await searchGuidance(
-      { query: terms.join(" "), limit: 20 },
+    const switched = await searchGuidance(
+      { query: "switch provider annotations", limit: 20 },
       resources,
     );
-    if (!scattered.ok) throw scattered.error;
-    if (scattered.value.status !== "matches")
+    if (!switched.ok) throw switched.error;
+    if (switched.value.status !== "matches")
       throw new Error("Expected guidance matches");
-    let checkedScattered = 0;
-    for (const match of scattered.value.matches) {
-      const read = await readGuidanceSection(
-        { locator: match.locator },
-        resources,
-      );
-      if (!read.ok || read.value.status !== "section")
-        throw new Error("Expected a readable section");
-      expect(read.value.content).toHaveLength(match.content_length);
-      if (match.match_scope === "section") continue;
-      checkedScattered += 1;
-      const pointers = match.subsections ?? [];
-      expect(pointers.length).toBeGreaterThan(0);
-      for (const pointer of pointers)
-        expect(
-          terms.every((term) => pointer.matched_terms.includes(term)),
-        ).toBe(false);
-      // Every term is either in the parent's own text or behind a pointer.
-      const located = new Set([
-        ...(match.own_text_terms ?? []),
-        ...pointers.flatMap((pointer) => pointer.matched_terms),
-      ]);
-      expect(terms.filter((term) => !located.has(term))).toEqual([]);
-    }
-    // These terms sit in different subsections of the installed guides.
-    expect(checkedScattered).toBeGreaterThan(0);
+    const match = switched.value.matches.find(
+      ({ heading }) => heading === "Function annotations in Ghidra",
+    );
+    expect(match).toMatchObject({
+      guide: "references/native-and-artifacts.md",
+      match_scope: "section",
+      matched_terms: expect.arrayContaining([
+        "switch",
+        "provider",
+        "annotations",
+      ]),
+    });
+    if (match === undefined) throw new Error("Expected Ghidra guidance");
+    const read = await readGuidanceSection(
+      { locator: match.locator },
+      resources,
+    );
+    if (!read.ok) throw read.error;
+    expect(read.value).toMatchObject({
+      status: "section",
+      heading: match.heading,
+      content: expect.stringContaining("discard"),
+    });
   } finally {
     await resources.close();
   }

@@ -20,7 +20,7 @@ import {
   expectDroppedPartial,
   expectKeptPartial,
   expectOwnerError,
-} from "./ownerObservationExpectation.fixture.js";
+} from "../../tests/fixtures/ownerObservationExpectation.js";
 
 const scenario = browserScenarioInputSchema.parse({
   browser: { mode: "launch", executable_path: "/fixture/chrome" },
@@ -48,7 +48,6 @@ const expectRetainedCapture = (
   result: Awaited<ReturnType<typeof runScenario>>,
   failure: AnalysisError,
 ) => {
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the retained capture");
   expect(result.error).toBe(failure);
   expect(parseEvidence(result.error.partialObservation)).toMatchObject({
@@ -197,7 +196,6 @@ it("rejects a successful capture that is not a completed scenario", async () => 
     captureScenario: async () => ok({} as BrowserScenarioCapture),
   };
   const result = await captureBrowserScenario(provider, scenario);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a completed-capture refusal");
   expect(result.error).toBeInstanceOf(AnalysisOutputError);
   expect(result.error.message).toContain(

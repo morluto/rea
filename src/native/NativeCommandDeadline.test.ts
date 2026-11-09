@@ -91,7 +91,6 @@ describe("native_command_timeout_ms", () => {
     const result = await runner.run("lipo", ["-info", "/fixture/app"], {
       timeoutMs: 120_000,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected resolution timeout");
     expect(result.error.reason).toBe("timeout");
     expect(calls).toEqual([

@@ -80,6 +80,7 @@ const fixture = async (
     readonly failAfterTool?: boolean;
     readonly maximumInputElements?: number;
     readonly evidenceReferenceAlternative?: boolean;
+    readonly progressive?: boolean;
   } = {},
 ) => {
   const started = barrier();
@@ -146,6 +147,7 @@ const fixture = async (
     options.maximumInputElements,
   );
   const client = new Client({ name: "deferred-fixture-client", version: "1" });
+  if (options.progressive) server.enableProgressiveCatalog();
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -164,6 +166,46 @@ const fixture = async (
     loads: () => loads,
   };
 };
+
+it("loads cold definitions without initializing analysis and preserves canonical validation and identity", async () => {
+  const f = await fixture({ progressive: true });
+  const identity = f.server.catalogIdentity;
+  expect(identity.digests.combined_sha256).not.toBe(
+    catalog.identity.digests.combined_sha256,
+  );
+  expect(identity.counts.mcp_tools).toBe(2);
+  expect((await f.client.listTools()).tools.map(({ name }) => name)).toEqual([
+    "discover_tools",
+  ]);
+  const changed = vi.fn();
+  f.client.setNotificationHandler("notifications/tools/list_changed", changed);
+  const discover = () =>
+    f.client.callTool({
+      name: "discover_tools",
+      arguments: { names: ["fixture"] },
+    });
+  expect((await discover()).isError).not.toBe(true);
+  expect(f.loads()).toBe(0);
+  expect(changed).toHaveBeenCalledTimes(1);
+  await discover();
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(
+    (await f.client.callTool({ name: "fixture", arguments: { n: 1.5 } }))
+      .isError,
+  ).toBe(true);
+  expect(f.loads()).toBe(1);
+  expect(f.calls).not.toHaveBeenCalled();
+  expect(
+    (await f.client.callTool({ name: "fixture", arguments: {} }))
+      .structuredContent,
+  ).toEqual({ n: 3 });
+  expect(f.server.catalogIdentity).toEqual(identity);
+  expect(changed).toHaveBeenCalledTimes(1);
+  const independent = await fixture({ progressive: true });
+  expect(
+    (await independent.client.listTools()).tools.map(({ name }) => name),
+  ).toEqual(["discover_tools"]);
+});
 
 it("refuses excess input before loading a deferred runtime, then admits a valid call", async () => {
   const f = await fixture({ maximumInputElements: 2 });

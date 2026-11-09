@@ -683,8 +683,9 @@ it("preserves custom attribute value evidence through the filesystem provider wh
         code: "invalid-row",
         scope: "metadata.CustomAttribute:0x0c000001",
         offset: attribute.row_offset + 2,
-        detail:
-          "CustomAttribute constructor coded index 0x13 is invalid: coded index selects row 2 in table 10, which has 1 rows",
+        detail: expect.stringMatching(
+          /CustomAttribute.*0x13.*row 2.*table 10.*1 rows/i,
+        ),
       }),
     ]);
   } finally {

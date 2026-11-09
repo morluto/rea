@@ -11,6 +11,7 @@ import {
 
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
+import { settleChangeTimeBaseline } from "../../filesystem/ChangeTimeBaseline.js";
 import type { RootInventorySource } from "./classify.js";
 import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 
@@ -107,7 +108,18 @@ const scanCanonical = async (
   readonly snapshot: ArtifactInventorySnapshot;
   readonly transferredSource: TransferredArtifactInventorySource | undefined;
 }> => {
-  const metadata = await lstat(path);
+  const metadata = await settleChangeTimeBaseline(() => lstat(path), {
+    // The owner selected this runtime's environment; the settle limits must
+    // come from it rather than the daemon's ambient one.
+    environment: options.environment,
+    signal: options.signal,
+    // Callers match ArtifactReaderFailure reason "cancelled". The raw
+    // signal.reason is an AbortError and is reported as an execution failure.
+    cancellationError: (reason) =>
+      new ArtifactReaderFailure("cancelled", "Artifact inventory cancelled", {
+        cause: reason,
+      }),
+  });
   const {
     format: rootFormat,
     digest: rootDigest,

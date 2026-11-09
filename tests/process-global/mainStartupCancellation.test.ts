@@ -80,6 +80,8 @@ it.each([
         error: new AnalysisCancelledError("open_binary", {
           cause: signal.reason,
         }),
+        targetAtCompletion: null,
+        providerIdAtCompletion: null,
         selection: { kind: "none" },
       };
     });

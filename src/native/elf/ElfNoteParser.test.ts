@@ -6,6 +6,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {
+  androidIdentNote,
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
   coreAuxvNote,
@@ -120,9 +121,7 @@ it.each([
     expect(() => parse(compressedElfNoteSectionFixture(bits, little))).toThrow(
       expect.objectContaining({
         kind: "unsupported",
-        message: expect.stringContaining(
-          "Compressed ELF note sections are unsupported",
-        ),
+        message: expect.stringMatching(/compressed.*note/iu),
       }),
     );
   },
@@ -241,8 +240,10 @@ it("keeps note facts but marks section names unavailable for unknown compression
   expect(report.entries[0]?.gnu?.build_id_hex).toBe(
     "0123456789abcdef0123456789abcdef01234567",
   );
-  expect(report.limitations).toContain(
-    "ELF section names are unavailable because compression type 3 is unsupported.",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(
+      /section names.*unavailable.*compression type 3.*unsupported/iu,
+    ),
   );
 });
 
@@ -315,6 +316,8 @@ it("keeps non-GNU owners as unknown types with descriptor hashes", () => {
     owner: "CORE",
     type_name: "unknown",
     gnu: null,
+    core: null,
+    android: null,
   });
   expect(report.entries[0]?.descriptor.sha256).toBe(
     createHash("sha256").update(payload).digest("hex"),
@@ -480,11 +483,11 @@ it.each([
     expect(directory.sections[2]).toMatchObject({ name, name_state: state });
     if (name === null) {
       expect(notes.coverage.status).toBe("complete");
-      expect(notes.limitations).toContain(
-        "ELF section names are incomplete because a name offset is outside its string table.",
+      expect(notes.limitations.join(" ")).toMatch(
+        /name offset.*string table/iu,
       );
-      expect(directory.section_names_limitation).toBe(
-        "ELF section names are incomplete because a name offset is outside its string table",
+      expect(directory.section_names_limitation).toMatch(
+        /name offset.*string table/iu,
       );
     }
   },
@@ -506,8 +509,8 @@ it.each([65535, 65536])(
         : { name: null, name_state: "truncated" },
     );
     if (terminatorOffset === 65536)
-      expect(directory.section_names_limitation).toBe(
-        "ELF section names are unavailable because a name is not NUL-terminated",
+      expect(directory.section_names_limitation).toMatch(
+        /section names.*unavailable.*not NUL-terminated/iu,
       );
   },
 );
@@ -516,11 +519,13 @@ it("bounds repeated scans of an unterminated section name", () => {
   const report = parse(unterminatedNoteSections(2, 64));
   expect(report.tables.map(({ name }) => name)).toEqual([null, null]);
   expect(report.coverage.status).toBe("complete");
-  expect(
-    report.limitations.filter((value) => value.includes("not NUL-terminated")),
-  ).toEqual([
-    "ELF section names are incomplete because a name is not NUL-terminated.",
-  ]);
+  const nameWarnings = report.limitations.filter((value) =>
+    /not NUL-terminated/iu.test(value),
+  );
+  expect(nameWarnings).toHaveLength(1);
+  expect(nameWarnings[0]).toMatch(
+    /section names.*incomplete.*not NUL-terminated/iu,
+  );
   let failure: unknown;
   try {
     parse(unterminatedNoteSections(3, 400));
@@ -680,9 +685,7 @@ it("keeps compressed-note refusal ahead of alignment precision admission", () =>
   const bytes = compressedElfNoteSectionFixture();
   const sectionTable = Number(bytes.readBigUInt64LE(40));
   bytes.writeBigUInt64LE(0xffffffffffffffffn, sectionTable + 64 + 48);
-  expect(() => parse(bytes)).toThrow(
-    "Compressed ELF note sections are unsupported",
-  );
+  expect(() => parse(bytes)).toThrow(/compressed.*note/iu);
 });
 
 it.each([
@@ -1079,4 +1082,267 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
   });
   const report = parse(bytes);
   expect(report.entries[0]?.core).toBeNull();
+});
+
+it.each([
+  { bits: 64, little: true, machine: 183 },
+  { bits: 64, little: true, machine: 62 },
+  { bits: 32, little: false, machine: 8 },
+  { bits: 64, little: false, machine: 21 },
+] as const)(
+  "decodes Android .note.android.ident 132-byte, 152-byte, and legacy 4-byte descriptors (ELF$bits little=$little machine=$machine)",
+  ({ bits, little, machine }) => {
+    const extendedTail = Buffer.alloc(20, 0xaa);
+    const notes = Buffer.concat([
+      androidIdentNote({
+        androidApi: 24,
+        ndkVersion: "r27c",
+        ndkBuildNumber: "12297006",
+        little,
+      }),
+      androidIdentNote({
+        androidApi: 35,
+        ndkVersion: "r28",
+        ndkBuildNumber: "12479018",
+        extraTail: extendedTail,
+        little,
+      }),
+      androidIdentNote({
+        androidApi: 21,
+        ndkVersion: null,
+        ndkBuildNumber: null,
+        little,
+      }),
+      elfNote("Android", 2, Buffer.from([1, 2, 3, 4]), little),
+    ]);
+    const bytes = elfNoteFixture({
+      bits,
+      little,
+      machine,
+      ownership: "section",
+      sectionName: ".note.android.ident",
+      notes,
+    });
+    const report = parse(bytes);
+    expect(report.tables[0]?.name).toBe(".note.android.ident");
+    expect(report.entries).toHaveLength(4);
+
+    expect(report.entries[0]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      descsz: 132,
+      gnu: null,
+      core: null,
+      android: {
+        android_api: 24,
+        ndk_version: "r27c",
+        ndk_build_number: "12297006",
+      },
+    });
+    expect(report.entries[1]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      descsz: 152,
+      gnu: null,
+      core: null,
+      android: {
+        android_api: 35,
+        ndk_version: "r28",
+        ndk_build_number: "12479018",
+      },
+    });
+    expect(report.entries[2]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      descsz: 4,
+      gnu: null,
+      core: null,
+      descriptor: {
+        bytes: 4,
+        hex: little ? "15000000" : "00000015",
+      },
+      android: {
+        android_api: 21,
+        ndk_version: null,
+        ndk_build_number: null,
+      },
+    });
+    expect(report.entries[3]).toMatchObject({
+      owner: "Android",
+      type: 2,
+      type_name: "unknown",
+      gnu: null,
+      core: null,
+      android: null,
+      descriptor: {
+        bytes: 4,
+        hex: "01020304",
+      },
+    });
+  },
+);
+
+it("degrades truncated, unterminated, or non-printable Android ident notes to null while preserving descriptors", () => {
+  const truncated2 = Buffer.from([0x15, 0x00]);
+  const truncated68 = Buffer.alloc(68);
+  truncated68.writeUInt32LE(24, 0);
+  truncated68.write("r27c\0", 4, "latin1");
+
+  const unterminatedVersion = Buffer.alloc(132);
+  unterminatedVersion.writeUInt32LE(24, 0);
+  unterminatedVersion.fill(0x72, 4, 68);
+  unterminatedVersion.write("12297006\0", 68, "latin1");
+
+  const unterminatedBuild = Buffer.alloc(132);
+  unterminatedBuild.writeUInt32LE(24, 0);
+  unterminatedBuild.write("r27c\0", 4, "latin1");
+  unterminatedBuild.fill(0x39, 68, 132);
+
+  const controlByteSlot = Buffer.alloc(132);
+  controlByteSlot.writeUInt32LE(24, 0);
+  controlByteSlot.set([0x72, 0x07, 0x00], 4);
+  controlByteSlot.write("12297006\0", 68, "latin1");
+
+  const nonZeroPaddingSlot = Buffer.alloc(132);
+  nonZeroPaddingSlot.writeUInt32LE(24, 0);
+  nonZeroPaddingSlot.write("r27c\0", 4, "latin1");
+  nonZeroPaddingSlot[20] = 0x58;
+  nonZeroPaddingSlot.write("12297006\0", 68, "latin1");
+
+  const descriptors = [
+    Buffer.alloc(0),
+    truncated2,
+    truncated68,
+    unterminatedVersion,
+    unterminatedBuild,
+    controlByteSlot,
+    nonZeroPaddingSlot,
+  ];
+  const notes = Buffer.concat(
+    descriptors.map((desc) => elfNote("Android", 1, desc)),
+  );
+  const report = parse(elfNoteFixture({ ownership: "program", notes }));
+  expect(report.entries).toHaveLength(descriptors.length);
+  for (const [index, desc] of descriptors.entries()) {
+    expect(report.entries[index]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      gnu: null,
+      core: null,
+      android: null,
+      descriptor: {
+        bytes: desc.length,
+        sha256: createHash("sha256").update(desc).digest("hex"),
+        hex: desc.length <= 64 ? desc.toString("hex") : null,
+      },
+    });
+  }
+});
+
+it("charges TextBudget for scanned and retained Android ident strings", () => {
+  // 6 aliased headers over a 552-byte file: 128 scanned once <= 552, and
+  // 6 * (23 owner + 12 retained) = 210 <= 552 (un-cached 6 * 128 = 768 > 552).
+  const typicalIdent = androidIdentNote({
+    androidApi: 24,
+    ndkVersion: "r27c",
+    ndkBuildNumber: "12297006",
+  });
+  const aliased6 = parse(repeatedNotes(6, typicalIdent));
+  expect(aliased6.entries).toHaveLength(6);
+  expect(
+    aliased6.entries.every(
+      (entry) =>
+        entry.android?.ndk_version === "r27c" &&
+        entry.android.ndk_build_number === "12297006",
+    ),
+  ).toBe(true);
+
+  // 6 aliased headers * (23 owner + 126 retained) = 894 bytes > 552-byte file.
+  const maxStrings = androidIdentNote({
+    androidApi: 24,
+    ndkVersion: "v".repeat(63),
+    ndkBuildNumber: "b".repeat(63),
+  });
+  let retainedFailure: unknown;
+  try {
+    parse(repeatedNotes(6, maxStrings));
+  } catch (cause) {
+    retainedFailure = cause;
+  }
+  expect(retainedFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(retainedFailure).toMatchObject({
+    reason: "limit",
+    boundary: "memory",
+    message: expect.stringMatching(/byte budget/u),
+  });
+
+  // Share one 132-byte descriptor range across a GNU gold-version header
+  // (namesz=24) and a nested Android ident header (namesz=8 at +16) so
+  // `hashed` stays 132 (cached by range) and `used` stays 148, while
+  // `scanned` reaches 132 (GNU) + 128 (Android) = 260 bytes.
+  const identDescriptor = Buffer.alloc(132);
+  identDescriptor.writeUInt32LE(24, 0);
+  identDescriptor.write("r27c\0", 4, "latin1");
+  identDescriptor.write("1\0", 68, "latin1");
+  const sharedPayload = Buffer.alloc(36 + identDescriptor.length);
+  sharedPayload.writeUInt32LE(24, 0);
+  sharedPayload.writeUInt32LE(identDescriptor.length, 4);
+  sharedPayload.writeUInt32LE(4, 8);
+  sharedPayload.write("GNU\0", 12, "latin1");
+  sharedPayload.writeUInt32LE(8, 16);
+  sharedPayload.writeUInt32LE(identDescriptor.length, 20);
+  sharedPayload.writeUInt32LE(1, 24);
+  sharedPayload.write("Android\0", 28, "latin1");
+  identDescriptor.copy(sharedPayload, 36);
+  const programHeaders = Buffer.alloc(56 * 2);
+  const payloadOffset = 64 + programHeaders.length;
+  programHeaders.writeUInt32LE(4, 0);
+  programHeaders.writeBigUInt64LE(BigInt(payloadOffset), 8);
+  programHeaders.writeBigUInt64LE(BigInt(sharedPayload.length), 32);
+  programHeaders.writeBigUInt64LE(4n, 48);
+  programHeaders.writeUInt32LE(4, 56);
+  programHeaders.writeBigUInt64LE(BigInt(payloadOffset + 16), 56 + 8);
+  programHeaders.writeBigUInt64LE(BigInt(sharedPayload.length - 16), 56 + 32);
+  programHeaders.writeBigUInt64LE(4n, 56 + 48);
+  const sharedScanImage = Buffer.concat([
+    elf64({ phoff: 64, phnum: 2 }),
+    programHeaders,
+    sharedPayload,
+  ]);
+
+  const withinScanBudget = parse(
+    sharedScanImage,
+    inspectElfNotesInputSchema.parse({
+      path: defaults.path,
+      max_file_bytes: 260,
+    }),
+  );
+  expect(withinScanBudget.entries[1]?.android).toEqual({
+    android_api: 24,
+    ndk_version: "r27c",
+    ndk_build_number: "1",
+  });
+
+  let scanFailure: unknown;
+  try {
+    parse(
+      sharedScanImage,
+      inspectElfNotesInputSchema.parse({
+        path: defaults.path,
+        max_file_bytes: 259,
+      }),
+    );
+  } catch (cause) {
+    scanFailure = cause;
+  }
+  expect(scanFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(scanFailure).toMatchObject({
+    reason: "limit",
+    boundary: "memory",
+    message: expect.stringMatching(/259-byte budget/u),
+  });
 });

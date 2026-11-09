@@ -205,6 +205,19 @@ export class DecompileExport {
   async writeIndex(input: {
     readonly layoutStatus: "address" | "debug_layout_unavailable";
     readonly limitations: readonly string[];
+    readonly latestRun: {
+      readonly resume: boolean;
+      readonly selected: number;
+      readonly excluded: number;
+      readonly selection: {
+        readonly name: string | null;
+        readonly namespace: string | null;
+        readonly address_start: string | null;
+        readonly address_end: string | null;
+        readonly limit: number | null;
+      };
+      readonly inventoryLimitations: readonly string[];
+    };
   }): Promise<Result<void, AnalysisError>> {
     // Appends update this owner only after journal sync; resume parses once.
     // Reuse those committed facts instead of re-reading and reinterpreting them.
@@ -215,6 +228,13 @@ export class DecompileExport {
       analysis_profile_digest: this.identity.analysisProfileDigest,
       layout: this.identity.layout,
       layout_status: input.layoutStatus,
+      latest_run: {
+        resume: input.latestRun.resume,
+        selected: input.latestRun.selected,
+        excluded: input.latestRun.excluded,
+        selection: input.latestRun.selection,
+        inventory_limitations: [...input.latestRun.inventoryLimitations],
+      },
       limitations: [...input.limitations],
       functions: [...this.records.values()].sort((left, right) =>
         compareProcedureAddresses(left.address, right.address),

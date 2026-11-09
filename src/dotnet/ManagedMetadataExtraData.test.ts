@@ -46,6 +46,15 @@ describe("CLR metadata tables ExtraData extension", () => {
       const plainTarget = managedPeFixtureTarget(plain);
       const baseline = inspectManagedArtifactBytes(plain, plainTarget);
       const baselineMembers = inspectManagedMembersBytes(plain, plainTarget);
+      expect(baselineMembers.coverage).toEqual({
+        state: "complete",
+        issues: [],
+      });
+      expect(baselineMembers.types.map(({ full_name }) => full_name)).toEqual([
+        "Fixture.Program",
+      ]);
+      expect(baselineMembers.fields).toHaveLength(1);
+      expect(baselineMembers.methods).toMatchObject([{ name: "Main" }]);
       const bytes = buildManagedPeFixture(
         metadataExtraData === undefined ? {} : { metadataExtraData },
       );
@@ -134,6 +143,13 @@ describe("CLR ExtraData index widths and boundaries", () => {
     const baselineTarget = managedPeFixtureTarget(bytes);
     const baseline = inspectManagedArtifactBytes(bytes, baselineTarget);
     const baselineMembers = inspectManagedMembersBytes(bytes, baselineTarget);
+    expect(baseline.module?.name).toBe("Fixture.dll");
+    expect(baseline.assembly).not.toBeNull();
+    expect(baselineMembers.types).toMatchObject([
+      { full_name: "Fixture.Program" },
+    ]);
+    expect(baselineMembers.fields).toHaveLength(1);
+    expect(baselineMembers.methods).toMatchObject([{ name: "Main" }]);
     const { streamHeader } = fixtureTablesStream(bytes);
     bytes.write("#-", streamHeader + 8, "ascii");
     const target = managedPeFixtureTarget(bytes);

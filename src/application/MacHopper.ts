@@ -22,6 +22,7 @@ import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
 import {
   downloadHopperPackage,
+  HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
@@ -66,6 +67,7 @@ type MacHopperInstallFailureReason = Extract<
   | "bundle"
   | "publisher_verification_failed"
   | "copy"
+  | "cancelled"
 >;
 
 export type MacHopperBundleInstallResult =
@@ -120,7 +122,10 @@ export type MacHopperInstallResult =
 
 /** External effects used by the bounded macOS Hopper installer. */
 export interface MacHopperInstallHost {
-  download(url: string): Promise<HopperDownload>;
+  download(
+    url: string,
+    options?: { readonly timeoutMs?: number; readonly signal?: AbortSignal },
+  ): Promise<HopperDownload>;
   createTemporaryDirectory(): Promise<string>;
   createMountDirectory(path: string): Promise<void>;
   writePackage(path: string, bytes: Uint8Array): Promise<void>;
@@ -155,9 +160,15 @@ export interface MacHopperInstallHost {
  * app's `LSMinimumSystemVersion` before it is copied.
  */
 export const installMacHopper = async (
-  options: { readonly replaceExisting?: boolean },
+  options: {
+    readonly replaceExisting?: boolean;
+    /** Stops downloads and the steps after them; a started copy finishes. */
+    readonly signal?: AbortSignal;
+  },
   host: MacHopperInstallHost,
 ): Promise<MacHopperInstallResult> => {
+  const cancellation =
+    options.signal === undefined ? {} : { signal: options.signal };
   const hostVersion = await host.macosVersion();
   // Without a comparable host version no declared minimum can be checked.
   if (hostVersion === undefined || macosMajorVersion(hostVersion) === undefined)
@@ -169,7 +180,10 @@ export const installMacHopper = async (
   let result: MacHopperInstallResult;
   try {
     result = await (async (): Promise<MacHopperInstallResult> => {
-      const metadata = await host.download(HOPPER_RELEASES_URL);
+      const metadata = await host.download(HOPPER_RELEASES_URL, {
+        timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+        ...cancellation,
+      });
       if (!metadata.ok)
         return {
           status: "failed",
@@ -198,7 +212,7 @@ export const installMacHopper = async (
           }),
         };
       installStage = "download";
-      const archive = await host.download(release.filename);
+      const archive = await host.download(release.filename, cancellation);
       if (!archive.ok)
         return {
           status: "failed",
@@ -214,6 +228,7 @@ export const installMacHopper = async (
       const destinationExists = await host.destinationExists(destination);
       if (destinationExists && options.replaceExisting !== true)
         return { status: "failed", reason: "destination_exists" };
+      options.signal?.throwIfAborted();
       installStage = "mount";
       temporary = await host.createTemporaryDirectory();
       const packagePath = posix.join(temporary, "hopper.dmg");
@@ -255,6 +270,7 @@ export const installMacHopper = async (
             ),
           };
       }
+      options.signal?.throwIfAborted();
       installStage = "copy";
       const installation = await host.installBundle(
         source,
@@ -277,11 +293,14 @@ export const installMacHopper = async (
         "darwin",
       );
       let openFailure: string | undefined;
-      try {
-        await host.openApplication(destination);
-      } catch (cause: unknown) {
-        openFailure = failureMessage(cause);
-      }
+      if (options.signal?.aborted === true)
+        openFailure = "Setup was cancelled before Hopper was opened";
+      else
+        try {
+          await host.openApplication(destination);
+        } catch (cause: unknown) {
+          openFailure = failureMessage(cause);
+        }
       return {
         status: "installed",
         launcherPath,
@@ -291,7 +310,7 @@ export const installMacHopper = async (
   } catch (cause: unknown) {
     result = {
       status: "failed",
-      reason: installStage,
+      reason: options.signal?.aborted === true ? "cancelled" : installStage,
       diagnostic: failureMessage(cause),
     };
   }
@@ -570,7 +589,7 @@ export const systemMacHopperInstallHost = (
 };
 
 /** Installer detail naming the declared minimum this Mac's version does not meet. */
-export const macHopperHostVersionDetail = (
+const macHopperHostVersionDetail = (
   refusal: (
     | { readonly source: "release_feed"; readonly packageUrl: string }
     | { readonly source: "signed_app" }
@@ -581,7 +600,7 @@ export const macHopperHostVersionDetail = (
     : `The signed Hopper application declares LSMinimumSystemVersion ${refusal.minimumVersion}; this Mac runs macOS ${refusal.hostVersion}. Nothing was copied.`;
 
 /** Installer detail for a signed-app minimum REA cannot compare with this Mac's version. */
-export const macHopperIncomparableMinimumDetail = (
+const macHopperIncomparableMinimumDetail = (
   declared: string,
   hostVersion: string,
 ): string =>

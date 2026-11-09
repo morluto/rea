@@ -28,7 +28,7 @@ const ABI_SELECTOR_MAX_CHARACTERS =
  * budget as JSON Schema maxLength, including every trailing line terminator.
  */
 /** Shared refusal for an ABI label that is not a lib/ directory name. */
-export const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
+const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
 const abiSelectorSchema = z
   .string()
   .min(1, ABI_SELECTOR_MESSAGE)

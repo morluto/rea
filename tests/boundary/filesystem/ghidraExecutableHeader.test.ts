@@ -171,7 +171,6 @@ it.each(["completed", "physical", "close"] as const)(
         resourceOwner: resources.owner,
         signal: controller.signal,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected retained failure");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toEqual([path]);

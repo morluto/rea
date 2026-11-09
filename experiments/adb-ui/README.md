@@ -1,6 +1,6 @@
 # Android UI Automator verification
 
-Discovery and waits use the public [UI observation contracts](../../docs/adb-ui-automation.md).
+Discovery and waits use the public [UI observation contracts](../../docs/guides/android/adb-ui-automation.md).
 Input remains an **unshipped proposal** pending a maintainer scope decision.
 The normal CLI/MCP surface does not register it and has no opt-in switch.
 

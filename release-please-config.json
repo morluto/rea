@@ -17,7 +17,7 @@
     ".": {
       "package-name": "rea-agents",
       "extra-files": [
-        { "type": "generic", "path": "docs/installation.md" },
+        { "type": "generic", "path": "docs/getting-started/installation.md" },
         {
           "type": "generic",
           "path": "src/generatedPackageMetadata.ts"

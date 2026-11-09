@@ -449,7 +449,6 @@ describe("residual unknown registry resolution and history", () => {
     ).toBe(true);
     const before = serializeEvidenceBundle(base.export());
     const conflict = base.import(branch.export());
-    expect(conflict.ok).toBe(false);
     if (conflict.ok) throw new Error("Expected divergent history refusal");
     expectHistoryConflict(conflict.error, created.value.unknown_id);
     expect(base.get(source.evidence_id)?.caller_input_path).toBe("./original");

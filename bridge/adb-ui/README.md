@@ -5,7 +5,7 @@ Public CLI/MCP tools expose observations and waits only; input is bound by the
 unshipped `experiments/adb-ui/mcp.mjs` verifier pending maintainer scope approval.
 
 This source-built, operator-owned instrumentation APK supplies the Android UI
-backend described in [the UI guide](https://github.com/morluto/rea/blob/main/docs/adb-ui-automation.md). It pins
+backend described in [the UI guide](https://github.com/morluto/rea/blob/main/docs/guides/android/adb-ui-automation.md). It pins
 AndroidX UI Automator 2.4.0 and uses its public window, node and gesture APIs.
 It needs JDK 17, Gradle 8.9, Android SDK 35 and build-tools 34.0.0.
 

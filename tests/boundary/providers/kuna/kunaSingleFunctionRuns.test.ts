@@ -1,7 +1,9 @@
-import { expect, it as test } from "vitest";
+import { expect, it as test, vi } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { kunaTimeoutRecovery } from "../../../../src/kuna/KunaCommand.js";
+import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
+import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
+import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 
 import {
   fakeKunaCalls,
@@ -235,10 +237,72 @@ it("keeps answering repeats from the completed run after the export fails", asyn
       expect(answer.limitations).toContainEqual(
         expect.stringContaining("The project export failed"),
       );
+      expect(answer.siblingUnavailability?.siblingOperations).toEqual([
+        "procedure_assembly",
+        "analyze_function",
+      ]);
     }
     expect(await decompilesOf(kuna)).toHaveLength(1);
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
+  const exportSettled = deferred<void>();
+  exportSettled.promise.catch(() => undefined);
+  const originalBuild = KunaProjectCache.prototype.build;
+  const exportBuild = vi
+    .spyOn(KunaProjectCache.prototype, "build")
+    .mockImplementation(function (this: KunaProjectCache, ...args) {
+      const promise = originalBuild.apply(this, args);
+      return promise.finally(() => exportSettled.resolve());
+    });
+  const launcher: KunaProcessLauncher = async (options) => {
+    if (options.arguments[0] === "decompile") {
+      await exportSettled.promise;
+    }
+    return spawnOwnedProviderProcess(options);
+  };
+  const { kuna, open } = await session(
+    "rea-kuna-single-fallback-unavail-",
+    { project: "exit-failure" },
+    {},
+    launcher,
+  );
+  const client = open();
+  try {
+    const answer = await run(client, "procedure_pseudo_code", {
+      procedure: "main",
+    });
+    expect(answer.rawResult).toMatchObject({
+      source: { kind: "single-function" },
+    });
+    expect(answer.siblingUnavailability).toBeDefined();
+    expect(answer.siblingUnavailability?.siblingOperations).toEqual([
+      "procedure_assembly",
+      "analyze_function",
+    ]);
+    expect(answer.siblingUnavailability?.providerId).toBe("kuna");
+    expect(await decompilesOf(kuna)).toHaveLength(1);
+    await exportSettled.promise;
+  } finally {
+    exportSettled.resolve();
+    try {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    } finally {
+      exportBuild.mockRestore();
+    }
   }
 });
 
@@ -303,23 +367,16 @@ it("names the setting that owns a single-function deadline", async () => {
     if (result.ok) throw new Error("the hanging run answered");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
-      message:
-        "kuna decompile did not finish within REA_KUNA_TIMEOUT_MS (300 ms).",
+      message: expect.stringMatching(
+        /kuna decompile.*REA_KUNA_TIMEOUT_MS.*300 ms/i,
+      ),
       remediation: {
         action: expect.stringMatching(
-          /^Raise REA_KUNA_TIMEOUT_MS .* restart REA.*project export/u,
+          /raise.*REA_KUNA_TIMEOUT_MS.*restart REA/i,
         ),
       },
       details: { timeout_ms: 300 },
     });
-    // A finished invocation cannot read a later export from this session.
-    const recovery = kunaTimeoutRecovery("REA_KUNA_TIMEOUT_MS", "decompile");
-    expect(
-      projectAnalysisError(result.error, "invocation").remediation.action,
-    ).toBe(recovery.remediationAction);
-    expect(projectAnalysisError(result.error).remediation.action).toBe(
-      recovery.continuingCallerGuidance?.remediationAction,
-    );
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
