@@ -9,7 +9,11 @@ import {
 } from "./appTaskDraftGuards.js";
 import { isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { KIND_FIELD } from "./jsonRecordPairing.js";
+import {
+  isRecordIdField,
+  KIND_FIELD,
+  pairRecordsById,
+} from "./jsonRecordPairing.js";
 import { pairMembers } from "./memberPairing.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import {
@@ -25,6 +29,95 @@ const resolvePointer = (view: JsonValue | null, pointer: string) =>
 import { selectorOf, spellCondition } from "./viewSelector.js";
 
 type Suggestion = DesktopTaskCheckInput;
+
+/** Identify only fields the record pairing actually selected as generated ids. */
+export const generatedRecordId = (
+  ends: {
+    readonly baseline: JsonValue | null;
+    readonly final: JsonValue | null;
+  },
+  format: "json" | "zip",
+) => {
+  const lists = new Map<
+    string,
+    | { readonly field: string; readonly generated: ReadonlySet<string> }
+    | undefined
+  >();
+  return (pointer: string): boolean => {
+    const segments = pointer.split("/");
+    if (segments.length < 3) return false;
+    const field = segments.at(-1)?.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (field === undefined || !isRecordIdField(field)) return false;
+    const member = segments.at(-2)?.replaceAll("~1", "/").replaceAll("~0", "~");
+    const list = segments.slice(0, -2).join("/");
+    if (!lists.has(list)) {
+      const after = resolveView(ends.final, list, format);
+      const before = resolveView(ends.baseline, list, format);
+      const paired = Array.isArray(after)
+        ? pairRecordsById(after, Array.isArray(before) ? before : [])
+        : undefined;
+      lists.set(
+        list,
+        paired === undefined
+          ? undefined
+          : {
+              field: paired.idField,
+              generated: new Set(
+                paired.newer.keys.filter(
+                  (_, index) => paired.generated[index] === true,
+                ),
+              ),
+            },
+      );
+    }
+    const paired = lists.get(list);
+    if (paired === undefined || field !== paired.field || member === undefined)
+      return false;
+    return paired.generated.has(member);
+  };
+};
+
+/** Find the generated record IDs inside added JSON subtrees named by a diff. */
+export const generatedIdsInAdditions = (
+  ends: {
+    readonly baseline: JsonValue | null;
+    readonly final: JsonValue | null;
+  },
+  format: "json" | "zip",
+  pointers: readonly string[],
+  isJson: (pointer: string) => boolean,
+  generatedId: (pointer: string) => boolean,
+): ReadonlySet<string> => {
+  const found = new Set<string>();
+  const pending: { pointer: string; value: JsonValue }[] = [];
+  for (const pointer of pointers) {
+    const value = resolveView(ends.final, pointer, format);
+    if (value !== undefined && isJson(pointer))
+      pending.push({ pointer, value });
+  }
+  while (pending.length > 0) {
+    const item = pending.pop();
+    if (item === undefined) break;
+    const { pointer, value } = item;
+    if (typeof value === "string" && generatedId(pointer)) found.add(value);
+    else if (Array.isArray(value)) {
+      const { keys } = pairMembers(value, [], undefined, "json").newer;
+      value.forEach((child, index) =>
+        pending.push({
+          pointer: `${pointer}/${escapeToken(keys[index] ?? String(index))}`,
+          value: child,
+        }),
+      );
+    } else if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value))
+        pending.push({
+          pointer: `${pointer}/${escapeToken(key)}`,
+          value: child,
+        });
+    }
+  }
+  return found;
+};
 
 /** Count checks a JSON file's draft suggests, and count guards it offers. */
 const MAX_COUNTS = 2;
