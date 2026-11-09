@@ -364,6 +364,7 @@
 * **ci:** remove unused exports that fail deep static checks ([#8095](https://github.com/morluto/rea/issues/8095)) ([6b68fb6](https://github.com/morluto/rea/commit/6b68fb642a62f42e4e5359717e7f2f80b7938c63))
 * **ci:** repair native fixture and unused export ([429355c](https://github.com/morluto/rea/commit/429355ca4d1078579fca7d286de85c512bed0a96))
 * **ci:** repair verifier fixtures and formatting failures ([00c4f44](https://github.com/morluto/rea/commit/00c4f44a1c002f9801ee535386be60c30b23d20e))
+* **ci:** restore compilation and static checks on main ([8dfc47b](https://github.com/morluto/rea/commit/8dfc47b107afc0cf4b53322a10b94c666fe9e18b))
 * **ci:** restore qualification and reduce validation overhead ([6eb37a7](https://github.com/morluto/rea/commit/6eb37a774930b5b9edb137edd441e30652dfd394))
 * **ci:** reuse shared JavaScript AST child traversal ([afc1813](https://github.com/morluto/rea/commit/afc18131f4518783b7bf42ff7e81491639e5328d))
 * **ci:** validate static evidence through receipt owner ([af9bc3a](https://github.com/morluto/rea/commit/af9bc3ab5015da3734e79f16b550b4b28297356a))
