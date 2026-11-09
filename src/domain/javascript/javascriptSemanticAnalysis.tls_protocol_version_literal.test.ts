@@ -73,6 +73,58 @@ it.each([
   ]);
 });
 it.each([
+  [
+    "a later accepted version over a rejected one",
+    `tls.connect({ port: 443, minVersion: "nope" }, { minVersion: "TLSv1.2" })`,
+  ],
+  [
+    "a supplied secure context beside a bad version",
+    `tls.connect({ port: 80, secureContext: ctx, minVersion: "nope" })`,
+  ],
+  [
+    "an accessor version with no explicit one",
+    `tls.connect({ port: 80, get minVersion() { return "TLSv1.2"; } })`,
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  // Several object arguments merge in order, so a later one wins; a supplied
+  // `secureContext` bypasses version parsing entirely; and an accessor runs a body, so its
+  // result is not settled by this literal. Measured on Node 24.22.1.
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+
+it.each([
+  [
+    "a rejected version over an accepted one",
+    `tls.connect({ port: 443, minVersion: "TLSv1.2" }, { minVersion: "nope" })`,
+  ],
+  [
+    "a later rejected version with no earlier one",
+    `tls.connect({ port: 443 }, { minVersion: "nope" })`,
+  ],
+  [
+    "a null secure context beside a bad version",
+    `tls.connect({ port: 80, secureContext: null, minVersion: "nope" })`,
+  ],
+  [
+    "an ordinary method beside a bad version",
+    `tls.connect({ port: 80, checkServerIdentity() {}, minVersion: "nope" })`,
+  ],
+  ["an arrow version", `tls.connect({ port: 80, minVersion: () => {} })`],
+  [
+    "a function version",
+    `tls.connect({ port: 80, minVersion: function () {} })`,
+  ],
+  ["a class version", `tls.connect({ port: 80, minVersion: class {} })`],
+  ["a negative BigInt version", `tls.connect({ port: 80, minVersion: -1n })`],
+  ["a version method member", `tls.connect({ port: 80, minVersion() {} })`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  // An ordinary method cannot install a version, and an arrow, function, class or signed
+  // BigInt version is a truthy non-string, so each of these throws at the call site.
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+it.each([
   ["an unknown version name", `tls.connect({ port: 80, minVersion: "nope" })`],
   ["the TLSv1.0 spelling", `tls.connect({ port: 80, minVersion: "TLSv1.0" })`],
   ["a lower-case name", `tls.connect({ port: 80, minVersion: "tlsv1.2" })`],

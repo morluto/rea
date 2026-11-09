@@ -568,6 +568,13 @@ const TLS_PROTOCOL_VERSIONS = new Set([
  * those slots is the one to read. A spread argument shifts the position, so it leaves the
  * answer undecided rather than picking the wrong slot.
  */
+/** One effective option member after Node merges every argument. */
+type EffectiveOption =
+  | { readonly status: "missing" }
+  | { readonly status: "unknown" }
+  | { readonly status: "rejects" }
+  | { readonly status: "explicit"; readonly node: t.Node };
+
 const tlsOptionsArguments = (
   node: t.CallExpression | t.OptionalCallExpression,
 ): readonly t.ObjectExpression[] | undefined => {
@@ -590,8 +597,20 @@ const tlsOptionsArguments = (
  * from the call itself and no socket exists. Measured on Node 24.22.1: `null` and
  * `undefined` are accepted as "not given", every other non-string value throws
  * `ERR_TLS_INVALID_PROTOCOL_VERSION` (a BigInt throws `TypeError`), and a string is
- * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`. An accepted `minVersion` does
- * not make a rejected `maxVersion` irrelevant — both are resolved, so both are checked.
+ * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`.
+ *
+ * Three Node behaviours decide the shape of this reader:
+ *
+ * - Several object arguments are **merged in order**, so a later one wins:
+ *   `tls.connect({port: 443, minVersion: "nope"}, {minVersion: "TLSv1.2"})` connects while
+ *   the reversed pair throws.
+ * - A supplied `secureContext` **bypasses version parsing** entirely — Node uses
+ *   `options.secureContext || tls.createSecureContext(options)` — so
+ *   `{secureContext: ctx, minVersion: "nope"}` connects.
+ * - An ordinary method member cannot install or override a version, so
+ *   `{checkServerIdentity() {}, minVersion: "nope"}` still throws. Only a real accessor
+ *   or a computed key leaves the member undecided.
+ *
  * Only `tls` reads these members, so `net` is not consulted.
  */
 const rejectsTlsProtocolVersionLiteral = (
@@ -601,63 +620,79 @@ const rejectsTlsProtocolVersionLiteral = (
   if (specifier !== "tls") return false;
   const objects = tlsOptionsArguments(node);
   if (objects === undefined) return false;
-  for (const options of objects) {
-    // A spread or an accessor can install the member without writing it here.
-    if (
-      options.properties.some(
-        (property) =>
-          t.isSpreadElement(property) ||
-          property.computed ||
-          t.isObjectMethod(property),
-      )
-    )
-      continue;
-    for (const member of ["minVersion", "maxVersion"] as const) {
-      // The last assignment wins, the same way the options object is built.
-      let read: t.Node | undefined;
+  const effective = (member: string): EffectiveOption => {
+    let read: EffectiveOption = { status: "missing" };
+    for (const options of objects) {
       for (const property of options.properties) {
-        if (t.isSpreadElement(property) || t.isObjectMethod(property)) continue;
+        // A spread or a computed key may write any member without naming it.
+        if (t.isSpreadElement(property) || property.computed) {
+          read = { status: "unknown" };
+          continue;
+        }
         if (
           semanticStaticPropertyName(property.key, property.computed) !== member
         )
           continue;
-        read = property.value;
+        // A plain method is a value Node never reads as a version name; an accessor runs
+        // a body, so its result is not this literal.
+        read = t.isObjectMethod(property)
+          ? property.kind === "method"
+            ? { status: "rejects" }
+            : { status: "unknown" }
+          : { status: "explicit", node: property.value };
       }
-      if (read === undefined) continue;
-      const value = unwrapJavaScriptExpression(read).node;
-      // `null` and `undefined` mean "not given", which Node accepts.
-      if (isNullishJavaScriptSyntax(value)) continue;
-      if (t.isStringLiteral(value)) {
-        if (!TLS_PROTOCOL_VERSIONS.has(value.value)) return true;
-        continue;
-      }
-      if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
-        const cooked = value.quasis[0]?.value.cooked;
-        if (cooked === null || cooked === undefined) continue;
-        if (!TLS_PROTOCOL_VERSIONS.has(cooked)) return true;
-        continue;
-      }
-      // A signed number is the same non-string version Node refuses. The shared literal
-      // reader excludes `-0`, so a `+`/`-` sign over a numeric literal is decided here
-      // rather than left as unknown.
-      if (
-        t.isUnaryExpression(value) &&
-        (value.operator === "+" || value.operator === "-") &&
-        t.isNumericLiteral(unwrapJavaScriptExpression(value.argument).node)
-      )
-        return true;
-      if (readExactJavaScriptLiteral(value).found) return true;
-      // A non-string literal is never a version name, so the call throws.
-      if (
-        t.isNumericLiteral(value) ||
-        t.isBooleanLiteral(value) ||
-        t.isBigIntLiteral(value) ||
-        t.isObjectExpression(value) ||
-        t.isArrayExpression(value) ||
-        t.isRegExpLiteral(value)
-      )
+    }
+    return read;
+  };
+  // A supplied context means Node never parses the members at all.
+  const context = effective("secureContext");
+  if (context.status === "explicit") {
+    const value = unwrapJavaScriptExpression(context.node).node;
+    if (!isNullishJavaScriptSyntax(value)) return false;
+  }
+  if (context.status === "unknown") return false;
+  for (const member of ["minVersion", "maxVersion"] as const) {
+    const read = effective(member);
+    if (read.status === "missing" || read.status === "unknown") continue;
+    if (read.status === "rejects") return true;
+    const value = unwrapJavaScriptExpression(read.node).node;
+    // `null` and `undefined` mean "not given", which Node accepts.
+    if (isNullishJavaScriptSyntax(value)) continue;
+    if (t.isStringLiteral(value)) {
+      if (!TLS_PROTOCOL_VERSIONS.has(value.value)) return true;
+      continue;
+    }
+    if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+      const cooked = value.quasis[0]?.value.cooked;
+      if (cooked === null || cooked === undefined) continue;
+      if (!TLS_PROTOCOL_VERSIONS.has(cooked)) return true;
+      continue;
+    }
+    // A signed number is the same non-string version Node refuses. The shared literal
+    // reader excludes `-0` and a signed BigInt, so a sign over either is decided here.
+    if (
+      t.isUnaryExpression(value) &&
+      (value.operator === "+" || value.operator === "-")
+    ) {
+      const operand = unwrapJavaScriptExpression(value.argument).node;
+      if (t.isNumericLiteral(operand) || t.isBigIntLiteral(operand))
         return true;
     }
+    if (readExactJavaScriptLiteral(value).found) return true;
+    // Every other statically known shape is truthy and not a string, so the call throws.
+    if (
+      t.isNumericLiteral(value) ||
+      t.isBooleanLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      t.isNewExpression(value)
+    )
+      return true;
   }
   return false;
 };
