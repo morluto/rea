@@ -99,3 +99,30 @@ it.each([
 ] as const)("keeps the spawn for an accepted cwd or argv0: %s", (call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });
+
+/**
+ * `cwd` is a path, so Node also accepts a byte array or a file `URL` there, while `argv0`
+ * is an argument string only.
+ *
+ * Measured on Node 24.22.1: `{cwd: new Uint8Array([47, 116, 109, 112])}` and
+ * `{cwd: new Buffer("/tmp")}` start a child on all four methods, while the same
+ * constructors throw `ERR_INVALID_ARG_TYPE` for `argv0`. `new URL("file:///tmp/")` throws
+ * `ERR_INVALID_FILE_URL_PATH` on Windows, so a `URL` context stays undecided here.
+ */
+it.each([
+  [`cp.spawn("x", [], { cwd: new Uint8Array([47, 116, 109, 112]) })`],
+  [`cp.spawn("x", [], { cwd: new Buffer("/tmp") })`],
+  [`cp.spawn("x", [], { cwd: new URL("file:///C:/tmp/") })`],
+] as const)("keeps the spawn for a path-shaped cwd: %s", (call) => {
+  expect(spawnsFor(call)).toHaveLength(1);
+});
+
+it.each([
+  [`cp.spawn("x", [], { argv0: new Uint8Array([120]) })`],
+  [`cp.spawn("x", [], { argv0: new URL("file:///C:/t/") })`],
+  [`cp.spawn("x", [], { cwd: new String("/tmp") })`],
+  [`cp.spawn("x", [], { cwd: new Number(1) })`],
+  [`cp.spawn("x", [], { cwd: new Foo("/tmp") })`],
+] as const)("emits no spawn for a constructor Node refuses: %s", (call) => {
+  expect(spawnsFor(call)).toEqual([]);
+});
