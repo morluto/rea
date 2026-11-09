@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
-import { lstat, open, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
@@ -11,8 +11,13 @@ export class NonRegularFileReadError extends Error {
   constructor(
     readonly path: string,
     directory: boolean,
+    readonly resolvedPath?: string,
   ) {
-    super(`Selected input must be a regular file: ${path}`);
+    super(
+      resolvedPath === undefined
+        ? `Selected input must be a regular file: ${path}`
+        : `Selected input is a symbolic link; retry with the resolved regular file path: ${resolvedPath}`,
+    );
     this.name = "NonRegularFileReadError";
     this.code = directory ? "EISDIR" : "ENOTFILE";
   }
@@ -60,13 +65,32 @@ export const openRegularFile = async (
   },
 ): Promise<FileHandle> => {
   options.signal?.throwIfAborted();
-  const handle = await open(
-    path,
-    constants.O_RDONLY |
-      (constants.O_NONBLOCK ?? 0) |
-      (constants.O_NOCTTY ?? 0) |
-      (options.symlinks === "reject" ? (constants.O_NOFOLLOW ?? 0) : 0),
-  );
+  let handle: FileHandle;
+  try {
+    handle = await open(
+      path,
+      constants.O_RDONLY |
+        (constants.O_NONBLOCK ?? 0) |
+        (constants.O_NOCTTY ?? 0) |
+        (options.symlinks === "reject" ? (constants.O_NOFOLLOW ?? 0) : 0),
+    );
+  } catch (cause: unknown) {
+    if (
+      options.symlinks === "reject" &&
+      cause instanceof Error &&
+      "code" in cause &&
+      String(cause.code) === "ELOOP"
+    ) {
+      try {
+        const resolvedPath = await realpath(path);
+        throw new NonRegularFileReadError(path, false, resolvedPath);
+      } catch (resolutionCause) {
+        if (resolutionCause instanceof NonRegularFileReadError)
+          throw resolutionCause;
+      }
+    }
+    throw cause;
+  }
   const owner = new OwnedFileHandle(handle);
   try {
     options.signal?.throwIfAborted();
