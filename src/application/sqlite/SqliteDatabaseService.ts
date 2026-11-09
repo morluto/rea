@@ -59,6 +59,7 @@ const matchesSelectedDatabase = (
     ? report.rows === null
     : report.rows?.table === input.table &&
       report.rows.row_limit === (input.row_limit ?? SQLITE_ROW_LIMIT_DEFAULT) &&
+      report.rows.row_offset === (input.row_offset ?? 0) &&
       (input.columns === undefined ||
         (report.rows.columns.length === input.columns.length &&
           report.rows.columns.every(

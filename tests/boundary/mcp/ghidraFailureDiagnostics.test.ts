@@ -14,7 +14,7 @@ import {
   GhidraSessionError,
   bindGhidraSessionFailure,
 } from "../../../src/ghidra/GhidraSessionError.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import {
   nativeAotPeFixture,
   nativeAotPeDigest,
@@ -25,7 +25,6 @@ import { expect, it } from "vitest";
 
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
-import { ok } from "../../../src/domain/result.js";
 import { GhidraRequestQueue } from "../../../src/ghidra/GhidraRequestQueue.js";
 import { silentLogger } from "../../../src/logger.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
