@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
@@ -36,7 +37,6 @@ it.each([
   'import Database from "better-sqlite3"; new Database("known.db");',
   'import Database = require("better-sqlite3"); new Database("known.db");',
   'import sqlite = require("sqlite3"); new sqlite.Database("known.db");',
-  'const Database = require("better-sqlite3"); new Database("known.db");',
   'import {Database} from "sqlite3"; new Database("known.db");',
   'import * as sqlite from "sqlite3"; new sqlite.Database("known.db");',
 ])("retains proven SQLite API origins: %s", (source) => {
@@ -47,4 +47,16 @@ it.each([
     name: "known.db",
   });
   expect(analysis.storage[0]).not.toHaveProperty("interpretation");
+});
+
+it("distinguishes conditional and proven CommonJS SQLite origins", () => {
+  const source =
+    'const Database = require("better-sqlite3"); new Database("known.db");';
+  expect(analyzeJavaScriptStaticSource(source).storage).toMatchObject([
+    { kind: "sqlite", name: "known.db", interpretation: "candidate" },
+  ]);
+  const proven = analyzeCommonJsStaticFixture(source).storage;
+  expect(proven).toHaveLength(1);
+  expect(proven[0]).toMatchObject({ kind: "sqlite", name: "known.db" });
+  expect(proven[0]).not.toHaveProperty("interpretation");
 });

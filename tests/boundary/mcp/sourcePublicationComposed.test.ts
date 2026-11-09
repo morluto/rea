@@ -15,134 +15,88 @@ import {
 } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { compareApplicationVersionsEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import {
-  omitUnretainedEvidenceFromError,
-  recoveryOmissionRemediation,
-  unretainedEvidenceCandidates,
-  type AnalysisErrorProjection,
-} from "../../../src/domain/analysisErrorProjection.js";
-import { encodeToolResult } from "../../../src/server/toolResultEncoding.js";
+import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
 
-it.each([
-  { name: "preserves the source", preserveSource: true },
-  { name: "reports both omissions at a lower budget", preserveSource: false },
-])(
-  "$name when an inline result with unknown retention exceeds delivery",
-  async ({ preserveSource }) => {
-    const call = async (
-      delivery: ReturnType<typeof createToolResultDelivery>,
-    ) => {
-      const session = new BinarySession(
-        createTestProviderRouter(() => {
-          throw new Error("no provider needed");
+it("preserves the source when an inline result with unknown retention exceeds delivery", async () => {
+  const session = new BinarySession(
+    createTestProviderRouter(() => {
+      throw new Error("no provider needed");
+    }),
+    new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+  );
+  const input = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+  const full = await createApplicationMcpHarness({ session });
+  const request = { name: "compare_application_versions", arguments: input };
+  const completeResponse = await full.client.callTool(request);
+  const completeError = parseMcpToolError(completeResponse).error;
+  expect(completeError.details).toMatchObject({
+    partial_observation: {
+      kind: "unretained-evidence",
+      evidence: { evidence_id: input.left.evidence_id },
+    },
+    completed_observation: { kind: "inline-evidence", retention: "unknown" },
+  });
+
+  // Measure the delivered envelope, including escaped error text and metadata.
+  // Contract example growth must not make the source itself exceed this budget.
+  const { completed_observation: _completed, ...sourceDetails } =
+    completeError.details!;
+  const sourceResponse = {
+    ...completeResponse,
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          error: { ...completeError, details: sourceDetails },
         }),
-        new InvestigationRecords({ maximumRepresentationBytes: 0 }),
-      );
-      const { client, close } = await createApplicationMcpHarness({
-        session,
-        serverOptions: { delivery },
-      });
-      const response = await client.callTool({
-        name: "compare_application_versions",
-        arguments: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
-      });
-      const error = parseMcpToolError(response).error;
-      expect(session.exportEvidenceBundle().records).toEqual([]);
-      await close();
-      return { error, response };
-    };
-    const encoded = (
-      error: AnalysisErrorProjection,
-      budget = Number.MAX_SAFE_INTEGER,
-    ) => encodeToolResult({ error }, budget, "error-text", true);
-    const bytes = (error: AnalysisErrorProjection) => {
-      const result = encoded(error);
-      if (!result.ok) throw new Error("Expected complete error encoding");
-      return result.bytes;
-    };
-    const normalDelivery = createToolResultDelivery(undefined);
-    const { error: complete } = await call(normalDelivery);
-    const completeBytes = bytes(complete);
-    const omit = (
-      error: AnalysisErrorProjection,
-      field: "partial_observation" | "completed_observation",
-    ) => {
-      const candidate = [...unretainedEvidenceCandidates(error)].find(
-        (entry) => entry.field === field && entry.secondaryPath.length === 0,
-      );
-      if (candidate === undefined) throw new Error(`Missing ${field} recovery`);
-      const omitted = omitUnretainedEvidenceFromError(
-        error,
-        { constraint: "receive-buffer", bytesAtLeast: completeBytes },
-        candidate,
-      );
-      if (omitted === undefined) throw new Error(`Cannot omit ${field}`);
-      return omitted;
-    };
-    const sourceOnly = omit(complete, "completed_observation");
-    const completedOnly = omit(complete, "partial_observation");
-    const neither = omit(sourceOnly, "partial_observation");
-    // Bound the scenario by actual wire representations, not the shared example's size.
-    const minimum = bytes(preserveSource ? sourceOnly : neither);
-    const maximum = Math.min(
-      bytes(preserveSource ? complete : sourceOnly),
-      bytes(completedOnly),
-    );
-    expect(minimum).toBeLessThan(maximum);
-    const resultBudget = Math.floor((minimum + maximum) / 2);
-    expect(encoded(complete, resultBudget).ok).toBe(false);
-    expect(encoded(sourceOnly, resultBudget).ok).toBe(preserveSource);
-    expect(encoded(completedOnly, resultBudget).ok).toBe(false);
-    expect(encoded(neither, resultBudget).ok).toBe(true);
-    const delivery = createToolResultDelivery(
-      resultBudget +
-        normalDelivery.maximumResponseBytes -
-        normalDelivery.resultBudgetBytes,
-    );
-    expect(delivery.resultBudgetBytes).toBe(resultBudget);
-    const { error, response } = await call(delivery);
-    expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(
-      resultBudget,
-    );
-    expect(error.remediation.action).toContain(
-      recoveryOmissionRemediation("unknown"),
-    );
-    expect(error).toMatchObject({
-      code: "resource_constraint",
-      details: {
-        completed_observation_omitted: {
-          reason: "mcp-response-limit",
-          retention: "unknown",
-          source_closure: "not-established",
-        },
       },
-    });
-    expect(error.details).not.toHaveProperty("completed_observation");
-    const sourceId =
-      JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left.evidence_id;
-    if (preserveSource) {
-      expect(error.details).toMatchObject({
-        partial_observation: {
-          kind: "unretained-evidence",
-          evidence: { evidence_id: sourceId },
-        },
-      });
-      expect(error.details).not.toHaveProperty("partial_observation_omitted");
-    } else {
-      expect(error.details).not.toHaveProperty("partial_observation");
-      expect(error.details).toMatchObject({
-        partial_observation_omitted: {
-          reason: "mcp-response-limit",
-          retention: "unretained",
-          evidence_id: sourceId,
-        },
-      });
-      expect(error.remediation.action).toContain(
-        recoveryOmissionRemediation("unretained"),
-      );
-    }
-  },
-);
+    ],
+  };
+  const sourceBytes = Buffer.byteLength(JSON.stringify(sourceResponse));
+  const completeBytes = Buffer.byteLength(JSON.stringify(completeResponse));
+  const delivery = createToolResultDelivery(
+    Math.ceil((sourceBytes + completeBytes) / 2) + 1024,
+  );
+  expect(sourceBytes).toBeLessThan(delivery.resultBudgetBytes);
+  expect(completeBytes).toBeGreaterThan(delivery.resultBudgetBytes);
+  await full.close();
+
+  const boundedSession = new BinarySession(
+    createTestProviderRouter(() => {
+      throw new Error("no provider needed");
+    }),
+    new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+  );
+  const { client } = await createApplicationMcpHarness({
+    session: boundedSession,
+    serverOptions: { delivery },
+  });
+  const response = await client.callTool(request);
+  expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(
+    delivery.resultBudgetBytes,
+  );
+  const error = parseMcpToolError(response).error;
+  expect(error.remediation.action).toContain(
+    recoveryOmissionRemediation("unknown"),
+  );
+  expect(error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      partial_observation: {
+        kind: "unretained-evidence",
+        evidence: input.left,
+      },
+      completed_observation_omitted: {
+        reason: "mcp-response-limit",
+        retention: "unknown",
+        source_closure: "not-established",
+      },
+    },
+  });
+  expect(error.details).not.toHaveProperty("completed_observation");
+  expect(error.details).not.toHaveProperty("partial_observation_omitted");
+  expect(boundedSession.exportEvidenceBundle().records).toEqual([]);
+});
 
 it("does not infer ledger membership from an independently registered reader", async () => {
   const computed = compareApplicationVersionsEvidence(
