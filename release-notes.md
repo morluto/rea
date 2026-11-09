@@ -1356,6 +1356,7 @@
 * **javascript:** cover Request endpoint identity and provenance ([#6365](https://github.com/morluto/rea/issues/6365)) ([09c889b](https://github.com/morluto/rea/commit/09c889b3b5c6df26c47565cc1b8fcad8864c8710))
 * **javascript:** normalize module resolution oracle paths ([#9159](https://github.com/morluto/rea/issues/9159)) ([0fc35a0](https://github.com/morluto/rea/commit/0fc35a098a36c42a566211187462bc6754cf4411))
 * **mcp:** bound schema compilation for native and web workflows ([6be6596](https://github.com/morluto/rea/commit/6be6596aaca5a9f584fd726b9ca7733d5b54f55a))
+* **mcp:** size source recovery budget from delivered evidence ([#9566](https://github.com/morluto/rea/issues/9566)) ([78a84d7](https://github.com/morluto/rea/commit/78a84d75c091839aa59da01cc7cc0010aa6d1ec5))
 * **mcp:** validate selected tools without compiling the entire catalog ([cc5a969](https://github.com/morluto/rea/commit/cc5a96933aaae4738289c349c8720037c7b45590))
 * **native:** bind lipo refusal fixture to a real source ([#7977](https://github.com/morluto/rea/issues/7977)) ([9cc3417](https://github.com/morluto/rea/commit/9cc34178c00cea6fb5f2938b4d7f102d2f83db05))
 * **package:** migrate skill metadata fixture to frontmatter ([23bc51d](https://github.com/morluto/rea/commit/23bc51d5c48306ef91cc6f1766783bc89e18293d))
