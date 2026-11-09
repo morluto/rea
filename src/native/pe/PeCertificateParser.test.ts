@@ -411,9 +411,14 @@ it.each([
     {},
     { [target]: malformed },
   );
-  expect(() => parse(peCertificateFixture(false, payload))).toThrow(
-    /AlgorithmIdentifier has unexpected trailing fields/u,
-  );
+  let failure: unknown;
+  try {
+    parse(peCertificateFixture(false, payload));
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "format" });
 });
 
 it("preserves digest identifiers with absent parameters", () => {
