@@ -52,9 +52,11 @@ must be at least as large as itself; anything else is reported as
 chunk that does not start with `ElfChnk` is skipped with `invalid-chunk`, and
 its neighbours are still read.
 
-`max_file_bytes` (64 MiB) bounds the read and `max_records` (20000) bounds the
-number of records decoded; both report a diagnostic instead of silently
-truncating. Diagnostic growth is bounded separately, because one malformed
+`max_file_bytes` (64 MiB) bounds the read. A file over that limit is refused
+with a resource error before parsing starts, so it yields no inventory at all.
+`max_records` (20000) bounds the number of records decoded; reaching it returns
+a partial inventory carrying a diagnostic instead of silently truncating.
+Diagnostic growth is bounded separately, because one malformed
 chunk can contain many bad records.
 
 ## Retain the complete inventory with a summary
