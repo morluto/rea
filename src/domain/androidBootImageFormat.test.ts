@@ -433,6 +433,42 @@ it("names unsafe vendor ramdisk paths and reports an uncovered section", () => {
   expect(wideRows.value.components[0]?.boardIdHex).toHaveLength(128);
 });
 
+it("omits empty vendor ramdisk fragments instead of rejecting the table", () => {
+  const entry = (name: string, size: number, offset: number): Buffer => {
+    const row = Buffer.alloc(108);
+    row.writeUInt32LE(size, 0);
+    row.writeUInt32LE(offset, 4);
+    Buffer.from(name, "utf8").copy(row, 12);
+    return row;
+  };
+  const input = {
+    entryCount: 3,
+    entrySize: 108,
+    sectionOffset: 4096,
+    sectionSize: 8,
+  };
+  const result = parseVendorRamdiskTable(
+    Buffer.concat([entry("one", 4, 0), entry("gap", 0, 4), entry("two", 4, 4)]),
+    input,
+  );
+  expect(result.ok, JSON.stringify(result)).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.components.map((item) => item.path)).toEqual([
+    "vendor_ramdisk/one",
+    "vendor_ramdisk/two",
+  ]);
+  expect(result.value.limitations.join(" ")).toContain(
+    "entries 1 declare no bytes",
+  );
+  const outside = parseVendorRamdiskTable(
+    Buffer.concat([entry("one", 4, 0), entry("gap", 0, 9), entry("two", 4, 4)]),
+    input,
+  );
+  expect(outside.ok).toBe(false);
+  if (outside.ok) return;
+  expect(outside.error.message).toContain("overruns the vendor ramdisk");
+});
+
 it("keeps colliding vendor ramdisk names unique", () => {
   const entry = (name: string, offset: number): Buffer => {
     const row = Buffer.alloc(108);

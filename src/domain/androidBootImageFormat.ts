@@ -977,18 +977,23 @@ const readVendorRamdiskTable = (
     );
   const components: AndroidBootComponentPlan[] = [];
   const used = new Set<string>();
+  const empty: number[] = [];
   let longer = false;
   for (let index = 0; index < input.entryCount; index += 1) {
     const base = index * input.entrySize;
     const size = table.readUInt32LE(base);
     const offset = table.readUInt32LE(base + 4);
     const ramdiskType = table.readUInt32LE(base + 8);
-    if (size === 0)
-      formatError(`vendor ramdisk table entry ${index} declares no bytes`);
     if (offset > input.sectionSize || size > input.sectionSize - offset)
       formatError(
         `vendor ramdisk table entry ${index} overruns the vendor ramdisk section`,
       );
+    // An empty fragment carries no bytes to expose, like other zero-sized
+    // components; omit it rather than rejecting the image.
+    if (size === 0) {
+      empty.push(index);
+      continue;
+    }
     const fileOffset = endOf(input.sectionOffset, offset);
     endOf(fileOffset, size);
     const decoded = decodeField(
@@ -1038,6 +1043,10 @@ const readVendorRamdiskTable = (
   if (longer)
     limitations.push(
       `Vendor ramdisk table entries are longer than the ${String(VENDOR_RAMDISK_ENTRY_SIZE)}-byte v4 structure; trailing entry bytes were not decoded.`,
+    );
+  if (empty.length > 0)
+    limitations.push(
+      `Vendor ramdisk table entries ${empty.join(", ")} declare no bytes and were omitted.`,
     );
   if (!sectionCovered(components, input.sectionOffset, input.sectionSize))
     limitations.push(
