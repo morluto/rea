@@ -16,6 +16,10 @@ import {
 } from "./androidJniBindings.js";
 import { androidJniViewRequestSchema } from "./androidJniQuery.js";
 import {
+  androidKotlinViewRequestSchema,
+  validateAndroidKotlinListing,
+} from "./androidKotlinQuery.js";
+import {
   androidKotlinMetadataFactsSchema,
   androidKotlinMetadataSelectionSchema,
 } from "./androidKotlinMetadata.js";
@@ -111,6 +115,16 @@ export const androidJniInspectionInputSchema =
       view: androidJniViewRequestSchema.optional(),
     })
     .superRefine(validateAndroidPackageDelivery);
+
+/** Delivery is an adapter choice; only a retained summary may hold a large listing. */
+export const androidKotlinInspectionInputSchema =
+  androidInputSchemas.inspect_android_kotlin_metadata
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidKotlinViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery)
+    .superRefine(validateAndroidKotlinListing);
 
 /** Supported static Android operations. */
 export type AndroidOperation = keyof typeof androidInputSchemas;

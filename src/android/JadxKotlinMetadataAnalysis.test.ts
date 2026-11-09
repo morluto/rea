@@ -94,6 +94,8 @@ it("fails closed when the raw reader is not provided", async () => {
 it("rejects unreviewed input fields and an out-of-range limit", () => {
   expect(() => request({ extra: true })).toThrow();
   expect(() => request({ limit: 0 })).toThrow();
-  expect(() => request({ limit: 501 })).toThrow();
+  // Analysis may retain more than the inline limit; delivery enforces 500 for complete detail.
+  expect(() => request({ limit: 100_000 })).not.toThrow();
+  expect(() => request({ limit: 100_001 })).toThrow();
   expect(() => request({ class_name: "" })).toThrow();
 });

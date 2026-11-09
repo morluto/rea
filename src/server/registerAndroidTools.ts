@@ -4,6 +4,7 @@ import { AndroidAnalysisService } from "../application/android/AndroidAnalysisSe
 import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
 import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
+import { inspectAndroidKotlinMetadata } from "../application/android/AndroidKotlinInspection.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
@@ -124,10 +125,26 @@ export const registerAndroidTools = (
     )(methodContract),
   );
   const kotlinContract = toolContract("inspect_android_kotlin_metadata");
+  const kotlinService: ContractToolService<"inspect_android_kotlin_metadata"> =
+    {
+      execute: (_operation, input, options) =>
+        inspectAndroidKotlinMetadata(
+          service,
+          input,
+          { recordEvidence, evidenceById },
+          options,
+        ),
+    };
   server.registerTool(
     kotlinContract.name,
     toolRegistrationOptions(kotlinContract),
-    handler(kotlinContract),
+    createContractToolHandler(
+      server,
+      kotlinService,
+      logger,
+      recordEvidence,
+      withAdmittedAnalysis,
+    )(kotlinContract),
   );
   const referencesContract = toolContract("trace_android_references");
   server.registerTool(

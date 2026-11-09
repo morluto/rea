@@ -5,6 +5,7 @@ import {
   androidSymbolInspectionInputSchemas,
   androidResultSchemas,
   androidJniInspectionInputSchema,
+  androidKotlinInspectionInputSchema,
 } from "../../domain/android/androidAnalysis.js";
 import {
   androidPackageSummaryViewResultSchema,
@@ -15,6 +16,8 @@ import {
   androidMethodSummaryViewResultSchema,
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
+  androidKotlinSummaryViewResultSchema,
+  androidKotlinPageViewResultSchema,
 } from "../../domain/analysisView/analysisView.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
@@ -53,11 +56,15 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "inspect_android_kotlin_metadata",
     ...toolContractMetadata("inspect_android_kotlin_metadata"),
     description:
-      "Report which classes in an explicit local APK carry kotlin.Metadata, from the raw annotations in its standard root classes*.dex members: per-DEX coverage, a metadata-version histogram, a declaration-kind histogram (class, file facade, synthetic class, multi-file facade/part, unknown) and listed classes with raw k/mv/pn/xi facts. Optional package_prefix and limit (default 100, maximum 500) narrow the listed classes; histograms and counts always cover every class. Select class_name to decode that exact class's declaration: class kind, modality, visibility, data/value/fun-interface flags, functions with suspend/inline/operator, nullable return and receiver types and their JVM/DEX prototypes (the same descriptors inspect_android_class reports), and properties with var/const and types. Malformed or undecodable metadata stays explicit and a class without metadata is not proof it was not Kotlin. Does not load the decompiler or execute the APK. Requires caller-supplied JADX MCP JAR and JDK.",
+      "Report which classes in an explicit local APK carry kotlin.Metadata, from the raw annotations in its standard root classes*.dex members: per-DEX coverage, a metadata-version histogram, a declaration-kind histogram (class, file facade, synthetic class, multi-file facade/part, unknown) and listed classes with raw k/mv/pn/xi facts. Optional package_prefix and limit (default 100) narrow the listed classes; histograms and counts always cover every class. Omitted or complete detail lists at most 500 classes inline. Select detail summary to retain the complete inventory (up to a 4 MiB allowance; a shortfall is an explicit unknown, and narrowing with package_prefix lists the rest) and return a bounded summary with whole-APK histograms and a 64-class preview. Read later pages with inspect_analysis_view and the returned parent_evidence_id, using view {kind:android-kotlin,collection:classes,offset:0,limit:64,class_names,package_prefix,kinds,indices,fields:[...]}; follow coverage.next_offset until exhausted. With summary detail an optional view selects such a page directly; complete detail rejects a view. Select class_name to decode that exact class's declaration: class kind, modality, visibility, data/value/fun-interface flags, functions with suspend/inline/operator, nullable return and receiver types and their JVM/DEX prototypes (the same descriptors inspect_android_class reports), and properties with var/const and types. Malformed or undecodable metadata stays explicit and a class without metadata is not proof it was not Kotlin. Does not load the decompiler or execute the APK. Requires caller-supplied JADX MCP JAR and JDK.",
     kind: "android-provider",
-    inputSchema: androidInputSchemas.inspect_android_kotlin_metadata,
+    inputSchema: androidKotlinInspectionInputSchema,
     outputSchema: evidenceResultOf(
-      androidResultSchemas.inspect_android_kotlin_metadata,
+      z.union([
+        androidResultSchemas.inspect_android_kotlin_metadata,
+        androidKotlinSummaryViewResultSchema,
+        androidKotlinPageViewResultSchema,
+      ]),
     ),
     examples: [
       {
@@ -66,6 +73,14 @@ export const ANDROID_TOOL_CONTRACTS = [
           path: "/tmp/Example.apk",
           package_prefix: "com.example",
           limit: 50,
+        },
+      },
+      {
+        title: "Retain every Kotlin class and read the first page",
+        input: {
+          path: "/tmp/Example.apk",
+          detail: "summary",
+          view: { kind: "android-kotlin", collection: "classes", limit: 100 },
         },
       },
       {

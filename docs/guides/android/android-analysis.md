@@ -493,9 +493,35 @@ rea inspect-android-kotlin-metadata /path/Example.apk --package-prefix com.examp
 rea inspect-android-kotlin-metadata /path/Example.apk --class-name com.example.api.ApiService
 ```
 
-The MCP arguments are `path` and optional `class_name`, `package_prefix` and
-`limit` (default 100, maximum 500). `class_name` and `package_prefix` cannot be
-combined.
+The MCP arguments are `path` and optional `class_name`, `package_prefix`,
+`limit`, `detail` and `view`. `class_name` and `package_prefix` cannot be
+combined. Complete delivery (the default) lists at most 500 classes inline,
+`limit` defaulting to 100.
+
+### Page a large inventory
+
+Select `detail: "summary"` to retain the complete inventory and read it in
+pages. The analysis then lists as many classes as a 4 MiB retained allowance
+holds (`limit` defaults to that maximum), the tool returns a bounded summary with
+the whole-APK histograms and a 64-class preview, and the complete Evidence stays
+retained. If the allowance stops the listing early, `coverage.status` is
+`partial` and `unknowns` says so; every matching class is still counted in
+`matching_classes`, and narrowing with `package_prefix` lists the rest.
+
+```bash
+rea inspect-android-kotlin-metadata /path/Example.apk --detail summary --evidence_output kotlin.json
+rea inspect-analysis-view '{"source":{"kind":"retained-evidence","evidence_id":"ev_..."},"view":{"kind":"android-kotlin","collection":"classes","offset":500,"limit":500,"fields":["class_name","kind"]}}' --evidence-bundle kotlin.json
+```
+
+Use the summary's `parent_evidence_id` with `inspect_analysis_view` on the same
+connection, or the exported bundle offline; views never reopen the APK or rerun
+the DEX reader. A page accepts `offset`, `limit`, exact `indices` and
+`class_names`, a literal `package_prefix`, `kinds` and `fields`; filters combine
+with AND and an explicit empty array matches nothing. Every row carries its
+`row_index` in the retained inventory. Follow `coverage.next_offset` until
+`coverage.exhausted`. With `detail: "summary"` and `view` on the first call, the
+requested page is returned directly, as the other Android operations do; complete
+detail rejects a view.
 
 - `coverage` counts DEX members, examined classes and classes with metadata.
   `versions` and `kinds` always cover every class; `matching_classes` counts the

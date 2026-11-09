@@ -29,10 +29,10 @@ export const androidKotlinMetadataSelectionSchema = z.strictObject({
   limit: z
     .int()
     .min(1)
-    .max(ANDROID_KOTLIN_METADATA_INLINE_ROWS)
+    .max(ANDROID_KOTLIN_METADATA_RETAINED_ROWS)
     .optional()
     .describe(
-      `Maximum listed classes (default ${ANDROID_KOTLIN_METADATA_DEFAULT_ROWS}, maximum ${ANDROID_KOTLIN_METADATA_INLINE_ROWS})`,
+      `Maximum listed classes (default ${ANDROID_KOTLIN_METADATA_DEFAULT_ROWS}). Complete detail lists at most ${ANDROID_KOTLIN_METADATA_INLINE_ROWS}; detail summary retains up to ${ANDROID_KOTLIN_METADATA_RETAINED_ROWS} within a 4 MiB allowance and defaults to that maximum`,
     ),
 });
 

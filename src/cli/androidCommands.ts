@@ -21,6 +21,8 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
 import { androidJniSelectionSchema } from "../domain/android/androidJniBindings.js";
 import { androidJniDeliverySchema } from "../domain/android/androidJniQuery.js";
+import { androidKotlinDeliverySchema } from "../domain/android/androidKotlinQuery.js";
+import { parseAndroidKotlinInspection } from "../application/android/AndroidKotlinInspection.js";
 import { androidInputSchemas } from "../domain/android/androidAnalysis.js";
 import { cliIntegerArgument } from "./options.js";
 
@@ -207,6 +209,7 @@ export const registerAndroidCommands = (
       "Report kotlin.Metadata coverage and Kotlin declarations in an APK without executing it",
     args: z.object({ path }),
     options: z.object({
+      ...analysisEvidenceDeliveryOptions,
       className:
         androidInputSchemas.inspect_android_kotlin_metadata.shape.class_name,
       packagePrefix:
@@ -214,23 +217,62 @@ export const registerAndroidCommands = (
           .package_prefix,
       limit: cliIntegerArgument(1)
         .optional()
-        .describe("Maximum listed classes (default 100, maximum 500)"),
+        .describe(
+          "Maximum listed classes (default 100); complete detail allows 500, summary retains more",
+        ),
+      view: z
+        .string()
+        .optional()
+        .describe(
+          "JSON android-kotlin class page; requires --detail summary and --evidence_output",
+        ),
     }),
     run: ({ args, options }) =>
-      execute(
-        CLI_COMMANDS.inspectAndroidKotlinMetadata,
-        "inspect_android_kotlin_metadata",
-        {
-          path: args.path,
-          ...(options.className === undefined
-            ? {}
-            : { class_name: options.className }),
-          ...(options.packagePrefix === undefined
-            ? {}
-            : { package_prefix: options.packagePrefix }),
-          ...(options.limit === undefined ? {} : { limit: options.limit }),
-        },
-        args.path,
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectAndroidKotlinMetadata,
+          async () => {
+            const operation = "inspect_android_kotlin_metadata";
+            const delivery = parseCliAnalysisEvidenceDelivery(
+              operation,
+              options,
+              androidKotlinDeliverySchema,
+            );
+            if (!delivery.ok) return projectAnalysisError(delivery.error);
+            const parsed = parseAndroidKotlinInspection(
+              {
+                path: args.path,
+                detail: delivery.value.detail,
+                ...(options.className === undefined
+                  ? {}
+                  : { class_name: options.className }),
+                ...(options.packagePrefix === undefined
+                  ? {}
+                  : { package_prefix: options.packagePrefix }),
+                ...(options.limit === undefined
+                  ? {}
+                  : { limit: options.limit }),
+              },
+              signal,
+            );
+            if (!parsed.ok) return projectAnalysisError(parsed.error);
+            return deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
+              run: () =>
+                service.execute(operation, parsed.value.analysis, { signal }),
+              service: { close: () => provider.close() },
+              providerId: "jadx",
+              operation,
+              signal,
+              detail: delivery.value.detail,
+              evidenceOutput: delivery.value.evidenceOutput,
+              ...(delivery.value.view === undefined
+                ? {}
+                : { view: delivery.value.view }),
+            });
+          },
+        ),
       ),
   });
   cli.command(CLI_COMMANDS.inspectAndroidClass, {

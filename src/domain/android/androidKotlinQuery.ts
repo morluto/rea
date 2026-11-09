@@ -47,14 +47,22 @@ export const androidKotlinDeliverySchema = z
   })
   .superRefine(validateAndroidPackageDelivery);
 
-/** Complete delivery inlines the listing; only a retained summary may hold more. */
+/** One exact class or a prefix, never both; complete delivery inlines at most 500 rows. */
 export const validateAndroidKotlinListing = (
   value: {
     readonly detail?: "complete" | "summary" | undefined;
     readonly limit?: number | undefined;
+    readonly class_name?: string | undefined;
+    readonly package_prefix?: string | undefined;
   },
   context: z.RefinementCtx,
 ): void => {
+  if (value.class_name !== undefined && value.package_prefix !== undefined)
+    context.addIssue({
+      code: "custom",
+      path: ["package_prefix"],
+      message: "class_name selects one exact class; omit package_prefix.",
+    });
   if (
     value.detail !== "summary" &&
     value.limit !== undefined &&
