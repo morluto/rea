@@ -189,7 +189,7 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z.string().describe("ASAR or extracted application path"),
+      path: localPath.describe("ASAR or extracted application path"),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
