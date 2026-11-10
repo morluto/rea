@@ -237,8 +237,8 @@ it.each([true, false])(
       .filter((line) => !line.includes("agentenv_protocol"))
       .join("\n");
     const pairs = childFirst
-      ? '[("settings/profile", ".config/notes"), ("settings", ".local/share/notes")]'
-      : '[("settings", ".local/share/notes"), ("settings/profile", ".config/notes")]';
+      ? '[("settings/profile", ".config/notes", "directory"), ("settings", ".local/share/notes", "directory")]'
+      : '[("settings", ".local/share/notes", "directory"), ("settings/profile", ".config/notes", "directory")]';
     const program = `${imports}
 STATE_ALIASES = ${pairs}
 STATE_ALIAS_DIRECTORIES = frozenset()
@@ -254,6 +254,29 @@ _ensure_state_aliases(home)
   },
 );
 
+it("creates a legacy parent alias when a child alias proves it is a directory", async () => {
+  const root = await createTestTempDirectory("desktop-legacy-parent-alias-");
+  const home = join(root, "home");
+  await mkdir(join(home, ".config", "notes"), { recursive: true });
+  await writeFile(join(home, ".config", "notes", "profile.ini"), "profile");
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+STATE_ALIASES = [("settings", ".local/share/notes", "unknown"), ("settings/profile", ".config/notes", "directory")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+  expect(
+    await readFile(join(home, "settings", "profile", "profile.ini"), "utf8"),
+  ).toBe("profile");
+  expect(
+    (await stat(join(home, ".local", "share", "notes"))).isDirectory(),
+  ).toBe(true);
+});
+
 it("restores a selected alias to an existing settings file", async () => {
   const root = await createTestTempDirectory("desktop-file-alias-");
   const home = join(root, "home");
@@ -263,8 +286,7 @@ it("restores a selected alias to an existing settings file", async () => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
-STATE_ALIASES = [("settings", ".config/tellicorc")]
-STATE_ALIAS_DIRECTORIES = frozenset()
+STATE_ALIASES = [("settings", ".config/tellicorc", "file")]
 ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
@@ -272,6 +294,47 @@ _ensure_state_aliases(home)
 `;
   execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
   expect(await readFile(join(home, "settings"), "utf8")).toBe("saved");
+
+  const absent = join(root, "absent");
+  await mkdir(join(absent, ".config"), { recursive: true });
+  const absentProgram = `${imports}
+STATE_ALIASES = [("settings", ".config/tellicorc", "file")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", absentProgram, absent], { encoding: "utf8" });
+  await writeFile(join(absent, "settings"), "created");
+  expect(await readFile(join(absent, ".config", "tellicorc"), "utf8")).toBe(
+    "created",
+  );
+  expect((await stat(join(absent, ".config", "tellicorc"))).isFile()).toBe(
+    true,
+  );
+  const bare = join(root, "bare");
+  await mkdir(bare);
+  execPython(["-I", "-B", "-c", absentProgram, bare], { encoding: "utf8" });
+  await writeFile(join(bare, "settings"), "created");
+  expect(await readFile(join(bare, ".config", "tellicorc"), "utf8")).toBe(
+    "created",
+  );
+
+  const legacy = join(root, "legacy");
+  await mkdir(join(legacy, ".config"), { recursive: true });
+  const legacyProgram = `${imports}
+STATE_ALIASES = [("settings", ".config/tellicorc", "unknown")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", legacyProgram, legacy], { encoding: "utf8" });
+  await writeFile(join(legacy, "settings"), "legacy");
+  expect(await readFile(join(legacy, ".config", "tellicorc"), "utf8")).toBe(
+    "legacy",
+  );
+  expect((await stat(join(legacy, ".config", "tellicorc"))).isFile()).toBe(
+    true,
+  );
 });
 
 it("restores a selected settings alias without replacing an existing path", async () => {
@@ -296,8 +359,7 @@ it("restores a selected settings alias without replacing an existing path", asyn
 SEED_HOME = "/home/ada"
 TEXT_SEEDS = frozenset()
 SEED_MODES = {}
-STATE_ALIASES = [("settings", ".config/notes")]
-STATE_ALIAS_DIRECTORIES = frozenset({"settings"})
+STATE_ALIASES = [("settings", ".config/notes", "directory")]
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 home = Path(sys.argv[2])

@@ -544,7 +544,7 @@ jobs:
           --coverage.reporter=text
           --coverage.reporter=json-summary
           --coverage.reporter=lcov
-          --reporter=default
+          --reporter=dot
           --reporter=junit
           --reporter=json
           --reporter=./scripts/ci/test-timing-reporter.mjs
@@ -559,7 +559,7 @@ jobs:
            needs.test-source.result == 'success' || needs.test-source.result == 'failure')
         run: >-
           npm exec -- vitest --merge-reports
-          --reporter=default
+          --reporter=dot
           --reporter=junit
           --reporter=json
           --reporter=./scripts/ci/test-timing-reporter.mjs

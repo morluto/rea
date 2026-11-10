@@ -51,7 +51,13 @@ cliTest(
     const har = join(root, "grafana.har");
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const built = await cli.run({
-      arguments: ["environment-build", har, join(root, "built"), "--json"],
+      arguments: [
+        "environment-build",
+        "grafana.har",
+        join(root, "built"),
+        "--json",
+      ],
+      cwd: root,
       timeoutMs: 60_000,
     });
     expect(built.exitCode, built.stderr).toBe(0);
@@ -67,11 +73,12 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        har,
+        "grafana.har",
         "har",
         "--format",
         "json",
       ],
+      cwd: root,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const capture = join(root, "capture.json");
@@ -114,6 +121,13 @@ cliTest(
         ),
         file,
       ).toBe(0);
+    const published = JSON.parse(
+      await readFile(
+        join(root, "built", "envs", "grafana-example", "evidence.json"),
+        "utf8",
+      ),
+    ) as { caller_input_path?: string };
+    expect(published.caller_input_path).toBe("grafana.har");
     expect(built.json).toMatchObject({
       tool_count: (exported.json as { tool_count: number }).tool_count,
       files: (exported.json as { files: unknown[] }).files,
