@@ -94,6 +94,12 @@ export async function startBrowserRequestSite() {
       writes.push({
         method: request.method,
         path: url.pathname,
+        query: url.search,
+        body,
+        contentType: request.headers["content-type"],
+        cookie:
+          request.headers.cookie?.includes(`csrftoken=${requestFixtureCsrf}`) ??
+          false,
         csrf: request.headers["x-csrftoken"] === requestFixtureCsrf,
         bearer:
           request.headers.authorization === `Bearer ${requestFixtureToken}`,

@@ -7,6 +7,30 @@ import {
   stringifyHermesConfigurationYaml,
 } from "./HermesConfigurationYaml.js";
 
+it("preserves annotations on changed registration mappings and scalar fields", () => {
+  const source =
+    "mcp_servers:\n  rea: # registration note\n    command: old # command note\n    env: # environment note\n      MODE: old # mode note\n    args: # arguments note\n      - old # argument note\n";
+  const updated = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+    command: "new",
+    env: { MODE: "new" },
+    args: ["new"],
+  });
+  expect(parseHermesConfigurationYaml(updated)).toEqual({
+    mcp_servers: {
+      rea: { command: "new", env: { MODE: "new" }, args: ["new"] },
+    },
+  });
+  for (const comment of [
+    "registration note",
+    "command note",
+    "environment note",
+    "mode note",
+    "arguments note",
+    "argument note",
+  ])
+    expect(updated.split(comment)).toHaveLength(2);
+});
+
 it("refreshes an anchored entry without changing another server's resolved value", () => {
   const source =
     "mcp_servers:\n  rea: &server\n    command: old\n    enabled: false\n  other: *server # Independent server\n";
@@ -21,6 +45,31 @@ it("refreshes an anchored entry without changing another server's resolved value
     },
   });
   expect(updated).toContain("# Independent server");
+});
+
+it("keeps comments once when an updated anchored entry has a surviving consumer", () => {
+  const source =
+    "mcp_servers:\n  rea: &server # registration note\n    # command key note\n    command: old # command note\n    enabled: true # enabled note\n    env: # environment note\n      MODE: old # mode note\n  other: *server\n";
+  const updated = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+    command: "new",
+    enabled: true,
+    env: { MODE: "new" },
+  });
+  expect(parseHermesConfigurationYaml(updated)).toEqual({
+    mcp_servers: {
+      rea: { command: "new", enabled: true, env: { MODE: "new" } },
+      other: { command: "old", enabled: true, env: { MODE: "old" } },
+    },
+  });
+  for (const comment of [
+    "registration note",
+    "command key note",
+    "command note",
+    "enabled note",
+    "environment note",
+    "mode note",
+  ])
+    expect(updated.split(comment)).toHaveLength(2);
 });
 
 describe("Hermes surviving anchor definitions", () => {
@@ -498,4 +547,24 @@ describe("Hermes configuration YAML", () => {
       parseHermesConfigurationYaml("%YAML 1.2\n---\ndate: 2026-10-14\n"),
     ).toEqual({ date: new Date("2026-10-14") });
   });
+});
+
+it("keeps argument annotations with unique values and retains removed annotations on the list", () => {
+  const source =
+    "mcp_servers:\n  rea:\n    args:\n      - mcp # mcp note\n      - old # removed note\n      - dup # first duplicate\n      - dup # second duplicate\n";
+  const updated = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+    args: ["script", "mcp", "dup"],
+  });
+  expect(parseHermesConfigurationYaml(updated)).toEqual({
+    mcp_servers: { rea: { args: ["script", "mcp", "dup"] } },
+  });
+  expect(updated).toMatch(/- mcp # mcp note/u);
+  expect(updated).not.toMatch(/- script # mcp note/u);
+  for (const comment of [
+    "mcp note",
+    "removed note",
+    "first duplicate",
+    "second duplicate",
+  ])
+    expect(updated.split(comment)).toHaveLength(2);
 });

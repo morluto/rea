@@ -609,26 +609,3 @@ export const parseAmStartOutput = (
       (text === "" ? "am start returned no activity" : text.slice(0, 512)),
   };
 };
-
-const PNG_SIGNATURE = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-]);
-
-/** Read image dimensions from a PNG header, or null for other payloads. */
-export const parsePngDimensions = (
-  bytes: Uint8Array,
-): {
-  width: number | null;
-  height: number | null;
-} => {
-  if (
-    bytes.length < 24 ||
-    !Buffer.from(bytes.subarray(0, 8)).equals(PNG_SIGNATURE)
-  )
-    return { width: null, height: null };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return {
-    width: view.getUint32(16),
-    height: view.getUint32(20),
-  };
-};

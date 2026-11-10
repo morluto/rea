@@ -17,6 +17,9 @@ import {
   requireMcpOutput,
 } from "./mcp-verifier-results.mjs";
 import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
+import { verifyLegacyValueScopeSnapshot } from "./ghidra-value-scope-snapshot-e2e.mjs";
+import { verifyGhidraProjectIdentity } from "./real-ghidra-project-identity.mjs";
+import { verifyGhidraSocketBoundary } from "./real-ghidra-socket-boundary.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
@@ -212,8 +215,29 @@ async function verifyNativeValueAdapters(
       procedure,
       globalAddress,
     );
+    assert.ok(
+      mcpGraph.limitations.some(
+        (value) =>
+          value.includes("analyze_function") &&
+          value.includes("LOAD and STORE") &&
+          value.includes("address varnodes"),
+      ),
+    );
     assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
     assert.deepEqual(mcpGraph, cliGraph);
+    const warmReply = await client.callTool(
+      {
+        name: "trace_native_values",
+        arguments: { procedure, max_depth: 2, max_functions: 8, limit: 3 },
+      },
+      { timeout: 180000 },
+    );
+    const warmEvidence = parseEvidence(
+      requireMcpOutput(warmReply, "trace_native_values"),
+    );
+    const warmGraph = nativeValueTraceSchema.parse(
+      warmEvidence.normalized_result,
+    );
     const analyzed = await client.callTool(
       {
         name: "analyze_function",
@@ -228,6 +252,26 @@ async function verifyNativeValueAdapters(
     );
     assert.equal(functionEvidence.operation, "analyze_function");
     assert.equal(functionEvidence.provider.id, "ghidra");
+    const flow = functionEvidence.normalized_result.native_value_flow;
+    assert.equal(flow.available, true);
+    const identifiesEffectScope = (value) =>
+      value.includes("LOAD and STORE") && value.includes("address varnodes");
+    assert.ok(flow.limitations.some(identifiesEffectScope));
+    const effectsView = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: functionEvidence.evidence_id,
+        },
+        view: { kind: "native", facet: "value_flow_effects" },
+      },
+    });
+    assert.notEqual(effectsView.isError, true, JSON.stringify(effectsView));
+    const effectsPage = requireMcpOutput(effectsView, "inspect_analysis_view");
+    assert.ok(
+      effectsPage.normalized_result.limitations.some(identifiesEffectScope),
+    );
     assert.deepEqual(
       functionEvidence.normalized_result.facet_availability,
       Object.fromEntries(
@@ -253,20 +297,15 @@ async function verifyNativeValueAdapters(
       functionEvidence.analysis_profile,
     );
     assert.deepEqual(functionProfile, upstreamProfile);
-    const comparison = await client.callTool(
-      {
-        name: "compare_functions",
-        arguments: {
-          left: analyzed.structuredContent,
-          right: analyzed.structuredContent,
-        },
-      },
-      { timeout: 180000 },
-    );
-    assert.notEqual(comparison.isError, true, JSON.stringify(comparison));
-    assert.notEqual(comparison.structuredContent, undefined);
-    const comparisonEvidence = parseEvidence(
-      requireMcpOutput(comparison, "compare_functions"),
+    await verifyLegacyValueScopeSnapshot(client, {
+      target,
+      procedure,
+      observed: functionEvidence,
+      env,
+    });
+    const comparisonEvidence = await compareRetainedFunctionEvidence(
+      client,
+      functionEvidence,
     );
     assert.equal(
       comparisonEvidence.normalized_result.status,
@@ -286,6 +325,25 @@ async function verifyNativeValueAdapters(
       "MCP omitted structured Evidence bundle",
     );
     const bundle = requireMcpEvidenceBundle(bundleReply);
+    for (const [evidence, graph] of [
+      [mcpEvidence, mcpGraph],
+      [warmEvidence, warmGraph],
+    ]) {
+      for (const source of [
+        ...graph.procedures,
+        ...graph.nodes,
+        ...graph.edges,
+      ]) {
+        assert.ok(evidence.evidence_links.includes(source.evidence_id));
+        assert.equal(
+          bundle.records.find(
+            (record) => record.evidence_id === source.evidence_id,
+          )?.operation,
+          "analyze_function",
+          `Missing source Evidence ${source.evidence_id}`,
+        );
+      }
+    }
     for (const evidence of [
       mcpEvidence,
       functionEvidence,
@@ -328,6 +386,17 @@ async function verifyNativeValueAdapters(
     await client.close();
     await transport.close();
   }
+  const projectIdentity = await verifyGhidraProjectIdentity({
+    target,
+    entrypoint,
+    env,
+  });
+  const socketBoundary = await verifyGhidraSocketBoundary({
+    target,
+    procedure,
+    entrypoint,
+    env,
+  });
   return {
     mocked: false,
     cli: true,
@@ -335,6 +404,8 @@ async function verifyNativeValueAdapters(
     inline_evidence: true,
     direct_function_comparison: true,
     boundaries,
+    project_identity: projectIdentity,
+    socket_boundary: socketBoundary,
     nodes: cliGraph.total_nodes,
     edges: cliGraph.total_edges,
     decompilations: cliGraph.decompilations,
@@ -395,21 +466,27 @@ async function verifyUnresolvedCallEvidence(client) {
   assert.equal(trace.goal_status, "unknown");
   assert.equal(trace.truncated, true);
   assert.ok(trace.residual_unknowns.length > 0);
+  const compared = await compareRetainedFunctionEvidence(client, evidence);
+  assert.equal(compared.normalized_result.status, "unknown");
+}
+
+/** Compare an already admitted function record without retransmitting its payload. */
+export async function compareRetainedFunctionEvidence(client, evidence) {
+  const reference = {
+    kind: "retained-evidence",
+    evidence_id: evidence.evidence_id,
+  };
   const compared = await client.callTool(
     {
       name: "compare_functions",
       arguments: {
-        left: analyzed.structuredContent,
-        right: analyzed.structuredContent,
+        left: reference,
+        right: reference,
       },
     },
     { timeout: 180000 },
   );
   assert.notEqual(compared.isError, true, JSON.stringify(compared));
   assert.notEqual(compared.structuredContent, undefined);
-  assert.equal(
-    parseEvidence(requireMcpOutput(compared, "compare_functions"))
-      .normalized_result.status,
-    "unknown",
-  );
+  return parseEvidence(requireMcpOutput(compared, "compare_functions"));
 }

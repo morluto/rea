@@ -3,6 +3,16 @@ import { describe, expect, it } from "vitest";
 import { DecodedNdjsonLineBuffer } from "./DecodedNdjsonLineBuffer.js";
 
 describe("decoded NDJSON line buffer", () => {
+  it("drains complete buffered lines on an empty push after iteration stops", () => {
+    const lines = new DecodedNdjsonLineBuffer();
+    const iterator = lines.push("first\nsecond\nthird\npartial");
+    expect(iterator.next()).toEqual({ value: "first", done: false });
+    iterator.return(undefined);
+
+    expect([...lines.push("")]).toEqual(["second", "third"]);
+    expect([...lines.push(" line\n")]).toEqual(["partial line"]);
+  });
+
   it("joins fragments and yields trimmed nonblank complete lines", () => {
     const lines = new DecodedNdjsonLineBuffer();
 

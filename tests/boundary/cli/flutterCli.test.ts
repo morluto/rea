@@ -110,6 +110,7 @@ it("inspects the caller-selected nonstandard ABI through the public CLI", async 
   ]);
   expect(selected.exitCode).toBe(0);
   expect(JSON.parse(selected.stdout)).toMatchObject({
+    caller_input_path: path,
     parameters: { path, abi: "ARM64-V8A" },
     normalized_result: {
       abi: "ARM64-V8A",
@@ -170,7 +171,11 @@ it.each([
       process.exitCode = exitCode;
     });
     const control = await serveWithCleanupRetry(command, apk, false);
-    expect(control).toMatchObject({ operation, confidence: "observed" });
+    expect(control).toMatchObject({
+      operation,
+      confidence: "observed",
+      caller_input_path: apk,
+    });
     expect(process.exitCode).toBe(exitCode);
     const interrupted = await serveWithCleanupRetry(command, apk, true);
     expect(process.exitCode).toBe(130);
@@ -180,6 +185,7 @@ it.each([
         operation,
         partial_observation: {
           operation,
+          caller_input_path: apk,
           subject: { local_path: apk },
           confidence: "observed",
           normalized_result: control.normalized_result,
@@ -193,6 +199,7 @@ it.each([
         resources: [expect.stringContaining("rea-flutter-")],
         partial_observation: {
           operation,
+          caller_input_path: apk,
           normalized_result: control.normalized_result,
         },
       },

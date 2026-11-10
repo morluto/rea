@@ -1,11 +1,15 @@
 import { z } from "zod";
-import type { AnalysisSettingId } from "./analysisSettings.js";
+import type {
+  AnalysisInvocationSettingLimit,
+  AnalysisSettingId,
+  AnalysisSettingLimit,
+} from "./analysisSettings.js";
 import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
+  MAX_NODE_TIMER_DELAY_MS,
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
   MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
@@ -42,7 +46,7 @@ interface SettingDefinition {
 }
 const timer = {
   minimum: 1,
-  maximum: MAX_PROVIDER_STARTUP_TIMEOUT_MS,
+  maximum: MAX_NODE_TIMER_DELAY_MS,
   unit: "ms",
   appliesAt: "next_operation",
 } as const;
@@ -225,8 +229,8 @@ export const analysisSettingValueSchema = (id: AnalysisSettingId) => {
 export const analysisSettingLimit = (
   setting: AnalysisSettingId,
   effective_value: number | null,
-  source: import("./analysisSettings.js").AnalysisSettingLimit["source"],
-): import("./analysisSettings.js").AnalysisSettingLimit => {
+  source: AnalysisSettingLimit["source"],
+): AnalysisSettingLimit => {
   const definition = analysisSettingDefinition(setting);
   return {
     setting,
@@ -242,5 +246,20 @@ export const analysisSettingLimit = (
     ...(definition.parameter === undefined
       ? {}
       : { parameter: definition.parameter }),
+  };
+};
+
+/** Re-scope an enforced limit for a caller whose runtime ended with this invocation. */
+export const invocationSettingLimit = ({
+  applies_at: _appliesAt,
+  scope: _scope,
+  ...facts
+}: AnalysisSettingLimit): AnalysisInvocationSettingLimit => {
+  const environment = analysisSettingDefinition(facts.setting).environment;
+  return {
+    ...facts,
+    applies_at: "next_invocation",
+    scope: "rea-invocation",
+    ...(environment === undefined ? {} : { environment }),
   };
 };

@@ -48,7 +48,7 @@ import {
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
@@ -67,6 +67,7 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import {
+  compactInputSchemaByDefault,
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -93,9 +94,16 @@ export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanu
 export const configureClientConfiguration = async (
   client: SetupClient,
   environment: SetupProviderEnvironment = {},
-  command: readonly string[] = npxRegistrationCommand(),
+  command: readonly string[] = currentClientRegistrationCommand(),
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationResult> => {
+  if (command.length === 0)
+    return {
+      status: "failed",
+      reason: "registration_ownership",
+      detail:
+        "The running REA entrypoint could not be identified; run setup from an installed REA command.",
+    };
   if (client.configPathError !== undefined)
     return { status: "failed", reason: "path" };
   const transactionPath = await resolveClientConfigTransactionPath(
@@ -372,7 +380,6 @@ const persistClientConfiguration = async ({
       transactionPath,
       serialized.value,
       original,
-      0o600,
       { requestedPath: client.configPath, state: snapshot?.state },
     );
   } catch (cause: unknown) {
@@ -780,7 +787,7 @@ const readZcodeFallbackServers = async (
         path,
         detail: ownershipBlocker,
       });
-    const environment = clientRegistrationEnvironment(parsed);
+    const environment = clientRegistrationEnvironment(parsed, client.name);
     if (!environment.ok)
       return err({
         kind: "malformed",
@@ -900,6 +907,7 @@ const clientConfigurationDesired = async (
   if (format === "dsh") {
     const validated = clientRegistrationEnvironment(
       effective,
+      client.name,
       providerEnvironment,
     );
     if (!validated.ok) throw validated.error;
@@ -913,6 +921,7 @@ const clientConfigurationDesired = async (
   }
   const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
+    client.name,
     providerEnvironment,
     "effective",
     client.name === "codex" || client.name === "kimi"
@@ -925,12 +934,13 @@ const clientConfigurationDesired = async (
   // timeout facts; the target file's fragment remains the value being written.
   const environment = clientRegistrationEnvironment(
     parsed,
+    client.name,
     providerEnvironment,
     "fragment",
   );
   if (!environment.ok) throw environment.error;
   const registrationEnvironment =
-    client.name === "kimi" &&
+    compactInputSchemaByDefault(client) &&
     snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
       undefined
       ? {

@@ -11,11 +11,50 @@ import {
 } from "../cliBuiltinArguments.js";
 import { CLI_OUTPUT_FORMATS, parseCliOutputArguments } from "../cliOutput.js";
 import { bashCompletionScript } from "./bashCompletionRegistration.js";
+import { MCP_BUILTIN_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
+import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
 
 type Commands = Parameters<typeof Completions.complete>[0];
 type CompletionCli = Parameters<typeof Cli.toCommands.get>[0];
 type ServeOptions = NonNullable<Parameters<CompletionCli["serve"]>[1]>;
 const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);
+
+/** Supplement Incur's built-in setup instructions without replacing its help. */
+export const completionHelpNote = (
+  arguments_: readonly string[],
+): string | undefined => {
+  const split = splitIncurBuiltinArguments(arguments_);
+  const words =
+    split.command[0] === "rea" ? split.command.slice(1) : split.command;
+  if (words[0] !== "completions") return undefined;
+  const rest = words.slice(1);
+  if (
+    rest.length > 1 ||
+    (rest.length === 1 &&
+      !CLI_COMPLETION_SHELLS.includes(
+        rest[0] as (typeof CLI_COMPLETION_SHELLS)[number],
+      ))
+  )
+    return undefined;
+  const values = new Set(split.outputValues.map(({ index }) => index));
+  const flags = arguments_.filter((_, index) => !values.has(index));
+  if (
+    flags.some((word) =>
+      [
+        "--schema",
+        "--llms",
+        "--llms-full",
+        "--mcp",
+        "--update",
+        "--version",
+      ].includes(word),
+    )
+  )
+    return undefined;
+  if (rest.length > 0 && !flags.includes("--help") && !flags.includes("-h"))
+    return undefined;
+  return "Zsh: initialize completion with `autoload -Uz compinit; compinit` before evaluating the zsh hook. If your shell already runs compinit, place the hook after it.\n";
+};
 
 const standardGlobals = (root: boolean): z.ZodObject =>
   z.object(
@@ -47,24 +86,7 @@ const completionCommands = (cli: CompletionCli): Commands => {
   commands.set("mcp", {
     _group: true,
     description: "Register as MCP server",
-    commands: new Map([
-      [
-        "add",
-        {
-          description: "Register as MCP server",
-          alias: { command: "c" },
-          options: z.object({
-            agent: z.string().optional(),
-            command: z.string().optional(),
-            noGlobal: z.boolean().optional(),
-          }),
-        },
-      ],
-      [
-        "doctor",
-        { description: "Validate MCP server startup and tool listing" },
-      ],
-    ]),
+    commands: MCP_BUILTIN_SUBCOMMANDS,
   });
   commands.set("completions", {
     _group: true,
@@ -104,15 +126,20 @@ export const createCliCompletions = (
       const before = splitIncurBuiltinArguments(
         normalizeCliArguments(words.slice(1, index)),
       ).command;
+      if (before.includes("--")) return true;
       const input = [cli.name, ...before, words[index] ?? ""];
+      const doctor = before[0] === "mcp" && before[1] === "doctor";
       const candidates = Completions.complete(
         completionCommands(cli),
         undefined,
         input,
         input.length - 1,
         {
-          schema: standardGlobals(before.length === 0),
-          alias: { help: "h" },
+          schema: doctor
+            ? // The launcher consumes this global before doctor parses options.
+              MCP_DOCTOR_OPTIONS.extend({ timings: z.boolean().optional() })
+            : standardGlobals(before.length === 0),
+          alias: doctor ? MCP_DOCTOR_ALIAS : { help: "h" },
         },
       );
       const result = Completions.format(shell, candidates);

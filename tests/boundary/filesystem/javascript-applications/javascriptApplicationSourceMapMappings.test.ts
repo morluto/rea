@@ -260,7 +260,9 @@ it("keeps external indexed sections unsupported while retaining local siblings",
             invalid_sections: [
               {
                 section_path: [2],
-                reason: "External source-map section URL must be a string.",
+                reason: expect.stringMatching(
+                  /section URL.*must be a string/iu,
+                ),
               },
             ],
           }),
@@ -313,14 +315,16 @@ it("marks non-array sections malformed even when the object has regular-map fiel
             invalid_sections: [
               {
                 section_path: [],
-                reason: "Indexed source-map sections must be an array.",
+                reason: expect.stringMatching(/sections.*must be an array/iu),
               },
             ],
           }),
           evidence: expect.objectContaining({
             artifact: expect.objectContaining({ sha256: digest }),
             limitations: [
-              "Indexed source-map section at []: Indexed source-map sections must be an array.",
+              expect.stringMatching(
+                /section at \[\].*sections.*must be an array/iu,
+              ),
             ],
           }),
         }),

@@ -378,7 +378,7 @@ const comparableCaptures = (
     expect(request?.body_shapes.status).toBe("included");
     expect(
       request?.body_shapes[source === "request" ? "request" : "response"],
-    ).not.toBeNull();
+    ).toEqual(expect.any(Object));
   }
   return [before, after];
 };

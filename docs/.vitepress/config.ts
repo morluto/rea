@@ -1,4 +1,18 @@
 import { defineConfig } from "vitepress";
+import { dirname, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  documentationRewrites,
+  documentationSections,
+} from "./documentation.js";
+
+const documentationRoot = fileURLToPath(new URL("..", import.meta.url));
+const rewrites: Record<string, string> = {
+  ...documentationRewrites,
+  "README.md": "documentation.md",
+  "specs/README.md": "specs/index.md",
+  "adr/README.md": "adr/index.md",
+};
 
 export default defineConfig({
   title: "REA",
@@ -6,109 +20,92 @@ export default defineConfig({
     "Reverse engineer binaries, applications, and runtime behavior with one CLI and MCP server.",
   lang: "en-US",
   base: "/rea/",
+  rewrites,
+  markdown: {
+    config(md) {
+      // Repository links resolve from their physical source. Render them from
+      // the stable public route instead, including links across categories.
+      md.core.ruler.after("inline", "documentation-source-links", (state) => {
+        const physicalPath =
+          state.env.realPath ??
+          (state.env.relativePath
+            ? resolve(documentationRoot, state.env.relativePath)
+            : null);
+        if (physicalPath === null) return;
+        const renderedPath =
+          state.env.path ??
+          resolve(
+            documentationRoot,
+            rewrites[state.env.relativePath] ?? state.env.relativePath,
+          );
+        for (const block of state.tokens) {
+          for (const token of block.children ?? []) {
+            const attribute =
+              token.type === "link_open"
+                ? "href"
+                : token.type === "image"
+                  ? "src"
+                  : null;
+            if (attribute === null) continue;
+            const destination = token.attrGet(attribute);
+            if (
+              !destination ||
+              /^(?:[a-z][a-z\d+.-]*:|[/#])/iu.test(destination)
+            )
+              continue;
+            const separator = destination.search(/[?#]/u);
+            const path =
+              separator === -1 ? destination : destination.slice(0, separator);
+            const suffix = separator === -1 ? "" : destination.slice(separator);
+            const source = relative(
+              documentationRoot,
+              resolve(dirname(physicalPath), path),
+            )
+              .split(sep)
+              .join("/");
+            const rendered = relative(
+              dirname(renderedPath),
+              resolve(
+                documentationRoot,
+                source.startsWith("public/")
+                  ? source.slice("public/".length)
+                  : (rewrites[source] ?? source),
+              ),
+            )
+              .split(sep)
+              .join("/");
+            token.attrSet(attribute, rendered + suffix);
+          }
+        }
+      });
+    },
+  },
   srcExclude: ["readme/**"],
   themeConfig: {
     nav: [
       { text: "Get started", link: "/installation" },
+      { text: "Documentation", link: "/documentation" },
       { text: "Reference", link: "/mcp-contracts" },
       { text: "Roadmap", link: "/roadmap" },
     ],
     sidebar: [
       {
-        text: "Getting started",
+        text: "Documentation directory",
         items: [
-          { text: "Installation and setup", link: "/installation" },
-          { text: "Client configuration", link: "/client-configuration" },
-          { text: "CLI and Evidence", link: "/cli" },
-          { text: "Agent prompts", link: "/mcp-prompts" },
-          { text: "Roadmap", link: "/roadmap" },
+          { text: "All guides", link: "/documentation" },
+          { text: "Authoring conventions", link: "/development/documentation" },
+          { text: "Feature specifications", link: "/specs/" },
+          { text: "Architecture decisions", link: "/adr/" },
         ],
       },
-      {
-        text: "Investigation guides",
-        items: [
-          { text: "Native binaries", link: "/native-investigation" },
-          { text: "Go build metadata", link: "/go-binaries" },
-          { text: "IL2CPP metadata", link: "/il2cpp-metadata" },
-          { text: "Model artifacts", link: "/model-artifacts" },
-          { text: "Rust dependencies", link: "/rust-binaries" },
-          { text: "PE certificates", link: "/pe-certificates" },
-          { text: "PE imports", link: "/pe-imports" },
-          { text: "PE TLS/load config", link: "/pe-load-config" },
-          { text: "ELF notes", link: "/elf-notes" },
-          { text: "Apple IPS crash reports", link: "/apple-ips" },
-          { text: "Linux kernel modules", link: "/kernel-modules" },
-          { text: "CPython pyc files", link: "/python-pyc" },
-          { text: "Erlang BEAM", link: "/erlang-beam" },
-          {
-            text: "JavaScript and Electron",
-            link: "/javascript-artifact-reconstruction",
-          },
-          {
-            text: "JavaScript workflows",
-            link: "/javascript-application-workflows",
-          },
-          { text: "Browser observation", link: "/browser-observation" },
-          {
-            text: "Web network captures",
-            link: "/web-network-captures",
-          },
-          {
-            text: "Build RL environments",
-            link: "/agent-environments-quickstart",
-          },
-          { text: "Environment reference", link: "/agent-environments" },
-          { text: "Electron observation", link: "/electron-observation" },
-          { text: "Electron fuses", link: "/electron-fuses" },
-          { text: "Process capture", link: "/process-capture" },
-          { text: ".NET assemblies", link: "/managed-code-analysis" },
-          {
-            text: "Python packaged applications",
-            link: "/python-packaged-applications",
-          },
-          { text: "Android applications", link: "/android-analysis" },
-          { text: "Apple applications", link: "/apple-application-analysis" },
-          { text: "Desktop installations", link: "/desktop-applications" },
-          { text: "Firmware", link: "/firmware-analysis" },
-          { text: "SQLite databases", link: "/sqlite-databases" },
-          { text: "Packet captures", link: "/packet-captures" },
-          { text: "Signal recordings", link: "/signal-recordings" },
-        ],
-      },
-      {
-        text: "Provider guides",
-        collapsed: true,
-        items: [
-          { text: "IDA", link: "/ida-provider" },
-          { text: "Kuna", link: "/kuna-provider" },
-          { text: "Ghidra on Windows", link: "/windows-ghidra-p0" },
-          { text: "Ghidra DOS analysis", link: "/ghidra-dos" },
-          { text: "Ghidra raw binary", link: "/raw-binary" },
-          { text: "Ghidra NativeAOT", link: "/ghidra-nativeaot" },
-          { text: "Ghidra PowerPC", link: "/ghidra-ppc" },
-          { text: "Ghidra GameCube DOL", link: "/ghidra-dol" },
-          { text: "Ghidra semantics", link: "/ghidra-provider" },
-        ],
-      },
-      {
-        text: "Reference and development",
-        collapsed: true,
-        items: [
-          { text: "MCP contracts", link: "/mcp-contracts" },
-          { text: "Tool design", link: "/tool-design" },
-          {
-            text: "Admission limits and recovery",
-            link: "/design/limits-and-recovery",
-          },
-          { text: "Testing", link: "/testing" },
-          { text: "Client verification", link: "/client-verification" },
-          {
-            text: "Reconstruction readiness",
-            link: "/reconstruction-readiness",
-          },
-          { text: "Releasing", link: "/releasing" },
-        ],
-      },
+      ...documentationSections.map((section) => ({
+        text: section.text,
+        collapsed: section.text !== "Getting started",
+        items: section.items.map((item) => ({
+          text: item.text,
+          link: item.route,
+        })),
+      })),
     ],
     search: { provider: "local" },
     socialLinks: [

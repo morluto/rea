@@ -7,7 +7,8 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField } from "./options.js";
 import { inspectEvmInterfaceInputSchema } from "../domain/evm/evmInterface.js";
 
 /** Resolve operator paths and preserve explicit encoding through the shared workflow. */
@@ -26,12 +27,15 @@ export const registerEvmCommands = (
         .describe("Selected carrier representation"),
     }),
     options: z.object({
-      timeoutMs: inspectEvmInterfaceInputSchema.shape.timeout_ms,
+      timeoutMs: cliDecimalField(
+        inspectEvmInterfaceInputSchema.shape.timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, evmInterfaceModule.cliCommand, () =>
-          finishAnalysisCommand(
+          finishCliEvidenceCommand(
+            args.path,
             () =>
               service.inspect(
                 {

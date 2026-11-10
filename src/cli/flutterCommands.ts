@@ -1,5 +1,8 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { evidenceSchema } from "../domain/evidence.js";
+import {
+  evidenceSchema,
+  withEvidenceCallerInputPath,
+} from "../domain/evidence.js";
 import { z } from "incur";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
@@ -14,6 +17,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 
 /** One flutter command: CLI shape and the request it produces. */
 interface FlutterCommandSpec {
@@ -72,12 +76,13 @@ export const registerFlutterCommands = (
         withCommandCancellation((signal) =>
           logCliCommand(logger, spec.command, () =>
             finishAnalysisCommand(
-              () =>
+              bindCliEvidenceCallerPath(args.path as string, () =>
                 new FlutterBuildAnalysisService(provider).execute(
                   spec.operation,
                   spec.toInput(args, options ?? {}),
                   { signal },
                 ),
+              ),
               { close: () => provider.close() },
               "flutter",
               spec.operation,
@@ -86,7 +91,12 @@ export const registerFlutterCommands = (
               {
                 recoverCompletedObservation: (observation) => {
                   const parsed = evidenceSchema.safeParse(observation);
-                  return parsed.success ? parsed.data : undefined;
+                  return parsed.success
+                    ? withEvidenceCallerInputPath(
+                        parsed.data,
+                        args.path as string,
+                      )
+                    : undefined;
                 },
               },
             ).then(projectCliAnalysisResult),

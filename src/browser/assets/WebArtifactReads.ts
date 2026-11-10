@@ -1,6 +1,7 @@
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
 import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
@@ -250,9 +251,16 @@ const selectedFileError = (
   context: WebArtifactReadContext,
 ): AnalysisError | undefined => {
   const selected = (message: string) =>
-    new AnalysisInputError(context.operation, { cause }, [
-      { path: context.field, reason: "invalid_value", message },
-    ]);
+    new AnalysisInputError(
+      context.operation,
+      {
+        cause,
+        ...(cause instanceof ArtifactReaderFailure
+          ? stableArtifactInputRecovery(cause)
+          : {}),
+      },
+      [{ path: context.field, reason: "invalid_value", message }],
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

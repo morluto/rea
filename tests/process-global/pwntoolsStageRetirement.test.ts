@@ -23,10 +23,8 @@ import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { PwntoolsRecordedCrashProvider } from "../../src/native/pwntools/PwntoolsRecordedCrashProvider.js";
 import type { PwntoolsLauncher } from "../../src/native/pwntools/PwntoolsDecoder.js";
-import {
-  PWNTOOLS_MEMORY_FAILURE_EXIT,
-  PWNTOOLS_PROVIDER_IDENTITY,
-} from "../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_MEMORY_FAILURE_EXIT } from "../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import {
   cleanupOwnedProcessGroup,
   type OwnedProcessGroup,

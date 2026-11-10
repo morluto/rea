@@ -1,4 +1,7 @@
+import { EvmAdmissionError } from "./EvmAdmissionError.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
@@ -74,11 +77,11 @@ import {
   projectEvmoleFunctions,
 } from "./EvmoleInterfaceAdapter.js";
 import {
-  EVMOLE_PROVIDER_IDENTITY,
   EVM_CPU_SECONDS,
   EVM_INTERFACE_LIMITS,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
+import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import {
   selectEvmWorkerLimits,
@@ -110,9 +113,10 @@ export interface EvmLimiterProbeOptions {
 
 type EvmLimiterSelection = {
   readonly path: string;
-  readonly diagnostics: Readonly<Record<string, string>>;
+  readonly diagnostics: Readonly<Record<string, JsonValue>>;
 };
 type EvmLimiterUnavailable = EvmLimiterSelection & {
+  readonly code: ProviderRejectionCode;
   readonly reason: string;
   readonly cause: unknown;
 };
@@ -142,22 +146,54 @@ const selectEvmLimiter = async (
   const diagnostics = { limiter_path: path, platform, arch };
   try {
     if (!isAbsolute(path))
-      throw new Error(
-        "REA_EVM_PRLIMIT_COMMAND must be an absolute executable path.",
-      );
+      throw new EvmAdmissionError("prlimit_not_absolute", {
+        setting: "REA_EVM_PRLIMIT_COMMAND",
+      });
     const fs = probes?.fs ?? { access, stat };
     await fs.access(path, constants.X_OK);
     throwIfAborted();
     if (!(await fs.stat(path)).isFile())
-      throw new Error(
-        "Configured prlimit must be a regular executable file, not a directory.",
-      );
+      throw new EvmAdmissionError("prlimit_not_file");
     throwIfAborted();
     return ok({ path, diagnostics });
   } catch (cause: unknown) {
     throwIfAborted();
-    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}`;
-    return err({ path, diagnostics, reason, cause });
+    if (cause instanceof EvmAdmissionError)
+      return err({
+        path,
+        code: "not_configured",
+        diagnostics: {
+          ...diagnostics,
+          code: cause.code,
+          ...cause.detail,
+        },
+        reason: `Set REA_EVM_PRLIMIT_COMMAND to an absolute executable regular file for caller-supplied util-linux prlimit. The selected path ${path} ${cause.code === "prlimit_not_absolute" ? "is not absolute" : "is not a regular file"}.`,
+        cause,
+      });
+    const systemCode =
+      cause instanceof Error &&
+      "code" in cause &&
+      typeof cause.code === "string"
+        ? cause.code
+        : undefined;
+    const permissionDenied = systemCode === "EACCES" || systemCode === "EPERM";
+    const missing = systemCode === "ENOENT" || systemCode === "ENOTDIR";
+    const recovery = permissionDenied
+      ? "Grant execute permission and filesystem access to the selected file, or set REA_EVM_PRLIMIT_COMMAND to an accessible absolute executable regular file for util-linux prlimit."
+      : missing
+        ? "Set REA_EVM_PRLIMIT_COMMAND to an existing absolute executable regular file for util-linux prlimit."
+        : "Check the selected file and filesystem access, or set REA_EVM_PRLIMIT_COMMAND to an accessible absolute executable regular file for util-linux prlimit.";
+    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}. ${recovery}`;
+    return err({
+      path,
+      code: missing ? "executable_missing" : "runtime_unavailable",
+      diagnostics: {
+        ...diagnostics,
+        ...(systemCode === undefined ? {} : { system_code: systemCode }),
+      },
+      reason,
+      cause,
+    });
   }
 };
 
@@ -182,8 +218,10 @@ export const evmLimiterAvailability = async (
       }
     : {
         status: "unavailable",
-        code: "executable_missing",
+        code: selected.error.code,
         reason: selected.error.reason,
+        // The limiter owner does not yet author a separate repair (#8508).
+        remediation: selected.error.reason,
         diagnostics: selected.error.diagnostics,
       };
 };
@@ -452,10 +490,13 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               stopped.status === "incomplete" ||
               stopped.status === "not-owned"
             )
-              throw new Error(
+              throw new EvmAdmissionError(
                 stopped.status === "incomplete"
-                  ? stopped.reason
-                  : "Owned EVM worker cleanup did not confirm ownership.",
+                  ? "cleanup_incomplete"
+                  : "cleanup_unconfirmed",
+                stopped.status === "incomplete"
+                  ? { reason: stopped.reason }
+                  : undefined,
                 { cause: stopped },
               );
           },
@@ -511,6 +552,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           selectedLimiter.error.reason,
           {
             cause: selectedLimiter.error.cause,
+            diagnostics: selectedLimiter.error.diagnostics,
             userMessage: selectedLimiter.error.reason,
           },
         );
@@ -813,9 +855,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             marker = completed;
           }
           if (!marker.bytes.equals(Buffer.from("F")))
-            throw new Error(
-              "Private worker failure marker does not match the observed exit status.",
-            );
+            throw new EvmAdmissionError("marker_mismatch");
           fileFailure = { verified: true, failure: null };
         } catch (markerFailure: unknown) {
           fileFailure = {

@@ -32,6 +32,7 @@ import {
   slugSpellings,
   sortedStrings,
   type ClockFormat,
+  type ClockReading,
 } from "./environmentStateWriteValues.js";
 import {
   composedValue,
@@ -522,6 +523,8 @@ export const explainUpdate = (
   const rules: FieldRule[] = [];
   const echoed = new Set<string>();
   const unexplained: string[] = [];
+  // A whole-object PUT clears a member it leaves out: that value is the member's default.
+  const defaults: { readonly member: string; readonly value: JsonValue }[] = [];
   // A member the application replaces with a value it generates is accepted with any value.
   const generated = new Set<string>();
   let identity: string | null = null;
@@ -593,8 +596,14 @@ export const explainUpdate = (
       body,
       knownEntities,
     );
-    if (rule === undefined) unexplained.push(field);
-    else rules.push(rule);
+    if (rule !== undefined) rules.push(rule);
+    else if (
+      evidence.method === "PUT" &&
+      isBlankValue(ownMember(evidence.after, field)) &&
+      !isBlankValue(ownMember(evidence.before, field))
+    )
+      defaults.push({ member: field, value: evidence.after[field]! });
+    else unexplained.push(field);
   }
   rules.push(...pairedStamps(evidence, rules));
   // A member a reference reads names an entity, which any held one may be.
@@ -614,7 +623,11 @@ export const explainUpdate = (
   );
   return {
     rules,
-    body: { ...shaped, identity },
+    body: {
+      ...shaped,
+      identity,
+      ...(defaults.length === 0 ? {} : { defaults }),
+    },
     unexplained,
     unstamped: sameSecondClocks(evidence),
   };
@@ -652,6 +665,11 @@ export const responseShapeOf = (
   return { ordinal, shape: "recorded", pointer: null };
 };
 
+const compareClockReadings = (
+  left: ClockReading,
+  right: ClockReading,
+): number => left.ms - right.ms || left.subMillisecond - right.subMillisecond;
+
 /** Order two field values as numbers, instants or text; undefined when they are not comparable. */
 export const compareValues = (
   left: JsonValue | undefined,
@@ -660,8 +678,7 @@ export const compareValues = (
   const [a, b] = [integerOf(left), integerOf(right)];
   if (a !== undefined && b !== undefined) return a - b;
   const [c, d] = [readClock(left), readClock(right)];
-  if (c !== undefined && d !== undefined)
-    return c.ms - d.ms || c.subMillisecond - d.subMillisecond;
+  if (c !== undefined && d !== undefined) return compareClockReadings(c, d);
   return typeof left === "string" && typeof right === "string"
     ? compare(left, right)
     : undefined;
@@ -690,7 +707,8 @@ const UUID_V4 =
 
 /**
  * Whether a collection's identities order nothing: version 4 UUIDs, or values every creation clock
- * lists in another order. Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
+ * lists in another order. Only recognized clock observations establish that order.
+ * Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
  */
 export const randomIdentities = (
   members: readonly JsonObject[],
@@ -706,16 +724,16 @@ export const randomIdentities = (
     (left, right) =>
       compareValues(ownMember(left, idField), ownMember(right, idField)) ?? 0,
   );
-  return clocks.every((clock) =>
-    byId.some(
-      (member, index) =>
-        index > 0 &&
-        (compareValues(
-          ownMember(byId[index - 1]!, clock),
-          ownMember(member, clock),
-        ) ?? 1) > 0,
-    ),
-  );
+  return clocks.every((clock) => {
+    const values = byId.flatMap((member) => {
+      const reading = readClock(ownMember(member, clock));
+      return reading === undefined ? [] : [reading];
+    });
+    return values.some((value, index) => {
+      if (index === 0) return false;
+      return compareClockReadings(values[index - 1]!, value) > 0;
+    });
+  });
 };
 
 /**

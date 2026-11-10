@@ -2,6 +2,7 @@ import { expect } from "vitest";
 
 import {
   verifyJavaScriptReturnShapes,
+  verifyJavaScriptReturnShapesThroughCli,
   type JavaScriptReturnFields,
 } from "../../fixtures/javascriptReturnShapes.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -60,6 +61,22 @@ const writes = {
     (_, index) => `m${index}() { return shared; }`,
   ).join(", ")} }; box.m0().x = 2; box.m63().other = 3;`,
 };
+const wideReceiverSource = (width: number): string => {
+  const object = Array.from(
+    { length: width },
+    (_, index) => `p${index}:0`,
+  ).join(",");
+  const array = "0,".repeat(width);
+  return [
+    ["wideObject", `{${object},last:shared}`],
+    ["wideArray", `[${array}shared]`],
+  ]
+    .map(
+      ([name, value]) =>
+        `export function ${name}(){const shared={x:1};const box={wide(){return ${value}},noop(){}};box.noop();return {x:shared.x,keep:7};}`,
+    )
+    .join("\n");
+};
 const source = [
   ...Object.entries(writes).map(
     ([name, body]) =>
@@ -93,7 +110,19 @@ const source = [
   "export function unrelated(){ const shared = {x: 1}; const other = {x: 9}; const get = () => shared; get().x = 2; return other.x; }",
   "export function receiverDistinctScopes(){ const shared = {x: 1}; const box = {outer(){ return shared; }, inner(){ const shared = {x: 9}; return shared; }, noop(){}}; box.noop(); return {outer: shared.x, inner: box.inner().x}; }",
   "export function receiverDistinctPaths(){ const parent = {left: {x: 1}, right: {x: 9}, keep: 7}; const box = {left(){ return parent.left; }, right(){ return parent.right; }, noop(){}}; box.noop(); return {left: parent.left.x, right: parent.right.x, keep: parent.keep}; }",
+  wideReceiverSource(64),
 ].join("\n");
+
+const assertWideReturns = (fields: JavaScriptReturnFields): void => {
+  for (const name of ["wideObject", "wideArray"]) {
+    expect(fields(name)).toContainEqual(
+      expect.objectContaining({ path: "/x", state: "unknown" }),
+    );
+    expect(fields(name)).toContainEqual(
+      expect.objectContaining({ path: "/keep", state: "literal", value: 7 }),
+    );
+  }
+};
 
 const assertReturns = (fields: JavaScriptReturnFields): void => {
   for (const name of Object.keys(writes)) {
@@ -176,42 +205,24 @@ const assertReturns = (fields: JavaScriptReturnFields): void => {
 
 cliTest(
   "preserves mutation uncertainty for objects returned by local calls",
-  ({ cli }) => verifyJavaScriptReturnShapes(cli, source, assertReturns),
+  ({ cli }) =>
+    verifyJavaScriptReturnShapes(cli, source, (fields) => {
+      assertReturns(fields);
+      assertWideReturns(fields);
+    }),
   120_000,
 );
 
 cliTest(
   "analyzes wide receiver returns without losing escaped reference facts",
   ({ cli }) => {
-    const width = 160_000;
-    const object = Array.from(
-      { length: width },
-      (_, index) => `p${index}:0`,
-    ).join(",");
-    const array = "0,".repeat(width);
-    const wideSource = [
-      ["wideObject", `{${object},last:shared}`],
-      ["wideArray", `[${array}shared]`],
-    ]
-      .map(
-        ([name, value]) =>
-          `export function ${name}(){const shared={x:1};const box={wide(){return ${value}},noop(){}};box.noop();return {x:shared.x,keep:7};}`,
-      )
-      .join("\n");
-    return verifyJavaScriptReturnShapes(cli, wideSource, (fields) => {
-      for (const name of ["wideObject", "wideArray"]) {
-        expect(fields(name)).toContainEqual(
-          expect.objectContaining({ path: "/x", state: "unknown" }),
-        );
-        expect(fields(name)).toContainEqual(
-          expect.objectContaining({
-            path: "/keep",
-            state: "literal",
-            value: 7,
-          }),
-        );
-      }
-    });
+    // Exceed the argument limit with the worker's 2048 KiB stack as well as
+    // Node's default stack, so a spread into push still fails this regression.
+    return verifyJavaScriptReturnShapesThroughCli(
+      cli,
+      wideReceiverSource(300_000),
+      assertWideReturns,
+    );
   },
   120_000,
 );

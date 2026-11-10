@@ -62,6 +62,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     await good("record_unknown", { ...unknown, severity: "high" });
     await good("close_binary", { snapshot_path: conflicting, overwrite: true });
     await good("open_binary", { path: first });
+    await good("reset_investigation", {});
     const original = parseEvidence(
       (await good("inspect_native_dispatch_metadata", { max_records: 100 }))
         .structuredContent,

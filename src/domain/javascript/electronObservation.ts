@@ -6,7 +6,7 @@ import { browserCompletenessSchema } from "../browserCompleteness.js";
 import { browserEndpointSchema } from "../browserObservation.js";
 import { browserVersionSchema } from "../browserObservationSchemas.js";
 import {
-  cdpDomNodeSchema,
+  cdpDomSnapshotSchema,
   cdpScriptSourceSchema,
   cdpScriptMetadataSchema,
 } from "../cdpObservationSchemas.js";
@@ -96,10 +96,7 @@ export const electronPageInspectionSchema = z.object({
       file_path: z.string(),
     }),
   ),
-  dom: z.object({
-    total_nodes: z.int().min(0),
-    nodes: z.array(cdpDomNodeSchema),
-  }),
+  dom: cdpDomSnapshotSchema,
   scripts: z.object({
     total: z.int().min(0),
     items: z.array(
