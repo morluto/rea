@@ -79,7 +79,13 @@ export const isSafeMemberPath = (path: string): boolean =>
   !path.split(/[\\/]/u).some((segment) => segment === "..") &&
   !path.includes("\u0000");
 
-const normalisePath = (path: string): string => path.replace(/\\/gu, "/");
+/**
+ * Separators first, then the current-directory prefix: a Windows-built package
+ * stores `.\lib\net8.0\Foo.dll`, and stripping `./` before the backslashes are
+ * folded would leave the prefix in place and classify the asset as `other`.
+ */
+const normalisePath = (path: string): string =>
+  path.replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "");
 
 const assembleKind = (path: string): AssetKind => {
   // NuGet ships native assets under runtimes/<rid>/native/, so that subtree has

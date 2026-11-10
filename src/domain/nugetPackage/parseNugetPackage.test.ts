@@ -685,6 +685,22 @@ describe("parseNugetPackage: name uncertainty and read allowances", () => {
     ]);
   });
 
+  it("classifies a backslash current-directory prefix after separator folding", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        // A Windows-built archive stores `.\lib\…`; the prefix has to go after
+        // the separators are folded or the asset reads as `other`.
+        member(".\\lib\\net8.0\\Example.dll"),
+      ]),
+    );
+    expect(package_.assets.at(-1)).toMatchObject({
+      path: ".\\lib\\net8.0\\Example.dll",
+      kind: "assemblies",
+      target_framework: "net8.0",
+    });
+  });
+
   it("treats a rewritten limitation as prose, not a coverage signal", () => {
     // The reader states the rewrite with `sourcePath`; its message is only
     // explanatory, so different wording must not change coverage.
