@@ -125,7 +125,7 @@ raise REA's reserved string limit or Node's string ceiling. Like the regex
 deadline, it is in `SELECTED_REGISTRATION_SETTINGS`, so setup forwards an
 explicit selection into the client registration.
 
-Literal path and URL endpoint candidates from `analyze_web_bundle` are an optional inventory. `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` is how many unique literals one captured script retains: a positive decimal integer from 1 to 4096. Unset uses 1024. An invalid value is a configuration error and does not fall back to the default. Once that many unique literals are kept, further unique literals are omitted, `completeness.status` is `partial`, and `endpoint_literal_candidates` names the setting, the effective count, whether it came from the default or the setting, the floor, and the maximum, and says to set a decimal integer in that range in the environment that starts REA and then restart REA. There is no runtime override. The setting does not raise the worker result budget, and it does not change observed endpoints.
+Literal path and URL endpoint candidates from `analyze_web_bundle` are an optional inventory. `web.bundle_endpoint_literal_candidates`, seeded by `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES`, is how many unique literals one captured script retains: a positive decimal integer from 1 to 4096. Unset uses 1024. An invalid launch value is a configuration error and does not fall back to the default. Once that many unique literals are kept, further unique literals are omitted, `completeness.status` is `partial`, and `endpoint_literal_candidates` names the setting, the effective count, whether it came from the default, the launch setting, or a runtime override, the floor, and the maximum. `update_analysis_settings` changes it for the next analysis. The setting does not raise the worker result budget, and it does not change observed endpoints.
 
 Windows ChangeTime admission waits out a fresh timestamp before recording a
 baseline. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS` (default 2000 ms, floor 1 ms,
@@ -188,6 +188,7 @@ cannot partially apply. Clients coordinating writes can supply
 | `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
 | `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
 | `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
+| `web.bundle_endpoint_literal_candidates`                                                                        | Next `analyze_web_bundle` script analysis                                       |
 
 ### Precedence and lifetime
 

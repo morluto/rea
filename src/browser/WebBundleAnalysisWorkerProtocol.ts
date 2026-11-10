@@ -10,6 +10,10 @@ import {
   DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
   DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS,
 } from "../domain/webBundleAnalysis.js";
+import {
+  MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+} from "../domain/webBundleEndpointLiteralBudget.js";
 
 /** Independent per-script worker limits for source records and control frames. */
 export const WEB_BUNDLE_WORKER_LIMITS = {
@@ -47,6 +51,16 @@ export const webBundleWorkerRequestSchema = z.strictObject({
     .int()
     .min(0)
     .max(WEB_BUNDLE_WORKER_LIMITS.resultBytes),
+  endpoint_literal_candidates: z
+    .strictObject({
+      maximum_count: z
+        .number()
+        .int()
+        .min(MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES)
+        .max(MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES),
+      source: z.enum(["default", "setting", "runtime"]),
+    })
+    .optional(),
 });
 
 const identity = { id: z.uuid() };

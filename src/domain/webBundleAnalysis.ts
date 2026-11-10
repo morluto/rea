@@ -4,6 +4,7 @@ import { z } from "zod";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
+import { WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID } from "./webBundleEndpointLiteralBudget.js";
 
 import {
   MAX_BROWSER_DEADLINE_MS,
@@ -522,15 +523,15 @@ export const webBundleAnalysisSchema = z.object({
     .strictObject({
       coverage: z.literal("partial"),
       code: z.literal("web_bundle_endpoint_literal_candidates"),
-      setting: z.literal("REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES"),
+      setting: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID),
       admitted_count: z.number().int().nonnegative(),
       omitted_count: z.number().int().positive(),
       maximum_count: z.number().int().positive(),
-      source: z.enum(["default", "setting"]),
+      source: z.enum(["default", "setting", "runtime"]),
       default_count: z.number().int().positive(),
       floor_count: z.number().int().positive(),
       maximum_setting_count: z.number().int().positive(),
-      restart_required: z.literal(true),
+      rea_restart_required: z.literal(false),
     })
     .optional(),
 });

@@ -39,6 +39,12 @@ import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
 } from "./wasm/wasmArtifact.js";
+import {
+  DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+} from "./webBundleEndpointLiteralBudget.js";
 interface SettingDefinition {
   readonly environment?: string;
   readonly defaultValue: number | null;
@@ -296,6 +302,16 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_operation",
     provider: "rea-function-comparison",
     operations: ["match_native_functions"],
+  },
+  "web.bundle_endpoint_literal_candidates": {
+    environment: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+    defaultValue: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    minimum: MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    maximum: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-cdp-browser",
+    operations: ["analyze_web_bundle"],
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 export const analysisSettingIds = Object.keys(

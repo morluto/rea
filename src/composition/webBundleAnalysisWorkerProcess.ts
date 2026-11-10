@@ -5,14 +5,25 @@ import {
   serveWebBundleAnalysisWorker,
   type WebBundleScriptAnalyzer,
 } from "../browser/WebBundleAnalysisWorkerServer.js";
+import type { WebBundleEndpointLiteralAdmission } from "../domain/webBundleEndpointLiteralBudget.js";
 
-const endpointLiterals = parseWebBundleEndpointLiteralAdmission(
+const launchAdmission = parseWebBundleEndpointLiteralAdmission(
   process.env[WEB_BUNDLE_ENDPOINT_LITERAL_SETTING],
 );
-if (!endpointLiterals.ok) throw endpointLiterals.error;
 
-const analyze: WebBundleScriptAnalyzer = (script, precision) =>
-  analyzeCapturedWebScript(script, precision, endpointLiterals.value);
+const analyze: WebBundleScriptAnalyzer = (
+  script,
+  precision,
+  endpointLiterals,
+) => {
+  const admission = endpointLiterals ?? launchAdmissionOrThrow();
+  return analyzeCapturedWebScript(script, precision, admission);
+};
+
+const launchAdmissionOrThrow = (): WebBundleEndpointLiteralAdmission => {
+  if (!launchAdmission.ok) throw launchAdmission.error;
+  return launchAdmission.value;
+};
 
 try {
   await serveWebBundleAnalysisWorker(analyze);

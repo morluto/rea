@@ -6,13 +6,13 @@ import {
   MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
-  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
 } from "./webBundleEndpointLiteralBudget.js";
 
 const endpointLiteralCandidatesSchema = z.strictObject({
   coverage: z.literal("partial"),
   code: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_CODE),
-  setting: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_SETTING),
+  setting: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID),
   admitted_count: z.number().int().nonnegative(),
   omitted_count: z.number().int().positive(),
   maximum_count: z
@@ -20,11 +20,11 @@ const endpointLiteralCandidatesSchema = z.strictObject({
     .int()
     .min(MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES)
     .max(MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES),
-  source: z.enum(["default", "setting"]),
+  source: z.enum(["default", "setting", "runtime"]),
   default_count: z.number().int().positive(),
   floor_count: z.number().int().positive(),
   maximum_setting_count: z.number().int().positive(),
-  restart_required: z.literal(true),
+  rea_restart_required: z.literal(false),
 });
 
 const observationsSchema = z.strictObject({

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import { expect, it } from "vitest";
 
+import { WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID } from "../domain/webBundleEndpointLiteralBudget.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
@@ -56,7 +57,7 @@ const sourceWorkerProgram = (
 ): string => `
   const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(new URL("./WebBundleAnalysisWorkerServer.ts", import.meta.url).href)});
   const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
-  const analyze = (script) => {
+  const analyze = (script, _precision, endpointLiterals) => {
     if (${JSON.stringify(hangMarker)} !== undefined && script.source.artifact.text === ${JSON.stringify(hangMarker)}) {
       for (;;) {}
     }
@@ -66,7 +67,7 @@ const sourceWorkerProgram = (
     }
     if (${JSON.stringify(stderrMarker)} !== undefined)
       process.stderr.write(${JSON.stringify(stderrMarker)} + "\\n");
-    return analyzeCapturedWebScript(script);
+    return analyzeCapturedWebScript(script, undefined, endpointLiterals);
   };
   await serveWebBundleAnalysisWorker(analyze);
 `;
@@ -322,6 +323,35 @@ it("reuses one real owned worker for completed facts from consecutive scripts", 
       script_key: makeScript("fetch('/orders');").script_key,
     });
     expect(children).toHaveLength(1);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("applies the literal-candidate ceiling sent with that script", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript(`const routes = ["/api/one", "/api/two"];`),
+      10_000,
+      undefined,
+      undefined,
+      { maximumCount: 1, source: "runtime" },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value.status !== "analyzed")
+      throw new Error("Expected the captured script to complete");
+    expect(result.value.endpoint_literal_candidates).toMatchObject({
+      setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
+      maximum_count: 1,
+      source: "runtime",
+      admitted_count: 1,
+      omitted_count: 1,
+      rea_restart_required: false,
+    });
   } finally {
     await worker.close();
   }

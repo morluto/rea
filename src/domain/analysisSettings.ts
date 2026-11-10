@@ -17,6 +17,7 @@ export interface AnalysisSettingValues {
   readonly "javascript.max_heap_mb": number;
   readonly "wasm.command_timeout_ms": number;
   readonly "native.matching_representation_bytes": number;
+  readonly "web.bundle_endpoint_literal_candidates": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {

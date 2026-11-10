@@ -17,6 +17,7 @@ import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
 import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
 import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { parseNativeMatchingAllowance } from "./nativeMatchingAllowance.js";
+import { webBundleEndpointLiteralCandidatesSchema } from "./webBundleEndpointLiteralCandidates.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
@@ -30,6 +31,8 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: ghidraDecompileTimeoutSchema,
     REA_JADX_OPERATION_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema,
+    REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES:
+      webBundleEndpointLiteralCandidatesSchema,
     REA_REGEX_WORKER_HEAP_REQUEST_MIB: regexWorkerHeapRequestMiBSchema,
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
       captureDecoderOldGenerationMiBSchema,

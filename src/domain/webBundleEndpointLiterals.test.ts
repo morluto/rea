@@ -6,8 +6,7 @@ import {
   MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
-  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
-  webBundleEndpointLiteralLimitMessage,
+  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
 } from "./webBundleEndpointLiteralBudget.js";
 
 const analyze = (source: string) =>
@@ -149,25 +148,51 @@ fetch("/api/kept");`;
   expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
     "/api/kept",
   ]);
-  const limit = {
-    coverage: "partial" as const,
+  expect(result.endpoint_literal_candidates).toEqual({
+    coverage: "partial",
     code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
-    setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+    setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
     admitted_count: 2,
     omitted_count: 1,
     maximum_count: 2,
-    source: "setting" as const,
+    source: "setting",
     default_count: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     floor_count: MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     maximum_setting_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
-    restart_required: true as const,
-  };
-  expect(result.endpoint_literal_candidates).toEqual(limit);
+    rea_restart_required: false,
+  });
   expect(result.completeness.status).toBe("partial");
-  expect(result.unknowns).toContainEqual({
-    dimension: "endpoint_literal_candidates",
-    affected_script_keys: [`scr_${"1".repeat(64)}`],
-    reason: webBundleEndpointLiteralLimitMessage(limit),
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoint_literal_candidates",
+      affected_script_keys: [`scr_${"1".repeat(64)}`],
+    }),
+  );
+});
+
+it("records a runtime ceiling on the same structured limit", () => {
+  const source = `const routes = ["/api/one", "/api/two"];`;
+  const result = analyzeWebBundleFixture(
+    createWebPageInspection([
+      {
+        source,
+        scriptKey: `scr_${"2".repeat(64)}`,
+        url: "https://app.example.test/app.js",
+        origin: "https://app.example.test",
+        cdpHash: "hash",
+      },
+    ]),
+    undefined,
+    { maximumCount: 1, source: "runtime" },
+  );
+  expect(result.endpoint_literal_candidates).toMatchObject({
+    code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
+    setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
+    admitted_count: 1,
+    omitted_count: 1,
+    maximum_count: 1,
+    source: "runtime",
+    rea_restart_required: false,
   });
 });
 

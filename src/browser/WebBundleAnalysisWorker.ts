@@ -275,6 +275,7 @@ export class WebBundleAnalysisWorker {
     timeoutMs: number,
     signal?: AbortSignal,
     precision?: JavaScriptSemanticPrecisionInput,
+    endpointLiterals?: import("../domain/webBundleEndpointLiteralBudget.js").WebBundleEndpointLiteralAdmission,
   ): Promise<Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure>> {
     let deadline: ProviderStartupDeadline | undefined;
     const id = randomUUID();
@@ -327,6 +328,14 @@ export class WebBundleAnalysisWorker {
       const request = webBundleWorkerRequestSchema.parse({
         kind: "analyze",
         ...(precision === undefined ? {} : { semantic_precision: precision }),
+        ...(endpointLiterals === undefined
+          ? {}
+          : {
+              endpoint_literal_candidates: {
+                maximum_count: endpointLiterals.maximumCount,
+                source: endpointLiterals.source,
+              },
+            }),
         id,
         source,
         result_budget_bytes: resultBudget,
