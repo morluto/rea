@@ -23,32 +23,57 @@ export const registerSqliteCommands = (
     args: z.object({
       path: z.string().describe("Local SQLite database snapshot"),
     }),
-    options: z.object({
-      table: z
-        .string()
-        .optional()
-        .describe("Exact ordinary table name to read"),
-      column: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Repeat to select exact row columns in the requested order; requires table",
-        ),
-      schemaScope: z
-        .enum(["inventory", "selected_table", "database"])
-        .optional()
-        .describe(
-          "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
-        ),
-      rowLimit: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe(
-          "Positive safe integer row count; default 20; requires table",
-        ),
-    }),
+    options: z
+      .object({
+        table: z
+          .string()
+          .optional()
+          .describe("Exact ordinary table name to read"),
+        column: z
+          .array(z.string())
+          .min(1)
+          .optional()
+          .describe(
+            "Repeat to select exact row columns in the requested order; requires table",
+          ),
+        schemaScope: z
+          .enum(["inventory", "selected_table", "database"])
+          .optional()
+          .describe(
+            "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
+          ),
+        rowLimit: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            "Positive safe integer row count; default 20; requires table",
+          ),
+      })
+      .superRefine((options, context) => {
+        if (options.rowLimit !== undefined && options.table === undefined)
+          context.addIssue({
+            code: "custom",
+            path: ["rowLimit"],
+            message: "rowLimit requires an explicit table selection",
+          });
+        if (options.column !== undefined && options.table === undefined)
+          context.addIssue({
+            code: "custom",
+            path: ["column"],
+            message: "column requires an explicit table selection",
+          });
+        if (
+          options.schemaScope === "selected_table" &&
+          options.table === undefined
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["schemaScope"],
+            message: "selected_table schema scope requires table",
+          });
+      }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectSqliteDatabase, async () => {
