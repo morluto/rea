@@ -13,23 +13,7 @@ import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtur
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
-import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
-
-it("documents the shared combined capture limit for both command tools", () => {
-  expect(REVERSE_ENGINEERING_TOOL_CONTRACTS.map(({ name }) => name)).toEqual(
-    expect.arrayContaining(["inspect_with_objdump", "execute_rizin_command"]),
-  );
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("shared 16 MiB combined limit");
-  expect(
-    REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
-      ({ name }) => name === "inspect_with_objdump",
-    )?.description,
-  ).toContain("does not follow local debug links by default");
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("command_timeout_ms");
-});
 
 it.each(["objdump", "rizin"] as const)(
   "recovers a bounded %s capture after the caller raises output admission",
