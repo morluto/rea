@@ -1,4 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import {
@@ -15,14 +16,26 @@ const open: {
   server: EvidenceMcpServer;
   resources: ArtifactResourceScope;
 }[] = [];
+const ajv = new Ajv2020({
+  strict: false,
+  validateFormats: false,
+  inlineRefs: false,
+  code: { optimize: false },
+});
+const advertisedOutputSchemas = new Map<string, Record<string, unknown>>();
+// Clients validate structuredContent against the advertised output schema, so
+// a union root the SDK wraps in { result } rejects every unwrapped result.
 const guidanceOutput = <T>(
+  tool: "search_guidance" | "read_guidance_section",
   schema: { parse(value: unknown): T },
   value: unknown,
 ): T => {
-  // MCP's legacy output-schema projection wraps root-level union schemas.
-  // Newer transports pass the object unchanged.
-  if (typeof value === "object" && value !== null && "result" in value)
-    return schema.parse(value.result);
+  const advertised = advertisedOutputSchemas.get(tool);
+  if (advertised === undefined)
+    throw new Error(`${tool} output schema was not advertised`);
+  expect(ajv.validate(advertised, value), JSON.stringify(ajv.errors)).toBe(
+    true,
+  );
   return schema.parse(value);
 };
 afterEach(async () => {
@@ -57,6 +70,20 @@ it("advertises strict provider-free contracts and returns packaged guide results
   expect(listed.tools.map(({ name }) => name)).toEqual(
     expect.arrayContaining(["search_guidance", "read_guidance_section"]),
   );
+  for (const tool of listed.tools) {
+    if (
+      tool.name !== "search_guidance" &&
+      tool.name !== "read_guidance_section"
+    )
+      continue;
+    const outputSchema: Record<string, unknown> | undefined = tool.outputSchema;
+    if (outputSchema === undefined)
+      throw new Error(`${tool.name} output schema is missing`);
+    expect(outputSchema.type).toBe("object");
+    expect(outputSchema.properties).toBeUndefined();
+    expect(ajv.validateSchema(outputSchema)).toBe(true);
+    advertisedOutputSchemas.set(tool.name, outputSchema);
+  }
   expect(
     searchGuidanceInputSchema.safeParse({
       query: "module",
@@ -79,6 +106,7 @@ it("advertises strict provider-free contracts and returns packaged guide results
   });
   expect(response.isError).not.toBe(true);
   const parsed = guidanceOutput(
+    "search_guidance",
     searchGuidanceOutputSchema,
     response.structuredContent,
   );
@@ -97,7 +125,11 @@ it("advertises strict provider-free contracts and returns packaged guide results
   });
   expect(section.isError).not.toBe(true);
   expect(
-    guidanceOutput(readGuidanceSectionOutputSchema, section.structuredContent),
+    guidanceOutput(
+      "read_guidance_section",
+      readGuidanceSectionOutputSchema,
+      section.structuredContent,
+    ),
   ).toMatchObject({
     status: "section",
     heading: selected?.heading,
@@ -108,6 +140,7 @@ it("advertises strict provider-free contracts and returns packaged guide results
     arguments: { query: "module", limit: 1 },
   });
   const firstResult = guidanceOutput(
+    "search_guidance",
     searchGuidanceOutputSchema,
     firstPage.structuredContent,
   );
@@ -122,6 +155,10 @@ it("advertises strict provider-free contracts and returns packaged guide results
     },
   });
   expect(
-    guidanceOutput(searchGuidanceOutputSchema, nextPage.structuredContent),
+    guidanceOutput(
+      "search_guidance",
+      searchGuidanceOutputSchema,
+      nextPage.structuredContent,
+    ),
   ).toMatchObject({ status: "matches", offset: 1 });
 });
