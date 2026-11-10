@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
@@ -9,7 +12,14 @@ import type {
   AndroidJniSelection,
   AndroidJniLibraryCheckpoint,
 } from "../domain/android/androidJniBindings.js";
-import { compileAndroidJniLibrarySelection } from "../domain/android/androidJniBindings.js";
+import {
+  applyAndroidJniRequiredSplits,
+  compileAndroidJniLibrarySelection,
+} from "../domain/android/androidJniBindings.js";
+import {
+  readAndroidManifestSplitTypes,
+  type AndroidManifestSplitTypes,
+} from "./AndroidManifestSplitTypes.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { inspectAndroidJniLibrary } from "../native/android/AndroidJniLibrary.js";
@@ -30,9 +40,15 @@ export const ANDROID_JNI_LIBRARY_LIMITS = Object.freeze({
   entries: 100_000,
   libraries: 2048,
 });
+/** A root manifest larger than this is not read for required-split facts. */
+export const ANDROID_JNI_MANIFEST_BYTES = 4 * 1024 * 1024;
 export interface AndroidJniLibraries {
   readonly libraries: readonly AndroidJniLibraryObservation[];
   readonly inventory: AndroidJniReport["library_inventory"];
+  /** Required split types from the base APK manifest; empty when none are declared. */
+  readonly requiredSplitTypes: readonly string[];
+  /** Whether the base APK manifest declares splits are required. */
+  readonly splitRequired: boolean;
 }
 
 /** Read each exact ZIP occurrence once from the provider's immutable admitted APK. */
@@ -64,6 +80,45 @@ export const readAndroidJniLibraries = async (input: {
         selected_libraries: 0,
         unknowns: [],
       };
+      let manifestSplits: AndroidManifestSplitTypes | null = null;
+      /** Read the root manifest's required-split facts, if it is small enough to hold. */
+      const readManifestSplits = async (
+        entry: ArtifactEntry,
+      ): Promise<AndroidManifestSplitTypes | null> => {
+        if (
+          entry.declaredSize !== null &&
+          (entry.declaredSize < 0 ||
+            entry.declaredSize > ANDROID_JNI_MANIFEST_BYTES)
+        )
+          return null;
+        try {
+          const stream = await reader.open(entry, input.signal);
+          try {
+            const chunks: Buffer[] = [];
+            let total = 0;
+            for await (const chunk of stream) {
+              throwIfJadxInterrupted(input.signal);
+              const data = streamChunkToBuffer(chunk);
+              total += data.length;
+              if (total > ANDROID_JNI_MANIFEST_BYTES) return null;
+              chunks.push(data);
+            }
+            return readAndroidManifestSplitTypes(Buffer.concat(chunks));
+          } finally {
+            stream.destroy();
+          }
+        } catch (cause: unknown) {
+          if (cause instanceof JadxInterruption) throw cause;
+          if (
+            cause instanceof ArtifactReaderFailure &&
+            cause.reason === "cancelled"
+          )
+            throw input.interruption(input.signal.reason);
+          // An unreadable manifest leaves split requirements undetermined;
+          // the library inventory keeps its previous status.
+          return null;
+        }
+      };
       let totalBytes = 0;
       let factsBytes = 0;
       let primary: unknown;
@@ -81,6 +136,13 @@ export const readAndroidJniLibraries = async (input: {
             );
             break;
           }
+          if (
+            manifestSplits === null &&
+            entry.path === "AndroidManifest.xml" &&
+            entry.kind === "file" &&
+            !entry.encrypted
+          )
+            manifestSplits = await readManifestSplits(entry);
           const match = /^lib\/([^/]+)\/([^/]+\.so)$/u.exec(entry.path);
           if (match === null || entry.kind === "directory") continue;
           const abi = match[1]!;
@@ -246,6 +308,11 @@ export const readAndroidJniLibraries = async (input: {
         // its digest only if those bytes actually completed authentication.
         libraries.push(inProgress);
       }
+      if (manifestSplits !== null)
+        Object.assign(
+          inventory,
+          applyAndroidJniRequiredSplits(inventory, manifestSplits),
+        );
       inventory.selected_libraries = libraries.length;
       const checkpoint: AndroidJniLibraryCheckpoint = {
         scan_state:
@@ -295,7 +362,12 @@ export const readAndroidJniLibraries = async (input: {
       }
       if (failed) throw primary;
       throwIfJadxInterrupted(input.signal);
-      return { libraries, inventory };
+      return {
+        libraries,
+        inventory,
+        requiredSplitTypes: manifestSplits?.requiredSplitTypes ?? [],
+        splitRequired: manifestSplits?.splitRequired ?? false,
+      };
     })
     .catch((cause: unknown) => {
       // A prior owned close can reject scope admission before this callback runs.

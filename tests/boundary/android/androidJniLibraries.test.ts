@@ -25,6 +25,7 @@ import {
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
+import { axmlManifestBytes } from "../../fixtures/android/axmlManifest.js";
 
 const OPERATION = "inspect_android_jni_bindings";
 const LIBRARY = "lib/arm64-v8a/libfixture.so";
@@ -162,6 +163,53 @@ it("keeps duplicate library-name occurrences bound to their own opaque ZIP keys"
       source_key,
     })),
   );
+  expect(source.resources.hasPending).toBe(false);
+});
+
+it("reports required splits from the base APK manifest instead of a complete zero-library inventory", async () => {
+  const bytes = jniElfFixture().bytes;
+  const source = await fixture([
+    [
+      "AndroidManifest.xml",
+      axmlManifestBytes({
+        requiredSplitTypes: "base__abi,base__density",
+        splitRequired: true,
+      }),
+    ],
+    [LIBRARY, bytes],
+  ]);
+  const result = await read(source);
+  expect(result.requiredSplitTypes).toEqual(["base__abi", "base__density"]);
+  expect(result.splitRequired).toBe(true);
+  expect(result.libraries).toHaveLength(1);
+  expect(result.inventory).toMatchObject({
+    status: "partial",
+    examined_entries: 2,
+    selected_libraries: 1,
+  });
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "base__abi, base__density",
+  );
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "required split APKs",
+  );
+  expect(source.resources.hasPending).toBe(false);
+});
+
+it("leaves a manifest without required splits unqualified complete", async () => {
+  const source = await fixture([
+    ["AndroidManifest.xml", axmlManifestBytes()],
+    [LIBRARY, jniElfFixture().bytes],
+  ]);
+  const result = await read(source);
+  expect(result.requiredSplitTypes).toEqual([]);
+  expect(result.splitRequired).toBe(false);
+  expect(result.inventory).toMatchObject({
+    status: "complete",
+    examined_entries: 2,
+    selected_libraries: 1,
+    unknowns: [],
+  });
   expect(source.resources.hasPending).toBe(false);
 });
 

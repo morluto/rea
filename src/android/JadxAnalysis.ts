@@ -459,6 +459,8 @@ export const analyzeJadxRequest = async (
       inventory,
       libraries: libraries.libraries,
       libraryInventory: libraries.inventory,
+      requiredSplitTypes: libraries.requiredSplitTypes,
+      splitRequired: libraries.splitRequired,
     });
     if (!projected.ok)
       throw new AnalysisResourceConstraintError(

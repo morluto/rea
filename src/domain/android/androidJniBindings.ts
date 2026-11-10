@@ -90,6 +90,45 @@ export const androidJniLibraryInventorySchema = z.strictObject({
   selected_libraries: count,
   unknowns: z.array(z.string()),
 });
+/** Required-split facts read from the base APK's manifest, if it declares any. */
+export interface AndroidJniRequiredSplits {
+  readonly requiredSplitTypes: readonly string[];
+  readonly splitRequired: boolean;
+}
+/**
+ * The unknown a required-split manifest adds to a library inventory: the
+ * libraries in required split APKs were never examined, so the inventory
+ * covers only this APK file. Null when the manifest declares no splits.
+ */
+export const androidJniRequiredSplitsUnknown = (
+  splits: AndroidJniRequiredSplits,
+): string | null => {
+  if (splits.requiredSplitTypes.length > 0)
+    return `The APK manifest declares required split types (${splits.requiredSplitTypes.join(", ")}); native libraries may be in required split APKs that were not examined, so this library inventory covers only this APK file.`;
+  if (splits.splitRequired)
+    return "The APK manifest declares isSplitRequired; native libraries may be in split APKs that were not examined, so this library inventory covers only this APK file.";
+  return null;
+};
+/**
+ * Downgrade an unqualified complete inventory when the manifest declares
+ * required splits. Idempotent: an inventory already carrying the unknown is
+ * returned unchanged. Inventories already partial for another reason keep
+ * their status and gain the split unknown.
+ */
+export const applyAndroidJniRequiredSplits = (
+  inventory: AndroidJniReport["library_inventory"],
+  splits: AndroidJniRequiredSplits,
+): AndroidJniReport["library_inventory"] => {
+  const unknown = androidJniRequiredSplitsUnknown(splits);
+  if (unknown === null) return inventory;
+  return {
+    ...inventory,
+    status: "partial",
+    unknowns: inventory.unknowns.includes(unknown)
+      ? inventory.unknowns
+      : [...inventory.unknowns, unknown],
+  };
+};
 /** Parsed, JSON-only checkpoint captured before a live ZIP reader is finalized. */
 export const androidJniLibraryCheckpointSchema = z.strictObject({
   scan_state: z.enum(["completed", "interrupted"]),
@@ -229,7 +268,17 @@ export const projectAndroidJniBindings = (input: {
   readonly inventory: AndroidNativeDeclarations;
   readonly libraries: readonly AndroidJniLibraryObservation[];
   readonly libraryInventory: AndroidJniReport["library_inventory"];
+  /** Required-split facts from the base APK manifest, when it declares any. */
+  readonly requiredSplitTypes?: readonly string[] | undefined;
+  readonly splitRequired?: boolean | undefined;
 }): Result<AndroidJniReport, ProjectionFailure> => {
+  const libraryInventory = applyAndroidJniRequiredSplits(
+    input.libraryInventory,
+    {
+      requiredSplitTypes: input.requiredSplitTypes ?? [],
+      splitRequired: input.splitRequired ?? false,
+    },
+  );
   const declarations = input.inventory.methods.map((method) => ({
     ...method,
     declaration_id: id("jni_method", [
@@ -446,7 +495,7 @@ export const projectAndroidJniBindings = (input: {
         (candidate) => candidate.class_attribution === "ambiguous-native-pair",
       );
       const incomplete =
-        input.libraryInventory.status !== "complete" ||
+        libraryInventory.status !== "complete" ||
         abiLibraries.some(
           (library) =>
             library.failure !== null ||
@@ -503,7 +552,7 @@ export const projectAndroidJniBindings = (input: {
     selection: input.selection,
     native_inventory,
     library_inventory: {
-      ...input.libraryInventory,
+      ...libraryInventory,
       selected_libraries: libraries.length,
     },
     declarations,

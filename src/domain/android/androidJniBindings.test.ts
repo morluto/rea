@@ -129,6 +129,10 @@ const project = (
   observed = [library(0)],
   declarations = inventory(),
   selection: AndroidJniSelection = {},
+  splits: {
+    requiredSplitTypes?: readonly string[];
+    splitRequired?: boolean;
+  } = {},
 ) => {
   const result = projectAndroidJniBindings({
     apk: { path: "/selected/app.apk", sha256: "a".repeat(64) },
@@ -141,6 +145,7 @@ const project = (
       selected_libraries: observed.length,
       unknowns: [],
     },
+    ...splits,
   });
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   expect(androidJniReportSchema.safeParse(result.value).success).toBe(true);
@@ -342,8 +347,7 @@ it.each([{ method_names: [] }, { descriptors: [] }, { abis: [] }])(
   },
 );
 
-it("keeps an explicit empty library selection without introducing ABI candidates", () => {
-  const report = project([], inventory(), {
+it("keeps an explicit empty library selection without introducing ABI candidates", () => {  const report = project([], inventory(), {
     library_paths: [],
     abis: ["arm64-v8a"],
   });
@@ -475,4 +479,52 @@ it("preserves an observed export with explicit incomplete uniqueness coverage", 
     candidate_ids: [report.candidates[0]?.candidate_id],
   });
   expect(report.libraries[0]?.unknowns).toEqual(observed.unknowns);
+});
+
+it("reports a required-split manifest as a partial library inventory, not complete with zero libraries", () => {
+  const report = project([], inventory(), {}, {
+    requiredSplitTypes: ["base__abi", "base__density"],
+  });
+  expect(report.libraries).toEqual([]);
+  expect(report.declarations).toHaveLength(1);
+  expect(report.library_inventory).toMatchObject({
+    status: "partial",
+    selected_libraries: 0,
+  });
+  expect(report.library_inventory.unknowns.join("\n")).toContain(
+    "base__abi, base__density",
+  );
+  expect(report.library_inventory.unknowns.join("\n")).toContain(
+    "required split APKs",
+  );
+});
+
+it("reports isSplitRequired alone as a partial library inventory", () => {
+  const report = project(
+    [library(0, "arm64-v8a", facts({ exports: [exportRow(0)] }))],
+    inventory(),
+    {},
+    { splitRequired: true },
+  );
+  expect(report.library_inventory.status).toBe("partial");
+  expect(report.library_inventory.unknowns.join("\n")).toContain(
+    "isSplitRequired",
+  );
+  // The export was observed, so the binding stays matched, but its coverage
+  // is partial: libraries in the splits were never examined.
+  expect(report.bindings[0]).toMatchObject({
+    status: "matched",
+    coverage: "partial",
+  });
+});
+
+it("leaves an APK without required splits unqualified complete", () => {
+  const report = project([], inventory());
+  expect(report.library_inventory).toEqual({
+    status: "complete",
+    examined_entries: 0,
+    selected_libraries: 0,
+    unknowns: [],
+  });
+  expect(report.declarations).toHaveLength(1);
 });
