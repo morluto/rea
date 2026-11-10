@@ -147,8 +147,9 @@ executes target code. It checks:
 
 With `REA_XTENSA_CC` set to an Espressif compiler such as
 `xtensa-esp32-elf-gcc`, the lane also builds `tests/conformance/c/xtensa.c`. It
-checks that the callee's compiled code loads the constant `0x1234567` with an
-`l32r` from a literal holding it. In decompiled code it checks that the caller
+checks that the caller's decoded call to the callee is `call8` and that the
+callee's compiled code loads the constant `0x1234567` with an `l32r` from a
+literal holding it. In decompiled code it checks that the caller
 passes the global and 5 through `call8` and returns the result, and that the
 callee returns `value * factor` plus the constant.
 

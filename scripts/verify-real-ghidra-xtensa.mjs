@@ -414,21 +414,48 @@ try {
           BigInt(address) === BigInt(readelf.symbols.rea_xtensa_c_scale),
       ),
     );
-    // The compiler's own literal load: walk the callee as Ghidra decodes it
-    // until its l32r, then read the word that load references.
-    let literalLoad;
-    let at = BigInt(readelf.symbols.rea_xtensa_c_scale);
-    for (let step = 0; step < 64 && literalLoad === undefined; step += 1) {
-      const decoded = await call(
-        "inspect_native_instruction",
-        { address: hex(at) },
-        built.sha256,
-      );
-      assert.equal(decoded.status, "decoded", `${hex(at)} was not decoded`);
-      if (decoded.mnemonic?.toLowerCase() === "l32r") literalLoad = decoded;
-      else if (decoded.flow?.kind === "return") break;
-      at += BigInt(decoded.bytes.length / 2);
-    }
+    /** Walks a procedure as Ghidra decodes it until `found` or a return. */
+    const findDecoded = async (start, found) => {
+      let at = BigInt(start);
+      for (let step = 0; step < 64; step += 1) {
+        const decoded = await call(
+          "inspect_native_instruction",
+          { address: hex(at) },
+          built.sha256,
+        );
+        assert.equal(decoded.status, "decoded", `${hex(at)} was not decoded`);
+        if (found(decoded)) return decoded;
+        if (decoded.flow?.kind === "return") return undefined;
+        at += BigInt(decoded.bytes.length / 2);
+      }
+      return undefined;
+    };
+    // The compiler chooses the windowed call instruction; the report claims
+    // call8, so the caller's decoded call to the callee must be call8.
+    const scaleCall = await findDecoded(
+      readelf.symbols.rea_xtensa_c_entry,
+      (decoded) =>
+        decoded.flow?.kind === "call" &&
+        decoded.flow.direct_destinations.some(
+          (value) =>
+            BigInt(value) === BigInt(readelf.symbols.rea_xtensa_c_scale),
+        ),
+    );
+    assert.ok(
+      scaleCall !== undefined,
+      "rea_xtensa_c_entry has no decoded call to rea_xtensa_c_scale before it returns",
+    );
+    assert.equal(
+      scaleCall.mnemonic?.toLowerCase(),
+      "call8",
+      `rea_xtensa_c_entry calls rea_xtensa_c_scale with ${scaleCall.mnemonic}`,
+    );
+    // The compiler's own literal load: walk the callee until its l32r, then
+    // read the word that load references.
+    const literalLoad = await findDecoded(
+      readelf.symbols.rea_xtensa_c_scale,
+      (decoded) => decoded.mnemonic?.toLowerCase() === "l32r",
+    );
     assert.ok(
       literalLoad !== undefined,
       "rea_xtensa_c_scale loads no literal with l32r before it returns",
@@ -469,11 +496,12 @@ try {
       toolchain: built.toolchain,
       checks: [
         "readelf symbols",
-        "call8 callee",
+        "the caller's decoded call to the callee is call8",
         "the callee's compiled l32r loads the constant from its literal",
         "decompiled call8 arguments are the global and the factor; caller returns the callee result",
         "decompiled callee returns value * factor plus the constant",
       ],
+      callee_call: { address: scaleCall.address, bytes: scaleCall.bytes },
       literal_load: { address: literalLoad.address, bytes: literalLoad.bytes },
       entry_pseudocode: decompiled.rea_xtensa_c_entry,
       scale_pseudocode: decompiled.rea_xtensa_c_scale,
