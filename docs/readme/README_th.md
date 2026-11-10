@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · **ไทย** · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -84,6 +84,10 @@ npx rea-agents setup
 
 MCP ใช้สคีมาอินพุตแบบกระชับโดยปริยาย หากต้องการคำอธิบายฟิลด์และการตรวจสอบแบบซ้อนทั้งหมด ให้ตั้ง `REA_MCP_INPUT_SCHEMA_PROFILE=full` ในการลงทะเบียน MCP ทั้งสองแบบคงเครื่องมือครบและใช้การตรวจสอบมาตรฐานฝั่งเซิร์ฟเวอร์เดียวกัน ดูคู่มือสัญญา MCP
 
+การตั้งค่าจะลงทะเบียนรันไทม์ที่เลือกและสคริปต์เริ่มต้นของ REA โดยตรง หากใช้ตัวรันแพ็กเกจ ให้เก็บรายการแคชและรันไทม์ไว้ และรับแพ็กเกจจากไดเรกทอรีที่เชื่อถือได้นอกโปรเจกต์เป้าหมาย ดูคู่มือการติดตั้ง
+
+ระบบประกาศสคีมาเอาต์พุตฉบับเต็มตามค่าเริ่มต้น หากไคลเอนต์จำกัด `tools/list` ให้ตั้ง `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` หรือ `off` ในการลงทะเบียน MCP การตรวจสอบฝั่งเซิร์ฟเวอร์และผลลัพธ์แบบมีโครงสร้างยังคงครบถ้วน ดูหัวข้อ “Output schemas” ในคู่มือสัญญา MCP
+
 ### ถามเอเจนต์
 
 ```text
@@ -157,6 +161,7 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | โครงสร้าง ELF แบบออฟไลน์       | เซกชัน เซกเมนต์ สัญลักษณ์/รีโลเคชันต้นฉบับ และตัวเลือกกลไกป้องกันที่พบจากการวิเคราะห์แบบสถิต      | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; [การวินิจฉัยไบนารี](../guides/native/binary-diagnostics.md)                                                                 |
 | PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                   |
 | PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                             |
+| Windows shortcuts            | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts    | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                 |
 | ไบต์โค้ด EVM                   | ตัวเลือกฟังก์ชันสำหรับการเรียก ออฟเซ็ตไบต์ อาร์กิวเมนต์และความสามารถในการเปลี่ยนสถานะที่อนุมานได้ | ไฟล์บนเครื่องที่มีไบต์ดิบหรือข้อมูลเลขฐานสิบหกบน Linux x64; [คู่มือ EVM แบบออฟไลน์](../guides/evm/evm-bytecode.md)                                                        |
 | Rust binaries                | Embedded cargo-auditable dependency list                                        | [Rust binaries](../rust-binaries.md)                                                                                                                      |
 | ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                              |
@@ -172,6 +177,7 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม; [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                                            |
 | แอสเซมบลี .NET                | เมทาดาทา คำสั่ง CIL การพึ่งพาเนทีฟที่ประกาศไว้ และการเปรียบเทียบผลการบิลด์                  | การตรวจสอบแบบสถิต; [คู่มือโค้ดแบบจัดการ](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller                  | CArchive, PYZ, Python bytecode                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                     |
+| Deno compile binaries        | Virtual files, entry point, recorded options, npm snapshot length               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                      |
 | APK ของ Android              | การประกาศใน manifest คลาส เมธอดที่ดีคอมไพล์ และการอ้างอิง                             | JADX แบบไม่มี GUI และ JDK แบบเต็มบน Linux/macOS/Windows x64; [คู่มือ Android](../guides/android/android-analysis.md)                                            |
 | อุปกรณ์ Android                | อุปกรณ์ แพ็กเกจ โพรเซส บันทึก ดัมพ์ ภาพหน้าจอ และการถ่ายโอน APK/ไฟล์                      | adb ที่ผู้เรียกจัดเตรียม (โปรแกรมจำลองหรืออุปกรณ์จริง); [คู่มือ ADB](../guides/android/adb-device-analysis.md)                                                          |
 | โปรเจกต์ JEB                  | หน่วยโปรเจกต์จากเอนจิน, แฮชของอาร์ติแฟกต์ และซูโดโค้ดของไทป์/เมท็อด                       | ไคลเอนต์ JEB ที่ผู้เรียกเริ่มและให้บริการ MCP เลือกด้วย REA_JEB_MCP_URL; [คู่มือ JEB](../providers/jeb-analysis.md)                                                      |
@@ -272,6 +278,12 @@ REA ส่งออกสภาพแวดล้อมที่รันได�
 [คู่มือสร้างสภาพแวดล้อม](https://rea.tools/guides/rl-environments/) ·
 [เอกสารอ้างอิงสภาพแวดล้อม](../agent-environments.md) ·
 [ชมเดโมบน X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### สภาพแวดล้อมของแอปเดสก์ท็อป
+
+REA ยังสร้างสภาพแวดล้อมของแอปเดสก์ท็อปบน Linux ที่เอเจนต์ใช้งานผ่านภาพหน้าจอ เมาส์ และคีย์บอร์ดได้ด้วย จากคำขอเพียงบรรทัดเดียว เช่น "สร้างสภาพแวดล้อม Gnote ที่เอเจนต์เพิ่มน้ำมันมะกอกลงในโน้ตรายการซื้อของ" เอเจนต์ของคุณจะติดตั้งแอปบนคอมพิวเตอร์สำหรับบิลด์ในเครื่อง เขียนงาน ส่งออกสภาพแวดล้อม และตรวจสอบงานบนคอมพิวเตอร์เครื่องใหม่ เครื่องที่ใช้สร้างต้องมี Linux บน amd64 หรือ arm64, Docker และ agentenv framework เวอร์ชันที่คู่มือกำหนด
+
+[ตั้งค่าสภาพแวดล้อมของแอปเดสก์ท็อป](../desktop-build-computer.md)
 
 ## คำถามที่พบบ่อย
 

@@ -258,7 +258,9 @@ export const publishCliAnalysisEvidence = async (
   // This projection answers the same direct invocation as its parent. Later
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
-    detail === "summary" && complete.caller_input_path !== undefined
+    detail === "summary" &&
+    (complete.caller_input_path !== undefined ||
+      complete.caller_input_paths !== undefined)
       ? withEvidenceCallerInputPath(
           delivered.value,
           complete.caller_input_path,

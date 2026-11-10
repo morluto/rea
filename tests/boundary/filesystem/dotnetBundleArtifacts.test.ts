@@ -3,8 +3,9 @@ import { access, open, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
+import { DEFAULT_DOTNET_BUNDLE_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
 import { artifactFixedLimitFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
@@ -24,63 +25,99 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.each([
-  {
-    name: ".NET bundle entry count",
-    maximum: 100_000,
-    unit: "entries",
-    kind: "count",
-  },
-  {
-    name: ".NET bundle decoded string",
-    maximum: 65_536,
-    unit: "UTF-8 bytes",
-    kind: "string",
-  },
-  {
-    name: ".NET bundle member stored or expanded size",
-    maximum: 536_870_912,
-    unit: "bytes",
-    kind: "member",
-  },
-  {
-    name: ".NET bundle exact integer range",
-    maximum: 9_007_199_254_740_991,
-    unit: "integer units",
-    kind: "integer",
-  },
-])(
-  "reports the effective fixed $name allowance",
-  async ({ name, maximum, unit, kind }) => {
-    const root = await createTestTempDirectory("rea-dotnet-fixed-allowance-");
+  { field: "entry_count", maximum: 1, required: 2 },
+  { field: "string_bytes", maximum: 13, required: 14 },
+  { field: "member_bytes", maximum: 7, required: 8 },
+  { field: "expanded_bytes", maximum: 15, required: 16 },
+  { field: "path_parts", maximum: 1, required: 2 },
+  { field: "path_nodes", maximum: 2, required: 3 },
+  { field: "metadata_bytes", maximum: null, required: null },
+] as const)(
+  "recovers the same complete bundle after raising $field",
+  async ({ field, maximum, required }) => {
+    const root = await createTestTempDirectory("rea-dotnet-reader-admission-");
     const path = join(root, "host.exe");
     const fixture = dotnetBundleFixture([
-      {
-        path: kind === "string" ? "a".repeat(maximum + 1) : "file",
-        bytes: Buffer.from("x"),
-        ...(kind === "member" || kind === "integer"
-          ? { declaredSize: maximum + 1 }
-          : {}),
-      },
+      { path: "dir/first.txt", bytes: Buffer.from("aaaaaaaa") },
+      { path: "dir/second.txt", bytes: Buffer.from("bbbbbbbb") },
     ]);
-    if (kind === "count")
-      fixture.bytes.writeUInt32LE(maximum + 1, fixture.fields.entryCount);
+    const needed = required ?? fixture.bytes.length - fixture.headerOffset;
+    const selected = maximum ?? needed - 1;
     await writeFile(path, fixture.bytes);
     const handle = await open(path, "r");
     try {
-      const expected = artifactFixedLimitFailure(name, maximum, unit);
       await expect(
-        readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+        readDotnetBundle(
+          handle,
+          fixture.bytes.length,
+          fixture.headerOffset,
+          undefined,
+          {
+            ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+            [field]: selected,
+          },
+        ),
       ).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
-        message: expected.message,
-        userMessage: expected.message,
+        readerLimit: {
+          parameter: `artifact_limits.dotnet_bundle.${field}`,
+          effective_value: selected,
+          required_value: needed,
+          applies_at: "next_operation",
+          agent_editable: true,
+          rea_restart_required: false,
+        },
       });
+      const recovered = await readDotnetBundle(
+        handle,
+        fixture.bytes.length,
+        fixture.headerOffset,
+        undefined,
+        { ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS, [field]: needed },
+      );
+      expect(
+        recovered.files.map((file) => ({ path: file.path, size: file.size })),
+      ).toEqual([
+        { path: "dir/first.txt", size: 8 },
+        { path: "dir/second.txt", size: 8 },
+      ]);
+      expect(sha(await readFile(path))).toBe(sha(fixture.bytes));
     } finally {
       await handle.close();
     }
   },
 );
+
+it("retains the exact integer representation ceiling independently of reader budgets", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-integer-allowance-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture([
+    {
+      path: "file",
+      bytes: Buffer.from("x"),
+      declaredSize: 9_007_199_254_740_992,
+    },
+  ]);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  try {
+    const expected = artifactFixedLimitFailure(
+      ".NET bundle exact integer range",
+      9_007_199_254_740_991,
+      "integer units",
+    );
+    await expect(
+      readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expected.message,
+    });
+  } finally {
+    await handle.close();
+  }
+});
 
 it.each(["pyinstaller", "dotnet-bundle"] as const)(
   "keeps the %s outer container when a stored member is another executable container",
@@ -542,17 +579,21 @@ it("finds a split marker and uses the first apphost marker, including offset zer
       (await readDotnetBundle(handle, padded.length, header)).files,
     ).toMatchObject([{ path: "App.dll", size: 20 }]);
     const controller = new AbortController();
+    const readFailure = new Error("injected read failure during cancellation");
     handle.read = (async () => {
       controller.abort();
-      throw new Error("injected read failure during cancellation");
+      throw readFailure;
     }) as typeof handle.read;
     await expect(
       findDotnetBundleHeader(handle, padded.length, controller.signal),
-    ).rejects.toMatchObject({ reason: "cancelled" });
+    ).rejects.toBe(readFailure);
     const metadataController = new AbortController();
+    const manifestFailure = new Error(
+      "injected manifest read failure during cancellation",
+    );
     handle.read = (async () => {
       metadataController.abort();
-      throw new Error("injected manifest read failure during cancellation");
+      throw manifestFailure;
     }) as typeof handle.read;
     await expect(
       readDotnetBundle(
@@ -561,7 +602,22 @@ it("finds a split marker and uses the first apphost marker, including offset zer
         header,
         metadataController.signal,
       ),
-    ).rejects.toMatchObject({ reason: "cancelled" });
+    ).rejects.toBe(manifestFailure);
+    const completedController = new AbortController();
+    const reason = { source: "caller" };
+    handle.read = (async (...args: Parameters<typeof handle.read>) => {
+      const result = await original(...args);
+      completedController.abort(reason);
+      return result;
+    }) as typeof handle.read;
+    await expect(
+      readDotnetBundle(
+        handle,
+        padded.length,
+        header,
+        completedController.signal,
+      ),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
   } finally {
     await handle.close();
   }
@@ -764,3 +820,45 @@ it.each(["pe", "elf"] as const)(
     await expect(access(outputRoot)).rejects.toThrow();
   },
 );
+
+it("preserves a physical .NET member read failure during cancellation", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-physical-failure-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture([
+    { path: "data", bytes: Buffer.from("content") },
+  ]);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  const controller = new AbortController();
+  const physical = Object.assign(new Error("descriptor failure"), {
+    code: "EIO",
+  });
+  let restore = () => {};
+  const reader = new DotnetBundleArtifactReader(path, {
+    handle,
+    initial: await handle.stat(),
+  });
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing member");
+    const stream = await reader.open(entry, controller.signal);
+    const spy = vi.spyOn(handle, "read").mockImplementationOnce(async () => {
+      controller.abort("caller stopped");
+      throw physical;
+    });
+    restore = () => spy.mockRestore();
+    await expect(
+      (async () => {
+        for await (const _ of stream) {
+          /* consume */
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "io", cause: physical });
+  } finally {
+    restore();
+    await reader.close();
+    await handle.close();
+  }
+});

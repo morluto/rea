@@ -1,3 +1,4 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
@@ -200,7 +201,10 @@ export const electronBoundaryFactCount = (
           javascript.electron.native_addon_bindings.filter(
             provenElectronFinding,
           ).length +
-          javascript.electron.protocols.filter(provenElectronFinding).length),
+          javascript.electron.protocols.filter(provenElectronFinding).length +
+          (javascript.electron.dynamic_code ?? []).filter(
+            isPossibleCachedDataCompilation,
+          ).length),
     0,
   );
 
@@ -398,6 +402,14 @@ export const summarizeElectronBoundaries = (
         }),
     ).length,
     native_addon_bindings: nativeBindings.length,
+    v8_cached_data_compilations: javascript.reduce(
+      (count, { electron }) =>
+        count +
+        (electron.dynamic_code ?? []).filter(
+          ({ cached_data_status }) => cached_data_status === "declared",
+        ).length,
+      0,
+    ),
     resolved_native_addon_bindings: nativeBindings.filter(({ file, finding }) =>
       resolvesToFile({
         file,

@@ -22,6 +22,7 @@ import type {
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
   ElectronProtocolFinding,
+  ElectronDynamicCodeFinding,
   ElectronUtilityProcessFinding,
   ElectronWindowConstructor,
 } from "./electronStaticAnalysisTypes.js";
@@ -58,7 +59,7 @@ export interface JavaScriptAnalysisAccumulator {
   )[];
   readonly appPathChanges: LocatedJavaScriptFinding<ElectronAppPathChangeFinding>[];
   electronCallPaths?: readonly ElectronCallPath[];
-  electronCallPathLimitReached?: boolean;
+  electronCallPathLimits?: Set<"wrapper_visits" | "wrapper_depth">;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
   /** Target and receiver identities awaiting the shared mutation index. */
@@ -95,6 +96,8 @@ export interface JavaScriptAnalysisAccumulator {
     | t.AssignmentExpression
   )[];
   readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
+  readonly dynamicCode: LocatedJavaScriptFinding<ElectronDynamicCodeFinding>[];
+  readonly pendingDynamicCode: (t.NewExpression | t.CallExpression)[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
@@ -201,6 +204,8 @@ export const createJavaScriptAnalysisAccumulator = (
   nativeAddonBindings: [],
   pendingNativeAddonBindings: [],
   protocols: [],
+  dynamicCode: [],
+  pendingDynamicCode: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
   seen: new Set(),
