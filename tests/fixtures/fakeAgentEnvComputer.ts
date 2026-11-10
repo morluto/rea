@@ -1,5 +1,10 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import {
+  observeProcessStartIdentity,
+  signalProcessWithStartIdentity,
+} from "../../src/process/ProcessOwnershipObservation.js";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -15,7 +20,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -28,6 +33,7 @@ import { z } from "zod";
 import { onTestFinished } from "vitest";
 
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
+import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 /** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
@@ -92,6 +98,11 @@ export interface FakeApp {
   readonly methods: string[];
   /** data/get calls still to answer with an error, as a busy app would. */
   failGets?: number;
+  /**
+   * Called as each data/get arrives, before its answer, as an app saving on
+   * its own timer changes its files; the answer waits for a promise it returns.
+   */
+  onGet?: () => void | Promise<void>;
   /** Readiness polls answered not ready after each data/reset, as a slow relaunch would. */
   readonly unreadyAfterReset?: number;
   /** Readiness polls left before the relaunched app is ready. */
@@ -214,11 +225,67 @@ const homeFileParts = async (home: string, paths: readonly string[]) => {
 /** The most of a command's stdout the computer's computer-exec answers with. */
 const EXEC_STDOUT_BYTES = 1024 * 1024;
 
+/** Process groups a computer's commands started, so closing the computer can stop them. */
+interface ExecSessions {
+  readonly running: Set<ChildProcess>;
+  /** Start identity recorded while the process was still the one this computer launched. */
+  readonly owned: Map<number, string>;
+}
+
+/** Remember a live PID only with the start identity that proves it is still that process. */
+const rememberOwned = async (
+  sessions: ExecSessions,
+  pid: number | undefined,
+) => {
+  if (pid === undefined || sessions.owned.has(pid)) return;
+  const observed = await observeProcessStartIdentity(pid);
+  if (observed?.state === "readable")
+    sessions.owned.set(pid, observed.identity);
+};
+
+/** Child processes of `pid`, which a new session keeps after the parent exits. */
+const noteChildren = async (
+  sessions: ExecSessions,
+  pid: number | undefined,
+) => {
+  if (pid === undefined) return;
+  try {
+    const text = readFileSync(
+      `/proc/${String(pid)}/task/${String(pid)}/children`,
+      "utf8",
+    );
+    for (const id of text.trim().split(/\s+/u)) {
+      const child = Number(id);
+      if (Number.isSafeInteger(child) && child > 0)
+        await rememberOwned(sessions, child);
+    }
+  } catch {
+    // The process has exited, or this host does not expose /proc.
+  }
+};
+
+/** Stop commands this computer started, including captures detached into their own session. */
+const stopExecSessions = async (sessions: ExecSessions) => {
+  for (const child of sessions.running) await noteChildren(sessions, child.pid);
+  for (const child of sessions.running) child.kill("SIGTERM");
+  for (const [pid, identity] of sessions.owned)
+    await signalProcessWithStartIdentity(pid, identity, "SIGTERM", {
+      sendSignal: (target, signal) => {
+        try {
+          process.kill(-target, signal);
+        } catch {
+          process.kill(target, signal);
+        }
+      },
+    });
+};
+
 /** Run one computer-exec command on this host as the computer would: in the home, its stdin closed, its stdout cut at the cap. */
 const runExec = (
   exec: NonNullable<FakeComputerOptions["exec"]>,
   token: string,
   argv: readonly string[],
+  sessions: ExecSessions,
 ) =>
   new Promise<Record<string, unknown>>((resolve, reject) => {
     const [command = "", ...rest] = argv;
@@ -233,20 +300,32 @@ const runExec = (
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    sessions.running.add(child);
     const stdout: Buffer[] = [];
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => (stderr += String(chunk)));
     child.once("error", reject);
     child.once("close", (code) => {
-      const output = Buffer.concat(stdout);
-      resolve({
-        exit_code: code,
-        stdout: output.subarray(0, EXEC_STDOUT_BYTES).toString("utf8"),
-        stderr,
-        truncated: output.length > EXEC_STDOUT_BYTES,
-        timed_out: false,
-      });
+      void (async () => {
+        await noteChildren(sessions, child.pid);
+        const output = Buffer.concat(stdout);
+        for (const match of output
+          .toString("utf8")
+          .matchAll(/"pid":\s*(\d+)/gu)) {
+          const capture = Number(match[1]);
+          if (Number.isSafeInteger(capture) && capture > 0)
+            await rememberOwned(sessions, capture);
+        }
+        sessions.running.delete(child);
+        resolve({
+          exit_code: code,
+          stdout: output.subarray(0, EXEC_STDOUT_BYTES).toString("utf8"),
+          stderr,
+          truncated: output.length > EXEC_STDOUT_BYTES,
+          timed_out: false,
+        });
+      })().catch(reject);
     });
   });
 
@@ -259,9 +338,13 @@ const toolCall = z.object({
 });
 
 /** One of the app's data methods. */
-const appRoute = (app: FakeApp, request: { id?: number; method?: string }) => {
+const appRoute = async (
+  app: FakeApp,
+  request: { id?: number; method?: string },
+) => {
   const method = request.method ?? "";
   app.methods.push(method);
+  if (method === "data/get") await app.onGet?.();
   if (method === "data/get" && (app.failGets ?? 0) > 0) {
     app.failGets = (app.failGets ?? 0) - 1;
     return {
@@ -281,7 +364,15 @@ const appRoute = (app: FakeApp, request: { id?: number; method?: string }) => {
       method === "data/get"
         ? {
             parts: [
-              { kind: "file", file: { bytes: "eA==" } },
+              // Each file's bytes follow its view, so they change when the state does.
+              ...Object.entries(app.state).map(([path, view]) => ({
+                kind: "file",
+                file: {
+                  bytes: Buffer.from(JSON.stringify(view)).toString("base64"),
+                  name: path.split("/").at(-1),
+                },
+                metadata: { "urn:agentenv:data-objects/v1": { path } },
+              })),
               { kind: "data", data: { state: app.state } },
             ],
           }
@@ -301,14 +392,15 @@ const execRoute = async (
   exec: NonNullable<FakeComputerOptions["exec"]>,
   token: string,
   argv: readonly string[],
+  sessions: ExecSessions,
 ) => {
-  const answer = await runExec(exec, token, argv);
+  const answer = await runExec(exec, token, argv, sessions);
   const { dropReplies } = exec;
   const requested = dropReplies?.[0];
   const [command, operation] = requested?.split(":") ?? [];
   if (
     command !== argv[4] ||
-    (operation !== undefined && !argv[5]?.includes(`\"${operation}\"`))
+    (operation !== undefined && !argv[5]?.includes(`"${operation}"`))
   )
     return answer;
   if (dropReplies === undefined) return answer;
@@ -322,13 +414,20 @@ const buildRoute = async (
   token: string,
   path: string,
   parsed: unknown,
+  sessions: ExecSessions,
 ): Promise<unknown> => {
   const { app, exec } = options;
   const request = parsed as {
     id?: number;
     method?: string;
     argv?: string[];
-    params?: { paths?: string[] };
+    params?: {
+      paths?: string[];
+      parts?: {
+        file: { bytes: string };
+        metadata: Record<string, { path: string }>;
+      }[];
+    };
   };
   if (path === "/.well-known/agent-env.json")
     return {
@@ -343,7 +442,20 @@ const buildRoute = async (
   if (path === "/agentenv/ext/computer-ready/status") return relaunching(app);
   if (exec === undefined) return undefined;
   if (path === "/agentenv/ext/computer-exec/run")
-    return execRoute(exec, token, request.argv ?? []);
+    return execRoute(exec, token, request.argv ?? [], sessions);
+  // data/add writes each file part under the home, at the path its marker names.
+  if (path === "/agentenv" && request.method === "data/add") {
+    for (const part of request.params?.parts ?? []) {
+      const [marker] = Object.values(part.metadata);
+      if (marker === undefined) continue;
+      await mkdir(dirname(join(exec.home, marker.path)), { recursive: true });
+      await writeFile(
+        join(exec.home, marker.path),
+        Buffer.from(part.file.bytes, "base64"),
+      );
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  }
   const paths = request.params?.paths ?? [];
   // Recordings keep the canned segment; other paths are the home's files.
   if (
@@ -459,6 +571,7 @@ export const startFakeComputer = async (
     polls: 0,
     lostStarts: options.lostRecordingStarts ?? 0,
   };
+  const sessions: ExecSessions = { running: new Set(), owned: new Map() };
   const refusals = new Map<string, string>();
   const lostReplies = new Set<string>();
   const { mcp, transport } = await startFakeDriver(calls, refusals, options);
@@ -500,7 +613,7 @@ export const startFakeComputer = async (
       }
       const parsed: unknown = body.length === 0 ? {} : JSON.parse(String(body));
       const answer =
-        (await buildRoute(options, token, url.pathname, parsed)) ??
+        (await buildRoute(options, token, url.pathname, parsed, sessions)) ??
         frameworkRoute(state, url.pathname, parsed);
       if (answer === LOST) response.destroy();
       else sendJson(response, 200, answer);
@@ -520,6 +633,7 @@ export const startFakeComputer = async (
     refuseNext: (name, message) => refusals.set(name, message),
     loseNext: (name) => lostReplies.add(name),
     close: async () => {
+      await stopExecSessions(sessions);
       await mcp.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
@@ -537,6 +651,7 @@ export const startFakeComputer = async (
  */
 const FAKE_BUNDLE_MODULE = String.raw`
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -581,6 +696,9 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     previous = signal.signal(signal.SIGTERM, _interrupted)
     _note("runs.jsonl", {"root": str(root), "tasks": list(tasks), "keep": keep, "emulate": emulate,
                          "sandbox": sandbox})
+    _note("settings.jsonl", {name: hashlib.sha256(value.encode()).hexdigest() for name, value in os.environ.items()
+                             if name.startswith("REA_") and not name.startswith(("REA_AGENT_ENV", "REA_DOCKER",
+                                                                                 "REA_BUILD_COMPUTER"))})
     for path in glob.glob(os.path.join(root, "envs", "*", "*.py")):
         subprocess.run([sys.executable, "-c", DECLARE, os.path.dirname(path), os.path.basename(path)], check=True)
     shutil.copytree(root, os.path.join(STATE, "bundle"), dirs_exist_ok=True)
@@ -663,6 +781,13 @@ export const fakeAgentEnvRunner = async (
  * A build computer owner over REA's real helper, a fake runner and a fake
  * driver, and a bundle-folder start; the test closes what it starts.
  */
+/** Build-setting defaults that find nothing: an empty archive folder and PATH, never the host's own. */
+export const isolatedBuildDefaults =
+  async (): Promise<BuildComputerDefaults> => {
+    const empty = await createTestTempDirectory("build-defaults-");
+    return { archiveDirectory: empty, searchPath: empty };
+  };
+
 export const fakeBuildComputers = async (
   options: FakeComputerOptions = {},
   environment: Readonly<Record<string, string>> = {},
@@ -670,11 +795,11 @@ export const fakeBuildComputers = async (
   const computer = await startFakeComputer(options);
   onTestFinished(() => computer.close());
   const runner = await fakeAgentEnvRunner(computer);
-  const computers = new DesktopBuildComputers({
-    ...process.env,
-    ...runner.environment,
-    ...environment,
-  });
+  const computers = new DesktopBuildComputers(
+    { ...process.env, ...runner.environment, ...environment },
+    undefined,
+    await isolatedBuildDefaults(),
+  );
   const bundle = await createTestTempDirectory("exported-bundle-");
   await mkdir(join(bundle, "tasks"));
   await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");

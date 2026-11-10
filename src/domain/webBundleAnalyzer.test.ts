@@ -1099,9 +1099,20 @@ describe("web bundle configuration and navigation parity", () => {
       endpoints: [],
       candidates: ["/v1/state", "token", "users"],
     };
+    const conditional = {
+      endpoints: [],
+      candidates: [
+        "/v1/state",
+        "closedRepositories",
+        "lastVersion",
+        "onboarded",
+        "token",
+        "users",
+      ],
+    };
     expect(analyze(`const vscode = require("vscode");${reads}`)).toEqual({
-      web: proven,
-      application: proven,
+      web: conditional,
+      application: conditional,
     });
     expect(analyze(`import * as vscode from "vscode";${reads}`)).toEqual({
       web: proven,
