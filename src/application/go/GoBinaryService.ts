@@ -3,18 +3,15 @@ import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelec
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { GoBinaryPort } from "./GoBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   goBinarySchema,
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
@@ -32,7 +29,7 @@ export class GoBinaryService {
   constructor(readonly provider: GoBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */
@@ -41,18 +38,14 @@ export class GoBinaryService {
     options?: ExecutionOptions,
     retention: AnalysisViewRetention = NO_RETENTION,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectGoBinaryInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const { detail, ...providerInput } = input.data;
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectGoBinaryInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const { detail, ...providerInput } = input.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
       if (!ready.ok) return ready;
@@ -60,7 +53,7 @@ export class GoBinaryService {
     const inspected = await this.provider.inspect(providerInput, options);
     if (!inspected.ok) return inspected;
     const report = goBinarySchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
+    if (!report.success || report.data.artifact.path !== input.value.path)
       return err(
         new AnalysisOutputError(
           OPERATION,

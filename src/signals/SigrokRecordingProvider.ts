@@ -1,3 +1,9 @@
+import {
+  BOUNDED_PRODUCER_LIMITS as LIMITS,
+  resolveProducerLimits,
+} from "../domain/producerResourceLimits.js";
+import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectSignalDecodersInput,
@@ -12,14 +18,13 @@ import {
   type SigrokSelection,
 } from "./sigrokSelectorRejection.js";
 import {
-  BOUNDED_PRODUCER_LIMITS as LIMITS,
   prlimitArgumentVector,
   readLinuxResourceLimits,
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, realpath, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
@@ -34,6 +39,10 @@ import {
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  assertArtifactCommandPath,
+  selectArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -63,16 +72,27 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "decode_signal_recording";
-export const SIGROK_PROVIDER_IDENTITY = {
-  id: "sigrok-recording",
-  name: "REA sigrok recording adapter",
-  version: "sigrok-cli@0.7.2",
-} as const;
+
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Signal decoding runs only on Linux; discovery and execution share this check. */
 export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
   platform === "linux";
+
+/**
+ * A nonzero version probe ran under the resource limiter, so the status is not
+ * attributed to sigrok-cli alone.
+ */
+class ResourceLimitedVersionProbeFailure extends Error {
+  readonly statusOwner = "limiter-or-tool" as const;
+
+  constructor() {
+    super(
+      "The resource-limited sigrok-cli --version probe failed; the status may come from the limiter or from sigrok-cli, so inspect both selected installations and the captured output.",
+    );
+    this.name = "ResourceLimitedVersionProbeFailure";
+  }
+}
 
 /** Decode selected recordings only, retaining cleanup ownership across failures. */
 export class SigrokRecordingProvider implements SignalRecordingPort {
@@ -124,6 +144,8 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     input: DecodeSignalRecordingInput | InspectSignalDecodersInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const limits = resolveProducerLimits(LIMITS, input.producer_limits);
+    const environment = snapshotEnvironment(this.environment, this.platform);
     const operation = "path" in input ? OPERATION : "inspect_signal_decoders";
     let phase: "configuration" | "workspace" | "producer" | "integrity" =
       "configuration";
@@ -142,12 +164,16 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         throw new Error(
           "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
         );
-      const configured = this.environment.REA_SIGROK_COMMAND ?? "";
+      const configured = environment.REA_SIGROK_COMMAND ?? "";
       if (!isAbsolute(configured))
         throw new Error(
           "Supply absolute REA_SIGROK_COMMAND for sigrok-cli 0.7.2 with libsigrokdecode.",
         );
-      const command = await realpath(configured);
+      const selectedCommand = await selectArtifactCommandPath(
+        configured,
+        options?.signal,
+      );
+      const command = selectedCommand.resolvedPath;
       await access(command, constants.X_OK);
       const tool = await this.#resources.read(
         command,
@@ -155,18 +181,25 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         options?.signal,
       );
       const configuredLimiter =
-        this.environment.REA_SIGROK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
+        environment.REA_SIGROK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
         throw new Error("REA_SIGROK_PRLIMIT_COMMAND must be absolute.");
-      const limiter = await realpath(configuredLimiter);
+      const selectedLimiter = await selectArtifactCommandPath(
+        configuredLimiter,
+        options?.signal,
+      );
+      const limiter = selectedLimiter.resolvedPath;
       await access(limiter, constants.X_OK);
       const limiterIdentity = await this.#resources.read(
         limiter,
         64 * 1024 * 1024,
         options?.signal,
       );
-      effectiveLimits = await this.#resources.readLimits(LIMITS);
-      const limitArguments = prlimitArgumentVector(effectiveLimits, command);
+      effectiveLimits = await this.#resources.readLimits(limits);
+      const limitArguments = prlimitArgumentVector(
+        effectiveLimits,
+        selectedCommand.invocationPath,
+      );
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
@@ -180,18 +213,24 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         selection?: SigrokSelection,
       ) => {
         capturedOutput = undefined;
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          signal: options?.signal,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          signal: options?.signal,
+        });
         const output = await runOwnedCommand(
           {
-            command: limiter,
+            command: selectedLimiter.invocationPath,
             arguments: [...limitArguments, ...args],
             ...(root === undefined ? {} : { cwd: root.path }),
             expectedCommand: null,
             runId: `rea-sigrok-${randomUUID()}`,
-            hostEnvironment: this.environment,
+            hostEnvironment: environment,
           },
           {
-            timeoutMs: LIMITS.command_timeout_ms,
-            diagnosticBytes: LIMITS.output_bytes,
+            timeoutMs: limits.command_timeout_ms,
+            diagnosticBytes: limits.output_bytes,
             acceptNonZeroExit: true,
           },
           {
@@ -202,6 +241,12 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           },
         );
         capturedOutput = artifactCommandOutput(output);
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          capturedOutput,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          capturedOutput,
+        });
         const current = await this.#resources.readCommandAfterRun(
           command,
           { path: limiter, sha256: limiterIdentity.sha256 },
@@ -244,10 +289,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             { capturedOutput, userMessage: rejection.message },
             [rejection],
           );
+        // The probe runs under the limiter, so either program may own the status.
         if (output.exitCode !== 0 && phase === "configuration")
-          throw new Error(
-            "The selected sigrok-cli installation failed its --version probe; inspect its captured output.",
-          );
+          throw new ResourceLimitedVersionProbeFailure();
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
             SIGROK_PROVIDER_IDENTITY.id,
@@ -287,7 +331,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           sha256: limiterIdentity.sha256,
           arguments: limitArguments,
         },
-        limits: { ...LIMITS, ...effectiveLimits },
+        limits: { ...limits, ...effectiveLimits },
         hardware_acquisition: "not-performed" as const,
       });
       if (!("path" in input)) {
@@ -315,8 +359,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       } else {
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
-          maximumBytes: LIMITS.input_bytes,
-          allowanceName: "the fixed sigrok input allowance",
+          maximumBytes: limits.input_bytes,
+          allowanceName: "the sigrok input allowance",
+          budgetParameter: "producer_limits.input_bytes",
           observedOutput: capturedOutput,
           signal: options?.signal,
         });
@@ -344,7 +389,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase = "integrity";
         resourcePath = snapshotPath;
         if (
-          (await this.#resources.read(snapshotPath, LIMITS.input_bytes))
+          (await this.#resources.read(snapshotPath, limits.input_bytes))
             .sha256 !== selected.sha256
         )
           throw new AnalysisArtifactChangedError(
@@ -381,7 +426,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
               "Annotations are the selected decoder's interpretation of the recorded samples and caller-selected settings, not independently verified protocol semantics. Empty output does not establish absence of traffic.",
               "Sample-number ranges and display text are preserved verbatim, not converted to timestamps or parsed as a lossless byte stream. All producer stderr is retained, including warnings on exit zero.",
               "Only a private copy of the selected file is decoded. Hardware discovery/acquisition and target execution are not requested. Caller-supplied tools, plugins and decoder modules are trusted; this is not an OS sandbox.",
-              "Linux prlimit enforces soft and hard ceilings before execution, preserving stricter inherited limits: at most 1 GiB address space per process, 64 MiB per file, 30 CPU seconds and no core dumps. Effective limits are reported. Resident input is capped at 32 MiB, each command at 30 wall-clock seconds and combined output at 4 MiB. Output overflow fails. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted. REA retains the tighter inherited limit. This release has no runtime override.",
+              "Linux prlimit enforces the reported per-process address-space, per-file and CPU limits before execution with no core dumps, preserving tighter inherited soft and hard limits. Input, command deadline and retained output budgets are reported in limits; producer_limits can change their requested defaults on the next call without restart. Output overflow fails. Parser and transport bounds remain independent. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted.",
             ],
           }),
         );
@@ -402,6 +447,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           effectiveLimits,
           capturedOutput,
           operation,
+          limits,
         ),
       );
     }
@@ -428,6 +474,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     effectiveLimits: LinuxResourceLimits | undefined,
     observedOutput: AnalysisCapturedOutput | undefined,
     operation = OPERATION,
+    limits: {
+      readonly output_bytes: number;
+      readonly command_timeout_ms: number;
+    } = LIMITS,
   ): AnalysisError {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
@@ -442,6 +492,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             effectiveLimits,
             observedOutput,
             operation,
+            limits,
           ),
         observedOutput,
         operation,
@@ -474,9 +525,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     if (cause instanceof OwnedCommandFailure)
       return this.#resources.commandFailure(
         cause,
-        LIMITS,
+        limits,
         effectiveLimits,
         operation,
+        "producer_limits",
       );
     if (phase === "workspace")
       return privateWorkspaceFailure(
@@ -502,6 +554,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
+          ...(cause instanceof ResourceLimitedVersionProbeFailure
+            ? {
+                diagnostics: {
+                  version_probe_status_owner: cause.statusOwner,
+                },
+              }
+            : {}),
           userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
         },
       );

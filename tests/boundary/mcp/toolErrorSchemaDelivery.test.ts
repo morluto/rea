@@ -29,7 +29,7 @@ it("delivers typed tool failures without violating the advertised success schema
     const tool = tools.find(({ name }) => name === request.name);
     if (tool?.outputSchema === undefined)
       throw new Error(`${request.name} omitted its output schema`);
-    const reply = await client.callTool(request);
+    const reply = await client.callTool(request, { toolDefinition: tool });
     const diagnostic = parseMcpToolError(reply);
     expect(diagnostic.error.message, request.name).not.toBe("");
     if ("path" in request.arguments || "input_path" in request.arguments)

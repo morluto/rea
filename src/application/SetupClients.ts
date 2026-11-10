@@ -5,11 +5,15 @@ import type {
   SetupProgressEvent,
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
+import { clientEnvironment } from "./SetupPlan.js";
+import { assertSetupActive } from "./SetupCancellation.js";
 
 export const failedConfigurationMessage = (
   result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,
 ): string => {
   switch (result.reason) {
+    case "registration_ownership":
+      return result.detail;
     case "conflict":
       return "Agent configuration changed during setup. Review the current file and rerun setup.";
     case "target_changed":
@@ -56,19 +60,24 @@ export const configureDetectedClients = async (options: {
   readonly host: SetupHost;
   readonly detectedClients: readonly SetupClient[];
   readonly providerEnvironment: SetupProviderEnvironment;
+  readonly clientEnvironments?:
+    | Readonly<Record<string, SetupProviderEnvironment>>
+    | undefined;
   readonly command: readonly string[];
   readonly clients: Record<string, ClientConfigurationResult>;
   readonly appliedActions: string[];
   readonly onProgress?: (event: SetupProgressEvent) => void;
+  readonly signal?: AbortSignal | undefined;
 }): Promise<string | undefined> => {
   let failure: string | undefined;
   for (const client of options.detectedClients) {
+    assertSetupActive(options.signal);
     const actionId = `configure_client:${client.name}`;
     const label = client.displayName ?? client.name;
     options.onProgress?.({ actionId, label, state: "started" });
     const result = await options.host.configureClient(
       client,
-      options.providerEnvironment,
+      clientEnvironment(options, client.name),
       options.command,
     );
     options.clients[client.name] = result;
@@ -94,6 +103,7 @@ export const configureDetectedClients = async (options: {
             : "Manual configuration required",
       });
     }
+    assertSetupActive(options.signal);
   }
   return failure;
 };

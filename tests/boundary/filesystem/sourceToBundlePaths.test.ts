@@ -171,8 +171,16 @@ it("matches source-map originals named relative to the map", async () => {
 
 it.each([
   { root: "../src/", expected: "https://example.test/src/index.js" },
-  { root: "", expected: "https://example.test/index.js" },
+  // webpack 5 and tsc emit an empty root for map-relative sources.
+  { root: "", expected: "https://example.test/maps/index.js" },
   { root: null, expected: "https://example.test/maps/index.js" },
+  { root: "/", expected: "https://example.test/index.js" },
+  { root: "./", expected: "https://example.test/maps/index.js" },
+  { root: " ", expected: "https://example.test/index.js" },
+  {
+    root: "https://cdn.example/src",
+    expected: "https://cdn.example/src/index.js",
+  },
 ])("resolves sourceRoot $root according to ECMA-426", ({ root, expected }) => {
   expect(
     resolveJavaScriptSourceMapUrl(
@@ -194,7 +202,14 @@ it.each([
     mapPath: "maps/app.js.map",
     sourceRoot: "",
     source: "index.js",
-    expected: "index.js",
+    expected: "maps/index.js",
+    decoy: "index.js",
+  },
+  {
+    mapPath: "pkg/dist/cjs/main.js.map",
+    sourceRoot: "",
+    source: "../../src/a.js",
+    expected: "pkg/src/a.js",
   },
   {
     mapPath: "maps/app.js.map",

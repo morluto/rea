@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_PLIST_DEPTH, plistNestingLimitMessage } from "./plistValue.js";
+import { MAX_PLIST_DEPTH } from "./plistValue.js";
 import { projectKeyedArchive } from "./keyedArchive.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
@@ -9,6 +9,36 @@ const deepValue = (depth: number): unknown => {
   return value;
 };
 
+it("preserves an own root named __proto__ through selection and UID edge projection", () => {
+  const input = {
+    $archiver: "NSKeyedArchiver",
+    $objects: ["$null", { ["__proto__"]: { CF$UID: 0 } }],
+    $top: { ["__proto__"]: { CF$UID: 1 }, ordinary: { CF$UID: 1 } },
+  };
+  const result = projectKeyedArchive(input, {
+    root: "__proto__",
+    offset: 0,
+    limit: 2,
+  });
+  expect(result.roots).toEqual({ ["__proto__"]: { CF$UID: 1 } });
+  expect(result.references).toContainEqual(
+    expect.objectContaining({
+      source: null,
+      path: ["__proto__"],
+      target: 1,
+      status: "resolved",
+    }),
+  );
+  expect(result.references).toContainEqual(
+    expect.objectContaining({
+      source: 1,
+      path: ["__proto__"],
+      target: 0,
+      status: "nil",
+    }),
+  );
+});
+
 describe("projectKeyedArchive input bound", () => {
   it("rejects over-deep decoded input at the plist projection limit", () => {
     expect(() =>
@@ -16,7 +46,7 @@ describe("projectKeyedArchive input bound", () => {
         offset: 0,
         limit: 1,
       }),
-    ).toThrow(plistNestingLimitMessage());
+    ).toThrow(/128 nesting levels/iu);
   });
 });
 

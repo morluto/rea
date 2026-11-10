@@ -69,11 +69,17 @@ vi.mock("../../src/firmware/FirmwareCommand.js", async (importOriginal) => {
     >();
   return {
     ...original,
-    resolveFirmwareCommand: async () => ({
-      command: "/fixture/binwalk",
-      limiter: "/fixture/prlimit",
-      sha256: "0".repeat(64),
-    }),
+    resolveFirmwareCommand: async () => {
+      const { selectArtifactCommandPath } =
+        await import("../../src/process/ArtifactCommandPath.js");
+      const command = await selectArtifactCommandPath(process.execPath);
+      return {
+        command,
+        limiter: command,
+        sha256: "0".repeat(64),
+        fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+      };
+    },
     runFirmwareCommand: async (
       context: Parameters<typeof original.runFirmwareCommand>[0],
     ) => {

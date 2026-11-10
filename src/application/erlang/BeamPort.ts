@@ -12,7 +12,7 @@ import type { Result } from "../../domain/result.js";
 /** Stable read and BEAM IFF decoding, independent of a disassembler session. */
 export interface BeamPort {
   readonly identity: ProviderIdentity;
-  close?(): Promise<void>;
+  close(): Promise<void>;
   inspect(
     input: InspectErlangBeamInput,
     options?: ExecutionOptions,

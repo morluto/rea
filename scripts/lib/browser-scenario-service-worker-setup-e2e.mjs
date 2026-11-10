@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { createServer, request } from "node:http";
+import { request } from "node:http";
 import { connect } from "node:net";
 
 import { createBrowserScenarioProvider } from "../../dist/composition/browserScenario.js";
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
 import { PlaywrightScenarioServiceWorkers } from "../../dist/browser/PlaywrightScenarioServiceWorkers.js";
+import { createBrowserFixtureHttpServer } from "./browser-fixture-http.mjs";
 
 const beforeDeadline = async (promise, label, timeoutMs = 2_000) => {
   let timer;
@@ -26,7 +27,7 @@ const beforeDeadline = async (promise, label, timeoutMs = 2_000) => {
 
 // Real loopback proxy: Playwright's first transport is forwarded to Chrome,
 // then only the policy owner's discovery/handshake is deliberately withheld.
-const startProxy = async (endpoint, mode, ownerOnly = false) => {
+export const startProxy = async (endpoint, mode, ownerOnly = false) => {
   const upstream = new URL(endpoint);
   const sockets = new Set();
   let versions = 0;
@@ -47,38 +48,44 @@ const startProxy = async (endpoint, mode, ownerOnly = false) => {
     socket.once("close", () => closed());
     entered();
   };
-  const server = createServer((incoming, response) => {
-    const versionRequest = incoming.url.replace(/\/$/, "") === "/json/version";
-    if (versionRequest) versions += 1;
-    if (
-      enabled &&
-      mode === "http-discovery" &&
-      versions === 2 &&
-      versionRequest
-    ) {
-      stall(incoming.socket);
-      return;
-    }
-    const outgoing = request(new URL(incoming.url, upstream), (received) => {
-      const chunks = [];
-      received.on("data", (chunk) => chunks.push(chunk));
-      received.on("end", () => {
-        const content = Buffer.concat(chunks).toString("utf8");
-        response.writeHead(received.statusCode, {
-          "content-type": "application/json",
+  const server = createBrowserFixtureHttpServer(
+    (incoming, response, target) => {
+      const versionRequest =
+        target.pathname.replace(/\/$/, "") === "/json/version";
+      if (versionRequest) versions += 1;
+      if (
+        enabled &&
+        mode === "http-discovery" &&
+        versions === 2 &&
+        versionRequest
+      ) {
+        stall(incoming.socket);
+        return;
+      }
+      const destination = new URL(upstream);
+      destination.pathname = target.pathname;
+      destination.search = target.search;
+      const outgoing = request(destination, (received) => {
+        const chunks = [];
+        received.on("data", (chunk) => chunks.push(chunk));
+        received.on("end", () => {
+          const content = Buffer.concat(chunks).toString("utf8");
+          response.writeHead(received.statusCode, {
+            "content-type": "application/json",
+          });
+          response.end(
+            content.replaceAll(
+              `127.0.0.1:${upstream.port}`,
+              `127.0.0.1:${server.address().port}`,
+            ),
+          );
         });
-        response.end(
-          content.replaceAll(
-            `127.0.0.1:${upstream.port}`,
-            `127.0.0.1:${server.address().port}`,
-          ),
-        );
       });
-    });
-    outgoing.on("error", () => response.destroy());
-    response.on("close", () => outgoing.destroy());
-    outgoing.end();
-  });
+      outgoing.on("error", () => response.destroy());
+      response.on("close", () => outgoing.destroy());
+      outgoing.end();
+    },
+  );
   server.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));

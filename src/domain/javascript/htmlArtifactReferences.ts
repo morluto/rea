@@ -11,6 +11,8 @@ import type {
 
 interface HtmlScriptReference {
   readonly scriptPath: string;
+  /** Null for data blocks and other non-JavaScript script types. */
+  readonly scriptType: HtmlInlineScript["scriptType"] | null;
   /** The opening tag's range in parse5 coordinates. */
   readonly location: JavaScriptSourceRange;
 }
@@ -54,7 +56,7 @@ const JAVASCRIPT_MIME_TYPES = new Set([
  * MIME check; `module` must match the type string exactly, ignoring ASCII
  * case. Import maps, speculation rules and data blocks are not JavaScript.
  */
-const inlineScriptType = (
+const javaScriptType = (
   attrs: readonly { readonly name: string; readonly value: string }[],
 ): HtmlInlineScript["scriptType"] | null => {
   const type = attrs.find(({ name }) => name === "type");
@@ -77,6 +79,30 @@ const inlineScriptType = (
 
 const asciiLowercase = (value: string): string =>
   value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+
+/** SVG uses href/XLink and has no HTML language fallback or src attribute. */
+const scriptAttributes = (node: DefaultTreeAdapterTypes.Element) => {
+  const html = node.namespaceURI === "http://www.w3.org/1999/xhtml";
+  const source = html
+    ? node.attrs.find(({ name }) => name === "src")
+    : (node.attrs.find(
+        ({ name, namespace }) => name === "href" && namespace === undefined,
+      ) ??
+      node.attrs.find(
+        ({ name, namespace }) =>
+          name === "href" && namespace === "http://www.w3.org/1999/xlink",
+      ));
+  return {
+    source,
+    scriptType: javaScriptType(
+      html
+        ? node.attrs
+        : node.attrs.filter(
+            ({ name, namespace }) => name === "type" && namespace === undefined,
+          ),
+    ),
+  };
+};
 
 /**
  * Extract inert HTML script references, inline JavaScript bodies, and the
@@ -103,18 +129,24 @@ export const htmlArtifactReferences = (
     if (node === undefined) continue;
     if (
       defaultTreeAdapter.isElementNode(node) &&
-      node.namespaceURI === "http://www.w3.org/1999/xhtml"
+      (node.namespaceURI === "http://www.w3.org/1999/xhtml" ||
+        node.namespaceURI === "http://www.w3.org/2000/svg")
     ) {
-      if (node.tagName === "base" && baseHref === null) {
+      if (
+        node.namespaceURI === "http://www.w3.org/1999/xhtml" &&
+        node.tagName === "base" &&
+        baseHref === null
+      ) {
         const href = node.attrs.find(({ name }) => name === "href");
         if (href !== undefined) baseHref = href.value;
       }
       if (node.tagName === "script") {
-        const src = node.attrs.find(({ name }) => name === "src");
+        const { scriptType, source: src } = scriptAttributes(node);
         const location = node.sourceCodeLocation?.startTag;
         if (src !== undefined && src.value !== "" && location !== undefined) {
           scripts.push({
             scriptPath: src.value,
+            scriptType,
             location: {
               start: sourcePoint(location.startLine, location.startCol),
               end: sourcePoint(location.endLine, location.endCol),
@@ -122,8 +154,6 @@ export const htmlArtifactReferences = (
           });
         }
         const inline = src === undefined ? inlineScriptBody(node) : undefined;
-        const scriptType =
-          inline === undefined ? null : inlineScriptType(node.attrs);
         if (inline !== undefined && scriptType !== null) {
           inlineScriptCount += 1;
           if (inlineScripts.length < HTML_INLINE_SCRIPT_LOCATION_LIMIT)

@@ -12,7 +12,7 @@ import type { Result } from "../../domain/result.js";
 /** Replaceable offline build-information reader with no target-execution authority. */
 export interface GoBinaryPort {
   readonly identity: ProviderIdentity;
-  close?(): Promise<void>;
+  close(): Promise<void>;
   inspect(
     input: Omit<InspectGoBinaryInput, "detail">,
     options?: ExecutionOptions,

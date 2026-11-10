@@ -30,7 +30,7 @@ const observedJavaScriptRuntimeKindSchema = javascriptRuntimeKindSchema.or(
 /** Input for one passive attach-only V8 Inspector observation. */
 export const observeJavaScriptRuntimeInputSchema = z.strictObject({
   ...runtimeEndpoint,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   runtime_kind: javascriptRuntimeKindSchema.optional(),
   observation_ms: z.int().min(0).default(100),
 });
@@ -121,7 +121,18 @@ const javascriptRuntimeScriptSchema = z.strictObject({
     .describe(
       "Exact Inspector URL for an authorized file script, retained separately from its verified filesystem path.",
     ),
-  execution_context_key: z.string().nullable(),
+  execution_context_key: z
+    .string()
+    .nullable()
+    .describe(
+      "Capture-local observed context lifetime associated with this script; null when no context creation was observed.",
+    ),
+  execution_context_id: z
+    .int()
+    .nullable()
+    .describe(
+      "Numeric execution-context ID reported for the script, independent of whether its lifetime was observed.",
+    ),
   cdp_hash: z.string().nullable(),
   length: z
     .int()
@@ -138,7 +149,17 @@ const javascriptRuntimeScriptSchema = z.strictObject({
 });
 
 const javascriptRuntimeContextSchema = z.strictObject({
-  context_key: z.string().min(1),
+  context_key: z
+    .string()
+    .min(1)
+    .describe(
+      "Capture-local context lifetime key used to associate scripts with this observed context.",
+    ),
+  execution_context_id: z
+    .int()
+    .describe(
+      "Numeric execution-context ID reported by the protocol; IDs can be reused across lifetimes.",
+    ),
   state: z.enum(["created", "destroyed", "cleared"]),
   name: z.string().nullable(),
   origin: z.string().nullable(),

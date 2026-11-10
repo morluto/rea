@@ -1,3 +1,4 @@
+import { retainYamlSequenceAnnotations } from "./YamlSequenceAnnotations.js";
 import {
   isAlias,
   isMap,
@@ -7,12 +8,12 @@ import {
   parseDocument,
   Document,
   Schema,
-  visit,
   type ParsedNode,
   type Node,
   type ScalarTag,
   type Tags,
 } from "yaml";
+import { preserveHermesAliasValues } from "./HermesConfigurationAliases.js";
 
 const SOURCE_SCALAR_TAGS = new Set([
   "tag:yaml.org,2002:int",
@@ -328,10 +329,32 @@ export const parseHermesConfigurationYaml = (text: string): unknown => {
       });
 };
 
-/** Keep unchanged scalar nodes, including their quoting and explicit tags. */
-const retainHermesScalarSource = (previous: unknown, next: Node): Node => {
-  if (isScalar(previous) && isScalar(next) && previous.value === next.value)
-    return previous;
+/** Keep source annotations and unchanged scalars when updating a value. */
+const retainHermesSource = (
+  previous: unknown,
+  next: Node,
+  retainedSources: ReadonlySet<Node>,
+): Node => {
+  if (isScalar(previous) && isScalar(next) && previous.value === next.value) {
+    if (!retainedSources.has(previous)) return previous;
+    const copied = previous.clone();
+    if (!isScalar(copied)) throw new TypeError("Invalid Hermes scalar copy");
+    delete copied.anchor;
+    delete copied.comment;
+    delete copied.commentBefore;
+    delete copied.spaceBefore;
+    return copied;
+  }
+  // An anchor moved to a surviving consumer owns its original comments.
+  // Otherwise retain annotations on the replacement without retaining the
+  // old anchor, tag, or scalar spelling for the changed value.
+  if (isNode(previous) && !retainedSources.has(previous)) {
+    if (previous.comment !== undefined) next.comment = previous.comment;
+    if (previous.commentBefore !== undefined)
+      next.commentBefore = previous.commentBefore;
+    if (previous.spaceBefore !== undefined)
+      next.spaceBefore = previous.spaceBefore;
+  }
   if (isMap(previous) && isMap(next)) {
     const entries = new Map(
       previous.items.flatMap((pair) =>
@@ -344,16 +367,33 @@ const retainHermesScalarSource = (previous: unknown, next: Node): Node => {
       const key = isScalar(pair.key) ? pair.key.value : undefined;
       const prior = typeof key === "string" ? entries.get(key) : undefined;
       if (prior === undefined) continue;
-      pair.key = prior.key;
+      pair.key = isNode(pair.key)
+        ? retainHermesSource(prior.key, pair.key, retainedSources)
+        : prior.key;
       if (isNode(pair.value))
-        pair.value = retainHermesScalarSource(prior.value, pair.value);
+        pair.value = retainHermesSource(
+          prior.value,
+          pair.value,
+          retainedSources,
+        );
     }
   } else if (isSeq(previous) && isSeq(next)) {
-    next.items = next.items.map((item, index) =>
-      isNode(item)
-        ? retainHermesScalarSource(previous.items[index], item)
-        : item,
-    );
+    const stringItems = (items: readonly unknown[]) =>
+      items.every((item) => isScalar(item) && typeof item.value === "string");
+    if (stringItems(previous.items) && stringItems(next.items))
+      retainYamlSequenceAnnotations(
+        previous,
+        next,
+        (item) => (isScalar(item) ? item.value : undefined),
+        (source, target) => retainHermesSource(source, target, retainedSources),
+        (source) => !retainedSources.has(source),
+      );
+    else
+      next.items = next.items.map((item, index) =>
+        isNode(item)
+          ? retainHermesSource(previous.items[index], item, retainedSources)
+          : item,
+      );
   }
   return next;
 };
@@ -395,33 +435,6 @@ const copyHermesAliasSource = (
   return copied;
 };
 
-/** External aliases keep their original bindings when their source is replaced. */
-const retainHermesAliasConsumers = (
-  document: Document,
-  previous: unknown,
-): void => {
-  if (!isNode(previous)) return;
-  const replaced = new Set<Node>();
-  visit(previous, {
-    Node: (_key, node) => {
-      replaced.add(node);
-    },
-  });
-  visit(document, {
-    Alias: (_key, alias, path) => {
-      const source = alias.resolve(document);
-      if (
-        source === undefined ||
-        !replaced.has(source) ||
-        path.some((parent) => isNode(parent) && replaced.has(parent))
-      )
-        return;
-      const copied = copyHermesAliasSource(alias, document);
-      return isNode(copied) ? copied : undefined;
-    },
-  });
-};
-
 /** Set or delete one value in a Hermes `config.yaml`, keeping the rest as written. */
 export const editHermesConfigurationYaml = (
   text: string,
@@ -453,17 +466,32 @@ export const editHermesConfigurationYaml = (
       document.setIn(parent, document.createNode({}));
     }
   }
-  retainHermesAliasConsumers(document, document.getIn(path, true));
+  const previous = document.getIn(path, true);
+  // Deletion removes the pair's key too; replacement retains that key node.
+  const parent =
+    value === undefined ? document.getIn(path.slice(0, -1), true) : undefined;
+  const removedKey = isMap(parent)
+    ? parent.items.find(
+        (pair) => isScalar(pair.key) && pair.key.value === path.at(-1),
+      )?.key
+    : undefined;
+  const retainedSources = preserveHermesAliasValues(document, [
+    previous,
+    removedKey,
+  ]);
   if (value === undefined) {
     if (!document.deleteIn(path)) return text;
   } else {
-    const previous = document.getIn(path, true);
     // Let YAML's scalar update preserve numeric formats for a direct edit.
     // Replacing containers needs explicit retention of unchanged child nodes.
     document.setIn(
       path,
       isMap(previous) || isSeq(previous)
-        ? retainHermesScalarSource(previous, document.createNode(value))
+        ? retainHermesSource(
+            previous,
+            document.createNode(value),
+            retainedSources,
+          )
         : value,
     );
   }

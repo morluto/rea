@@ -1,3 +1,6 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -16,7 +19,14 @@ import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  parseEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
+import {
+  createResidualUnknown,
+  updateResidualUnknown,
+} from "../../../src/domain/residualUnknown.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
@@ -88,6 +98,111 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
     throw new Error("missing structured result");
   return Object.fromEntries(Object.entries(result.structuredContent));
 };
+
+it("rejects divergent imported histories without suggesting an unchanged retry", async () => {
+  const root = await createTestTempDirectory("rea-unknown-divergent-");
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const records = ["create", "left", "right"].map((operation) =>
+    createEvidence(undefined, provider, {
+      operation,
+      parameters: {},
+      result: {},
+    }),
+  );
+  const [created, left, right] = records;
+  if (created === undefined || left === undefined || right === undefined)
+    throw new Error("Missing fixture records");
+  const fields = {
+    question: "Does this branch conflict?",
+    domain: "fixture",
+    severity: "medium" as const,
+    required_authority: null,
+    required_confidence: "observed" as const,
+    required_environment: null,
+    recommended_probes: [],
+    relationships: [],
+    supporting_evidence_ids: [],
+    contradicting_evidence_ids: [],
+  };
+  const initial = createResidualUnknown(fields, created.evidence_id, null);
+  const update = {
+    ...fields,
+    unknown_id: initial.unknown_id,
+    expected_revision: 1,
+    status: "investigating" as const,
+    resolution: null,
+  };
+  const first = createEvidenceBundle(records, [
+    initial,
+    updateResidualUnknown(initial, update, left.evidence_id),
+  ]);
+  const second = createEvidenceBundle(records, [
+    initial,
+    updateResidualUnknown(
+      initial,
+      { ...update, status: "blocked" },
+      right.evidence_id,
+    ),
+  ]);
+  const paths = [join(root, "first.json"), join(root, "second.json")];
+  await Promise.all([
+    writeFile(paths[0]!, JSON.stringify(first)),
+    writeFile(paths[1]!, JSON.stringify(second)),
+  ]);
+  const session = createTestBinarySession(() => {
+    throw new Error("no target");
+  });
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "conflicting-history", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const emptyExport = await client.callTool({
+    name: "export_evidence_bundle",
+    arguments: { path: join(root, "empty-export.json") },
+  });
+  expect(emptyExport.isError).not.toBe(true);
+  expect(emptyExport.structuredContent).toMatchObject({
+    result: { records: 0, unknowns: 0 },
+  });
+  const imported = await client.callTool({
+    name: "import_evidence_bundle",
+    arguments: { path: paths[0]! },
+  });
+  expect(imported.isError).not.toBe(true);
+  const exportResult = await client.callTool({
+    name: "export_evidence_bundle",
+    arguments: { path: join(root, "revisions-export.json") },
+  });
+  expect(exportResult.isError).not.toBe(true);
+  expect(exportResult.structuredContent).toMatchObject({
+    result: { records: records.length, unknowns: 2 },
+  });
+  const before = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const conflict = await client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: paths[1]! },
+    });
+    expect(conflict.isError).toBe(true);
+    expect(parseMcpToolError(conflict).error).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      retryable: false,
+      remediation: { action: expect.stringContaining("cannot reconcile") },
+      details: { diagnostics: { unknown_id: initial.unknown_id, revision: 2 } },
+    });
+    const after = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(after.structuredContent).toEqual(before.structuredContent);
+  }
+});
 
 it("does not record capability unavailability without supporting Evidence", async () => {
   const session = createTestBinarySession(
@@ -571,10 +686,31 @@ it("returns exact committed unknown receipts when creation and update replies ov
         },
       },
     });
+    const recovery = parseMcpToolError(response).error.remediation.action;
+    expect(recovery).toContain("export_evidence_bundle");
+    expect(recovery).not.toContain("or page list_unknowns");
+    expect(recovery).toContain("may be too large");
     for (const id of unknown.mutation_evidence_ids)
       expect(session.evidenceById(id)).toBeDefined();
   };
   checkReceipt(created, first);
+  const singlePage = await client.callTool({
+    name: "list_unknowns",
+    arguments: { offset: 0, limit: 1 },
+  });
+  expect(singlePage.isError).toBe(true);
+  expect(parseMcpToolError(singlePage).error.remediation.action).toContain(
+    "export_evidence_bundle",
+  );
+  const directory = await createTestTempDirectory("rea-unknown-overflow-");
+  const path = join(directory, "bundle.json");
+  const exported = await client.callTool({
+    name: "export_evidence_bundle",
+    arguments: { path },
+  });
+  expect(exported.isError).not.toBe(true);
+  const bundle = parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")));
+  expect(bundle.unknowns[0]?.question).toBe("x".repeat(10_000));
   const updated = await client.callTool({
     name: "update_unknown",
     arguments: {
@@ -590,4 +726,168 @@ it("returns exact committed unknown receipts when creation and update replies ov
   expect(latest.revision).toBe(2);
   checkReceipt(updated, latest);
   expect(session.exportEvidenceBundle().unknowns).toHaveLength(2);
+});
+
+it("preserves graph constraint facts and rejects atomically until input is corrected", async () => {
+  const session = createTestBinarySession(providerWithCapabilities([]));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "unknown-constraint", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const fields = {
+    severity: "medium",
+    required_authority: "controlled-replay",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [],
+    relationships: [],
+    supporting_evidence_ids: [],
+    contradicting_evidence_ids: [],
+  };
+  const good = async (name: string, args: Record<string, unknown> = {}) => {
+    const reply = await client.callTool({ name, arguments: args });
+    expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+    return structured(reply).result;
+  };
+  const missingEvidence = `ev_${"0".repeat(64)}`;
+  const missingUnknown = `unk_${"0".repeat(64)}`;
+  const empty = await good("get_evidence_bundle");
+  const request = {
+    ...fields,
+    question: "Can this reference be used?",
+    domain: "reference",
+  };
+  for (const [args, constraint] of [
+    [
+      { supporting_evidence_ids: [missingEvidence] },
+      { kind: "missing_evidence", evidence_id: missingEvidence },
+    ],
+    [
+      { relationships: [{ type: "related-to", unknown_id: missingUnknown }] },
+      { kind: "missing_unknown", related_unknown_id: missingUnknown },
+    ],
+  ] as const) {
+    const error = parseMcpToolError(
+      await client.callTool({
+        name: "record_unknown",
+        arguments: { ...request, ...args },
+      }),
+    ).error;
+    expect(error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      details: { reason: "constraint", constraint },
+      remediation: {
+        action: expect.stringContaining("Do not repeat the unchanged call"),
+      },
+    });
+    expect(await good("get_evidence_bundle")).toEqual(empty);
+  }
+  const head = (await good("record_unknown", request)) as {
+    unknown_id: string;
+    revision: number;
+    mutation_evidence_ids: string[];
+  };
+  const id = head.mutation_evidence_ids[0];
+  const before = await good("get_evidence_bundle");
+  const update = {
+    ...fields,
+    unknown_id: head.unknown_id,
+    expected_revision: head.revision,
+    status: "resolved",
+    supporting_evidence_ids: [id],
+    resolution: {
+      disposition: "verified",
+      rationale: "Mutation alone does not prove this claim.",
+      evidence_ids: [id],
+    },
+  };
+  const error = parseMcpToolError(
+    await client.callTool({ name: "update_unknown", arguments: update }),
+  ).error;
+  expect(error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    retryable: false,
+    details: {
+      reason: "constraint",
+      constraint: { kind: "resolution_unproven", unknown_id: head.unknown_id },
+    },
+  });
+  expect(error.message).toContain("no qualifying resolution evidence");
+  expect(await good("get_evidence_bundle")).toEqual(before);
+  expect(
+    await good("record_unknown", {
+      ...request,
+      question: "Does the corrected reference work?",
+      supporting_evidence_ids: [id],
+    }),
+  ).toMatchObject({ revision: 1 });
+  expect(
+    await good("update_unknown", {
+      ...update,
+      resolution: {
+        disposition: "withdrawn",
+        rationale: "Withdraw unsupported claim.",
+        evidence_ids: [],
+      },
+    }),
+  ).toMatchObject({ revision: 2 });
+  const conflict = parseMcpToolError(
+    await client.callTool({ name: "update_unknown", arguments: update }),
+  ).error;
+  expect(conflict).toMatchObject({
+    code: "revision_conflict",
+    retryable: true,
+  });
+});
+
+it("recovers an oversized list with same-session paging or export", async () => {
+  const session = createTestBinarySession(providerWithCapabilities([]));
+  const server = createServer(
+    { kind: "session", session },
+    { delivery: createToolResultDelivery(8 * 1024) },
+  );
+  const client = new Client({ name: "unknown-list-recovery", version: "1" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  await server.connect(st);
+  await client.connect(ct);
+  const fields = {
+    severity: "medium",
+    domain: "overflow-list",
+    required_authority: null,
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [],
+    relationships: [],
+  };
+  for (let i = 0; i < 3; i += 1) {
+    const result = await client.callTool({
+      name: "record_unknown",
+      arguments: { ...fields, question: `${i}-${"q".repeat(1800)}` },
+    });
+    expect(result.isError).not.toBe(true);
+  }
+  const overflow = parseMcpToolError(
+    await client.callTool({
+      name: "list_unknowns",
+      arguments: { domain: "overflow-list" },
+    }),
+  ).error;
+  expect(overflow.code).toBe("resource_constraint");
+  expect(overflow.remediation.action).toContain("same connection");
+  expect(overflow.remediation.action).toContain("smaller limit");
+  expect(overflow.remediation.action).toContain("export_evidence_bundle");
+  expect(overflow.remediation.action).not.toContain("CLI JSON");
+  const first = await client.callTool({
+    name: "list_unknowns",
+    arguments: { domain: "overflow-list", offset: 0, limit: 1 },
+  });
+  expect(first.isError).not.toBe(true);
+  expect(session.exportEvidenceBundle().unknowns).toHaveLength(3);
 });

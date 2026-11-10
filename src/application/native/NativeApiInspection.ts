@@ -1,4 +1,4 @@
-import type { FunctionDossier } from "../../domain/hopperValues.js";
+import type { FunctionDossier } from "../../domain/native/functionDossier.js";
 import {
   nativeApiInspectionResultSchema,
   type NativeApiBoundary,

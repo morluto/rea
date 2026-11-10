@@ -1,3 +1,4 @@
+import { captureBudgets } from "../CaptureBudgets.js";
 import { isAbsolute } from "node:path";
 import { CaptureFormatError } from "../CaptureFormatError.js";
 import {
@@ -6,6 +7,7 @@ import {
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
 import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
@@ -16,11 +18,10 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../../../domain/analysisErrorCore.js";
 import { redactExplicitText } from "../../../domain/explicitSensitiveValues.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type InspectWebNetworkCaptureInput,
-  type WebNetworkCapture,
-  type WebNetworkCaptureRecord,
+import type {
+  InspectWebNetworkCaptureInput,
+  WebNetworkCapture,
+  WebNetworkCaptureRecord,
 } from "../../../domain/webNetworkCapture.js";
 import type { JsonValue } from "../../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../../domain/result.js";
@@ -417,13 +418,13 @@ export const prepareCaptureProtobuf = async (
         continue;
       }
       if (
-        field.bytes > WEB_NETWORK_CAPTURE_LIMITS.inputBytes ||
+        field.bytes > captureBudgets().inputBytes ||
         field.content_base64.length >
-          Math.ceil(WEB_NETWORK_CAPTURE_LIMITS.inputBytes / 3) * 4
+          Math.ceil(captureBudgets().inputBytes / 3) * 4
       )
         throw new CaptureFormatError(
           "limit",
-          "Protobuf body exceeds the admitted 32 MiB source bound",
+          `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
         );
       const body = Buffer.from(field.content_base64, "base64");
       if (
@@ -541,12 +542,12 @@ export const decodeCaptureProtobuf = async (
       ]);
     const snapshot = await readStableArtifact(
       path,
-      WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+      captureBudgets().inputBytes,
       signal,
       undefined,
       resources,
     ).catch((cause: unknown) => {
-      throw withCaptureReaderCleanup(
+      const failure = withCaptureReaderCleanup(
         historicalCaptureFailure(
           input,
           cause,
@@ -555,6 +556,11 @@ export const decodeCaptureProtobuf = async (
         ),
         cause,
       );
+      const snapshot = completedStableArtifactObservation(cause, path);
+      // The caller retains the sanitized capture as its partial observation.
+      if (snapshot !== undefined)
+        failure.retainDiagnostics({ descriptor_set_snapshot: snapshot });
+      throw failure;
     });
     const { ProtobufSchema } = await import("./ProtobufSchema.js");
     const admitted = await ProtobufSchema.read(

@@ -79,6 +79,53 @@ const frame = (events: CdpCaptureEvents, payloadData: string) =>
     params: { requestId: "socket", response: { opcode: 1, payloadData } },
   });
 
+it.each([
+  ["\tAPPLICATION/JSON ; charset=utf-8\t", true],
+  ["application/problem+json", true],
+  ["model/example+json", true],
+  ["+json", false],
+  ["application /problem+json", false],
+  ["application/problem\n+json", false],
+  ["application/\u212a+json", false],
+  ["\napplication/json", false],
+  ["text/plain", false],
+])(
+  "admits shapes only from valid media types while preserving %j",
+  (mediaType, selected) => {
+    const events = createEvents();
+    events.ingest({
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "typed",
+        timestamp: 1,
+        initiator: { type: "other" },
+        request: {
+          url: `${origin}/typed`,
+          method: "POST",
+          headers: { "Content-Type": mediaType },
+          postData: '{"count":1}',
+        },
+      },
+    });
+    expect(events.network.get("typed")?.body_shapes.request !== null).toBe(
+      selected,
+    );
+    events.ingest({
+      method: "Network.responseReceived",
+      params: {
+        requestId: "typed",
+        response: {
+          url: `${origin}/typed`,
+          status: 200,
+          mimeType: mediaType,
+        },
+      },
+    });
+    expect(events.responseBodyRequests().length).toBe(selected ? 1 : 0);
+    expect(events.network.get("typed")?.mime_type).toBe(mediaType);
+  },
+);
+
 it("distinguishes valid over-budget websocket JSON from non-JSON text", () => {
   const events = createEvents();
   openSocket(events);

@@ -1,3 +1,8 @@
+import {
+  BOUNDED_PRODUCER_LIMITS as LIMITS,
+  resolveProducerLimits,
+} from "../domain/producerResourceLimits.js";
+import { TSHARK_PROVIDER_IDENTITY } from "./TsharkProviderIdentity.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectPacketFieldsInput,
@@ -9,7 +14,6 @@ import {
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
 import {
-  BOUNDED_PRODUCER_LIMITS as LIMITS,
   prlimitArgumentVector,
   readLinuxResourceLimits,
   type LinuxResourceLimits,
@@ -17,7 +21,7 @@ import {
 import { parsePacketOutput } from "./parsePacketOutput.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
@@ -32,6 +36,10 @@ import {
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  assertArtifactCommandPath,
+  selectArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -67,11 +75,7 @@ import {
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_packet_capture";
-export const TSHARK_PROVIDER_IDENTITY = {
-  id: "tshark-capture",
-  name: "REA TShark capture adapter",
-  version: "tshark@4",
-} as const;
+
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Packet inspection runs only on Linux; discovery and execution share this check. */
@@ -130,8 +134,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const operation = "path" in input ? OPERATION : "inspect_packet_fields";
     // TShark 4.6.9 emits a 22.3 MB glossary; keep capture output capped at 4 MiB.
-    const limits =
-      "path" in input ? LIMITS : { ...LIMITS, output_bytes: 32 * 1024 * 1024 };
+    const limits = resolveProducerLimits(
+      "path" in input ? LIMITS : { ...LIMITS, output_bytes: 32 * 1024 * 1024 },
+      input.producer_limits,
+    );
     let phase: "configuration" | "workspace" | "producer" | "integrity" =
       "configuration";
     let capturedOutput: AnalysisCapturedOutput | undefined;
@@ -155,7 +161,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         throw new Error(
           `TShark 4.x was not found on PATH; add it to PATH or set absolute ${TSHARK_COMMAND_ENV}.`,
         );
-      const command = await realpath(configured);
+      const selectedCommand = await selectArtifactCommandPath(
+        configured,
+        options?.signal,
+      );
+      const command = selectedCommand.resolvedPath;
       await access(command, constants.X_OK);
       const toolSnapshot = await this.#resources.read(
         command,
@@ -167,7 +177,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         this.environment.REA_TSHARK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
         throw new Error("REA_TSHARK_PRLIMIT_COMMAND must be absolute.");
-      const limiter = await realpath(configuredLimiter);
+      const selectedLimiter = await selectArtifactCommandPath(
+        configuredLimiter,
+        options?.signal,
+      );
+      const limiter = selectedLimiter.resolvedPath;
       await access(limiter, constants.X_OK);
       const limiterIdentity = await this.#resources.read(
         limiter,
@@ -175,7 +189,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         options?.signal,
       );
       effectiveLimits = await this.#resources.readLimits(limits);
-      const limitArguments = prlimitArgumentVector(effectiveLimits, command);
+      const limitArguments = prlimitArgumentVector(
+        effectiveLimits,
+        selectedCommand.invocationPath,
+      );
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
@@ -184,9 +201,15 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       await mkdir(configurationPath, { mode: 0o700 });
       const execute = async (args: readonly string[]) => {
         capturedOutput = undefined;
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          signal: options?.signal,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          signal: options?.signal,
+        });
         const output = await runOwnedCommand(
           {
-            command: limiter,
+            command: selectedLimiter.invocationPath,
             arguments: [...limitArguments, ...args],
             ...(root === undefined ? {} : { cwd: root.path }),
             expectedCommand: null,
@@ -209,6 +232,12 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           },
         );
         capturedOutput = artifactCommandOutput(output);
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          capturedOutput,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          capturedOutput,
+        });
         const current = await this.#resources.readCommandAfterRun(
           command,
           { path: limiter, sha256: limiterIdentity.sha256 },
@@ -284,15 +313,16 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             limitations: [
               "Protocol and field registrations describe the selected installation, not traffic observed in a capture. Duplicate abbreviations remain distinct producer records with source line numbers.",
               "Each request probes again without caching. The private empty personal profile does not fingerprint or isolate installed libraries, global configuration or plugins; they remain trusted.",
-              "No capture file, interface or device is opened. Resource ceilings do not constitute an OS sandbox. Glossary output is capped at 32 MiB and selected record representation at 8 MiB before expansion.",
+              "No capture file, interface or device is opened. Resource ceilings do not constitute an OS sandbox. Selected producer output budget is reported in limits.output_bytes and can be changed with producer_limits.output_bytes. Selected record representation remains independently capped at 8 MiB before expansion.",
             ],
           }),
         );
       } else {
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
-          maximumBytes: LIMITS.input_bytes,
-          allowanceName: "the fixed packet-capture input allowance",
+          maximumBytes: limits.input_bytes,
+          allowanceName: "the packet-capture input allowance",
+          budgetParameter: "producer_limits.input_bytes",
           observedOutput: capturedOutput,
           signal: options?.signal,
         });
@@ -326,7 +356,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         phase = "integrity";
         resourcePath = snapshotPath;
         if (
-          (await this.#resources.read(snapshotPath, LIMITS.input_bytes))
+          (await this.#resources.read(snapshotPath, limits.input_bytes))
             .sha256 !== selected.sha256
         )
           throw new AnalysisArtifactChangedError(
@@ -378,7 +408,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               "Packet limits count input packets before display filtering. Filtered results do not establish whole-capture or device traffic absence. Two-pass reassembly cannot recover bytes missing from the recording or beyond the read limit.",
               "Repeated field values remain ordered string arrays; raw packet bytes are included only when explicitly selected as a supported field. Export index/score metadata are omitted. All stderr, including warnings on exit zero, is retained.",
               "A private empty personal configuration is used. Installed libraries, global configuration and dissector plugins are trusted and not fully fingerprinted. File-only analysis and disabled name resolution do not constitute an OS sandbox.",
-              "Linux prlimit enforces soft and hard ceilings before execution, preserving stricter inherited limits: at most 1 GiB address space per process, 64 MiB per file, 30 CPU seconds and no core dumps. Effective limits are reported. Resident input is capped at 32 MiB, each command at 30 wall-clock seconds and combined output at 4 MiB. Output overflow fails. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted. REA retains the tighter inherited limit. This release has no runtime override.",
+              "Linux prlimit enforces the reported per-process address-space, per-file and CPU limits before execution with no core dumps, preserving tighter inherited soft and hard limits. Input, command deadline and retained output budgets are reported in limits; producer_limits can change their requested defaults on the next call without restart. Output overflow fails. Parser and transport bounds remain independent. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted.",
             ],
           }),
         );
@@ -480,6 +510,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         limits,
         effectiveLimits,
         operation,
+        "producer_limits",
       );
     if (phase === "workspace")
       return privateWorkspaceFailure(

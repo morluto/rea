@@ -21,7 +21,7 @@ import { createJavaScriptSemanticGraph } from "../../src/domain/javascript/javas
 import type { BinaryLayout } from "../../src/domain/native/binaryLayout.js";
 import { binaryLayoutSchema } from "../../src/domain/native/binaryLayout.js";
 import { ghidraFunctionDossier } from "../../src/domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../../src/domain/relationshipCoverage.js";
 
 /** Canonical portable Evidence; no native provider is started by this fixture. */

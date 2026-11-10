@@ -31,7 +31,7 @@ it("preserves the relative request path in a load-image CLI summary and its comp
     ),
     selectedPath,
   );
-  const run = vi.fn(async () => parent);
+  const run = vi.fn(async () => ({ ok: true as const, value: parent }));
   const cli = Cli.create("rea-load-image-cli-test", { sync: false });
   registerCoreNativeCommands(cli, pino({ enabled: false }), run);
   let stdout = "";

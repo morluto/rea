@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 import {
   webRuntimeLocationSchema,
   webRuntimeScopeSchema,
@@ -21,7 +22,7 @@ export type InspectWebEventListenersInput = z.infer<
 export const webEventListenersObservationSchema = z.object({
   browser: browserVersionSchema,
   target: webRuntimeTargetSchema,
-  inspected_at: z.iso.datetime(),
+  inspected_at: utcDateTimeSchema,
   selected_node: z.object({
     selector: z.string(),
     match: z.enum(["found", "not_found"]),

@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
@@ -6,6 +7,7 @@ import type { GhidraLauncher } from "./GhidraLauncher.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
+import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
 
 /** Result of opening and authenticating one headless Ghidra session. */
 export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
@@ -13,6 +15,8 @@ export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
 /** Cancellation and deadline controls shared by authenticated requests. */
 export interface GhidraRequestOptions {
   readonly decompileTimeoutSeconds?: number | null;
+  readonly decompileMaxPayloadMiB?: number | null;
+  readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;
@@ -33,12 +37,14 @@ export type GhidraDiagnostic =
     }
   | { readonly type: "cleanup-incomplete"; readonly reason: string };
 
-/** Dependencies and exact profile commitment for one headless import. */
+/** Dependencies and exact profile commitment for one headless Program session. */
 export interface GhidraClientOptions {
   readonly launcher: GhidraLauncher;
   readonly runId?: string;
   readonly targetPath: string;
   readonly targetSha256: string;
+  readonly existingProject?: boolean;
+  readonly checkpoint?: GhidraCheckpointSelection;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;

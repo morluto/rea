@@ -25,6 +25,13 @@ export const sourceLimitationKey = ({
     limitation,
   ]);
 
+/** Provider/text identity shared by rendering and composed-workflow budgets. */
+export const sourceLimitationGroupKey = ({
+  provider,
+  limitation,
+}: Pick<SourceLimitation, "provider" | "limitation">): string =>
+  JSON.stringify([provider.id, provider.name, provider.version, limitation]);
+
 /** Render unique source caveats without losing their provider or operation. */
 export const renderSourceLimitations = (
   limitations: readonly SourceLimitation[],
@@ -38,12 +45,7 @@ export const renderSourceLimitations = (
     }
   >();
   for (const { provider, operation, limitation } of limitations) {
-    const key = JSON.stringify([
-      provider.id,
-      provider.name,
-      provider.version,
-      limitation,
-    ]);
+    const key = sourceLimitationGroupKey({ provider, limitation });
     const group = groups.get(key) ?? {
       provider,
       limitation,

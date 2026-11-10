@@ -1,5 +1,20 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
+import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
+import {
+  androidViewRequestSchema,
+  validateAndroidPackageDelivery,
+} from "./androidPackageQuery.js";
+import { androidMappingReportSchema } from "./androidMapping.js";
+import { dexDescriptorSchema } from "./dexTypes.js";
+import {
+  androidJniSelectionSchema,
+  androidJniReportSchema,
+} from "./androidJniBindings.js";
+import { androidJniViewRequestSchema } from "./androidJniQuery.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -10,19 +25,28 @@ const classTarget = {
   ...target,
   class_name: z.string().min(1).describe("Exact fully qualified class name"),
 };
+const mappingPath = {
+  mapping_path: absoluteLocalPathStringSchema
+    .optional()
+    .describe(
+      "Absolute local R8/ProGuard mapping.txt; names are annotated, never replaced",
+    ),
+};
 
 /** Caller intent for static Android inspection, independent of its engine. */
 export const androidInputSchemas = {
   inspect_android_package: z.strictObject(target),
+  inspect_android_jni_bindings: androidJniSelectionSchema.extend(target),
   search_android_classes: z.strictObject({
     ...target,
     query: z
       .string()
       .describe("Case-sensitive class-name substring; empty lists all classes"),
   }),
-  inspect_android_class: z.strictObject(classTarget),
+  inspect_android_class: z.strictObject({ ...classTarget, ...mappingPath }),
   inspect_android_method: z.strictObject({
     ...classTarget,
+    ...mappingPath,
     method_name: z.string().min(1),
     overload_index: z
       .int()
@@ -34,6 +58,9 @@ export const androidInputSchemas = {
   }),
   trace_android_references: z.strictObject({
     ...classTarget,
+    class_name: classTarget.class_name.describe(
+      "Exact APK-defined class, or an externally referenced DEX class when method_name is selected",
+    ),
     method_name: z
       .string()
       .min(1)
@@ -46,16 +73,38 @@ export const androidInputSchemas = {
       .nonnegative()
       .optional()
       .describe(
-        "Index among same-name methods from inspect_android_class; requires method_name",
+        "Index among same-name APK methods or observed external DEX prototypes; requires method_name",
       ),
   }),
 } as const;
 
 /** Optional retained delivery is separate from the engine's APK request. */
 export const androidPackageInspectionInputSchema =
-  androidInputSchemas.inspect_android_package.extend({
+  androidInputSchemas.inspect_android_package
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery);
+
+/** Delivery is an adapter/application choice, never a provider analysis option. */
+export const androidSymbolInspectionInputSchemas = {
+  inspect_android_class: androidInputSchemas.inspect_android_class.extend({
     detail: z.enum(["complete", "summary"]).optional(),
-  });
+  }),
+  inspect_android_method: androidInputSchemas.inspect_android_method.extend({
+    detail: z.enum(["complete", "summary"]).optional(),
+  }),
+} as const;
+
+/** JNI selection changes analysis; delivery only selects retained views. */
+export const androidJniInspectionInputSchema =
+  androidInputSchemas.inspect_android_jni_bindings
+    .extend({
+      detail: z.enum(["complete", "summary"]).default("summary"),
+      view: androidJniViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery);
 
 /** Supported static Android operations. */
 export type AndroidOperation = keyof typeof androidInputSchemas;
@@ -69,6 +118,10 @@ export type AndroidRequest = {
 
 /** Validate operation and input together so their types remain correlated. */
 export const androidRequestSchema = z.discriminatedUnion("operation", [
+  z.strictObject({
+    operation: z.literal("inspect_android_jni_bindings"),
+    input: androidInputSchemas.inspect_android_jni_bindings,
+  }),
   z.strictObject({
     operation: z.literal("inspect_android_package"),
     input: androidInputSchemas.inspect_android_package,
@@ -96,46 +149,6 @@ const textCoverage = z.strictObject({
   text: z.string(),
   reported_total_bytes: z.int().nonnegative().nullable(),
 });
-
-const manifestComponent = z.strictObject({
-  kind: z.enum([
-    "activity",
-    "activity-alias",
-    "service",
-    "receiver",
-    "provider",
-  ]),
-  declared_name: z.string(),
-  name: z.string(),
-  exported: z.boolean().nullable(),
-  exported_default: z.boolean().nullable(),
-  permission: z.string().nullable(),
-  permission_source: z.enum(["component", "application", "none", "unknown"]),
-  intent_filter_count: z.number().int().nonnegative(),
-  actions: z.array(z.string()),
-  categories: z.array(z.string()),
-  foreground_service_type: z.string().nullable(),
-  authorities: z.array(z.string()).nullable(),
-  target_activity: z.string().nullable(),
-});
-
-/**
- * Static component projection of the decoded manifest. The export default is
- * Android's documented rule for an absent android:exported when one applies;
- * null also means the default is unknown or an explicit declaration is
- * required. This is not a merged-manifest or runtime observation.
- */
-const manifestComponents = z.strictObject({
-  status: z.enum(["complete", "partial", "unavailable"]),
-  items: z.array(manifestComponent),
-  limitations: z.array(z.string()),
-});
-/** A DEX prototype; hex parentheses also keep the advertised class valid in v mode. */
-export const dexDescriptorSchema = z
-  .string()
-  .regex(
-    /^\((?:\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))*\)(?:V|\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))$/u,
-  );
 
 const integral = <Type extends string>(type: Type, min: number, max: number) =>
   z.strictObject({
@@ -189,6 +202,12 @@ const method = z.strictObject({
   is_constructor: z.boolean(),
   dex_descriptor: dexDescriptorSchema,
 });
+/** Exact member selector shared with follow-up APK method inspection. */
+export const androidMethodSelectorSchema = z.strictObject({
+  class_name: z.string().min(1),
+  method_name: z.string().min(1),
+  overload_index: z.int().nonnegative(),
+});
 const engine = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
@@ -201,6 +220,7 @@ const common = { engine };
 
 /** Portable observations with explicit decompiler and identity limitations. */
 export const androidResultSchemas = {
+  inspect_android_jni_bindings: androidJniReportSchema.extend(common),
   inspect_android_package: z.strictObject({
     ...common,
     package_name: z.string().nullable(),
@@ -212,7 +232,7 @@ export const androidResultSchemas = {
     manifest: textCoverage,
     // Evidence retained before the component projection existed re-parses
     // with an explicit unavailable inventory; current results always carry it.
-    components: manifestComponents.default(() => ({
+    components: androidManifestComponentsSchema.default(() => ({
       status: "unavailable" as const,
       items: [],
       limitations: [
@@ -249,6 +269,7 @@ export const androidResultSchemas = {
       }),
     ),
     inner_classes: z.array(z.string()),
+    mapping: androidMappingReportSchema.exactOptional(),
   }),
   inspect_android_method: z.strictObject({
     ...common,
@@ -260,15 +281,30 @@ export const androidResultSchemas = {
     fell_back: z.boolean(),
     markers: z.array(z.string()),
     source: textCoverage,
+    mapping: androidMappingReportSchema.exactOptional(),
   }),
   trace_android_references: z.strictObject({
     ...common,
+    /** Older retained Evidence omits this fact; omission does not mean external. */
+    target_definition: z.enum(["defined", "external"]).exactOptional(),
+    /** External results inventory directly encoded invokes, not reflection or dispatch. */
+    reference_scope: z.literal("direct_dex_invokes").exactOptional(),
     class_name: z.string(),
     method_name: z.string().nullable(),
     overload_index: z.int().nonnegative().nullable(),
     reported_signature: z.string().nullable(),
     dex_descriptor: dexDescriptorSchema.nullable(),
     total: z.int().nonnegative(),
+    /** Position coverage is separate from the complete using-node inventory.
+     * Historical Evidence may omit this aggregate; omission is unexamined. */
+    direct_invokes_coverage: z
+      .strictObject({
+        complete_using_nodes: z.int().nonnegative(),
+        partial_using_nodes: z.int().nonnegative(),
+        unknown_using_nodes: z.int().nonnegative(),
+        recorded_sites: z.int().nonnegative(),
+      })
+      .exactOptional(),
     references: z.array(
       z.strictObject({
         kind: z.string(),
@@ -278,6 +314,8 @@ export const androidResultSchemas = {
         top_class: z.string(),
         source_line: z.null(),
         dex_offset: z.null(),
+        /** An explicit follow-up selector accepted by inspect_android_method. */
+        source_selector: androidMethodSelectorSchema.exactOptional(),
         /** false means transport-bounded instruction evidence; null is unknown. */
         direct_invokes_exhaustive: z.boolean().nullable(),
         /** Raw direct invoke instructions inside this using node, when available. */

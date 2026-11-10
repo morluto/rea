@@ -115,6 +115,7 @@ it("binds Linux credentials to the same native process generation", async () => 
         {
           state: "readable",
           identity: "linux-starttime:100",
+          name: "fixture",
           effectiveUid: 1001,
           // Kernel ptrace checks also compare the real and saved UIDs.
           environmentRestriction: "credentials",
@@ -308,6 +309,7 @@ it("keeps native identity when status UID is unavailable", async () => {
         {
           state: "readable",
           identity: "linux-starttime:100",
+          name: "fixture",
           lifecycle: { state: "observed", lifecycle: "non-zombie" },
           relation: {
             state: "observed",

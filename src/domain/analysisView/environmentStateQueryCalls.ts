@@ -1,3 +1,4 @@
+import type { StateRecordChronology } from "./StateRecordChronology.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -176,10 +177,9 @@ export const readOnlyTools = (
   tools: readonly StateToolFacts[],
   records: readonly StateRecordFacts[],
   io: QueryCallIo,
+  chronology: StateRecordChronology,
 ): Set<string> => {
-  const position = new Map(
-    records.map((record, index) => [record.ordinal, index]),
-  );
+  const position = chronology.positions;
   const response = responseDigests(io);
   /** The timeline indexes of the nearest state writes either side of an index, the skipped calls aside: -1 and the length when none, found in one pass each way. */
   const nearestWrites = (
@@ -220,6 +220,7 @@ export const readOnlyTools = (
     if (!calls.some(succeeded) || calls.some(unresolved)) continue;
     const timeline = {
       position,
+      chronology,
       ...nearestWrites(new Set(tool.record_ordinals)),
       response,
     };
@@ -234,6 +235,7 @@ export const readOnlyTools = (
   for (let vetoed = true; vetoed;) {
     const timeline = {
       position,
+      chronology,
       ...nearestWrites(
         new Set([...candidates.values()].flat().map((call) => call.ordinal)),
       ),
@@ -250,6 +252,7 @@ export const readOnlyTools = (
 };
 
 interface Timeline {
+  readonly chronology: StateRecordChronology;
   readonly position: ReadonlyMap<number, number>;
   /** The nearest other writes either side of a timeline index. */
   readonly writes: (at: number) => {
@@ -266,12 +269,14 @@ interface Timeline {
 const lastFinishedBefore = (
   reads: readonly StateRecordFacts[],
   call: StateRecordFacts,
+  chronology: StateRecordChronology,
 ): StateRecordFacts | undefined => {
   let latest: StateRecordFacts | undefined;
   for (const read of reads)
     if (
-      read.end <= call.start &&
-      (latest === undefined || read.end >= latest.end)
+      chronology.completedBefore(read, call) &&
+      (latest === undefined ||
+        chronology.endMs(read)! >= chronology.endMs(latest)!)
     )
       latest = read;
   return latest;
@@ -281,10 +286,10 @@ const lastFinishedBefore = (
 const repeatsRead = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
-  { position, isWrite, response }: Timeline,
+  { position, isWrite, response, chronology }: Timeline,
 ): boolean => {
   const answering = calls.filter(succeeded);
-  const reads = lastReads(answering, records, position, isWrite);
+  const reads = lastReads(answering, records, position, isWrite, chronology);
   return answering.every((call) => {
     const read = reads.get(call.ordinal);
     if (read === undefined) return false;
@@ -302,6 +307,7 @@ const lastReads = (
   records: readonly StateRecordFacts[],
   position: ReadonlyMap<number, number>,
   isWrite: (index: number) => boolean,
+  chronology: StateRecordChronology,
 ): Map<number, StateRecordFacts> => {
   const paths = new Set(calls.map((call) => call.path));
   const callAt = new Map(
@@ -317,12 +323,12 @@ const lastReads = (
   for (let index = 0; index <= lastCall; index += 1) {
     const record = records[index]!;
     const call = callAt.get(index);
-    if (call !== undefined) {
+    if (call !== undefined && chronology.startMs(call) !== undefined) {
       const ready = waiting.get(call.path);
       for (
-        let read = ready?.popEndedBy(call.start);
+        let read = ready?.popEndedBy(chronology.startMs(call)!);
         read !== undefined;
-        read = ready?.popEndedBy(call.start)
+        read = ready?.popEndedBy(chronology.startMs(call)!)
       )
         latest.set(call.path, read);
       const read = latest.get(call.path);
@@ -333,9 +339,11 @@ const lastReads = (
     } else if (
       record.method === "GET" &&
       succeeded(record) &&
-      paths.has(record.path)
+      paths.has(record.path) &&
+      chronology.endMs(record) !== undefined
     ) {
-      const heap = waiting.get(record.path) ?? new ReadsByEnd(position);
+      const heap =
+        waiting.get(record.path) ?? new ReadsByEnd(position, chronology);
       heap.push(record);
       waiting.set(record.path, heap);
     }
@@ -347,12 +355,15 @@ const lastReads = (
 class ReadsByEnd {
   readonly #reads: StateRecordFacts[] = [];
 
-  constructor(private readonly position: ReadonlyMap<number, number>) {}
+  constructor(
+    private readonly position: ReadonlyMap<number, number>,
+    private readonly chronology: StateRecordChronology,
+  ) {}
 
   #before(left: StateRecordFacts, right: StateRecordFacts): boolean {
     return (
-      left.end < right.end ||
-      (left.end === right.end &&
+      this.chronology.endMs(left)! < this.chronology.endMs(right)! ||
+      (this.chronology.endMs(left) === this.chronology.endMs(right) &&
         this.position.get(left.ordinal)! < this.position.get(right.ordinal)!)
     );
   }
@@ -372,7 +383,8 @@ class ReadsByEnd {
   popEndedBy(time: number): StateRecordFacts | undefined {
     const reads = this.#reads;
     const first = reads[0];
-    if (first === undefined || first.end > time) return undefined;
+    if (first === undefined || this.chronology.endMs(first)! > time)
+      return undefined;
     const last = reads.pop()!;
     if (reads.length > 0) {
       reads[0] = last;
@@ -431,7 +443,7 @@ const lastMeaningfulWord = (segment: string): string | undefined =>
 const changesReadsAcross = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
-  { position, writes, response }: Timeline,
+  { position, writes, response, chronology }: Timeline,
 ): boolean => {
   const stretches = new Map<
     string,
@@ -451,7 +463,8 @@ const changesReadsAcross = (
     else stretch.calls.push(call);
   }
   for (const stretch of stretches.values())
-    if (changesInStretch(stretch, records, { position, response })) return true;
+    if (changesInStretch(stretch, records, { position, response, chronology }))
+      return true;
   return false;
 };
 
@@ -464,7 +477,11 @@ const changesInStretch = (
     readonly calls: readonly StateRecordFacts[];
   },
   records: readonly StateRecordFacts[],
-  { position, response }: Pick<Timeline, "position" | "response">,
+  {
+    position,
+    response,
+    chronology,
+  }: Pick<Timeline, "position" | "response" | "chronology">,
 ): boolean => {
   const shown = (record: StateRecordFacts): string | symbol =>
     succeeded(record) ? (response(record.ordinal) ?? UNKNOWN) : ABSENT;
@@ -493,9 +510,12 @@ const changesInStretch = (
       const earlier = lastFinishedBefore(
         reads.filter((read) => position.get(read.ordinal)! < at),
         call,
+        chronology,
       );
       const later = reads.find(
-        (read) => position.get(read.ordinal)! > at && read.start >= call.end,
+        (read) =>
+          position.get(read.ordinal)! > at &&
+          chronology.completedBefore(call, read),
       );
       if (earlier === undefined || later === undefined) return false;
       const [was, now] = [shown(earlier), shown(later)];
@@ -515,11 +535,12 @@ export const stateWritesOf = (
   tools: readonly StateToolFacts[],
   records: readonly StateRecordFacts[],
   io: QueryCallIo,
+  chronology: StateRecordChronology,
 ): {
   readonly readOnly: ReadonlySet<string>;
   readonly writes: readonly StateRecordFacts[];
 } => {
-  const readOnly = readOnlyTools(tools, records, io);
+  const readOnly = readOnlyTools(tools, records, io, chronology);
   const reads = new Set(
     tools
       .filter((tool) => readOnly.has(tool.name))

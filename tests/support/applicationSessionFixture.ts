@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -53,7 +54,11 @@ export const writeApplicationZip = async (
 export const inventoryApplicationPackage = async (
   path: string,
 ): Promise<Evidence> =>
-  parseEvidence(await runProviderAnalysis(path, "inventory_artifact", {}));
+  parseEvidence(
+    await runProviderAnalysis(path, "inventory_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
 
 /**
  * Project the same inventory Evidence twice and return the schema-parsed
@@ -93,6 +98,8 @@ export const createNonApplicationZipInventory = async (
   await writer.add("one.js", new TextReader("one"));
   await writeFile(path, await writer.close());
   return parseEvidence(
-    await runProviderAnalysis(path, "inventory_artifact", {}),
+    await runProviderAnalysis(path, "inventory_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
   );
 };

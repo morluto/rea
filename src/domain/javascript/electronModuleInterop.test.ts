@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { ROLLDOWN_MODULE_INTEROP } from "./javascriptModuleInterop.fixture.js";
 
 const WINDOW =
@@ -19,6 +20,13 @@ const BLOCK_MODULE_INTEROP = ROLLDOWN_MODULE_INTEROP.replace(
   )
   .replace("    });", "    });\n    }")
   .replace("  return to;", "  }\n  return to;");
+
+it("does not claim Electron interop identity when wrapper authority is unknown", () => {
+  expect(
+    analyzeUnknownHostSource(`${ROLLDOWN_MODULE_INTEROP}
+${IMPORT} ${WRAP} ${WINDOW}`).electron.browser_windows,
+  ).toEqual([]);
+});
 
 describe("Electron module interop identity", () => {
   it("preserves named APIs through the released Rolldown namespace conversion", () => {
@@ -322,6 +330,76 @@ describe("Electron module interop helper results", () => {
       new plain.BrowserWindow({});
     `);
     expect(analysis.electron.browser_windows).toHaveLength(3);
+  });
+
+  it("preserves BrowserWindow findings through lexical aliases of proven interop results", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      function identity(mod) { return mod; }
+      const electron = identity(require("electron"));
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+  });
+
+  it("preserves BrowserWindow and IPC findings through aliases of Rolldown namespace conversions", () => {
+    const analysis = analyzeJavaScriptStaticSource(`${ROLLDOWN_MODULE_INTEROP}
+      const electron = __toESM(require("electron"), 1);
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+      api.ipcMain.handle("ping", () => "pong");
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "ping", side: "main" },
+    ]);
+  });
+});
+
+describe("Electron module interop alias resolution", () => {
+  it("does not infer Electron identity through an alias when the target binding was modified", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP}
+      function identity(mod) { return mod; }
+      let electron = identity(require("electron"));
+      eval("electron = { BrowserWindow: class {} }");
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toEqual([]);
+  });
+
+  it("retains possible member writes through uncertain aliases of interop results", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP}
+      function identity(mod) { return mod; }
+      const original = identity(require("electron"));
+      let electron = original;
+      eval("noop()");
+      const api = electron;
+      api.BrowserWindow = Fake;
+      new original.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toEqual([]);
+  });
+
+  it("resolves Electron identity across long alias chains without stack overflow", () => {
+    const lines = [
+      ROLLDOWN_MODULE_INTEROP,
+      'const a0 = __toESM(require("electron"), 1);',
+    ];
+    for (let i = 1; i <= 2000; i++) {
+      lines.push(`const a${i} = a${i - 1};`);
+    }
+    lines.push('new a2000.BrowserWindow({webPreferences:{preload:"./p.js"}});');
+    const analysis = analyzeJavaScriptStaticSource(lines.join("\n"));
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
   });
 });
 
@@ -659,4 +737,45 @@ it("keeps unrelated exports after an aliased prebound key write", () => {
       new electron.BrowserWindow({});
     `);
   expect(analysis.electron.browser_windows).toHaveLength(1);
+});
+
+describe("Electron member syntax ownership", () => {
+  it.each([
+    "electron as typeof electron",
+    "electron!",
+    "electron satisfies typeof electron",
+  ])("preserves lexical API identity through %s", (receiver) => {
+    const source = `const electron = require("electron");
+      new ((${receiver}).BrowserWindow as typeof electron.BrowserWindow)({webPreferences:{preload:"./wrapped.js"}});
+      ((${receiver}).ipcMain as typeof electron.ipcMain).handle("wrapped:ping", () => "pong");
+      (${receiver}).contextBridge.exposeInMainWorld("wrappedApi", {ping:true});`;
+    const { electron } = analyzeJavaScriptStaticSource(source);
+    expect(electron.browser_windows).toMatchObject([
+      { preload_path: "./wrapped.js" },
+    ]);
+    expect(electron.ipc).toMatchObject([{ channel: "wrapped:ping" }]);
+    expect(electron.context_bridge_apis).toMatchObject([
+      { api_key: "wrappedApi" },
+    ]);
+  });
+
+  it.each([
+    'const electron = require("other");',
+    'function require() { return unknown; } const electron = require("electron");',
+    'const electron = require("electron"); electron.BrowserWindow = replacement;',
+  ])(
+    "retains rejected lexical identity through erased wrappers: %s",
+    (setup) => {
+      const result = analyzeJavaScriptStaticSource(`${setup}
+      new (electron.BrowserWindow as typeof electron.BrowserWindow)({webPreferences:{preload:"./bad.js"}});`);
+      expect(result.electron.browser_windows).toEqual([]);
+    },
+  );
+
+  it("keeps computed unknown member selections unresolved", () => {
+    const result =
+      analyzeJavaScriptStaticSource(`const electron = require("electron");
+      new (electron as typeof electron)[runtimeKey]({webPreferences:{preload:"./bad.js"}});`);
+    expect(result.electron.browser_windows).toEqual([]);
+  });
 });

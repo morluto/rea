@@ -5,6 +5,50 @@ import { parseExpression } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+
+it.each([
+  ['path.join(__dirname, "page.html")', "page.html", "source-directory"],
+  ['path.resolve(__dirname, "page.html")', "page.html", "source-directory"],
+  ['__dirname + "/page.html"', "page.html", "source-directory"],
+  ['path.join("pages", "page.html")', "pages/page.html", undefined],
+  ['path.join("prefix", __dirname, "page.html")', null, undefined],
+  ['path.join(__dirname, __dirname, "page.html")', null, undefined],
+  ["path.join(__dirname, runtimePage)", null, undefined],
+] as const)(
+  "retains the owned renderer path base for %s",
+  (expression, path, base) => {
+    const analysis = analyzeCommonJsStaticFixture(
+      `const path=require('node:path');const{BrowserWindow}=require('electron');new BrowserWindow().loadFile(${expression});`,
+    );
+    if (path === null) {
+      expect(analysis.role_paths).toEqual([]);
+      expect(
+        analysis.analysis_coverage?.semantics.unknown_findings,
+      ).toBeGreaterThan(0);
+    } else {
+      expect(analysis.role_paths).toMatchObject([
+        { role: "renderer", path, resolution_context: "filesystem-expression" },
+      ]);
+      expect(analysis.role_paths[0]?.path_base).toBe(base);
+    }
+  },
+);
+
+it.each(["loadFile", "loadURL"])(
+  "reports an unresolved proven BrowserWindow %s expression",
+  (method) => {
+    const analysis = analyzeCommonJsStaticFixture(
+      `const{BrowserWindow}=require('electron');new BrowserWindow().${method}(runtimePage);`,
+    );
+    expect(analysis.role_paths).toEqual([]);
+    expect(
+      analysis.analysis_coverage?.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+    expect(analysis.limitations).toContain(
+      "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
+    );
+  },
+);
 import { parserPluginsForPath } from "./javascriptSourceParser.js";
 import {
   calleeName,

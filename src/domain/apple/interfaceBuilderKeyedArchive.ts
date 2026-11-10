@@ -1,9 +1,7 @@
 import { plistUidValue } from "./plistUid.js";
 import { z } from "zod";
 
-import { jsonValueSchema } from "../jsonValue.js";
-
-const recordSchema = z.record(z.string(), z.unknown());
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 
 const objectNode = z.strictObject({
   id: z.string().min(1),
@@ -20,7 +18,7 @@ const objectNode = z.strictObject({
   ]),
   class_name: z.string().nullable(),
   name: z.string().min(1),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
 });
 
 const connection = z.strictObject({
@@ -29,7 +27,7 @@ const connection = z.strictObject({
   source_id: z.string().min(1),
   destination_id: z.string().nullable(),
   label: z.string().nullable(),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
 });
 
 type InterfaceBuilderObject = z.infer<typeof objectNode>;
@@ -302,14 +300,14 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
     if (uid !== undefined) return reference(uid);
     if (Array.isArray(value)) return value.map(resolve);
     if (typeof value !== "object" || value === null) return value;
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-      // `$class` describes the archived object's type. Keep that derived fact
-      // outside its serialized fields so an authored `className` key remains
-      // ordinary application data.
-      if (key !== "$class") output[key] = resolve(child);
-    }
-    return output;
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, child]) => {
+        // `$class` describes the archived object's type. Keep that derived fact
+        // outside its serialized fields so an authored `className` key remains
+        // ordinary application data.
+        return key === "$class" ? [] : [[key, resolve(child)]];
+      }),
+    );
   };
   const hierarchy = (start: unknown) => {
     let omittedReferences = 0;
@@ -546,9 +544,15 @@ const parseKeyedArchive = (
   };
 };
 
-/** Coerce unknown values to a string-keyed record; non-objects become `{}`. */
+/** Borrow decoded dictionaries without copying away keys or UID source identity. */
 export const record = (value: unknown): Record<string, unknown> =>
-  recordSchema.safeParse(value).data ?? {};
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  (Object.getPrototypeOf(value) === Object.prototype ||
+    Object.getPrototypeOf(value) === null)
+    ? (value as Record<string, unknown>)
+    : {};
 
 /** First non-empty string among the candidates, otherwise null. */
 export const firstString = (...values: unknown[]): string | null => {

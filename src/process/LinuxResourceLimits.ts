@@ -1,4 +1,6 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { open } from "node:fs/promises";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
@@ -12,16 +14,6 @@ const rows = {
   address_space_bytes: "Max address space",
   file_bytes: "Max file size",
   cpu_seconds: "Max cpu time",
-} as const;
-
-/** Bound the resident input copy and retained text before allocation/collection. */
-export const BOUNDED_PRODUCER_LIMITS = {
-  input_bytes: 32 * 1024 * 1024,
-  output_bytes: 4 * 1024 * 1024,
-  command_timeout_ms: 30_000,
-  address_space_bytes: 1024 * 1024 * 1024,
-  file_bytes: 64 * 1024 * 1024,
-  cpu_seconds: 30,
 } as const;
 
 /**
@@ -56,12 +48,12 @@ export const clampLinuxResourceLimits = (
       .filter((line) => line.startsWith(`${rows[key]} `));
     const values = matches[0]?.slice(rows[key].length).trim().split(/\s+/u);
     if (matches.length !== 1 || values === undefined || values.length !== 3)
-      throw new Error(`Cannot establish inherited Linux limit: ${rows[key]}`);
+      throw new ProcessAdmissionError("limit_unreadable", { limit: key });
     let ceiling = BigInt(configured[key]);
     for (const token of values.slice(0, 2)) {
       if (token === "unlimited") continue;
       if (!/^[0-9]+$/u.test(token))
-        throw new Error(`Invalid inherited Linux limit: ${rows[key]}`);
+        throw new ProcessAdmissionError("limit_invalid", { limit: key });
       const value = BigInt(token);
       if (value < ceiling) ceiling = value;
     }
@@ -82,14 +74,13 @@ export const readLinuxResourceLimits = async (
     resourceScope,
     undefined,
     async (handle) => {
-      const buffer = Buffer.alloc(16 * 1024);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      if (bytesRead === buffer.length)
-        throw new Error("Inherited Linux limits exceed the report budget.");
-      return clampLinuxResourceLimits(
-        configured,
-        buffer.subarray(0, bytesRead).toString("utf8"),
-      );
+      const reportBudget = 16 * 1024;
+      const buffer = await readFileHandleRange(handle, 0, reportBudget);
+      if (buffer.length === reportBudget)
+        throw new ProcessAdmissionError("report_exceeds_budget", {
+          budget_bytes: reportBudget,
+        });
+      return clampLinuxResourceLimits(configured, buffer.toString("utf8"));
     },
   );
 };

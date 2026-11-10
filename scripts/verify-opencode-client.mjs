@@ -2,17 +2,22 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -45,19 +50,15 @@ const skillDirectory = join(
   "skills",
   "reverse-engineer-anything",
 );
-const isManagedSkillTarget = (target) => {
-  const value = relative(skillDirectory, target);
-  return (
-    value === "" ||
-    (value !== ".." && !value.startsWith(`..${sep}`) && !isAbsolute(value))
-  );
-};
 assert.equal(
-  isManagedSkillTarget(`${skillDirectory}-sibling/AGENTS.md`),
+  isPathWithinRoot(skillDirectory, `${skillDirectory}-sibling/AGENTS.md`),
   false,
 );
 assert.equal(
-  isManagedSkillTarget(join(skillDirectory, "..", "outside", "AGENTS.md")),
+  isPathWithinRoot(
+    skillDirectory,
+    join(skillDirectory, "..", "outside", "AGENTS.md"),
+  ),
   false,
 );
 let clientVersion = null;
@@ -108,35 +109,11 @@ await withVerifierCleanup(async () => {
     }
     const target = join(lab, "fixture α测试");
     await mkdir(target);
-    await writeFile(
-      join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     const schemaValidator = new Ajv2020({
       strict: false,
       validateFormats: false,
     });
-    const extractEvidence = (value) => {
-      if (typeof value === "string") {
-        try {
-          return extractEvidence(JSON.parse(value));
-        } catch {
-          return undefined;
-        }
-      }
-      if (value && typeof value === "object") {
-        if (
-          typeof value.evidence_id === "string" &&
-          value.normalized_result?.graph?.nodes?.length > 0
-        )
-          return value;
-        for (const nested of Object.values(value)) {
-          const evidence = extractEvidence(nested);
-          if (evidence) return evidence;
-        }
-      }
-      return undefined;
-    };
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: "opencode",
@@ -181,35 +158,11 @@ await withVerifierCleanup(async () => {
             m.content.includes(skillDirectory) &&
             m.content.includes(expectedSkillBody),
         );
-        const observed = extractEvidence(replies);
+        const observed = findClientResult(replies, isClientJavaScriptEvidence);
         if (observed) {
-          const evidence = toolContract(
-            "analyze_javascript_application",
-          ).outputSchema.parse(observed);
-          await assertJavaScriptApplicationInputPaths(evidence, target);
-          const shape = evidence.normalized_result.graph.nodes
-            .flatMap((n) => n.observations)
-            .map((o) => o.properties)
-            .find(
-              (p) =>
-                p.semantic_role === "export-return-shapes" &&
-                p.exported_name === "result",
-            );
-          assert(shape?.return_shape_coverage?.projection_complete);
-          const fields = shape.static_return_shapes.flatMap((s) => s.fields);
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/clientCompatibility" &&
-                f.state === "literal" &&
-                f.value === "REA_CLIENT_FIXTURE",
-            ),
-          );
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/count" && f.state === "literal" && f.value === 7,
-            ),
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            observed,
+            target,
           );
           const bytes = JSON.stringify(evidence);
           artifactDigest = createHash("sha256").update(bytes).digest("hex");
@@ -315,7 +268,10 @@ await withVerifierCleanup(async () => {
           );
           assert(
             parsed.plannedActions.every(
-              (a) => a.target === configPath || isManagedSkillTarget(a.target),
+              (a) =>
+                a.target === configPath ||
+                (isAbsolute(a.target) &&
+                  isPathWithinRoot(skillDirectory, a.target)),
             ),
           );
         }

@@ -50,6 +50,8 @@ export interface ManagedGraphProjectionOmissions {
   readonly unscopedTokenRelationships: boolean;
   /** Declaring types the member Evidence selected; null when it inspected every type. */
   readonly selectedTypes: readonly string[] | null;
+  /** Undefined when all MethodDef rows were examined or member Evidence is absent. */
+  readonly methodRows: ManagedMemberInspection["method_rows"] | undefined;
   /** Counted call and field-access sites without edges; null without member Evidence. */
   readonly relations: ManagedRelationOmissions | null;
 }
@@ -58,7 +60,8 @@ export interface ManagedGraphProjectionOmissions {
 const omitsUncounted = (omissions: ManagedGraphProjectionOmissions): boolean =>
   omissions.partialInput ||
   omissions.unscopedTokenRelationships ||
-  omissions.selectedTypes !== null;
+  omissions.selectedTypes !== null ||
+  omissions.methodRows !== undefined;
 
 const omitsAny = (omissions: ManagedGraphProjectionOmissions): boolean =>
   omitsUncounted(omissions) || omittedRelationSites(omissions.relations) > 0;
@@ -106,6 +109,13 @@ export const assessManagedGraphOmissions = (
     sources.artifact?.coverage.state,
   ].some((state) => state !== undefined && state !== "complete"),
   selectedTypes: sources.members?.selection?.type_names ?? null,
+  methodRows:
+    sources.members === null ||
+    (sources.members.method_rows !== null &&
+      sources.members.method_rows.offset === 0 &&
+      sources.members.method_rows.count === sources.members.method_rows.total)
+      ? undefined
+      : sources.members.method_rows,
 });
 
 /** Derive graph coverage solely from the coverage of supplied source evidence. */

@@ -1,3 +1,5 @@
+import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
+import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import {
   decodeCaptureProtobuf,
   prepareCaptureProtobuf,
@@ -24,12 +26,16 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import type { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
 } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../../artifacts/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../artifacts/AnalysisCleanupLease.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -44,11 +50,18 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
+  selectedWebNetworkCaptureBudgets,
+  webNetworkCaptureBudgetFacts,
+  webNetworkCaptureBudgetRecovery,
   selectedWebNetworkCaptureTimeoutMs,
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
 } from "../../domain/webNetworkCapture.js";
-import { runOwnedCommand } from "../../process/OwnedCommand.js";
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 
@@ -95,41 +108,52 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
-    try {
-      return await this.#resources.run(() =>
-        this.inspectAdmitted(input, options),
-      );
-    } catch (cause: unknown) {
-      const error = historicalCaptureFailure(
-        input,
-        cause,
-        "capture-read",
-        options,
-        this.#heap,
-      );
-      return err(
-        redactExplicitFailure(
-          withCaptureReaderCleanup(error, cause),
-          input.sensitive_values,
-        ),
-      );
-    }
+    return withCaptureBudgets(
+      selectedWebNetworkCaptureBudgets(input),
+      async () => {
+        try {
+          return await this.#resources.run(() =>
+            this.inspectAdmitted(input, options),
+          );
+        } catch (cause: unknown) {
+          const error = historicalCaptureFailure(
+            input,
+            cause,
+            "capture-read",
+            options,
+            this.#heap,
+          );
+          return err(
+            redactExplicitFailure(
+              withCaptureReaderCleanup(error, cause),
+              input.sensitive_values,
+            ),
+          );
+        }
+      },
+    );
   }
 
   private async inspectAdmitted(
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
+    const selectedEnvironment = snapshotEnvironment(this.environment);
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
+    const runtimeResources = new ArtifactResourceScope();
+    let processLease: AnalysisCleanupLease | undefined;
+    let sourceObservation: FileSnapshotPartialObservation | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
     let encodedReplyBytes = 0;
     let reportedHeap = this.#heap;
     let replyFinalization: ArtifactReaderFailure | undefined;
     try {
-      const adapter = this.adapters.find(
+      const selectedAdapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
       );
+      const adapter =
+        selectedAdapter?.snapshotConfiguration?.() ?? selectedAdapter;
       reportedHeap = this.#reportedHeap(adapter);
       if (adapter === undefined)
         throw new AnalysisCapabilityUnavailableError(
@@ -139,11 +163,17 @@ export class HistoricalCaptureDecoder {
         );
       const snapshot = await readStableArtifact(
         input.capture_path,
-        WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+        captureBudgets().inputBytes,
         options?.signal,
         undefined,
         this.#resources,
       );
+      sourceObservation = {
+        kind: "file-snapshot-hash",
+        path: input.capture_path,
+        sha256: snapshot.sha256,
+        bytes: snapshot.bytes.length,
+      };
       phase = "decoder";
       runtime = await this.createRuntime();
       const snapshotPath = join(runtime.path, "capture.snapshot");
@@ -160,12 +190,13 @@ export class HistoricalCaptureDecoder {
           snapshot_path: snapshotPath,
           reply_path: replyPath,
           sensitive_values: input.sensitive_values,
+          budgets: captureBudgets(),
         }),
         { mode: 0o600, flag: "wx" },
       );
       const command = await adapter.command(requestPath, runtime.path);
       const environment: NodeJS.ProcessEnv = {
-        ...this.environment,
+        ...selectedEnvironment,
         UV_THREADPOOL_SIZE: "1",
       };
       delete environment.NODE_OPTIONS;
@@ -196,8 +227,9 @@ export class HistoricalCaptureDecoder {
       const decodedReply = await readHistoricalCaptureReply(
         replyPath,
         input.capture_path,
-        this.#resources,
+        runtimeResources,
         options?.signal,
+        input.sensitive_values,
       );
       const reply = decodedReply.value;
       encodedReplyBytes = decodedReply.bytes;
@@ -212,28 +244,54 @@ export class HistoricalCaptureDecoder {
             },
           ]);
         if (reply.reason === "input-limit")
-          throw new AnalysisInputError(OPERATION, undefined, [
+          throw new AnalysisInputError(
+            OPERATION,
             {
-              path: ["capture_path", reply.pointer],
-              reason: "out_of_range",
-              message: reply.message,
-              expected: {
-                maximum_capture_nesting: WEB_NETWORK_CAPTURE_LIMITS.depth,
+              diagnostics: {
+                budget: webNetworkCaptureBudgetFacts(
+                  input,
+                  "max_nesting_depth",
+                ),
               },
+              remediationAction: webNetworkCaptureBudgetRecovery(
+                input,
+                "max_nesting_depth",
+              ),
             },
-          ]);
+            [
+              {
+                path: ["capture_path", reply.pointer],
+                reason: "out_of_range",
+                message: reply.message,
+                expected: {
+                  maximum_capture_nesting: captureBudgets().depth,
+                },
+              },
+            ],
+          );
         if (reply.reason === "expanded-limit")
-          throw new AnalysisInputError(OPERATION, undefined, [
+          throw new AnalysisInputError(
+            OPERATION,
             {
-              path: ["capture_path", reply.pointer],
-              reason: "out_of_range",
-              message: reply.message,
-              expected: {
-                maximum_expanded_capture_bytes:
-                  WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+              diagnostics: {
+                budget: webNetworkCaptureBudgetFacts(input, "max_input_bytes"),
               },
+              remediationAction: webNetworkCaptureBudgetRecovery(
+                input,
+                "max_input_bytes",
+              ),
             },
-          ]);
+            [
+              {
+                path: ["capture_path", reply.pointer],
+                reason: "out_of_range",
+                message: reply.message,
+                expected: {
+                  maximum_expanded_capture_bytes: captureBudgets().inputBytes,
+                },
+              },
+            ],
+          );
         if (reply.reason === "resource-limit")
           throw captureMemoryFailure(
             input,
@@ -257,11 +315,15 @@ export class HistoricalCaptureDecoder {
             reply.message,
           );
         throw new AnalysisOutputError(OPERATION, reply.message, {
-          userMessage: `The capture decoder refused a complete reply exceeding ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)} bytes: ${reply.message}`,
-          remediationAction: `The ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte complete-reply allowance has no runtime override. Select a smaller capture exported by its producer when a narrower observation is acceptable. Record selection, delivery mode and worker memory do not raise it; no completed capture Evidence is available from this refusal.`,
+          userMessage: `The capture decoder refused a complete reply exceeding ${String(captureBudgets().outputBytes)} bytes: ${reply.message}`,
+          remediationAction: webNetworkCaptureBudgetRecovery(
+            input,
+            "max_reply_bytes",
+          ),
           diagnostics: {
-            maximum_reply_bytes: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+            maximum_reply_bytes: captureBudgets().outputBytes,
             boundary: "historical-capture-reply",
+            budget: webNetworkCaptureBudgetFacts(input, "max_reply_bytes"),
           },
         });
       }
@@ -287,7 +349,7 @@ export class HistoricalCaptureDecoder {
           "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
           "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
           "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          `Complete evidence is bounded by a ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, a ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, and a ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap. Those have no runtime override. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
+          `Complete evidence is bounded by a ${String(captureBudgets().inputBytes)}-byte input budget, a ${String(captureBudgets().outputBytes)}-byte reply budget, and a ${String(captureBudgets().depth)}-level nesting cap. Set max_input_bytes, max_reply_bytes or max_nesting_depth explicitly for the next call to change those budgets without restarting REA. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
         ],
       };
       if (input.format === "qlog") {
@@ -330,13 +392,14 @@ export class HistoricalCaptureDecoder {
                   "capacity",
                   cause.message,
                   {
-                    maximum_encoded_capture_bytes:
-                      WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+                    maximum_encoded_capture_bytes: captureBudgets().outputBytes,
                   },
                   {
                     retryable: false,
-                    remediationAction:
-                      "Select smaller records, or inspect the retained original source bytes.",
+                    remediationAction: webNetworkCaptureBudgetRecovery(
+                      input,
+                      "max_reply_bytes",
+                    ),
                   },
                 )
               : cause instanceof CaptureFormatError
@@ -370,6 +433,29 @@ export class HistoricalCaptureDecoder {
         }
       }
     } catch (cause: unknown) {
+      if (
+        cause instanceof OwnedCommandFailure &&
+        cause.cleanupOwner !== undefined
+      ) {
+        const supervisor = cause.cleanupOwner;
+        processLease = new AnalysisCleanupLease(async () => {
+          const stopped = await supervisor.stop();
+          if (stopped.status === "incomplete")
+            throw new ProviderCleanupError(
+              input.format,
+              cause.resources,
+              {
+                reason: stopped.reason,
+              },
+              { operation: OPERATION, cause: stopped },
+            );
+        }, cause.resources);
+        runtimeResources.retain({
+          kind: "lease",
+          resource: runtime?.path ?? input.capture_path,
+          lease: processLease,
+        });
+      }
       const error = historicalCaptureFailure(
         input,
         cause,
@@ -392,24 +478,67 @@ export class HistoricalCaptureDecoder {
           reply_finalization_error: projectAnalysisError(cancellation),
         });
       }
-      result = err(
-        redactExplicitFailure(
-          withCaptureReaderCleanup(error, replyFinalization ?? cause),
-          input.sensitive_values,
-        ),
+      const failure = withCaptureReaderCleanup(
+        error,
+        replyFinalization ?? cause,
       );
+      if (processLease !== undefined)
+        new AnalysisCleanupLeaseGroup(failure, [processLease]);
+      if (phase === "capture-read") {
+        const snapshot = completedStableArtifactObservation(
+          cause,
+          input.capture_path,
+        );
+        if (snapshot !== undefined) failure.retainPartialObservation(snapshot);
+      }
+      if (
+        failure.partialObservation === undefined &&
+        sourceObservation !== undefined
+      )
+        failure.retainPartialObservation(sourceObservation);
+      result = err(redactExplicitFailure(failure, input.sensitive_values));
     }
     const completedCapture = result.ok ? result.value : undefined;
     let cleanupFailure:
       | Extract<ArtifactCleanupAttempt, { readonly kind: "failed" }>
       | undefined;
     if (runtime !== undefined) {
-      const cleanup = await this.#resources.release({
-        kind: "private-runtime-root",
-        resource: runtime.path,
-        root: runtime,
-      });
-      if (cleanup.kind === "failed") cleanupFailure = cleanup;
+      const root = runtime;
+      const lease = new AnalysisCleanupLease(
+        async () => {
+          await runtimeResources.close();
+          await root.close();
+        },
+        {
+          get cleanupResources() {
+            return [
+              ...new Set([root.path, ...runtimeResources.cleanupResources]),
+            ];
+          },
+        },
+      );
+      const owner = { kind: "lease" as const, resource: root.path, lease };
+      if (runtimeResources.hasPending) {
+        // Failed child cleanup is retried by the service owner, after active peers settle.
+        this.#resources.retain(owner);
+        cleanupFailure = {
+          kind: "failed",
+          owner,
+          lease,
+          cause: new ProviderCleanupError(
+            input.format,
+            lease.cleanupResources ?? [root.path],
+            {
+              reason:
+                "Capture decoder resources must be released before runtime removal.",
+            },
+            { operation: OPERATION },
+          ),
+        };
+      } else {
+        const cleanup = await this.#resources.release(owner);
+        if (cleanup.kind === "failed") cleanupFailure = cleanup;
+      }
     }
     if (result.ok && options?.signal?.aborted)
       result = err(
@@ -443,11 +572,10 @@ export class HistoricalCaptureDecoder {
       if (completedCapture !== undefined)
         failure.retainPartialObservation(completedCapture);
       new AnalysisCleanupLeaseGroup(cleanupError, [cleanupFailure.lease]);
-      const redacted = redactExplicitFailure(failure, input.sensitive_values);
       if (!result.ok)
-        redacted.bindCleanupDependencies([result.error, cleanupError]);
-      new AnalysisCleanupLeaseGroup(redacted, [cleanupFailure.lease]);
-      return err(redacted);
+        failure.bindCleanupDependencies([result.error, cleanupError]);
+      new AnalysisCleanupLeaseGroup(failure, [cleanupFailure.lease]);
+      return err(redactExplicitFailure(failure, input.sensitive_values));
     }
     if (!result.ok && completedCapture !== undefined)
       result.error.retainPartialObservation(completedCapture);

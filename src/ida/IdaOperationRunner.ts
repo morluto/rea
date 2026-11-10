@@ -25,11 +25,15 @@ import {
 import {
   functionDossierSchema,
   functionInstructionWindowSchema,
-} from "../domain/hopperValues.js";
+} from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
-import { readCallGraphCallees, unavailableCallGraph } from "./IdaCallGraph.js";
+import {
+  readCallGraphCallees,
+  IDA_CALLEE_DISCOVERY,
+  unavailableCallGraph,
+} from "./IdaCallGraph.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import type { IdaOperation } from "./IdaProviderCapabilities.js";
 import {
@@ -54,6 +58,7 @@ import {
   modernPageSchema,
   modernXrefsSchema,
   nextOffset,
+  nextPageOffset,
   surveySegmentsSchema,
   type IdaDisassembly,
   type IdaFunction,
@@ -160,11 +165,7 @@ export class IdaOperationRunner {
       if (value === undefined)
         throw new AnalysisProtocolError("IDA MCP omitted its function page.");
       result.push(...value.data.map((fn) => idaFunctionSchema.parse(fn)));
-      offset = value.next_offset;
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP function pagination did not advance.",
-        );
+      offset = nextPageOffset(value.next_offset, current);
     }
     return result;
   }
@@ -328,7 +329,7 @@ export class IdaOperationRunner {
     this.limitations.push(...graph.limitations);
     for (const callee of graph.callees)
       if (!result.has(callee.address))
-        result.set(callee.address, identity({ ...callee, size: "unknown" }));
+        result.set(callee.address, identity(callee));
     return graph.coverage;
   }
 
@@ -349,7 +350,7 @@ export class IdaOperationRunner {
           const s = legacyStringSchema.parse(item);
           result.push({ address: s.address, value: s.string });
         }
-        offset = page.next_offset;
+        offset = nextPageOffset(page.next_offset, current);
       } else {
         const page = idaStringsPageSchema.parse(
           await this.call("find_regex", {
@@ -370,10 +371,6 @@ export class IdaOperationRunner {
         );
         offset = nextOffset(page.cursor, current);
       }
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP string pagination did not advance.",
-        );
     }
     return result;
   }
@@ -524,7 +521,7 @@ export class IdaOperationRunner {
           : legacyCalleesSchema.parse(value);
       for (const item of items) {
         if ("type" in item && item.type === "external")
-          result.set(item.address, identity({ ...item, size: "unknown" }));
+          result.set(item.address, identity(item));
         else queries.push(item.name);
       }
     } else if (direction === "callers") {
@@ -558,26 +555,29 @@ export class IdaOperationRunner {
         this.limitations.push(
           "Upstream callees capped results at 500; additional callees remain unknown.",
         );
-      coverage =
-        page.more === true
+      coverage = {
+        ...(page.more === undefined
           ? {
-              status: "partial",
-              limitations: [
-                "Upstream callees capped results at 500; additional callees remain unknown.",
-              ],
+              status: "unknown" as const,
+              reason:
+                "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
             }
-          : page.more === false
-            ? { status: "complete" }
-            : {
-                status: "unknown",
-                reason:
-                  "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
-              };
+          : page.more
+            ? {
+                status: "partial" as const,
+                limitations: [
+                  "Upstream callees capped results at 500; additional callees remain unknown.",
+                ],
+                limited_directions: ["callees"] as const,
+              }
+            : { status: "complete" as const }),
+        discovery: IDA_CALLEE_DISCOVERY,
+      };
       for (const item of page.callees) {
         if ("type" in item && item.type === "external")
           result.set(
             item.addr,
-            identity({ address: item.addr, name: item.name, size: "unknown" }),
+            identity({ address: item.addr, name: item.name }),
           );
         else queries.push(item.addr);
       }
@@ -661,6 +661,10 @@ export class IdaOperationRunner {
       return this.searchItems(operation, items, query);
     }
     if (operation === "list_strings" || operation === "search_strings") {
+      const selectedAddress =
+        query === undefined && parameters.address !== undefined
+          ? idaAddressSchema.parse(parameters.address)
+          : undefined;
       const nativePattern =
         this.protocol === "native" && query?.mode === "literal"
           ? nativeLiteralSearchPattern(query.pattern, query.case_sensitive)
@@ -668,12 +672,9 @@ export class IdaOperationRunner {
       const items = await this.strings(nativePattern);
       return query !== undefined
         ? this.searchItems(operation, items, query)
-        : parameters.address === undefined
+        : selectedAddress === undefined
           ? items
-          : items.filter(
-              ({ address }) =>
-                address === idaAddressSchema.parse(parameters.address),
-            );
+          : items.filter(({ address }) => address === selectedAddress);
     }
     if (operation === "list_documents") {
       if (this.options.admittedDocument === undefined)

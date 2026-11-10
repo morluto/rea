@@ -49,7 +49,7 @@ async function checkPrerequisites() {
     const value = process.env[name];
     if (value === undefined) {
       throw new Error(
-        `verify:firmware requires ${name}; see docs/firmware-analysis.md`,
+        `verify:firmware requires ${name}; see docs/guides/firmware/firmware-analysis.md`,
       );
     }
     await fs.access(value);
@@ -341,7 +341,7 @@ async function stageExt4() {
 async function stageGhidra(mcpFiles) {
   if (process.env.GHIDRA_INSTALL_DIR === undefined) {
     throw new Error(
-      "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/ghidra.md",
+      "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/providers/ghidra-provider.md",
     );
   }
 

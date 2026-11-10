@@ -2,8 +2,14 @@ import { expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
-import { resolveInvestigationEvidenceClosure } from "./InvestigationEvidence.js";
+import {
+  createInvestigationEvidenceClosureChecker,
+  collectInvestigationEvidenceClosure,
+  resolveInvestigationEvidenceClosure,
+} from "./InvestigationEvidence.js";
 
 const observation = (path: string, links: readonly string[] = []): Evidence =>
   createEvidence(
@@ -64,12 +70,28 @@ it("keeps a selected transitive closure distinct from unrelated records and reje
   records.clear();
   const added = records.recordEvidence(root);
   if (!added.ok) throw added.error;
-  expect(
-    resolveInvestigationEvidenceClosure(records, [root.evidence_id]),
-  ).toMatchObject({
+  const missing = resolveInvestigationEvidenceClosure(records, [
+    root.evidence_id,
+  ]);
+  expect(missing).toMatchObject({
     ok: false,
-    error: { _tag: "EvidenceIntegrityError" },
+    error: {
+      _tag: "EvidenceIntegrityError",
+      reason: "missing",
+      referenceScope: "retained-closure",
+    },
   });
+  if (missing.ok) throw new Error("missing source closure was resolved");
+  const projected = projectAnalysisError(missing.error);
+  expect(projected).toMatchObject({
+    details: {
+      evidence_id: leaf.evidence_id,
+      reference_scope: "retained-closure",
+      reason: "missing",
+    },
+  });
+  expect(projected.message).toContain(leaf.evidence_id);
+  expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
 });
 
 it("rejects a lookup that returns another semantic Evidence identity", () => {
@@ -86,6 +108,76 @@ it("rejects a lookup that returns another semantic Evidence identity", () => {
       reason: "identity_mismatch",
       evidenceId: selectedId,
       actual: record.evidence_id,
+      referenceScope: undefined,
     },
   });
+});
+
+it("resolves an authenticated source with a wide repeated-link array", () => {
+  const leaf = observation("/wide-leaf");
+  const source = observation(
+    "/wide-source",
+    Array(500_000).fill(leaf.evidence_id),
+  );
+  expect(source.evidence_links).toHaveLength(500_000);
+  const records = new InvestigationRecords();
+  for (const record of [leaf, source]) {
+    const added = records.recordEvidence(record);
+    if (!added.ok) throw added.error;
+  }
+  expect(
+    records.evidenceForAnalysis(source.evidence_id)?.evidence_links,
+  ).toHaveLength(500_000);
+  expect(
+    resolveInvestigationEvidenceClosure(records, [source.evidence_id]),
+  ).toEqual({
+    ok: true,
+    value: [source.evidence_id, leaf.evidence_id].sort(),
+  });
+});
+
+it("reuses a complete shared source graph without weakening missing-source checks", () => {
+  const leaf = observation("/shared-leaf");
+  const source = observation("/shared-source", [leaf.evidence_id]);
+  const records = new Map(
+    [leaf, source].map((record) => [record.evidence_id, record]),
+  );
+  let lookups = 0;
+  const check = createInvestigationEvidenceClosureChecker({
+    evidenceForAnalysis: (id) => {
+      lookups++;
+      return records.get(id);
+    },
+  });
+  expect(check([source.evidence_id])).toBe(true);
+  expect(lookups).toBe(2);
+  expect(check([source.evidence_id, leaf.evidence_id])).toBe(true);
+  expect(lookups).toBe(2);
+  const missing = `ev_${"0".repeat(64)}`;
+  expect(check([missing])).toBe(false);
+  expect(check([missing])).toBe(false);
+  expect(lookups).toBe(3);
+  expect(check([source.evidence_id, missing])).toBe(false);
+});
+
+it("collects other reachable sources after a missing ancestor", () => {
+  const missing = `ev_${"0".repeat(64)}`;
+  const first = observation("/reachable");
+  const incomplete = observation("/incomplete", [missing]);
+  const records = new InvestigationRecords();
+  for (const record of [first, incomplete]) {
+    const added = records.recordEvidence(record);
+    if (!added.ok) throw added.error;
+  }
+  const result = collectInvestigationEvidenceClosure(records, [
+    first.evidence_id,
+    incomplete.evidence_id,
+  ]);
+  expect(result.result).toMatchObject({
+    ok: false,
+    error: { reason: "missing" },
+  });
+  expect(result.records.map((record) => record.evidence_id).sort()).toEqual(
+    [first.evidence_id, incomplete.evidence_id].sort(),
+  );
 });

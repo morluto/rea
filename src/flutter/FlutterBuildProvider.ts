@@ -1,3 +1,10 @@
+import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
@@ -15,6 +22,8 @@ import {
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   MAX_FLUTTER_LIBRARY_PATH_BYTES,
+  dartPoolPolicy,
+  type DartPoolPolicy,
   type FlutterRequest,
 } from "../domain/flutter/flutterBuildAnalysis.js";
 import {
@@ -28,7 +37,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -57,13 +69,6 @@ import {
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
-/** Stable identity for the Flutter build-identification provider. */
-export const FLUTTER_PROVIDER_IDENTITY = {
-  id: "flutter",
-  name: "Flutter build identification",
-  version: null,
-} as const;
-
 const APK_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 const LIBRARY_MAX_BYTES = 256 * 1024 * 1024;
 /** Cumulative cap across every library entry in one identification. */
@@ -76,8 +81,6 @@ const APK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_FLUTTER_ABIS = 32;
 const flutterBudget = (allowance: string, kind: "parser" | "input") =>
   fixedAllowanceOptions(allowance, kind);
-const MAX_POOL_URIS = 500;
-const MAX_POOL_TOKENS = 2_000;
 /** A complete AOT image carries exactly one VM and one isolate section. */
 const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
@@ -367,8 +370,11 @@ export class FlutterBuildProvider {
   >();
   private readonly removeRoot: (path: string) => Promise<void>;
   private readonly cleanupFailures = new Map<string, readonly unknown[]>();
+  private readonly rootLeases = new Map<string, AnalysisCleanupLease>();
+  private readonly operations = new ArtifactResourceScope();
 
   constructor(options: FlutterProviderOptions = {}) {
+    this.operations.addCloseHook(() => this.closeRoots());
     this.removeRoot =
       options.removeRoot ??
       ((path) => rm(path, { recursive: true, force: true }));
@@ -393,6 +399,13 @@ export class FlutterBuildProvider {
       throw mapOwnedIoFailure(operation, cause, null);
     }
     this.ownedRoots.set(root, new Set());
+    this.rootLeases.set(
+      root,
+      new AnalysisCleanupLease(async () => {
+        if (!(await this.cleanupRoot(root)))
+          throw this.cleanupError(root, operation);
+      }, [root]),
+    );
     const snapshotPath = join(root, "input.apk");
     const readSource = async <T>(read: () => Promise<T>): Promise<T> => {
       try {
@@ -486,10 +499,18 @@ export class FlutterBuildProvider {
       const sha256 = await sha256File(operation, snapshotPath, signal);
       return { root, path: snapshotPath, bytes: info.size, sha256 };
     } catch (cause) {
-      await this.discardRoot(root);
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, { cause });
-      throw mapOwnedIoFailure(operation, cause, root);
+      const primary =
+        signal?.aborted === true
+          ? new AnalysisCancelledError(operation, { cause: signal.reason })
+          : mapOwnedIoFailure(operation, cause, root);
+      const released = await this.discardRoot(root);
+      if (!released)
+        throw this.withCleanup(
+          primary,
+          this.cleanupError(root, operation),
+          operation,
+        );
+      throw primary;
     }
   }
 
@@ -518,6 +539,18 @@ export class FlutterBuildProvider {
 
   /** Close every owned handle before removing its root; retain any failure. */
   private async discardRoot(root: string): Promise<boolean> {
+    const lease = this.rootLeases.get(root);
+    if (lease === undefined) return true;
+    try {
+      await lease.release();
+      this.rootLeases.delete(root);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async cleanupRoot(root: string): Promise<boolean> {
     const resources = this.ownedRoots.get(root);
     if (resources === undefined) return true;
     const attempts = await Promise.allSettled(
@@ -551,29 +584,23 @@ export class FlutterBuildProvider {
     };
   }
 
-  /** Retain failed snapshot cleanup ownership and retry it on close. */
-  async close(): Promise<void> {
-    const failures: {
-      readonly root: string;
-      readonly causes: readonly unknown[];
-    }[] = [];
-    for (const root of [...this.ownedRoots.keys()]) {
-      if (!(await this.discardRoot(root)))
-        failures.push({ root, causes: this.cleanupFailures.get(root)! });
-    }
-    if (failures.length > 0)
-      throw new ProviderCleanupError(
-        FLUTTER_PROVIDER_IDENTITY.id,
-        failures.map(({ root }) => root),
-        {
-          reason: failures
-            .flatMap(({ causes }) =>
-              causes.map((cause) =>
-                cause instanceof Error ? cause.message : String(cause),
-              ),
-            )
-            .join("; "),
-          retained_roots: failures.map(({ root, causes }) => ({
+  private cleanupError(
+    root: string,
+    operation: string,
+    completedObservation?: AnalysisPartialObservation,
+  ): ProviderCleanupError {
+    const causes = this.cleanupFailures.get(root) ?? [];
+    const error = new ProviderCleanupError(
+      FLUTTER_PROVIDER_IDENTITY.id,
+      [root],
+      {
+        reason: causes
+          .map((cause) =>
+            cause instanceof Error ? cause.message : String(cause),
+          )
+          .join("; "),
+        retained_roots: [
+          {
             path: root,
             failures: causes.map((cause) => ({
               name: cause instanceof Error ? cause.name : "UnknownError",
@@ -584,28 +611,104 @@ export class FlutterBuildProvider {
                 ? { code: cause.code }
                 : {}),
             })),
-          })),
+          },
+        ],
+      },
+      {
+        cause: new AggregateError(causes, "Flutter snapshot cleanup failed"),
+        operation,
+        ...(completedObservation === undefined ? {} : { completedObservation }),
+      },
+    );
+    const lease = this.rootLeases.get(root);
+    if (lease !== undefined) new AnalysisCleanupLeaseGroup(error, [lease]);
+    return error;
+  }
+
+  private withCleanup(
+    primary: AnalysisError,
+    cleanup: AnalysisError,
+    operation: string,
+  ): AnalysisError {
+    return analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      operation,
+    ).bindCleanupDependencies([primary, cleanup]);
+  }
+
+  /** Stop admission and drain active snapshots before attempting retained cleanup. */
+  async close(): Promise<void> {
+    await this.operations.close();
+  }
+
+  private async closeRoots(
+    roots = [...this.ownedRoots.keys()],
+    operation = "close_flutter_build",
+  ): Promise<void> {
+    const failures: AnalysisError[] = [];
+    for (const root of roots) {
+      if (!(await this.discardRoot(root)))
+        failures.push(this.cleanupError(root, operation));
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new ProviderCleanupError(
+        FLUTTER_PROVIDER_IDENTITY.id,
+        failures.flatMap((failure) => failure.cleanupResources),
+        {
+          reason: failures
+            .map((failure) => failure.diagnostics?.reason ?? failure.message)
+            .join("; "),
+          retained_roots: failures.flatMap((failure) => {
+            const roots = failure.diagnostics?.retained_roots;
+            return Array.isArray(roots) ? roots : [];
+          }),
         },
         {
-          cause: new AggregateError(
-            failures.flatMap(({ causes }) => causes),
-            "Flutter snapshot cleanup failed",
-          ),
-          operation: "close_flutter_build",
+          cause: new AggregateError(failures),
+          operation,
         },
-      );
+      ).bindCleanupDependencies(failures);
   }
 
   async execute(
     request: FlutterRequest,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: options.signal.reason,
-        }),
+    try {
+      return await this.operations.run(() =>
+        this.executeOwned(request, options),
       );
+    } catch (cause) {
+      return err(mapOwnedIoFailure(request.operation, cause, null));
+    }
+  }
+
+  private async executeOwned(
+    request: FlutterRequest,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const cancellation = (): AnalysisCancelledError | undefined =>
+      options?.signal?.aborted === true
+        ? new AnalysisCancelledError(request.operation, {
+            cause: options.signal.reason,
+          })
+        : undefined;
+    const beforeCleanup = cancellation();
+    if (beforeCleanup !== undefined) return err(beforeCleanup);
+    // Only failed roots are safe to retry here: concurrent admitted snapshots
+    // retain their own live resources until their operations finish.
+    try {
+      await this.closeRoots(
+        [...this.cleanupFailures.keys()],
+        request.operation,
+      );
+    } catch (cause) {
+      return err(mapOwnedIoFailure(request.operation, cause, null));
+    }
+    const afterCleanup = cancellation();
+    if (afterCleanup !== undefined) return err(afterCleanup);
     const { path } = request.input;
     const signal = options?.signal;
     let snapshot: OwnedSnapshot | undefined;
@@ -628,6 +731,7 @@ export class FlutterBuildProvider {
               snapshot,
               reader,
               libraries,
+              dartPoolPolicy(request.input.pool_policy),
             )
           : await this.identifyFlutterBuild(
               path,
@@ -640,27 +744,50 @@ export class FlutterBuildProvider {
       result = err(
         mapOwnedIoFailure(request.operation, cause, snapshot?.root ?? null),
       );
-    } finally {
-      if (snapshot !== undefined) await this.discardRoot(snapshot.root);
     }
-    // Cancellation observed after the awaited snapshot removal still keeps
-    // the completed facts, composed exactly as the uncancelled Evidence.
-    if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
-          ...(result.ok
-            ? {
-                partialObservation: createAnalysisExecutionEvidence(
+    const cleanup =
+      snapshot !== undefined && !(await this.discardRoot(snapshot.root))
+        ? this.cleanupError(
+            snapshot.root,
+            request.operation,
+            result.ok
+              ? createAnalysisExecutionEvidence(
                   request.operation,
                   request.input,
                   result.value,
                   "observed",
-                ),
-              }
-            : {}),
+                )
+              : undefined,
+          )
+        : undefined;
+    // Cancellation observed after the awaited snapshot removal still keeps
+    // the completed facts, composed exactly as the uncancelled Evidence.
+    if (signal?.aborted === true && result.ok) {
+      result = err(
+        new AnalysisCancelledError(request.operation, {
+          cause: signal.reason,
+          partialObservation: createAnalysisExecutionEvidence(
+            request.operation,
+            request.input,
+            result.value,
+            "observed",
+          ),
         }),
       );
+    }
+    if (cleanup !== undefined) {
+      if (!result.ok)
+        return err(this.withCleanup(result.error, cleanup, request.operation));
+      cleanup.retainPartialObservation(
+        createAnalysisExecutionEvidence(
+          request.operation,
+          request.input,
+          result.value,
+          "observed",
+        ),
+      );
+      return err(cleanup);
+    }
     return result;
   }
 
@@ -897,7 +1024,7 @@ export class FlutterBuildProvider {
           limitations: [
             "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
             "The snapshot hash identifies a Dart SDK build only against an external mapping dataset; REA performs no lookup",
-            "Release engine builds often carry no labeled Dart version string; absence is reported, not guessed",
+            "Unlabeled Dart version values are identified by their printable-string shape, not a symbol or other source identity; a matching unrelated string may be reported and a null value means no supported pattern was found",
             "Engine build IDs come only from ELF-declared PT_NOTE/SHT_NOTE records; conflicting or incompletely examined notes preserve candidates and report partial coverage",
             ...[...facts].flatMap(([abi, value]) => [
               ...value.libflutter.buildIdFailures.map(
@@ -959,6 +1086,7 @@ export class FlutterBuildProvider {
     snapshot: OwnedSnapshot,
     reader: ZipArtifactReader,
     libraries: readonly FlutterLibrary[],
+    poolPolicy: DartPoolPolicy,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const candidates = libraries.filter((library) => library.kind === "libapp");
     if (candidates.length === 0)
@@ -1170,7 +1298,7 @@ export class FlutterBuildProvider {
         ),
       );
     }
-    const pool = await projectStringPool(isolateData, signal);
+    const pool = await projectStringPool(isolateData, signal, poolPolicy);
     const snapshotPartial =
       inventory.failures.length > 0 ||
       aliasedDataSymbols ||
@@ -1183,9 +1311,9 @@ export class FlutterBuildProvider {
     const poolPartial =
       isolateData === null ||
       pool.collectionCapped ||
-      pool.packageUriCount > MAX_POOL_URIS ||
-      pool.dartUriCount > MAX_POOL_URIS ||
-      pool.classLikeTokenCount > MAX_POOL_TOKENS;
+      pool.packageUriCount > poolPolicy.uri_limit ||
+      pool.dartUriCount > poolPolicy.uri_limit ||
+      pool.classLikeTokenCount > poolPolicy.token_limit;
     return ok(
       createAnalysisExecution(
         {
@@ -1202,12 +1330,16 @@ export class FlutterBuildProvider {
             sections,
           },
           string_pool: {
+            policy: { ...poolPolicy },
             coverage: poolPartial ? "partial" : "complete",
-            package_uris: pool.packageUris.slice(0, MAX_POOL_URIS),
+            package_uris: pool.packageUris.slice(0, poolPolicy.uri_limit),
             package_uri_count_at_least: pool.packageUriCount,
-            dart_uris: pool.dartUris.slice(0, MAX_POOL_URIS),
+            dart_uris: pool.dartUris.slice(0, poolPolicy.uri_limit),
             dart_uri_count_at_least: pool.dartUriCount,
-            class_like_tokens: pool.classLikeTokens.slice(0, MAX_POOL_TOKENS),
+            class_like_tokens: pool.classLikeTokens.slice(
+              0,
+              poolPolicy.token_limit,
+            ),
             class_like_token_count_at_least: pool.classLikeTokenCount,
             printable_run_count: pool.printableRunCount,
           },
@@ -1223,7 +1355,7 @@ export class FlutterBuildProvider {
             "Snapshot hash sources are the headers at the start of the VM and isolate data symbols; complete decoding supports kind 3 (the Dart 2.14 FullAOT layout), a valid hash and a declared length that fits its symbol, including the four magic bytes; other kind values remain observed with partial coverage",
             "String-pool entries are byte-pattern observations from the isolate data section, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser",
             "class_like_tokens are identifier-shaped runs and include incidental matches",
-            "string-pool counts are lower bounds: collection stops at twice each projection bound, and any value beyond that is counted only through the capped flag",
+            "URI/token counts are lower bounds for runs matching pool_policy.contains: distinct collection stops at twice each selected projection bound. printable_run_count counts complete printable runs before filtering; overflowed runs are omitted, never fabricated as prefixes",
             ...inventory.failures.map((failure) => failure.reason),
             ...(sections.length < symbolNames.length
               ? [
@@ -1246,24 +1378,23 @@ export class FlutterBuildProvider {
                 (section) =>
                   `${section.name} has an incomplete or invalid snapshot header: kind ${String(section.header.kind)} (AOT app requires 3), declared length ${String(section.header.headerLength)} excludes the four magic bytes, symbol size ${String(section.size)}, valid hash ${String(section.header.hash !== null)}`,
               ),
-            ...(pool.collectionCapped
+            ...pool.limitsReached.map(
+              (limit) =>
+                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit} (CLI --pool-policy JSON); no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
+            ),
+            ...(pool.dartUriCount > poolPolicy.uri_limit
               ? [
-                  "String-pool collection or printable-run capacity was exceeded; counts are lower bounds and overflowed runs are omitted",
+                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
                 ]
               : []),
-            ...(pool.dartUriCount > MAX_POOL_URIS
+            ...(pool.packageUriCount > poolPolicy.uri_limit
               ? [
-                  `dart_uris reports ${String(MAX_POOL_URIS)} of at least ${String(pool.dartUriCount)} distinct URIs`,
+                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
                 ]
               : []),
-            ...(pool.packageUriCount > MAX_POOL_URIS
+            ...(pool.classLikeTokenCount > poolPolicy.token_limit
               ? [
-                  `package_uris reports ${String(MAX_POOL_URIS)} of at least ${String(pool.packageUriCount)} distinct URIs`,
-                ]
-              : []),
-            ...(pool.classLikeTokenCount > MAX_POOL_TOKENS
-              ? [
-                  `class_like_tokens reports ${String(MAX_POOL_TOKENS)} of at least ${String(pool.classLikeTokenCount)} distinct tokens`,
+                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (CLI --pool-policy JSON) on a new call, no restart required`,
                 ]
               : []),
           ],
@@ -1283,6 +1414,7 @@ export class FlutterBuildProvider {
 const projectStringPool = async (
   section: Buffer | null,
   signal: AbortSignal | undefined,
+  poolPolicy: DartPoolPolicy,
 ): Promise<{
   packageUris: string[];
   packageUriCount: number;
@@ -1292,38 +1424,44 @@ const projectStringPool = async (
   classLikeTokenCount: number;
   printableRunCount: number;
   collectionCapped: boolean;
+  limitsReached: readonly Exclude<keyof DartPoolPolicy, "contains">[];
 }> => {
   const packages = new Set<string>();
   const darts = new Set<string>();
   const tokens = new Set<string>();
   let runCount = 0;
-  let collectionCapped = false;
+  const limitsReached = new Set<Exclude<keyof DartPoolPolicy, "contains">>();
   const COLLECTION_SLACK = 2;
-  /** One printable run never materializes beyond this length. */
-  const MAX_RUN_BYTES = 1024;
-  const packageBudget = MAX_POOL_URIS * COLLECTION_SLACK;
-  const dartBudget = MAX_POOL_URIS * COLLECTION_SLACK;
-  const tokenBudget = MAX_POOL_TOKENS * COLLECTION_SLACK;
+  // Input bytes bound useful capacity before slack multiplication; large safe
+  // integer requests never overflow the collection-budget arithmetic.
+  const packageBudget =
+    Math.min(poolPolicy.uri_limit, section?.length ?? 0) * COLLECTION_SLACK;
+  const dartBudget = packageBudget;
+  const tokenBudget =
+    Math.min(poolPolicy.token_limit, section?.length ?? 0) * COLLECTION_SLACK;
   if (section !== null) {
     let run = "";
     const consider = (text: string): void => {
       if (text.length < 5) return;
       runCount += 1;
+      if (
+        poolPolicy.contains !== undefined &&
+        !text.includes(poolPolicy.contains)
+      )
+        return;
       if (text.startsWith("package:")) {
         if (!packages.has(text) && packages.size >= packageBudget)
-          collectionCapped = true;
+          limitsReached.add("uri_limit");
         else packages.add(text);
       } else if (text.startsWith("dart:")) {
         if (!darts.has(text) && darts.size >= dartBudget)
-          collectionCapped = true;
+          limitsReached.add("uri_limit");
         else darts.add(text);
-      } else if (
-        text.length <= 128 &&
-        text.length >= 5 &&
-        IDENTIFIER_PATTERN.test(text)
-      ) {
-        if (!tokens.has(text) && tokens.size >= tokenBudget)
-          collectionCapped = true;
+      } else if (IDENTIFIER_PATTERN.test(text)) {
+        if (text.length > poolPolicy.token_bytes)
+          limitsReached.add("token_bytes");
+        else if (!tokens.has(text) && tokens.size >= tokenBudget)
+          limitsReached.add("token_limit");
         else tokens.add(text);
       }
     };
@@ -1337,10 +1475,11 @@ const projectStringPool = async (
           // materializes: growth stops at the cap and the entire run is
           // discarded at its delimiter, since a truncated prefix would be
           // fabricated evidence rather than an observation.
-          if (run.length < MAX_RUN_BYTES) run += String.fromCharCode(byte);
+          if (run.length < poolPolicy.run_bytes)
+            run += String.fromCharCode(byte);
           else {
             overflowed = true;
-            collectionCapped = true;
+            limitsReached.add("run_bytes");
           }
         } else {
           if (!overflowed) consider(run);
@@ -1360,6 +1499,7 @@ const projectStringPool = async (
     classLikeTokens: [...tokens].sort(),
     classLikeTokenCount: tokens.size,
     printableRunCount: runCount,
-    collectionCapped,
+    collectionCapped: limitsReached.size > 0,
+    limitsReached: [...limitsReached],
   };
 };

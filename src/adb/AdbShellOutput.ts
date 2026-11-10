@@ -27,8 +27,10 @@ export interface AdbProcessEntry {
   readonly name: string;
 }
 
+// Toybox emits one separator before the unpadded final NAME column.
+// Remaining whitespace belongs to argv[0], not the table layout.
 const PROCESS_LINE =
-  /^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/u;
+  /^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+) (.+)$/u;
 
 const safeInteger = (text: string): number | null => {
   const value = Number(text);
@@ -46,22 +48,21 @@ export const parseProcessListOutput = (
   const processes: AdbProcessEntry[] = [];
   const unparsed = collectUnparsedLines();
   let columns: string | null = null;
-  for (const rawLine of stdout.split(/\r?\n/u)) {
-    const line = rawLine.trimEnd();
-    if (line === "") continue;
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (line.trim() === "") continue;
     if (/^USER\s+PID\s+PPID\b/u.test(line)) {
       columns = line.trim();
       continue;
     }
     const match = PROCESS_LINE.exec(line);
     if (match === null) {
-      unparsed.add(rawLine);
+      unparsed.add(line);
       continue;
     }
     const pid = safeInteger(match[2]!);
     const ppid = safeInteger(match[3]!);
     const rss = safeInteger(match[5]!);
-    if (pid === null || ppid === null || rss === null) unparsed.add(rawLine);
+    if (pid === null || ppid === null || rss === null) unparsed.add(line);
     if (pid === null) continue;
     processes.push({
       user: match[1]!,
@@ -69,7 +70,7 @@ export const parseProcessListOutput = (
       ppid,
       rss,
       state: match[8]!,
-      name: match[9]!.trim(),
+      name: match[9]!,
     });
   }
   return { columns, processes, unparsedLines: unparsed.facts() };
@@ -606,28 +607,5 @@ export const parseAmStartOutput = (
     reason:
       reason ??
       (text === "" ? "am start returned no activity" : text.slice(0, 512)),
-  };
-};
-
-const PNG_SIGNATURE = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-]);
-
-/** Read image dimensions from a PNG header, or null for other payloads. */
-export const parsePngDimensions = (
-  bytes: Uint8Array,
-): {
-  width: number | null;
-  height: number | null;
-} => {
-  if (
-    bytes.length < 24 ||
-    !Buffer.from(bytes.subarray(0, 8)).equals(PNG_SIGNATURE)
-  )
-    return { width: null, height: null };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return {
-    width: view.getUint32(16),
-    height: view.getUint32(20),
   };
 };

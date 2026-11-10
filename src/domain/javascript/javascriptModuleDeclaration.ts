@@ -30,6 +30,17 @@ export const isTypeOnlyExportDeclaration = (
     node.declaration != null &&
     isErasedJavaScriptDeclaration(node.declaration));
 
+/** Runtime static module source, shared by source and captured-script consumers. */
+export const semanticStaticModuleSource = (
+  node: t.Node,
+): t.StringLiteral | null => {
+  if (t.isImportDeclaration(node))
+    return isTypeOnlyImportDeclaration(node) ? null : node.source;
+  if (t.isExportAllDeclaration(node) || t.isExportNamedDeclaration(node))
+    return isTypeOnlyExportDeclaration(node) ? null : (node.source ?? null);
+  return null;
+};
+
 /**
  * Runtime external-module target for a value import-equals declaration;
  * `import type X = require("m")` is erased and declares no dependency.

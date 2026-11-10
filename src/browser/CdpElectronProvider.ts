@@ -1,3 +1,4 @@
+import { selectCdpDiscoveryTarget } from "./CdpDiscoveryTargets.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -206,7 +207,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
                 ]),
             ...(allowed.some((target) => target.attached === null)
               ? [
-                  "CDP discovery omitted attachment state for one or more targets; attached is reported as unknown.",
+                  "CDP discovery could not establish debugger attachment state for one or more targets.",
                 ]
               : []),
           ],
@@ -283,7 +284,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
         options.signal,
       );
       const target = await authorizeTarget(
-        discovery.targets,
+        discovery,
         input.target_id,
         this.#asarHeaderAdmission,
         options.signal,
@@ -431,13 +432,18 @@ export class CdpElectronProvider implements ElectronObservationPort {
 }
 
 const authorizeTarget = async (
-  targets: readonly CdpEndpointTarget[],
+  discovery: CdpEndpointDiscovery,
   targetId: string,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<CdpEndpointTarget> => {
   throwIfElectronOperationCancelled(signal, "inspect_electron_page");
-  const target = targets.find(({ id }) => id === targetId);
+  const target = selectCdpDiscoveryTarget(
+    discovery.targets,
+    targetId,
+    "inspect_electron_page",
+    discovery.ambiguousTargetIds,
+  );
   if (target === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_found");
   if (target.type !== "page")

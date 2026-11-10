@@ -1,6 +1,6 @@
 import * as t from "@babel/types";
 
-import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 
 /**
@@ -49,7 +49,7 @@ export const createSemanticCallableStack = <Callable>(
     enter: (node, parent) => {
       if (
         parent !== null &&
-        semanticComputedMethodKey(parent, node) &&
+        semanticMethodDefinitionExpression(parent, node) &&
         frames.at(-1)?.callableId === semanticCallableIdForNode(parent)
       ) {
         const method = pop();

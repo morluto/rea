@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 import { nativeCallObservationInputSchema } from "../../domain/native/nativeCallObservation.js";
 import {
@@ -10,7 +11,6 @@ import { nativeOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { localPathStringSchema } from "../../domain/localPath.js";
 import { toolContractMetadata } from "../toolEffects.js";
-import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { analysisDetailSchema } from "../analysisDetail.js";
 import { nativeCommandTimeoutField } from "../../domain/native/nativeDeadlines.js";
 
@@ -41,10 +41,14 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   },
 };
 
-const native = <Name extends string, Schema extends z.ZodObject>(
+const native = <
+  Name extends keyof typeof nativeOutputSchemas,
+  Schema extends z.ZodObject,
+>(
   name: Name,
   description: string,
   inputSchema: Schema,
+  retainedSummary?: ToolContract["retainedSummary"],
 ) => {
   const outputSchema = requireOutputSchema(nativeOutputSchemas, name);
   const strictInputSchema = inputSchema.strict();
@@ -54,6 +58,7 @@ const native = <Name extends string, Schema extends z.ZodObject>(
     description,
     kind: "native-provider",
     requiresActiveTarget: true,
+    ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema: strictInputSchema,
     outputSchema,
     examples: [
@@ -80,22 +85,22 @@ export const swiftSymbolsSchema = z.array(
 export const NATIVE_TOOL_CONTRACTS = [
   native(
     "observe_native_ui",
-    "Observe an already-running native app by PID and window ID, bound to the active Mach-O target. Captures a bounded accessibility tree and selected-window screenshot; OS permission denial fails without broad capture or target launch. native_ui_deadline_ms is the observation deadline (omitted means 180000 ms, range 1..2147483647, next call). It does not raise the fixed 67108864-byte output allowance or the 180000 ms wait-step cap.",
+    "Observe one already-running native app window by PID/window ID, bound to the active Mach-O target. Returns a bounded accessibility tree and window screenshot; permission denial does not broaden capture or launch the target. native_ui_deadline_ms sets this call's deadline independently of output and wait-step limits. Use capture_native_ui_scenario to interact.",
     nativeUiObservationInputSchema,
   ),
   native(
     "capture_native_ui_scenario",
-    "Run selected-element press, increment/decrement scroll, AXValue text entry and bounded wait steps in one exact native app window. Returns ordered before/after captures and action/capture failures. Actions can change app data, network activity and persistent state; application state is left as-is and restoration is not attempted. native_ui_deadline_ms is the scenario deadline (omitted means 180000 ms, range 1..2147483647, next call). It does not raise the fixed 67108864-byte output allowance or the 180000 ms wait-step cap.",
+    "Interact with one exact native app window through selected-element press, scroll, AXValue text entry and bounded waits. Returns ordered before/after captures and per-step failures. Actions may change app data, network activity and persistent state; REA leaves that state in place. native_ui_deadline_ms controls the scenario deadline, independently of output allowance and wait-step caps. Use observe_native_ui for observation only.",
     nativeUiScenarioInputSchema,
   ),
   native(
     "observe_native_calls",
-    "Launch the active Mach-O as an owned process under LLDB and record each entry into caller-selected functions or Objective-C methods: thread, module, symbol, load and file address, raw argument registers, selector, receiver class and optional caller frames. Every hit auto-continues. No expression is evaluated and no other process is attached. The process is killed when max_events or duration_ms is reached; exit status, captured stdout/stderr, unresolved breakpoints and limitations are returned inline. The process runs with the current user's permissions and may change files, show UI or use the network. A hardened-runtime target needs the get-task-allow entitlement.",
+    "Launch the active Mach-O under LLDB and record selected function/Objective-C method entries; the owned process is killed at max_events or duration_ms. Target execution uses the caller's permissions and may write files, show UI or use network. Hits auto-continue; REA evaluates no expressions and attaches to no other process. Returns addresses, thread/module/symbol, raw argument registers, selector/receiver facts, optional frames, stdout/stderr and limitations. Hardened-runtime targets need get-task-allow. Set capture_limits before launch; later changes cannot recover omitted observations.",
     nativeCallObservationInputSchema,
   ),
   native(
     "inspect_macho",
-    "Inspect Mach-O slices, load commands, imports, exports, dependencies, build metadata, segments, sections, permissions, and exact command provenance without launching Hopper. Large frameworks return megabytes of symbols; detail summary retains the complete Evidence and returns slice identity with per-collection counts, then page rows with inspect_analysis_view kind macho. native_command_timeout_ms is each Xcode command's wall clock (omitted means 60000 ms, range 1..2147483647, next call) and is distinct from objdump/rizin command_timeout_ms. It does not raise the fixed 67108864-byte output allowance.",
+    "Inspect Mach-O slices, load commands, linkage, build metadata, segments/sections and permissions without launching Hopper. Returns command provenance and explicit coverage. detail summary retains complete Evidence for inspect_analysis_view kind macho rather than delivering large symbol lists inline. native_command_timeout_ms bounds each Xcode command, independently of output admission.",
     z.object({
       detail: analysisDetailSchema
         .unwrap()
@@ -105,17 +110,18 @@ export const NATIVE_TOOL_CONTRACTS = [
         ),
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   native(
     "inspect_signature",
-    "Inspect the selected Mach-O architecture's code-signing identity, hashes, authorities, designated requirement, entitlements and hardened-runtime state from a temporary digest-verified byte snapshot. Other slices are checked for unsigned state, with their metadata coverage stated separately. Exact command provenance is retained. native_command_timeout_ms is each codesign command's wall clock (omitted means 60000 ms). It does not raise the fixed 67108864-byte output allowance.",
+    "Inspect the selected Mach-O slice's signing identity, hashes, authorities, requirement, entitlements and hardened-runtime state from a digest-verified snapshot. Other slices are checked for unsigned state with separate metadata coverage. Returns command provenance; native_command_timeout_ms bounds each codesign command independently of output admission.",
     z.object({
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
   ),
   native(
     "inspect_plist",
-    "Requires an open binary or bundle-resource session; use open_binary or open_bundle_resources first. Parse its Info.plist by default, or select a local plist with path within that session. Supplying path does not open a session. Returns normalized JSON rather than plutil text. native_command_timeout_ms is each file or plutil command's wall clock (omitted means 60000 ms). The 67108864-byte plist input and decode allowances and the 998-level nesting allowance have no runtime override. XML sources also require native plutil validation, which can refuse shallower inputs with its own diagnostics. The 4096-byte markup probe is a probe window, not a document cap, and has no runtime override.",
+    "Parse Info.plist from an open binary or bundle-resource session, or select path within that session. Use open_binary or open_bundle_resources first; path alone does not open one. Returns normalized JSON. native_command_timeout_ms bounds each file/plutil command, not fixed input/decode/nesting allowances. XML also requires plutil validation and may be refused at a shallower depth; errors name the applicable limit.",
     z.object({
       path: localPathStringSchema
         .optional()
@@ -127,14 +133,14 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "list_architectures",
-    "List thin or universal Mach-O slices with offsets, sizes, alignment, explicit coverage, and native-tool provenance. native_command_timeout_ms is the lipo wall clock (omitted means 60000 ms). It does not raise the fixed 67108864-byte output allowance.",
+    "List thin/universal Mach-O slices with file offsets, sizes, alignment, coverage and native-tool provenance. native_command_timeout_ms bounds lipo, independently of output admission.",
     z.object({
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
   ),
   native(
     "demangle_swift",
-    "Demangle an ordered list of single-line Swift symbols without requiring Hopper. Each input returns demangled, unchanged, or invalid status. An exact underscore input skipped by swift-demangle is invalid with empty output; it does not discard valid companion results. native_command_timeout_ms is the swift-demangle wall clock (omitted means 60000 ms) and does not raise the fixed 67108864-byte output allowance.",
+    "Demangle an ordered list of single-line Swift symbols without Hopper. Returns demangled, unchanged or invalid for every input; invalid entries do not discard valid companions. native_command_timeout_ms bounds swift-demangle, independently of output admission.",
     z.object({
       symbols: swiftSymbolsSchema,
       native_command_timeout_ms: nativeCommandTimeoutField,

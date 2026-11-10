@@ -101,6 +101,16 @@ const SWIFT_MANGLING_PREFIXES = [
 export const isSwiftMangledSymbolName = (name: string): boolean =>
   SWIFT_MANGLING_PREFIXES.some((prefix) => name.startsWith(prefix));
 
+/**
+ * A Swift symbol carries either a demangler mangling or a name the category
+ * decoder already accepts, including visible runtime class names (`_Tt…`) and
+ * the optional leading underscore of legacy encodings (`__T0…`). Whether the
+ * nominal category can be decoded is a separate question, so it must not decide
+ * whether the symbol is Swift at all.
+ */
+export const isSwiftSymbolName = (name: string): boolean =>
+  isSwiftMangledSymbolName(name) || classifySwiftSymbol(name) !== undefined;
+
 const identifierEnd = (
   mangling: string,
   offset: number,

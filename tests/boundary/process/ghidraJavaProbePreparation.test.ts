@@ -129,7 +129,6 @@ it.skipIf(process.platform === "win32")(
     controller.abort();
     const result = await outcome;
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a cancelled Java probe");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     await expect(access(java.launched)).rejects.toThrow();
@@ -156,7 +155,6 @@ it.skipIf(process.platform === "win32")(
 
     const result = await probe(java.command);
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a failed Java probe");
     expect(result.error).toBeInstanceOf(ProviderAdapterError);
     expect(result.error).toMatchObject({

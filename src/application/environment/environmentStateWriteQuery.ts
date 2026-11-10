@@ -28,8 +28,10 @@ export const pinnedRequest = (
   );
   if (!query.ok) return err(refused(tool, `Tool ${tool.name} ${query.error}`));
   const names = environmentToolArguments(tool).query;
-  const filled = { ...args };
-  for (const [name, value] of query.value)
-    filled[names.get(name) ?? name] ??= value;
-  return ok({ ...request, args: filled });
+  const filled = new Map(Object.entries(args));
+  for (const [name, value] of query.value) {
+    const argument = names.get(name) ?? name;
+    if (filled.get(argument) == null) filled.set(argument, value);
+  }
+  return ok({ ...request, args: Object.fromEntries(filled) });
 };

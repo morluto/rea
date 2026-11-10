@@ -23,6 +23,7 @@ const report = createEmptyIl2cppMetadataFixture();
 
 const serviceReturning = (value: Il2cppMetadata, calls = { count: 0 }) =>
   new Il2cppMetadataService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls.count += 1;
@@ -104,6 +105,7 @@ it("reports cancellation before and after reading", async () => {
 
   const during = new AbortController();
   const service = new Il2cppMetadataService({
+    close: async () => {},
     identity,
     inspect: () => {
       during.abort();
@@ -158,14 +160,17 @@ it("preserves source Evidence and requested output choices when publication fail
     path: "/output/seeds.tsv",
   });
   const service = new Il2cppMetadataService(
-    { identity, inspect: async () => ok(linkedReport()) },
+    {
+      close: async () => {},
+      identity,
+      inspect: async () => ok(linkedReport()),
+    },
     seedWriter(async () => err(failure)),
   );
   const result = await service.inspectWithGhidraSeeds(selectedPair, {
     path: "/output/seeds.tsv",
     base: "0x2000",
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Failed publication accepted");
   expect(result.error).toBe(failure);
   expect(result.error.partialObservation).toMatchObject({
@@ -192,7 +197,11 @@ it("retains a published seed receipt if cancellation arrives after the atomic wr
     generic_instances: null,
   };
   const service = new Il2cppMetadataService(
-    { identity, inspect: async () => ok(linkedReport()) },
+    {
+      close: async () => {},
+      identity,
+      inspect: async () => ok(linkedReport()),
+    },
     seedWriter(async () => {
       controller.abort(reason);
       return ok(receipt);
@@ -203,7 +212,6 @@ it("retains a published seed receipt if cancellation arrives after the atomic wr
     { path: receipt.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Cancellation ignored");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);

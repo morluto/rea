@@ -1,5 +1,13 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import { ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
+import {
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+} from "../domain/analysisResourceLimits.js";
+import { parseAsarListingAdmission } from "./asarListingAdmission.js";
 import {
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
@@ -8,6 +16,10 @@ import {
   resolveCaptureDecoderHeap,
   type CaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
+import {
+  parseNativeMatchingAllowance,
+  type NativeMatchingAllowance,
+} from "./nativeMatchingAllowance.js";
 
 /** Typed views read the enclosing operation snapshot, never the ambient environment. */
 export const runtimeAnalysisConfig = (
@@ -38,6 +50,35 @@ export const runtimeAnalysisConfig = (
         : value === null
           ? undefined
           : value;
+    },
+    get ghidraDecompileMaxPayloadMiB() {
+      const value = read().overrides["ghidra.decompile_max_payload_mib"];
+      return value === undefined
+        ? config.ghidraDecompileMaxPayloadMiB
+        : value === null
+          ? undefined
+          : value;
+    },
+    get ghidraValueFlowMaxOperations() {
+      return (
+        read().overrides["ghidra.value_flow_max_operations"] ??
+        config.ghidraValueFlowMaxOperations ??
+        DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS
+      );
+    },
+    get ghidraValueFlowMaxInputsPerOperation() {
+      return (
+        read().overrides["ghidra.value_flow_max_inputs_per_operation"] ??
+        config.ghidraValueFlowMaxInputsPerOperation ??
+        DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION
+      );
+    },
+    get ghidraValueFlowMaxEdges() {
+      return (
+        read().overrides["ghidra.value_flow_max_edges"] ??
+        config.ghidraValueFlowMaxEdges ??
+        DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES
+      );
     },
     regexMatchingDeadline: {
       get deadlineMs() {
@@ -73,10 +114,27 @@ export const runtimeAsarHeaderAdmission = (
     environment.REA_ASAR_MAX_HEADER_BYTES,
   );
   if (!parsed.ok) throw parsed.error;
+  const listing = parseAsarListingAdmission(
+    environment.REA_ASAR_MAX_LISTING_BYTES,
+  );
+  if (!listing.ok) throw listing.error;
   const baseline = parsed.value;
   return read === undefined
-    ? baseline
+    ? { ...baseline, listing: listing.value }
     : {
+        listing: {
+          get maximumBytes() {
+            return (
+              read().overrides["asar.max_listing_bytes"] ??
+              listing.value.maximumBytes
+            );
+          },
+          get source() {
+            return read().overrides["asar.max_listing_bytes"] === undefined
+              ? listing.value.source
+              : "runtime";
+          },
+        },
         get maximumBytes() {
           return (
             read().overrides["asar.max_header_bytes"] ?? baseline.maximumBytes
@@ -111,3 +169,19 @@ export const runtimeCaptureDecoderHeap = (
         },
       };
 };
+/**
+ * Resolve the accepted operation's allowance on each call. An invalid launch
+ * value is refused only by the operation it bounds, so MCP stays available
+ * and a runtime override can repair it.
+ */
+export const runtimeNativeMatchingAllowance =
+  (
+    environment: Readonly<Record<string, string | undefined>>,
+    read?: AnalysisSettingsReader,
+  ): (() => Result<NativeMatchingAllowance, ConfigurationError>) =>
+  () => {
+    const override = read?.().overrides["native.matching_representation_bytes"];
+    return override === undefined
+      ? parseNativeMatchingAllowance(environment)
+      : ok({ maximumBytes: override, source: "runtime" });
+  };

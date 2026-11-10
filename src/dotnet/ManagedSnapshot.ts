@@ -22,13 +22,10 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../domain/managed/managedInspectionLimits.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
-
-// Managed static inspection retains the complete PE snapshot in memory.
-export const MAX_MANAGED_SNAPSHOT_BYTES = 128 * 1024 * 1024;
 
 interface ManagedSourceObservation {
   readonly byteLength: number;
@@ -38,6 +35,11 @@ interface ManagedSourceObservation {
 
 interface ManagedSnapshot extends ManagedSourceObservation {
   readonly bytes: Buffer;
+}
+
+interface ManagedSnapshotReadOptions extends RegularFileReadOptions {
+  readonly expectedSha256?: string;
+  readonly maxBytes?: number;
 }
 
 /** Admit one observed source digest before any parser or cache consumes its bytes. */
@@ -65,33 +67,35 @@ export const verifyManagedSourceIdentity = (
 
 const managedSnapshotCapacityError = (
   operation: string,
+  maxBytes: number,
 ): AnalysisResourceConstraintError =>
   new AnalysisResourceConstraintError(
     operation,
     "memory",
     "Managed static inspection requires an eagerly retained PE snapshot within its input byte budget.",
-    { max_snapshot_bytes: MAX_MANAGED_SNAPSHOT_BYTES },
-    fixedAllowanceOptions("The managed PE snapshot allowance", "parser"),
+    { max_snapshot_bytes: maxBytes },
+    {
+      retryable: false,
+      remediationAction: `Increase max_snapshot_bytes above ${String(maxBytes)} bytes on the next inspection (CLI --max-snapshot-bytes) to admit the complete selected file. No REA restart is required. Metadata representation, transport and host memory limits remain independent; repeating the unchanged request cannot raise this budget.`,
+    },
   );
 
 export const readManagedSnapshot = async (
   path: string,
   operation: string,
-  options: RegularFileReadOptions = {},
+  options: ManagedSnapshotReadOptions = {},
 ): Promise<ManagedSnapshot> => {
+  const maxBytes = snapshotBudget(options);
   return readManagedFile(
     path,
     operation,
     async (handle, metadata) => {
       const signal = options.signal;
-      if (metadata.size > MAX_MANAGED_SNAPSHOT_BYTES)
-        throw managedSnapshotCapacityError(operation);
-      const bytes = await readBoundedFileBytes(
-        handle,
-        MAX_MANAGED_SNAPSHOT_BYTES,
-        { signal },
-      );
-      if (bytes === undefined) throw managedSnapshotCapacityError(operation);
+      if (metadata.size > maxBytes)
+        throw managedSnapshotCapacityError(operation, maxBytes);
+      const bytes = await readBoundedFileBytes(handle, maxBytes, { signal });
+      if (bytes === undefined)
+        throw managedSnapshotCapacityError(operation, maxBytes);
       signal?.throwIfAborted();
       return {
         byteLength: bytes.length,
@@ -106,15 +110,16 @@ export const readManagedSnapshot = async (
 export const hashManagedSource = async (
   path: string,
   operation: string,
-  options: RegularFileReadOptions = {},
-): Promise<ManagedSourceObservation> =>
-  readManagedFile(
+  options: ManagedSnapshotReadOptions = {},
+): Promise<ManagedSourceObservation> => {
+  const maxBytes = snapshotBudget(options);
+  return readManagedFile(
     path,
     operation,
     async (handle, metadata) => {
       const signal = options.signal;
-      if (metadata.size > MAX_MANAGED_SNAPSHOT_BYTES)
-        throw managedSnapshotCapacityError(operation);
+      if (metadata.size > maxBytes)
+        throw managedSnapshotCapacityError(operation, maxBytes);
       const digest = createHash("sha256");
       let byteLength = 0;
       const chunk = Buffer.allocUnsafe(64 * 1024);
@@ -123,13 +128,13 @@ export const hashManagedSource = async (
         const { bytesRead } = await handle.read(
           chunk,
           0,
-          Math.min(chunk.length, MAX_MANAGED_SNAPSHOT_BYTES - byteLength + 1),
+          Math.min(chunk.length, maxBytes - byteLength + 1),
           null,
         );
         signal?.throwIfAborted();
         if (bytesRead === 0) break;
-        if (bytesRead > MAX_MANAGED_SNAPSHOT_BYTES - byteLength)
-          throw managedSnapshotCapacityError(operation);
+        if (bytesRead > maxBytes - byteLength)
+          throw managedSnapshotCapacityError(operation, maxBytes);
         byteLength += bytesRead;
         digest.update(chunk.subarray(0, bytesRead));
       }
@@ -137,29 +142,55 @@ export const hashManagedSource = async (
     },
     options,
   );
+};
+
+const snapshotBudget = (options: ManagedSnapshotReadOptions): number => {
+  const maxBytes = options.maxBytes ?? DEFAULT_MANAGED_SNAPSHOT_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
+    throw new RangeError("max_snapshot_bytes must be a positive safe integer");
+  return maxBytes;
+};
 
 const readManagedFile = <Value extends ManagedSourceObservation>(
   path: string,
   operation: string,
   read: (handle: FileHandle, metadata: Stats) => Promise<Value>,
-  options: RegularFileReadOptions,
+  options: ManagedSnapshotReadOptions,
 ): Promise<Value> =>
   withRegularFileCompletion(path, read, options)
     .then(({ value, cancellation }) => {
-      if (cancellation !== undefined)
-        throw new AnalysisCancelledError(operation, {
-          cause: cancellation.reason,
-          partialObservation: {
-            kind: "file-snapshot-hash",
-            path,
-            bytes: value.byteLength,
-            sha256: value.sha256,
-          },
+      if (cancellation !== undefined) {
+        const identity =
+          options.expectedSha256 === undefined
+            ? undefined
+            : verifyManagedSourceIdentity(
+                { path, sha256: options.expectedSha256 },
+                value,
+                operation,
+              );
+        const failure =
+          identity !== undefined && !identity.ok
+            ? identity.error
+            : new AnalysisCancelledError(operation, {
+                cause: cancellation.reason,
+              });
+        throw failure.retainPartialObservation({
+          kind: "file-snapshot-hash",
+          path,
+          bytes: value.byteLength,
+          sha256: value.sha256,
         });
+      }
       return value;
     })
     .catch((cause: unknown) => {
-      throw normalizeManagedReadFailure(cause, path, operation, options.signal);
+      throw normalizeManagedReadFailure(
+        cause,
+        path,
+        operation,
+        options.signal,
+        options.expectedSha256,
+      );
     });
 
 /** Keep cleanup ownership and the original typed read failure at this boundary. */
@@ -168,6 +199,7 @@ const normalizeManagedReadFailure = (
   fallbackPath: string,
   operation: string,
   signal?: AbortSignal,
+  expectedSha256?: string,
 ): unknown => {
   // An exact caller reason is opaque, even if it resembles a cleanup record.
   if (signal?.aborted === true && cause === signal.reason)
@@ -177,6 +209,7 @@ const normalizeManagedReadFailure = (
     fallbackPath,
     operation,
     signal,
+    expectedSha256,
   );
   if (cleanupError !== undefined) return cleanupError;
   return normalizeReadFailure(cause, fallbackPath, operation, signal);
@@ -188,6 +221,7 @@ export const managedCleanupError = (
   fallbackPath: string,
   operation: string,
   signal?: AbortSignal,
+  expectedSha256?: string,
 ): AnalysisError | undefined => {
   if (cause instanceof RegularFileCleanupFailure) {
     const cancellation = regularFileCancellation(cause);
@@ -198,6 +232,14 @@ export const managedCleanupError = (
       { cause, operation },
     );
     bindRegularFileCleanup(cause, cleanup);
+    const identity =
+      cause.outcome.kind === "completed" && expectedSha256 !== undefined
+        ? verifyManagedSourceIdentity(
+            { path: cause.path, sha256: expectedSha256 },
+            cause.outcome.value as ManagedSourceObservation,
+            operation,
+          )
+        : undefined;
     const failure =
       cause.outcome.kind === "failed"
         ? normalizeReadFailure(
@@ -206,11 +248,13 @@ export const managedCleanupError = (
             operation,
             signal,
           )
-        : cancellation === undefined
-          ? undefined
-          : new AnalysisCancelledError(operation, {
-              cause: cancellation.reason,
-            });
+        : identity !== undefined && !identity.ok
+          ? identity.error
+          : cancellation === undefined
+            ? undefined
+            : new AnalysisCancelledError(operation, {
+                cause: cancellation.reason,
+              });
     // This boundary produces only these snapshot facts. The descriptor owner
     // confirms completion independently of a failed final close.
     if (cause.outcome.kind === "completed") {

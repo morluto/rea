@@ -1,3 +1,12 @@
+import {
+  PE_RESOURCE_DIRECTORY_BYTES,
+  PE_RESOURCE_ENTRY_BYTES,
+  PE_RESOURCE_NAME_PREFIX_BYTES,
+  readPeResourceDirectoryFacts,
+  readPeResourceEntryFacts,
+  readPeResourceNameFacts,
+  type PeResourceIdentityDeclaration,
+} from "./PeResourceTreeFacts.js";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
@@ -14,6 +23,8 @@ import {
   readPeResourceLayout,
   requirePeRange,
 } from "./PeResourceLayout.js";
+
+type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
 
 type Range = { offset: number; bytes: number };
 type OccupiedRange = Range & {
@@ -43,9 +54,11 @@ export const parsePeResources = async (
   artifact: PeResources["artifact"],
   input: InspectPeResourcesInput,
   signal?: AbortSignal,
+  /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
+  admittedLayout?: PeResourceLayout,
 ): Promise<PeResources> => {
   assertArtifactReadActive(signal);
-  const layout = readPeResourceLayout(bytes);
+  const layout = admittedLayout ?? readPeResourceLayout(bytes);
   const directories: PeResources["directories"] = [];
   const resources: PeResources["resources"] = [];
   const occupied: OccupiedRange[] = [];
@@ -92,23 +105,33 @@ export const parsePeResources = async (
     if (size > 0) occupied.push({ ...range, kind });
     return range;
   };
-  const readIdentity = (encoded: number): PeResourceIdentity => {
-    if ((encoded & 0x80000000) === 0) return { kind: "id", id: encoded };
-    const at = encoded & 0x7fffffff;
+  const readIdentity = (
+    declaration: PeResourceIdentityDeclaration,
+  ): PeResourceIdentity => {
+    if (declaration.kind === "id") return { kind: "id", id: declaration.id };
+    const at = declaration.offset;
     const previous = names.get(at);
     if (previous !== undefined) return previous;
     if (at % 2 !== 0) peFailure("Unaligned PE resource name.");
-    const start = relative(at, 2);
-    const utf16Units = bytes.readUInt16LE(start);
+    const start = relative(at, PE_RESOURCE_NAME_PREFIX_BYTES);
+    const { utf16Units, payloadBytes: length } = readPeResourceNameFacts(
+      bytes.subarray(start, start + PE_RESOURCE_NAME_PREFIX_BYTES),
+    );
     reserveDecodedName(utf16Units);
-    const length = utf16Units * 2;
-    relative(at, 2 + length);
-    const raw = bytes.subarray(start + 2, start + 2 + length);
+    relative(at, PE_RESOURCE_NAME_PREFIX_BYTES + length);
+    const raw = bytes.subarray(
+      start + PE_RESOURCE_NAME_PREFIX_BYTES,
+      start + PE_RESOURCE_NAME_PREFIX_BYTES + length,
+    );
     const value: PeResourceIdentity = {
       kind: "name",
       name: raw.toString("utf16le"),
       utf16le_hex: raw.toString("hex"),
-      location: recordRange(start, 2 + length, "name"),
+      location: recordRange(
+        start,
+        PE_RESOURCE_NAME_PREFIX_BYTES + length,
+        "name",
+      ),
     };
     names.set(at, value);
     return value;
@@ -120,25 +143,30 @@ export const parsePeResources = async (
     ancestors: ReadonlySet<number>,
   ): Promise<void> => {
     if (ancestors.has(at)) peFailure("Cyclic PE resource directory.");
-    const header = relative(at, 16);
-    const named = bytes.readUInt16LE(header + 12);
-    const ids = bytes.readUInt16LE(header + 14);
-    const count = named + ids;
+    const header = relative(at, PE_RESOURCE_DIRECTORY_BYTES);
+    const facts = readPeResourceDirectoryFacts(
+      bytes.subarray(header, header + PE_RESOURCE_DIRECTORY_BYTES),
+    );
+    const { namedEntries: named, idEntries: ids, entryCount: count } = facts;
     if (count > input.max_entries - examined)
       limit(
         "PE resource directory entry budget exceeded; no partial inventory was returned.",
         "capacity",
       );
     examined += count;
-    relative(at, 16 + 8 * count);
+    relative(at, PE_RESOURCE_DIRECTORY_BYTES + PE_RESOURCE_ENTRY_BYTES * count);
     const directory = {
       path,
       entry_locations: entryLocations,
-      location: recordRange(header, 16 + 8 * count, "directory"),
-      characteristics: bytes.readUInt32LE(header),
-      timestamp: bytes.readUInt32LE(header + 4),
-      major_version: bytes.readUInt16LE(header + 8),
-      minor_version: bytes.readUInt16LE(header + 10),
+      location: recordRange(
+        header,
+        PE_RESOURCE_DIRECTORY_BYTES + PE_RESOURCE_ENTRY_BYTES * count,
+        "directory",
+      ),
+      characteristics: facts.characteristics,
+      timestamp: facts.timestamp,
+      major_version: facts.majorVersion,
+      minor_version: facts.minorVersion,
       named_entries: named,
       id_entries: ids,
     };
@@ -151,22 +179,27 @@ export const parsePeResources = async (
         await setImmediate();
         assertArtifactReadActive(signal);
       }
-      const entry = header + 16 + index * 8;
-      const encoded = bytes.readUInt32LE(entry);
-      if (((encoded & 0x80000000) !== 0) !== index < named)
+      const entry =
+        header + PE_RESOURCE_DIRECTORY_BYTES + index * PE_RESOURCE_ENTRY_BYTES;
+      const record = readPeResourceEntryFacts(
+        bytes.subarray(entry, entry + PE_RESOURCE_ENTRY_BYTES),
+      );
+      if ((record.identity.kind === "name") !== index < named)
         peFailure(
           "Resource name/ID entry counts disagree with encoded identities.",
         );
-      const identity = readIdentity(encoded);
+      const identity = readIdentity(record.identity);
       const key = identityKey(identity);
       if (keys.has(key))
         peFailure("Duplicate identity within a resource directory.");
       keys.add(key);
       const next = [...path, identity];
-      const locations = [...entryLocations, { offset: entry, bytes: 8 }];
-      const target = bytes.readUInt32LE(entry + 4);
-      const offset = target & 0x7fffffff;
-      if ((target & 0x80000000) !== 0) {
+      const locations = [
+        ...entryLocations,
+        { offset: entry, bytes: PE_RESOURCE_ENTRY_BYTES },
+      ];
+      const { offset } = record.target;
+      if (record.target.kind === "directory") {
         if (next.length >= 3)
           peFailure(
             "Unsupported resource tree deeper than type/name/language.",

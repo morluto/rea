@@ -15,6 +15,7 @@ const attachOutputSchema = z.object({
 const infoOutputSchema = z.object({
   images: z.array(
     z.object({
+      "image-path": z.string().optional(),
       "system-entities": z.array(systemEntitySchema),
     }),
   ),

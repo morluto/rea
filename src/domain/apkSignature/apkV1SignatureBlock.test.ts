@@ -6,6 +6,7 @@ import {
   indefinite,
   oid,
   withIssuer,
+  withSerial,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
   OID_ECDSA_SHA256,
@@ -307,6 +308,57 @@ it("matches supported issuer strings across encodings and RDN attribute order, p
   ).toBeNull();
 });
 
+it("matches v1 signer serials by signed INTEGER value, preserving raw certificates", () => {
+  // apksig tolerates redundant sign padding, although DER requires minimal
+  // encoding. A sign octet remains significant when the next high bit differs.
+  const identify = (certificate: Uint8Array, serial: Uint8Array) => {
+    const block = decoded(
+      signedDataBlock({
+        certificates: [certificate],
+        signerInfos: [signerInfo({ names: certificate, serial })],
+      }),
+    );
+    expect(block.certificates.map((value) => Buffer.from(value))).toEqual([
+      Buffer.from(certificate),
+    ]);
+    return block.signerInfos[0]?.certificateIndex;
+  };
+
+  expect(identify(LEAF_CERTIFICATE, Uint8Array.of(0x00, 0x12, 0x34))).toBe(0);
+  expect(
+    identify(
+      withSerial(LEAF_CERTIFICATE, tlv(0x02, Uint8Array.of(0xff))),
+      Uint8Array.of(0xff, 0xff),
+    ),
+  ).toBe(0);
+  for (const [canonical, padded] of [
+    [Uint8Array.of(0x12, 0x34), Uint8Array.of(0x00, 0x00, 0x12, 0x34)],
+    [Uint8Array.of(0xff), Uint8Array.of(0xff, 0xff, 0xff)],
+  ] as const) {
+    const canonicalCertificate = withSerial(
+      LEAF_CERTIFICATE,
+      tlv(0x02, canonical),
+    );
+    const paddedCertificate = withSerial(LEAF_CERTIFICATE, tlv(0x02, padded));
+    expect(identify(canonicalCertificate, padded)).toBe(0);
+    expect(identify(paddedCertificate, canonical)).toBe(0);
+    expect(identify(paddedCertificate, padded)).toBe(0);
+  }
+  // 0x00 0x80 is +128; a bare 0x80 is -128. 0xff 0x7f is -129, not 0x7f.
+  expect(
+    identify(
+      withSerial(LEAF_CERTIFICATE, tlv(0x02, Uint8Array.of(0x00, 0x80))),
+      Uint8Array.of(0x80),
+    ),
+  ).toBeNull();
+  expect(
+    identify(
+      withSerial(LEAF_CERTIFICATE, tlv(0x02, Uint8Array.of(0xff, 0x7f))),
+      Uint8Array.of(0x7f),
+    ),
+  ).toBeNull();
+});
+
 it("keeps exact issuer identity when its comparison key cannot be interpreted", () => {
   const unsupported = tlv(
     0x30,
@@ -328,3 +380,34 @@ it("keeps exact issuer identity when its comparison key cannot be interpreted", 
   );
   expect(block.signerInfos[0]?.certificateIndex).toBe(0);
 });
+
+it.each([0, 1])(
+  "refuses a non-minimal PKCS#7 content OID at subidentifier %i",
+  (at) => {
+    const block = signedDataBlock({
+      certificates: [LEAF_CERTIFICATE],
+      signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+    });
+    const contentAt = block[1]! > 0x80 ? 2 + (block[1]! & 0x7f) : 2;
+    const signedDataOid = oid("1.2.840.113549.1.7.2");
+    expect(block.subarray(contentAt, contentAt + signedDataOid.length)).toEqual(
+      signedDataOid,
+    );
+    const content = signedDataOid.subarray(2);
+    const paddedOid = tlv(
+      0x06,
+      content.subarray(0, at),
+      Uint8Array.of(0x80),
+      content.subarray(at),
+    );
+    const malformedBlock = indefinite(
+      0x30,
+      paddedOid,
+      block.subarray(contentAt + signedDataOid.length),
+    );
+    expect(decodeV1SignatureBlock(malformedBlock)).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-pkcs7" },
+    });
+  },
+);

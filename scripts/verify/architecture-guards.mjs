@@ -59,6 +59,13 @@ const check = (label, selected, pattern, allow = []) => {
     );
 };
 
+// Prerequisite inspection lifetime is an application contract shared by adapters.
+check(
+  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  files,
+  /providers\/ProviderInspectionScope\.js/,
+);
+
 check(
   "src/domain uses localeCompare (use compareUnicodeCodePoints)",
   inDir("src/domain/"),
@@ -133,10 +140,10 @@ check(
 // inputBytes values with a different policy (an overridable pwntools admission,
 // historical capture intake) are not this budget.
 check(
-  "inline resident-input budget (use BOUNDED_PRODUCER_LIMITS from src/process/LinuxResourceLimits)",
+  "inline resident-input budget (use BOUNDED_PRODUCER_LIMITS from src/domain/producerResourceLimits)",
   files,
   /input_bytes:\s*32 \* 1024 \* 1024/,
-  ["src/process/LinuxResourceLimits.ts"],
+  ["src/domain/producerResourceLimits.ts"],
 );
 
 // Fixed-arity backtick keys audited 2026-10-10: every prefix field is NUL-free
@@ -149,6 +156,9 @@ check(
   files,
   /`[^`\n]*\\0/,
   [
+    // Bundle fingerprint: fixed packaged paths (no NUL/newline) and 64 hex
+    // digest characters per record, never guide contents. Preserve v1 locators.
+    "src/application/GuidanceAccess.ts",
     "src/application/javascript/ElectronBoundaryAnalysis.ts",
     "src/application/javascript/ElectronBoundaryGraphContext.ts",
     "src/application/javascript/JavaScriptArtifactGraphContext.ts",

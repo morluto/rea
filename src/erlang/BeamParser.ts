@@ -134,13 +134,19 @@ const readCompactUnsignedBytes = (
 const parseAtoms = (
   payload: Buffer,
   maxAtoms: number,
-  encoding: "latin1" | "utf8",
+  format: "Atom" | "AtU8",
 ): ErlangBeam["atoms"] => {
   if (payload.length < 4) fail("BEAM atom table is truncated.");
-  // OTP 28+ writes a negated count and compact-encoded name lengths.
-  const declared = payload.readInt32BE(0);
-  const compact = declared < 0;
-  const count = Math.abs(declared);
+  // Only AtU8 supports OTP 28+'s negated count and compact name lengths.
+  // Historical Atom uses an unsigned count and single-byte lengths.
+  const encoding = format === "AtU8" ? "utf8" : "latin1";
+  const declared =
+    format === "AtU8" ? payload.readInt32BE(0) : payload.readUInt32BE(0);
+  const compact = format === "AtU8" && declared < 0;
+  const count = compact ? -declared : declared;
+  // Every entry needs at least one length byte, regardless of the layout.
+  // Reject an impossible table before treating its count as a budget refusal.
+  if (count > payload.length - 4) fail("BEAM atom table is truncated.");
   if (count > maxAtoms)
     throw new BeamCapacityFailure(
       "atoms",
@@ -166,15 +172,19 @@ const parseAtoms = (
   return atoms;
 };
 
+const tableCount = (payload: Buffer, width: number, label: string): number => {
+  if (payload.length < 4) fail(`BEAM ${label} table is truncated.`);
+  const count = u32(payload, 0);
+  if (count > Math.floor((payload.length - 4) / (width * 4)))
+    fail(`BEAM ${label} table is truncated.`);
+  return count;
+};
+
 const parseRows = (
   payload: Buffer,
   width: number,
-  label: string,
+  count: number,
 ): number[][] => {
-  if (payload.length < 4) fail(`BEAM ${label} table is truncated.`);
-  const count = u32(payload, 0);
-  const need = 4 + count * width * 4;
-  if (payload.length < need) fail(`BEAM ${label} table is truncated.`);
   const rows: number[][] = [];
   for (let index = 0; index < count; index += 1) {
     const row: number[] = [];
@@ -264,53 +274,63 @@ export const parseErlangBeam = (
     utf8AtomChunk !== undefined &&
     (utf8AtomChunk.payload.length > 0 || legacyAtomChunk === undefined);
   const atomChunk = useUtf8Atoms ? utf8AtomChunk : legacyAtomChunk;
+  const atomFormat =
+    atomChunk === undefined ? null : useUtf8Atoms ? "AtU8" : "Atom";
   const atomEncoding =
-    atomChunk === undefined ? null : useUtf8Atoms ? "utf8" : "latin1";
+    atomFormat === null ? null : atomFormat === "AtU8" ? "utf8" : "latin1";
   const atoms =
-    atomChunk === undefined || atomEncoding === null
+    atomChunk === undefined || atomFormat === null
       ? null
-      : parseAtoms(atomChunk.payload, input.max_atoms, atomEncoding);
-  const declaredRows = (name: string): number => {
-    const payload = payloads.get(name)?.payload;
-    return payload !== undefined && payload.length >= 4 ? u32(payload, 0) : 0;
-  };
+      : parseAtoms(atomChunk.payload, input.max_atoms, atomFormat);
+  const exportChunk = payloads.get("ExpT");
+  const importChunk = payloads.get("ImpT");
+  const lambdaChunk = payloads.get("FunT");
+  const exportCount =
+    exportChunk === undefined
+      ? 0
+      : tableCount(exportChunk.payload, 3, "export");
+  const importCount =
+    importChunk === undefined
+      ? 0
+      : tableCount(importChunk.payload, 3, "import");
+  // OTP skips the optional lambda parser for a zero-byte selected chunk.
+  const lambdaCount =
+    lambdaChunk === undefined || lambdaChunk.payload.length === 0
+      ? 0
+      : tableCount(lambdaChunk.payload, 6, "lambda");
   if (
-    declaredRows("ExpT") + declaredRows("ImpT") + declaredRows("FunT") >
+    exportCount + importCount + lambdaCount >
     MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS
   )
     throw new BeamCapacityFailure(
       "table-rows",
       MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
-      `BEAM tables exceed the ${String(
-        MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
-      )}-row budget.`,
+      `BEAM tables exceed the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row budget.`,
     );
   const exports =
-    payloads.get("ExpT") === undefined
+    exportChunk === undefined
       ? null
-      : parseRows(payloads.get("ExpT")!.payload, 3, "export").map((row) => ({
+      : parseRows(exportChunk.payload, 3, exportCount).map((row) => ({
           function_index: row[0]!,
           function: atomAt(atoms, row[0]!),
           arity: row[1]!,
           label: row[2]!,
         }));
   const imports =
-    payloads.get("ImpT") === undefined
+    importChunk === undefined
       ? null
-      : parseRows(payloads.get("ImpT")!.payload, 3, "import").map((row) => ({
+      : parseRows(importChunk.payload, 3, importCount).map((row) => ({
           module_index: row[0]!,
           module: atomAt(atoms, row[0]!),
           function_index: row[1]!,
           function: atomAt(atoms, row[1]!),
           arity: row[2]!,
         }));
-  const lambdaChunk = payloads.get("FunT");
-  // OTP skips the optional lambda parser for a zero-byte selected chunk.
   // A four-byte zero count remains a decoded, explicitly empty table.
   const lambdas =
     lambdaChunk === undefined || lambdaChunk.payload.length === 0
       ? null
-      : parseRows(lambdaChunk.payload, 6, "lambda").map((row) => ({
+      : parseRows(lambdaChunk.payload, 6, lambdaCount).map((row) => ({
           function_index: row[0]!,
           function: atomAt(atoms, row[0]!),
           arity: row[1]!,

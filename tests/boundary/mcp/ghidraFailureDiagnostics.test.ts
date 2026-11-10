@@ -10,8 +10,11 @@ import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLeas
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { fileSnapshotPartialObservationSchema } from "../../../src/domain/fileSnapshotObservation.js";
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
-import { err } from "../../../src/domain/result.js";
+import {
+  GhidraSessionError,
+  bindGhidraSessionFailure,
+} from "../../../src/ghidra/GhidraSessionError.js";
+import { err, ok } from "../../../src/domain/result.js";
 import {
   nativeAotPeFixture,
   nativeAotPeDigest,
@@ -22,9 +25,7 @@ import { expect, it } from "vitest";
 
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
-import { ok } from "../../../src/domain/result.js";
 import { GhidraRequestQueue } from "../../../src/ghidra/GhidraRequestQueue.js";
-import { bindGhidraSessionFailure } from "../../../src/ghidra/GhidraSessionError.js";
 import { silentLogger } from "../../../src/logger.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 

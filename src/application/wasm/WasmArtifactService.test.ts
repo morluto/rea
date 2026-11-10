@@ -1,3 +1,7 @@
+import { rebindEvidenceToTargetPath } from "../../domain/evidence.js";
+import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
+import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
+import { compareWasmInterfaces } from "./WasmInterfaceComparisonService.js";
 import { AnalysisSettings } from "../AnalysisSettings.js";
 import { expect, it } from "vitest";
 import { WasmArtifactService } from "./WasmArtifactService.js";
@@ -16,6 +20,18 @@ it.each([
     path: "/module",
     command_timeout_ms,
   })),
+  ...[
+    "max_input_bytes",
+    "max_tool_bytes",
+    "max_output_bytes",
+    "max_interface_bytes",
+    "max_artifact_paths",
+  ].flatMap((name) =>
+    [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1000", null].map((value) => ({
+      path: "/module",
+      [name]: value,
+    })),
+  ),
 ])("rejects invalid selection before effects: %j", async (input) => {
   const service = new WasmArtifactService({
     close: () => Promise.resolve(),
@@ -48,20 +64,23 @@ it("preserves the selected command budget in provider input and Evidence", async
   expect(result.value.normalized_result).toEqual(value);
 });
 
-it("rejects a provider report that silently changes the selected command budget", async () => {
-  const value = wasmArtifactFixture();
-  const service = new WasmArtifactService({
-    close: () => Promise.resolve(),
-    inspect: async () => ok(wasmArtifactExecution(value)),
-  });
-  expect(
-    await service.inspect({
-      path: value.artifact.path,
-      command_timeout_ms: 42_000,
-    }),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
-});
-it.each(["path", "digest", "wat", "candidates", "glue"])(
+it.each([{ command_timeout_ms: 42_000 }, { max_output_bytes: 1024 }])(
+  "rejects a provider report that silently changes the selected budget: %j",
+  async (selection) => {
+    const value = wasmArtifactFixture();
+    const service = new WasmArtifactService({
+      close: () => Promise.resolve(),
+      inspect: async () => ok(wasmArtifactExecution(value)),
+    });
+    expect(
+      await service.inspect({
+        path: value.artifact.path,
+        ...selection,
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+  },
+);
+it.each(["path", "subject-path", "digest", "wat", "candidates", "glue"])(
   "rejects mismatched upstream observation: %s",
   async (problem) => {
     const value = wasmArtifactFixture();
@@ -76,7 +95,10 @@ it.each(["path", "digest", "wat", "candidates", "glue"])(
           ok({
             ...execution,
             subject: {
-              path: "/artifacts/module.wasm",
+              path:
+                problem === "subject-path"
+                  ? "/different"
+                  : "/artifacts/module.wasm",
               format: "file",
               sha256:
                 problem === "digest" ? "b".repeat(64) : value.artifact.sha256,
@@ -254,4 +276,52 @@ it("uses runtime defaults only for omitted budgets, preserving explicit input an
   expect((await settings.run(() => service.inspect({ path }))).ok).toBe(true);
   expect(accepted).toEqual([123000, 42000, 30000]);
   expect(authored).toEqual([undefined, 42000, undefined]);
+});
+
+it("replays imported rebound WASM Evidence in views and comparisons", async () => {
+  const report = wasmArtifactFixture();
+  const service = new WasmArtifactService({
+    close: () => Promise.resolve(),
+    inspect: async () => ok(wasmArtifactExecution(report)),
+  });
+  const completed = await service.inspect({ path: report.artifact.path });
+  if (!completed.ok) throw completed.error;
+  const rebound = rebindEvidenceToTargetPath(completed.value, {
+    path: "/alias/module.wasm",
+    sha256: report.artifact.sha256,
+    format: "file",
+  });
+  const exporting = new EvidenceLedger();
+  expect(exporting.record(rebound).ok).toBe(true);
+  const imported = new EvidenceLedger();
+  expect(imported.import(exporting.export()).ok).toBe(true);
+  const lookup = (id: string) => imported.forAnalysis(id);
+  const replay = await inspectAnalysisView(
+    {
+      source: { kind: "retained-evidence", evidence_id: rebound.evidence_id },
+      view: { kind: "summary" },
+    },
+    lookup,
+  );
+  if (!replay.ok) throw replay.error;
+  expect(replay.value.subject?.local_path).toBe("/alias/module.wasm");
+  expect(replay.value.normalized_result).toMatchObject({
+    artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
+  });
+  expect(
+    (
+      await compareWasmInterfaces(
+        {
+          left: { kind: "retained-evidence", evidence_id: rebound.evidence_id },
+          right: {
+            kind: "retained-evidence",
+            evidence_id: rebound.evidence_id,
+          },
+          scope: "both",
+        },
+        {},
+        lookup,
+      )
+    ).ok,
+  ).toBe(true);
 });

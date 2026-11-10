@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
 import { setImmediate } from "node:timers/promises";
+
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 
 import { resolveJavaScriptSourceMapReferences } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
@@ -77,16 +80,26 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   ) => Promise<void>,
   signal?: AbortSignal,
   onPhase?: (file: JavaScriptArtifactFile, phase: string) => Promise<void>,
+  preloadPaths: ReadonlySet<string> = new Set(),
+  /** Discovery gaps that may leave a declared preload in its package scope. */
+  preloadLimitations: readonly string[] = [],
 ): Promise<{
   readonly analysis: JavaScriptArtifactAnalysis;
   readonly interruption: AnalysisError | null;
 }> => {
   const state = emptyArtifactAnalysis();
+  const sourceIndices: number[] = [];
+  const packageTypeFor = createJavaScriptPackageTypeLookup(
+    fileSet,
+    state.jsonDocuments,
+  );
   let interruption: AnalysisError | null = null;
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
   let selectedFileIndex = 0;
-  for (const file of fileSet.files) {
+  for (const file of fileSet.source_selection === undefined
+    ? javaScriptAnalysisOrder(fileSet.files)
+    : fileSet.files) {
     let analysisStarted = false;
     try {
       await setImmediate();
@@ -117,8 +130,28 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         projection.remainingFileCapacity(),
         signal,
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
+        preloadPaths.has(`${file.container_sha256}:${file.path}`) &&
+          posix.extname(file.path) === ".js"
+          ? "commonjs"
+          : packageTypeFor(file),
       );
       const facts = result.ok ? result.value : result.error;
+      for (const revoked of facts.revokedStaticProjections ?? []) {
+        const index = sourceIndices[revoked.sourceIndex];
+        const previous = index === undefined ? undefined : state.files[index];
+        if (previous === undefined)
+          throw new TypeError(
+            "Revoked application projection has no retained source",
+          );
+        state.files[index!] = {
+          ...previous,
+          application_projection_failure: {
+            reason: revoked.error.message,
+            error: projectAnalysisError(revoked.error),
+            limits: revoked.error.reportedLimits,
+          },
+        };
+      }
       const applicationProjectionFailure = facts.applicationProjectionFailure;
       if (facts.projection !== null)
         projection.adoptFileProjection(facts.projection);
@@ -139,6 +172,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
               error: projectAnalysisError(error),
               limits,
             };
+      sourceIndices.push(state.files.length);
       state.files.push({
         file,
         javascript: facts.javascript,
@@ -276,11 +310,52 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
       );
     }
   }
-  return { analysis: finalizeArtifactAnalysis(state), interruption };
+  restoreInventoryOrder(fileSet.files, state.files);
+  return {
+    analysis: finalizeArtifactAnalysis(state, preloadLimitations),
+    interruption,
+  };
+};
+
+/** A source inside an installed dependency package, not the application. */
+const dependencySourcePath = (path: string): boolean =>
+  path.split("/").slice(0, -1).includes("node_modules");
+
+/**
+ * Every source in one analysis charges the same parent result budget, so the
+ * order sources are offered decides which ones keep semantic and application
+ * facts when that budget runs out. Inventory order is lexical, which lets a
+ * large `node_modules` tree spend the budget before first-party entrypoints,
+ * preloads, and Electron windows are examined. Offer application JavaScript
+ * first and dependency JavaScript last; metadata files keep their position.
+ */
+export const javaScriptAnalysisOrder = (
+  files: readonly JavaScriptArtifactFile[],
+): JavaScriptArtifactFile[] => {
+  const application: JavaScriptArtifactFile[] = [];
+  const dependencies: JavaScriptArtifactFile[] = [];
+  for (const file of files) {
+    if (file.kind === "javascript" && dependencySourcePath(file.path))
+      dependencies.push(file);
+    else application.push(file);
+  }
+  return [...application, ...dependencies];
+};
+
+/** Analysis order is an admission policy; reported files keep inventory order. */
+const restoreInventoryOrder = (
+  inventory: readonly JavaScriptArtifactFile[],
+  analyzed: AnalyzedJavaScriptArtifactFile[],
+): void => {
+  const positions = new Map(inventory.map((file, index) => [file, index]));
+  const position = ({ file }: AnalyzedJavaScriptArtifactFile): number =>
+    positions.get(file) ?? inventory.length;
+  analyzed.sort((left, right) => position(left) - position(right));
 };
 
 const finalizeArtifactAnalysis = (
   state: MutableArtifactAnalysis,
+  preloadLimitations: readonly string[],
 ): JavaScriptArtifactAnalysis => {
   return {
     jsonDocuments: state.jsonDocuments,
@@ -310,6 +385,7 @@ const finalizeArtifactAnalysis = (
             (failure) => (failure === undefined ? [] : [failure.reason]),
           ),
       ),
+      ...preloadLimitations,
     ],
   };
 };
@@ -368,6 +444,54 @@ const addStructuredObservations = (
   if (json.status === "invalid") state.parseFailures += 1;
 };
 
+/**
+ * Node's package scope for a source is its nearest package.json; the lookup
+ * stops at a `node_modules` directory (Node's package scope resolution). Only
+ * a same-container, readable manifest object establishes the type; any other
+ * nearest manifest, including one whose bytes are unavailable, or none in the
+ * inventory, leaves the scope unknown.
+ */
+export const createJavaScriptPackageTypeLookup = (
+  fileSet: JavaScriptArtifactFileSet,
+  jsonDocuments: JavaScriptJsonDocuments,
+): ((file: JavaScriptArtifactFile) => JavaScriptPackageType) => {
+  const manifests = new Map<string, JavaScriptArtifactFile>();
+  for (const file of fileSet.files)
+    if (posix.basename(file.path) === "package.json")
+      manifests.set(
+        `${file.container_sha256}:${posix.dirname(file.path)}`,
+        file,
+      );
+  const unavailableManifests = new Set(
+    fileSet.unavailable_relevant_files
+      .filter(({ path }) => posix.basename(path) === "package.json")
+      .map(
+        ({ path, container_sha256 }) =>
+          `${container_sha256}:${posix.dirname(path)}`,
+      ),
+  );
+  return (file) => {
+    for (
+      let directory = posix.dirname(file.path);
+      posix.basename(directory) !== "node_modules";
+      directory = posix.dirname(directory)
+    ) {
+      const key = `${file.container_sha256}:${directory}`;
+      if (unavailableManifests.has(key)) return "unknown";
+      const manifest = manifests.get(key);
+      if (manifest !== undefined) {
+        const document = jsonDocuments.read(manifest);
+        if (document.status !== "included" || document.packageFields === null)
+          return "unknown";
+        const type = document.packageFields.type;
+        return type === "module" || type === "commonjs" ? type : "unspecified";
+      }
+      if (directory === "." || directory === "" || directory === "/") break;
+    }
+    return "unknown";
+  };
+};
+
 const parsePackage = (
   file: JavaScriptArtifactFile,
   document: JavaScriptJsonDocumentFacts,
@@ -379,6 +503,23 @@ const parsePackage = (
   if (document.packageFields === null)
     return invalidPackage(file, "package.json root is not an object.");
   const value = document.packageFields;
+  const rendererDeclarations: NonNullable<
+    JavaScriptPackageObservation["renderer_declarations"]
+  > = {};
+  let rendererEntrypoint: JavaScriptPackageObservation["renderer_entrypoint"] =
+    null;
+  for (const field of ["renderer", "browser", "module"] as const) {
+    if (!Object.hasOwn(value, field)) continue;
+    const declaration = value[field];
+    rendererDeclarations[field] =
+      typeof declaration === "string" ? declaration : { status: "non-string" };
+    if (
+      rendererEntrypoint === null &&
+      typeof declaration === "string" &&
+      declaration !== ""
+    )
+      rendererEntrypoint = { field, path: declaration };
+  }
   return {
     path: file.path,
     sha256: file.sha256,
@@ -393,10 +534,8 @@ const parsePackage = (
           ? "declared"
           : "invalid",
     main_entrypoint: typeof value.main === "string" ? value.main : "",
-    renderer:
-      optionalString(value.renderer) ??
-      optionalString(value.browser) ??
-      optionalString(value.module),
+    renderer_declarations: rendererDeclarations,
+    renderer_entrypoint: rendererEntrypoint,
     limitation: null,
   };
 };
@@ -421,7 +560,8 @@ const unavailablePackage = (
   main: null,
   main_status: "unavailable",
   main_entrypoint: null,
-  renderer: null,
+  renderer_declarations: null,
+  renderer_entrypoint: null,
   limitation,
 });
 
@@ -435,9 +575,10 @@ const parseHtmlScripts = (
   const { scripts, inlineScripts, inlineScriptCount, baseHref } =
     htmlArtifactReferences(text);
   return {
-    scripts: scripts.map(({ scriptPath, location }) => ({
+    scripts: scripts.map(({ scriptPath, scriptType, location }) => ({
       html_path: path,
       script_path: scriptPath,
+      script_type: scriptType,
       base_href: baseHref,
       location,
     })),
@@ -633,7 +774,9 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.electron.ipc.length +
   analysis.electron.sender_validations.length +
   analysis.electron.utility_processes.length +
-  analysis.electron.native_addon_bindings.length;
+  analysis.electron.native_addon_bindings.length +
+  analysis.electron.protocols.length +
+  (analysis.electron.dynamic_code ?? []).length;
 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;

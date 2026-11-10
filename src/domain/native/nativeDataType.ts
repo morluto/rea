@@ -12,7 +12,7 @@ export const nativeDataTypeInputSchema = z
     (value) => (value.type === undefined) !== (value.address === undefined),
     "Supply exactly one of type or address",
   );
-/** Types remain analysis database observations; child identities can be inspected separately. */
+/** Types and component identities remain analysis database observations. */
 export const nativeDataTypeSchema = z.strictObject({
   status: z.enum(["available", "unavailable"]),
   reason: z.string().nullable(),
@@ -47,6 +47,21 @@ export const nativeDataTypeSchema = z.strictObject({
       type_id: z.string(),
       bit_size: z.int().nonnegative().nullable(),
       bit_offset: z.int().nonnegative().nullable(),
+      bit_field: z
+        .strictObject({
+          base_type_id: z.string(),
+          declared_bit_size: z.int().nonnegative(),
+          component_type_lookup: z.enum([
+            "equivalent",
+            "different",
+            "not-found",
+          ]),
+          base_type_lookup: z.enum(["equivalent", "different", "not-found"]),
+        })
+        .optional()
+        .describe(
+          "Observed bit-field base and exact manager lookups. bit_size is the effective width; bit_offset is the least-significant-bit offset within the base type. Omission means bit-field details were not reported.",
+        ),
       status: z.enum(["observed", "unsupported"]),
       flexible_tail: z.literal("unknown"),
     }),

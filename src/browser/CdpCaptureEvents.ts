@@ -1,3 +1,5 @@
+import { readCdpRequestWillBeSent } from "./CdpNetworkEventFacts.js";
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpEvent } from "./CdpConnection.js";
@@ -7,7 +9,7 @@ import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
-import { cdpStringValue, recordValue } from "./CdpCaptureValues.js";
+import { recordValue } from "./CdpCaptureValues.js";
 
 export interface ResponseBodyCandidate {
   readonly requestId: string;
@@ -31,7 +33,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     string,
     { readonly request: number; readonly response: number }
   >();
-  readonly executionContextFrames = new Map<string, string>();
+  readonly executionContextFrames = new Map<string, CdpContextFrameClaim>();
   readonly network = new Map<string, NetworkState>();
   readonly networkRequestTimestamps = new Map<string, number>();
   readonly malformedRedirectRequestIds = new Set<string>();
@@ -174,11 +176,12 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
         handlers.handleScriptParsed(this, params);
         break;
       case "Network.requestWillBeSent": {
-        const requestId = cdpStringValue(params.requestId);
+        const facts = readCdpRequestWillBeSent(params);
+        const requestId = facts.requestId;
         const previous =
-          requestId === undefined ? undefined : this.network.get(requestId);
-        handlers.handleRequestWillBeSent(this, params);
-        if (requestId !== undefined && this.network.get(requestId) !== previous)
+          requestId === null ? undefined : this.network.get(requestId);
+        handlers.handleRequestWillBeSent(this, facts);
+        if (requestId !== null && this.network.get(requestId) !== previous)
           this.#networkRequestOccurrences.set(
             requestId,
             (this.#networkRequestOccurrences.get(requestId) ?? 0) + 1,

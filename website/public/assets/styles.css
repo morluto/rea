@@ -113,7 +113,7 @@ section[id] {
   scroll-margin-top: 2rem;
 }
 .container {
-  width: min(1080px, calc(100% - 3.5rem));
+  width: min(var(--content-width, 1080px), calc(100% - 3.5rem));
   margin-inline: auto;
 }
 .skip-link {
@@ -168,12 +168,17 @@ section[id] {
   gap: 0.4rem;
   min-height: 44px;
   padding: 0.35rem 0.65rem;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: 5px;
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
   list-style: none;
+}
+.language-picker summary:hover,
+.language-picker[open] summary {
+  background: var(--soft);
+  color: var(--ink);
 }
 .language-picker summary > span:last-child {
   min-inline-size: 0;
@@ -248,7 +253,7 @@ section[id] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 1.5rem;
+  gap: 2rem;
 }
 .brand {
   display: flex;
@@ -278,7 +283,7 @@ section[id] {
 .navigation a {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 44px;
   color: var(--muted);
   text-decoration: none;
   white-space: nowrap;
@@ -308,7 +313,7 @@ section[id] {
   width: 44px;
   height: 44px;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: 5px;
   background: var(--page);
   color: var(--muted);
@@ -335,8 +340,8 @@ section[id] {
   height: 44px;
   padding-inline: 10px;
   gap: 8px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
   color: var(--muted);
   text-decoration: none;
 }
@@ -437,7 +442,7 @@ section[id] {
   margin-top: 2.25rem;
 }
 .home-hero {
-  padding-block: 4rem 3.5rem;
+  padding-block: 5rem 3rem;
 }
 .home-calculation {
   margin: 0;
@@ -1721,6 +1726,12 @@ pre code {
   border: 0;
 }
 
+.home-page {
+  --content-width: 1200px;
+}
+.home-page .section {
+  padding-block: 5rem;
+}
 .home-page-nav {
   position: sticky;
   top: 0;
@@ -1808,12 +1819,12 @@ pre code {
   margin-top: 0.3rem;
   white-space: normal;
 }
-@media (min-width: 1440px) {
+@media (min-width: 1800px) {
   .home-page-nav {
     position: fixed;
     top: 7.5rem;
-    right: max(1.5rem, calc((100vw - 1080px) / 2 - 156px));
-    width: 132px;
+    right: max(1.5rem, calc((100vw - var(--content-width)) / 2 - 208px));
+    width: 160px;
     max-height: calc(100svh - 9rem);
     overflow-y: auto;
     border: 0;
@@ -1857,22 +1868,29 @@ pre code {
 .home-start-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 3.5rem;
+  gap: clamp(3rem, 6vw, 5.5rem);
   align-items: start;
 }
 .home-start-grid h1 {
-  font-size: clamp(2.8rem, 5vw, 4.2rem);
+  font-size: clamp(2.8rem, 4.4vw, 3.75rem);
+  line-height: 1.12;
+}
+.home-start-grid .lede {
+  max-width: 30rem;
 }
 .home-reading-links {
-  margin-top: 1.75rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2.5rem;
+  margin-top: 3.5rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 0.9rem;
 }
 .home-reading-links p {
-  margin-bottom: 0.5rem;
-}
-.home-reading-links p:last-child {
-  margin-bottom: 0;
+  max-width: 22rem;
+  margin: 0.5rem 0 0;
 }
 .home-setup {
   min-width: 0;
@@ -1882,16 +1900,10 @@ pre code {
   letter-spacing: -0.02em;
   margin-bottom: 0.7rem;
 }
-.home-setup-agent > p,
-.home-setup-command > p {
+.home-setup-agent > p {
   color: var(--muted);
   font-size: 0.9rem;
-}
-.home-setup-agent > p {
   margin-bottom: 1rem;
-}
-.home-setup-command > p:first-child {
-  margin-top: 1.5rem;
 }
 .home-install-resources {
   display: flex;
@@ -1904,6 +1916,25 @@ pre code {
 }
 .home-install-resources a {
   white-space: nowrap;
+}
+.home-install-options {
+  font-size: 0.85rem;
+}
+.home-setup-command > summary,
+.home-install-options > summary {
+  width: fit-content;
+  min-height: 44px;
+  padding-block: 0.65rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.home-setup-command[open] > summary,
+.home-install-options[open] > summary {
+  margin-bottom: 0.5rem;
+}
+.home-install-options .home-other-install-options {
+  margin-bottom: 0;
 }
 .home-other-install-options {
   margin-top: 0.65rem;
@@ -2214,13 +2245,13 @@ pre code {
 .home-case-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
+  gap: 1.5rem;
 }
 .home-case-card {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  padding: 1.5rem;
+  padding: 2rem;
   border: 1px solid var(--line);
   border-radius: 5px;
 }
@@ -2233,7 +2264,7 @@ pre code {
 }
 .home-case-card p:not(.eyebrow) {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 .home-case-card .text-link {
   margin-top: auto;
@@ -2242,11 +2273,20 @@ pre code {
 .home-page #community p {
   color: var(--muted);
 }
+.home-environments {
+  background: var(--soft);
+}
+.home-environment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(2rem, 4vw, 4rem);
+  align-items: start;
+}
 .home-example-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
   align-items: start;
-  gap: 3rem;
+  gap: clamp(2rem, 4vw, 4rem);
 }
 .percent-figure,
 .dino-demo {
@@ -2464,9 +2504,21 @@ pre code {
 [hidden] {
   display: none !important;
 }
+@media (max-width: 1100px) {
+  .home-start-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3rem;
+    max-width: 760px;
+    margin-inline: auto;
+  }
+  .home-start-grid .lede {
+    max-width: 38rem;
+  }
+}
 @media (max-width: 850px) {
   .home-start-grid,
   .home-role-comparison,
+  .home-environment-grid,
   .home-example-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 2rem;
@@ -2474,9 +2526,6 @@ pre code {
   .home-workflow,
   .home-case-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .home-start-grid h1 {
-    font-size: clamp(2.7rem, 9vw, 4.65rem);
   }
   .home-role-comparison figcaption {
     margin-top: 0;
@@ -2489,19 +2538,17 @@ pre code {
   }
 }
 @media (max-width: 640px) {
+  .home-page .section {
+    padding-block: 3.5rem;
+  }
+  .home-reading-links {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+    margin-top: 2.5rem;
+  }
   .home-showcase-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-  .home-start-grid .actions {
-    display: grid;
-    grid-template-columns: max-content max-content;
-    justify-content: start;
-    gap: 0.9rem 1.4rem;
-  }
-  .home-start-grid .actions .button {
-    grid-column: 1 / -1;
-    justify-self: start;
   }
   .home-install-resources > span {
     flex-basis: 100%;
@@ -2619,17 +2666,16 @@ pre code {
     width: calc(100% - 2.5rem);
   }
   .navigation {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    justify-content: space-between;
     gap: 0.5rem 0.8rem;
     font-size: 0.875rem;
   }
+  /* Share the row evenly, but never narrower than a link's longest word. */
   .navigation a {
-    min-width: 0;
+    flex: 1 1 0;
+    max-width: 100%;
     min-height: 40px;
     white-space: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
   .hero {
     padding-block: 3.5rem 3rem;

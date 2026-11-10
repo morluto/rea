@@ -4,6 +4,7 @@ import { DEFAULT_ASAR_HEADER_ADMISSION } from "../config/asarHeaderAdmission.js"
 import { inspectElectronPageInputSchema } from "../domain/javascript/electronObservation.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import {
   ingestElectronScriptEvent,
@@ -39,7 +40,9 @@ describe("Electron script metadata byte admission", () => {
           },
         },
         scripts,
-        executionContextFrames: new Map([["7", "context-frame"]]),
+        executionContextFrames: new Map<string, CdpContextFrameClaim>([
+          ["7", { state: "observed", frameId: "context-frame" }],
+        ]),
         completeness,
         retention,
       });

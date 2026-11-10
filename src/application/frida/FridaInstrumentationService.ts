@@ -11,12 +11,11 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { fridaSessionStatusInputSchema } from "../../domain/fridaSessionStatus.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
@@ -252,36 +251,32 @@ export class FridaInstrumentationService {
       evidenceById: undefined,
     },
   ): Result<Evidence, AnalysisError> {
-    const input = fridaSessionStatusInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(
-          "frida_session_status",
-          input.error.issues,
-          rawInput,
-          { cause: input.error },
-        ),
-      );
-    if (input.data.detail === "summary") {
+    const input = parseAnalysisInput(
+      "frida_session_status",
+      rawInput,
+      fridaSessionStatusInputSchema,
+    );
+    if (!input.ok) return input;
+    if (input.value.detail === "summary") {
       const ready = requireAnalysisViewRetention(
         "frida_session_status",
         retention,
       );
       if (!ready.ok) return ready;
     }
-    const status = this.#provider.status(input.data.session_id);
+    const status = this.#provider.status(input.value.session_id);
     if (status === undefined)
       return err(
-        unknownFridaSession("frida_session_status", input.data.session_id),
+        unknownFridaSession("frida_session_status", input.value.session_id),
       );
     const evidence = fridaEvidence(
       "frida_session_status",
       sessionStatusOutput(status),
       {
-        session_id: input.data.session_id,
+        session_id: input.value.session_id,
       },
     );
-    return input.data.detail === "summary"
+    return input.value.detail === "summary"
       ? summarizeRetainedAnalysis(evidence, retention)
       : ok(evidence);
   }
@@ -552,6 +547,9 @@ const fridaParameters = (
         },
       }),
   mode: input.mode,
+  ...(input.captureLimits === undefined
+    ? {}
+    : { capture_limits: input.captureLimits }),
   ...(input.mode === "attach"
     ? { pid: input.pid }
     : {
@@ -567,6 +565,9 @@ const sourceOutput = (script: FridaScriptObservation) => ({
 });
 
 const scriptOutput = (script: FridaScriptObservation) => ({
+  ...(script.captureLimits === undefined
+    ? {}
+    : { capture_limits: script.captureLimits }),
   script_id: script.scriptId,
   ...sourceOutput(script),
   messages: script.messages,
@@ -574,6 +575,9 @@ const scriptOutput = (script: FridaScriptObservation) => ({
 });
 
 const sessionStatusOutput = (status: FridaSessionStatus) => ({
+  ...(status.captureLimits === undefined
+    ? {}
+    : { capture_limits: status.captureLimits }),
   session_id: status.sessionId,
   device_id: status.deviceId,
   state: status.state,

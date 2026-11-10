@@ -14,15 +14,17 @@ import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
+  ghidraMipsProfileMismatchReason,
   ghidraMipsProfileParameters,
-  ghidraPinnedMipsLanguage,
 } from "./GhidraMipsProfile.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { GhidraMipsSoftFloatReport } from "./GhidraMipsProfile.js";
 import {
+  existingGhidraAnalysisProfile,
   ghidraPinnedLanguage,
   ghidraProfileLanguageOverride,
+  ghidraProfilePinnedLanguage,
 } from "./GhidraAnalysisProfile.js";
 
 const parsed = parseConfig({ GHIDRA_INSTALL_DIR: "/ghidra" });
@@ -98,6 +100,28 @@ const abi = (
 const softFloat = abi({ cpr1Size: 0, fpAbi: 3 });
 
 describe("bounded Ghidra MIPS admission", () => {
+  it("binds a saved project's MIPS metadata without claiming a fresh-import lane", () => {
+    const little = target();
+    const big = target({ byteOrder: "big" });
+    const profile = existingGhidraAnalysisProfile(
+      little,
+      { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      { project_name: "fixture" },
+    );
+    expect(profile.parameters).not.toHaveProperty("mips_support_lane");
+    expect(
+      ghidraMipsProfileMismatchReason(little, profile.parameters, true),
+    ).toBeNull();
+    expect(
+      ghidraMipsProfileMismatchReason(big, profile.parameters, true),
+    ).toMatch(/metadata does not match/u);
+    expect(
+      ghidraMipsProfileMismatchReason(little, profile.parameters, false),
+    ).toMatch(/different target/u);
+    expect(ghidraMipsProfileMismatchReason(little, {}, true)).toMatch(
+      /metadata does not match/u,
+    );
+  });
   it("binds endian and flags without widening Windows P0", async () => {
     const ghidra = new GhidraProvider(config, silentLogger, {}, host);
     const little = target();
@@ -128,6 +152,8 @@ describe("bounded Ghidra MIPS admission", () => {
       },
       gnu_attributes: null,
     });
+    expect(left.value.profile?.digest).toEqual(expect.any(String));
+    expect(right.value.profile?.digest).toEqual(expect.any(String));
     expect(left.value.profile?.digest).not.toBe(right.value.profile?.digest);
     const windows = new GhidraProvider(
       config,
@@ -331,12 +357,12 @@ describe("recordless legacy MIPS admission", () => {
     const pinned = ghidraMipsProfileParameters(
       target({ flags: 0x50000001, abiFlags: null }),
     );
-    expect(ghidraPinnedMipsLanguage(pinned)).toEqual({
+    expect(ghidraProfilePinnedLanguage(pinned)).toEqual({
       languageId: "MIPS:LE:32:default",
       compilerSpecId: "default",
     });
     const standard = ghidraMipsProfileParameters(target());
-    expect(ghidraPinnedMipsLanguage(standard)).toBeUndefined();
+    expect(ghidraProfilePinnedLanguage(standard)).toBeUndefined();
   });
 });
 

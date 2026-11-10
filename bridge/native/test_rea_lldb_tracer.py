@@ -25,6 +25,45 @@ spec.loader.exec_module(tracer)
 
 
 class NativeTraceBudgetTests(unittest.TestCase):
+    def test_source_coordinates_preserve_partial_metadata_without_reading_source(self):
+        def address(valid=True, file_valid=True, line=23, column=7):
+            class SourceFileSpec:
+                def IsValid(self):
+                    return file_valid
+
+                def __str__(self):
+                    return "/missing/é space/fixture.pas"
+
+            file_spec = SourceFileSpec()
+            entry = types.SimpleNamespace(
+                IsValid=lambda: valid,
+                GetFileSpec=lambda: file_spec,
+                GetLine=lambda: line,
+                GetColumn=lambda: column,
+            )
+            return types.SimpleNamespace(GetLineEntry=lambda: entry)
+
+        self.assertEqual(
+            tracer._source_location(address()),
+            {"file_path": "/missing/é space/fixture.pas", "line": 23, "column": 7},
+        )
+        self.assertEqual(
+            tracer._source_location(address(column=0)),
+            {"file_path": "/missing/é space/fixture.pas", "line": 23, "column": None},
+        )
+        self.assertEqual(
+            tracer._source_location(address(file_valid=False)),
+            {"file_path": None, "line": 23, "column": 7},
+        )
+        self.assertEqual(
+            tracer._source_location(address(line=0)),
+            {"file_path": "/missing/é space/fixture.pas", "line": None, "column": 7},
+        )
+        self.assertIsNone(tracer._source_location(address(valid=False)))
+        self.assertIsNone(
+            tracer._source_location(address(file_valid=False, line=0, column=0))
+        )
+
     def test_invalid_launch_process_reports_explicit_no_creation(self):
         class InvalidProcess:
             def IsValid(self):
@@ -82,6 +121,7 @@ class NativeTraceBudgetTests(unittest.TestCase):
             result = tracer.trace(Debugger(), {
                 "executable": "fixture", "architecture": "arm64", "expected_sha256": "expected",
                 "breakpoints": [], "working_directory": "fixture/absent",
+                "capture_limits": {"output_bytes": 1024},
                 "stdout_path": "stdout", "stdout_capture_path": "stdout-capture",
                 "stderr_path": "stderr", "stderr_capture_path": "stderr-capture",
             })
@@ -281,37 +321,44 @@ class NativeTraceBudgetTests(unittest.TestCase):
                 return super().flush()
 
         stream = CountingStream()
-        journal = tracer._ObservationJournal(stream)
+        journal = tracer._ObservationJournal(stream, max_bytes=4096)
         journal.append({"kind": "event", "event": {"sequence": 0}})
         journal.append({"kind": "other-stop", "reason": "signal"})
         self.assertEqual((stream.writes, stream.flushes), (2, 2))
         self.assertEqual(journal.bytes, len(stream.getvalue()))
 
-    def test_aggregate_trace_budget_admits_exact_boundary_and_rejects_next_record(self):
-        self.assertTrue(
-            tracer._can_retain_trace(
-                tracer.MAX_TRACE_BYTES - 10,
-                tracer.MAX_TRACE_FRAMES - 2,
-                10,
-                2,
-            )
+    def test_aggregate_trace_budget_uses_the_selected_admission(self):
+        limits = {"trace_bytes": 100, "trace_frames": 10}
+        self.assertTrue(tracer._can_retain_trace(90, 8, 10, 2, limits))
+        self.assertFalse(tracer._can_retain_trace(90, 8, 11, 2, limits))
+        self.assertFalse(tracer._can_retain_trace(90, 8, 10, 3, limits))
+        raised = {"trace_bytes": 101, "trace_frames": 11}
+        self.assertTrue(tracer._can_retain_trace(90, 8, 11, 3, raised))
+
+    def test_breakpoint_reports_exact_exhausted_budget_and_accepts_more_room(self):
+        frame = types.SimpleNamespace(
+            IsValid=lambda: True, GetPC=lambda: 1,
+            GetThread=lambda: types.SimpleNamespace(GetNumFrames=lambda: 1),
+            GetPCAddress=lambda: object(),
         )
-        self.assertFalse(
-            tracer._can_retain_trace(
-                tracer.MAX_TRACE_BYTES - 10,
-                tracer.MAX_TRACE_FRAMES - 2,
-                11,
-                2,
-            )
-        )
-        self.assertFalse(
-            tracer._can_retain_trace(
-                tracer.MAX_TRACE_BYTES - 10,
-                tracer.MAX_TRACE_FRAMES - 2,
-                10,
-                3,
-            )
-        )
+        context = {
+            "target": object(), "events": [], "retained_frames": 1,
+            "retained_trace_bytes": 0,
+            "config": {"breakpoints": [{}], "backtrace_frames": 0, "max_events": 10,
+                       "capture_limits": {"trace_bytes": 4096, "trace_frames": 1}},
+        }
+        with patch.object(tracer, "_location", return_value={"symbol": "main"}), patch.object(
+            tracer, "_wanted", return_value=True
+        ), patch.object(tracer, "_record", return_value={"backtrace": []}):
+            self.assertEqual(tracer._handle_breakpoint(context, frame, 0), "resource-limit")
+            self.assertEqual(context["resource_limit"], "trace_frames")
+            context["config"]["capture_limits"] = {"trace_bytes": 8, "trace_frames": 2}
+            self.assertEqual(tracer._handle_breakpoint(context, frame, 0), "resource-limit")
+            self.assertEqual(context["resource_limit"], "trace_bytes")
+            self.assertEqual(context["events"], [])
+            context["config"]["capture_limits"]["trace_bytes"] = 4096
+            self.assertIsNone(tracer._handle_breakpoint(context, frame, 0))
+            self.assertEqual(context["events"], [{"backtrace": []}])
 
     def test_oversized_producer_string_is_rejected_before_serialization(self):
         self.assertTrue(tracer._fits_trace_budget("method", 1024))
@@ -390,6 +437,9 @@ class NativeTraceBudgetTests(unittest.TestCase):
                 return FileSpec()
 
         class Address:
+            def GetLineEntry(self):
+                return types.SimpleNamespace(IsValid=lambda: False)
+
             def GetModule(self):
                 return Module()
 
@@ -417,6 +467,7 @@ class NativeTraceBudgetTests(unittest.TestCase):
             object(),
             [[Breakpoint()]],
             {
+                "capture_limits": {"breakpoint_location_bytes": 4096},
                 "breakpoints": [
                     {
                         "kind": "objc-method",
@@ -428,6 +479,34 @@ class NativeTraceBudgetTests(unittest.TestCase):
         )
         self.assertEqual(report[0]["location_count"], 0)
         self.assertEqual(report[0]["locations"], [])
+        self.assertFalse(locations_truncated)
+
+    def test_breakpoint_report_keeps_all_locations_under_aggregate_budget(self):
+        class Location:
+            def __init__(self, index):
+                self.index = index
+
+            def GetAddress(self):
+                return self.index
+
+        class Breakpoint:
+            def GetNumLocations(self):
+                return 65
+
+            def GetLocationAtIndex(self, index):
+                return Location(index)
+
+        with patch.object(
+            tracer,
+            "_location",
+            side_effect=lambda address, _target: {"address": address, "symbol": None},
+        ), patch.object(tracer, "_wanted", return_value=True):
+            report, locations_truncated = tracer._breakpoint_report(
+                object(), [[Breakpoint()]], {"breakpoints": [{}], "capture_limits": {"breakpoint_location_bytes": 4096}}
+            )
+
+        self.assertEqual(report[0]["location_count"], 65)
+        self.assertEqual(len(report[0]["locations"]), 65)
         self.assertFalse(locations_truncated)
 
     def test_breakpoint_report_bounds_aggregate_location_json(self):
@@ -463,7 +542,24 @@ class NativeTraceBudgetTests(unittest.TestCase):
             def GetFileSpec(self):
                 return FileSpec()
 
+        class SourceFileSpec:
+            def IsValid(self):
+                return True
+
+            def __str__(self):
+                return source_path
+
         class Address:
+            def GetLineEntry(self):
+                if source_path is None:
+                    return types.SimpleNamespace(IsValid=lambda: False)
+                return types.SimpleNamespace(
+                    IsValid=lambda: True,
+                    GetFileSpec=SourceFileSpec,
+                    GetLine=lambda: 15,
+                    GetColumn=lambda: 3,
+                )
+
             def GetModule(self):
                 return Module()
 
@@ -487,22 +583,39 @@ class NativeTraceBudgetTests(unittest.TestCase):
             def GetLocationAtIndex(self, index):
                 return Location()
 
-        breakpoint_count = 1000
+        breakpoint_count = 30
         created = [[Breakpoint()] for _ in range(breakpoint_count)]
-        config = {"breakpoints": [{"kind": "objc-method"}] * breakpoint_count}
-        report, locations_truncated = tracer._breakpoint_report(
-            object(), created, config
-        )
-        retained_bytes = sum(
-            len(json.dumps(location).encode("utf-8"))
-            + (1 if index > 0 else 0)
-            for row in report
-            for index, location in enumerate(row["locations"])
-        )
-        self.assertTrue(locations_truncated)
-        self.assertEqual(sum(row["location_count"] for row in report), 64_000)
-        self.assertLess(sum(len(row["locations"]) for row in report), 64_000)
-        self.assertLessEqual(retained_bytes, tracer.MAX_BREAKPOINT_LOCATION_BYTES)
+        config = {"breakpoints": [{"kind": "objc-method"}] * breakpoint_count,
+                  "capture_limits": {"breakpoint_location_bytes": 512 * 1024}}
+        for source_path in (None, "/tmp/" + "源🚀" * 3000 + "/calls.pas"):
+            with self.subTest(source_path_present=source_path is not None):
+                report, locations_truncated = tracer._breakpoint_report(
+                    object(), created, config
+                )
+                retained_bytes = sum(
+                    len(json.dumps(location).encode("utf-8"))
+                    + (1 if index > 0 else 0)
+                    for row in report
+                    for index, location in enumerate(row["locations"])
+                )
+                self.assertTrue(locations_truncated)
+                self.assertEqual(
+                    sum(row["location_count"] for row in report), 1920
+                )
+                self.assertLess(
+                    sum(len(row["locations"]) for row in report), 1920
+                )
+                self.assertLessEqual(
+                    retained_bytes, 512 * 1024
+                )
+                if source_path is not None:
+                    self.assertTrue(
+                        any(
+                            location["source_location"]["file_path"] == source_path
+                            for row in report
+                            for location in row["locations"]
+                        )
+                    )
 
 
 if __name__ == "__main__":

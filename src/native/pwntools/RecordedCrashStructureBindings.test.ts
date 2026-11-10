@@ -50,3 +50,76 @@ it.each([3, 0x46494c45])(
     expect(recordedCrashSchema.safeParse(report).success).toBe(false);
   },
 );
+
+it("keeps snapshot rebinding independent of unused ELF section and header-size admission", () => {
+  const report = recordedCrashSchema.parse(recordedCrashFixture());
+  const bytes = recordedCrashFixtureBytes(report);
+  bytes.writeUInt16LE(0, 52);
+  bytes.writeBigUInt64LE(0xffffffffffffffffn, 40);
+  bytes.writeUInt16LE(0xffff, 60);
+  expect(() =>
+    validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics),
+  ).not.toThrow();
+});
+
+it("binds PN_XNUM through raw section-zero info without full ELF numbering admission", () => {
+  const report = recordedCrashSchema.parse(recordedCrashFixture());
+  const original = recordedCrashFixtureBytes(report);
+  const bytes = Buffer.concat([original, Buffer.alloc(64)]);
+  bytes.writeUInt16LE(0xffff, 56);
+  bytes.writeBigUInt64LE(BigInt(original.length), 40);
+  bytes.writeUInt16LE(64, 58);
+  // Rebinding only needs the reported count; full ELF admission separately requires SHT_NULL and reserved thresholds.
+  bytes.writeUInt32LE(1, original.length + 4);
+  bytes.writeUInt32LE(report.segments.length, original.length + 44);
+  expect(() =>
+    validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics),
+  ).not.toThrow();
+  bytes.writeUInt32LE(report.segments.length + 1, original.length + 44);
+  expect(() =>
+    validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics),
+  ).toThrow(/original ELF\/note headers/);
+});
+
+it.each([
+  ["magic", 0, 0],
+  ["class", 4, 1],
+  ["byte order", 5, 2],
+  ["identification version", 6, 0],
+  ["OS ABI", 7, 0xff],
+  ["ABI version", 8, 1],
+  ["object type", 16, 2],
+  ["machine", 18, 0],
+  ["header version", 20, 0],
+] as const)(
+  "rejects mismatched core %s while retaining decoder diagnostics",
+  (_name, offset, value) => {
+    const report = recordedCrashSchema.parse(recordedCrashFixture());
+    const bytes = recordedCrashFixtureBytes(report);
+    bytes[offset] = value;
+    let failure: unknown;
+    try {
+      validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics);
+    } catch (cause: unknown) {
+      failure = cause;
+    }
+    expect(failure).toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "inspect_recorded_crash",
+      capturedOutput: report.decoder_diagnostics,
+    });
+  },
+);
+
+it.each([0, 3])(
+  "retains supported core OS ABI %i independently of declared header size",
+  (osAbi) => {
+    const report = recordedCrashSchema.parse(recordedCrashFixture());
+    const bytes = recordedCrashFixtureBytes(report);
+    bytes[7] = osAbi;
+    bytes.writeUInt16LE(0xffff, 52);
+    expect(() =>
+      validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics),
+    ).not.toThrow();
+  },
+);

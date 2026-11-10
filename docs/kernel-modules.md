@@ -70,14 +70,35 @@ trailer is observed absence, not proof the module is unsigned.
 When section names are incomplete, a missing named section is `unknown`
 rather than `absent`. An empty file-backed section is present and empty.
 
+`coverage.status` is `partial` when supported facts cannot all be examined or
+interpreted, including incomplete section names, malformed or unsupported
+metadata, and omitted duplicate named sections. When multiple `.modinfo`,
+`__versions`, `.gnu.linkonce.this_module`, `.init.text`, or `.exit.text`
+sections exist, the first is examined and a limitation identifies the omission.
+`complete` covers the supported inspection described here; it does not claim
+that `struct module`, symbol-table records, or certificate chains were decoded.
+
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 8192 `.modinfo` and `__versions` entries plus listed `__ksymtab*` sections are
 examined by default (65536 maximum); `coverage.examined_entries` counts all
-three. Exceeding that budget fails with no partial success. Keys longer
-than 256 bytes and values longer than 4096 bytes stay malformed per entry;
-the field that fits is still copied. A `__ksymtab*` section name longer than
+three. Exceeding that budget fails with no partial success. `.modinfo` keys
+retain at most 256 bytes and values at most 4096 bytes by default. A larger
+field becomes `null` and is named in the entry's `omitted_fields`; the field
+that fits is still copied. Structural `status` and `reason` remain independent:
+a terminated, nonempty `key=value` entry stays `observed` when its text is
+omitted, while overall coverage becomes `partial`. Source range and digest
+remain available.
+
+Raise `max_modinfo_key_bytes` or `max_modinfo_value_bytes` on the next MCP call
+to retain the omitted text. The returned limitation names the required byte
+budget. CLI flags are `--max-modinfo-key-bytes` and `--max-modinfo-value-bytes`.
+Each accepts an integer from 1 through 536870912 bytes, matching the maximum
+input size. No restart is required; file, entry and raw-hex budgets do not
+change. These are per-call controls, not runtime settings.
+
+A `__ksymtab*` section name longer than
 256 bytes keeps its range with `name: null` and `ksymtab_name_exceeds_limit`. Inline raw hex stops at 4096 bytes and
 the SHA-256 remains.
 

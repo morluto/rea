@@ -1,12 +1,7 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { AppleIpsPort } from "./AppleIpsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   appleIpsSchema,
@@ -14,9 +9,9 @@ import {
   inspectAppleIpsInputSchema,
   type AppleIps,
 } from "../../domain/native/appleIps.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -32,34 +27,20 @@ export class AppleIpsService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectAppleIpsInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const result = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectAppleIpsInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = appleIpsSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      !validReport(report.data, input.data)
+      report.data.artifact.path !== input.value.path ||
+      !validReport(report.data, input.value)
     )
       return err(
         new AnalysisOutputError(
@@ -78,11 +59,16 @@ export class AppleIpsService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,
-          locations: [{ kind: "artifact-path", path: value.artifact.path }],
+          locations: [
+            { kind: "artifact-path", path: value.artifact.path },
+            ...(value.join === null || value.join.path === value.artifact.path
+              ? []
+              : [{ kind: "artifact-path" as const, path: value.join.path }]),
+          ],
         },
       ),
       options?.signal,
@@ -95,6 +81,11 @@ const validReport = (
   input: InspectAppleIpsInputLike,
 ): boolean => {
   if (
+    (input.join_path === undefined
+      ? report.join !== null
+      : report.join === null ||
+        report.join.path !== input.join_path ||
+        report.join.bytes > input.max_join_bytes) ||
     report.artifact.bytes > input.max_file_bytes ||
     report.coverage.threads > input.max_threads ||
     report.coverage.frames > input.max_frames ||
@@ -131,6 +122,8 @@ const validReport = (
 };
 
 type InspectAppleIpsInputLike = {
+  readonly join_path?: string | undefined;
+  readonly max_join_bytes: number;
   readonly max_file_bytes: number;
   readonly max_threads: number;
   readonly max_frames: number;

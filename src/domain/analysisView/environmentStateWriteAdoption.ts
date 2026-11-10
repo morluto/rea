@@ -1,7 +1,9 @@
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
+  ownMember,
   at,
   isObject,
+  markedDeleted,
   stateValueRetentionBytes,
   scalarText,
   type StateEntity,
@@ -87,8 +89,9 @@ export class UnseenEntities {
     const idField = this.facts.idField(view.type);
     if (
       !isObject(object) ||
+      markedDeleted(object) ||
       idField === undefined ||
-      scalarText(object[idField]) !== id
+      scalarText(ownMember(object, idField)) !== id
     )
       return undefined;
     const entity = {

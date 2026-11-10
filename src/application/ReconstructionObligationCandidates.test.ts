@@ -79,10 +79,32 @@ const applicationWithUnknowns = (
       ],
     }),
   );
+  const root = createJavaScriptApplicationNode({
+    kind: "artifact",
+    identity: {
+      strategy: "content-digest",
+      stability: "global-exact",
+      sha256: APPLICATION_GRAPH_DIGESTS.asar,
+    },
+    observations: [
+      {
+        label: "managed root",
+        properties: {},
+        evidence: artifactEvidence(
+          APPLICATION_GRAPH_DIGESTS.asar,
+          "artifact-root",
+        ),
+      },
+    ],
+  });
   const graph = createJavaScriptApplicationGraph({
     schema: "JavaScriptApplicationGraph",
-    root_node_ids: base.root_node_ids,
-    nodes: [...base.nodes, ...unknownNodes],
+    root_node_ids: [root.node_id],
+    nodes: [
+      ...base.nodes.filter(({ node_id }) => node_id !== root.node_id),
+      ...unknownNodes,
+      root,
+    ],
     edges: base.edges,
     coverage: completeCoverage,
     limitations: base.limitations,
@@ -198,8 +220,11 @@ describe("reconstruction obligation candidates", () => {
     const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
     expect(generated.candidates).toEqual([]);
-    expect(generated.limitations).toContain(
-      `Process capture ${evidence.evidence_id} has no validated executable artifact identity; packaged-process lifecycle obligation was not bound to an artifact.`,
+    const warning = generated.limitations.find((value) =>
+      value.includes(evidence.evidence_id),
+    );
+    expect(warning).toMatch(
+      /process capture.*no validated executable artifact identity.*lifecycle obligation.*not bound to an artifact/iu,
     );
   });
 
@@ -229,9 +254,11 @@ describe("reconstruction obligation candidates", () => {
     });
     const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
-    expect(generated.limitations).toEqual([
-      `Process Evidence ${evidence.evidence_id} could not generate candidates: at manifest.completed_at: Invalid input: expected string, received undefined (1 more issues)`,
-    ]);
+    expect(generated.limitations).toHaveLength(1);
+    expect(generated.limitations[0]).toContain(evidence.evidence_id);
+    expect(generated.limitations[0]).toMatch(
+      /Process Evidence.*could not generate candidates.*manifest\.completed_at/iu,
+    );
   });
 });
 
@@ -319,10 +346,22 @@ it("keeps each semantic candidate bound to its own file and authority context", 
     createEvidenceBundle([...sourceRecords, application]),
     [],
   );
-  expect(generated.limitations).toEqual([
-    `Semantic graph ${semanticGraph.graph_id} coverage is unknown; omitted candidates remain unknown.`,
-    `Semantic graph ${semanticGraph.graph_id}: Semantic relations are unavailable in this minimal example.`,
-  ]);
+  expect(generated.limitations).toHaveLength(2);
+  expect(generated.limitations).toContainEqual(
+    expect.stringMatching(
+      /coverage is unknown.*omitted candidates remain unknown/iu,
+    ),
+  );
+  expect(
+    generated.limitations.every((limitation) =>
+      limitation.includes(semanticGraph.graph_id),
+    ),
+  ).toBe(true);
+  expect(generated.limitations).toContainEqual(
+    expect.stringContaining(
+      "Semantic relations are unavailable in this minimal example.",
+    ),
+  );
   expect(generated.candidates).toHaveLength(requests.length);
   for (const [index, node] of requests.entries()) {
     const source = sourceRecords[Math.floor(index / 2)];

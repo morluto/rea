@@ -7,6 +7,8 @@ import type {
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import type { ApplicationFeatureTraceResult } from "./javascriptFeatureTraceSchemas.js";
 
+import { nativeExportObservationFacts } from "./javascriptNativeExportFacts.js";
+
 type NativeHandoff = ApplicationFeatureTraceResult["native_handoffs"][number];
 
 /** Build provider-neutral addon targets and link exact-subject native Evidence. */
@@ -102,24 +104,17 @@ const nativeExportNodes = (
 
 const requestedExports = (nodes: readonly ApplicationNode[]): string[] => {
   const values = nodes.flatMap((node) =>
-    node.observations.flatMap((observation) => [
-      // Display labels can summarize several names or namespace access.
-      // Only legacy observations without structured member facts need them.
-      ...(observation.label === null ||
-      Array.isArray(observation.properties.requested_members)
-        ? []
-        : [observation.label]),
-      ...stringArray(observation.properties.requested_members),
-      ...stringArray(observation.properties.members),
-    ]),
+    node.observations.flatMap((observation) => {
+      const facts = nativeExportObservationFacts(observation);
+      return [
+        ...(facts.label === null ? [] : [facts.label]),
+        ...facts.requested,
+        ...facts.members,
+      ];
+    }),
   );
   return [...new Set(values)].sort(compareUnicodeCodePoints);
 };
-
-const stringArray = (value: unknown): string[] =>
-  Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
 
 const uniqueProviders = (
   evidence: readonly Evidence[],

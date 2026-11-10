@@ -14,7 +14,10 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import type { FridaDeviceList } from "../../../src/domain/fridaDiscovery.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { createEvidenceToolHandler } from "../../../src/server/contractToolHandler.js";
+import {
+  createEvidenceToolHandler,
+  runEvidenceToolOperation,
+} from "../../../src/server/contractToolHandler.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -128,4 +131,42 @@ describe("shared Evidence handler target-content framing", () => {
     });
     expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
   });
+});
+
+it("delivers optional-provider load failure before session admission or execution", async () => {
+  const recordEvidence = vi.fn(() => ok("added" as const));
+  const server = new EvidenceMcpServer(
+    { name: "optional-provider-admission", version: "1" },
+    { capabilities: {} },
+    recordEvidence,
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+  );
+  const admission = vi.fn(async () => {
+    throw new Error("Unavailable provider must not enter target admission");
+  });
+  const execute = vi.fn(async () => {
+    throw new Error("Unavailable provider must not execute");
+  });
+  const result = await runEvidenceToolOperation(
+    {
+      server,
+      logger: silentLogger,
+      recordEvidence,
+      withAdmittedAnalysis: admission,
+    },
+    toolContract("inspect_web_page"),
+    { providerId: "browser", reason: "controlled provider load failure" },
+    { input: {}, context },
+    execute,
+  );
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result).error).toMatchObject({
+    code: "capability_unavailable",
+    details: { operation: "inspect_web_page" },
+  });
+  expect(JSON.stringify(result)).toContain("controlled provider load failure");
+  expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+  expect(admission).not.toHaveBeenCalled();
+  expect(execute).not.toHaveBeenCalled();
+  expect(recordEvidence).not.toHaveBeenCalled();
 });

@@ -5,6 +5,13 @@ const packedCutterBridge = "package/bridge/cutter/rea_bridge.py";
 
 /** Check shipped bridge files; real-provider lanes verify runtime behavior. */
 export async function verifyPackedBridge({ tarball, packedFiles, commands }) {
+  if (
+    packedFiles.some(
+      (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
+    )
+  ) {
+    throw new Error("package contained generated Python bytecode");
+  }
   for (const path of [
     packedHopperBridge,
     packedCutterBridge,

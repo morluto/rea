@@ -3,7 +3,9 @@ import {
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
+import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
+import { isDesktopBuildCheck } from "./DoctorProviderIds.js";
 import type {
   DoctorCheck,
   DoctorHost,
@@ -21,6 +23,7 @@ export interface DoctorDiagnostics {
 export const collectDoctorDiagnostics = async (
   target: string | undefined,
   host: DoctorHost,
+  clients: readonly string[] = [],
 ): Promise<DoctorDiagnostics> => {
   const checks: DoctorCheck[] = [nodeCheck(host)];
   checks.push(await hostCheck(host));
@@ -33,7 +36,7 @@ export const collectDoctorDiagnostics = async (
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
-  const providerInspections = await host.providerInspections?.();
+  const providerInspections = await host.providerInspections?.(clients ?? []);
   if (providerInspections !== undefined)
     checks.push(...providerInspections.flatMap(providerDoctorChecks));
 
@@ -62,16 +65,17 @@ export const doctorHealthy = (
       | undefined;
   },
 ): boolean => {
+  const audited = checks.filter(({ name }) => !isDesktopBuildCheck(name));
   if (providers.providerInspections === undefined)
-    return checks.every(({ ok }) => ok);
-  const providerChecks = checks.filter(
+    return audited.every(({ ok }) => ok);
+  const providerChecks = audited.filter(
     ({ name }) =>
       name.startsWith("hopper") ||
       providers.providerInspections?.some((inspection) =>
         providerCheckName(inspection.id, name),
       ) === true,
   );
-  const coreHealthy = checks
+  const coreHealthy = audited
     .filter((candidate) => !providerChecks.includes(candidate))
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
@@ -94,7 +98,9 @@ export const doctorHealthy = (
 };
 
 /** Runtime support follows the shared rule, which judges Bun by its Node.js compatibility. */
-const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
+export const nodeCheck = ({
+  runtime,
+}: Pick<DoctorHost, "runtime">): DoctorCheck => {
   const failure = {
     remediation: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
     classification: "missing_dependency",
@@ -129,8 +135,22 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
     host.platform === "darwin" ? await host.macosVersion() : undefined;
   const linuxDistribution =
     host.platform === "linux" ? await host.linuxDistribution() : undefined;
+  const macosMajor = macosMajorVersion(macosVersion);
+  if (host.platform === "darwin" && macosMajor === undefined)
+    return {
+      name: "host",
+      ok: false,
+      classification: "unknown",
+      detail:
+        macosVersion === undefined
+          ? "The macOS version could not be determined."
+          : `The macOS version probe returned an unrecognized value: ${JSON.stringify(macosVersion)}.`,
+      remediation: "Check /usr/bin/sw_vers -productVersion and rerun doctor.",
+    };
   const supported =
-    (host.platform === "darwin" && parseMajor(macosVersion) >= 12) ||
+    (host.platform === "darwin" &&
+      macosMajor !== undefined &&
+      macosMajor >= 12) ||
     (host.platform === "linux" && supportsReaHost(linuxDistribution)) ||
     (host.platform === "win32" && host.architecture === "x64");
   const detail =
@@ -358,9 +378,6 @@ const unsupportedHopperRemediation = (configured: boolean): string =>
   configured
     ? "Check HOPPER_LAUNCHER_PATH and its publisher verification evidence. Run rea setup to install and retain an authenticated official Hopper package for offline use."
     : "Run rea setup to install and retain an authenticated official Hopper package for offline use.";
-
-const parseMajor = (version: string | undefined): number =>
-  Number.parseInt(version?.split(".")[0] ?? "0", 10);
 
 const providerCheckName = (providerId: string, name: string): boolean =>
   name === providerId || name.startsWith(`${providerId}-`);

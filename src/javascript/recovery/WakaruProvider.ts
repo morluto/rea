@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +40,7 @@ import {
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { prepareWakaruExecution } from "./WakaruExecution.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { WakaruReportReadFailure } from "./WakaruReport.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -109,6 +111,8 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
+    // Capture configuration after queue/cleanup admission; later requests may select updates.
+    const environment = snapshotEnvironment(this.environment);
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failed: { readonly cause: unknown } | undefined;
@@ -117,7 +121,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     try {
       checkRecoveryCancellation(options?.signal);
       const engine = await resolveWakaruCommand(
-        this.environment,
+        environment,
         this.#resources,
         options?.signal,
       );
@@ -149,7 +153,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         input,
         sources,
         engine,
-        environment: this.environment,
+        environment,
         launcher: this.launcher,
         options,
         deadline,
@@ -163,14 +167,25 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       failed = { cause };
     }
     if (failed !== undefined) {
+      const reportFailure =
+        failed.cause instanceof WakaruReportReadFailure
+          ? failed.cause
+          : undefined;
+      const primary = reportFailure?.failure ?? failed.cause;
       const failure =
-        failed.cause instanceof ArtifactReaderFailure &&
-        failed.cause.reason === "cancelled" &&
-        failed.cause.cleanup === undefined
+        primary instanceof ArtifactReaderFailure &&
+        primary.reason === "cancelled" &&
+        primary.cleanup === undefined
           ? new AnalysisCancelledError(OPERATION, {
-              cause: artifactFileCancellationCause(failed.cause),
+              cause: artifactFileCancellationCause(primary),
+              ...(primary.partialObservation === undefined
+                ? {}
+                : { partialObservation: primary.partialObservation }),
+              ...(reportFailure === undefined
+                ? {}
+                : { capturedOutput: reportFailure.capturedOutput }),
             })
-          : failed.cause;
+          : primary;
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];
       const cleanupOwner =
@@ -260,6 +275,9 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           {
             operation: OPERATION,
             cause: failure,
+            ...(reportFailure === undefined
+              ? {}
+              : { capturedOutput: reportFailure.capturedOutput }),
             ...(tree?.published && execution !== undefined
               ? {
                   partialObservation: {
@@ -269,7 +287,10 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
                     ),
                   },
                 }
-              : {}),
+              : failure instanceof ArtifactReaderFailure &&
+                  failure.partialObservation !== undefined
+                ? { partialObservation: failure.partialObservation }
+                : {}),
           },
         );
         const lease = this.#pendingCleanup?.lease;
@@ -287,6 +308,9 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           : new ProviderAdapterError("wakaru", OPERATION, {
               cause: failure,
               diagnostics: { reason: recoveryFailureMessage(failure) },
+              ...(reportFailure === undefined
+                ? {}
+                : { capturedOutput: reportFailure.capturedOutput }),
             }),
       );
     }

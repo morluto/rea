@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { zip64Tail } from "../../../tests/fixtures/apkSignature/zip64Tail.js";
 
 import {
   APK_BLOCK_ID,
@@ -102,7 +103,8 @@ describe("APK signing block locator", () => {
     if (!tail.ok) return;
     const block = locateApkSigningBlock(bytes, tail.value);
     expect(block.ok).toBe(true);
-    if (!block.ok || block.value === null) return expect(block).toBeTruthy();
+    if (!block.ok || block.value === null)
+      throw new Error("Expected an APK signing block");
     expect(block.value.pairs.map((p) => p.id)).toEqual([
       APK_BLOCK_ID.signatureV2,
       APK_BLOCK_ID.signatureV3,
@@ -178,6 +180,37 @@ describe("APK signing block locator", () => {
 });
 
 describe("Zip64 end-of-central-directory", () => {
+  it.each([43n, 45n, 1n << 63n])(
+    "rejects a Zip64 record whose declared body size is %s",
+    async (size) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect(parseZipTail(bytes).ok).toBe(true);
+      new DataView(bytes.buffer).setBigUint64(recordOffset + 4, size, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-zip", offset: recordOffset + 4 },
+      });
+    },
+  );
+
+  it("allows a Zip64 extensible sector that fits before the locator", async () => {
+    const { bytes, recordOffset, locatorOffset } = await zip64Tail();
+    const extension = Uint8Array.of(0xfe, 0xff, 1, 0, 0, 0, 0);
+    const extended = new Uint8Array(bytes.length + extension.length);
+    extended.set(bytes.subarray(0, locatorOffset));
+    extended.set(extension, locatorOffset);
+    extended.set(
+      bytes.subarray(locatorOffset),
+      locatorOffset + extension.length,
+    );
+    new DataView(extended.buffer).setBigUint64(
+      recordOffset + 4,
+      BigInt(44 + extension.length),
+      true,
+    );
+    expect(parseZipTail(extended).ok).toBe(true);
+  });
+
   it("follows a Zip64 EOCD locator to the central-directory offset", () => {
     const body = new Bytes().raw(Array.from({ length: 40 }, () => 0));
     const cdOffset = body.b.length;

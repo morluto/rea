@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS } from "../analysisResourceLimits.js";
 
 /** A decompiler p-code varnode location or literal value. */
 export const nativeVarnodeSchema = z.strictObject({
@@ -45,37 +46,83 @@ export const nativePcodeEffectSchema = z.strictObject({
   value_input: z.int().nonnegative().nullable(),
 });
 
+/** Accepted projection budgets; historical observations may omit these facts. */
+export const nativeValueFlowLimitsSchema = z.strictObject({
+  max_operations: z.int().min(1).max(MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS),
+  max_inputs_per_operation: z
+    .int()
+    .min(1)
+    .max(MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS),
+  max_edges: z.int().min(1).max(MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS),
+});
+export type NativeValueFlowLimits = z.infer<typeof nativeValueFlowLimitsSchema>;
+
 /** Bounded data-flow observations; STORE is not necessarily a persistent/global write. */
+export const availableNativeValueFlowSchema = z.strictObject({
+  available: z.literal(true),
+  provenance: z.literal("ghidra-high-pcode"),
+  limits: nativeValueFlowLimitsSchema.exactOptional(),
+  limits_reached: z
+    .array(z.enum(["max_operations", "max_inputs_per_operation", "max_edges"]))
+    .exactOptional(),
+  operations: z.array(nativePcodeOperationSchema),
+  def_use: z.array(nativePcodeDefUseSchema),
+  effects: z
+    .array(nativePcodeEffectSchema)
+    .describe(
+      "Observed p-code effects. Memory reads and writes cover LOAD and STORE operations only; direct memory address varnodes in other operations are excluded. An empty list does not establish no memory access.",
+    ),
+  parameters: z.array(
+    z.strictObject({
+      ordinal: z.int().nonnegative(),
+      name: z.string(),
+      data_type: z.string(),
+    }),
+  ),
+  parameter_uses: z.array(
+    z.strictObject({
+      ordinal: z.int().nonnegative(),
+      use: z.string(),
+      input_index: z.int().nonnegative(),
+    }),
+  ),
+  truncated: z.boolean(),
+  omitted_operations_lower_bound: z.int().nonnegative(),
+  known_omitted_inputs: z.int().nonnegative(),
+  known_omitted_edges: z.int().nonnegative(),
+  limitations: z.array(z.string().min(1)),
+});
+export const unavailableNativeValueFlowSchema = z.strictObject({
+  available: z.literal(false),
+  reason: z.string().min(1),
+  limitations: z.array(z.string().min(1)),
+});
 export const nativeValueFlowSchema = z.discriminatedUnion("available", [
-  z.strictObject({
-    available: z.literal(true),
-    provenance: z.literal("ghidra-high-pcode"),
-    operations: z.array(nativePcodeOperationSchema),
-    def_use: z.array(nativePcodeDefUseSchema),
-    effects: z.array(nativePcodeEffectSchema),
-    parameters: z.array(
-      z.strictObject({
-        ordinal: z.int().nonnegative(),
-        name: z.string(),
-        data_type: z.string(),
-      }),
-    ),
-    parameter_uses: z.array(
-      z.strictObject({
-        ordinal: z.int().nonnegative(),
-        use: z.string(),
-        input_index: z.int().nonnegative(),
-      }),
-    ),
-    truncated: z.boolean(),
-    omitted_operations_lower_bound: z.int().nonnegative(),
-    known_omitted_inputs: z.int().nonnegative(),
-    known_omitted_edges: z.int().nonnegative(),
-    limitations: z.array(z.string().min(1)),
-  }),
-  z.strictObject({
-    available: z.literal(false),
-    reason: z.string().min(1),
-    limitations: z.array(z.string().min(1)),
-  }),
+  availableNativeValueFlowSchema,
+  unavailableNativeValueFlowSchema,
+]);
+
+/** Lightweight retained metadata; historical records may omit newer omission counts.
+ * Strip full flow collections without parsing or copying them. An empty recorded
+ * unavailable reason remains source evidence even though new producers forbid it.
+ */
+export const nativeValueFlowMetadataSchema = z.union([
+  availableNativeValueFlowSchema
+    .pick({
+      available: true,
+      truncated: true,
+      omitted_operations_lower_bound: true,
+      known_omitted_inputs: true,
+      known_omitted_edges: true,
+    })
+    .partial({
+      omitted_operations_lower_bound: true,
+      known_omitted_inputs: true,
+      known_omitted_edges: true,
+    })
+    .strip(),
+  unavailableNativeValueFlowSchema
+    .pick({ available: true, reason: true })
+    .extend({ reason: z.string() })
+    .strip(),
 ]);

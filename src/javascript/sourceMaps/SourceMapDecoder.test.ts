@@ -30,7 +30,6 @@ it("preserves the exact caller reason before source-map admission", async () => 
   const response = await new SourceMapDecoder().trace(input, {
     signal: controller.signal,
   });
-  expect(response.ok).toBe(false);
   if (response.ok) throw new Error("expected cancellation");
   expect(response.error).toBeInstanceOf(AnalysisCancelledError);
   expect(response.error.cause).toBe(reason);
