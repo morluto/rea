@@ -10,6 +10,7 @@ import {
   type ApktoolOperation,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -72,8 +73,9 @@ export const registerApktoolCommands = (
         apktoolInputSchemas.decode_android_resources.shape.locales.describe(
           "Repeat to project multiple localized string tables, e.g. --locales de --locales pt-BR",
         ),
-      decodeTimeoutMs:
+      decodeTimeoutMs: cliDecimalField(
         apktoolInputSchemas.decode_android_resources.shape.decode_timeout_ms,
+      ),
       strings: z
         .boolean()
         .default(

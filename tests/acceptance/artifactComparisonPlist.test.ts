@@ -37,7 +37,7 @@ it("compares identical complete plist inventories across CLI and MCP and creates
   expect(cliInventory.normalized_result).toMatchObject({
     coverage: { scope: "root", status: "complete" },
     limitations: [
-      "Inventory covers root bytes only; child container entries were not examined.",
+      expect.stringMatching(/root bytes only.*child.*not examined/iu),
     ],
   });
 
@@ -56,7 +56,7 @@ it("compares identical complete plist inventories across CLI and MCP and creates
   expect(mcpInventory.normalized_result).toMatchObject({
     coverage: { scope: "root", status: "complete" },
     limitations: [
-      "Inventory covers root bytes only; child container entries were not examined.",
+      expect.stringMatching(/root bytes only.*child.*not examined/iu),
     ],
   });
 

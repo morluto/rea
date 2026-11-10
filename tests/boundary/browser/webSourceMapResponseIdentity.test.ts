@@ -193,6 +193,11 @@ it("refuses oversized text before JSON interpretation while retaining body ident
       { status: "included", artifact: { text: valid }, mappings: [{}] },
     ],
   });
+  const limitation = result.value.items[0]?.limitation;
+  expect(limitation).toMatch(/JSON[- ]escap/i);
+  expect(limitation).toMatch(/metadata/i);
+  expect(limitation).toMatch(/shared/i);
+  expect(limitation).toMatch(/32\s*MiB/i);
   expect(Buffer.byteLength(JSON.stringify(result.value))).toBeLessThanOrEqual(
     32 * 1024 * 1024,
   );

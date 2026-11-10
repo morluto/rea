@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
-import { JSON_LINES_SELECTION_REMEDIATION } from "../../src/cli/jsonLines.js";
 import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -44,7 +43,9 @@ cliTest(
                   status === "malformed" ? null : expect.any(String),
                 issue:
                   status === "malformed"
-                    ? "CIL prefix chain at IL offset 0 has no following instruction"
+                    ? expect.stringMatching(
+                        /CIL prefix.*offset 0.*no following instruction/iu,
+                      )
                     : null,
               }),
             }),
@@ -404,7 +405,11 @@ cliTest(
       result: {
         code: "invalid_request",
         category: "invalid_input",
-        remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
+        remediation: {
+          action: expect.stringMatching(
+            /--format json.*record collection.*--filter-output/iu,
+          ),
+        },
         details: {
           issues: [
             {

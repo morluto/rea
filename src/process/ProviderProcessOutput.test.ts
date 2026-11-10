@@ -894,3 +894,52 @@ it("marks a stop the owner requested before any signal it sends", async () => {
     stopRequested: true,
   });
 });
+
+it("retains a stream's latest bytes in tail retention, with checkpoints over what remains", () => {
+  const producer = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    kill: () => false,
+  });
+  const supervisor = new ProviderProcessSupervisor(
+    { process: producer, ownsProcessLifetime: false },
+    {
+      maxDiagnosticBytes: { stdout: 0, stderr: 6 },
+      diagnosticRetention: "tail",
+    },
+  );
+  try {
+    const first = supervisor.checkpointOutput();
+    producer.stderr.write("abcd");
+    producer.stderr.write("efgh");
+    producer.stderr.write("ij");
+    expect(supervisor.snapshot()).toMatchObject({
+      diagnosticTruncated: true,
+      stderr: { text: "efghij", bytes: 6, observedBytes: 10 },
+    });
+    // Bytes before the retained tail are gone, so that range is incomplete.
+    expect(supervisor.snapshotOutputSince(first)).toMatchObject({
+      complete: false,
+      snapshot: { stderr: { text: "efghij" } },
+    });
+    const later = supervisor.checkpointOutput();
+    producer.stderr.write("kl");
+    expect(supervisor.snapshotOutputSince(later)).toMatchObject({
+      complete: true,
+      snapshot: { stderr: { text: "kl", bytes: 2 } },
+    });
+    // A character the cut would split is dropped whole, not decoded as U+FFFD.
+    producer.stderr.write(Buffer.from("é12345"));
+    expect(supervisor.snapshot().stderr).toEqual({
+      text: "12345",
+      bytes: 5,
+      observedBytes: 19,
+    });
+  } finally {
+    supervisor.dispose();
+    producer.stdout.destroy();
+    producer.stderr.destroy();
+  }
+});

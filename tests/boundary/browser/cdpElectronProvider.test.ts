@@ -473,7 +473,6 @@ describe("CdpElectronProvider target access", () => {
       { signal: controller.signal },
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected late cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.partialObservation).toMatchObject({

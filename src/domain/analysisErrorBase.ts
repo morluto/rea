@@ -1,7 +1,11 @@
+import type { AppleIpsPartialObservation } from "./native/appleIps.js";
+import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
+import type { EnvironmentBundlePublication } from "./environmentBundleExport.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -113,6 +117,43 @@ export interface AnalysisCleanupResourceOwner {
   readonly cleanupResources: readonly string[] | undefined;
 }
 
+/** Result completed before its source Evidence could be published. */
+export type SourcePublicationCompletion =
+  | {
+      readonly kind: "unretained-evidence";
+      readonly source_closure: "not-established";
+      readonly evidence: Evidence;
+    }
+  | {
+      readonly kind: "retained-evidence";
+      readonly source_closure: "not-established";
+      readonly evidence_id: string;
+    }
+  | {
+      readonly kind: "unretained-observation";
+      readonly source_closure: "not-established";
+      readonly observation: Readonly<Record<string, JsonValue>>;
+    }
+  | {
+      readonly kind: "inline-evidence";
+      readonly retention: "one-shot-session" | "unknown";
+      readonly source_closure: "not-established";
+      readonly evidence: Evidence;
+    }
+  | {
+      readonly kind: "omitted";
+      readonly source_closure: "not-established";
+      readonly reason:
+        | "primary-authentication-failed"
+        | "insufficient-authentication-headroom"
+        | "recovery-input-invalid";
+    };
+
+export interface SourcePublicationRecovery {
+  readonly source: AnalysisPartialObservation | undefined;
+  readonly completed: SourcePublicationCompletion;
+}
+
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
   limit: Readonly<AnalysisSettingLimit> | undefined;
@@ -135,7 +176,10 @@ export abstract class AnalysisError extends Error {
   readonly invocationDiagnostics:
     | Readonly<Record<string, JsonValue>>
     | undefined;
-  readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  #capturedOutput: AnalysisCapturedOutput | undefined;
+  get capturedOutput(): AnalysisCapturedOutput | undefined {
+    return this.#capturedOutput;
+  }
   readonly cleanup: AnalysisCleanupObservation | undefined;
   cleanupIncomplete: boolean;
   #ownedCleanupResources: readonly string[];
@@ -159,7 +203,7 @@ export abstract class AnalysisError extends Error {
       options?.invocationDiagnostics === undefined
         ? undefined
         : structuredClone(options.invocationDiagnostics);
-    this.capturedOutput =
+    this.#capturedOutput =
       options?.capturedOutput === undefined
         ? undefined
         : { ...options.capturedOutput };
@@ -173,7 +217,18 @@ export abstract class AnalysisError extends Error {
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
+  sourcePublicationRecovery: SourcePublicationRecovery | undefined;
   workflowUnknownPublication: WorkflowUnknownPublication | undefined;
+
+  /** Keep the failed source and completed result with their error owner. */
+  retainSourcePublication(completed: SourcePublicationCompletion): this {
+    this.sourcePublicationRecovery = {
+      source: this.partialObservation,
+      completed,
+    };
+    this.partialObservation = undefined;
+    return this;
+  }
 
   get cleanupPrimary(): AnalysisError | undefined {
     return this.#cleanupPrimary;
@@ -255,6 +310,19 @@ export abstract class AnalysisError extends Error {
     return this;
   }
 
+  /** Retain facts on every primary that cleanup settlement can reveal. */
+  retainPrimaryDiagnostics(
+    diagnostics: Readonly<Record<string, JsonValue>>,
+  ): this {
+    for (
+      let error: AnalysisError | undefined = this;
+      error !== undefined;
+      error = error.cleanupPrimary
+    )
+      error.retainDiagnostics(diagnostics);
+    return this;
+  }
+
   /** Diagnostics recorded for a caller with this lifetime. */
   diagnosticsFor(
     callerLifetime: AnalysisCallerLifetime,
@@ -319,6 +387,12 @@ export abstract class AnalysisError extends Error {
     return this;
   }
 
+  /** Keep command output observed before this error without replacing the owner. */
+  retainCapturedOutput(output: AnalysisCapturedOutput): this {
+    this.#capturedOutput ??= { ...output };
+    return this;
+  }
+
   /** Preserve the exact committed prefix when automatic question publication stops. */
   retainWorkflowUnknownPublication(
     publication: WorkflowUnknownPublication,
@@ -339,6 +413,20 @@ export const resolvedAnalysisError = (error: AnalysisError): AnalysisError => {
 export const primaryAnalysisError = (error: AnalysisError): AnalysisError => {
   while (error.cleanupPrimary !== undefined) error = error.cleanupPrimary;
   return error;
+};
+
+/** Find the completed publication outcome owned anywhere in a cleanup chain. */
+export const sourcePublicationRecoveryOf = (
+  error: AnalysisError,
+): SourcePublicationRecovery | undefined => {
+  for (
+    let owner: AnalysisError | undefined = error;
+    owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    if (owner.sourcePublicationRecovery !== undefined)
+      return owner.sourcePublicationRecovery;
+  return undefined;
 };
 import type {
   PartialProcessCaptureObservation,
@@ -400,6 +488,16 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | {
+      readonly kind: "omitted-observation";
+      readonly reason:
+        | "insufficient-authentication-headroom"
+        | "recovery-input-invalid";
+    }
+  | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
+  | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | GraphqlContract
+  | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
   | WebArtifactAcquisition
   | WebTraceObservation
@@ -428,10 +526,12 @@ export type AnalysisPartialObservation =
   | ArtifactInventoryPartialObservation
   | ArtifactExtractionPartialObservation
   | WebScriptExportPartialObservation
+  | EnvironmentBundlePublication
   | JavaScriptRecoveryPartialObservation
   | Evidence
   | BinaryLayout
   | RecordedCrash
+  | AppleIpsPartialObservation
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation

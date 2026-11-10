@@ -1,7 +1,7 @@
 <div align="center" dir="rtl">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · **فارسی** · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: مهندسی معکوس هر چیزی
 
@@ -10,7 +10,7 @@
 **قابلیتی دیده‌اید که دوستش دارید؟ سازوکارش را تا سطح باینری درک کنید.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -72,9 +72,13 @@ npx rea-agents setup
 
 ایجنت‌های موردنظر را انتخاب کنید، تغییرات پیشنهادی را بررسی و تأیید کنید. فرایند راه‌اندازی، سرور MCP مربوط به REA و دستورالعمل‌های گردش‌کار متناظر را اضافه می‌کند و از پیکربندی موجود نسخهٔ پشتیبان می‌گیرد. پس از آن ایجنت خود را مجدداً راه‌اندازی کنید.
 
-راه‌اندازی از Claude Code، Codex، Cursor، Gemini CLI، Grok Build و [ایجنت‌های دیگر](../installation.md#supported-agents) پشتیبانی می‌کند. برای پیکربندی ارائه‌دهنده و ثبت دستی MCP، [نصب و راه‌اندازی](../installation.md) را ببینید.
+راه‌اندازی از Claude Code، Codex، Cursor، Gemini CLI، Grok Build و [ایجنت‌های دیگر](../getting-started/installation.md#supported-agents) پشتیبانی می‌کند. برای پیکربندی ارائه‌دهنده و ثبت دستی MCP، [نصب و راه‌اندازی](../getting-started/installation.md) را ببینید.
 
 MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاده می‌کند. برای راهنمای کامل فیلدها و اعتبارسنجی تو‌در‌تو، در ثبت MCP مقدار `REA_MCP_INPUT_SCHEMA_PROFILE=full` را تنظیم کنید. هر دو حالت همهٔ ابزارها و اعتبارسنجی استاندارد یکسان سرور را نگه می‌دارند؛ راهنمای قراردادهای MCP را ببینید.
+
+راه‌اندازی، محیط اجرای انتخاب‌شده و اسکریپت ورودی REA را مستقیماً ثبت می‌کند. اگر از اجراکنندهٔ بسته استفاده می‌کنید، ورودی حافظهٔ پنهان و محیط اجرا را حفظ کنید؛ بسته را از پوشه‌ای قابل اعتماد خارج از پروژهٔ هدف دریافت کنید. راهنمای نصب را ببینید.
+
+طرح‌های خروجی کامل به‌طور پیش‌فرض اعلام می‌شوند. اگر کلاینت `tools/list` را محدود می‌کند، در ثبت MCP مقدار `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` یا `off` را تنظیم کنید. اعتبارسنجی سرور و نتایج ساخت‌یافته کامل می‌مانند. بخش «Output schemas» در راهنمای قراردادهای MCP را ببینید.
 
 ### از ایجنت خود بپرسید
 
@@ -101,7 +105,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-برای تحلیل بومی ابتدا یک ارائه‌دهنده پیکربندی کنید. برای دستورات بومی، انتخاب ارائه‌دهنده، snapshotها و اسکریپت‌نویسی، [راهنمای CLI و شواهد](../cli.md) را ببینید.
+برای تحلیل بومی ابتدا یک ارائه‌دهنده پیکربندی کنید. برای دستورات بومی، انتخاب ارائه‌دهنده، snapshotها و اسکریپت‌نویسی، [راهنمای CLI و شواهد](../getting-started/cli.md) را ببینید.
 
 ### به‌روزرسانی REA
 
@@ -143,44 +147,47 @@ npx rea-agents@latest setup
 
 REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به‌همراه npm نیاز دارد. ابزارهای اضافی و پشتیبانی سیستم میزبان به نوع هدف بستگی دارند:
 
-| هدف                    | خروجی REA                                                                           | پیش‌نیازها و راهنما                                                                                                                |
-| ---------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| باینری‌های بومی         | شبه‌کد، اسمبلی، رشته‌ها، نمادها، فراخوانی‌ها و ارجاعات                                 | Hopper، Ghidra، IDA یا Kuna؛ [تحلیل بومی](../native-investigation.md)                                                             |
-| ساختار ELF آفلاین       | بخش‌ها، سگمنت‌ها، نمادها و relocationهای اصلی و گزینه‌های احتمالی کاهش آسیب‌پذیری ایستا | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ [تشخیص باینری](../binary-diagnostics.md)                                         |
-| PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields        | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
-| PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash          | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                     |
-| بایت‌کد EVM             | selectorهای dispatch، offsetهای بایتی، آرگومان‌های استنباط‌شده و قابلیت تغییر وضعیت   | دادهٔ خام/hex محلی روی Linux x64؛ [راهنمای EVM آفلاین](../evm-bytecode.md)                                                          |
-| Rust binaries          | Embedded cargo-auditable dependency list                                            | [Rust binaries](../rust-binaries.md)                                                                                              |
-| ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                     | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
-| Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                         | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                     |
-| Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer         | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                            |
-| Erlang BEAM            | IFF chunks, atoms, exports, and tables                                              | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
-| کرش‌های ثبت‌شدهٔ لینوکس   | یادداشت‌های خام، رجیسترها/سیگنال‌های تمام threadهای ثبت‌شده و گزینه‌های احتمالی نگاشت   | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ GDB/pwndbg اختیاری؛ [کرش‌های ثبت‌شده](../recorded-crashes.md)                      |
-| نصب‌های دسکتاپ          | نامزدهای زمان اجرا، فایل‌های شاهد، نشانه‌های مؤلفه‌ها و مراحل بعدی                     | بررسی محدود پوشه‌ها و سرآیندها；[برنامه‌های دسکتاپ](../desktop-applications.md)                                                     |
-| JavaScript / Electron  | ماژول‌ها، importها، source mapها، مسیرها، IPC و ارتباط افزونه‌های بومی                | Node.js و npm؛ [تحلیل برنامه](../javascript-application-workflows.md); Linux: procps `ps`                                         |
-| وب‌سایت‌ها               | ساختار صفحه، اسکریپت‌ها، مشاهدات شبکه و اسکرین‌شات‌های درخواستی                        | مرورگر مبتنی بر Chrome؛ [تحلیل مرورگر](../browser-observation.md)                                                                 |
-| داده‌های ضبط‌شدهٔ شبکه    | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR / Fiddler Everywhere SAZ؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](../web-network-captures.md) |
-| اسمبلی‌های .NET         | فراداده، دستورالعمل‌های CIL، وابستگی‌های بومی اعلام‌شده و مقایسهٔ buildها                | بررسی ایستا؛ [راهنمای کد مدیریت‌شده](../managed-code-analysis.md)                                                                  |
-| PyInstaller            | CArchive, PYZ, Python bytecode                                                      | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                             |
-| فایل‌های APK اندروید    | تعاریف Manifest، کلاس‌ها، متدهای دیکامپایل‌شده و ارجاعات                               | JADX بدون رابط گرافیکی و JDK کامل در Linux/macOS/Windows x64؛ [راهنمای اندروید](../android-analysis.md)                           |
-| دستگاه‌های اندروید      | دستگاه‌ها، بسته‌ها، فرایندها، لاگ‌ها، دامپ‌ها، اسکرین‌شات‌ها و انتقال APK/فایل             | adb تأمین‌شده توسط فراخوان‌کننده (شبیه‌ساز یا دستگاه)؛ [راهنمای ADB](../adb-device-analysis.md)                                      |
-| پروژه‌های JEB           | واحدهای پروژه از موتور، هش‌های مصنوع و شبه‌کدِ نوع/متد                                 | یک کلاینت JEB که توسط فراخوان‌کننده اجرا شده و MCP ارائه می‌دهد و با REA_JEB_MCP_URL انتخاب می‌شود؛ [راهنمای JEB](../jeb-analysis.md) |
-| منابع اندروید          | مانیفست رمزگشایی‌شده، جداول رشته‌ها، زبان‌ها و اطلاعات نسخه                             | راه‌انداز Apktool تأمین‌شده توسط فراخوان‌کننده؛ [راهنمای منابع](../apktool-resource-analysis.md)                                     |
-| برنامه‌های فلاتر         | هش اسنپ‌شات دارت، هش کتابخانه‌ها به تفکیک ABI و اصالت بیلد موتور                      | هیچ (تحلیل ایستا APK)؛ [راهنمای فلاتر](../flutter-analysis.md)                                                                     |
-| Firmware               | ناحیه‌ها، نتایج استخراج و تحویل به ابزارهای تحلیل بومی                               | Binwalk / Unblob در لینوکس؛ [راهنمای Firmware](../firmware-analysis.md)                                                           |
-| بسته‌های ضبط‌شده         | فیلدهای منتخب، مقادیر تکراری، فیلترها و قواعد رمزگشایی                              | Linux: TShark 4.x + prlimit; [راهنمای ضبط بسته](../packet-captures.md)                                                            |
-| ضبط بسته‌ها             | نقاط پایانی، DNS، TLS SNI، توزیع پروتکل و درخواست‌های HTTP                           | tshark و capinfos تأمین‌شده توسط فراخوان‌کننده؛ [راهنمای pcap](../pcap-analysis.md)                                                 |
-| سیگنال‌های منطقی ضبط‌شده | توضیحات رمزگشا، بازه‌های نمونه و اطلاعات عیب‌یابی                                      | Linux: sigrok-cli 0.7.2 + prlimit; [راهنمای سیگنال‌ها](../signal-recordings.md)                                                    |
-| بسته‌ها و منابع         | فهرست فایل‌ها، digestها، فایل‌های plist، ساختار bundle اپل و منابع استخراج‌شده         | [راهنمای آرتیفکت و JavaScript](../javascript-artifact-reconstruction.md)، [برنامه‌های اپل](../apple-application-analysis.md)       |
-| رفتار فرایند           | خروجی ترمینال، تعاملات، وضعیت خروج، مشاهدات سیستم فایل و مقایسهٔ اجراها               | Linux/macOS با PTY بومی؛ [ضبط فرایند](../process-capture.md)                                                                      |
-| باینری‌های Go           | نسخهٔ کامپایلر تعبیه‌شده، ماژول‌ها، جایگزینی‌ها و تنظیمات ساخت                          | بررسی ایستای داخلی ELF/PE/thin Mach-O; نصب Go لازم نیست                                                                            |
-| پایگاه‌های SQLite       | جدول‌ها، ستون‌ها، ایندکس‌ها، نماها، تریگرها و سطرهای انتخاب‌شدهٔ جدول‌های عادی            | snapshot محلی پایگاه/WAL؛ Node.js 24.x >=24.15 یا 26+ با محدودیت‌های بومی SQLite                                                   |
-| اشیای کد GPU           | هدف‌های CUDA/HIP، پارامترها و منابع کرنل‌های انتخاب‌شده و متن PTX نگه‌داری‌شده           | بررسی ایستای داخلی ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                         |
-| فایل‌های مدل            | فرادادهٔ GGUF / safetensors، اعلان تانسورها و مجموع‌های مشتق‌شده                        | بررسی هدر؛ هش کل فایل اختیاری است; [GGUF / safetensors](../model-artifacts.md)                                                    |
-| فرادادهٔ IL2CPP         | تصاویر اسمبلی، نام نوع‌ها/متدها و بازهٔ ایندکس‌ها در Unity global-metadata.dat         | رمزگشایی ایستای نسخه‌های 24، 27، 29، 31 و 39؛ بدون نیاز به Unity                                                                   |
-| Godot PCK              | فهرست و استخراج آرشیو، اطلاعات اصلی هدر/دایرکتوری و هویت محتوای انتخاب‌شده            | قالب‌های ایستای 2، 3 و 4؛ بدون نیاز به Godot                                                                                       |
-| مصنوعات WASM           | اعتبارسنجی، بخش‌ها، فرم دقیق WAT ورودی/خروجی و WAT رمزگشایی‌شده                       | تهیه‌شده توسط کاربر WABT 1.0.42; `inspect_wasm_artifact`                                                                           |
-| امضاهای APK            | امضاکنندگان v1/v2/v3/v3.1، اثر انگشت گواهی، چرخش کلید و سازگاری داخلی digest        | بررسی ایستای داخلی; `inspect_apk_signature`                                                                                       |
+| هدف                    | خروجی REA                                                                           | پیش‌نیازها و راهنما                                                                                                                                         |
+| ---------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| باینری‌های بومی         | شبه‌کد، اسمبلی، رشته‌ها، نمادها، فراخوانی‌ها و ارجاعات                                 | Hopper، Ghidra، IDA یا Kuna؛ [تحلیل بومی](../guides/native/native-investigation.md)                                                                        |
+| ساختار ELF آفلاین       | بخش‌ها، سگمنت‌ها، نمادها و relocationهای اصلی و گزینه‌های احتمالی کاهش آسیب‌پذیری ایستا | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ [تشخیص باینری](../guides/native/binary-diagnostics.md)                                                    |
+| PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields        | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                    |
+| PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash          | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                              |
+| Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts        | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                  |
+| بایت‌کد EVM             | selectorهای dispatch، offsetهای بایتی، آرگومان‌های استنباط‌شده و قابلیت تغییر وضعیت   | دادهٔ خام/hex محلی روی Linux x64؛ [راهنمای EVM آفلاین](../guides/evm/evm-bytecode.md)                                                                        |
+| Rust binaries          | Embedded cargo-auditable dependency list                                            | [Rust binaries](../rust-binaries.md)                                                                                                                       |
+| ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                     | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                               |
+| Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                 | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                              |
+| Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                         | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                              |
+| Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer         | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                     |
+| Erlang BEAM            | IFF chunks, atoms, exports, and tables                                              | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                          |
+| کرش‌های ثبت‌شدهٔ لینوکس   | یادداشت‌های خام، رجیسترها/سیگنال‌های تمام threadهای ثبت‌شده و گزینه‌های احتمالی نگاشت   | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ GDB/pwndbg اختیاری؛ [کرش‌های ثبت‌شده](../guides/native/recorded-crashes.md)                                 |
+| نصب‌های دسکتاپ          | نامزدهای زمان اجرا، فایل‌های شاهد، نشانه‌های مؤلفه‌ها و مراحل بعدی                     | بررسی محدود پوشه‌ها و سرآیندها；[برنامه‌های دسکتاپ](../desktop-applications.md)                                                                              |
+| JavaScript / Electron  | ماژول‌ها، importها، source mapها، مسیرها، IPC و ارتباط افزونه‌های بومی                | Node.js و npm؛ [تحلیل برنامه](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                |
+| وب‌سایت‌ها               | ساختار صفحه، اسکریپت‌ها، مشاهدات شبکه و اسکرین‌شات‌های درخواستی                        | مرورگر مبتنی بر Chrome؛ [تحلیل مرورگر](../guides/web/browser-observation.md)                                                                               |
+| داده‌های ضبط‌شدهٔ شبکه    | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR / Fiddler Everywhere SAZ؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](../guides/web/web-network-captures.md)               |
+| اسمبلی‌های .NET         | فراداده، دستورالعمل‌های CIL، وابستگی‌های بومی اعلام‌شده و مقایسهٔ buildها                | بررسی ایستا؛ [راهنمای کد مدیریت‌شده](../guides/managed/managed-code-analysis.md)                                                                            |
+| PyInstaller            | CArchive, PYZ, Python bytecode                                                      | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                      |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length                   | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                       |
+| فایل‌های APK اندروید    | تعاریف Manifest، کلاس‌ها، متدهای دیکامپایل‌شده و ارجاعات                               | JADX بدون رابط گرافیکی و JDK کامل در Linux/macOS/Windows x64؛ [راهنمای اندروید](../guides/android/android-analysis.md)                                     |
+| دستگاه‌های اندروید      | دستگاه‌ها، بسته‌ها، فرایندها، لاگ‌ها، دامپ‌ها، اسکرین‌شات‌ها و انتقال APK/فایل             | adb تأمین‌شده توسط فراخوان‌کننده (شبیه‌ساز یا دستگاه)؛ [راهنمای ADB](../guides/android/adb-device-analysis.md)                                                |
+| پروژه‌های JEB           | واحدهای پروژه از موتور، هش‌های مصنوع و شبه‌کدِ نوع/متد                                 | یک کلاینت JEB که توسط فراخوان‌کننده اجرا شده و MCP ارائه می‌دهد و با REA_JEB_MCP_URL انتخاب می‌شود؛ [راهنمای JEB](../providers/jeb-analysis.md)                |
+| منابع اندروید          | مانیفست رمزگشایی‌شده، جداول رشته‌ها، زبان‌ها و اطلاعات نسخه                             | راه‌انداز Apktool تأمین‌شده توسط فراخوان‌کننده؛ [راهنمای منابع](../guides/android/apktool-resource-analysis.md)                                               |
+| برنامه‌های فلاتر         | هش اسنپ‌شات دارت، هش کتابخانه‌ها به تفکیک ABI و اصالت بیلد موتور                      | هیچ (تحلیل ایستا APK)؛ [راهنمای فلاتر](../guides/android/flutter-analysis.md)                                                                               |
+| Firmware               | ناحیه‌ها، نتایج استخراج و تحویل به ابزارهای تحلیل بومی                               | Binwalk / Unblob در لینوکس؛ [راهنمای Firmware](../guides/firmware/firmware-analysis.md)                                                                    |
+| بسته‌های ضبط‌شده         | فیلدهای منتخب، مقادیر تکراری، فیلترها و قواعد رمزگشایی                              | Linux: TShark 4.x + prlimit; [راهنمای ضبط بسته](../guides/data/packet-captures.md)                                                                         |
+| ضبط بسته‌ها             | نقاط پایانی، DNS، TLS SNI، توزیع پروتکل و درخواست‌های HTTP                           | tshark و capinfos تأمین‌شده توسط فراخوان‌کننده؛ [راهنمای pcap](../guides/data/pcap-analysis.md)                                                              |
+| سیگنال‌های منطقی ضبط‌شده | توضیحات رمزگشا، بازه‌های نمونه و اطلاعات عیب‌یابی                                      | Linux: sigrok-cli 0.7.2 + prlimit; [راهنمای سیگنال‌ها](../guides/signals/signal-recordings.md)                                                              |
+| بسته‌ها و منابع         | فهرست فایل‌ها، digestها، فایل‌های plist، ساختار bundle اپل و منابع استخراج‌شده         | [راهنمای آرتیفکت و JavaScript](../guides/javascript/javascript-artifact-reconstruction.md)، [برنامه‌های اپل](../guides/apple/apple-application-analysis.md) |
+| رفتار فرایند           | خروجی ترمینال، تعاملات، وضعیت خروج، مشاهدات سیستم فایل و مقایسهٔ اجراها               | Linux/macOS با PTY بومی؛ [ضبط فرایند](../guides/runtime/process-capture.md)                                                                                |
+| باینری‌های Go           | نسخهٔ کامپایلر تعبیه‌شده، ماژول‌ها، جایگزینی‌ها و تنظیمات ساخت                          | بررسی ایستای داخلی ELF/PE/thin Mach-O; نصب Go لازم نیست                                                                                                     |
+| پایگاه‌های SQLite       | جدول‌ها، ستون‌ها، ایندکس‌ها، نماها، تریگرها و سطرهای انتخاب‌شدهٔ جدول‌های عادی            | snapshot محلی پایگاه/WAL؛ Node.js 24.x >=24.15 یا 26+ با محدودیت‌های بومی SQLite                                                                            |
+| اشیای کد GPU           | هدف‌های CUDA/HIP، پارامترها و منابع کرنل‌های انتخاب‌شده و متن PTX نگه‌داری‌شده           | بررسی ایستای داخلی ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                  |
+| فایل‌های مدل            | فرادادهٔ GGUF / safetensors، اعلان تانسورها و مجموع‌های مشتق‌شده                        | بررسی هدر؛ هش کل فایل اختیاری است; [GGUF / safetensors](../model-artifacts.md)                                                                             |
+| فرادادهٔ IL2CPP         | تصاویر اسمبلی، نام نوع‌ها/متدها و بازهٔ ایندکس‌ها در Unity global-metadata.dat         | رمزگشایی ایستای نسخه‌های 24، 27، 29، 31 و 39؛ بدون نیاز به Unity                                                                                            |
+| Godot PCK              | فهرست و استخراج آرشیو، اطلاعات اصلی هدر/دایرکتوری و هویت محتوای انتخاب‌شده            | قالب‌های ایستای 2، 3 و 4؛ بدون نیاز به Godot                                                                                                                |
+| مصنوعات WASM           | اعتبارسنجی، بخش‌ها، فرم دقیق WAT ورودی/خروجی و WAT رمزگشایی‌شده                       | تهیه‌شده توسط کاربر WABT 1.0.42; `inspect_wasm_artifact`                                                                                                    |
+| امضاهای APK            | امضاکنندگان v1/v2/v3/v3.1، اثر انگشت گواهی، چرخش کلید و سازگاری داخلی digest        | بررسی ایستای داخلی; `inspect_apk_signature`                                                                                                                |
 
 بررسی ایستای JavaScript و .NET فایل‌های ارائه‌شده را بدون اجرای برنامه می‌خواند. ضبط زمان اجرا، هدف انتخاب‌شده را با مجوزهای کاربری شما اجرا می‌کند یا با آن تعامل دارد؛ آثار این عملیات در راهنمای مربوط به هر نوع ضبط توضیح داده شده‌اند.
 
@@ -190,7 +197,7 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 
 برای باینری‌های بزرگ، مهلت شروع را با `REA_GHIDRA_STARTUP_TIMEOUT_MS` یا `REA_HOPPER_STARTUP_TIMEOUT_MS` افزایش دهید.
 
-فرمت‌های بومی و پشتیبانی سیستم میزبان بر اساس ارائه‌دهنده متفاوت‌اند. [راه‌اندازی Hopper و Ghidra](../installation.md#hopper)، [راهنمای IDA](../ida-provider.md)، [Kuna](../kuna-provider.md) و [پشتیبانی آزمایشی Ghidra در ویندوز](../windows-ghidra-p0.md) را ببینید. Ghidra همچنین از [تحلیل DOS شانزده‌بیتی](../ghidra-dos.md) پشتیبانی می‌کند. برای انتخاب ارائه‌دهنده، به [راهنمای CLI](../cli.md#choose-a-provider) مراجعه کنید. برای قابلیت‌هایی که پس از آخرین انتشار npm اضافه شده‌اند، [وضعیت انتشار](../installation.md#released-package-and-main) را بررسی کنید.
+فرمت‌های بومی و پشتیبانی سیستم میزبان بر اساس ارائه‌دهنده متفاوت‌اند. [راه‌اندازی Hopper و Ghidra](../getting-started/installation.md#hopper)، [راهنمای IDA](../providers/ida-provider.md)، [Kuna](../kuna-provider.md) و [پشتیبانی آزمایشی Ghidra در ویندوز](../providers/windows-ghidra-p0.md) را ببینید. Ghidra همچنین از [تحلیل DOS شانزده‌بیتی](../providers/ghidra-dos.md) پشتیبانی می‌کند. برای انتخاب ارائه‌دهنده، به [راهنمای CLI](../getting-started/cli.md#choose-a-provider) مراجعه کنید. برای قابلیت‌هایی که پس از آخرین انتشار npm اضافه شده‌اند، [وضعیت انتشار](../getting-started/installation.md#released-package-and-main) را بررسی کنید.
 
 ## نمونه‌های عملی
 
@@ -264,29 +271,35 @@ REA محیطی آمادهٔ اجرا همراه با یک آزمون ساده ب
 [مرجع محیط‌ها](../agent-environments.md) ·
 [نمایش را در X ببینید](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### محیط‌های برنامه‌های دسکتاپ
+
+REA می‌تواند برای یک برنامهٔ دسکتاپ Linux هم محیط بسازد که عامل با تصویر صفحه، ماوس و صفحه‌کلید از آن استفاده می‌کند. از یک درخواست یک‌خطی، مثل «یک محیط Gnote برایم بساز که در آن عامل روغن زیتون را به یادداشت فهرست خرید اضافه کند»، عامل شما برنامه را روی یک رایانهٔ ساخت محلی نصب می‌کند، کار را می‌نویسد، محیط را صادر می‌کند و کار را روی یک رایانهٔ تازه بررسی می‌کند. دستگاهی که آن را می‌سازد به Linux روی amd64 یا arm64، Docker و نسخه‌ای از چارچوب agentenv که راهنما تعیین کرده نیاز دارد.
+
+[راه‌اندازی محیط‌های برنامه‌های دسکتاپ](../desktop-build-computer.md)
+
 ## پرسش‌های متداول
 
 <details><summary><strong>کدام ایجنت‌ها می‌توانند از REA استفاده کنند؟</strong></summary>
 
-هر ایجنتی که از سرورهای MCP محلی پشتیبانی کند. فرایند setup، [ایجنت‌های پشتیبانی‌شده](../installation.md#supported-agents) را پیکربندی می‌کند؛ سایر کلاینت‌ها می‌توانند از [ثبت دستی MCP](../installation.md#mcp-registry) استفاده کنند.
+هر ایجنتی که از سرورهای MCP محلی پشتیبانی کند. فرایند setup، [ایجنت‌های پشتیبانی‌شده](../getting-started/installation.md#supported-agents) را پیکربندی می‌کند؛ سایر کلاینت‌ها می‌توانند از [ثبت دستی MCP](../getting-started/installation.md#mcp-registry) استفاده کنند.
 
 </details>
 
 <details><summary><strong>آیا به Hopper، Ghidra، IDA یا Kuna نیاز دارم؟</strong></summary>
 
-تحلیل عمیق بومی به یکی از آن‌ها نیاز دارد. بررسی ایستای JavaScript و .NET بدون موتور تحلیل بومی کار می‌کند. setup می‌تواند با تأیید شما Hopper را نصب کند؛ Ghidra، IDA و Kuna از نصب‌های موجود شما استفاده می‌کنند. [راه‌اندازی ارائه‌دهنده](../installation.md#hopper) را ببینید.
+تحلیل عمیق بومی به یکی از آن‌ها نیاز دارد. بررسی ایستای JavaScript و .NET بدون موتور تحلیل بومی کار می‌کند. setup می‌تواند با تأیید شما Hopper را نصب کند؛ Ghidra، IDA و Kuna از نصب‌های موجود شما استفاده می‌کنند. [راه‌اندازی ارائه‌دهنده](../getting-started/installation.md#hopper) را ببینید.
 
 </details>
 
 <details><summary><strong>آیا باید ابتدا Hopper را اجرا کنم؟</strong></summary>
 
-REA زمانی که عملیاتی به Hopper نیاز داشته باشد آن را اجرا می‌کند. در macOS، ممکن است هنگام نخستین اجرا پنجره‌ای برای انتخاب حالت آزمایشی یا فعال‌سازی مجوز نمایش داده شود. [راه‌اندازی Hopper و رفع اشکال](../installation.md#launcher-paths-and-troubleshooting) را ببینید.
+REA زمانی که عملیاتی به Hopper نیاز داشته باشد آن را اجرا می‌کند. در macOS، ممکن است هنگام نخستین اجرا پنجره‌ای برای انتخاب حالت آزمایشی یا فعال‌سازی مجوز نمایش داده شود. [راه‌اندازی Hopper و رفع اشکال](../getting-started/installation.md#launcher-paths-and-troubleshooting) را ببینید.
 
 </details>
 
 <details><summary><strong>نصب skill از skills.sh چه کاری انجام می‌دهد؟</strong></summary>
 
-این skill دستورالعمل‌های بررسی را برای ایجنت فراهم می‌کند. برای ثبت سرور MCP مربوط به REA و نصب دستورالعمل‌های متناظر، `npx rea-agents setup` را اجرا کنید و سپس ایجنت را مجدداً راه‌اندازی کنید. [نصب مستقل skill](../installation.md#skill-only-installation) را ببینید.
+این skill دستورالعمل‌های بررسی را برای ایجنت فراهم می‌کند. برای ثبت سرور MCP مربوط به REA و نصب دستورالعمل‌های متناظر، `npx rea-agents setup` را اجرا کنید و سپس ایجنت را مجدداً راه‌اندازی کنید. [نصب مستقل skill](../getting-started/installation.md#skill-only-installation) را ببینید.
 
 </details>
 
@@ -326,12 +339,12 @@ npx rea-agents@latest setup
 
 از [راهنماهای عملی وب‌سایت](https://rea.tools/fa/guides/) شروع کنید. برای گزینه‌های دقیق، پیش‌نیازها و قراردادهای خروجی:
 
-- [نصب و راه‌اندازی](../installation.md): ثبت ایجنت، پیکربندی ارائه‌دهنده، به‌روزرسانی و حذف نصب.
-- [آمادگی و رفع اشکال](../installation.md#check-readiness-for-your-task): عیب‌یابی یک ایجنت یا موتور تحلیل.
-- [CLI و شواهد](../cli.md): دستورات، انتخاب ارائه‌دهنده، snapshotها، ورود/خروج داده و وضعیت‌های خروج.
-- [قراردادهای MCP](../mcp-contracts.md) و [پرامپت‌های ایجنت](../mcp-prompts.md): نتایج ابزارها، نشست‌ها و بررسی‌های هدایت‌شده.
-- [فهرست ابزارها](../mcp-contracts.md#generated-catalog): فهرست تولیدشده هنگام build از ابزارها، ارائه‌دهندگان و دستورات CLI.
-- [نقشهٔ راه](../roadmap.md): برنامه‌های آینده و پیگیری قابلیت‌ها.
+- [نصب و راه‌اندازی](../getting-started/installation.md): ثبت ایجنت، پیکربندی ارائه‌دهنده، به‌روزرسانی و حذف نصب.
+- [آمادگی و رفع اشکال](../getting-started/installation.md#check-readiness-for-your-task): عیب‌یابی یک ایجنت یا موتور تحلیل.
+- [CLI و شواهد](../getting-started/cli.md): دستورات، انتخاب ارائه‌دهنده، snapshotها، ورود/خروج داده و وضعیت‌های خروج.
+- [قراردادهای MCP](../reference/mcp-contracts.md) و [پرامپت‌های ایجنت](../getting-started/mcp-prompts.md): نتایج ابزارها، نشست‌ها و بررسی‌های هدایت‌شده.
+- [فهرست ابزارها](../reference/mcp-contracts.md#generated-catalog): فهرست تولیدشده هنگام build از ابزارها، ارائه‌دهندگان و دستورات CLI.
+- [نقشهٔ راه](../development/roadmap.md): برنامه‌های آینده و پیگیری قابلیت‌ها.
 
 آسیب‌پذیری‌ها را از طریق [SECURITY.md](../../SECURITY.md) گزارش کنید.
 
@@ -357,7 +370,7 @@ applicable licenses.
 
 از کمک شما به REA استقبال می‌کنیم! برای گزارش خطا یا پیشنهاد قابلیت، یک [issue باز کنید](https://github.com/morluto/rea/issues) یا برای بهبود کد و مستندات [pull request بفرستید](https://github.com/morluto/rea/pulls).
 
-برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](../../CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](../testing.md) و برای ساختار پروژه [نقشهٔ معماری](../architecture.mermaid) را ببینید.
+برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](../../CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](../development/testing.md) و برای ساختار پروژه [نقشهٔ معماری](../architecture/architecture.mermaid) را ببینید.
 
 ## مجوز
 

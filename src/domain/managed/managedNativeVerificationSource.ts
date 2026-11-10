@@ -34,6 +34,11 @@ export interface ManagedNativeObservationFacts {
   readonly evidence: Evidence;
   readonly symbols: readonly NativeSymbol[];
   readonly supported: boolean;
+  /** Coverage of an export inventory; function observations are targeted. */
+  readonly exportCoverage?: {
+    readonly exhaustive: boolean;
+    readonly limitations: readonly string[];
+  };
 }
 
 const inputFailure = (
@@ -62,6 +67,10 @@ const readNativeObservation = (
     return ok({
       evidence,
       supported: true,
+      exportCoverage: {
+        exhaustive: payload.value.exports.exhaustive,
+        limitations: payload.value.exports.limitations,
+      },
       symbols: payload.value.exports.items.map((symbol) => ({
         evidence_id: evidence.evidence_id,
         operation: evidence.operation,

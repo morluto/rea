@@ -159,6 +159,10 @@ export const planSetupActions = async (input: {
   readonly clientIds: readonly string[];
   readonly skillClientIds: readonly string[];
   readonly installSkill: boolean;
+  /** Settings added to one client's registration only, by client id. */
+  readonly clientEnvironments?:
+    | Readonly<Record<string, SetupProviderEnvironment>>
+    | undefined;
 }): Promise<{
   readonly plannedActions: readonly SetupAction[];
   readonly selectedClients: readonly SetupClient[];
@@ -189,16 +193,6 @@ export const planSetupActions = async (input: {
       clientsToConfigure: [],
       blocker: hopperCache.error.message,
     };
-  const inspections = await Promise.all(
-    selectedClients.map(async (client) => ({
-      client,
-      inspection: await input.host.inspectClientConfiguration(
-        client,
-        input.providerEnvironment,
-        input.command,
-      ),
-    })),
-  );
   if (
     input.host.registrationCommandBlocker !== undefined &&
     selectedClients.some(
@@ -211,17 +205,14 @@ export const planSetupActions = async (input: {
       clientsToConfigure: [],
       blocker: input.host.registrationCommandBlocker,
     };
-  const invalid = inspections.find(
-    ({ inspection }) => inspection.status === "invalid",
-  );
-  if (invalid?.inspection.status === "invalid") {
+  const inspections = await inspectSelectedClients(input, selectedClients);
+  if ("blocker" in inspections)
     return {
       plannedActions: [],
       selectedClients,
       clientsToConfigure: [],
-      blocker: `${invalid.client.displayName ?? invalid.client.name}: ${invalid.inspection.remediation}`,
+      blocker: inspections.blocker,
     };
-  }
   let skillDestinations: readonly SkillDestination[] = [];
   try {
     if (input.installSkill)
@@ -251,6 +242,7 @@ export const planSetupActions = async (input: {
     skillDestinations,
     clients: clientPlans,
     providerEnvironment: input.providerEnvironment,
+    clientEnvironments: input.clientEnvironments,
     ...(input.discovery.linuxPackageFamily === undefined
       ? {}
       : { linuxPackageFamily: input.discovery.linuxPackageFamily }),
@@ -284,6 +276,51 @@ export const planSetupActions = async (input: {
     ...(blocker === undefined ? {} : { blocker }),
   };
 };
+
+/** Inspect each selected client's registration; the first invalid one blocks the plan. */
+const inspectSelectedClients = async (
+  input: Parameters<typeof planSetupActions>[0],
+  selectedClients: readonly SetupClient[],
+): Promise<
+  | readonly {
+      readonly client: SetupClient;
+      readonly inspection: ClientConfigurationInspection;
+    }[]
+  | { readonly blocker: string }
+> => {
+  const inspections = await Promise.all(
+    selectedClients.map(async (client) => ({
+      client,
+      inspection: await input.host.inspectClientConfiguration(
+        client,
+        clientEnvironment(input, client.name),
+        input.command,
+      ),
+    })),
+  );
+  const invalid = inspections.find(
+    ({ inspection }) => inspection.status === "invalid",
+  );
+  return invalid?.inspection.status === "invalid"
+    ? {
+        blocker: `${invalid.client.displayName ?? invalid.client.name}: ${invalid.inspection.remediation}`,
+      }
+    : inspections;
+};
+
+/** A client's registration settings: the shared ones, then its own. */
+export const clientEnvironment = (
+  input: {
+    readonly providerEnvironment: SetupProviderEnvironment;
+    readonly clientEnvironments?:
+      | Readonly<Record<string, SetupProviderEnvironment>>
+      | undefined;
+  },
+  client: string,
+): SetupProviderEnvironment => ({
+  ...input.providerEnvironment,
+  ...input.clientEnvironments?.[client],
+});
 
 /** Selected clients whose registration setup writes, with the disclosed operation. */
 const plannedClientWrites = (
@@ -329,6 +366,9 @@ const setupPlan = (input: {
     readonly backupPath?: string;
   }[];
   readonly providerEnvironment: SetupProviderEnvironment;
+  readonly clientEnvironments?:
+    | Readonly<Record<string, SetupProviderEnvironment>>
+    | undefined;
   readonly linuxPackageFamily?: LinuxPackageFamily;
   readonly command: readonly string[];
 }): readonly SetupAction[] => [
@@ -369,7 +409,7 @@ const setupPlan = (input: {
       detail: clientConfigurationDetail(
         client,
         input.command,
-        input.providerEnvironment,
+        clientEnvironment(input, client.name),
         input.installHopper,
       ),
       external: false,

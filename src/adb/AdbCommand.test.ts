@@ -233,7 +233,6 @@ it.each([true, false])(
       { timeoutMs: 100, maxOutputBytes: 1024, volatileOutput },
       undefined,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a capture allowance refusal");
     const projected = projectAnalysisError(result.error);
     expect(projected.retryable).toBe(volatileOutput);
@@ -263,7 +262,6 @@ it("reports the effective fixed adb deadline", async () => {
     { timeoutMs: 600_000, maxOutputBytes: 1024 },
     undefined,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected an adb deadline");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({
@@ -369,5 +367,63 @@ it.each([
   await expect(probe()).resolves.toMatchObject({
     ok: false,
     error: { capturedOutput: { stderr, exit_code: 1 } },
+  });
+});
+
+it("reports an adb that never started without claiming an exit code", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("spawn ENOTDIR"), {
+      code: "ENOTDIR",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "list_adb_devices",
+    { device: "device" },
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
+    ["devices"],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisProtocolError",
+      commandFailure: { code: "ENOTDIR", spawnFailed: true, signal: null },
+    },
+  });
+});
+
+it("reports exhausted host capacity rather than an adb protocol failure", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("spawn EAGAIN"), {
+      code: "EAGAIN",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "list_adb_devices",
+    { device: "device" },
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
+    ["devices"],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+      retryable: true,
+      reportedLimits: { spawn_error: "EAGAIN" },
+    },
   });
 });

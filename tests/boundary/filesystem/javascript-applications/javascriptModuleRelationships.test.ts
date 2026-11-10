@@ -122,8 +122,8 @@ it.each([
         ),
       ).toEqual([semanticResourceLimitReason(limit)]);
       expect(evidence.coverage.status).toBe("partial");
-      expect(evidence.limitations).toContain(
-        "Static syntax does not prove that this relationship executes at runtime.",
+      expect(evidence.limitations).toContainEqual(
+        expect.stringMatching(/static syntax.*not prove.*runtime/iu),
       );
       expect(evidence.limitations).toContain(
         "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",

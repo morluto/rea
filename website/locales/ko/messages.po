@@ -11079,7 +11079,8 @@ msgctxt "runtime"
 msgid "Switch to dark mode"
 msgstr "다크 모드로 전환"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/web-network-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-
 #. captures.md" >
 #. {ph1}: </a >
 #: website/public/guides/browser/index.html:487
@@ -12555,8 +12556,8 @@ msgstr "Claude Desktop · 데스크톱 채팅으로 사용하기"
 
 #. {ph0}: <a href="https://claude.ai/download">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#claude-desktop" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#claude-desktop" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:597
 #, python-brace-format
@@ -12599,12 +12600,11 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "설정 ID"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md" >
 #. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
-#. package-and-main" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#released-package-and-main" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:757
 #, python-brace-format
@@ -12629,8 +12629,8 @@ msgid ""
 msgstr ""
 "Grok Bot 채팅에서 Bot의 컴퓨터에 다음 명령어로 {ph0}라는 이름의 사용자 지정 MCP 서버를 추가해 달라고 요청하세요."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#other-client-settings" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#other-client-settings" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:788
 #, python-brace-format
@@ -12880,9 +12880,8 @@ msgstr ""
 "macOS가 자동화 권한을 요청하면 시스템 설정 → 개인정보 보호 및 보안 → 자동화에서 REA를 시작하는 앱을 허용한 뒤 다시 "
 "시도하세요."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#hopper" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1099
 #, python-brace-format
@@ -12958,11 +12957,11 @@ msgstr ""
 "이 명령어들은 같은 터미널 세션에서 실행하세요. 경로를 설정한 뒤 설정 명령어를 다시 실행하고, 갱신된 클라이언트 설정을 승인한 다음 "
 "에이전트를 다시 시작하세요."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#ghidra" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1258
@@ -13005,7 +13004,8 @@ msgid ""
 "rerun setup and restart your agent."
 msgstr "분석 도구 가이드에서 준비한 JSON 등록 파일을 사용한 뒤 설정 명령어를 다시 실행하고 에이전트를 다시 시작하세요."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/ida-
 #. provider.md" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1376
@@ -13149,13 +13149,16 @@ msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "프로세스 동작"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/flutter-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/flutter-
 #. analysis.md" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/javascript-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-
 #. artifact-reconstruction.md" >
 #. {ph3}: </a >
-#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/evm-
+#. {ph4}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-
 #. bytecode.md" >
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
@@ -13248,9 +13251,8 @@ msgid ""
 "REA's client configuration and skill."
 msgstr "전역 CLI를 설치했다면 {ph0}로 업데이트하세요. REA의 클라이언트 설정과 스킬을 제거하려면 {ph1}을 사용하세요."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
-#. update-and-remove" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1812
 #, python-brace-format
@@ -13467,9 +13469,8 @@ msgstr ""
 "macOS에서 빌드하려면 Xcode Command Line Tools, make, bison이 필요합니다. 컴퓨터에 맞는 가이드를 "
 "따르세요."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
-#. macos-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#missing-macos-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1216
 #, python-brace-format
@@ -13477,9 +13478,8 @@ msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
 msgstr "{ph0}macOS · Intel{ph1}"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
-#. arm64-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#macos-arm64-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1222
 #, python-brace-format
@@ -14819,7 +14819,8 @@ msgstr ""
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/android-
 #. analysis.md" >
 #. {ph3}: </a >
 #: website/public/showcase/aegis/index.html:714

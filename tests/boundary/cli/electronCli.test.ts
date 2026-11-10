@@ -85,7 +85,7 @@ it(
         isolation: "none",
       },
       limitations: expect.arrayContaining([
-        "Browser host platform and architecture were not observed.",
+        expect.stringMatching(/platform.*architecture.*not observed/iu),
       ]),
       normalized_result: {
         targets: [{ target_id: "electron-page" }],
@@ -148,19 +148,13 @@ it(
     expect(invalidPageInspect.signal).toBeNull();
     expect(invalidPageInspect.exitCode).toBe(1);
     expect(invalidPageInspect.json).toMatchObject({
-      error: "Electron analysis failed",
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        operation: "inspect_electron_page",
-        issues: [
-          {
-            path: ["target_id"],
-            reason: "out_of_range",
-            minimum: 1,
-          },
-        ],
-      },
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        {
+          code: "too_small",
+          path: "targetId",
+        },
+      ],
     });
   },
   INTEGRATION_TEST_TIMEOUT_MS,

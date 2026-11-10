@@ -176,6 +176,63 @@ it("records a residual question for partial verification with zero item counts",
   expect(harness.session.listUnknowns()).toHaveLength(1);
 });
 
+it("retains partial native export coverage after an observed match", async () => {
+  const harness = await createApplicationMcpHarness({
+    session: createTestBinarySession(() => {
+      throw new Error("No provider needed");
+    }),
+  });
+  onTestFinished(harness.close);
+  const original = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
+  if (original === undefined || original.subject === null)
+    throw new Error("Managed verification example is missing native Evidence");
+  const report = inspectMachoSchema.parse(original.normalized_result);
+  const native = createEvidence(
+    {
+      path: original.subject.local_path!,
+      sha256: original.subject.digest.sha256,
+      format: original.subject.format,
+    },
+    original.provider,
+    {
+      operation: "inspect_macho",
+      parameters: original.parameters,
+      result: {
+        ...report,
+        exports: {
+          ...report.exports,
+          exhaustive: false,
+          limitations: ["Export inventory may be incomplete."],
+        },
+      },
+      rawResult: null,
+    },
+  );
+  const response = await harness.client.callTool({
+    name: "verify_managed_native_boundaries",
+    arguments: {
+      managed_boundaries:
+        MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries,
+      native_observations: [native],
+    },
+  });
+  expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+  const evidence = parseEvidence(response.structuredContent);
+  const result = managedNativeVerificationResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(result.summary).toMatchObject({
+    verified: 1,
+    unresolved: 0,
+    contradicted: 0,
+  });
+  expect(result.coverage.status).toBe("partial");
+  expect(result.limitations).toContainEqual(
+    expect.stringContaining("Export inventory may be incomplete."),
+  );
+  expect(harness.session.listUnknowns()).toHaveLength(1);
+});
+
 it("records distinct unresolved managed boundary checks and makes exact replay idempotent", async () => {
   const harness = await createApplicationMcpHarness({
     session: createTestBinarySession(() => {

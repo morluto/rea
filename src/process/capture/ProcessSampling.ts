@@ -143,6 +143,7 @@ const readPsRowsRaw = async (
       session_id: Number(match[4]) || null,
       command: match[5] ?? "",
       startTime: undefined,
+      lifecycle: undefined,
     }))
     .filter(
       (row) =>

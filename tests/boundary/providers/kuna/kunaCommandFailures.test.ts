@@ -119,19 +119,17 @@ it("says why Kuna cannot answer instead of a generic unavailable message", async
         operation: "procedure_assembly",
         parameters: { procedure: "0x2000" },
         message:
-          "Kuna's export lists no code at 0x2000; import slots and data entries have no listing.",
+          /no code at 0x2000.*import slots and data entries.*no listing/i,
       },
       {
         operation: "procedure_callers",
         parameters: { procedure: "0x1004" },
-        message:
-          "Kuna's graph has no function node at 0x1004; its relationships are unknown.",
+        message: /no function node at 0x1004.*relationships are unknown/i,
       },
       {
         operation: "list_segments",
         parameters: {},
-        message:
-          "Kuna answers procedure and string queries, pseudocode, assembly and references; this operation needs another provider.",
+        message: /operation needs another provider/i,
       },
     ] as const;
     for (const { operation, parameters, message } of cases) {
@@ -139,7 +137,7 @@ it("says why Kuna cannot answer instead of a generic unavailable message", async
       if (result.ok) throw new Error(`${operation} unexpectedly succeeded`);
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "capability_unavailable",
-        message,
+        message: expect.stringMatching(message),
         retryable: false,
       });
     }

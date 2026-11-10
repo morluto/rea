@@ -27,11 +27,14 @@ export const setupOutcomeSnapshot = (value: unknown): JsonValue =>
   );
 
 export const throwIfSetupCancelled = (signal?: AbortSignal): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError("setup", { cause: signal.reason });
+  assertSetupActive(signal);
 };
 
-/** Finish admitted transactions, but never admit later work after cancellation. */
+/**
+ * Finish admitted transactions, but never admit later work after cancellation.
+ * A settled effect is returned, not discarded, so the workflow can record its
+ * outcome before it observes the cancellation.
+ */
 export const withSetupCancellation = (
   host: SetupHost,
   signal?: AbortSignal,
@@ -48,7 +51,6 @@ export const withSetupCancellation = (
       const value = await action(...args);
       if (operation !== undefined)
         recordEffect(operation, setupOutcomeSnapshot(value));
-      throwIfSetupCancelled(signal);
       return value;
     };
   return {
@@ -74,7 +76,6 @@ export const withSetupCancellation = (
         `configure_client:${args[0].name}`,
         setupOutcomeSnapshot(value),
       );
-      throwIfSetupCancelled(signal);
       return value;
     },
     clientNeedsConfigure: guard(host.clientNeedsConfigure.bind(host)),
@@ -86,4 +87,18 @@ export const withSetupCancellation = (
     installSkill: guard(host.installSkill.bind(host), "install_skill"),
     doctor: guard(host.doctor.bind(host)),
   };
+};
+
+/** Preserve the caller's exact reason while setup unwinds its resource owners. */
+export const assertSetupActive = (
+  signal?: AbortSignal,
+  failure?: string,
+): void => {
+  if (signal?.aborted)
+    throw new AnalysisCancelledError("setup", {
+      cause: signal.reason,
+      ...(failure === undefined
+        ? {}
+        : { diagnostics: { setup_failure: failure } }),
+    });
 };

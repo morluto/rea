@@ -260,7 +260,6 @@ it.each(
         { procedure: "main" },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected physical span failure");
       const primary = closeFails ? result.error.cleanupPrimary : result.error;
       expect(primary?._tag).toBe("ProviderAdapterError");
@@ -325,7 +324,6 @@ it.each([false, true])(
         { procedure: "main" },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected continued-read cancellation");
       const primary = closeFails ? result.error.cleanupPrimary : result.error;
       expect(primary).toBeInstanceOf(AnalysisCancelledError);

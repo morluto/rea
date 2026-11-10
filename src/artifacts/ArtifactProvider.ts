@@ -339,6 +339,9 @@ class ArtifactClient implements AnalysisClient {
             inputFormat: this.target.format,
             espFlashSelection: espFlashSelection(this.target),
             outputRoot: parsed.output_root,
+            ...(parsed.occurrence_ids === undefined
+              ? {}
+              : { occurrenceIds: parsed.occurrence_ids }),
             environment: this.environment,
             asarHeaderAdmission: runtimeAsarHeaderAdmission(
               this.environment,
