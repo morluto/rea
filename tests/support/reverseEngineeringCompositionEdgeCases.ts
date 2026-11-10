@@ -670,8 +670,9 @@ const registerSharedReverseEngineeringEdgeCasesPart8 = (): void => {
     );
     const service = new ReverseEngineeringService({ runOwned });
 
+    let running: ReturnType<typeof service.executeRizinCommand> | undefined;
     try {
-      const running = service.executeRizinCommand(
+      running = service.executeRizinCommand(
         { path, command: "iI" },
         { signal: controller.signal },
       );
@@ -687,6 +688,7 @@ const registerSharedReverseEngineeringEdgeCasesPart8 = (): void => {
       });
     } finally {
       release?.();
+      if (running !== undefined) await Promise.allSettled([running]);
       await service.close();
       await rm(directory, { recursive: true, force: true });
     }
