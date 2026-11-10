@@ -327,7 +327,7 @@ describe("empty form destinations with a document base URL", () => {
     nodes.attributes[2] = [href, guide, href, value.strings.length - 1];
     const result = capture(value);
     expect(result.nodes[2]?.attribute_names).toEqual(["href"]);
-    expect(result.urls.map(({ url }) => url)).toContain(
+    expect(result.urls.find(({ node_index }) => node_index === 2)?.url).toBe(
       `${origin}/screens/guide`,
     );
     expect(result.urls.map(({ url }) => url)).not.toContain(later);
