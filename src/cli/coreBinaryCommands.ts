@@ -264,7 +264,11 @@ const registerTraceCommand = (
   cli.command(CLI_COMMANDS.trace, {
     description: "Trace a literal feature through analyzed references",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("App or program path"),
       query: z.string().min(1).optional().describe("Literal feature query"),
     }),
     options: z.object({
