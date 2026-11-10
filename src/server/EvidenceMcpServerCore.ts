@@ -54,7 +54,10 @@ import {
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
-import { acceptStringifiedStructuredArguments } from "./toolRegistrationOptions.js";
+import {
+  acceptStringifiedStructuredArguments,
+  rejectedInputForIssues,
+} from "./toolRegistrationOptions.js";
 import {
   carriesTargetContentMarker,
   encodeToolResult,
@@ -92,7 +95,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
           if (context?.tool === tool && result.issues !== undefined)
             context.validation = {
               issues: result.issues as readonly z.core.$ZodIssue[],
-              input: value,
+              input: rejectedInputForIssues(result.issues) ?? value,
             };
           return result;
         };
@@ -397,7 +400,10 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     const recovered =
       config.inputSchema === undefined
         ? undefined
-        : acceptStringifiedStructuredArguments(config.inputSchema);
+        : acceptStringifiedStructuredArguments(config.inputSchema, {
+            tool: name,
+            maximumElements: this.maximumInputElements,
+          });
     const normalized =
       recovered === undefined || recovered === config.inputSchema
         ? config
