@@ -521,3 +521,25 @@ it("keeps explicit directories out of unavailable file components", async () => 
     inventory_complete: true,
   });
 });
+
+it.each([
+  ["Payload/Fixture.app/Resources/libswiftCore.dylib/readme.txt", false],
+  ["Payload/Fixture.app/Resources/LIBSWIFTCORE.DYLIB/libordinary.dylib", false],
+  ["Payload/Fixture.app/Frameworks/libswiftCore.dylib", true],
+  ["SwiftSupport/iphoneos/LIBSWIFTCORE.DYLIB", true],
+] as const)(
+  "classifies the Swift library leaf from ZIP member %s",
+  async (path, swift) => {
+    const projection = await projectArchive("SwiftConvention.ipa", [
+      ["Payload/Fixture.app/Info.plist"],
+      [path],
+    ]);
+    expect(projection.runtime_families.includes("swift-objective-c")).toBe(
+      swift,
+    );
+    expect(projection.coverage).toEqual({
+      status: "complete-within-inventory",
+      inventory_complete: true,
+    });
+  },
+);
