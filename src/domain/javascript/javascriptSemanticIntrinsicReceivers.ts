@@ -1,7 +1,12 @@
 import * as t from "@babel/types";
 
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  isUnmodifiedGlobalReference,
+  semanticAmbientObjectMayHaveChangedAt,
+} from "./javascriptSemanticAmbientWrites.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { semanticPrimitiveCandidates } from "./javascriptSemanticPrimitives.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -68,3 +73,40 @@ export const semanticPrimitiveArguments = (
         evaluateSemanticExpression(argument, state),
       ) !== null,
   );
+
+/** Fresh primitive arrays cannot retain object slots or select modified prototype hooks. */
+export const semanticPristineArrayConstruction = (
+  construction: t.NewExpression,
+  invocation: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isUnmodifiedGlobalReference(construction.callee, state, "Array") &&
+  semanticPrimitiveArguments(construction.arguments, state) &&
+  // Include argument evaluation and inherited numeric accessors through holes.
+  !["Array", "Object"].some((owner) =>
+    semanticAmbientObjectMayHaveChangedAt(
+      invocation,
+      state,
+      ["global", owner, "prototype"],
+      invocation,
+    ),
+  ) &&
+  !semanticOpaqueGlobalMayHaveChanged(invocation, state);
+
+/** Empty native Maps have no iterable hooks or retained entry objects. */
+export const semanticPristineEmptyMapConstruction = (
+  construction: t.NewExpression,
+  invocation: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isUnmodifiedGlobalReference(construction.callee, state, "Map") &&
+  construction.arguments.length === 0 &&
+  !["Map", "Object"].some((owner) =>
+    semanticAmbientObjectMayHaveChangedAt(
+      invocation,
+      state,
+      ["global", owner, "prototype"],
+      invocation,
+    ),
+  ) &&
+  !semanticOpaqueGlobalMayHaveChanged(invocation, state);

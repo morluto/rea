@@ -355,3 +355,171 @@ it.each([
     ).toEqual([false, false]);
   },
 );
+
+it.each(["Array", "Map"])(
+  "uses Object method contracts on pristine %s receivers",
+  (owner) => {
+    const construction = owner === "Array" ? "new Array(3)" : "new Map()";
+    const calls = [
+      "hasOwnProperty('0')",
+      "propertyIsEnumerable('0')",
+      "isPrototypeOf(null)",
+      ...(owner === "Map" ? ["toString()", "toLocaleString()"] : []),
+      "valueOf()",
+    ];
+    for (const call of calls) {
+      const method = call.slice(0, call.indexOf("("));
+      for (const bound of [false, true]) {
+        for (const used of method === "valueOf" ? [false] : [false, true]) {
+          const source = `${bound ? `const receiver = ${construction};` : ""}
+            ${used ? "const result = " : ""}${bound ? "receiver" : construction}.${call};`;
+          expect(proofFor(source, method), source).toEqual([true]);
+          const tail =
+            owner === "Array"
+              ? "const urls = ['/api']; const [url] = urls; fetch(url);"
+              : "const records = new Map(); records.get('/cache');";
+          expect(
+            analyzeJavaScriptStaticSource(source + tail).endpoints.map(
+              ({ value }) => value,
+            ),
+            source,
+          ).toEqual(owner === "Array" ? ["/api"] : []);
+        }
+      }
+    }
+  },
+);
+
+it.each(["Array", "Map"])(
+  "retains pristine %s receiver proof boundaries",
+  (owner) => {
+    const construction = owner === "Array" ? "new Array(3)" : "new Map()";
+    const rejected = [
+      `function run(${owner}) { new ${owner}().hasOwnProperty('x'); }`,
+      `${owner} = Replacement; ${construction}.hasOwnProperty('x');`,
+      `globalThis.${owner} = Replacement; new globalThis.${owner}().hasOwnProperty('x');`,
+      `new ${owner}(unknown).hasOwnProperty('x');`,
+      `new ${owner}(...args).hasOwnProperty('x');`,
+      `new ${owner}({}).hasOwnProperty('x');`,
+      `const o = ${construction}; o.x = 1; o.hasOwnProperty('x');`,
+      `const o = ${construction}; o.hasOwnProperty = patch; o.hasOwnProperty('x');`,
+      `const o = ${construction}; const alias = o; alias.x = 1; o.hasOwnProperty('x');`,
+      `const o = ${construction}; consume(o); o.hasOwnProperty('x');`,
+      `const o = ${construction}; Object.setPrototypeOf(o, custom); o.hasOwnProperty('x');`,
+      `${owner}.prototype.hasOwnProperty = patch; ${construction}.hasOwnProperty('x');`,
+      `Object.prototype.hasOwnProperty = patch; ${construction}.hasOwnProperty('x');`,
+      `${owner}.prototype[0] = patch; ${construction}.hasOwnProperty('x');`,
+      `${construction}.hasOwnProperty({toString() { patch(); return 'x'; }});`,
+      `${construction}.hasOwnProperty(...args);`,
+      `${construction}.hasOwnProperty(unknown);`,
+      `eval(code); ${construction}.hasOwnProperty('x');`,
+      `const o = ${construction}; o.hasOwnProperty((o.x = 1, 'x'));`,
+      `${construction}.hasOwnProperty((${owner}.prototype.x = 1, 'x'));`,
+      `${construction}.hasOwnProperty((Object.prototype.x = 1, 'x'));`,
+      `${construction}.hasOwnProperty((eval(code), 'x'));`,
+    ];
+    for (const source of rejected)
+      expect(proofFor(source), source).toEqual([false]);
+    for (const context of [
+      `const retained = ${construction}.valueOf();`,
+      `consume(${construction}.valueOf());`,
+      `${construction}.valueOf() && 0;`,
+      `const retained = flag ? ${construction}.valueOf() : 0;`,
+    ])
+      expect(proofFor(context, "valueOf"), context).toEqual([false]);
+    for (const context of [
+      `void ${construction}.valueOf();`,
+      `const unused = (${construction}.valueOf(), 0);`,
+      `flag ? ${construction}.valueOf() : 0;`,
+      `flag && ${construction}.valueOf();`,
+    ])
+      expect(proofFor(context, "valueOf"), context).toEqual([true]);
+    const source = `${construction}.hasOwnProperty('x');`;
+    const { index, calls } = fixture(source, "hasOwnProperty", false);
+    expect(
+      isIntrinsicNonEscapingObjectCall(calls[0]!, index.bindings),
+    ).toBeUndefined();
+  },
+);
+
+it.each([
+  ["new Array(3).toString();", "toString"],
+  ["new Array(3).toLocaleString();", "toLocaleString"],
+  [
+    "Number.prototype.toLocaleString = function() { patch(); }; new Array(1, 2).toLocaleString();",
+    "toLocaleString",
+  ],
+  ["new Map([]).hasOwnProperty('x');", "hasOwnProperty"],
+  ["new Set().hasOwnProperty('x');", "hasOwnProperty"],
+  ["new Date().hasOwnProperty('x');", "hasOwnProperty"],
+  ["new Map().hasOwnProperty.call(new Map(), 'x');", "call"],
+  [
+    "Map.prototype[Symbol.toStringTag] = 'Changed'; new Map().toString();",
+    "toString",
+  ],
+  [
+    "Object.defineProperty(Map.prototype, Symbol.toStringTag, {get() { patch(); }}); new Map().toString();",
+    "toString",
+  ],
+  [
+    "Map.prototype.toString = patch; new Map().toLocaleString();",
+    "toLocaleString",
+  ],
+  [
+    "const o = new Map(); o.toString = patch; o.toLocaleString();",
+    "toLocaleString",
+  ],
+] as const)(
+  "does not widen inherited Object dispatch: %s",
+  (source, method) => {
+    expect(proofFor(source, method)).toEqual([false]);
+  },
+);
+
+it.each(["Array", "Map"])(
+  "orders %s inherited method effects at invocation",
+  (owner) => {
+    const construction = owner === "Array" ? "new Array(3)" : "new Map()";
+    for (const later of [
+      "o.x = 1;",
+      `${owner}.prototype.hasOwnProperty = patch;`,
+      "Object.prototype.hasOwnProperty = patch;",
+    ]) {
+      expect(
+        proofFor(`const o = ${construction}; o.hasOwnProperty('x'); ${later}`),
+      ).toEqual([true]);
+    }
+    expect(
+      proofFor(`const o = ${construction}; function patch() {
+    ${owner}.prototype.hasOwnProperty = replacement;
+  } o.hasOwnProperty('x');`),
+    ).toEqual([false]);
+  },
+);
+
+it.each([
+  ["Map.prototype.hasOwnProperty = replacement;", "hasOwnProperty('x')"],
+  ["delete Map.prototype.hasOwnProperty;", "hasOwnProperty('x')"],
+  ["delete Object.prototype.hasOwnProperty;", "hasOwnProperty('x')"],
+  ["Object.prototype.toString = replacement;", "toLocaleString()"],
+  ["delete Object.prototype.toString;", "toString()"],
+  ["delete Map.prototype[Symbol.toStringTag];", "toString()"],
+  ["Object.prototype[Symbol.toStringTag] = 'Changed';", "toString()"],
+  [
+    "Object.defineProperty(Object.prototype, Symbol.toStringTag, {get() { patch(); }});",
+    "toLocaleString()",
+  ],
+  ["Object.setPrototypeOf(Map.prototype, custom);", "toString()"],
+  ["const o = new Map(); o[Symbol.toStringTag] = 'Changed';", "toString()"],
+] as const)(
+  "requires Map's own and inherited method surfaces: %s",
+  (prefix, call) => {
+    const receiver = prefix.startsWith("const o") ? "o" : "new Map()";
+    expect(
+      proofFor(
+        `${prefix} ${receiver}.${call};`,
+        call.slice(0, call.indexOf("(")),
+      ),
+    ).toEqual([false]);
+  },
+);

@@ -12,6 +12,8 @@ import {
 import {
   semanticConstructedReceiver,
   semanticPrimitiveArguments,
+  semanticPristineArrayConstruction,
+  semanticPristineEmptyMapConstruction,
 } from "./javascriptSemanticIntrinsicReceivers.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import type {
@@ -28,7 +30,7 @@ const PRISTINE_OBJECT_METHODS = new Set([
   "valueOf",
 ]);
 
-/** These methods cannot expose an empty native Object with no receiver/prototype hooks. */
+/** Object prototype methods on proven fresh receivers cannot expose shared hooks. */
 export const isIntrinsicNonEscapingObjectCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
@@ -51,10 +53,33 @@ export const isIntrinsicNonEscapingObjectCall = (
     paths: [[]],
     index,
   });
+  if (receiver === undefined) return false;
   if (
-    receiver === undefined ||
-    receiver.construction.arguments.length !== 0 ||
-    !isUnmodifiedGlobalReference(receiver.construction.callee, state, "Object")
+    isUnmodifiedGlobalReference(receiver.construction.callee, state, "Array")
+  ) {
+    // Arrays override both string methods; their contracts belong to Array operations.
+    if (
+      method === "toString" ||
+      method === "toLocaleString" ||
+      !semanticPristineArrayConstruction(receiver.construction, node, state)
+    )
+      return false;
+    return index === undefined ? undefined : true;
+  }
+  if (isUnmodifiedGlobalReference(receiver.construction.callee, state, "Map")) {
+    if (
+      !semanticPristineEmptyMapConstruction(receiver.construction, node, state)
+    )
+      return false;
+    return index === undefined ? undefined : true;
+  }
+  if (
+    !isUnmodifiedGlobalReference(
+      receiver.construction.callee,
+      state,
+      "Object",
+    ) ||
+    receiver.construction.arguments.length !== 0
   )
     return false;
   // Include argument evaluation and the whole prototype surface: toString

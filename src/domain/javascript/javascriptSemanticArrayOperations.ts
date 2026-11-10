@@ -6,14 +6,10 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  isUnmodifiedGlobalReference,
-  semanticAmbientObjectMayHaveChangedAt,
-} from "./javascriptSemanticAmbientWrites.js";
-import {
   semanticConstructedReceiver,
   semanticPrimitiveArguments,
+  semanticPristineArrayConstruction,
 } from "./javascriptSemanticIntrinsicReceivers.js";
-import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import type {
   JavaScriptBindingIndex,
   JavaScriptSemanticAnalysisState,
@@ -68,26 +64,7 @@ export const isIntrinsicNonEscapingArrayCall = (
   // value update would restore stale slots; new Array already evaluates unknown.
   if (
     receiver === undefined ||
-    !isUnmodifiedGlobalReference(
-      receiver.construction.callee,
-      state,
-      "Array",
-    ) ||
-    !semanticPrimitiveArguments(receiver.construction.arguments, state)
-  )
-    return false;
-  // Holes may select inherited numeric accessors, not only the named method.
-  // Include argument evaluation, which runs before the native mutation begins.
-  if (
-    ["Array", "Object"].some((owner) =>
-      semanticAmbientObjectMayHaveChangedAt(
-        node,
-        state,
-        ["global", owner, "prototype"],
-        node,
-      ),
-    ) ||
-    semanticOpaqueGlobalMayHaveChanged(node, state)
+    !semanticPristineArrayConstruction(receiver.construction, node, state)
   )
     return false;
   // Even direct constructions wait for propagated effects and convergence.

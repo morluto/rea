@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
@@ -347,3 +349,13 @@ it.each(["at(0)", "pop()", "shift()"])(
     ]);
   },
 );
+
+it("does not treat Array's locale override as an inherited Object method", () => {
+  const observed: string[] = [];
+  const source = `Number.prototype.toLocaleString = function() {
+    fetch('/locale-hook'); return 'number';
+  }; new Array(1, 2).toLocaleString();`;
+  runInNewContext(source, { fetch: (value: string) => observed.push(value) });
+  expect(observed).toEqual(["/locale-hook", "/locale-hook"]);
+  expect(proofFor(source, "toLocaleString")).toEqual([false]);
+});

@@ -336,3 +336,113 @@ it("keeps an exhausted primitive proof unknown", () => {
     endpoints(source + capture, { primitive_candidates: 1 }),
   ).not.toContain("/api");
 });
+
+it.each(["Array.isArray", "Reflect.ownKeys"])(
+  "preserves native Map lookup after %s of a proven empty Map",
+  (method) => {
+    expect(runInNewContext(`${method}(new Map())`)).toEqual(
+      method === "Array.isArray" ? false : [],
+    );
+    for (const bound of [false, true]) {
+      for (const used of method === "Array.isArray" ? [false, true] : [false]) {
+        const source = `${bound ? "const map = new Map();" : ""}
+          ${used ? "const result = " : ""}${method}(${bound ? "map" : "new Map()"});`;
+        const tail = "const records = new Map(); records.get('/cache');";
+        expect(proof(source), source).toBe(true);
+        expect(() => runInNewContext(source + tail)).not.toThrow();
+        expect(endpoints(source + tail), source).toEqual([]);
+      }
+    }
+  },
+);
+
+it.each(["Array.isArray", "Reflect.ownKeys"])(
+  "keeps empty Map inspection authority bounded for %s",
+  (method) => {
+    const namespace = method.split(".")[0];
+    for (const source of [
+      `function run(Map) { ${method}(new Map()); }`,
+      `Map = Replacement; ${method}(new Map());`,
+      `globalThis.Map = Replacement; ${method}(new globalThis.Map());`,
+      `${namespace} = replacement; ${method}(new Map());`,
+      `${method} = replacement; ${method}(new Map());`,
+      `const map = new Map(); map.x = 1; ${method}(map);`,
+      `const map = new Map(); const alias = map; alias.x = 1; ${method}(map);`,
+      `const map = new Map(); consume(map); ${method}(map);`,
+      `const map = new Map(); Object.setPrototypeOf(map, custom); ${method}(map);`,
+      `Map.prototype.x = 1; ${method}(new Map());`,
+      `Object.prototype.x = 1; ${method}(new Map());`,
+      `delete Map.prototype.get; ${method}(new Map());`,
+      `Object.defineProperty(Map.prototype, Symbol.toStringTag, {get() { patch(); }}); ${method}(new Map());`,
+      `function later() { Map.prototype.x = 1; } ${method}(new Map());`,
+      `eval(code); ${method}(new Map());`,
+      `${method}(new Map([]));`,
+      `${method}(new Map(undefined));`,
+      `${method}(new Map(...args));`,
+      `${method}(...[new Map()]);`,
+      `${method}(new Set());`,
+      `${method}(new Date());`,
+      `const inspect = ${method}; inspect(new Map());`,
+      `${method}.call(null, new Map());`,
+      `${method}.apply(null, [new Map()]);`,
+      `const inspect = ${method}.bind(null); inspect(new Map());`,
+    ])
+      expect(proof(source), source).toBe(false);
+    for (const effect of [
+      "Map.prototype.x = 1",
+      "Object.prototype.x = 1",
+      "eval(code)",
+      "consume(map)",
+      "map.x = 1",
+    ]) {
+      const source = `const map = new Map(); ${method}(map, (${effect}, 0));`;
+      expect(proof(source), source).toBe(false);
+    }
+    const source = `${method}(new Map());`;
+    const { calls, query } = fixture(source, false);
+    expect(query.argument(calls[0]!, calls[0]!.arguments[0]!)).toBeUndefined();
+  },
+);
+
+it.each([
+  "const result = Reflect.ownKeys(new Map());",
+  "consume(Reflect.ownKeys(new Map()));",
+  "Reflect.ownKeys(new Map()) && 0;",
+  "const result = flag ? Reflect.ownKeys(new Map()) : 0;",
+])("retains container-result uncertainty for empty Map: %s", (source) => {
+  const { index, calls, query } = fixture(source);
+  const call = calls.find(
+    (call) =>
+      t.isMemberExpression(call.callee) &&
+      t.isIdentifier(call.callee.object, { name: "Reflect" }),
+  )!;
+  expect(query.argument(call, call.arguments[0]!, index)).toBe(false);
+});
+
+it.each(METHODS.filter((method) => method.startsWith("Object.")))(
+  "preserves the existing empty Map argument boundary for %s",
+  (method) => {
+    for (const used of [false, true]) {
+      const source = `${used ? "const result = " : ""}${method}(new Map());`;
+      expect(proof(source)).toBe(false);
+      expect(
+        endpoints(source + "const records = new Map(); records.get('/cache');"),
+      ).toEqual(["/cache"]);
+    }
+  },
+);
+
+it.each(["Array.isArray", "Reflect.ownKeys"])(
+  "retains the selected %s callee before later arguments",
+  (method) => {
+    const source = `const map = new Map(); ${method}(map, (${method} = replacement, 0));`;
+    expect(proof(source)).toBe(true);
+    expect(() =>
+      runInNewContext(source, {
+        replacement() {
+          throw new Error("Wrong callee");
+        },
+      }),
+    ).not.toThrow();
+  },
+);
