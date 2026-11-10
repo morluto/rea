@@ -50,10 +50,18 @@ const compoundFile = (options: {
   file.writeUInt32LE(0, 0x40);
   file.writeUInt32LE(END, 0x44);
   file.writeUInt32LE(0, 0x48);
+  // Each directory sector is 4 entries; a longer table chains them.
+  const directorySectors = Math.max(
+    1,
+    Math.ceil((options.entries.length * 128) / SECTOR),
+  );
   for (let index = 0; index < 109; index += 1)
     file.writeUInt32LE(index === 0 ? 0 : FREE, 0x4c + index * 4);
   for (let index = 0; index < 128; index += 1)
-    file.writeUInt32LE(fat[index] ?? FREE, SECTOR + index * 4);
+    file.writeUInt32LE(
+      fat[index] ?? (index < directorySectors ? 1 + index : FREE),
+      SECTOR + index * 4,
+    );
   options.entries.forEach((entry, index) => {
     const base = 2 * SECTOR + index * 128;
     const name = Buffer.from(`${entry.name}\0`, "utf16le");
@@ -73,7 +81,13 @@ const root = (
   child: number | undefined,
   extra: readonly Entry[],
 ): readonly Entry[] => [
-  { name: "Root Entry", type: 5, start: END, size: 0, ...(child === undefined ? {} : { child }) },
+  {
+    name: "Root Entry",
+    type: 5,
+    start: END,
+    size: 0,
+    ...(child === undefined ? {} : { child }),
+  },
   ...extra,
 ];
 
@@ -187,9 +201,7 @@ it("reports a directory tree link that leaves the entry table", () => {
 it("reports a link that would revisit an entry as a cycle", () => {
   const image = parse(
     compoundFile({
-      entries: root(1, [
-        { name: "a", type: 2, start: 2, size: 512, right: 1 },
-      ]),
+      entries: root(1, [{ name: "a", type: 2, start: 2, size: 512, right: 1 }]),
     }),
   );
   expect(image.limitations).toContainEqual(
@@ -248,9 +260,7 @@ it("rejects a directory chain that leaves the declared file", () => {
 });
 
 it("refuses a file above the fixed ceiling and streams a parse below it", () => {
-  expect(
-    createCompoundFileDecoder(COMPOUND_FILE_MAX_BYTES + 1).ok,
-  ).toBe(false);
+  expect(createCompoundFileDecoder(COMPOUND_FILE_MAX_BYTES + 1).ok).toBe(false);
   const decoder = createCompoundFileDecoder(COMPOUND_FILE_MAX_BYTES);
   expect(decoder.ok).toBe(true);
   if (!decoder.ok) return;
@@ -258,4 +268,16 @@ it("refuses a file above the fixed ceiling and streams a parse below it", () => 
   expect(decoder.value.write(bytes).ok).toBe(true);
   const image = decoder.value.finish();
   expect(image.ok).toBe(true);
+});
+
+it("refuses a DIFAT that names more FAT sectors than the file holds", () => {
+  // Every header DIFAT slot names sector 1, so the ids are neither free nor
+  // unique; the table must be bounded by the file, not by that count.
+  const file = compoundFile({ entries: root(undefined, []) });
+  for (let index = 0; index < 109; index += 1)
+    file.writeUInt32LE(1, 0x4c + index * 4);
+  const result = parseCompoundFile(file);
+  expect(!result.ok && result.error.message).toMatch(
+    /DIFAT names .* FAT sector/u,
+  );
 });

@@ -17,9 +17,8 @@ export const COMPOUND_FILE_HEADER_BYTES = 512;
 
 export const hasCompoundFileSignature = (prefix: Uint8Array): boolean =>
   prefix.length >= COMPOUND_FILE_MAGIC_BYTES &&
-  Buffer.from(prefix.subarray(0, COMPOUND_FILE_MAGIC_BYTES)).toString(
-    "hex",
-  ) === COMPOUND_FILE_MAGIC;
+  Buffer.from(prefix.subarray(0, COMPOUND_FILE_MAGIC_BYTES)).toString("hex") ===
+    COMPOUND_FILE_MAGIC;
 
 /**
  * Fixed whole-file ceiling. The directory and allocation tables are read
@@ -315,10 +314,7 @@ export const parseCompoundFile = (
   // Collect FAT sector ids: 109 inline, then the DIFAT chain.
   const fatSectorIds: number[] = [];
   for (let index = 0; index < DIFAT_ENTRIES_IN_HEADER; index += 1) {
-    const sector = header.getUint32(
-      HEADER.difatEntries + index * 4,
-      true,
-    );
+    const sector = header.getUint32(HEADER.difatEntries + index * 4, true);
     if (sector !== CFB_FREE_SECTOR) fatSectorIds.push(sector);
   }
   const difatSectors: number[] = [];
@@ -358,14 +354,28 @@ export const parseCompoundFile = (
     );
 
   const entriesPerSector = sectorBytes / 4;
+  // A malformed DIFAT can repeat sector ids, so the table is bounded by the
+  // sectors the file actually holds rather than by the DIFAT's own count.
+  if (fatSectorIds.length > sectorCount)
+    return err(
+      failure(
+        `DIFAT names ${String(fatSectorIds.length)} FAT sector(s), more than the ${String(sectorCount)} sector(s) the file holds`,
+      ),
+    );
   const fat = new Uint32Array(fatSectorIds.length * entriesPerSector);
   let fatCells = 0;
   let unlistedFatSectors = 0;
+  const seenFatSectors = new Set<number>();
   for (const sector of fatSectorIds) {
     if (sector >= sectorCount || isMarker(sector)) {
       unlistedFatSectors += 1;
       continue;
     }
+    if (seenFatSectors.has(sector)) {
+      unlistedFatSectors += 1;
+      continue;
+    }
+    seenFatSectors.add(sector);
     const offset = sectorOf(sector, sectorBytes);
     const sectorView = new DataView(
       bytes.buffer,
@@ -453,32 +463,55 @@ export const parseCompoundFile = (
   const visited = new Set<number>();
   let cycleCount = 0;
   const visit = (index: number, parent: number, prefix: string): void => {
-    if (index >= entryCount) {
-      limitations.push(
-        `directory entry ${String(parent)} links to entry ${String(index)}, which is outside the ${String(entryCount)} entries the directory stream holds`,
-      );
-      return;
+    // An explicit stack keeps a long sibling chain from nesting one call per
+    // entry; a malformed tree can hold far more than the call stack allows.
+    const pending: { index: number; parent: number; prefix: string }[] = [
+      { index, parent, prefix },
+    ];
+    while (pending.length > 0) {
+      const next = pending.pop() as {
+        index: number;
+        parent: number;
+        prefix: string;
+      };
+      const entryIndex = next.index;
+      if (entryIndex >= entryCount) {
+        limitations.push(
+          `directory entry ${String(next.parent)} links to entry ${String(entryIndex)}, which is outside the ${String(entryCount)} entries the directory stream holds`,
+        );
+        continue;
+      }
+      if (visited.has(entryIndex)) {
+        cycleCount += 1;
+        continue;
+      }
+      visited.add(entryIndex);
+      parents.set(entryIndex, next.parent);
+      const entry = raw[entryIndex] as RawEntry;
+      const path =
+        entry.name === null
+          ? null
+          : next.prefix === ""
+            ? entry.name
+            : `${next.prefix}/${entry.name}`;
+      if (path !== null) paths.set(entryIndex, path);
+      // Siblings share this entry's parent, so they keep its prefix; only a
+      // storage's children take its full path.
+      if (entry.leftSibling !== null)
+        pending.push({
+          index: entry.leftSibling,
+          parent: entryIndex,
+          prefix: next.prefix,
+        });
+      if (entry.rightSibling !== null)
+        pending.push({
+          index: entry.rightSibling,
+          parent: entryIndex,
+          prefix: next.prefix,
+        });
+      if (path !== null && entry.type !== "stream" && entry.child !== null)
+        pending.push({ index: entry.child, parent: entryIndex, prefix: path });
     }
-    if (visited.has(index)) {
-      cycleCount += 1;
-      return;
-    }
-    visited.add(index);
-    parents.set(index, parent);
-    const entry = raw[index] as RawEntry;
-    const path =
-      entry.name === null
-        ? null
-        : prefix === ""
-          ? entry.name
-          : `${prefix}/${entry.name}`;
-    if (path !== null) paths.set(index, path);
-    // Siblings share this entry's parent, so they keep its prefix; only a
-    // storage's children take its full path.
-    visitTree(entry.leftSibling, index, prefix);
-    visitTree(entry.rightSibling, index, prefix);
-    if (path !== null && entry.type !== "stream")
-      visitTree(entry.child, index, path);
   };
   const visitTree = (
     index: number | null,
@@ -580,12 +613,10 @@ export const parseCompoundFile = (
     directory_entry_count: entries.length,
     stream_count: entries.filter((entry) => entry.type === "stream").length,
     storage_count: entries.filter((entry) => entry.type === "storage").length,
-    root_storage_count: entries.filter(
-      (entry) => entry.type === "root-storage",
-    ).length,
-    unallocated_entry_count: entries.filter(
-      (entry) => entry.type === "unknown",
-    ).length,
+    root_storage_count: entries.filter((entry) => entry.type === "root-storage")
+      .length,
+    unallocated_entry_count: entries.filter((entry) => entry.type === "unknown")
+      .length,
     orphan_entry_count: orphanCount,
     unreadable_entry_count: raw.filter((entry) => !entry.definedType).length,
     broken_chain_count: brokenChains,
