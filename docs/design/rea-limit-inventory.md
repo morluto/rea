@@ -10,7 +10,8 @@ entry in [`numericLimitRegistry.ts`](https://github.com/morluto/rea/blob/main/sr
 with a reason.
 
 `update_mode` is `runtime` when `update_analysis_settings` can change the active
-value, and `restart` when this process keeps the value it started with.
+value, `restart` when this process keeps the value it started with, and
+`parameter` when this call supplied the value.
 `pending_restart` is true only when a configured value is not the one this
 process is using. A rejected Windows ChangeTime launch value is not active, so
 that failure reports `pending_restart: true`. Every other value reported here
