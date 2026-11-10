@@ -1317,6 +1317,7 @@ export class ReverseEngineeringService {
     if (lookup.status !== "found") {
       const missing = lookup.status === "missing" ? lookup : undefined;
       const stopped = missing?.stoppedAt;
+      const denied = missing?.deniedAt;
       const cwdCode =
         lookup.status === "no-working-directory"
           ? commandFailureCode(lookup.cause)
@@ -1333,6 +1334,10 @@ export class ReverseEngineeringService {
         ...(missing?.selectedPath === undefined
           ? {}
           : { provider_executable_path: missing.selectedPath }),
+        // Where a launch by name fails with EACCES and access must be granted.
+        ...(denied === undefined
+          ? {}
+          : { executable_lookup_denied_candidate: denied }),
         ...(stopped === undefined
           ? {}
           : {
@@ -1347,7 +1352,9 @@ export class ReverseEngineeringService {
           lookup.status === "no-working-directory"
             ? "the executable could not be located: its lookup needed the working directory, which could not be read"
             : stopped === undefined
-              ? "the executable could not be located"
+              ? denied === undefined
+                ? "the executable could not be located"
+                : `the executable could not be located; the search moved past ${denied} (EACCES), which lacks execute permission or is under a directory that cannot be searched`
               : `the executable lookup stopped at ${stopped.candidate}${stopped.code === undefined ? "" : ` (${stopped.code})`}, where at least one native search stops, so the host's own search decides what runs`,
           profile.executable,
           Object.keys(observed).length === 0 ? undefined : observed,

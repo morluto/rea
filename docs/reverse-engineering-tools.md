@@ -186,7 +186,11 @@ also keeps the selected `provider_executable` and, for a call with a target, its
 
 REA reports a version only for the file it runs. The lookup moves past what every native
 `PATH` search moves past: a missing file, a non-directory, a denied directory
-and a file without execute permission. On Linux and macOS it also skips an
+and a file without execute permission. When it finds no executable after
+moving past a denied directory or file, a launch by name fails with `EACCES`:
+a limitation names the first such file, and Evidence or the launch failure
+keeps it as `executable_lookup_denied_candidate`, where access must be granted.
+On Linux and macOS it also skips an
 entry too long for the native path buffer. At any other error, such as a
 symbolic link loop, a stale network file handle or an I/O error, at least one
 of the searches of glibc, musl, Android and libuv stops, so the lookup stops

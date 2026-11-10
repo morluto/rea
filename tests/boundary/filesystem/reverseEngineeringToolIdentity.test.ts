@@ -441,6 +441,15 @@ posix(
     await expect(
       lookupExecutable("rizin", cwd, `${unexecutable}${delimiter}${directory}`),
     ).resolves.toEqual({ status: "found", path: executable });
+    // Without a later match, the first file it moved past is where a launch
+    // by name is denied.
+    await expect(lookupExecutable("rizin", cwd, unexecutable)).resolves.toEqual(
+      {
+        status: "missing",
+        checked: [`${join(unexecutable, "rizin")} (EACCES)`],
+        deniedAt: join(unexecutable, "rizin"),
+      },
+    );
     // The execute check stops the same way, as at an I/O error on a mount.
     const failing = join(unexecutable, "rizin");
     await expect(
@@ -703,6 +712,40 @@ posix(
           limitation.includes("ELOOP"),
       ),
     ).toBe(true);
+  },
+);
+
+posix(
+  "keeps the PATH candidate a launch by name is denied when the search finds only files it cannot run",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    await chmod(executable, 0o644);
+    // Every native search moves past the file, then fails with EACCES.
+    const run = vi.fn(
+      async (
+        _command: string,
+        _args: readonly string[],
+        _options?: ExecFileOutputOptions,
+      ): Promise<never> => {
+        throw Object.assign(new Error("spawn EACCES"), { code: "EACCES" });
+      },
+    );
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (result.ok) throw new Error("Expected the launch to fail");
+    expect(run.mock.calls.map(([command]) => command)).toEqual(["rizin"]);
+    expect(result.error.diagnostics).toMatchObject({
+      provider_executable: "rizin",
+      executable_lookup_denied_candidate: executable,
+    });
+    // The denied file is where access must be granted, not the file that ran.
+    expect(result.error.diagnostics).not.toHaveProperty(
+      "provider_executable_path",
+    );
   },
 );
 

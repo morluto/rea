@@ -37,6 +37,12 @@ export type ExecutableLookup =
         readonly candidate: string;
         readonly code?: string;
       };
+      /**
+       * The first PATH candidate the search moved past with EACCES: a file
+       * without execute permission or one under an unsearchable directory.
+       * A launch by name then fails with EACCES, and this is where to grant it.
+       */
+      readonly deniedAt?: string;
     }
   /** A relative command, or a match under a relative PATH entry, needed the working directory, which could not be read. */
   | { readonly status: "no-working-directory"; readonly cause: unknown }
@@ -106,6 +112,11 @@ export const lookupExecutable = async (
   try {
     const checked: string[] = [];
     let selectedPath: string | undefined;
+    let deniedAt: string | undefined;
+    const movedPast = (candidate: string, code: string | undefined): void => {
+      checked.push(`${candidate}${systemErrorSuffix(code)}`);
+      if (!explicit && code === "EACCES") deniedAt ??= candidate;
+    };
     const missing = (stoppedAt?: {
       readonly candidate: string;
       readonly code: string | undefined;
@@ -113,6 +124,7 @@ export const lookupExecutable = async (
       status: "missing",
       checked,
       ...(selectedPath === undefined ? {} : { selectedPath }),
+      ...(deniedAt === undefined ? {} : { deniedAt }),
       ...(stoppedAt === undefined
         ? {}
         : {
@@ -156,7 +168,7 @@ export const lookupExecutable = async (
             code,
             cause: metadata.cause,
           };
-        checked.push(`${candidate}${systemErrorSuffix(code)}`);
+        movedPast(candidate, code);
         if (searchMovesPast(code)) continue;
         return missing({ candidate, code });
       }
@@ -180,7 +192,7 @@ export const lookupExecutable = async (
             }
           : { status: "no-working-directory", cause: unnamed.cause };
       const code = systemErrorCode(executable.cause);
-      checked.push(`${candidate}${systemErrorSuffix(code)}`);
+      movedPast(candidate, code);
       if (!searchMovesPast(code)) return missing({ candidate, code });
     }
     return missing();
