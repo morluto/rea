@@ -447,7 +447,10 @@ posix(
       {
         status: "missing",
         checked: [`${join(unexecutable, "rizin")} (EACCES)`],
-        deniedAt: join(unexecutable, "rizin"),
+        deniedAt: {
+          candidate: join(unexecutable, "rizin"),
+          reason: "permission",
+        },
       },
     );
     // The execute check stops the same way, as at an I/O error on a mount.
@@ -715,12 +718,26 @@ posix(
   },
 );
 
-posix(
-  "keeps the PATH candidate a launch by name is denied when the search finds only files it cannot run",
-  async () => {
+posix.each([
+  [
+    "a file without execute permission",
+    "permission",
+    (file: string) => chmod(file, 0o644),
+  ],
+  [
+    "a directory",
+    "not-regular-file",
+    async (file: string) => {
+      await rm(file);
+      await mkdir(file);
+    },
+  ],
+] as const)(
+  "keeps the PATH candidate a launch by name is denied when the search finds only %s",
+  async (_case, reason, deny) => {
     const { executable, path } = await rizinExecutableFixture();
-    await chmod(executable, 0o644);
-    // Every native search moves past the file, then fails with EACCES.
+    await deny(executable);
+    // Every native search moves past the candidate, then fails with EACCES.
     const run = vi.fn(
       async (
         _command: string,
@@ -741,6 +758,7 @@ posix(
     expect(result.error.diagnostics).toMatchObject({
       provider_executable: "rizin",
       executable_lookup_denied_candidate: executable,
+      executable_lookup_denied_reason: reason,
     });
     // The denied file is where access must be granted, not the file that ran.
     expect(result.error.diagnostics).not.toHaveProperty(

@@ -190,6 +190,9 @@ and a file without execute permission. When it finds no executable after
 moving past a denied directory or file, a launch by name fails with `EACCES`:
 a limitation names the first such file, and Evidence or the launch failure
 keeps it as `executable_lookup_denied_candidate`, where access must be granted.
+A candidate that is not a regular file, such as a directory, is denied the same
+way, since the host refuses to run it; `executable_lookup_denied_reason` is
+`permission` or `not-regular-file`.
 On Linux and macOS it also skips an
 entry too long for the native path buffer. At any other error, such as a
 symbolic link loop, a stale network file handle or an I/O error, at least one

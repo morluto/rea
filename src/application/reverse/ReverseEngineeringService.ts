@@ -1337,7 +1337,10 @@ export class ReverseEngineeringService {
         // Where a launch by name fails with EACCES and access must be granted.
         ...(denied === undefined
           ? {}
-          : { executable_lookup_denied_candidate: denied }),
+          : {
+              executable_lookup_denied_candidate: denied.candidate,
+              executable_lookup_denied_reason: denied.reason,
+            }),
         ...(stopped === undefined
           ? {}
           : {
@@ -1354,7 +1357,7 @@ export class ReverseEngineeringService {
             : stopped === undefined
               ? denied === undefined
                 ? "the executable could not be located"
-                : `the executable could not be located; the search moved past ${denied} (EACCES), which lacks execute permission or is under a directory that cannot be searched`
+                : `the executable could not be located; a launch by name is denied (EACCES) at ${denied.candidate}, ${denied.reason === "permission" ? "which lacks execute permission or is under a directory that cannot be searched" : "which is not a regular file"}`
               : `the executable lookup stopped at ${stopped.candidate}${stopped.code === undefined ? "" : ` (${stopped.code})`}, where at least one native search stops, so the host's own search decides what runs`,
           profile.executable,
           Object.keys(observed).length === 0 ? undefined : observed,
