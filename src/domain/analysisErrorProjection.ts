@@ -818,8 +818,8 @@ const artifactStateErrorDetails = (
               floor_bytes: error.admission.fileLimit.floorBytes,
               maximum_setting_bytes:
                 error.admission.fileLimit.maximumSettingBytes,
-              rea_restart_required:
-                error.admission.fileLimit.reaRestartRequired,
+              update_mode: error.admission.fileLimit.updateMode,
+              pending_restart: error.admission.fileLimit.pendingRestart,
             }
           : {
               admission: error.admission.kind,

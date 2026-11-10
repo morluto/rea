@@ -10,7 +10,8 @@ export interface RegionFileAdmissionLimit {
   readonly defaultBytes: number;
   readonly floorBytes: number;
   readonly maximumSettingBytes: number;
-  readonly reaRestartRequired: false;
+  readonly updateMode: "runtime";
+  readonly pendingRestart: false;
 }
 
 /** A whole-file refusal from a firmware decoder; no partial regions accompany it. */

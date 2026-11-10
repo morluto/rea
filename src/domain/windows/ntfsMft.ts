@@ -73,7 +73,8 @@ export const ntfsMftFileLimit = (
   defaultBytes: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
   floorBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
   maximumSettingBytes: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
-  reaRestartRequired: false,
+  updateMode: "runtime",
+  pendingRestart: false,
 });
 
 /** Name the effective ceiling, its source, the allowed range, and the runtime update. */

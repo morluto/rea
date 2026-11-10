@@ -19,7 +19,8 @@ export interface FileByteAdmissionLimit {
   readonly defaultBytes: number;
   readonly floorBytes: number;
   readonly maximumSettingBytes: number;
-  readonly reaRestartRequired: false;
+  readonly updateMode: "runtime";
+  readonly pendingRestart: false;
 }
 
 /** Admission named by the producing reader, with its effective byte ceiling and its source. */

@@ -43,7 +43,6 @@ import {
   DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
   MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
   MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
-  NTFS_MFT_MAX_FILE_SETTING,
 } from "./windows/ntfsMft.js";
 interface SettingDefinition {
   readonly environment?: string;
@@ -322,7 +321,8 @@ export const ANALYSIS_SETTINGS = {
     operations: ["match_native_functions"],
   },
   "ntfs.mft_max_file_bytes": {
-    environment: NTFS_MFT_MAX_FILE_SETTING,
+    updateMode: "runtime",
+    environment: "REA_NTFS_MFT_MAX_FILE_BYTES",
     defaultValue: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
     minimum: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
     maximum: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,

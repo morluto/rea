@@ -280,7 +280,8 @@ describe("parseMftImage refusals and limits", () => {
       defaultBytes: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
       floorBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
       maximumSettingBytes: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
-      reaRestartRequired: false,
+      updateMode: "runtime",
+      pendingRestart: false,
     });
   });
 
@@ -300,7 +301,8 @@ describe("parseMftImage refusals and limits", () => {
       setting: NTFS_MFT_MAX_FILE_SETTING_ID,
       maximumBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
       source: "setting",
-      reaRestartRequired: false,
+      updateMode: "runtime",
+      pendingRestart: false,
     });
     expect(
       createMftDecoder(MINIMUM_NTFS_MFT_MAX_FILE_BYTES, admission).ok,
