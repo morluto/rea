@@ -39,6 +39,12 @@ import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
 } from "./wasm/wasmArtifact.js";
+import {
+  DEFAULT_REGF_MAX_FILE_BYTES,
+  MAXIMUM_REGF_MAX_FILE_BYTES,
+  MINIMUM_REGF_MAX_FILE_BYTES,
+  REGF_HIVE_MAX_FILE_SETTING,
+} from "./windows/registryHive.js";
 interface SettingDefinition {
   readonly environment?: string;
   readonly defaultValue: number | null;
@@ -296,6 +302,16 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_operation",
     provider: "rea-function-comparison",
     operations: ["match_native_functions"],
+  },
+  "regf.hive_max_file_bytes": {
+    environment: REGF_HIVE_MAX_FILE_SETTING,
+    defaultValue: DEFAULT_REGF_MAX_FILE_BYTES,
+    minimum: MINIMUM_REGF_MAX_FILE_BYTES,
+    maximum: MAXIMUM_REGF_MAX_FILE_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    operations: ["inspect_artifact", "inventory_artifact", "extract_artifact"],
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 export const analysisSettingIds = Object.keys(

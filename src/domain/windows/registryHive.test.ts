@@ -8,9 +8,8 @@ import {
   parseRegfHive,
   REGF_BASE_BLOCK_BYTES,
   REGF_HIVE_FILE_LIMIT_CODE,
-  REGF_HIVE_MAX_FILE_SETTING,
+  REGF_HIVE_MAX_FILE_SETTING_ID,
   regfHiveFileLimit,
-  regfHiveFileLimitMessage,
 } from "./registryHive.js";
 
 const checksumOf = (base: Uint8Array): number => {
@@ -207,22 +206,21 @@ describe("createRegfDecoder", () => {
     const decoder = createRegfDecoder(fileBytes);
     expect(decoder.ok).toBe(false);
     if (decoder.ok) return;
-    expect(decoder.error).toEqual({
+    expect(decoder.error).toMatchObject({
       kind: "limit",
       boundary: "file-size",
-      message: regfHiveFileLimitMessage(fileLimit),
       fileAdmission: fileLimit,
     });
     expect(fileLimit).toEqual({
       code: REGF_HIVE_FILE_LIMIT_CODE,
-      setting: REGF_HIVE_MAX_FILE_SETTING,
+      setting: REGF_HIVE_MAX_FILE_SETTING_ID,
       fileBytes,
       maximumBytes: DEFAULT_REGF_MAX_FILE_BYTES,
       source: "default",
       defaultBytes: DEFAULT_REGF_MAX_FILE_BYTES,
       floorBytes: MINIMUM_REGF_MAX_FILE_BYTES,
       maximumSettingBytes: MAXIMUM_REGF_MAX_FILE_BYTES,
-      restartRequired: true,
+      reaRestartRequired: false,
     });
   });
 
@@ -239,10 +237,10 @@ describe("createRegfDecoder", () => {
     if (refused.ok) return;
     expect(refused.error.fileAdmission).toMatchObject({
       code: REGF_HIVE_FILE_LIMIT_CODE,
-      setting: REGF_HIVE_MAX_FILE_SETTING,
+      setting: REGF_HIVE_MAX_FILE_SETTING_ID,
       maximumBytes: MINIMUM_REGF_MAX_FILE_BYTES,
       source: "setting",
-      restartRequired: true,
+      reaRestartRequired: false,
     });
     expect(createRegfDecoder(MINIMUM_REGF_MAX_FILE_BYTES, admission).ok).toBe(
       true,

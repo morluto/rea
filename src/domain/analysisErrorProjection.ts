@@ -806,7 +806,7 @@ const artifactStateErrorDetails = (
         : { reader_limit: { ...error.readerLimit } }),
       ...(error.admission === undefined
         ? {}
-        : error.admission.kind === "regf-hive-file"
+        : "fileLimit" in error.admission
           ? {
               admission: error.admission.kind,
               file_limit_code: error.admission.fileLimit.code,
@@ -818,7 +818,8 @@ const artifactStateErrorDetails = (
               floor_bytes: error.admission.fileLimit.floorBytes,
               maximum_setting_bytes:
                 error.admission.fileLimit.maximumSettingBytes,
-              restart_required: error.admission.fileLimit.restartRequired,
+              rea_restart_required:
+                error.admission.fileLimit.reaRestartRequired,
             }
           : {
               admission: error.admission.kind,

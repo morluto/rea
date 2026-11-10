@@ -126,16 +126,16 @@ deadline, it is in `SELECTED_REGISTRATION_SETTINGS`, so setup forwards an
 explicit selection into the client registration.
 
 Acquired Windows registry hive inventory reads one caller-selected file
-into a single buffer. `REA_REGF_HIVE_MAX_FILE_BYTES` is that ceiling: a
-positive decimal integer from 4096 bytes (one base block) to 8589934592
-bytes (8 GiB). Unset uses 536870912 bytes (512 MiB). An invalid value is a
-configuration error and does not fall back to the default. A file above the
-effective ceiling is a limit failure: it names `REA_REGF_HIVE_MAX_FILE_BYTES`,
-the effective byte count, whether that count came from the default or the
-setting, the floor, the maximum, and says to set a decimal integer in that
-range in the environment that starts REA and then restart REA. There is no
-runtime override. Raising it only admits a larger acquired hive. It does not
-decode key nodes, values, or transaction logs, and it does not mount the
+into a single buffer. `regf.hive_max_file_bytes` is that ceiling, seeded by
+`REA_REGF_HIVE_MAX_FILE_BYTES`: a positive decimal integer from 4096 bytes
+(one base block) to 8589934592 bytes (8 GiB). Unset uses 536870912 bytes
+(512 MiB). An invalid launch value is a configuration error and does not
+fall back to the default. A file above the effective ceiling is a limit
+failure: it names `regf.hive_max_file_bytes`, the effective byte count,
+whether that count came from the default, the launch setting, or a runtime
+override, and the allowed range. `update_analysis_settings` changes it for
+the next operation. Raising it only admits a larger acquired hive. It does
+not decode key nodes, values, or transaction logs, and it does not mount the
 host registry.
 
 Windows ChangeTime admission waits out a fresh timestamp before recording a
@@ -199,6 +199,7 @@ cannot partially apply. Clients coordinating writes can supply
 | `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
 | `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
 | `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
+| `regf.hive_max_file_bytes`                                                                                      | Next registry-hive inventory or extraction                                      |
 
 ### Precedence and lifetime
 

@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_REGF_MAX_FILE_BYTES,
   MAXIMUM_REGF_MAX_FILE_BYTES,
   MINIMUM_REGF_MAX_FILE_BYTES,
   REGF_HIVE_MAX_FILE_SETTING,
+  REGF_HIVE_MAX_FILE_SETTING_ID,
 } from "../domain/windows/registryHive.js";
 import { parseEnvironment } from "./environment.js";
 import {
   parseRegfHiveFileAdmission,
   REGF_HIVE_FILE_ADMISSION_CONSTRAINT,
+  runtimeRegfHiveFileAdmission,
 } from "./regfHiveFileAdmission.js";
 
 const rejectedSetting = {
@@ -64,5 +67,71 @@ describe("registry hive file admission", () => {
     expect(startup.ok).toBe(false);
     if (startup.ok) return;
     expect(startup.error.settings).toEqual([rejectedSetting]);
+  });
+
+  it("lists the ceiling and rejects a runtime value outside the range", () => {
+    const settings = new AnalysisSettings({});
+    expect(
+      settings.inspect({ settings: [REGF_HIVE_MAX_FILE_SETTING_ID] }).settings,
+    ).toEqual([
+      expect.objectContaining({
+        setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+        value: DEFAULT_REGF_MAX_FILE_BYTES,
+        source: "default",
+        unit: "bytes",
+        minimum: MINIMUM_REGF_MAX_FILE_BYTES,
+        maximum: MAXIMUM_REGF_MAX_FILE_BYTES,
+        environment: REGF_HIVE_MAX_FILE_SETTING,
+        applies_at: "next_operation",
+        agent_editable: true,
+      }),
+    ]);
+    const admission = runtimeRegfHiveFileAdmission({}, settings.read);
+    const rejected = settings.update({
+      changes: [
+        {
+          setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+          action: "set",
+          value: MINIMUM_REGF_MAX_FILE_BYTES - 1,
+        },
+      ],
+    });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(projectAnalysisError(rejected.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "update_analysis_settings",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["changes", 0, "value"],
+            reason: "out_of_range",
+            minimum: MINIMUM_REGF_MAX_FILE_BYTES,
+          }),
+        ]),
+      },
+    });
+    expect(admission.maximumBytes).toBe(DEFAULT_REGF_MAX_FILE_BYTES);
+    expect(admission.source).toBe("default");
+    const above = settings.update({
+      changes: [
+        {
+          setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+          action: "set",
+          value: MAXIMUM_REGF_MAX_FILE_BYTES + 1,
+        },
+      ],
+    });
+    expect(above.ok).toBe(false);
+    if (above.ok) return;
+    expect(projectAnalysisError(above.error).details?.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["changes", 0, "value"],
+          reason: "out_of_range",
+          maximum: MAXIMUM_REGF_MAX_FILE_BYTES,
+        }),
+      ]),
+    );
   });
 });

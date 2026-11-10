@@ -31,12 +31,13 @@ steps have an owned, validated parse to build value decoding on.
 - Stop and report a limitation rather than infer facts for bytes not examined:
   an unexpected signature, a bin or cell that overruns, or a declared bin span
   longer than the file each produce an explicit diagnostic naming the offset.
-- Bound the whole file by `REA_REGF_HIVE_MAX_FILE_BYTES` (default 512 MiB,
-  floor 4096 bytes, maximum 8 GiB). A file above the effective ceiling is a
-  `limit` failure with boundary `file-size` and code `regf_hive_file_size`.
-  The failure names the setting, the effective value, whether it came from
-  the default or the setting, and the allowed range, and says to restart REA
-  after changing the setting. There is no runtime override. Read nothing
+- Bound the whole file by `regf.hive_max_file_bytes` (launch seed
+  `REA_REGF_HIVE_MAX_FILE_BYTES`; default 512 MiB, floor 4096 bytes, maximum
+  8 GiB). A file above the effective ceiling is a `limit` failure with
+  boundary `file-size` and code `regf_hive_file_size`. The failure names the
+  setting, the effective value, whether it came from the default, the launch
+  setting, or a runtime override, and the allowed range.
+  `update_analysis_settings` changes it for the next operation. Read nothing
   outside the admitted extent and never write to the supplied file.
 
 ## Acceptance

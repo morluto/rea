@@ -144,6 +144,7 @@ const scanCanonical = async (
       options.asarHeaderAdmission,
       selectedPath,
       options.readerLimits,
+      options.analysisSettings,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };

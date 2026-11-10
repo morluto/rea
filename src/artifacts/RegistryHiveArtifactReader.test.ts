@@ -3,16 +3,19 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  DEFAULT_REGF_MAX_FILE_BYTES,
+  MAXIMUM_REGF_MAX_FILE_BYTES,
   MINIMUM_REGF_MAX_FILE_BYTES,
   REGF_BASE_BLOCK_BYTES,
   REGF_HIVE_FILE_LIMIT_CODE,
   REGF_HIVE_MAX_FILE_SETTING,
+  REGF_HIVE_MAX_FILE_SETTING_ID,
   regfHiveFileLimit,
-  regfHiveFileLimitMessage,
 } from "../domain/windows/registryHive.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -101,25 +104,111 @@ it("reports the configured file ceiling as a structured limit", async () => {
   });
   expect(
     projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
-  ).toEqual(
-    expect.objectContaining({
-      code: "truncated",
-      message: regfHiveFileLimitMessage(fileLimit),
-      remediation: { action: regfHiveFileLimitMessage(fileLimit) },
-      details: expect.objectContaining({
-        reason: "limit",
-        boundary: "file-size",
-        admission: "regf-hive-file",
-        file_limit_code: REGF_HIVE_FILE_LIMIT_CODE,
-        setting: REGF_HIVE_MAX_FILE_SETTING,
-        file_bytes: bytes.length,
-        maximum_bytes: MINIMUM_REGF_MAX_FILE_BYTES,
-        maximum_bytes_source: "setting",
-        floor_bytes: MINIMUM_REGF_MAX_FILE_BYTES,
-        restart_required: true,
+  ).toMatchObject({
+    code: "truncated",
+    details: {
+      reason: "limit",
+      boundary: "file-size",
+      admission: "regf-hive-file",
+      file_limit_code: REGF_HIVE_FILE_LIMIT_CODE,
+      setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+      file_bytes: bytes.length,
+      maximum_bytes: MINIMUM_REGF_MAX_FILE_BYTES,
+      maximum_bytes_source: "setting",
+      floor_bytes: MINIMUM_REGF_MAX_FILE_BYTES,
+      maximum_setting_bytes: MAXIMUM_REGF_MAX_FILE_BYTES,
+      rea_restart_required: false,
+      limit: {
+        setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+        effective_value: MINIMUM_REGF_MAX_FILE_BYTES,
+        required_value: bytes.length,
+        source: "setting",
+        unit: "bytes",
+        minimum: MINIMUM_REGF_MAX_FILE_BYTES,
+        maximum: MAXIMUM_REGF_MAX_FILE_BYTES,
+        applies_at: "next_operation",
+        agent_editable: true,
+        scope: "rea-runtime",
+        rea_restart_required: false,
+      },
+    },
+  });
+});
+
+it("applies a runtime ceiling on the next inventory", async () => {
+  const bytes = hiveBytes();
+  const path = await writeHive("SYSTEM");
+  const settings = new AnalysisSettings({
+    [REGF_HIVE_MAX_FILE_SETTING]: String(DEFAULT_REGF_MAX_FILE_BYTES),
+  });
+  expect(
+    settings.update({
+      changes: [
+        {
+          setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+          action: "set",
+          value: MINIMUM_REGF_MAX_FILE_BYTES,
+        },
+      ],
+    }).ok,
+  ).toBe(true);
+  expect(
+    settings.inspect({ settings: [REGF_HIVE_MAX_FILE_SETTING_ID] }).settings[0],
+  ).toMatchObject({
+    setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+    value: MINIMUM_REGF_MAX_FILE_BYTES,
+    source: "runtime",
+    environment: REGF_HIVE_MAX_FILE_SETTING,
+    applies_at: "next_operation",
+  });
+  let failure: unknown;
+  try {
+    await settings.run(() =>
+      scanCanonicalArtifactInventory(path, {
+        environment: {
+          [REGF_HIVE_MAX_FILE_SETTING]: String(DEFAULT_REGF_MAX_FILE_BYTES),
+        },
+        analysisSettings: settings.read,
       }),
-    }),
-  );
+    );
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("runtime ceiling did not refuse the hive");
+  expect(
+    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+  ).toMatchObject({
+    code: "truncated",
+    details: {
+      file_limit_code: REGF_HIVE_FILE_LIMIT_CODE,
+      limit: {
+        setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+        effective_value: MINIMUM_REGF_MAX_FILE_BYTES,
+        source: "runtime",
+        rea_restart_required: false,
+      },
+    },
+  });
+  expect(
+    settings.update({
+      changes: [
+        {
+          setting: REGF_HIVE_MAX_FILE_SETTING_ID,
+          action: "set",
+          value: bytes.length,
+        },
+      ],
+    }).ok,
+  ).toBe(true);
+  const inventory = await scanCanonicalArtifactInventory(path, {
+    environment: {
+      [REGF_HIVE_MAX_FILE_SETTING]: String(DEFAULT_REGF_MAX_FILE_BYTES),
+    },
+    analysisSettings: settings.read,
+  });
+  expect(inventory.manifest.root_format).toBe("regf-hive");
 });
 
 it("names a dirty hive's sequence mismatch in the limitations", async () => {

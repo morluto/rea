@@ -61,6 +61,10 @@ export interface ArtifactReaderConstruction {
   readonly espFlashSelection?: EspFlashSelection | undefined;
   /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
   readonly selectedPath?: string | undefined;
+  /** Accepted operation snapshot. Readers resolve runtime ceilings from it per call. */
+  readonly analysisSettings?:
+    | import("../domain/analysisSettings.js").AnalysisSettingsReader
+    | undefined;
 }
 
 export interface FormatDescriptor {
@@ -470,12 +474,13 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "Registry hive inventory reports the base block's versions, sequence numbers, checksum status and hive-bin and cell spans. The whole file is bounded by REA_REGF_HIVE_MAX_FILE_BYTES (default 512 MiB; restart REA after changing it). Key nodes, values, security descriptors and transaction logs are not decoded, so no key path or value is established.",
+      "Registry hive inventory reports the base block's versions, sequence numbers, checksum status and hive-bin and cell spans. The whole file is bounded by regf.hive_max_file_bytes (launch seed REA_REGF_HIVE_MAX_FILE_BYTES, default 512 MiB). update_analysis_settings changes it for the next operation. Key nodes, values, security descriptors and transaction logs are not decoded, so no key path or value is established.",
     createReader: (path, options) =>
       new RegistryHiveArtifactReader(
         path,
         sourceOf(options),
         options.environment,
+        options.analysisSettings,
       ),
   }),
   unknown: described("unknown", plain),

@@ -27,6 +27,9 @@ const REGF_CELL_ALIGNMENT = 8;
  * stays below a large hive until an operator raises it.
  */
 export const REGF_HIVE_MAX_FILE_SETTING = "REA_REGF_HIVE_MAX_FILE_BYTES";
+/** Runtime id accepted by `update_analysis_settings`. The environment name seeds it. */
+export const REGF_HIVE_MAX_FILE_SETTING_ID =
+  "regf.hive_max_file_bytes" as const;
 export const DEFAULT_REGF_MAX_FILE_BYTES = 512 * 1024 * 1024;
 /** A lower ceiling cannot admit one base block. */
 export const MINIMUM_REGF_MAX_FILE_BYTES = REGF_BASE_BLOCK_BYTES;
@@ -37,10 +40,10 @@ export const MINIMUM_REGF_MAX_FILE_BYTES = REGF_BASE_BLOCK_BYTES;
  */
 export const MAXIMUM_REGF_MAX_FILE_BYTES = 8 * 1024 * 1024 * 1024;
 
-/** Effective whole-file ceiling and whether it came from the default or the setting. */
+/** Effective whole-file ceiling and where that value came from. */
 export interface RegfHiveFileAdmission {
   readonly maximumBytes: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
 }
 
 export const REGF_HIVE_FILE_LIMIT_CODE = "regf_hive_file_size";
@@ -48,8 +51,7 @@ export const REGF_HIVE_FILE_LIMIT_CODE = "regf_hive_file_size";
 /** Structured refusal when a hive is outside the effective whole-file ceiling. */
 export interface RegfHiveFileLimit extends RegionFileAdmissionLimit {
   readonly code: typeof REGF_HIVE_FILE_LIMIT_CODE;
-  readonly setting: typeof REGF_HIVE_MAX_FILE_SETTING;
-  readonly restartRequired: true;
+  readonly setting: typeof REGF_HIVE_MAX_FILE_SETTING_ID;
 }
 
 export const regfHiveFileLimit = (
@@ -57,25 +59,24 @@ export const regfHiveFileLimit = (
   admission: RegfHiveFileAdmission,
 ): RegfHiveFileLimit => ({
   code: REGF_HIVE_FILE_LIMIT_CODE,
-  setting: REGF_HIVE_MAX_FILE_SETTING,
+  setting: REGF_HIVE_MAX_FILE_SETTING_ID,
   fileBytes: Number.isSafeInteger(fileBytes) ? fileBytes : null,
   maximumBytes: admission.maximumBytes,
   source: admission.source,
   defaultBytes: DEFAULT_REGF_MAX_FILE_BYTES,
   floorBytes: MINIMUM_REGF_MAX_FILE_BYTES,
   maximumSettingBytes: MAXIMUM_REGF_MAX_FILE_BYTES,
-  restartRequired: true,
+  reaRestartRequired: false,
 });
 
-/** Name the effective ceiling, its source, the allowed range, and the required restart. */
+/** Name the effective ceiling, its source, the allowed range, and the runtime update. */
 export const regfHiveFileLimitMessage = (limit: RegfHiveFileLimit): string =>
   [
     `The effective ${limit.setting} value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(limit.defaultBytes)} bytes, floor ${String(limit.floorBytes)} bytes, maximum ${String(limit.maximumSettingBytes)} bytes).`,
     limit.fileBytes === null
       ? "The supplied length is not a safe integer."
       : `The file is ${String(limit.fileBytes)} bytes.`,
-    `Set ${limit.setting} in the environment that starts REA to a positive decimal integer from ${String(limit.floorBytes)} to ${String(limit.maximumSettingBytes)}, then restart REA.`,
-    "There is no runtime override.",
+    `On MCP, call update_analysis_settings with setting ${limit.setting}, action set, and a value in bytes from ${String(limit.floorBytes)} to ${String(limit.maximumSettingBytes)}, then retry the original request. It applies to the next operation without restarting REA. For CLI or future REA processes, set ${REGF_HIVE_MAX_FILE_SETTING} in the launch environment.`,
   ].join(" ");
 /** Header fields retained from the base block; offsets are from the file start. */
 const REGF_HEADER = {
