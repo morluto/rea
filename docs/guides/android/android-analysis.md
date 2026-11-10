@@ -299,6 +299,88 @@ Only `inspect_android_class` asks the bridge for these values.
 class summary, so large encoded strings cannot push their member lookup past
 the 8 MiB protocol frame limit.
 
+### DEX annotations
+
+`inspect_android_method` reports the annotations of the selected method and of
+its parameters, so an interface method that has no body still shows what it is
+declared with. `inspect_android_class` reports them for the class, its methods
+and their parameters when the caller passes `annotations: true` (CLI
+`--annotations`); they are off by default because Kotlin classes alone add about
+3 KiB of `kotlin.Metadata` each.
+
+```sh
+rea inspect-android-method /path/Example.apk example.api.ApiService scan --format json
+```
+
+```json
+{
+  "method": {
+    "name": "scan",
+    "annotations": [
+      {
+        "dex_type": "Lretrofit2/http/POST;",
+        "visibility": "runtime",
+        "elements": [
+          {
+            "name": "value",
+            "value": { "type": "string", "value": "v1/items/lookup" }
+          }
+        ]
+      }
+    ],
+    "parameter_annotations": [
+      {
+        "index": 0,
+        "annotations": [
+          {
+            "dex_type": "Lretrofit2/http/Body;",
+            "visibility": "runtime",
+            "elements": []
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Each annotation is the DEX annotation as parsed: its `dex_type`, its
+`visibility` (`runtime`, `build` for class retention, or `system`) and its
+decoded `elements`. REA reports what is encoded and never infers what it means:
+the example shows an annotation with a path, not an HTTP request. Element values
+are typed like static values (`boolean`, `byte`, `short`, `char`, `int`;
+`long`, `float` and `double` as Java text) plus `string`, `type`, `enum`,
+`field`, `method`, `null`, and `array` of those. A nested annotation is
+identified by `dex_type` and `element_count` with `elements_omitted: true`
+instead of being expanded, and a value kind the engine did not decode is reported
+as `unsupported` with its engine type.
+
+Output is bounded, and a bound that drops a fact is visible where it applies:
+
+- An annotation carries `truncated: true` when it has more than 16 elements,
+  an array of more than 32 items, a nested annotation, an unsupported value or
+  a string cut at 256 characters (`length` then names the original length).
+  `item_count` on an array always states the full count.
+- `annotations_omitted` counts annotations beyond 32 on one member, or beyond
+  the whole-summary budget of 20,000 values and 1 MiB of string text.
+- `inspect_android_method` annotates only the overloads that share the
+  selected method's name and does not read the class-level list, so a large class
+  cannot push the lookup past the protocol frame limit.
+
+Absence has defined meanings. `inspect_android_method` always reports both
+lists, empty when the method has none. In `inspect_android_class` with
+annotations, the class list is always present, a member without annotations has
+no list, and `parameter_annotations` lists only annotated parameters by DEX
+parameter index (the receiver is not counted). Without the option, or in
+Evidence retained before annotations were read, the fields are absent, which
+means unknown rather than none.
+
+Toolchain annotations that the engine consumes itself, such as
+`dalvik.annotation.Signature` and `SourceDebugExtension`, are not listed even
+though they exist in the DEX. The contract accepts the `system` visibility, but
+the engine returned none for the APKs checked. Detail `summary` delivery keeps
+the same fields.
+
 Smali fallbacks select one complete block using the original method name and DEX
 descriptor, before applying the source byte limit. This preserves the selected
 overload even when Java code generation renames a method. If the selected Java

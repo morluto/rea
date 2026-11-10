@@ -10,6 +10,10 @@ import {
   dexDescriptorSchema,
   dexTypeSchema,
 } from "../domain/android/dexTypes.js";
+import {
+  androidAnnotationSchema,
+  androidParameterAnnotationsSchema,
+} from "../domain/android/androidAnnotations.js";
 import { androidNativeDeclarationsSchema } from "../domain/android/androidNativeDeclarations.js";
 
 /** Native-only raw DEX facts authored before decompiler deduplication. */
@@ -103,6 +107,13 @@ const jadxMethodMetadataSchema = z.object({
   dex_descriptor: dexDescriptorSchema,
   is_constructor: z.boolean(),
   def_pos: z.int(),
+  /** Present only when the request asked for annotations and the method has some. */
+  annotations: z.array(androidAnnotationSchema).min(1).optional(),
+  annotations_omitted: z.int().positive().optional(),
+  parameter_annotations: z
+    .array(androidParameterAnnotationsSchema)
+    .min(1)
+    .optional(),
 });
 
 export const jadxClassSchema = z.object({
@@ -126,6 +137,9 @@ export const jadxClassSchema = z.object({
   inner_classes: z.array(z.string()),
   /** Original binary names, index-aligned with the display names above. */
   inner_class_raw_names: z.array(z.string()),
+  /** Present, possibly empty, only when the request asked for annotations. */
+  annotations: z.array(androidAnnotationSchema).optional(),
+  annotations_omitted: z.int().positive().optional(),
 });
 /** Reference-only prototypes are not an external class definition or field inventory. */
 export const jadxExternalReferenceSummarySchema = z.object({

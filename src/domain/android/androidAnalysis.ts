@@ -8,6 +8,10 @@ import {
   androidViewRequestSchema,
   validateAndroidPackageDelivery,
 } from "./androidPackageQuery.js";
+import {
+  androidAnnotationSchema,
+  androidParameterAnnotationsSchema,
+} from "./androidAnnotations.js";
 import { androidMappingReportSchema } from "./androidMapping.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
 import {
@@ -43,7 +47,16 @@ export const androidInputSchemas = {
       .string()
       .describe("Case-sensitive class-name substring; empty lists all classes"),
   }),
-  inspect_android_class: z.strictObject({ ...classTarget, ...mappingPath }),
+  inspect_android_class: z.strictObject({
+    ...classTarget,
+    ...mappingPath,
+    annotations: z
+      .boolean()
+      .optional()
+      .describe(
+        "Include parsed DEX annotations of the class, its methods and their parameters; adds output, so it is off by default",
+      ),
+  }),
   inspect_android_method: z.strictObject({
     ...classTarget,
     ...mappingPath,
@@ -201,6 +214,19 @@ const method = z.strictObject({
   overload_index: z.int().nonnegative(),
   is_constructor: z.boolean(),
   dex_descriptor: dexDescriptorSchema,
+  /**
+   * DEX annotations of this method. `inspect_android_method` always reports both
+   * lists (possibly empty); `inspect_android_class` reports them only when the caller
+   * asked for annotations, and then omits a member's lists when it has none. Evidence
+   * retained before annotations were read omits them, which means unknown.
+   */
+  annotations: z.array(androidAnnotationSchema).exactOptional(),
+  /** Annotations beyond the per-member bound that are not listed. */
+  annotations_omitted: z.int().positive().exactOptional(),
+  /** Annotated parameters only, by DEX parameter index. */
+  parameter_annotations: z
+    .array(androidParameterAnnotationsSchema)
+    .exactOptional(),
 });
 /** Exact member selector shared with follow-up APK method inspection. */
 export const androidMethodSelectorSchema = z.strictObject({
@@ -269,6 +295,10 @@ export const androidResultSchemas = {
       }),
     ),
     inner_classes: z.array(z.string()),
+    /** Class-level DEX annotations; present, possibly empty, only when the caller asked for annotations. */
+    annotations: z.array(androidAnnotationSchema).exactOptional(),
+    /** Class-level annotations beyond the per-member bound that are not listed. */
+    annotations_omitted: z.int().positive().exactOptional(),
     mapping: androidMappingReportSchema.exactOptional(),
   }),
   inspect_android_method: z.strictObject({

@@ -626,21 +626,39 @@ it.each([
 );
 
 it.each([
-  { operation: "inspect_android_class", input: {}, values: true },
+  {
+    operation: "inspect_android_class",
+    input: {},
+    values: true,
+    annotations: false,
+  },
+  {
+    operation: "inspect_android_class",
+    input: { annotations: true },
+    values: true,
+    annotations: true,
+  },
   {
     operation: "inspect_android_method",
     input: { method_name: "choose", overload_index: 1 },
     values: false,
+    annotations: true,
   },
   {
     operation: "trace_android_references",
     input: { method_name: "choose", overload_index: 1 },
     values: false,
+    annotations: false,
   },
-  { operation: "trace_android_references", input: {}, values: false },
+  {
+    operation: "trace_android_references",
+    input: {},
+    values: false,
+    annotations: false,
+  },
 ] as const)(
-  "requests DEX static values for $operation only when inspecting a class",
-  async ({ operation, input, values }) => {
+  "requests DEX static values and annotations for $operation $input only where they are reported",
+  async ({ operation, input, values, annotations }) => {
     const calls: Record<string, unknown>[] = [];
     const reply = (name: string): JsonValue => {
       if (name === "get_class_summary") return summary;
@@ -691,6 +709,10 @@ it.each([
       name: "get_class_summary",
       class_name: "fixture.Target",
       ...(values ? { dex_static_values: true } : {}),
+      ...(annotations ? { annotations: true } : {}),
+      ...(annotations && operation === "inspect_android_method"
+        ? { method_name: input.method_name }
+        : {}),
       ...(operation === "trace_android_references" && "method_name" in input
         ? { reference_target: true, method_name: input.method_name }
         : {}),

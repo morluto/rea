@@ -205,7 +205,11 @@ export const registerAndroidCommands = (
   cli.command(CLI_COMMANDS.inspectAndroidClass, {
     description: "Inspect one exact APK class's member inventory",
     args: z.object({ path, className }),
-    options: z.object({ mappingPath, ...analysisEvidenceDeliveryOptions }),
+    options: z.object({
+      mappingPath,
+      annotations: androidInputSchemas.inspect_android_class.shape.annotations,
+      ...analysisEvidenceDeliveryOptions,
+    }),
     run: ({ args, options }) =>
       execute(
         CLI_COMMANDS.inspectAndroidClass,
@@ -213,6 +217,7 @@ export const registerAndroidCommands = (
         {
           path: args.path,
           class_name: args.className,
+          ...(options.annotations === true ? { annotations: true } : {}),
           ...mappingInput(options.mappingPath),
         },
         args.path,
