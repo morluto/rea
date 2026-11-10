@@ -39,13 +39,11 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
-import {
-  isMachOFormat,
-  type BinaryTarget,
-  type BinaryArchitecture,
-  type PeCodeViewRecord,
-  type UniversalMachOSlice,
-  type MachODebugCompanion,
+import type {
+  BinaryTarget,
+  BinaryArchitecture,
+  PeCodeViewRecord,
+  UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import {
   admitDebugCompanion,

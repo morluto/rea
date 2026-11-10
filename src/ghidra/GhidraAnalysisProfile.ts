@@ -6,7 +6,6 @@ import type {
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
-import { z } from "zod";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type {
   BinaryTarget,
