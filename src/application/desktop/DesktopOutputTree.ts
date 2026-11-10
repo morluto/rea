@@ -6,7 +6,10 @@ import {
   type ArtifactCleanupAttempt,
 } from "../../artifacts/ArtifactResourceScope.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
+import {
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeDestinationRefusal,
+} from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -29,13 +32,26 @@ export const writeOutputTree = async (
   refusal: { readonly operation: string; readonly field: string },
   signal: AbortSignal | undefined,
 ): Promise<FailedRelease | undefined> => {
-  await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
   const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
   let outcome:
     | { readonly kind: "completed" }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
+    try {
+      await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
+    } catch (cause: unknown) {
+      if (
+        cause instanceof Error &&
+        typeof Reflect.get(cause, "code") === "string" &&
+        ["EEXIST", "ENOTDIR"].includes(String(Reflect.get(cause, "code")))
+      )
+        throw new SafeOutputTreeDestinationRefusal(
+          "Desktop output parent must be a directory",
+          { cause },
+        );
+      throw cause;
+    }
     try {
       tree = await SafeOutputTree.create(directory, process.platform, {
         acceptExistingEmpty: true,
