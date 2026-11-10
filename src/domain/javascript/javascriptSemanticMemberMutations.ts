@@ -125,6 +125,20 @@ const arrayPrototypeIterationMayChange = (path: PropertyPath): boolean => {
   );
 };
 
+/** A literal's inherited reference can expose the native Array prototype. */
+const arrayLiteralIterationMayChange = (
+  node: t.Node,
+  path: PropertyPath,
+  effect: ValueEffect,
+): boolean =>
+  t.isArrayExpression(node) &&
+  ((path[0] === "__proto__" &&
+    (effect === "escape" || path.length > 1) &&
+    arrayPrototypeIterationMayChange(path.slice(1))) ||
+    (path[0] === "constructor" &&
+      path[1] === "prototype" &&
+      arrayPrototypeIterationMayChange(path.slice(2))));
+
 /** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
 
 /** Accessor selection uses the same slots, prototype shadowing and array indices as aliases. */
@@ -495,6 +509,14 @@ export function* collectSemanticMemberMutationsSteps(
   const observablePaths = observableMutationPaths(state);
   const recordedRequiredEffects = new Set<string>();
   let recordedEffectCount = 0;
+  const iterationEffects = new Set(state.arrayIterationEffects);
+  const recordArrayIterationEffect = (mutation: t.Node | undefined): void => {
+    if (iterationEffects.has(mutation)) return;
+    iterationEffects.add(mutation);
+    state.arrayIterationEffects.push(mutation);
+    recordedEffectCount += 1;
+    clearSemanticValueCaches(state);
+  };
   const recordRequiredEffect = (
     specifier: string,
     path: PropertyPath,
@@ -603,7 +625,6 @@ export function* collectSemanticMemberMutationsSteps(
       recordRequiredEffect("node:process", path.slice(2), "write", node);
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
-  state.arrayIterationUnknown = false;
   // Definition collection finishes before this phase, so a scope's bindings no
   // longer change and one node resolves to one binding. Repeated visits of the
   // same node otherwise repeat the same scope walk.
@@ -892,6 +913,8 @@ export function* collectSemanticMemberMutationsSteps(
       )
         continue;
       const expression = unwrapJavaScriptExpression(current.node).node;
+      if (arrayLiteralIterationMayChange(expression, current.path, effect))
+        recordArrayIterationEffect(mutation);
       const moduleEffectOrigin =
         semanticRequireOriginCandidate(expression, state, true)?.origin ??
         semanticModuleAcquisitionEffectOrigin(
@@ -958,7 +981,7 @@ export function* collectSemanticMemberMutationsSteps(
               (current.path[1] === "prototype" || current.path[1] === null) &&
               arrayPrototypeIterationMayChange(current.path.slice(2)))
           )
-            state.arrayIterationUnknown = true;
+            recordArrayIterationEffect(mutation);
           if (lookup?.kind !== "uncertain-binding") continue;
           binding = lookup.binding;
         }
@@ -1460,16 +1483,6 @@ export function* collectSemanticMemberMutationsSteps(
     effect: ValueEffect,
     widenedGetterResult = false,
   ): readonly ReferencedValue[] {
-    if (
-      t.isArrayExpression(expression) &&
-      ((path[0] === "__proto__" &&
-        (effect === "escape" || path.length > 1) &&
-        arrayPrototypeIterationMayChange(path.slice(1))) ||
-        (path[0] === "constructor" &&
-          path[1] === "prototype" &&
-          arrayPrototypeIterationMayChange(path.slice(2))))
-    )
-      state.arrayIterationUnknown = true;
     const references = referencedValues(
       expression,
       path,
@@ -1521,7 +1534,8 @@ export function* collectSemanticMemberMutationsSteps(
     if (
       value.iterableFallbackPath !== undefined ||
       t.isMemberExpression(node) ||
-      t.isOptionalMemberExpression(node)
+      t.isOptionalMemberExpression(node) ||
+      arrayLiteralIterationMayChange(node, value.path, "escape")
     ) {
       leaves.push(value);
       return true;
@@ -1758,7 +1772,6 @@ export function* collectSemanticMemberMutationsSteps(
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
-    const iterationBefore: boolean = state.arrayIterationUnknown;
     for (const [index, reference] of pendingReferences.splice(0).entries()) {
       if (index % 64 === 0) yield;
       const { initializer } = reference;
@@ -1838,10 +1851,18 @@ export function* collectSemanticMemberMutationsSteps(
           continue;
         }
       }
-      const slot = semanticSelectedReferenceSlot(reference, state);
+      const slot = semanticSelectedReferenceSlot(
+        reference,
+        state,
+        reference.node,
+      );
       // Custom iteration can yield the iterable itself as well as any child.
       // Treat its root as escaped, including writes through yielded references.
-      const knownArray = semanticKnownArrayIteration(slot?.value, state);
+      const knownArray = semanticKnownArrayIteration(
+        slot?.value,
+        state,
+        reference.node,
+      );
       if (knownArray && reference.iterationOnly) continue;
       markValue(
         reference.node,
@@ -1870,8 +1891,7 @@ export function* collectSemanticMemberMutationsSteps(
     }
     if (
       recordedEffectCount === effectsBefore &&
-      iterableReferences.length === iterablesBefore &&
-      state.arrayIterationUnknown === iterationBefore
+      iterableReferences.length === iterablesBefore
     )
       break;
   }

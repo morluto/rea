@@ -42,14 +42,17 @@ interface ReferenceSource {
   readonly iterationSources?: readonly ReferenceSource[];
 }
 
-/** Native array iteration preserves numeric slots only while its iterator is intact. */
+/** Native array iteration preserves numeric slots only while its iterator is intact at the read. */
 export const semanticKnownArrayIteration = (
   value: JavaScriptSemanticValue | undefined,
   state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
 ): boolean =>
-  !state.arrayIterationUnknown &&
   value?.status === "array" &&
-  value.items.every((item) => semanticArrayIndex(item.name) !== null);
+  value.items.every((item) => semanticArrayIndex(item.name) !== null) &&
+  !state.arrayIterationEffects.some(
+    (effect) => semanticEffectTiming(read, effect, state) !== "after",
+  );
 
 /** Invocation spreads use the same native-iteration proof at their source read. */
 export const semanticKnownArrayIterationAt = (
@@ -59,6 +62,7 @@ export const semanticKnownArrayIterationAt = (
   semanticKnownArrayIteration(
     evaluateSemanticExpression(node, state, node),
     state,
+    node,
   );
 
 /** Numeric destructuring projections do not select slots of custom iterators. */
@@ -84,7 +88,7 @@ const selectedReferenceIterationKnown = (
         // inventory can prove every possible nested iterable without treating
         // a computed object property or custom iterator as an own-index read.
         if (
-          !semanticKnownArrayIteration(value, state) ||
+          !semanticKnownArrayIteration(value, state, source.node) ||
           value.status !== "array" ||
           value.unknownItems
         )
@@ -101,7 +105,9 @@ const selectedReferenceIterationKnown = (
     }
     values = [...selected];
   }
-  return values.every((value) => semanticKnownArrayIteration(value, state));
+  return values.every((value) =>
+    semanticKnownArrayIteration(value, state, source.node),
+  );
 };
 
 /** Exclude references whose source slot or destructuring fallback is absent. */

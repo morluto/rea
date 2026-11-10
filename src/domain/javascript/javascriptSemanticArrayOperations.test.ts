@@ -143,20 +143,36 @@ it.each([
   "at(0)",
   "join(',')",
   "toString()",
+  "push(0)",
+  "pop()",
+  "shift()",
+  "unshift(0)",
+])("permits only proven primitive results to be consumed: %s", (call) => {
+  const method = call.slice(0, call.indexOf("("));
+  for (const use of [`const result = a.${call};`, `consume(a.${call});`]) {
+    const source = `const a = new Array(3); ${use} const urls=['/api']; const [url]=urls; fetch(url);`;
+    expect(proofFor(source, method)).toEqual([true]);
+    expect(analyzeJavaScriptStaticSource(source).endpoints).toMatchObject([
+      { value: "/api" },
+    ]);
+  }
+});
+
+it.each([
+  "fill(0)",
+  "copyWithin(0, 1)",
+  "reverse()",
   "keys()",
   "values()",
   "entries()",
-])(
-  "keeps read-result consumption outside the pristine receiver contract: %s",
-  (call) => {
-    expect(
-      proofFor(
-        `const a = new Array(3); consume(a.${call});`,
-        call.slice(0, call.indexOf("(")),
-      ),
-    ).toEqual([false]);
-  },
-);
+])("keeps retained receiver results discarded-only: %s", (call) => {
+  expect(
+    proofFor(
+      `const a = new Array(3); consume(a.${call});`,
+      call.slice(0, call.indexOf("(")),
+    ),
+  ).toEqual([false]);
+});
 
 it.each([
   "new Array(3).includes(0);",
@@ -264,3 +280,31 @@ it("does not exempt locale conversion through mutable element prototypes", () =>
     ),
   ).toEqual([false]);
 });
+
+it.each([
+  "const a = new Array(object, 0); const result = a.pop();",
+  "const a = new Array(3); a[0] = object; const result = a.at(0);",
+  "const a = new Array(3); a.fill(object); const result = a.shift();",
+  "const a = new Array(3); consume(a); const result = a.pop();",
+  "Object.defineProperty(Array.prototype, '0', {get() { return object; }}); const a = new Array(3); const result = a.at(0);",
+  "const a = new Array(3); const result = a.includes(0, (eval(code) ? 0 : 0));",
+  "const a = new Array(3); const result = a.includes(0, ((Array.prototype[0] = object) ? 0 : 0));",
+])(
+  "does not certify consumed results beyond the existing primitive/pristine facts: %s",
+  (source) => {
+    const method = /result = a\.(\w+)/u.exec(source)?.[1];
+    expect(proofFor(source, method)).toEqual([false]);
+  },
+);
+
+it.each(["at(0)", "pop()", "shift()"])(
+  "keeps primitive results after admitted slot mutations: %s",
+  (call) => {
+    const method = call.slice(0, call.indexOf("("));
+    const source = `const a = new Array(3); a.fill('/first'); a.copyWithin(1, 0); a.reverse(); a.push('/last'); a.unshift('/start'); const result = a.${call}; const urls=['/api']; const [url]=urls; fetch(url);`;
+    expect(proofFor(source, method).at(-1)).toBe(true);
+    expect(analyzeJavaScriptStaticSource(source).endpoints).toMatchObject([
+      { value: "/api" },
+    ]);
+  },
+);

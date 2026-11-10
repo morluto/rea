@@ -18,20 +18,23 @@ import type {
   JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 
-const PRISTINE_ARRAY_METHODS = new Set([
-  "fill",
-  "copyWithin",
-  "reverse",
-  "push",
-  "pop",
-  "shift",
-  "unshift",
+// Primitive-only construction and prior admitted mutations cannot add object slots.
+const PRISTINE_ARRAY_PRIMITIVE_RESULTS = new Set([
   "includes",
   "indexOf",
   "lastIndexOf",
   "at",
   "join",
   "toString",
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+]);
+const PRISTINE_ARRAY_RETAINED_RESULTS = new Set([
+  "fill",
+  "copyWithin",
+  "reverse",
   "keys",
   "values",
   "entries",
@@ -44,14 +47,15 @@ export const isIntrinsicNonEscapingArrayCall = (
   index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
 ): boolean | undefined => {
   const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+    return false;
+  const method =
+    semanticStaticPropertyName(callee.property, callee.computed) ?? "";
   if (
-    (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) ||
-    !PRISTINE_ARRAY_METHODS.has(
-      semanticStaticPropertyName(callee.property, callee.computed) ?? "",
-    ) ||
-    // Some results retain this (including iterators); no returned-reference
-    // proof is introduced even for methods whose result is primitive.
-    !t.isExpressionStatement(state.parentsByNode.get(node))
+    !PRISTINE_ARRAY_PRIMITIVE_RESULTS.has(method) &&
+    (!PRISTINE_ARRAY_RETAINED_RESULTS.has(method) ||
+      // Receiver-returning methods and iterators retain the array itself.
+      !t.isExpressionStatement(state.parentsByNode.get(node)))
   )
     return false;
   if (!semanticPrimitiveArguments(node.arguments, state)) return false;

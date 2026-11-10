@@ -1164,7 +1164,7 @@ const createState = (
     bindings: new Map(),
   };
   return {
-    arrayIterationUnknown: false,
+    arrayIterationEffects: [],
     memberMutationFactsComplete: false,
     program,
     opaqueEffects: {

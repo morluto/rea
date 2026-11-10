@@ -149,7 +149,8 @@ export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
-  arrayIterationUnknown: boolean;
+  /** Append-only sites classified by the native-array iteration effect owner. */
+  readonly arrayIterationEffects: (t.Node | undefined)[];
   /** Receiver isolation requires the completed member-effect inventory. */
   memberMutationFactsComplete: boolean;
   readonly program: t.Program;
