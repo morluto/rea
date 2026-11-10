@@ -112,13 +112,9 @@ export const observeGhidraEndpoint = async (
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           if (initial.size > BigInt(MAX_TCP_ENDPOINT_BYTES))
-            throw endpointFailure(
-              endpoint,
-              "Ghidra TCP endpoint is invalid",
-              new ArtifactReaderFailure(
-                "limit",
-                `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
-              ),
+            throw new ArtifactReaderFailure(
+              "limit",
+              `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
             );
           const input = readArtifactFileChunks(file, {
             end: initial.size,
@@ -182,14 +178,12 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-  // The native reader rejects expanded TCP records before JSON parsing.
-  // Keep that protocol refusal distinct from an unrelated observation failure.
-  const observationMessage =
+  // Classify a bounded endpoint record without discarding its owned cleanup.
+  const invalidRecord =
     endpoint.transport === "authenticated-loopback-tcp" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "limit"
-      ? "Ghidra TCP endpoint is invalid"
-      : "Ghidra endpoint observation failed";
+    origin === "owned-or-classified" &&
+    primary instanceof ArtifactReaderFailure &&
+    primary.reason === "limit";
   let failure =
     origin === "owned-or-classified" && primary instanceof GhidraSessionError
       ? primary
@@ -200,7 +194,13 @@ const observationFailure = (
           }))("cancelled", "Ghidra endpoint observation was cancelled", cause, {
             cancellation: { reason: artifactFileCancellationCause(cause) },
           })
-        : endpointFailure(endpoint, observationMessage, cause);
+        : endpointFailure(
+            endpoint,
+            invalidRecord
+              ? "Ghidra TCP endpoint is invalid"
+              : "Ghidra endpoint observation failed",
+            cause,
+          );
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const cleanup = new ProviderCleanupError(
       "ghidra",
