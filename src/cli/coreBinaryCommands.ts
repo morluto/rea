@@ -219,7 +219,11 @@ const registerXrefsCommand = (
   cli.command(CLI_COMMANDS.xrefs, {
     description: "List bounded references to an analyzed address",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("App or program path"),
       address: z.string().min(1).optional().describe("Address or symbol name"),
     }),
     options: z.object({
