@@ -288,7 +288,7 @@ describe("the reader runner's command and answer", () => {
 });
 
 describe("a verifier without readers", () => {
-  it("renders byte for byte as the selector parent before readers", () => {
+  it("preserves the current non-reader verifier bytes", () => {
     const rendered = renderTaskVerifier(
       {
         name: "add-milk",
@@ -322,10 +322,10 @@ describe("a verifier without readers", () => {
     );
 
     expect(rendered).not.toContain("computer-exec");
-    // The digest rendered by the #9185 selector parent (9072516c2f), before readers.
+    // The digest rendered by main d4a7c20e0, before the reader-source admission fix.
     // Older evaluator bodies remain subject to sameTaskVerifier's equivalence rules.
     expect(createHash("sha256").update(rendered).digest("hex")).toBe(
-      "f23f2f374a0fd774d36b76c1cc382d29a748da53647252c9a831493bfa220142",
+      "5de3e07500eab060a35e211a97e471e8e7942ab9e4b60e6ddb7df7851fa9cf00",
     );
   });
 });

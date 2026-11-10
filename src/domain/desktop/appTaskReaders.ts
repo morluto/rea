@@ -166,7 +166,11 @@ def _run(arguments: dict, source: str, work: str) -> dict:
         return {"error": f"the reader ran past its {timeout} s{_tail(stderr)}"}
     if process.returncode != 0:
         return {"error": f"the reader exited {process.returncode}{_tail(stderr)}"}
-    lines = [line[len(MARKER):] for line in LINE_BREAK.split(printed.decode("utf-8", "replace")) if line.startswith(MARKER)]
+    marker = MARKER.encode("ascii")
+    try:
+        lines = [line[len(marker):].decode("utf-8") for line in re.split(rb"\r?\n", printed) if line.startswith(marker)]
+    except UnicodeDecodeError:
+        return {"error": "the reader's marked output is not valid UTF-8"}
     if not lines:
         return {"error": f"the reader printed no line starting with {json.dumps(MARKER)}{_tail(stderr)}"}
     return _view(arguments["output"], lines)
