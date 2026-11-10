@@ -543,10 +543,12 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       "readback-",
     );
     try {
-      readbackRuntime.writeFile("written.txt", "runtime-write-readback");
+      const written = "runtime-write-readback";
+      const sourceBytes = await readFile(source);
+      readbackRuntime.writeFile("written.txt", written);
       assert.equal(
-        readbackRuntime.readFile("written.txt"),
-        "runtime-write-readback",
+        readbackRuntime.readFile("written.txt", Buffer.byteLength(written)),
+        written,
       );
       const readbackSnapshot = await readbackRuntime.snapshot(
         source,
@@ -554,21 +556,19 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       );
       assert.equal(
         readbackSnapshot.sha256,
-        createHash("sha256")
-          .update(await readFile(source))
-          .digest("hex"),
+        createHash("sha256").update(sourceBytes).digest("hex"),
       );
       assert.equal(
-        readbackRuntime.readFile("snapshot.bin"),
-        await readFile(source, "utf8"),
+        readbackRuntime.readFile("snapshot.bin", sourceBytes.byteLength),
+        sourceBytes.toString("utf8"),
       );
       const writtenPath = join(readbackRuntime.observation.path, "written.txt");
       await assert.rejects(writeFile(writtenPath, "replace"));
       await assert.rejects(rename(writtenPath, `${writtenPath}.renamed`));
       await assert.rejects(rm(writtenPath));
       assert.equal(
-        readbackRuntime.readFile("written.txt"),
-        "runtime-write-readback",
+        readbackRuntime.readFile("written.txt", Buffer.byteLength(written)),
+        written,
       );
       const snapshotPath = join(
         readbackRuntime.observation.path,
@@ -590,8 +590,8 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       await assert.rejects(rename(snapshotPath, `${snapshotPath}.renamed`));
       await assert.rejects(rm(snapshotPath));
       assert.equal(
-        readbackRuntime.readFile("snapshot.bin"),
-        await readFile(source, "utf8"),
+        readbackRuntime.readFile("snapshot.bin", sourceBytes.byteLength),
+        sourceBytes.toString("utf8"),
       );
       report.controls = {
         ...report.controls,
@@ -622,7 +622,11 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       assert.equal(await exists(heldPath), true);
       assert.throws(
         () => retryRuntime.writeFile("after-close.txt", "forbidden"),
-        /cleanup is pending/u,
+        /Windows private runtime cleanup is in progress or complete/u,
+      );
+      assert.equal(
+        await exists(join(retryRuntime.observation.path, "after-close.txt")),
+        false,
       );
       holder.child.stdin.end("\n");
       const [exitCode] = await holder.closed;

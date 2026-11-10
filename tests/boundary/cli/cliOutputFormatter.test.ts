@@ -1,0 +1,159 @@
+import { expect, it } from "vitest";
+
+import {
+  encodeMarkdownTableCell,
+  formatCliOutput,
+  prepareDelimitedOutput,
+} from "../../../src/cli/cliOutputFormatter.js";
+
+it.each([
+  ["", ""],
+  ["plain", "plain"],
+  ["a\u00a0b", "a\u00a0b"],
+  [
+    " \t\u00a0\u202f\u2003\u2028\u2029\ufeff",
+    "&#32;&#9;&#160;&#8239;&#8195;&#8232;&#8233;&#65279;",
+  ],
+  ["\u00a0🙂\ufeff", "&#160;🙂&#65279;"],
+  [" \t&#160;name\u00a0", "&#32;&#9;&amp;\\#160;name&#160;"],
+  ["\u00a0\u0000\u202f", "&#160;\\\\u0000&#8239;"],
+  ["\u00a0\r\n\u202f", "&#160;<br>&#8239;"],
+  ["\v \u00a0x\u202f \f", "\v \u00a0x\u202f \f"],
+  [" \v\u00a0x\u202f\f ", "&#32;\v\u00a0x\u202f\f&#32;"],
+])(
+  "encodes only representable Markdown table edge spacing in %j",
+  (value, expected) => {
+    expect(encodeMarkdownTableCell(value)).toBe(expected);
+  },
+);
+
+const parseDelimited = (source: string, delimiter: string): string[][] => {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    if (quoted) {
+      if (character === '"') {
+        if (source[index + 1] === '"') {
+          cell += '"';
+          index += 1;
+        } else quoted = false;
+      } else cell += character;
+      continue;
+    }
+    if (character === '"' && cell.length === 0) {
+      quoted = true;
+      continue;
+    }
+    if (character === delimiter) {
+      record.push(cell);
+      cell = "";
+      continue;
+    }
+    if (character === "\r" || character === "\n") {
+      if (character === "\r" && source[index + 1] === "\n") index += 1;
+      record.push(cell);
+      records.push(record);
+      record = [];
+      cell = "";
+      continue;
+    }
+    cell += character;
+  }
+  if (cell.length > 0 || record.length > 0) {
+    record.push(cell);
+    records.push(record);
+  }
+  return records;
+};
+
+it.each([
+  { format: "csv" as const, delimiter: "," },
+  { format: "tsv" as const, delimiter: "\t" },
+])(
+  "round-trips escaped $format fields and Unicode values",
+  ({ format, delimiter }) => {
+    const rows = [
+      {
+        name: 'A, "quoted" name',
+        note: "first line\r\nsecond\tline — café 雪",
+        count: 0,
+        ignored: { nested: true },
+      },
+      { name: "", note: "", count: false },
+      { name: "欠", count: null },
+    ];
+    const output = formatCliOutput(rows, format, {
+      fields: ["name", "note", "count"],
+      metadata: {
+        version: 1,
+        coverage: { status: "page", examined: 3, total: 8, next_offset: 3 },
+        view: { offset: 0, limit: 3 },
+      },
+    });
+    const lineEnding = format === "csv" ? "\r\n" : "\n";
+    const metadataEnd = output.indexOf(lineEnding);
+    const metadataLine = output.slice(0, metadataEnd);
+    const records = output
+      .slice(metadataEnd + lineEnding.length)
+      .replace(/\r?\n$/u, "");
+    expect(
+      JSON.parse(metadataLine!.slice("# rea-delimited-v1 ".length)),
+    ).toEqual({
+      version: 1,
+      coverage: { status: "page", examined: 3, total: 8, next_offset: 3 },
+      view: { offset: 0, limit: 3 },
+    });
+    expect(parseDelimited(records, delimiter)).toEqual([
+      ["name", "note", "count"],
+      ['A, "quoted" name', "first line\r\nsecond\tline — café 雪", "0"],
+      ["", "", "false"],
+      ["欠", "", ""],
+    ]);
+  },
+);
+
+it("does not flatten nested selected field values", () => {
+  expect(
+    prepareDelimitedOutput([{ details: { name: "nested" } }], "csv", {
+      fields: ["details"],
+      metadata: {},
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+});
+
+it.each(["=1+1", "  =1+1", "+1", "-1", "@SUM(A1:A2)"])(
+  "refuses formula-leading string cells without changing the source value %j",
+  (value) => {
+    const row = { target: value };
+    const result = prepareDelimitedOutput([row], "csv", {
+      fields: ["target"],
+      metadata: {},
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        userMessage: expect.stringContaining("formula-leading"),
+      },
+    });
+    expect(row.target).toBe(value);
+  },
+);
+
+it("refuses formula-leading column headers", () => {
+  expect(
+    prepareDelimitedOutput([{ value: "safe" }], "csv", {
+      fields: ["=header"],
+      metadata: {},
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+});

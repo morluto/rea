@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -188,10 +189,11 @@ const completedCaptureFromOutcome = (outcome: CaptureOutcome) => {
   return partial.capture;
 };
 
-const expectCooperativeFinalization = (
+const expectCooperativeFinalization = async (
   outcome: CaptureOutcome,
+  root: string,
   expectedExitCode = 0,
-): void => {
+): Promise<void> => {
   const capture = completedCaptureFromOutcome(outcome);
   expect(capture.exit.reason, "the deadline remains the exit reason").toBe(
     "timeout",
@@ -220,10 +222,13 @@ const expectCooperativeFinalization = (
     capture.frames.map(({ data }) => data).join(""),
     "finalization output is captured",
   ).toContain("finalized");
+  const reportBytes = await readFile(join(root, "final.json"));
+  expect(JSON.parse(reportBytes.toString("utf8"))).toEqual({ phase: "final" });
   expect(
-    capture.files_after.find(({ path }) => path.endsWith("final.json"))?.sha256,
+    capture.files_after.find(({ path }) => path.endsWith(":final.json"))
+      ?.sha256,
     "the final filesystem snapshot hashes the final report",
-  ).toMatch(/^[0-9a-f]{64}$/u);
+  ).toBe(createHash("sha256").update(reportBytes).digest("hex"));
   expect(
     capture.manifest.scenario.finalization_ms,
     "the scenario commitment retains finalization_ms",
@@ -282,7 +287,7 @@ cliCaptureTest.for(["CLI", "MCP"] as const)(
       adapter === "CLI"
         ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
-    expectCooperativeFinalization(outcome);
+    await expectCooperativeFinalization(outcome, root);
   },
 );
 
@@ -301,7 +306,7 @@ cliCaptureTest.for(["CLI", "MCP"] as const)(
       adapter === "CLI"
         ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
-    expectCooperativeFinalization(outcome, 3);
+    await expectCooperativeFinalization(outcome, root, 3);
   },
 );
 
@@ -394,23 +399,17 @@ cliCaptureTest.for(["CLI", "MCP"] as const)(
       adapter === "CLI"
         ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
-    if (outcome.kind === "partial") {
-      expect(
-        finalizationFromPartial(outcome.partial),
-        "the cleanup-flake partial observation has no default finalization",
-      ).toBeUndefined();
-      return;
-    }
+    const capture = completedCaptureFromOutcome(outcome);
     expect(
-      outcome.capture.exit,
+      capture.exit,
       "default captures have no finalization evidence",
     ).not.toHaveProperty("finalization");
     expect(
-      outcome.capture.manifest.scenario,
+      capture.manifest.scenario,
       "the committed scenario keeps its legacy identity",
     ).not.toHaveProperty("finalization_ms");
     expect(
-      outcome.capture.manifest.comparison_contract,
+      capture.manifest.comparison_contract,
       "the comparison contract keeps its legacy identity",
     ).not.toHaveProperty("finalization_ms");
   },

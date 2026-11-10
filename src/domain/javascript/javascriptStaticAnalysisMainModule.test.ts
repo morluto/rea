@@ -88,3 +88,16 @@ it.each(cases)(
     );
   },
 );
+
+it("keeps unknown wrapper eligibility separate from local replacement", () => {
+  const local = analyzeJavaScriptStaticSource(
+    'var require; require={main:{require:()=>0}}; require.main.require("node:path");',
+  );
+  expect(local.references).toEqual([]);
+  const conditional = analyzeJavaScriptStaticSource(
+    'var require; if(flag) require={main:{require:()=>0}}; require.main.require("node:path");',
+  );
+  expect(conditional.references).toMatchObject([
+    { kind: "require", specifier: null },
+  ]);
+});

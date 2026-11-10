@@ -261,11 +261,6 @@ const recoveryInputLayoutPath = async (
   path: string,
   signal?: AbortSignal,
 ): Promise<string> => {
-  if (!isAbsolute(path))
-    throw recoveryInputFailure(
-      "path",
-      "Select an absolute JavaScript file path",
-    );
   try {
     checkRecoveryCancellation(signal);
     const parent = dirname(path);

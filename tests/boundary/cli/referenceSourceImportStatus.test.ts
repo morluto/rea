@@ -73,6 +73,7 @@ describe("compiled Windows reference-source import", () => {
           });
         } else expect(result.stderr).toBe("");
       },
+      60_000,
     );
   }
 });

@@ -1,5 +1,9 @@
 # Serve an environment manifest as a replay environment
 
+This specification records an implementation increment and its original problem
+statement. For current behavior and limitations, see the
+[current guide](../../../agent-environments.md).
+
 Issue: https://github.com/morluto/rea/issues/4933
 
 ## Outcome

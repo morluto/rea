@@ -84,16 +84,17 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
   const directory = await createTestTempDirectory("rea-hopper-helper-failure-");
   const targetPath = join(directory, "target");
   await writeFile(targetPath, "fixture target");
+  const helperPath = join(directory, "helper.cjs");
+  await writeFile(
+    helperPath,
+    'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3));',
+  );
   const launcher = new HopperApplicationLauncher({
     environment: {},
     launcherPath: process.execPath,
     targetPath,
     targetKind: "executable",
-    loaderArgs: [
-      "-e",
-      'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3))',
-      "--",
-    ],
+    loaderArgs: [helperPath, "--"],
     bridgeScriptPath: "/rea/hopper_bridge.py",
     launchMode: "native",
   });
@@ -127,11 +128,12 @@ it.skipIf(process.platform !== "darwin")(
     );
     const targetPath = join(directory, "target");
     await writeFile(targetPath, "fixture target");
-    const loaderArgs = [
-      "-e",
-      'process.stderr.write("Hopper has not been found.\\nPlease make sure that Spotlight is active in order for this tool to find Hopper\'s executable.\\n", () => process.exit(3))',
-      "--",
-    ];
+    const helperPath = join(directory, "spotlight-helper.cjs");
+    await writeFile(
+      helperPath,
+      'process.stderr.write("Hopper has not been found.\\nPlease make sure that Spotlight is active in order for this tool to find Hopper\'s executable.\\n", () => process.exit(3));',
+    );
+    const loaderArgs = [helperPath, "--"];
     // Simulate a verified native helper at the launcher provenance boundary;
     // publisher verification itself has real codesign boundary coverage.
     const native = new HopperApplicationLauncher(

@@ -84,6 +84,7 @@ export const registerModelCommands = (
             );
           const service = createModelArtifactService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

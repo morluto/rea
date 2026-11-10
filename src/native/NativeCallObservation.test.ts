@@ -60,7 +60,6 @@ it.each([null, 0, new ProviderCleanupError("foreign", ["unowned"], {})])(
       resources,
       controller.signal,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected owned hash cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
@@ -92,7 +91,6 @@ it.each([false, true])(
       resources,
       controller.signal,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected physical read failure");
     expect(result.error).toMatchObject({
       _tag: "ProviderAdapterError",

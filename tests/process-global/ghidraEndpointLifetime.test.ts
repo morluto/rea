@@ -142,7 +142,8 @@ it.skipIf(process.platform === "win32").each(["valid", "invalid"] as const)(
     const failure = result.error;
     if (kind === "invalid")
       expect(failure.message).toBe("Ghidra TCP endpoint is invalid");
-    expect(fault.handles[0]?.fd).not.toBe(-1);
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
     expect(resources.hasPending).toBe(true);
     fault.blocked = false;
     await resources.retryCleanup();

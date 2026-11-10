@@ -262,6 +262,31 @@ describe("update failures and version boundaries", () => {
     expect(host.installedVersions).toEqual([]);
   });
 
+  it("distinguishes local package-manager startup from registry failure", async () => {
+    const host = new FakeUpdateHost();
+    host.release = err({
+      kind: "package-manager-unavailable",
+      manager: "bun",
+      detail: "spawn bun ENOENT",
+    });
+    const result = await runUpdate("3.2.1", host);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "version-check",
+      latestVersion: null,
+      remediation: expect.stringContaining("spawn bun ENOENT"),
+    });
+    expect(result).toHaveProperty(
+      "remediation",
+      expect.stringContaining("repair its launcher"),
+    );
+    expect(result).toHaveProperty(
+      "remediation",
+      expect.not.stringContaining("registry access"),
+    );
+    expect(host.installedVersions).toEqual([]);
+  });
+
   it.each(["latest", "", "3.3", "$(echo bad)"])(
     "rejects invalid release metadata %s before installation",
     async (version) => {

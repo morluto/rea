@@ -39,6 +39,8 @@ type FixtureLaunch = {
 class FixtureLauncher implements GhidraLauncher {
   readonly launches: FixtureLaunch[] = [];
   readonly requests: string[] = [];
+  /** Extra handshake fields, one entry per launch in order. */
+  readonly handshakeReports: Record<string, unknown>[] = [];
   cleanupAllowed = true;
   cleanupAttempts = 0;
 
@@ -57,6 +59,7 @@ class FixtureLauncher implements GhidraLauncher {
           profileDigest: session.profileDigest,
           targetSha256: session.targetSha256,
           transport: session.transport,
+          handshakeReports: this.handshakeReports.shift() ?? {},
         }),
       },
     });
@@ -208,6 +211,22 @@ const connectGhidra = async () => {
   };
 };
 
+const UNCOMMITTED_SEEDS = {
+  analysis_seeds: {
+    format: "rea-ghidra-seeds-v1",
+    sha256: "b".repeat(64),
+    entries: 1,
+    function_created: 1,
+    function_existing: 0,
+    function_failed: 0,
+    code_decoded: 0,
+    code_failed: 0,
+    label_applied: 0,
+    label_failed: 0,
+    unmapped: 0,
+  },
+};
+
 const firstLaunch = (launcher: FixtureLauncher): FixtureLaunch => {
   const first = launcher.launches[0];
   if (first === undefined) throw new Error("Expected a running Ghidra fixture");
@@ -340,6 +359,84 @@ describe.skipIf(process.platform === "win32")(
         expect(harness.launcher.launches).toHaveLength(1);
         expect((await harness.query(2)).isError).not.toBe(true);
         expect(harness.clients).toHaveLength(2);
+        expect(harness.launcher.launches).toHaveLength(2);
+      } finally {
+        await harness.close();
+      }
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "Ghidra MCP handshake rejection over Unix sockets",
+  () => {
+    it("refuses an uncommitted handshake report before the first query and replaces that session on reopen", async () => {
+      const harness = await connectGhidra();
+      try {
+        harness.launcher.handshakeReports.push(UNCOMMITTED_SEEDS);
+        expect((await harness.open()).isError).not.toBe(true);
+        expect(harness.launcher.launches).toHaveLength(0);
+        expect(parseMcpToolError(await harness.query(1))).toMatchObject({
+          error: {
+            details: {
+              operation: "list_strings",
+              diagnostics: {
+                reason: expect.stringContaining(
+                  "reported analysis seeds that the profile did not commit",
+                ),
+              },
+            },
+          },
+        });
+        const rejected = firstLaunch(harness.launcher);
+        await expectReleased(rejected);
+        expect(harness.launcher.requests).not.toContain("list_strings");
+
+        expect((await harness.query(2)).isError).toBe(true);
+        expect(harness.launcher.launches).toHaveLength(1);
+        expect(harness.launcher.requests).not.toContain("list_strings");
+
+        expect((await harness.open()).isError).not.toBe(true);
+        expect((await harness.query(3)).isError).not.toBe(true);
+        expect(harness.clients).toHaveLength(2);
+        expect(harness.launcher.launches).toHaveLength(2);
+        await expect
+          .poll(() =>
+            harness.launcher.requests.filter(
+              (method) => method === "list_strings",
+            ),
+          )
+          .toHaveLength(1);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it("retains a rejected session's failed cleanup and refuses replacement until it can be retried", async () => {
+      const harness = await connectGhidra();
+      try {
+        harness.launcher.handshakeReports.push(UNCOMMITTED_SEEDS);
+        harness.launcher.cleanupAllowed = false;
+        expect((await harness.open()).isError).not.toBe(true);
+        expect(parseMcpToolError(await harness.query(1))).toMatchObject({
+          error: { code: "cleanup_incomplete" },
+        });
+        expect(harness.launcher.cleanupAttempts).toBe(1);
+        expect(harness.launcher.requests).not.toContain("list_strings");
+        const rejected = firstLaunch(harness.launcher);
+        await access(rejected.runtimeRoot);
+
+        expect(parseMcpToolError(await harness.open())).toMatchObject({
+          error: { code: "cleanup_incomplete" },
+        });
+        expect(harness.launcher.cleanupAttempts).toBe(2);
+        expect(harness.launcher.launches).toHaveLength(1);
+        await access(rejected.runtimeRoot);
+
+        harness.launcher.cleanupAllowed = true;
+        expect((await harness.open()).isError).not.toBe(true);
+        await expectReleased(rejected);
+        expect((await harness.query(2)).isError).not.toBe(true);
         expect(harness.launcher.launches).toHaveLength(2);
       } finally {
         await harness.close();

@@ -7,13 +7,23 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
 } from "../../../src/domain/analysisView/analysisView.js";
-import { managedMemberInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
-import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import {
+  managedMemberInspectionSchema,
+  type ManagedMemberInspection,
+} from "../../../src/domain/managed/managedArtifact.js";
+import {
+  createApplicationMcpHarness,
+  type ApplicationMcpHarness,
+} from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const COLLECTIONS = [
@@ -36,6 +46,129 @@ const createHarness = async () => {
   return harness;
 };
 
+type ToolDefinition = Awaited<
+  ReturnType<ApplicationMcpHarness["client"]["listTools"]>
+>["tools"][number];
+const verifyProjection = async ({
+  client,
+  parent,
+  report,
+  advertised,
+}: {
+  readonly client: ApplicationMcpHarness["client"];
+  readonly parent: Evidence;
+  readonly report: ManagedMemberInspection;
+  readonly advertised: readonly ToolDefinition[];
+}) => {
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const viewDefinition = advertised.find(
+    (tool) => tool.name === "inspect_analysis_view",
+  );
+  if (viewDefinition?.outputSchema === undefined)
+    throw new Error("View schema is absent");
+  const viewInputSchema: Record<string, unknown> = viewDefinition.inputSchema;
+  const viewOutputSchema: Record<string, unknown> = viewDefinition.outputSchema;
+  for (const collection of COLLECTIONS) {
+    const projectedReply = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view: {
+            kind: "managed-members",
+            collection,
+            fields: [],
+            offset: 0,
+            limit: 1,
+          },
+        },
+      },
+      { toolDefinition: viewDefinition },
+    );
+    expect(projectedReply.isError).not.toBe(true);
+    const projected = analysisViewResultSchema.parse(
+      parseEvidence(projectedReply.structuredContent).normalized_result,
+    );
+    if (projected.kind !== "managed-members") throw new Error("Wrong view");
+    expect(projected.page.rows).toHaveLength(1);
+    expect(projected.page.rows[0]).toMatchObject({ source_index: 0 });
+    expect(projected.page.rows[0]).not.toHaveProperty("body");
+    expect(projected.page.rows[0]).not.toHaveProperty("signature");
+    expect(projected.page.rows[0]).not.toHaveProperty("target_identity_sha256");
+    expect(projected.page.rows[0]).not.toHaveProperty("name_sha256");
+  }
+  const selectedRequest = {
+    source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    view: {
+      kind: "managed-members",
+      collection: "methods",
+      names: ["Main", "Main"],
+      declaring_types: ["Fixture.Program"],
+      fields: ["name", "signature"],
+      offset: 1,
+      limit: 1,
+    },
+  };
+  expect(ajv.validateSchema(viewInputSchema)).toBe(true);
+  expect(ajv.validateSchema(viewOutputSchema)).toBe(true);
+  expect(
+    ajv.validate(viewInputSchema, selectedRequest),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+  const selectedReply = await client.callTool(
+    { name: "inspect_analysis_view", arguments: selectedRequest },
+    { toolDefinition: viewDefinition },
+  );
+  expect(selectedReply.isError).not.toBe(true);
+  const selectedEvidence = parseEvidence(selectedReply.structuredContent);
+  const selectedView = analysisViewResultSchema.parse(
+    selectedEvidence.normalized_result,
+  );
+  if (selectedView.kind !== "managed-members") throw new Error("Wrong view");
+  expect(selectedEvidence.evidence_links).toEqual([parent.evidence_id]);
+  expect(selectedView).toMatchObject({
+    module: report.module,
+    source_coverage: report.coverage,
+    coverage: { total: 2, examined: 1, next_offset: null },
+    page: {
+      collection: "methods",
+      source_count: 2,
+      unresolved_filter_rows: 0,
+      rows: [{ source_index: 1, token: "0x06000002", name: "Main" }],
+    },
+  });
+  expect(selectedView.page.rows[0]).not.toHaveProperty("body");
+  expect(selectedView.page.rows[0]).toMatchObject({
+    signature: report.methods[1]?.signature,
+  });
+};
+
+// ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
+const SUMMARY_METHOD_BODY = Buffer.from([
+  (18 << 2) | 2,
+  0x02,
+  0x7b,
+  1,
+  0,
+  0,
+  0x04,
+  0x28,
+  1,
+  0,
+  0,
+  0x0a,
+  0x72,
+  1,
+  0,
+  0,
+  0x70,
+  0x26,
+  0x2a,
+]);
+
 it("summarizes selected members and pages every original collection after the file disappears", async () => {
   const directory = await createTestTempDirectory("rea-member-summary-");
   const path = join(directory, "fixture.dll");
@@ -43,28 +176,9 @@ it("summarizes selected members and pages every original collection after the fi
     path,
     buildManagedPeFixture({
       methodRowCount: 2,
-      // ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
-      ilBody: Buffer.from([
-        (18 << 2) | 2,
-        0x02,
-        0x7b,
-        1,
-        0,
-        0,
-        0x04,
-        0x28,
-        1,
-        0,
-        0,
-        0x0a,
-        0x72,
-        1,
-        0,
-        0,
-        0x70,
-        0x26,
-        0x2a,
-      ]),
+      fieldSignature: Buffer.from([0x06, 0x12, 0x04]),
+      methodSignature: Buffer.from([0x00, 0x00, 0x12, 0x04]),
+      ilBody: SUMMARY_METHOD_BODY,
       userStringHeap: Buffer.from([0, 5, 0x6f, 0, 0x6b, 0, 0]),
       exportedTypes: [
         {
@@ -77,7 +191,8 @@ it("summarizes selected members and pages every original collection after the fi
     }),
   );
   const { client, session } = await createHarness();
-  const definition = (await client.listTools()).tools.find(
+  const advertised = (await client.listTools()).tools;
+  const definition = advertised.find(
     (x) => x.name === "inspect_managed_members",
   );
   if (definition?.outputSchema === undefined)
@@ -114,13 +229,16 @@ it("summarizes selected members and pages every original collection after the fi
   expect(parent.parameters).toEqual({ path, type_names });
   expect(receipt.evidence_links).toEqual([parent.evidence_id]);
   const report = managedMemberInspectionSchema.parse(parent.normalized_result);
+  expect(report.fields[0]?.signature.field_type).toBe(
+    "class:4 (Fixture.Program)",
+  );
   expect(view.summary.selection).toEqual({
     type_names,
     unmatched_type_names: ["Missing.Type"],
   });
   expect(view.summary.coverage).toEqual(report.coverage);
   expect(view.summary.method_rows).toEqual({ offset: 0, count: 2, total: 2 });
-  expect(view.summary.signature_resolution).toBe("type-names-v1");
+  expect(view.summary.signature_resolution).toBe("type-names-v2");
   expect(view.summary.identity_scope).toEqual(report.identity_scope);
   expect(view.summary).not.toHaveProperty("methods");
   for (const detail of [undefined, "complete"]) {
@@ -165,7 +283,7 @@ it("summarizes selected members and pages every original collection after the fi
       if (page.kind !== "managed-members")
         throw new Error("Unexpected page kind");
       expect(page.page.collection).toBe(collection);
-      expect(page.signature_resolution).toBe("type-names-v1");
+      expect(page.signature_resolution).toBe("type-names-v2");
       expect(page.selection).toEqual(report.selection);
       expect(page.coverage.total).toBe(rows.length);
       expect(page.method_rows).toEqual(report.method_rows);
@@ -175,6 +293,7 @@ it("summarizes selected members and pages every original collection after the fi
     // Method rows carry body facts that a looser row schema would strip.
     expect(paged).toEqual(rows);
   }
+  await verifyProjection({ client, parent, report, advertised });
   expect(JSON.stringify(session.evidenceById(parent.evidence_id))).toBe(
     original,
   );

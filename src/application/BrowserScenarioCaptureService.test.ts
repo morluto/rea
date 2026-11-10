@@ -20,7 +20,7 @@ import {
   expectDroppedPartial,
   expectKeptPartial,
   expectOwnerError,
-} from "./ownerObservationExpectation.fixture.js";
+} from "../../tests/fixtures/ownerObservationExpectation.js";
 
 const scenario = browserScenarioInputSchema.parse({
   browser: { mode: "launch", executable_path: "/fixture/chrome" },
@@ -48,7 +48,6 @@ const expectRetainedCapture = (
   result: Awaited<ReturnType<typeof runScenario>>,
   failure: AnalysisError,
 ) => {
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the retained capture");
   expect(result.error).toBe(failure);
   expect(parseEvidence(result.error.partialObservation)).toMatchObject({
@@ -114,6 +113,38 @@ it.each([
   },
 );
 
+it("retains completed scenario Evidence when cancellation arrives during capture", async () => {
+  const caller = new AbortController();
+  const reason = { requested: "stop after capture" };
+  const provider: BrowserScenarioCapturePort = {
+    identity: () => scenarioIdentity,
+    captureScenario: async (received, options) => {
+      expect(received).toBe(scenario);
+      expect(options?.signal).toBe(caller.signal);
+      caller.abort(reason);
+      return ok(capture);
+    },
+  };
+  const result = await captureBrowserScenario(provider, scenario, {
+    signal: caller.signal,
+  });
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "capture_browser_scenario",
+    provider: scenarioIdentity,
+    confidence: "observed",
+    authority: "controlled-replay",
+    parameters: {
+      browser: scenario.browser,
+      start_url: scenario.start_url,
+      actions: scenario.actions,
+    },
+    normalized_result: capture,
+  });
+});
+
 it("keeps startup cancellation and its incomplete capture", async () => {
   const reason = { requested: "stop during initial navigation" };
   const completed = scriptScenarioFixture();
@@ -165,7 +196,6 @@ it("rejects a successful capture that is not a completed scenario", async () => 
     captureScenario: async () => ok({} as BrowserScenarioCapture),
   };
   const result = await captureBrowserScenario(provider, scenario);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a completed-capture refusal");
   expect(result.error).toBeInstanceOf(AnalysisOutputError);
   expect(result.error.message).toContain(

@@ -67,6 +67,7 @@ import {
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
 const MAX_REPORTED_OMITTED_ARCHIVES = 64;
+const MAX_REPORTED_INVALID_ARCHIVES = 16;
 
 interface OmittedArchive {
   readonly path: string;
@@ -100,6 +101,7 @@ const decodeInterfaceBuilderBundle = async (
   const reader = new DirectoryArtifactReader(input.bundlePath);
   const documents: InterfaceBuilderDocumentInput[] = [];
   const invalid: string[] = [];
+  let unreportedInvalidArchives = 0;
   const omittedArchives: OmittedArchive[] = [];
   const omissionCounts = new Map<string, number>();
   const recordOmission = (reason: string, count = 1): void => {
@@ -280,9 +282,11 @@ const decodeInterfaceBuilderBundle = async (
           recordOmittedArchive(entry.path, "unsupported_uid_exact_range");
           continue;
         }
-        invalid.push(
-          `${entry.path}: ${cause instanceof Error ? cause.message : "archive decode failed"}`,
-        );
+        if (invalid.length < MAX_REPORTED_INVALID_ARCHIVES)
+          invalid.push(
+            `${entry.path}: ${cause instanceof Error ? cause.message : "archive decode failed"}`,
+          );
+        else unreportedInvalidArchives += 1;
       }
     }
   } catch (cause: unknown) {
@@ -315,6 +319,7 @@ const decodeInterfaceBuilderBundle = async (
     nonFiniteReals,
     negativeZeroReals,
     invalid,
+    unreportedInvalidArchives,
     omittedArchives,
     unreportedOmittedArchives,
     omissionCounts,
@@ -421,6 +426,7 @@ const finalizeHierarchyCoverage = (
     nonFiniteReals: ReadonlyMap<string, number>;
     negativeZeroReals: ReadonlyMap<string, number>;
     invalid: readonly string[];
+    unreportedInvalidArchives: number;
     omittedArchives: readonly OmittedArchive[];
     unreportedOmittedArchives: number;
     omissionCounts: ReadonlyMap<string, number>;
@@ -439,6 +445,7 @@ const finalizeHierarchyCoverage = (
     nonFiniteReals,
     negativeZeroReals,
     invalid,
+    unreportedInvalidArchives,
     omittedArchives,
     unreportedOmittedArchives,
   } = counts;
@@ -563,7 +570,12 @@ const finalizeHierarchyCoverage = (
       ...(invalid.length === 0
         ? []
         : [
-            `Some Interface Builder archives could not be decoded: ${invalid.slice(0, 16).join("; ")}`,
+            `Some Interface Builder archives could not be decoded: ${invalid.join("; ")}`,
+          ]),
+      ...(unreportedInvalidArchives === 0
+        ? []
+        : [
+            `${unreportedInvalidArchives} additional archive decode failure diagnostic(s) were not retained; reporting is bounded to ${MAX_REPORTED_INVALID_ARCHIVES} paths.`,
           ]),
       ...[...unknownDates].map(
         ([path, count]) => `${path}: ${unknownDateLimitation(count)}`,

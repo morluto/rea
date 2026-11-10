@@ -4,6 +4,7 @@ import { appendFile } from "node:fs/promises";
 import { parseArgs, promisify } from "node:util";
 import {
   applyReleasePleasePatch,
+  describeReleaseProposalError,
   releaseProposalSearchDepth,
 } from "./lib/release-proposal.mjs";
 
@@ -63,7 +64,7 @@ async function main() {
 
 await main().catch((error) => {
   process.stderr.write(
-    `Release proposal failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    `Release proposal failed: ${describeReleaseProposalError(error)}\n`,
   );
   process.exitCode = 1;
 });

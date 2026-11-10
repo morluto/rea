@@ -277,6 +277,7 @@ it.each(["read", "capacity", "completed"] as const)(
             },
           },
         });
+        expect(failure.cause).toBe(reason);
       } else if (outcome === "capacity") {
         expect(projectAnalysisError(failure).code).toBe("resource_constraint");
       } else {

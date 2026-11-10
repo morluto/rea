@@ -77,6 +77,21 @@ cliTest(
     const alias = await run(["--json", "--update"]);
     expect(alias.exitCode, alias.stderr).toBe(0);
     expect(alias.json).toEqual(canonical.json);
+    for (const flag of ["--no-timings", "--timings=false", "--timings=true"]) {
+      const canonicalTimed = await run(["update", "--json", flag]);
+      const aliasTimed = await run([flag, "--update", "--json"]);
+      expect(canonicalTimed.exitCode, canonicalTimed.stdout).toBe(0);
+      expect(aliasTimed.exitCode, aliasTimed.stdout).toBe(0);
+      expect(aliasTimed.json).toEqual(canonicalTimed.json);
+      expect(aliasTimed.json).toEqual(canonical.json);
+      for (const result of [canonicalTimed, aliasTimed]) {
+        if (flag === "--timings=true")
+          expect(JSON.parse(result.stderr)).toMatchObject({
+            rea_timings: { version: 1, command_ms: expect.any(Number) },
+          });
+        else expect(result.stderr).toBe("");
+      }
+    }
     const filtered = await run([
       "--update",
       "--format=json",

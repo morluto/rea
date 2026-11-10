@@ -19,7 +19,7 @@ vi.mock("node:v8", async (original) => {
         ? {
             ...observed,
             heap_size_limit:
-              observed.used_heap_size + 192 * 1024 * 1024 + 128 * 1024,
+              observed.used_heap_size + 192 * 1024 * 1024 + 64 * 1024,
           }
         : observed;
     },
@@ -112,7 +112,6 @@ it.each([
         { nodes: 100, unknowns: 100 },
         controller.signal,
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected worker failure");
       const failure = result.error.error.cleanupPrimary ?? result.error.error;
       expect(result.error.error.cleanupIncomplete).toBe(deniedCleanup);

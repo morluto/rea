@@ -6,101 +6,105 @@ import { expect, it } from "vitest";
 
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 
-it("bounds concurrent reverse-engineering provider calls", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-capacity-"));
-  const path = join(directory, "fixture.bin");
-  await writeFile(path, "fixture");
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let calls = 0;
-  let mode: "success" | "failure" | "timeout" = "success";
-  const service = new TestReverseEngineeringService({
-    run: async () => {
-      calls += 1;
-      if (mode === "failure")
-        throw Object.assign(new Error("provider failed"), { code: "ENOENT" });
-      if (mode === "timeout")
-        throw Object.assign(new Error("provider timed out"), {
-          code: "ETIMEDOUT",
-        });
-      await gate;
-      return { stdout: "", stderr: "" };
-    },
-  });
-
-  try {
-    const active = Array.from({ length: 8 }, () =>
-      service.inspectWithObjdump({ path, operation: "file_headers" }),
-    );
-    const preAborted = new AbortController();
-    preAborted.abort();
-    await expect(
-      service.inspectWithObjdump(
-        { path, operation: "file_headers" },
-        { signal: preAborted.signal },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCancelledError" },
+it.each([
+  { budget: undefined, capacity: 8 },
+  { budget: 40 * 1024 * 1024, capacity: 3 },
+])(
+  "bounds provider concurrency and aggregate capture admission at budget $budget",
+  async ({ budget, capacity }) => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-reverse-capacity-"));
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "fixture");
+    const input = {
+      path,
+      operation: "file_headers" as const,
+      ...(budget === undefined ? {} : { max_output_bytes: budget }),
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    await expect(
-      service.inspectWithObjdump({ path, operation: "file_headers" }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisResourceConstraintError",
-        resource: "transport",
-        reportedLimits: {
-          max_concurrent_operations: 8,
-          active_operations: 8,
-        },
+    let calls = 0;
+    let mode: "success" | "failure" | "timeout" = "success";
+    const service = new TestReverseEngineeringService({
+      run: async () => {
+        calls += 1;
+        if (mode === "failure")
+          throw Object.assign(new Error("provider failed"), { code: "ENOENT" });
+        if (mode === "timeout")
+          throw Object.assign(new Error("provider timed out"), {
+            code: "ETIMEDOUT",
+          });
+        await gate;
+        return { stdout: "", stderr: "" };
       },
     });
-    release();
-    const results = await Promise.all(active);
-    expect(results.every((result) => result.ok)).toBe(true);
-    expect(calls).toBe(8);
 
-    mode = "failure";
-    const failed = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        service.inspectWithObjdump({ path, operation: "file_headers" }),
-      ),
-    );
-    expect(failed.every((result) => !result.ok)).toBe(true);
+    try {
+      const active = Array.from({ length: capacity }, () =>
+        service.inspectWithObjdump(input),
+      );
+      const preAborted = new AbortController();
+      preAborted.abort();
+      await expect(
+        service.inspectWithObjdump(input, { signal: preAborted.signal }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError" },
+      });
+      await expect(service.inspectWithObjdump(input)).resolves.toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          resource: "transport",
+          reportedLimits: {
+            max_concurrent_operations: 8,
+            active_operations: capacity,
+            max_active_capture_bytes: 134217728,
+          },
+        },
+      });
+      release();
+      const results = await Promise.all(active);
+      expect(results.every((result) => result.ok)).toBe(true);
+      expect(calls).toBe(capacity);
 
-    mode = "timeout";
-    const timedOut = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        service.inspectWithObjdump({ path, operation: "file_headers" }),
-      ),
-    );
-    expect(timedOut.every((result) => !result.ok)).toBe(true);
-
-    const aborted = new AbortController();
-    aborted.abort();
-    const cancelled = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        service.inspectWithObjdump(
-          { path, operation: "file_headers" },
-          { signal: aborted.signal },
+      mode = "failure";
+      const failed = await Promise.all(
+        Array.from({ length: capacity }, () =>
+          service.inspectWithObjdump(input),
         ),
-      ),
-    );
-    expect(cancelled.every((result) => !result.ok)).toBe(true);
+      );
+      expect(failed.every((result) => !result.ok)).toBe(true);
 
-    mode = "success";
-    await expect(
-      service.inspectWithObjdump({ path, operation: "file_headers" }),
-    ).resolves.toMatchObject({ ok: true });
-  } finally {
-    release();
-    await service.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+      mode = "timeout";
+      const timedOut = await Promise.all(
+        Array.from({ length: capacity }, () =>
+          service.inspectWithObjdump(input),
+        ),
+      );
+      expect(timedOut.every((result) => !result.ok)).toBe(true);
+
+      const aborted = new AbortController();
+      aborted.abort();
+      const cancelled = await Promise.all(
+        Array.from({ length: capacity }, () =>
+          service.inspectWithObjdump(input, { signal: aborted.signal }),
+        ),
+      );
+      expect(cancelled.every((result) => !result.ok)).toBe(true);
+
+      mode = "success";
+      await expect(service.inspectWithObjdump(input)).resolves.toMatchObject({
+        ok: true,
+      });
+    } finally {
+      release();
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("preserves the exact caller reason when objdump admission is already aborted", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-preabort-"));
@@ -292,7 +296,7 @@ it.each([
       expect(result.error.cause).toBe(code === "ABORT_ERR" ? reason : failure);
       if (code === "EACCES") {
         expect(result.error).toMatchObject({
-          providerId: "objdump",
+          providerId: "objdump.command",
           diagnostics: {
             boundary: "provider-launch",
             command: "objdump",

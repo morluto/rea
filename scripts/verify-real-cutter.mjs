@@ -32,8 +32,6 @@ const runCli = async (...arguments_) => {
   return JSON.parse(stdout);
 };
 
-const projectRoot = await mkdtemp(join(tmpdir(), "rea-cutter-smoke-"));
-const projectPath = join(projectRoot, "smoke.rzdb");
 const rizinQuote = (value) =>
   `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 const unavailableAnalysis = {
@@ -44,16 +42,21 @@ const unavailableAnalysis = {
   },
 };
 const expectedPlatform = {
+  linux: "linux",
   Linux: "linux",
   macOS: "darwin",
   Windows: "win32",
 }[process.env.EXPECTED_PLATFORM];
-if (expectedPlatform !== undefined)
+if (process.env.EXPECTED_PLATFORM !== undefined) {
+  assert.ok(expectedPlatform, "Unrecognized Cutter runner platform.");
   assert.equal(
     process.platform,
     expectedPlatform,
     "Cutter runner did not match its declared platform.",
   );
+}
+const projectRoot = await mkdtemp(join(tmpdir(), "rea-cutter-smoke-"));
+const projectPath = join(projectRoot, "smoke.rzdb");
 try {
   const discovery = await runCli("list-cutter-sessions");
   assert.equal(

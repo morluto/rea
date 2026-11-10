@@ -4,7 +4,6 @@ import { err, ok, type Result } from "../../../../src/domain/result.js";
 
 import { nativeCallPartialObservationSchema } from "../../../../src/domain/native/nativeCallPartialObservation.js";
 import {
-  LLDB_OBSERVATION_JOURNAL_MAX_BYTES,
   parseLldbObservationJournal,
   projectLldbPartialObservation,
   readBoundedPrefix,
@@ -55,6 +54,26 @@ const observation = (
 };
 
 describe("LLDB retained observations", () => {
+  it("preserves partial source coordinates while accepting historical omission", () => {
+    const attributed = {
+      ...event,
+      source_location: {
+        file_path: "/missing/fixture.pas",
+        line: 23,
+        column: null,
+      },
+    };
+    const journal =
+      [event, attributed]
+        .map((entry) => JSON.stringify({ kind: "event", event: entry }))
+        .join("\n") + "\n";
+    const partial = observation("cancelled", journal);
+    expect(partial.events).toEqual([event, attributed]);
+    expect(partial.limitations).toContain(
+      "Source paths and lines are LLDB line-table attribution; REA did not read or verify the referenced source bytes.",
+    );
+  });
+
   it.each([
     ["cancellation", "cancelled"],
     ["bridge failure", "tracer-failure"],
@@ -148,13 +167,10 @@ describe("LLDB retained observation read failures", () => {
     const valid = JSON.stringify({ kind: "event", event });
     const malformed = '{"kind":"unknown"}\n';
     const malformedRows = Math.floor(
-      (LLDB_OBSERVATION_JOURNAL_MAX_BYTES - valid.length * 2 - 2) /
-        malformed.length,
+      (8 * 1024 * 1024 - valid.length * 2 - 2) / malformed.length,
     );
     const journal = `${valid}\n${malformed.repeat(malformedRows)}${valid}\n`;
-    expect(Buffer.byteLength(journal)).toBeLessThanOrEqual(
-      LLDB_OBSERVATION_JOURNAL_MAX_BYTES,
-    );
+    expect(Buffer.byteLength(journal)).toBeLessThanOrEqual(8 * 1024 * 1024);
     const partial = observation("tracer-failure", journal);
     expect(partial.events).toEqual([event, event]);
     expect(partial.limitations.length).toBeLessThanOrEqual(6);
@@ -186,6 +202,43 @@ describe("LLDB retained observation read failures", () => {
     );
   });
 
+  it("reads the selected partial capture and journal budgets instead of fixed defaults", async () => {
+    const source = Buffer.from("retained-output");
+    const first = await readPartialCapture(
+      "stdout",
+      readbackFilesFailingAfter(source, source.length, new Error("unused")),
+      8,
+    );
+    const raised = await readPartialCapture(
+      "stdout",
+      readbackFilesFailingAfter(source, source.length, new Error("unused")),
+      32,
+    );
+    if (!first.ok || !raised.ok)
+      throw new Error("Expected retained output reads");
+    expect(first.value.capture.text).toBe("retained");
+    expect(raised.value.capture.text).toBe("retained-output");
+    const row = `${JSON.stringify({ kind: "event", event })}\n`;
+    const journal = Buffer.from(row.repeat(2));
+    const limited = await readLldbObservationJournal(
+      "journal",
+      readbackFilesFailingAfter(journal, journal.length, new Error("unused")),
+      Buffer.byteLength(row),
+    );
+    const complete = await readLldbObservationJournal(
+      "journal",
+      readbackFilesFailingAfter(journal, journal.length, new Error("unused")),
+      journal.length,
+    );
+    if (!limited.ok || !complete.ok)
+      throw new Error("Expected retained journal reads");
+    expect(limited.value.parsed.events).toEqual([event]);
+    expect(complete.value.parsed.events).toEqual([event, event]);
+    expect(limited.value.limitations).toContainEqual(
+      expect.stringContaining("capture_limits.trace_bytes"),
+    );
+  });
+
   it("retains completed journal rows and the exact cause after a later read fails", async () => {
     const completeRow = `${JSON.stringify({ kind: "event", event })}\n`;
     const source = Buffer.from(`${completeRow}{"kind":"event"`);
@@ -197,7 +250,6 @@ describe("LLDB retained observation read failures", () => {
     );
     const result = await readLldbObservationJournal("journal", files);
 
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.status).toBe("read-failure");
     if (result.value.status !== "read-failure")
@@ -217,7 +269,6 @@ describe("LLDB retained observation read failures", () => {
       "stdout",
       readbackFilesFailingAfter(source, Buffer.byteLength(prefix), failure),
     );
-    expect(partial.ok).toBe(true);
     if (!partial.ok) throw partial.error;
     expect(partial.value.status).toBe("read-failure");
     if (partial.value.status !== "read-failure")

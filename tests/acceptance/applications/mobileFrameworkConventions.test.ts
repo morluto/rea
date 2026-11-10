@@ -117,7 +117,9 @@ cliTest(
             inventory_complete: true,
           },
           limitations: expect.arrayContaining([
-            "A bridge basis is inferred from the native path and is repeated for every managed component.",
+            expect.stringMatching(
+              /bridge basis.*inferred.*native path.*every managed component/iu,
+            ),
           ]),
           bridge_candidates: expect.arrayContaining(
             Object.entries(libraries).flatMap(([native_path, basis]) =>

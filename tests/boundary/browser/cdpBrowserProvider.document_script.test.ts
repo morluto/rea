@@ -1028,9 +1028,8 @@ describe("CdpBrowserProvider: frame scope and screenshots", () => {
     expect(names).toEqual(
       expect.arrayContaining(["search_orders", "update_order"]),
     );
-    expect(names).not.toEqual(
-      expect.arrayContaining(["child_tool", "escaped_child_tool"]),
-    );
+    expect(names).not.toContain("child_tool");
+    expect(names).not.toContain("escaped_child_tool");
     expect(result.value.completeness.policy_filtered_sections).toContain(
       "webmcp_tools",
     );

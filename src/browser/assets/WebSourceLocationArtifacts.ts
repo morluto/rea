@@ -1,11 +1,12 @@
+import {
+  selectedSourceMapLimits,
+  sourceMapLimitRecovery,
+} from "../../domain/sourceMapLimits.js";
 import type { WebSourceLocationArtifactPort } from "../../application/WebSourceLocationPorts.js";
 import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
-  WEB_SOURCE_MAP_LIMITS,
-  type WebSourceLocationInput,
-} from "../../domain/webSourceLocation.js";
+import type { WebSourceLocationInput } from "../../domain/webSourceLocation.js";
 import { err, ok } from "../../domain/result.js";
 import { WebArtifactCleanup } from "../WebArtifactCleanup.js";
 import { LocalWebScriptArtifacts } from "./LocalWebScriptArtifacts.js";
@@ -59,6 +60,10 @@ export class LocalWebSourceLocationArtifacts implements WebSourceLocationArtifac
               field: ["source_map", "path"],
               targetPath: input.source_map.path,
               callerSelected: true,
+              limitRecovery: sourceMapLimitRecovery(
+                "map_bytes",
+                selectedSourceMapLimits(input.source_map_limits).mapBytes,
+              ),
             },
             options?.signal,
           ),
@@ -83,7 +88,7 @@ export class LocalWebSourceLocationArtifacts implements WebSourceLocationArtifac
     const data = await acquisition.read(
       "source-map",
       input.source_map.path,
-      WEB_SOURCE_MAP_LIMITS.mapBytes,
+      selectedSourceMapLimits(input.source_map_limits).mapBytes,
       options?.signal,
       this.#resources,
     );

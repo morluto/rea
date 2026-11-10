@@ -218,6 +218,7 @@ it.each(["released", "still failing"] as const)(
         cause: reason,
         cleanupIncomplete: false,
       });
+      expect(cancelled.error.cause).toBe(reason);
       expect(first.error.cleanupIncomplete).toBe(false);
       expect(registry.hasPendingOwnedResources()).toBe(false);
     } else {
@@ -252,7 +253,7 @@ it("keeps the caller's reason and the catalog owner when cancellation lands duri
     cleanupIncomplete: true,
     cleanupResources: [definition],
   });
-  expect(JSON.stringify(resolved.error.cause)).toContain(reason.caller);
+  expect(resolved.error.cause).toBe(reason);
   expect(provider.hasPendingOwnedResources()).toBe(true);
   fault.deny = false;
   fault.onClose = undefined;

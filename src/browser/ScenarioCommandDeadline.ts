@@ -113,6 +113,7 @@ export const withScenarioCommandDeadline = async <T>(
   timeoutMs: number,
   phase: ScenarioCommandDeadlinePhase,
   method?: string,
+  launchExecutablePath?: string,
 ): Promise<T> => {
   let operation: Promise<T>;
   try {
@@ -131,6 +132,9 @@ export const withScenarioCommandDeadline = async <T>(
       diagnostics: {
         phase,
         command_timeout_ms: timeoutMs,
+        ...(launchExecutablePath === undefined
+          ? {}
+          : { executable_path: launchExecutablePath }),
         ...(method === undefined ? {} : { method }),
         // Discovered CDP URLs can carry transport userinfo in Playwright's
         // native message. Preserve that cause without projecting it here.

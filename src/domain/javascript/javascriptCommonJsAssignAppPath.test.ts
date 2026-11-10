@@ -3,7 +3,10 @@ import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeCommonJsStaticFixture,
+  analyzeCommonJsSemanticFixture,
+} from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 const cases = [
   [
@@ -115,7 +118,7 @@ it.each(cases)(
       module.exports,
     );
     expect(changed).toBe(possible ? 1 : 0);
-    const analysis = analyzeJavaScriptStaticSource(defining);
+    const analysis = analyzeCommonJsStaticFixture(defining);
     expect(analysis.parse_error_count).toBe(0);
     expect((analysis.electron.app_path_changes ?? []).length > 0).toBe(
       possible,
@@ -140,9 +143,9 @@ it("retains native source uncertainty when an array iterator is overwritten", ()
   // The local change function is harmless, but the published app still permits
   // a caller to select the native setter. Unknown iteration retains that
   // possibility without identifying a yielded value or an exact export link.
-  const analysis = analyzeJavaScriptStaticSource(defining);
+  const analysis = analyzeCommonJsStaticFixture(defining);
   expect((analysis.electron.app_path_changes ?? []).length).toBeGreaterThan(0);
-  const ir = analyzeJavaScriptSemantics(defining);
+  const ir = analyzeCommonJsSemanticFixture(defining);
   expect(
     ir.moduleLinks.filter(({ kind }) => kind === "commonjs-export"),
   ).toEqual([

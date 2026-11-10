@@ -38,3 +38,25 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(operations).toEqual(["archive", "history.list"]);
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains anchored reserved-prefix route constants through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-route-reserved-prefix-");
+    await writeFixtureFiles(root, {
+      "entry.js": `globalThis.TURBOPACK=[];
+        import {createBrowserRouter} from 'react-router-dom';
+        export const router=createBrowserRouter([{path:'/static',element:null}]);
+        const help='/static/help';globalThis.helpLink=help;
+        const unrelated='/api/unanchored';globalThis.other=unrelated;`,
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const routes = result.route_inventory?.routes ?? [];
+    expect(routes.find(({ path }) => path === "/static/help")).toMatchObject({
+      confidence: "low",
+      classification: "unknown",
+    });
+    expect(routes.some(({ path }) => path === "/api/unanchored")).toBe(false);
+    expect(result.route_inventory?.coverage.application_routes).toBe("unknown");
+  },
+);

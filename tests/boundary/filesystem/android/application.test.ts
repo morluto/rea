@@ -19,6 +19,8 @@ import {
 
 import { projectAndroidApplicationEvidence } from "../../../../src/application/android/AndroidApplicationService.js";
 import { androidApplicationProjectionResultSchema } from "../../../../src/domain/android/androidApplication.js";
+import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
+import { parseEvidence } from "../../../../src/domain/evidence.js";
 
 describe("Android application projection", () => {
   it("projects deterministic APK components and explicit bridge hypotheses", async () => {
@@ -100,7 +102,9 @@ describe("Android application projection", () => {
     ).toBe(true);
     expect(left.limitations).toEqual(
       expect.arrayContaining([
-        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+        expect.stringMatching(
+          /bridge basis.*inferred.*native path.*every managed component/iu,
+        ),
         "ZIP inventory cannot see the APK Signing Block, so an empty signing array does not mean the APK is unsigned.",
       ]),
     );
@@ -167,6 +171,23 @@ describe("Android application projection", () => {
       "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     );
   });
+});
+
+it("preserves the selected inventory subject through application projection", async () => {
+  const root = await createTestTempDirectory("rea-android-subject-");
+  const path = join(root, "Fixture.apk");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("AndroidManifest.xml", new TextReader("manifest"));
+  await writeFile(path, await writer.close());
+  const inventory = await inventoryApplicationPackage(path);
+  const selected = parseEvidence({
+    ...inventory,
+    subject: { ...inventory.subject, name: "Selected application" },
+  });
+  const result = projectAndroidApplicationEvidence({
+    inventory_evidence: [selected],
+  });
+  expect(requireSuccessfulProjection(result).subject).toEqual(selected.subject);
 });
 
 it("projects APK v1 metadata candidates at any META-INF depth", async () => {
@@ -321,11 +342,19 @@ describe("case-distinct APK resource names", () => {
     );
     expect(projection.components.manifests).toHaveLength(1);
     expect(projection.components.dex).toHaveLength(1);
-    expect(JSON.stringify(inventory)).toContain("res/2F.xml");
-    expect(JSON.stringify(inventory)).toContain("res/2f.xml");
-    expect(JSON.stringify(inventory)).toContain(
-      "English (en-US) Unicode case folding",
+    const graph = artifactInventoryResultSchema.parse(
+      inventory.normalized_result,
     );
+    for (const logicalPath of ["res/2F.xml", "res/2f.xml"]) {
+      expect(graph.occurrences).toContainEqual(
+        expect.objectContaining({
+          logical_path: logicalPath,
+          limitations: expect.arrayContaining([
+            expect.stringContaining("English (en-US) Unicode case folding"),
+          ]),
+        }),
+      );
+    }
   });
 });
 

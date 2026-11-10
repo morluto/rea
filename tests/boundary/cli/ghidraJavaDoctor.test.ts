@@ -9,7 +9,8 @@ import {
   observeOwnedProcessGroups,
   systemProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnershipObservation.js";
-import { resolveExecutable } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
+import { resolveProcessScenarioRuntimePaths } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for([
   ["missing", "missing_dependency", "runtime_missing"],
@@ -244,7 +245,15 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
       .filter((directory) => isAbsolute(directory))
       .join(delimiter);
     await symlink(
-      await resolveExecutable("ps", process.cwd(), hostPath),
+      (
+        await resolveProcessScenarioRuntimePaths(
+          processScenarioSchema.parse({
+            executable: "ps",
+            working_directory: process.cwd(),
+          }),
+          { PATH: hostPath },
+        )
+      ).executable,
       join(bin, "ps"),
     );
     await mkdir(join(install, "Ghidra"), { recursive: true });

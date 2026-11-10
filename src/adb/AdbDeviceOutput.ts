@@ -40,6 +40,28 @@ export const isSuccessfulDaemonStartNotice = (line: string): boolean =>
   line === "* daemon started successfully" ||
   line === "* daemon started successfully *";
 
+/** Host-side startup line, shared by failure and successful probe parsing. */
+export const isDaemonStartingNotice = (line: string): boolean =>
+  /^\* daemon not running(?:; starting now at [^\r\n]*|\. starting it now on port \d+ \*)$/u.test(
+    line,
+  );
+
+/** No diagnostics beyond a completed, recognized startup sequence. */
+export const hasOnlySuccessfulAdbStartupNotices = (output: string): boolean => {
+  let started = false;
+  for (let offset = 0; offset < output.length;) {
+    const newline = output.indexOf("\n", offset);
+    const line = normalizeAdbOutputLine(
+      output.slice(offset, newline === -1 ? output.length : newline),
+    );
+    if (isSuccessfulDaemonStartNotice(line)) started = true;
+    else if (isDaemonStartingNotice(line)) started = false;
+    else return false;
+    offset = newline === -1 ? output.length : newline + 1;
+  }
+  return started;
+};
+
 const metadataValue = (remainder: string, key: string): string | null => {
   const match = new RegExp(`(?:^|\\s)${key}:(\\S+)`, "u").exec(remainder);
   return match === null ? null : match[1]!;
@@ -75,7 +97,14 @@ export const parseAdbDevicesOutput = (
       if (remainder === undefined || !remainder.startsWith(candidate))
         return false;
       const next = remainder[candidate.length];
-      return next === undefined || /\s/u.test(next);
+      // adb prints no-permissions as `no permissions[ (reason)]; see [URL]` and
+      // omits the reason on a host where it finds no udev problem to name,
+      // such as one without a plugdev group, so `;` can follow it directly.
+      return (
+        next === undefined ||
+        /\s/u.test(next) ||
+        (candidate === "no permissions" && next === ";")
+      );
     });
     if (match === null || state === undefined) {
       if (rawLine.trim() !== "") unparsed.add(rawLine);

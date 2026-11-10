@@ -14,8 +14,13 @@ describe("computed Electron web preference keys", () => {
       } });
     `);
 
-    expect(analysis.parse_status).toBe("complete");
+    expect(analysis.parse_status).toBe("partial");
+    expect(analysis.analysis_coverage?.syntax).toEqual({
+      status: "complete",
+      error_count: 0,
+    });
     expect(analysis.electron.browser_windows[0]).toMatchObject({
+      loader_authority: "candidate",
       preload_path: "./preload.js",
       web_preferences: [
         { name: "", value: { status: "literal", value: false } },

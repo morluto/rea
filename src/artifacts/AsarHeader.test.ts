@@ -114,6 +114,6 @@ it("decodes admitted JSON across short reads without consuming padding", async (
     ),
   ).rejects.toMatchObject({
     reason: "format",
-    message: "Truncated ASAR JSON header",
+    message: expect.stringMatching(/truncated.*header/iu),
   });
 });

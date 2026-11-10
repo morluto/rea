@@ -23,7 +23,6 @@ it("preserves a warm provider when an already cancelled caller joins", async () 
   const reason = { source: "caller", opaque: 7 };
   controller.abort(reason);
   const joined = await client.start(controller.signal);
-  expect(joined.ok).toBe(false);
   if (joined.ok) throw new Error("Expected cancellation");
   expect(joined.error).toBeInstanceOf(HopperCancelledError);
   expect(joined.error.cause).toBe(reason);

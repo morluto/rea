@@ -95,7 +95,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     start_gdb_session: {
       readOnlyHint: false,

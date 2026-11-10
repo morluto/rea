@@ -33,7 +33,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { HistoricalCaptureDecoder } from "../../src/browser/history/HistoricalCaptureDecoder.js";
-import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/CaptureRelease.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/CaptureProviderIdentities.js";
 import { WebNetworkCaptureService } from "../../src/application/WebNetworkCaptureService.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { fileSnapshotPartialObservationSchema } from "../../src/domain/fileSnapshotObservation.js";
@@ -250,9 +250,10 @@ it.each(["captured", "over-capacity"] as const)(
         nestedResult.error.cleanupPrimary?.partialObservation,
       ),
     ).toEqual(expected);
-    expect(projected.details?.diagnostics).toMatchObject({
-      primary_error: { details: { partial_observation: expected } },
-    });
+    expect(projected.details?.partial_observation).toEqual(expected);
+    expect(projected.details?.diagnostics).not.toHaveProperty(
+      "primary_error.details.partial_observation",
+    );
     expect(JSON.stringify(projected)).not.toContain("private-read-marker");
     expect(JSON.stringify(projected)).not.toContain(snapshot.sha256);
     composed.resolveCleanup();

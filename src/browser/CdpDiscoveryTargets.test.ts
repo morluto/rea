@@ -203,7 +203,6 @@ it.each(
                 target_id: "duplicate",
                 observation_ms: 0,
               });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ambiguous target rejection");
       expect(result.error).toBeInstanceOf(BrowserObservationError);
       expect(result.error.userMessage).toContain("ambiguous");

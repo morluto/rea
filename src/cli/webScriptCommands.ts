@@ -1,6 +1,7 @@
 import { Cli, z } from "incur";
 
 import { exportWebScripts } from "../application/WebScriptExportService.js";
+import { exportWebScriptsInputSchema } from "../domain/webScriptExport.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -18,14 +19,8 @@ export const registerWebScriptCommands = (
     description:
       "Export retained website scripts into an absent directory for static JavaScript analysis",
     args: z.object({
-      capturePath: z
-        .string()
-        .describe("Absolute path to saved page or scenario capture JSON"),
-      outputDirectory: z
-        .string()
-        .describe(
-          "Absolute absent directory for verified scripts and manifest",
-        ),
+      capturePath: exportWebScriptsInputSchema.shape.capture_path,
+      outputDirectory: exportWebScriptsInputSchema.shape.output_directory,
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>

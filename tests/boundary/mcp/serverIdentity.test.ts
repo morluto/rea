@@ -22,6 +22,10 @@ import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import {
+  annotationsFromEffects,
+  toolSessionEffects,
+} from "../../../src/contracts/toolEffects.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
@@ -530,16 +534,18 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
   for (const contract of TOOL_CONTRACTS) {
+    const effects = toolSessionEffects(contract.name);
+    const annotations = annotationsFromEffects(effects);
     expect(availability).toContainEqual(
       expect.objectContaining({
         name: contract.name,
         surface: contract.kind,
-        effects: contract.effects,
+        effects,
         annotations: {
-          read_only: contract.annotations.readOnlyHint ?? false,
-          destructive: contract.annotations.destructiveHint ?? false,
-          idempotent: contract.annotations.idempotentHint ?? false,
-          open_world: contract.annotations.openWorldHint ?? true,
+          read_only: annotations.readOnlyHint,
+          destructive: annotations.destructiveHint,
+          idempotent: annotations.idempotentHint,
+          open_world: annotations.openWorldHint,
         },
       }),
     );

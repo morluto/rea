@@ -29,13 +29,21 @@ export const registerCompareManagedMembers = (
           const result = await logToolExecution(
             options.logger,
             compareContract.name,
-            () => Promise.resolve(executeManagedMemberComparison(input)),
+            () =>
+              Promise.resolve(
+                executeManagedMemberComparison(
+                  input,
+                  options.session.evidenceForAnalysis.bind(options.session),
+                  { signal: context.mcpReq.signal },
+                ),
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, compareContract);
           const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
+            { evidence: result.value.evidence },
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, compareContract);

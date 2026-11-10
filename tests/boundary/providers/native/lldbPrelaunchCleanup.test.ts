@@ -242,7 +242,6 @@ it.each([
     const tracer = new LldbCallTracer({}, undefined, async () => err(failure));
     try {
       const result = await tracer.trace(request);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected preparation failure");
       expect(result.error._tag).toBe(tag);
       expect(result.error.cause).toBe(abortReason);

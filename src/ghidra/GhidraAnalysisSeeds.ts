@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { createHash } from "node:crypto";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -228,15 +229,13 @@ export const snapshotGhidraAnalysisSeeds = async (
       if (
         (await resolveSeedPath(commitment.configured_path)) !== commitment.path
       )
-        throw new Error(
-          "Ghidra seed file resolved path differs from explicit configuration",
-        );
+        throw new GhidraAdmissionError("seed_path_differs");
       const entries = await readSeeds(commitment.path, resources, signal);
       const normalized = normalizedSeeds(entries);
       if (sha256(normalized) !== commitment.sha256)
-        throw new Error(
-          `Ghidra seed file changed after the analysis profile was committed: ${commitment.path}`,
-        );
+        throw new GhidraAdmissionError("seed_changed", {
+          path: commitment.path,
+        });
       const directory = join(runtimeRoot, "seeds");
       await mkdir(directory, { mode: 0o700 });
       const path = join(directory, "seeds.tsv");

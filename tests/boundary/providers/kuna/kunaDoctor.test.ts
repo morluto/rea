@@ -33,7 +33,9 @@ it("reports an unconfigured Kuna as a missing optional engine", async () => {
 
 it("publishes the caller's explicit settings once the installation validates", async () => {
   const root = await createTestTempDirectory("rea-kuna-doctor-");
-  const kuna = await writeFakeKuna(root);
+  const kuna = await writeFakeKuna(root, {
+    version: { stdout: "kuna 1.990\n" },
+  });
   const cache = join(root, "cache");
 
   const inspection = await inspectKunaProvider({
@@ -46,14 +48,22 @@ it("publishes the caller's explicit settings once the installation validates", a
   expect(inspection).toMatchObject({
     configured: true,
     available: true,
-    providerVersion: "1.833",
+    providerVersion: "1.990",
     registrationEnvironment: {
       REA_KUNA_COMMAND: kuna,
       REA_KUNA_CACHE_DIR: cache,
       REA_KUNA_JOBS: "4",
     },
     checks: [
-      { name: "installation", ok: true, details: { version: "1.833" } },
+      {
+        name: "installation",
+        ok: true,
+        detail: expect.stringMatching(
+          /reports Kuna 1\.990 \(sha256 [a-f0-9]{64}\)\.$/u,
+        ),
+        remediation: null,
+        details: { version: "1.990", verified_version: "1.990" },
+      },
       {
         name: "cache",
         ok: true,
@@ -75,8 +85,10 @@ it("flags an unverified release without failing the installation", async () => {
   expect(inspection.checks[0]).toMatchObject({
     ok: true,
     detail: expect.stringContaining(
-      "this release's project layout is unverified",
+      "You may continue with the selected unverified release.",
     ),
+    remediation: expect.stringContaining("setting REA_KUNA_COMMAND"),
+    details: { verified_version: "1.990" },
   });
 });
 
@@ -258,7 +270,7 @@ it.each(["caller", "host"] as const)(
       controller.signal,
     );
     let settled = false;
-    const inspection = host.providerInspections!().then(
+    const inspection = host.providerInspections!([]).then(
       () => {
         settled = true;
         return undefined;
@@ -317,7 +329,7 @@ it("does not launch the composed Kuna probe for an already cancelled caller", as
     controller.signal,
   );
   try {
-    await expect(host.providerInspections!()).rejects.toBeDefined();
+    await expect(host.providerInspections!([])).rejects.toBeDefined();
     expect(await fakeKunaCalls(kuna)).toEqual([]);
   } finally {
     await host.close!();
@@ -332,7 +344,7 @@ it("keeps a healthy composed Kuna inspection when the caller stays active", asyn
     new AbortController().signal,
   );
   try {
-    expect(await host.providerInspections!()).toEqual(
+    expect(await host.providerInspections!([])).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "kuna",

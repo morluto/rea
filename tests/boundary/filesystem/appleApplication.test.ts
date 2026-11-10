@@ -211,8 +211,8 @@ describe("Apple application projection", () => {
       application_roots: [],
       bundles: [],
     });
-    expect(projection.limitations).toContain(
-      "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+    expect(projection.limitations).toContainEqual(
+      expect.stringMatching(/no application bundle.*inventory/iu),
     );
   });
 

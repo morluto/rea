@@ -13,6 +13,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { kunaAddressFromJsonNumber } from "./KunaJson.js";
 
 /**
@@ -101,9 +102,10 @@ export const parseKunaRow = <Schema extends z.ZodType>(
 ): z.infer<Schema> => {
   const parsed = schema.safeParse(fields);
   if (parsed.success) return parsed.data;
-  throw new Error(
-    `${member} row field ${parsed.error.issues[0]?.path.join(".") ?? ""} is not Kuna's`,
-  );
+  throw new KunaDocumentError("row_field", {
+    member,
+    field: parsed.error.issues[0]?.path.join(".") ?? "",
+  });
 };
 
 /** V8 copies shorter substrings instead of slicing them. */
@@ -249,7 +251,13 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
     this.#failure ??=
       cause instanceof AnalysisResourceConstraintError
         ? cause
-        : this.unusable(describe(cause));
+        : cause instanceof KunaDocumentError
+          ? new AnalysisOutputError(this.producer, cause.code, {
+              cause,
+              diagnostics: { code: cause.code, ...cause.detail },
+              userMessage: `${this.label} cannot be used`,
+            })
+          : this.unusable(describe(cause));
     this.#text = "";
     this.#inKey = false;
     this.#header = {};
@@ -316,7 +324,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         this.#close();
         return;
       default:
-        throw new Error(`unexpected JSON ${token.name}`);
+        throw new KunaDocumentError("unexpected_token", { token: token.name });
     }
   }
 
@@ -337,7 +345,9 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
       if (token.name === "stringChunk")
         this.#charge(chunk.length * 2, this.#text.length);
       else if (this.#text.length > MAX_TOKEN_CODE_UNITS)
-        throw new Error(`${this.#target} is not a number Kuna writes`);
+        throw new KunaDocumentError("not_kuna_number", {
+          field: this.#target,
+        });
     }
     return true;
   }
@@ -348,31 +358,36 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
     const key = this.#key!;
     this.#key = undefined;
     this.#targetIsAddress = false;
-    if (frame === undefined)
-      throw new Error(`${this.label} is not one JSON object`);
+    if (frame === undefined) throw new KunaDocumentError("not_json_object");
     switch (frame.kind) {
       case "root":
         if (this.document.rows.has(key) || this.document.sections.has(key))
-          throw new Error(`${this.label} member ${key} is not a container`);
+          throw new KunaDocumentError("member_not_container", { field: key });
         this.#target = this.#kept(frame.values, key, this.document.header);
         return;
       case "section":
         this.#target = this.#kept(frame.values, key, frame.fields);
         return;
       case "rows":
-        throw new Error(`${frame.name} row is not an object`);
+        throw new KunaDocumentError("row_not_object", { member: frame.name });
       case "row":
         if (frame.spec.empty.has(key))
-          throw new Error(`${frame.member} row ${key} is not an array`);
+          throw new KunaDocumentError("row_not_array", {
+            member: frame.member,
+            field: key,
+          });
         if (frame.spec.nulls.has(key)) {
           if (kind !== "null")
-            throw new Error(`${frame.member} row ${key} must be null`);
+            throw new KunaDocumentError("row_must_be_null", {
+              member: frame.member,
+              field: key,
+            });
           this.#target = this.#kept(frame.values, key, frame.spec.nulls);
           return;
         }
         if (frame.spec.addresses.has(key)) {
           if (kind !== "number" && kind !== "null")
-            throw new Error(`invalid numeric address in ${key}`);
+            throw new KunaDocumentError("invalid_address", { field: key });
           this.#target = this.#kept(frame.values, key, frame.spec.addresses);
           this.#targetIsAddress = kind === "number";
           return;
@@ -380,7 +395,9 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         this.#target = this.#kept(frame.values, key, frame.spec.fields);
         return;
       case "empty":
-        throw new Error(`${frame.field} must be empty`);
+        throw new KunaDocumentError("field_must_be_empty", {
+          field: frame.field,
+        });
     }
   }
 
@@ -397,7 +414,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
 
   #claim(values: Record<string, unknown>, key: string): void {
     if (Object.hasOwn(values, key))
-      throw new Error(`${this.label} repeats ${key}`);
+      throw new KunaDocumentError("repeated_field", { field: key });
   }
 
   #store(
@@ -417,7 +434,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   #values(): Record<string, unknown> {
     const frame = this.#frames.at(-1);
     if (frame === undefined || frame.kind === "rows" || frame.kind === "empty")
-      throw new Error(`${this.label} value has no member`);
+      throw new KunaDocumentError("value_without_member");
     return frame.values;
   }
 
@@ -431,10 +448,11 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
     const section = this.document.sections.get(key);
     if (rows !== undefined) {
       if (kind !== "array" || this.#rowsSeen.has(key))
-        throw new Error(`${this.label} rows ${key} are not one array`);
+        throw new KunaDocumentError("rows_not_array", { field: key });
       this.#frames.push({ kind: "rows", name: key, spec: rows });
     } else if (section !== undefined) {
-      if (kind !== "object") throw new Error(`${key} is not an object`);
+      if (kind !== "object")
+        throw new KunaDocumentError("not_object", { field: key });
       this.#claim(root, key);
       const values: Record<string, unknown> = {};
       root[key] = values;
@@ -445,7 +463,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         values,
       });
     } else if (this.document.header.has(key))
-      throw new Error(`${this.label} ${key} is not a scalar`);
+      throw new KunaDocumentError("not_scalar", { field: key });
     else this.#skipping = 1;
   }
 
@@ -455,7 +473,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
     this.#key = undefined;
     if (frame === undefined) {
       if (kind !== "object" || this.#closed)
-        throw new Error(`${this.label} is not one JSON object`);
+        throw new KunaDocumentError("not_json_object");
       this.#frames.push({ kind: "root", values: this.#header });
       return;
     }
@@ -465,7 +483,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         return;
       case "rows":
         if (kind !== "object")
-          throw new Error(`${frame.name} row is not an object`);
+          throw new KunaDocumentError("row_not_object", { member: frame.name });
         this.#frames.push({
           kind: "row",
           member: frame.name,
@@ -476,7 +494,10 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
       case "row":
         if (frame.spec.empty.has(key!)) {
           if (kind !== "array")
-            throw new Error(`${frame.member} row ${key!} is not an array`);
+            throw new KunaDocumentError("row_not_array", {
+              member: frame.member,
+              field: key!,
+            });
           this.#claim(frame.values, key!);
           this.#frames.push({ kind: "empty", field: key! });
         } else if (
@@ -484,16 +505,22 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
           frame.spec.addresses.has(key!) ||
           frame.spec.nulls.has(key!)
         )
-          throw new Error(`${frame.member} row ${key!} is not a scalar`);
+          throw new KunaDocumentError("not_scalar", {
+            field: `${frame.member}.${key!}`,
+          });
         else this.#skipping = 1;
         return;
       case "section":
         if (frame.fields.has(key!))
-          throw new Error(`${frame.name} ${key!} is not a scalar`);
+          throw new KunaDocumentError("not_scalar", {
+            field: `${frame.name}.${key!}`,
+          });
         this.#skipping = 1;
         return;
       case "empty":
-        throw new Error(`${frame.field} must be empty`);
+        throw new KunaDocumentError("field_must_be_empty", {
+          field: frame.field,
+        });
     }
   }
 

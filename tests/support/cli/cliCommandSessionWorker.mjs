@@ -40,7 +40,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.exit(1);
 }
 
-const { closeCliJavaScriptResources, createCli } =
+const { closeCliResources, createCli } =
   await import("../../../dist/cli-runtime/cli.js");
 const { createCliResultOutput } =
   await import("../../../dist/cli-runtime/cliResultOutput.js");
@@ -106,7 +106,7 @@ try {
     await inputStopped;
     await chain;
     if (completion.kind === "failed") throw completion.cause;
-  }, [closeCliJavaScriptResources]);
+  }, [closeCliResources]);
 } catch (cause) {
   console.error(cause);
   process.exit(1);

@@ -20,7 +20,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const hap = process.env.REA_HARMONY_TEST_HAP;
 if (hap === undefined)
   throw new Error(
-    "verify:harmony requires REA_HARMONY_TEST_HAP. Run npm run fixtures:harmony and set it to the downloaded file; see docs/harmony-analysis.md.",
+    "verify:harmony requires REA_HARMONY_TEST_HAP. Run npm run fixtures:harmony and set it to the downloaded file; see docs/guides/harmony/harmony-analysis.md.",
   );
 await access(hap);
 const hashFile = async (path) => {

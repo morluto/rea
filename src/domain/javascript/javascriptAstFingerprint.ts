@@ -89,7 +89,7 @@ export const collectJavaScriptExports = (
       const read = semanticBindingAtRead(
         withoutUnusedFactoryDefaults(binding, roles),
         reference,
-        bindings.parentsByNode,
+        bindings,
       );
       if (read.status !== "ordered") return "unresolved";
       return read.binding.initializers.length === 0 &&

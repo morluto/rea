@@ -4,8 +4,8 @@ import {
   type WebBundleScriptAnalyzer,
 } from "../browser/WebBundleAnalysisWorkerServer.js";
 
-const analyze: WebBundleScriptAnalyzer = (script) =>
-  analyzeCapturedWebScript(script);
+const analyze: WebBundleScriptAnalyzer = (script, precision) =>
+  analyzeCapturedWebScript(script, precision);
 
 try {
   await serveWebBundleAnalysisWorker(analyze);

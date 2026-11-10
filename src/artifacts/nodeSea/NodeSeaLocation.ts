@@ -4,6 +4,7 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
+import { constants as bufferConstants } from "node:buffer";
 import { parsePeResources } from "../../native/pe/PeResourceParser.js";
 import {
   hasPeResourceName,
@@ -14,9 +15,15 @@ import {
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
 } from "../../domain/native/peResources.js";
 import type { FileHandle } from "node:fs/promises";
+import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  DEFAULT_NODE_SEA_READER_LIMITS,
+  type NodeSeaReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
+import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 import {
   readFatContainerHeader,
   readFatHeaderPrefix,
@@ -30,13 +37,12 @@ import {
   readElfNoteHeader,
 } from "../../domain/native/elfNoteLayout.js";
 import {
-  NODE_SEA_BLOB_TOO_LARGE,
   NODE_SEA_DUPLICATE_BLOB,
   NODE_SEA_ELF_DESCRIPTOR_TRUNCATED,
+  NODE_SEA_ELF_NOTES_REPEATED,
   NODE_SEA_ELF_TABLE_TRUNCATED,
   NODE_SEA_MACHO_COMMANDS_TRUNCATED,
   NODE_SEA_MACHO_SEGMENT_TRUNCATED,
-  NODE_SEA_MAX_BLOB_BYTES,
   NODE_SEA_TRUNCATED,
   observeNodeSeaFuseMatches,
   type NodeSeaFuseObservation,
@@ -49,9 +55,6 @@ const SHT_NOTE = 7;
 const RT_RCDATA = 10;
 const RESOURCE_NAME = "NODE_SEA_BLOB";
 const SEA_SECTION = "__NODE_SEA_BLOB";
-const MAX_COMMAND_BYTES = 8 * 1024 * 1024;
-const MAX_ELF_HEADERS = 4096;
-const MAX_NOTE_NAME_BYTES = 4096;
 const FUSE_LENGTH = "NODE_SEA_FUSE_".length + 32 + 2;
 // PE header structures must fit this prefix for the bounded name probe.
 const PE_HEADER_PROBE_BYTES = 64 * 1024;
@@ -72,6 +75,7 @@ interface Carrier {
   readonly handle: FileHandle;
   readonly fileSize: number;
   readonly signal: AbortSignal | undefined;
+  readonly limits?: NodeSeaReaderLimits;
 }
 
 const formatFailure = (message: string): ArtifactReaderFailure =>
@@ -79,6 +83,22 @@ const formatFailure = (message: string): ArtifactReaderFailure =>
 
 const limitFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "memory" });
+
+const admitBlobBytes = (carrier: Carrier, required: number): void => {
+  const limits = carrier.limits ?? DEFAULT_NODE_SEA_READER_LIMITS;
+  if (required > limits.blob_bytes)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.node_sea.blob_bytes",
+      limits.blob_bytes,
+      "bytes",
+      required,
+      "memory",
+    );
+  if (required > bufferConstants.MAX_LENGTH)
+    throw limitFailure(
+      `Node SEA blob requires ${String(required)} bytes, exceeding this runtime's ${String(bufferConstants.MAX_LENGTH)}-byte Buffer representation limit; increasing artifact_limits.node_sea.blob_bytes cannot raise that runtime limit`,
+    );
+};
 
 /**
  * Find a postject `NODE_SEA_BLOB` slot. Mach-O accepts segment `NODE_SEA`
@@ -92,9 +112,10 @@ export const locateNodeSea = async (
   handle: FileHandle,
   fileSize: number,
   signal?: AbortSignal,
+  limits: NodeSeaReaderLimits = DEFAULT_NODE_SEA_READER_LIMITS,
 ): Promise<NodeSeaLocation | undefined> => {
   if (!Number.isSafeInteger(fileSize) || fileSize < 4) return undefined;
-  const carrier: Carrier = { handle, fileSize, signal };
+  const carrier: Carrier = { handle, fileSize, signal, limits };
   const prefix = await readExact(carrier, 0, Math.min(fileSize, 64));
   if (prefix === undefined || prefix.length < 4) return undefined;
   const thin = readMachoHeaderPrefixFacts(prefix).format;
@@ -119,13 +140,16 @@ export const locateNodeSea = async (
 
 /** Read a located blob, refusing declarations above the in-memory cap. */
 export const readNodeSeaBlob = async (
-  handle: FileHandle,
+  source: StableRegularFileDescriptor,
   location: NodeSeaLocation,
-  fileSize: number,
   signal?: AbortSignal,
+  limits: NodeSeaReaderLimits = DEFAULT_NODE_SEA_READER_LIMITS,
 ): Promise<Buffer> => {
-  if (location.blobLength > NODE_SEA_MAX_BLOB_BYTES)
-    throw limitFailure(NODE_SEA_BLOB_TOO_LARGE);
+  const {
+    handle,
+    initial: { size: fileSize },
+  } = source;
+  admitBlobBytes({ handle, fileSize, signal, limits }, location.blobLength);
   const bytes = await readExact(
     { handle, fileSize, signal },
     location.blobOffset,
@@ -255,7 +279,15 @@ const locateThinMachO = async (
     commandCount: ncmds,
     commandBytes: sizeofcmds,
   } = framing.value;
-  if (sizeofcmds > MAX_COMMAND_BYTES) return [];
+  const limits = carrier.limits ?? DEFAULT_NODE_SEA_READER_LIMITS;
+  if (sizeofcmds > limits.recognition_load_command_bytes)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.node_sea.recognition_load_command_bytes",
+      limits.recognition_load_command_bytes,
+      "bytes",
+      sizeofcmds,
+      "memory",
+    );
   const commands = await readExact(carrier, base + headerSize, sizeofcmds);
   if (commands === undefined) return [];
   const found: BlobRange[] = [];
@@ -308,8 +340,11 @@ const locateThinMachO = async (
           if (cString(record.nameBytes, 0, 16) !== SEA_SECTION) continue;
           const length = Number(record.size);
           const fileOffset = record.offset;
-          if (!Number.isSafeInteger(length) || length > NODE_SEA_MAX_BLOB_BYTES)
-            throw limitFailure(NODE_SEA_BLOB_TOO_LARGE);
+          if (!Number.isSafeInteger(length))
+            throw limitFailure(
+              "Node SEA blob length exceeds exact-number representation",
+            );
+          admitBlobBytes(carrier, length);
           if (fileOffset > sliceSize || length > sliceSize - fileOffset)
             throw formatFailure(NODE_SEA_TRUNCATED);
           found.push({ offset: base + fileOffset, length });
@@ -358,6 +393,10 @@ const locateElfNotes = async (
   const minimumSection = elf64 ? 64 : 40;
   const found: BlobRange[] = [];
   let opaque = false;
+  // Every note header occupies at least 12 bytes, so disjoint tables hold at
+  // most one note per 12 file bytes. Headers that point at the same bytes
+  // would otherwise rescan them once per declaration.
+  const scan: NoteScan = { little, notes: Math.floor(carrier.fileSize / 12) };
   const programs = await readElfTables(carrier, {
     offset: phoff,
     count: phnum,
@@ -392,7 +431,7 @@ const locateElfNotes = async (
       const scanned = await scanElfNoteTable(
         carrier,
         note,
-        little,
+        scan,
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
@@ -440,7 +479,7 @@ const locateElfNotes = async (
       const scanned = await scanElfNoteTable(
         carrier,
         note,
-        little,
+        scan,
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
@@ -463,27 +502,41 @@ const readElfTables = async (
   if (table.count === 0) return [];
   if (
     table.offset === undefined ||
-    table.count > MAX_ELF_HEADERS ||
     table.entrySize < table.minimumEntry ||
-    table.entrySize > 1024 ||
-    table.offset > carrier.fileSize
+    table.offset > carrier.fileSize ||
+    table.count >
+      Math.floor((carrier.fileSize - table.offset) / table.entrySize)
   )
     return undefined;
+  const limits = carrier.limits ?? DEFAULT_NODE_SEA_READER_LIMITS;
+  if (table.count > limits.recognition_header_count)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.node_sea.recognition_header_count",
+      limits.recognition_header_count,
+      "count",
+      table.count,
+    );
   const entries: Buffer[] = [];
   for (let index = 0; index < table.count; index += 1) {
     if (index % 128 === 0) abortIfNeeded(carrier.signal);
     const offset = table.offset + index * table.entrySize;
     if (
       offset > carrier.fileSize ||
-      table.entrySize > carrier.fileSize - offset
+      table.minimumEntry > carrier.fileSize - offset
     )
       return undefined;
-    const entry = await readExact(carrier, offset, table.entrySize);
+    const entry = await readExact(carrier, offset, table.minimumEntry);
     if (entry === undefined) return undefined;
     entries.push(entry);
   }
   return entries;
 };
+
+/** One carrier's note byte order and the note headers it may still read. */
+interface NoteScan {
+  readonly little: boolean;
+  notes: number;
+}
 
 const scanElfNoteTable = async (
   carrier: Carrier,
@@ -492,7 +545,7 @@ const scanElfNoteTable = async (
     readonly length: number | undefined;
     readonly align: number | undefined;
   },
-  little: boolean,
+  scan: NoteScan,
   alreadyFound: boolean,
 ): Promise<BlobRange[] | undefined> => {
   if (
@@ -507,15 +560,21 @@ const scanElfNoteTable = async (
   let cursor = 0;
   while (cursor + 12 <= note.length) {
     abortIfNeeded(carrier.signal);
+    // Past the file's note capacity the tables overlap: an unconfirmed
+    // carrier stays unrecognized and a confirmed one fails closed.
+    if (scan.notes === 0) {
+      if (alreadyFound || found.length > 0)
+        throw formatFailure(NODE_SEA_ELF_NOTES_REPEATED);
+      return undefined;
+    }
+    scan.notes -= 1;
     const header = await readExact(carrier, note.offset + cursor, 12);
     if (header === undefined)
       return failNoteTable(alreadyFound || found.length > 0);
-    const parsedHeader = readElfNoteHeader(header, little);
+    const parsedHeader = readElfNoteHeader(header, scan.little);
     if (!parsedHeader.ok)
       return failNoteTable(alreadyFound || found.length > 0);
     const { namesz, descsz } = parsedHeader.value;
-    if (namesz > MAX_NOTE_NAME_BYTES)
-      return failNoteTable(alreadyFound || found.length > 0);
     if (cursor > note.length - 12 || namesz > note.length - cursor - 12)
       return failNoteTable(alreadyFound || found.length > 0);
     let layout: ReturnType<typeof elfNoteLayout>;
@@ -530,7 +589,13 @@ const scanElfNoteTable = async (
       layout.next < 12
     )
       return failNoteTable(alreadyFound || found.length > 0);
-    const name = await readExact(carrier, note.offset + cursor + 12, namesz);
+    // Only the exact SEA owner matters here. A bounded prefix distinguishes
+    // it without retaining an unrelated vendor's potentially long name.
+    const name = await readExact(
+      carrier,
+      note.offset + cursor + 12,
+      Math.min(namesz, RESOURCE_NAME.length + 1),
+    );
     if (name === undefined)
       return failNoteTable(alreadyFound || found.length > 0);
     const owner = cString(name, 0, name.length);
@@ -540,8 +605,7 @@ const scanElfNoteTable = async (
     if (owner === RESOURCE_NAME) {
       if (!descriptorFits)
         throw formatFailure(NODE_SEA_ELF_DESCRIPTOR_TRUNCATED);
-      if (descsz > NODE_SEA_MAX_BLOB_BYTES)
-        throw limitFailure(NODE_SEA_BLOB_TOO_LARGE);
+      admitBlobBytes(carrier, descsz);
       const blobOffset = note.offset + cursor + layout.descriptor;
       if (
         blobOffset > carrier.fileSize ||
@@ -625,8 +689,7 @@ const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
     )
       return [];
     const range = resource.payload.location;
-    if (range.bytes > NODE_SEA_MAX_BLOB_BYTES)
-      throw limitFailure(NODE_SEA_BLOB_TOO_LARGE);
+    admitBlobBytes(carrier, range.bytes);
     return [{ offset: range.offset, length: range.bytes }];
   });
 };

@@ -110,6 +110,15 @@ not establish full metadata validity or correspondence to a native binary;
 version 24 inspection still applies only to supported header layouts. See
 [IL2CPP metadata](il2cpp-metadata.md).
 
+In a managed directory with a Unity Mono witness, `Assembly-CSharp.dll` and
+`Assembly-CSharp-firstpass.dll` get an `inspect_managed_members` probe listed
+first; project-named asmdef assemblies keep only the ordinary managed probes.
+The same probe is offered for those names in `Managed/` of a
+`<Product>_BackUpThisFolder_ButDontShipItWithYourGame` folder (or when that
+folder is the root); whether its IL matches the shipped IL2CPP code is unknown.
+Point the scan at the game folder: a root that is the `<Product>_Data` or
+`Managed` folder itself has no Mono witness path and gets no member probe.
+
 Candidates are derived or inferred from these facts and do not prove loading or
 execution. BepInEx, MelonLoader, Easy Anti-Cheat and BattlEye labels identify
 path conventions only; runtime presence stays unknown. No bypass is provided.
@@ -135,11 +144,13 @@ observations, not an atomic directory snapshot. Unread bytes remain unknown.
 ## Resource bounds and reuse
 
 Defaults are 20,000 examined entries and 8 MiB of total probe reads. Callers may
-select up to 100,000 entries and 64 MiB. A separate 32 MiB conservative
-representation budget bounds retained paths and facts before growth. Limits
-and failed probes produce partial coverage. Traversal and reads are serial.
-Each reader admits one inspection at a time; overlapping requests receive a
-retryable capacity refusal without cancelling the admitted caller.
+select up to 100,000 entries and 64 MiB. A separate 32 MiB representation
+budget bounds retained rows, paths and facts before growth. Each retained path
+is charged at the larger of its UTF-16 heap size and its escaped JSON size, so
+typical macOS bundle paths fit about 20,000 rows, and control-character paths
+fewer. Limits and failed probes produce partial coverage. Traversal and reads
+are serial. Each reader admits one inspection at a time; overlapping requests
+receive a retryable capacity refusal without cancelling the admitted caller.
 
 Unity reference decoding stops after a witness in each `Data/Managed` directory;
 other assemblies' references remain unexamined, while their headers are still

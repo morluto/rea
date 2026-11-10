@@ -6,10 +6,12 @@ import { ok as resultOk } from "../../src/domain/result.js";
 import { createTestBinarySession } from "./binarySession.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { observed } from "./analysisExecution.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { createServer } from "../../src/server/createServer.js";
 import {
   createTestMcp,
   type McpClientIdentity,
+  type TestMcp,
 } from "../support/mcp/mcpFixture.js";
 
 /** Owned MCP SDK session shared by application workflow scenarios. */
@@ -19,12 +21,13 @@ export interface ApplicationMcpHarness {
   readonly close: () => Promise<void>;
 }
 
-/** Connect application workflows through the production MCP registration. */
+/** Connect complete-Evidence workflow fixtures through production registration. */
 export async function createApplicationMcpHarness(
   options: {
     readonly session?: BinarySession;
     readonly serverOptions?: Parameters<typeof createServer>[1];
     readonly clientIdentity?: McpClientIdentity;
+    readonly schemaValidator?: Parameters<TestMcp["connect"]>[2];
     readonly registerCleanup?: (close: ApplicationMcpHarness["close"]) => void;
   } = {},
 ): Promise<ApplicationMcpHarness> {
@@ -60,7 +63,13 @@ export async function createApplicationMcpHarness(
     options.registerCleanup?.(close);
     const server = createServer(
       { kind: "session", session },
-      options.serverOptions,
+      {
+        ...options.serverOptions,
+        environment: {
+          ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+          ...(options.serverOptions?.environment ?? process.env),
+        },
+      },
     );
     const client = await mcp.connect(
       server,
@@ -68,6 +77,7 @@ export async function createApplicationMcpHarness(
         name: "application-workflow-test",
         version: "1",
       },
+      options.schemaValidator,
     );
     return { client, session, close };
   } catch (cause) {

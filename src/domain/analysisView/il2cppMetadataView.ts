@@ -25,11 +25,12 @@ import {
 } from "../il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -519,9 +520,12 @@ const selection = (view: Request, report: Report) => {
 /** Reuse retained facts; source indices stay distinct from filtered page offsets. */
 export const projectIl2cppMetadataView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "il2cpp-metadata")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof il2cppMetadataViewRequestSchema>
+  >(admitted, "summary", "il2cpp-metadata");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -653,7 +657,7 @@ export const projectIl2cppMetadataView = (
                 }),
           }))(report.binary);
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -729,7 +733,7 @@ export const projectIl2cppMetadataView = (
     }
   }
   return ok({
-    kind: "il2cpp-metadata",
+    kind: "il2cpp-metadata" as const,
     view,
     ...shared,
     items,

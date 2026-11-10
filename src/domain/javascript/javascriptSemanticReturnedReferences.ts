@@ -31,7 +31,6 @@ import {
   semanticShiftCapturedSelections,
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
@@ -184,7 +183,7 @@ export const createSemanticReturnedReferences = (
     const selections = new SemanticAliasSelections(() => {
       state.valueResourceLimits.add("alias-selections");
       result.precision = "widened";
-    });
+    }, state.precision.alias_selections);
     const enqueue = (
       node: t.Node,
       path: Candidate["path"],
@@ -255,7 +254,7 @@ export const createSemanticReturnedReferences = (
         !contextsWidened &&
         (capturedSelections !== undefined || invocationContext !== undefined) &&
         paths.size > 0 &&
-        ++additionalContexts > SEMANTIC_ALIAS_SELECTION_LIMIT
+        ++additionalContexts > state.precision.alias_selections
       ) {
         contextsWidened = true;
         state.valueResourceLimits.add("alias-selections");
@@ -390,11 +389,7 @@ export const createSemanticReturnedReferences = (
           result.precision = "widened";
           if (sourceGenericInvocation) result.unresolvedInvocation = true;
         }
-        const selected = semanticBindingAtRead(
-          binding,
-          node,
-          state.parentsByNode,
-        ).binding;
+        const selected = semanticBindingAtRead(binding, node, state).binding;
         for (const initializer of [
           ...selected.initializers,
           ...selected.referenceInitializers,

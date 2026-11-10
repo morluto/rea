@@ -92,9 +92,10 @@ it("keeps source entries when a module has an empty specifier", () => {
     "other.txt",
   ]);
   expect(parsed.relationships).toEqual([]);
-  expect(parsed.limitations).toEqual([
-    "Empty module specifier in main.mjs was not recorded as a relationship.",
-  ]);
+  expect(parsed.limitations).toHaveLength(1);
+  expect(parsed.limitations[0]).toContain("main.mjs");
+  expect(parsed.limitations[0]).toMatch(/empty.*specifier/iu);
+  expect(parsed.limitations[0]).toMatch(/not recorded.*relationship/iu);
 });
 
 it("retains Kotlin source identity and language across the inventory projection", () => {

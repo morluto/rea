@@ -102,7 +102,7 @@ const connectImportSession = async () => {
   };
 };
 
-it("drains a file import before close_binary clears the session", async () => {
+it("drains a file import before close_binary releases the engine and retains its records", async () => {
   const fixture = await connectImportSession();
   const importing = fixture.importBundle("before_close");
   await fixture.readCompleted;
@@ -121,11 +121,16 @@ it("drains a file import before close_binary clears the session", async () => {
   });
   expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
   expect(fixture.events).toEqual(["import", "close"]);
-  expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
+  expect(fixture.session.exportEvidenceBundle().records).toMatchObject([
+    {
+      operation: "before_close",
+      normalized_result: { retained: "before_close" },
+    },
+  ]);
   await fixture.client.ping();
 });
 
-it("admits a later import after close_binary without retaining the earlier bundle", async () => {
+it("admits a later import after close_binary while retaining the earlier bundle", async () => {
   const fixture = await connectImportSession();
   const earlier = fixture.importBundle("before_close");
   await fixture.readCompleted;
@@ -143,14 +148,15 @@ it("admits a later import after close_binary without retaining the earlier bundl
   for (const result of results)
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
   expect(results[2]?.structuredContent).toMatchObject({
-    result: { imported: 1, unknowns_added: 0, total: 1 },
+    result: { imported: 1, unknowns_added: 0, total: 2 },
   });
   expect(fixture.events).toEqual(["import", "close", "import"]);
   expect(
     fixture.session
       .exportEvidenceBundle()
-      .records.map((record) => record.operation),
-  ).toEqual(["after_close"]);
+      .records.map((record) => record.operation)
+      .sort(),
+  ).toEqual(["after_close", "before_close"]);
   await fixture.client.ping();
 });
 

@@ -3,10 +3,7 @@ import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { expect } from "vitest";
 
-import {
-  NativeDmgArtifactReader,
-  DMG_EXISTING_ATTACHMENT_RECOVERY,
-} from "../../src/artifacts/NativeDmgArtifactReader.js";
+import { NativeDmgArtifactReader } from "../../src/artifacts/NativeDmgArtifactReader.js";
 import { parseNativeDmgInfo } from "../../src/artifacts/NativeDmgOwnership.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -90,9 +87,13 @@ cliTest.skipIf(process.platform !== "darwin")(
       expect(busy.json).toMatchObject({
         code: "artifact_operation_failed",
         category: "unavailable",
-        message: DMG_EXISTING_ATTACHMENT_RECOVERY,
+        message: expect.stringMatching(
+          /hdiutil.*existing attachment.*owner.*release.*retry.*does not borrow or detach/iu,
+        ),
         remediation: {
-          action: DMG_EXISTING_ATTACHMENT_RECOVERY,
+          action: expect.stringMatching(
+            /hdiutil.*existing attachment.*owner.*release.*retry.*does not borrow or detach/iu,
+          ),
         },
         details: {
           reason: "unavailable",

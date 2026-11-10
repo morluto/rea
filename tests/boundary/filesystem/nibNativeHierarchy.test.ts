@@ -21,7 +21,11 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 const compile = promisify(execFile);
 
-const compileNestedViews = async (depth: number, withWindow = false) => {
+const compileNestedViews = async (
+  depth: number,
+  withWindow = false,
+  withTextField = false,
+) => {
   const root = await createTestTempDirectory("rea-nib-hierarchy-");
   const bundle = join(root, "Fixture.app");
   const resources = join(bundle, "Contents", "Resources");
@@ -38,6 +42,11 @@ const compileNestedViews = async (depth: number, withWindow = false) => {
     ).join("") + "</subviews></view>".repeat(depth);
   const xib = join(root, "Nested.xib");
   let xibSource = source.replace("</subviews>", `${nested}</subviews>`);
+  if (withTextField)
+    xibSource = xibSource.replace(
+      "</subviews>",
+      `<textField id="text"><rect key="frame" x="20" y="60" width="120" height="22"/><textFieldCell key="cell" title="Sample" id="text-cell"><font key="font" metaFont="system"/></textFieldCell></textField></subviews>`,
+    );
   if (withWindow)
     xibSource = xibSource
       .replace(
@@ -142,6 +151,31 @@ describe.skipIf(!xcodeIbtoolAvailable)(
       ).toBe(true);
       expect(result.documents[0]?.hierarchy_complete).toBe(true);
       expect(result.graph.truncated).toBe(false);
+    });
+
+    it("does not treat a compiled text field cell as an unplaced view", async () => {
+      const { bundle, archive } = await compileNestedViews(0, true, true);
+      const text = archive.objects.find(
+        ({ class_name }) => class_name === "NSTextField",
+      );
+      const cell = archive.objects.find(
+        ({ class_name }) => class_name === "NSTextFieldCell",
+      );
+      expect(text).toBeDefined();
+      expect(cell).toBeDefined();
+      expect(cell?.values.NSControlView).toEqual({ $nib_object_ref: text?.id });
+      const result = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "e".repeat(64),
+      });
+      expect(result.documents[0]?.hierarchy_complete).toBe(true);
+      expect(result.graph.truncated).toBe(false);
+      expect(result.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "hierarchy:Contents/Resources/Main.nib",
+          status: "complete",
+        }),
+      );
     });
 
     it("reports partial coverage for a native hierarchy beyond the projection depth bound", async () => {

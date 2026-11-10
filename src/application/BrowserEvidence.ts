@@ -164,6 +164,10 @@ const browserParameters = (
         : "target_id" in input && observedOrigin !== undefined
           ? [observedOrigin]
           : [],
+    ...("discovery_timeout_ms" in input &&
+    input.discovery_timeout_ms !== undefined
+      ? { discovery_timeout_ms: input.discovery_timeout_ms }
+      : {}),
     ...("command_timeout_ms" in input && input.command_timeout_ms !== undefined
       ? { command_timeout_ms: input.command_timeout_ms }
       : {}),
@@ -191,6 +195,12 @@ const browserParameters = (
     ...("fetch_source_maps" in input
       ? {
           fetch_source_maps: input.fetch_source_maps,
+          ...(input.source_map_limits === undefined
+            ? {}
+            : { source_map_limits: input.source_map_limits }),
+          ...(input.semantic_precision === undefined
+            ? {}
+            : { semantic_precision: input.semantic_precision }),
           ...(input.max_heap_mb === undefined
             ? {}
             : { max_heap_mb: input.max_heap_mb }),

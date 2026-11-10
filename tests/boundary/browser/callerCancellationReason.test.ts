@@ -31,7 +31,6 @@ it.each([
           },
         },
       });
-      expect(cancelled.ok).toBe(false);
       if (cancelled.ok) throw new Error("Expected cancellation at arming");
       expect(cancelled.error._tag).toBe("AnalysisCancelledError");
       expect(cancelled.error.cause).toBe(controller.signal.reason);
@@ -82,7 +81,6 @@ it("preserves the caller reason when a navigation observation is cancelled at ar
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancelled navigation observation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);

@@ -19,7 +19,10 @@ import {
   noFollowOpenSupported,
   prepareRoot,
 } from "./ReferenceSourceReaderValidate.js";
-import { referenceSourceResourceFailure } from "./ReferenceSourceReaderErrors.js";
+import {
+  cancelled,
+  referenceSourceResourceFailure,
+} from "./ReferenceSourceReaderErrors.js";
 
 const PATH_RACE_LIMITATION =
   "Path identity is revalidated around operations; Node lacks portable descriptor-relative openat traversal, so a syscall-boundary pathname race remains.";
@@ -199,12 +202,7 @@ const traverse = async (
   state: TraversalState,
 ): Promise<ReferenceSourceResult<undefined>> => {
   while (state.pending.length > 0) {
-    if (isAborted(state.signal))
-      return err({
-        tag: "reference-source-reader",
-        code: "cancelled",
-        message: "Reference source traversal cancelled",
-      });
+    if (isAborted(state.signal)) return err(cancelled(state.signal));
     const current = state.pending.pop();
     if (current === undefined) break;
     const result = await traverseDirectory(state, current);

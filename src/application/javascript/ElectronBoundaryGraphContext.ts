@@ -33,7 +33,28 @@ export interface ElectronGraphEdgeInput {
   readonly properties: Readonly<Record<string, unknown>>;
   readonly confidence?: "high" | "medium" | "low";
   readonly limitations?: readonly string[];
+  readonly loaderAuthority?: "candidate" | undefined;
 }
+
+/** Candidate syntax does not establish that the receiver is Electron. */
+export const ELECTRON_CANDIDATE_LIMITATION =
+  "The Electron module loader is unknown, so this relationship is only a candidate.";
+
+/** Preserve syntax with uncertainty when its Electron receiver is unproven. */
+export const electronFindingEvidence = (
+  input: Parameters<typeof astObservationEvidence>[0],
+  loaderAuthority: "candidate" | undefined,
+) =>
+  loaderAuthority === "candidate"
+    ? staticInferenceEvidence({
+        ...input,
+        confidence: "low",
+        limitations: [
+          ...(input.limitations ?? []),
+          ELECTRON_CANDIDATE_LIMITATION,
+        ],
+      })
+    : astObservationEvidence(input);
 
 /** Resolve the file or recovered bundle module that owns one finding. */
 export const electronFindingSourceNode = (
@@ -69,17 +90,25 @@ export const addElectronAstEdge = (
     source_node_id: input.source.node_id,
     target_node_id: input.target.node_id,
     relation: input.relation,
-    properties: input.properties,
-    evidence: astObservationEvidence({
-      sha256: input.file.sha256,
-      path: input.file.path,
-      range: input.range,
-      operation: input.operation,
-      coverage: input.coverage,
-      ...(input.limitations === undefined
-        ? {}
-        : { limitations: input.limitations }),
-    }),
+    properties: {
+      ...input.properties,
+      ...(input.loaderAuthority === "candidate"
+        ? { loader_authority: "candidate" }
+        : {}),
+    },
+    evidence: electronFindingEvidence(
+      {
+        sha256: input.file.sha256,
+        path: input.file.path,
+        range: input.range,
+        operation: input.operation,
+        coverage: input.coverage,
+        ...(input.limitations === undefined
+          ? {}
+          : { limitations: input.limitations }),
+      },
+      input.loaderAuthority,
+    ),
   });
 };
 
@@ -92,19 +121,33 @@ export const addElectronInferenceEdge = (
     source_node_id: input.source.node_id,
     target_node_id: input.target.node_id,
     relation: input.relation,
-    properties: input.properties,
+    properties: {
+      ...input.properties,
+      ...(input.loaderAuthority === "candidate"
+        ? { loader_authority: "candidate" }
+        : {}),
+    },
     evidence: staticInferenceEvidence({
       sha256: input.file.sha256,
       path: input.file.path,
       range: input.range,
       operation: input.operation,
       coverage: input.coverage,
-      ...(input.confidence === undefined
-        ? {}
-        : { confidence: input.confidence }),
-      ...(input.limitations === undefined
-        ? {}
-        : { limitations: input.limitations }),
+      ...(input.loaderAuthority === "candidate"
+        ? { confidence: "low" as const }
+        : input.confidence === undefined
+          ? {}
+          : { confidence: input.confidence }),
+      ...(input.loaderAuthority === "candidate"
+        ? {
+            limitations: [
+              ...(input.limitations ?? []),
+              ELECTRON_CANDIDATE_LIMITATION,
+            ],
+          }
+        : input.limitations === undefined
+          ? {}
+          : { limitations: input.limitations }),
     }),
   });
 };

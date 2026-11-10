@@ -128,7 +128,9 @@ it("keeps default Frida status identity and messages and refreshes every summary
   expect(parent?.limitations).toEqual(
     expect.arrayContaining([
       expect.stringContaining("16777216"),
-      expect.stringContaining("no runtime override"),
+      expect.stringContaining(
+        "Already discarded observations cannot be recovered",
+      ),
     ]),
   );
   expect(parent?.authority).toBe("external-service");

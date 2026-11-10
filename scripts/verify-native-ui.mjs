@@ -245,7 +245,13 @@ try {
     scope,
     { environment: process.env },
   );
-  if (mismatch.ok || !mismatch.error.message.includes("target-mismatch"))
+  // A selection failure carries its helper code in the issue, not in its message.
+  if (
+    mismatch.ok ||
+    !mismatch.error.issues?.some(({ message }) =>
+      message.startsWith("target-mismatch:"),
+    )
+  )
     throw new Error("Real helper did not reject changed target bytes");
   report = {
     ok: true,

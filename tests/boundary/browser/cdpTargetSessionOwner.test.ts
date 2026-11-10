@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import type { Duplex } from "node:stream";
 
 import { WebSocket, WebSocketServer } from "ws";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -8,10 +9,12 @@ import { CdpConnection } from "../../../src/browser/CdpConnection.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
-it("waits for a late owned handshake and does not close its active peer on retry", async () => {
+it("joins a late owned handshake and waits for its active operation", async () => {
   const http = createServer();
   const webSockets = new WebSocketServer({ noServer: true });
   let port = 0;
@@ -61,11 +64,19 @@ it("waits for a late owned handshake and does not close its active peer on retry
   );
   await received;
   const closing = owner.close();
+  let closed = false;
+  void closing.then(() => {
+    closed = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(closed).toBe(false);
   releaseUpgrade?.();
   const connection = await connecting;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(closed).toBe(false);
   await owner.finish(connection);
   await closing;
-  expect(connection).toBeDefined();
+  await vi.waitFor(() => expect(webSockets.clients.size).toBe(0));
 });
 
 it("retries only the failed transport and does not repeat successful child cleanup", async () => {
@@ -275,4 +286,193 @@ it("keeps retry aggregates incomplete until every reported socket is released", 
   expect(mixed.cleanupIncomplete).toBe(false);
   await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
   await owner.finish(active);
+});
+
+it("surfaces cold-start acquireBrowserSocket cleanup failure to live waiters without unhandled rejections", async () => {
+  const http = createServer();
+  http.on("upgrade", (_request, socket) => {
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const address = http.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Fixture did not bind a TCP port");
+  const url = `ws://127.0.0.1:${String(address.port)}/devtools/browser/rejected`;
+  const owner = new CdpTargetSessionOwner();
+  const originalClose = CdpConnection.prototype.close;
+  let denyClose = true;
+  const closeSpy = vi
+    .spyOn(CdpConnection.prototype, "close")
+    .mockImplementation(function (this: CdpConnection) {
+      return denyClose
+        ? Promise.reject(new Error("controlled cold-connect close failure"))
+        : originalClose.call(this);
+    });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+  let first:
+    | ReturnType<CdpTargetSessionOwner["acquireBrowserSocket"]>
+    | undefined;
+  let second:
+    | ReturnType<CdpTargetSessionOwner["acquireBrowserSocket"]>
+    | undefined;
+  try {
+    const limits = { commandTimeoutMs: 1_000, handshakeTimeoutMs: 1_000 };
+    first = owner.acquireBrowserSocket(url, "list_browser_targets", {}, limits);
+    second = owner.acquireBrowserSocket(url, "inspect_web_page", {}, limits);
+    const [firstError, secondError] = await Promise.all([
+      first.then(
+        () => undefined,
+        (cause: unknown) => cause,
+      ),
+      second.then(
+        () => undefined,
+        (cause: unknown) => cause,
+      ),
+    ]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(unhandled).toEqual([]);
+    if (
+      !(firstError instanceof AnalysisError) ||
+      !(secondError instanceof AnalysisError)
+    )
+      throw new Error("Expected typed cleanup-incomplete handshake errors");
+    expect(firstError.cleanupIncomplete).toBe(true);
+    expect(secondError.cleanupIncomplete).toBe(true);
+    expect(firstError.cleanupResources).toEqual(["browser-endpoint"]);
+    expect(secondError.cleanupResources).toEqual(["browser-endpoint"]);
+    expect(secondError.cleanupPrimary).toMatchObject({
+      _tag: "BrowserObservationError",
+      operation: "inspect_web_page",
+    });
+
+    const blockedRetry = await owner
+      .retryPending()
+      .catch((cause: unknown) => cause);
+    expect(blockedRetry).toBeInstanceOf(AnalysisError);
+
+    denyClose = false;
+    await owner.retryPending();
+    expect(firstError.cleanupIncomplete).toBe(false);
+    expect(secondError.cleanupIncomplete).toBe(false);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    denyClose = false;
+    await Promise.allSettled([first, second]);
+    closeSpy.mockRestore();
+    await owner.close();
+    await new Promise<void>((resolve, reject) =>
+      http.close((cause) => (cause ? reject(cause) : resolve())),
+    );
+  }
+});
+
+it("surfaces cold-start acquireBrowserSocket cleanup failure when the last waiter aborts without unhandled rejections", async () => {
+  const http = createServer();
+  const upgradeSockets = new Set<Duplex>();
+  let upgradeReceived: (() => void) | undefined;
+  const received = new Promise<void>((resolve) => {
+    upgradeReceived = resolve;
+  });
+  http.on("upgrade", (_request, socket) => {
+    upgradeSockets.add(socket);
+    socket.on("close", () => upgradeSockets.delete(socket));
+    socket.on("error", () => undefined);
+    upgradeReceived?.();
+  });
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const address = http.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Fixture did not bind a TCP port");
+  const url = `ws://127.0.0.1:${String(address.port)}/devtools/browser/stalled`;
+  const owner = new CdpTargetSessionOwner();
+  const originalClose = CdpConnection.prototype.close;
+  let denyClose = true;
+  const closeSpy = vi
+    .spyOn(CdpConnection.prototype, "close")
+    .mockImplementation(function (this: CdpConnection) {
+      return denyClose
+        ? Promise.reject(new Error("controlled abort close failure"))
+        : originalClose.call(this);
+    });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  let first:
+    | ReturnType<CdpTargetSessionOwner["acquireBrowserSocket"]>
+    | undefined;
+  let second:
+    | ReturnType<CdpTargetSessionOwner["acquireBrowserSocket"]>
+    | undefined;
+  try {
+    const limits = { commandTimeoutMs: 5_000, handshakeTimeoutMs: 5_000 };
+    first = owner.acquireBrowserSocket(
+      url,
+      "list_browser_targets",
+      { signal: firstController.signal },
+      limits,
+    );
+    second = owner.acquireBrowserSocket(
+      url,
+      "inspect_web_page",
+      { signal: secondController.signal },
+      limits,
+    );
+    await awaitAcknowledgement(
+      received,
+      Promise.all([first, second]),
+      "cold browser-socket upgrade",
+    );
+
+    firstController.abort(new Error("first caller cancelled"));
+    const firstError = await first.then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(firstError).toBeInstanceOf(AnalysisCancelledError);
+    if (!(firstError instanceof AnalysisCancelledError))
+      throw new Error("Expected first waiter cancellation");
+    expect(firstError.cleanupIncomplete).toBe(false);
+
+    secondController.abort(new Error("last caller cancelled"));
+    const secondError = await second.then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(unhandled).toEqual([]);
+    if (!(secondError instanceof AnalysisError))
+      throw new Error("Expected last waiter cleanup-incomplete failure");
+    expect(secondError.cleanupIncomplete).toBe(true);
+    expect(secondError.cleanupResources).toEqual(["browser-endpoint"]);
+    expect(secondError.cleanupPrimary).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_web_page",
+    });
+
+    denyClose = false;
+    await owner.retryPending();
+    expect(secondError.cleanupIncomplete).toBe(false);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    denyClose = false;
+    firstController.abort(new Error("test teardown"));
+    secondController.abort(new Error("test teardown"));
+    await Promise.allSettled([first, second]);
+    closeSpy.mockRestore();
+    await owner.close();
+    for (const socket of upgradeSockets) socket.destroy();
+    await new Promise<void>((resolve, reject) =>
+      http.close((cause) => (cause ? reject(cause) : resolve())),
+    );
+  }
 });

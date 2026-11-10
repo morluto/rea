@@ -720,6 +720,7 @@ it.each(["depth", "dependency", "link"])(
           relative_path: "escape",
           kind: "symlink",
           link_target: "/etc/passwd",
+          link_target_hex: Buffer.from("/etc/passwd", "utf8").toString("hex"),
         },
       ]);
       expect(gapsWithContinuations(normalized)).toEqual([

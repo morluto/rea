@@ -60,7 +60,7 @@ beforeEach(() => {
   hooks.failure = undefined;
 });
 
-const capture = (
+const capture = async (
   script: string,
   signal?: AbortSignal,
   limits = { timeoutMs: 1000, maxOutputBytes: 1024 },
@@ -68,7 +68,7 @@ const capture = (
   runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    resolveAdbBinary({ ...process.env, REA_ADB_PATH: process.execPath }),
+    await resolveAdbBinary({ ...process.env, REA_ADB_PATH: process.execPath }),
     ["-e", script],
     limits,
     signal,
@@ -76,7 +76,6 @@ const capture = (
 
 const failureOf = async (result: ReturnType<typeof capture>) => {
   const completed = await result;
-  expect(completed.ok).toBe(false);
   if (completed.ok) throw new Error("Expected command failure");
   return completed.error;
 };
@@ -165,7 +164,7 @@ test.each([null, "caller stopped", new Error("caller stopped")] as const)(
     const controller = new AbortController();
     controller.abort(reason);
     const error: unknown = await inspectAdbClient(
-      resolveAdbBinary({ REA_ADB_PATH: "/must-not-start" }),
+      await resolveAdbBinary({ REA_ADB_PATH: process.execPath }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -191,7 +190,6 @@ nativeClientTest(
       operation: "inspect_adb_client",
       input: {},
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected capture overflow");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
@@ -210,7 +208,7 @@ nativeClientTest(
     const controller = new AbortController();
     hooks.afterCommand = () => controller.abort(null);
     const error: unknown = await inspectAdbClient(
-      resolveAdbBinary({ REA_ADB_PATH: join(root, "missing") }),
+      await resolveAdbBinary({ REA_ADB_PATH: join(root, "missing") }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -241,7 +239,6 @@ nativeClientTest.each([
       {},
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected completion cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -287,7 +284,6 @@ nativeClientTest.each([false, true])(
       { operation: "inspect_adb_client", input: {} },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected version timeout");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",

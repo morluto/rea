@@ -57,9 +57,10 @@ const peExportSchema = z.strictObject({
 
 /**
  * One defined, default- or protected-visibility global, weak or unique
- * dynamic symbol. `version` is null when the symbol carries no version and
- * "unknown" when the version table could not be read; a hidden version is not
- * the default one a by-name lookup selects.
+ * dynamic symbol. `visibility` is "unknown" in historical Evidence where
+ * dynamic symbol visibility was not recorded. `version` is null when the
+ * symbol carries no version and "unknown" when the version table could not be
+ * read; a hidden version is not the default one a by-name lookup selects.
  */
 const elfExportSchema = z.strictObject({
   name: z.string().min(1),
@@ -72,6 +73,7 @@ const elfExportSchema = z.strictObject({
   size: z.string().regex(/^[0-9]+$/u),
   type: z.enum(["function", "ifunc", "object", "tls", "other"]),
   binding: z.enum(["global", "weak", "unique"]),
+  visibility: z.enum(["default", "protected", "unknown"]).default("unknown"),
   version: z.union([
     z.null(),
     z.literal("unknown"),

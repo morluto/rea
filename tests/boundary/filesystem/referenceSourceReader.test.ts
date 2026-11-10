@@ -7,6 +7,28 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { readStableSymlinkTarget } from "../../../src/reference/ReferenceSourceReaderEntries.js";
 import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import { ok } from "../../../src/domain/result.js";
+
+it("retains the caller reason and observed entries when traversal is cancelled", async () => {
+  const root = await createTestTempDirectory("rea-reference-cancel-");
+  await writeFile(join(root, "observed.js"), "observed");
+  await mkdir(join(root, "nested"));
+  const controller = new AbortController();
+  const reason = { requested: "stop traversal" };
+  const result = await readReferenceSource(root, {
+    signal: controller.signal,
+    beforeDirectory: async (path) => {
+      if (path === "nested") controller.abort(reason);
+      return ok(undefined);
+    },
+  });
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error.code).toBe("cancelled");
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.partial?.entries).toContainEqual(
+    expect.objectContaining({ path: "observed.js", status: "read" }),
+  );
+});
 
 describe("readReferenceSource entries", () => {
   it("returns explicit entries in canonical code-point path order", async () => {
@@ -231,6 +253,7 @@ describe("readReferenceSource failures and exclusions", () => {
         tag: "reference-source-reader",
         code: "cancelled",
         message: "Reference source traversal cancelled",
+        cause: controller.signal.reason,
       },
     });
 

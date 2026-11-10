@@ -91,7 +91,15 @@ const source = (
       confidence: "derived",
       authority: "shipped-artifact",
       ...(hasCoverage
-        ? { relationshipCoverage: { status: "complete" as const } }
+        ? {
+            relationshipCoverage: {
+              status: "complete" as const,
+              discovery: {
+                callers: { status: "complete" as const },
+                callees: { status: "complete" as const },
+              },
+            },
+          }
         : {}),
       ...observation,
     },
@@ -354,10 +362,24 @@ describe("function reconstruction call coverage", () => {
   it("preserves complete call diagnostics while passing equal call claims", () => {
     const diagnostic = "Indirect calls remain unresolved.";
     const leftWithDiagnostic = source("a", {
-      relationshipCoverage: { status: "complete", diagnostics: [diagnostic] },
+      relationshipCoverage: {
+        status: "complete",
+        diagnostics: [diagnostic],
+        discovery: {
+          callers: { status: "complete" },
+          callees: { status: "complete" },
+        },
+      },
     });
     const rightWithDiagnostic = source("b", {
-      relationshipCoverage: { status: "complete", diagnostics: [diagnostic] },
+      relationshipCoverage: {
+        status: "complete",
+        diagnostics: [diagnostic],
+        discovery: {
+          callers: { status: "complete" },
+          callees: { status: "complete" },
+        },
+      },
     });
     const observed = compareFunctions(
       functionSnapshotFixture(leftWithDiagnostic),
@@ -454,7 +476,9 @@ describe("function reconstruction call coverage", () => {
       },
     });
   });
+});
 
+describe("function reconstruction with independent changes", () => {
   it("keeps a confirmed historical overall change as a failure despite unknown calls", () => {
     const changedDossier = jsonValueSchema.parse({
       ...functionDossierSchema.parse(dossier),

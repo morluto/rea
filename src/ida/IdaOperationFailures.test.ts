@@ -12,7 +12,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
-import { IDA_PROVIDER_IDENTITY } from "./IdaProviderCapabilities.js";
+import { IDA_PROVIDER_IDENTITY } from "./IdaProviderMetadata.js";
 import type { AnalysisOperation } from "../application/AnalysisProvider.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
@@ -302,6 +302,7 @@ describe("headless IDA partial operation evidence", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
         expect(result.error.partialObservation).toMatchObject({
           analysis_profile: null,
           normalized_result: {

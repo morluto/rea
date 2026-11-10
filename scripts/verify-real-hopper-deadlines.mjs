@@ -11,7 +11,7 @@ import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js"
 import { resolveHopperAnalysisProfile } from "../dist/hopper/HopperAnalysisProfile.js";
 import { HopperApplicationLauncher } from "../dist/hopper/BridgeLauncher.js";
 import { HopperClient } from "../dist/hopper/HopperClient.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderMetadata.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 
 // These options belong to the native client, below the CLI/MCP tool surface.

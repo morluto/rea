@@ -4,7 +4,10 @@ import { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { DestinationCaseCollisionFailure } from "../../artifacts/ArtifactPaths.js";
+import {
+  DestinationCaseCollisionFailure,
+  DestinationPathUnrepresentableFailure,
+} from "../../artifacts/ArtifactPaths.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
@@ -209,7 +212,10 @@ const publishPlannedScript = async (
     return record;
   } catch (cause: unknown) {
     if (
-      !(cause instanceof DestinationCaseCollisionFailure) ||
+      !(
+        cause instanceof DestinationCaseCollisionFailure ||
+        cause instanceof DestinationPathUnrepresentableFailure
+      ) ||
       record.content.layout !== "url-path"
     )
       throw cause;

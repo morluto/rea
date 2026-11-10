@@ -8,6 +8,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
+import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -112,8 +113,8 @@ cliTest(
           node.kind === "literal" &&
           (node.properties.value === 1 || node.properties.value === "1"),
       );
-      expect(choices.length).toBe(2);
-      expect(new Set(choices.map((node) => node.node_id)).size).toBe(2);
+      expect(choices.length).toBe(4);
+      expect(new Set(choices.map((node) => node.node_id)).size).toBe(4);
       expect(
         graph.nodes.some(
           (node) => node.kind === "literal" && node.properties.value === "",
@@ -169,7 +170,8 @@ cliTest(
       expect(valueTrace.seed_node_ids).toEqual(
         choices
           .filter((node) => node.properties.value === "1")
-          .map((node) => node.node_id),
+          .map((node) => node.node_id)
+          .sort(compareUnicodeCodePoints),
       );
       await client.ping();
     } finally {

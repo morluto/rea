@@ -506,7 +506,10 @@ describe("provider process memory limits", () => {
         platform: "linux",
         memoryLimitBytes: 704 * 1024 * 1024,
       }),
-    ).rejects.toThrow("require the Windows Job Object launcher");
+    ).rejects.toMatchObject({
+      _tag: "ProcessAdmissionError",
+      code: "memory_limit_unsupported",
+    });
   });
 });
 

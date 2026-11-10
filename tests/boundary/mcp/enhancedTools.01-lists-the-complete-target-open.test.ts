@@ -440,14 +440,14 @@ describe("enhanced MCP tools", () => {
         ]),
       },
     });
+    // A fixed adapter has no session to retain source Evidence for the trace.
     expect(results[13]).toMatchObject({
-      target_sha256: "a".repeat(64),
-      decompilations: 1,
-      unknowns: [
-        expect.objectContaining({
-          reason: "Provider has no native def-use model",
-        }),
-      ],
+      error: {
+        code: "capability_unavailable",
+        details: {
+          operation: "trace_native_values",
+        },
+      },
     });
     expect(results[14]).toMatchObject({
       counts: { selected: 6, written: 6, failed: 0, excluded: 0 },

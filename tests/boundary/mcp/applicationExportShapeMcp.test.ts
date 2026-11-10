@@ -215,6 +215,8 @@ describe("application workflow MCP parity", () => {
       const validate = new Ajv2020({
         strict: false,
         validateFormats: false,
+        inlineRefs: false,
+        code: { optimize: false },
       }).compile(
         z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
       );

@@ -89,6 +89,9 @@ it("summary delivery returns the compact view and writes a bundle inspect-analys
     evidence_bundle: { path: string; bytes: number };
   };
   expect(h.runDirectAnalysis).toHaveBeenCalledOnce();
+  expect(h.runDirectAnalysis.mock.calls[0]?.[3]).toMatchObject({
+    includeEvidenceSources: true,
+  });
   expect(out.summary.normalized_result.kind).toBe("summary");
   expect(typeof out.summary.normalized_result.parent_evidence_id).toBe(
     "string",

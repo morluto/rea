@@ -97,7 +97,6 @@ it("reports the first mixed child failure before awaiting the other owner and re
   await Promise.all([nativeStarted, failureObserved]);
   releaseNativeClose();
   const first = await closing;
-  expect(first.ok).toBe(false);
   if (first.ok) throw new Error("Expected mixed close failure");
   expect(first.error.cleanupIncomplete).toBe(true);
 

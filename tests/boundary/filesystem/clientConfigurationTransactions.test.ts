@@ -51,7 +51,6 @@ it
       selected,
       "updated",
       "original",
-      undefined,
       { requestedPath, state },
     );
     await publication.verify(async () => {
@@ -61,6 +60,42 @@ it
         "original",
       );
     });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves an existing client configuration mode while keeping new files private",
+  async () => {
+    const root = await createTestTempDirectory("rea-config-mode-");
+    const existing = join(root, "existing.json");
+    const fresh = join(root, "fresh.json");
+    const original = '{"keep":"caller data"}\n';
+    await writeFile(existing, original);
+    await chmod(existing, 0o640);
+
+    const client = {
+      name: "cursor",
+      format: "json",
+      configPath: existing,
+    } as const;
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toMatchObject({ status: "configured" });
+    expect((await lstat(existing)).mode & 0o777).toBe(0o640);
+    expect((await lstat(`${existing}.rea.backup`)).mode & 0o777).toBe(0o640);
+    expect(await readFile(`${existing}.rea.backup`, "utf8")).toBe(original);
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toMatchObject({ status: "unchanged" });
+    expect((await lstat(existing)).mode & 0o777).toBe(0o640);
+
+    expect(
+      await configureClientConfiguration({ ...client, configPath: fresh }, {}, [
+        "rea",
+        "mcp",
+      ]),
+    ).toMatchObject({ status: "configured" });
+    expect((await lstat(fresh)).mode & 0o777).toBe(0o600);
   },
 );
 

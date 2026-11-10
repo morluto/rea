@@ -86,7 +86,6 @@ it("keeps an observer failure primary and closes real source handles", async () 
     resourceScope: new ArtifactResourceScope(),
   });
 
-  expect(prepared.ok).toBe(false);
   if (prepared.ok) throw new Error("A failed copy was accepted");
   expect(prepared.error.cause).toBe(writeFailure);
   expect(prepared.error.cleanupIncomplete).toBe(false);
@@ -117,7 +116,6 @@ it("keeps a copy failure primary while retaining and retrying a real source hand
     fileSystem,
   });
 
-  expect(prepared.ok).toBe(false);
   if (prepared.ok) throw new Error("A failed copy was accepted");
   expect(prepared.error.cause).toBe(writeFailure);
   expect(prepared.error.cleanupIncomplete).toBe(true);
@@ -158,7 +156,6 @@ it("keeps an output-close failure primary when cancellation first arrives during
     { fileSystem, resourceScope, signal: controller.signal },
   );
 
-  expect(prepared.ok).toBe(false);
   if (prepared.ok) throw new Error("Failed output closure was accepted");
   expect(prepared.error).toBeInstanceOf(HopperStartError);
   expect(prepared.error.cause).toBe(outputCloseFailure);
@@ -203,7 +200,6 @@ it("keeps cancellation observed before close primary and retains an output-close
     },
   );
 
-  expect(prepared.ok).toBe(false);
   if (prepared.ok) throw new Error("Cancelled copy was accepted");
   expect(prepared.error).toBeInstanceOf(HopperCancelledError);
   expect(prepared.error.cause).toBe(reason);
@@ -247,7 +243,6 @@ it("preserves a physical preflight read failure and retains the handle after clo
     fileSystem,
   });
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Read failure was accepted");
   expect(result.error).toBeInstanceOf(BinaryTargetError);
   expect(result.error.cause).toBe(readFailure);
@@ -293,7 +288,6 @@ it("retains exact cancellation during preflight close without replacing its clos
     signal: controller.signal,
   });
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Close failure was accepted");
   expect(result.error).toBeInstanceOf(BinaryTargetError);
   expect(result.error.cause).toBe(closeFailure);

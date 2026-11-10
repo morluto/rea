@@ -1,3 +1,7 @@
+import {
+  fridaCapturePolicySchema,
+  fridaCapturePolicyInputSchema,
+} from "../domain/fridaCapturePolicy.js";
 import { z } from "zod";
 
 import { localPathStringSchema } from "../domain/localPath.js";
@@ -5,7 +9,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { isValidFridaRemoteAddress } from "./fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import {
   fridaSessionObservationSchema,
   fridaSessionStatusInputSchema,
@@ -56,6 +60,7 @@ const exclusiveDeviceSelector = <Schema extends z.ZodTypeAny>(schema: Schema) =>
 const sessionId = z.string().uuid();
 
 const scriptOutput = z.strictObject({
+  capture_limits: fridaCapturePolicySchema.optional(),
   script_id: z.string().uuid(),
   source_kind: z.enum(["inline", "file"]),
   source_path: z.string().nullable(),
@@ -107,6 +112,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     inputSchema: z
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
+        capture_limits: fridaCapturePolicyInputSchema.optional(),
         ...deviceSelector.shape,
         pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),
@@ -241,10 +247,11 @@ export const FRIDA_TOOL_CONTRACTS = [
     ...toolContractMetadata("instrument_with_frida"),
     kind: "native-provider",
     description:
-      "Run one caller-authored Frida script against an explicitly selected process and detach when the observation window ends. The CLI and MCP share this ephemeral workflow; use MCP session operations for persistent sessions. Remote authentication is used only for this call and excluded from Evidence.",
+      "Run caller-authored Frida JavaScript against a selected process for one observation window, then detach. Scripts can read/change target memory and behavior and use the process's capabilities. CLI and MCP share this ephemeral workflow; use start_frida_session/load_frida_script for a persistent session. Remote authentication is call-local and excluded from Evidence. Detachment does not establish target termination.",
     inputSchema: z
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
+        capture_limits: fridaCapturePolicyInputSchema.optional(),
         ...deviceSelector.shape,
         pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),

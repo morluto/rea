@@ -1,5 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -9,23 +8,23 @@ import {
   type Evidence,
 } from "../../../src/domain/evidence.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 const connect = async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Evidence comparison must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "comparison-unknowns", version: "1" });
-  onTestFinished(async () => {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+  return createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "comparison-unknowns", version: "1" },
+    serverOptions: {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+      },
+    },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return { client, session };
 };
 
 const observeAgain = (

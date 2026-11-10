@@ -410,8 +410,10 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       inspection: "partial",
     },
   ]);
-  expect(result.value.objects[0]?.limitations).toContain(
-    "AMDGPU notes declare conflicting processor targets; processor identity is unknown",
+  expect(result.value.objects[0]?.limitations).toContainEqual(
+    expect.stringMatching(
+      /conflicting processor targets.*identity is unknown/iu,
+    ),
   );
   expect(result.value.coverage).toMatchObject({
     discovery: "partial",
@@ -499,14 +501,17 @@ it.each([
   const inventory = await inspect(bytes, { analysis: "inventory" });
   if (!inventory.ok) throw inventory.error;
   const row = inventory.value.objects.find((value) => value.kind === "amdgpu")!;
-  expect(row.target).not.toBeNull();
-  const selected = await inspect(bytes, { targets: [row.target!] });
+  const expectedTarget = targetId.endsWith("opaque")
+    ? "amdgcn-amd-amdhsa--gfx900"
+    : "gfx900";
+  expect(row.target).toBe(expectedTarget);
+  const selected = await inspect(bytes, { targets: [expectedTarget] });
   if (!selected.ok) throw selected.error;
   expect(selected.value.kernels).toHaveLength(1);
   expect(
     selected.value.objects.find((value) => value.kind === "amdgpu"),
   ).toMatchObject({
-    target: row.target,
+    target: expectedTarget,
     payload_target: "amdgcn-amd-amdhsa--gfx900",
     target_consistency: targetId.endsWith("opaque")
       ? "single-source"
@@ -563,8 +568,8 @@ it("bounds standalone AMD note discovery before retaining metadata", async () =>
     target: "gfx900",
     inspection: "capacity",
   });
-  expect(result.value.objects[0]!.limitations).toContain(
-    "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
+  expect(result.value.objects[0]!.limitations).toContainEqual(
+    expect.stringMatching(/note discovery.*8 MiB.*metadata budget/iu),
   );
   expect(result.value.kernels).toEqual([]);
 });
@@ -1218,4 +1223,32 @@ it("refuses escaped PTX report expansion while preserving bounded interrupted fa
   expect(partial.ptx_artifacts).toEqual([]);
   expect(partial.objects).toHaveLength(1);
   expect(partial.artifact.sha256).toBeNull();
+});
+
+it("distinguishes impossible Clang bundle counts from a framed over-capacity directory", async () => {
+  const empty = Buffer.alloc(32);
+  Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(empty);
+  const emptyResult = await inspect(empty, { analysis: "inventory" });
+  if (!emptyResult.ok) throw emptyResult.error;
+  expect(emptyResult.value.objects).toEqual([]);
+  const truncated = hipFixture().subarray(0, 32);
+  for (const count of [65537n, 0xffffffffffffffffn]) {
+    const bytes = Buffer.from(truncated);
+    bytes.writeBigUInt64LE(count, 24);
+    const result = await inspect(bytes, { analysis: "inventory" });
+    if (result.ok) throw new Error("Expected malformed directory");
+    expect(result.error._tag).toBe("BinaryTargetError");
+  }
+  const framed = Buffer.alloc(32 + 65537 * 25);
+  Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(framed);
+  framed.writeBigUInt64LE(65537n, 24);
+  for (let index = 0; index < 65537; index++) {
+    const row = 32 + index * 25;
+    framed.writeBigUInt64LE(BigInt(framed.length), row);
+    framed.writeBigUInt64LE(1n, row + 16);
+    framed[row + 24] = 0x78;
+  }
+  const result = await inspect(framed, { analysis: "inventory" });
+  if (result.ok) throw new Error("Expected directory capacity failure");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
 });

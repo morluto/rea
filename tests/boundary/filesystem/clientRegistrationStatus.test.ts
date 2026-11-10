@@ -11,7 +11,10 @@ import {
   readClientRegistrationStatuses,
 } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { classifyClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  classifyClientRegistrationCommand,
+} from "../../../src/application/ClientRegistrationIdentity.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import { err } from "../../../src/domain/result.js";
@@ -24,7 +27,7 @@ afterEach(() => {
 });
 
 describe("client registration status", () => {
-  it("discovers Claude Code from its config file without a marker directory", async () => {
+  it("discovers a stale legacy Claude Code registration without a marker directory", async () => {
     const home = await createTestTempDirectory("rea-claude-config-only-");
     await writeFile(
       join(home, ".claude.json"),
@@ -44,8 +47,8 @@ describe("client registration status", () => {
       expect.objectContaining({
         client: "claude_code",
         config_path: join(home, ".claude.json"),
-        state: "aligned",
-        remediation: null,
+        state: "stale",
+        remediation: expect.stringMatching(/\S/u),
       }),
     ]);
   });
@@ -56,6 +59,10 @@ describe("client registration status", () => {
     const foreignEntry = join(home, "foreign-rea.mjs");
     await writeFile(currentEntry, "// current dispatcher\n");
     await writeFile(foreignEntry, "// different dispatcher\n");
+    const currentCommand = currentClientRegistrationCommand({
+      entrypointPath: currentEntry,
+      environment: {},
+    });
     await Promise.all([
       mkdir(join(home, ".codex")),
       mkdir(join(home, ".cursor")),
@@ -64,7 +71,7 @@ describe("client registration status", () => {
     ]);
     await writeFile(
       join(home, ".codex/config.toml"),
-      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
+      `[mcp_servers.rea]\ncommand = ${JSON.stringify(currentCommand[0])}\nargs = ${JSON.stringify(currentCommand.slice(1))}\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
     );
     await writeFile(
       join(home, ".cursor/mcp.json"),
@@ -160,6 +167,8 @@ describe("client registration environment validation", () => {
     const home = await createTestTempDirectory("rea-registration-budget-");
     await mkdir(join(home, ".cursor"));
     await mkdir(join(home, ".codex"));
+    await mkdir(join(home, ".lmstudio"));
+    await mkdir(join(home, ".kimi-code"));
     const entry = {
       command: "npx",
       args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
@@ -168,6 +177,11 @@ describe("client registration environment validation", () => {
       join(home, ".cursor/mcp.json"),
       JSON.stringify({ mcpServers: { rea: entry } }),
     );
+    for (const path of [".lmstudio/mcp.json", ".kimi-code/mcp.json"])
+      await writeFile(
+        join(home, path),
+        JSON.stringify({ mcpServers: { rea: entry } }),
+      );
     await writeFile(
       join(home, ".codex/config.toml"),
       `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\n`,
@@ -185,11 +199,15 @@ describe("client registration environment validation", () => {
 
     const byClient = new Map(statuses.map((status) => [status.client, status]));
     // The failing resolver must not invalidate non-Kimi/Codex registrations.
+    expect(byClient.has("cursor")).toBe(true);
     expect(byClient.get("cursor")?.state).not.toBe("invalid");
-    expect(byClient.get("codex")).toMatchObject({
-      state: "invalid",
-      remediation: expect.stringContaining("budget unavailable"),
-    });
+    expect(byClient.has("lm_studio")).toBe(true);
+    expect(byClient.get("lm_studio")?.state).not.toBe("invalid");
+    for (const client of ["codex", "kimi"])
+      expect(byClient.get(client)).toMatchObject({
+        state: "invalid",
+        remediation: expect.stringContaining("budget unavailable"),
+      });
   });
 });
 

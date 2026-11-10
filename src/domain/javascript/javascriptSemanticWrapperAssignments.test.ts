@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { topLevelBinding } from "./javascriptSemanticAnalysis.fixture.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 it.each([
   'var require;require("./before.cjs");',
@@ -45,7 +46,7 @@ it.each([
   "({require}={require:()=>({BrowserWindow:class{}})});",
   "[require]=[()=>({BrowserWindow:class{}})];",
 ])("preserves an Electron capture before the projected write: %s", (write) => {
-  const analysis = analyzeJavaScriptStaticSource(
+  const analysis = analyzeCommonJsStaticFixture(
     `var require;const {BrowserWindow}=require("electron");${write}new BrowserWindow({webPreferences:{preload:"./before.cjs"}});`,
   );
   expect(analysis.parse_error_count).toBe(0);
@@ -65,7 +66,7 @@ it.each([
 ])(
   "distinguishes definite and conditional wrapper replacement: %s",
   (write, unknown) => {
-    const analysis = analyzeJavaScriptStaticSource(
+    const analysis = analyzeCommonJsStaticFixture(
       `var module;${write}module.require("./unused.cjs");`,
     );
     expect(analysis.parse_error_count).toBe(0);

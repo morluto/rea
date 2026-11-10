@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { dirname } from "node:path";
@@ -130,9 +131,11 @@ export const ghidraJavaLaunch = async (options: {
     const key =
       options.platform === "win32" ? sourceKey.toUpperCase() : sourceKey;
     if (separator < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key))
-      throw new Error(
-        `Invalid Ghidra LaunchSupport environment entry: ${line}`,
-      );
+      throw new GhidraAdmissionError("invalid_environment_entry", {
+        check: separator < 1 ? "separator" : "key",
+        line: line.length <= 1024 ? line : line.slice(0, 1024),
+        ...(line.length <= 1024 ? {} : { line_truncated: 1 }),
+      });
     if ((environment[key] ?? "") === "")
       environment[key] = line.slice(separator + 1);
   }
@@ -172,12 +175,13 @@ export const ghidraJavaLaunch = async (options: {
   const vmArguments = configuredArguments.stdout
     .split(/\r?\n/u)
     .filter((line) => line !== "");
-  if (
-    vmArguments.some(
-      (argument) => !argument.startsWith("-") || argument.includes("\0"),
-    )
-  )
-    throw new Error("Invalid Ghidra LaunchSupport JVM argument");
+  const invalidArgument = vmArguments.find(
+    (argument) => !argument.startsWith("-") || argument.includes("\0"),
+  );
+  if (invalidArgument !== undefined)
+    throw new GhidraAdmissionError("invalid_jvm_argument", {
+      check: invalidArgument.includes("\0") ? "nul" : "prefix",
+    });
   rejectJvmPlatformOverrides(vmArguments);
   return {
     command,

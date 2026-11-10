@@ -19,6 +19,7 @@ const project = (
   const parent = analysisViewCaptureEvidence(capture);
   return projectAnalysisView(
     {
+      predicateType: parent.predicate_type,
       evidenceId: parent.evidence_id,
       operation: parent.operation,
       normalizedResult: parent.normalized_result,
@@ -202,6 +203,7 @@ it("rejects native captures and malformed parents with typed errors", () => {
   expect(
     projectAnalysisView(
       {
+        predicateType: "rea.analysis",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "inspect_web_network_capture",
         normalizedResult: {},
@@ -218,6 +220,7 @@ it.each(["api-surface", "environment-manifest", "environment-state"])(
     const capture = analysisViewCaptureFixture();
     const result = projectAnalysisView(
       {
+        predicateType: "rea.analysis",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "inspect_web_network_capture",
         limitations: [],
@@ -229,7 +232,6 @@ it.each(["api-surface", "environment-manifest", "environment-state"])(
       },
       analysisViewRequestSchema.parse({ kind }),
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected parent admission to fail");
     expect(result.error.cause).toMatchObject({ name: "ZodError" });
     expect(projectAnalysisError(result.error)).toMatchObject({
@@ -357,6 +359,7 @@ it("rejects cyclic captures and accessor members without invoking them", () => {
     expect(
       projectAnalysisView(
         {
+          predicateType: "rea.analysis",
           evidenceId: `ev_${"a".repeat(64)}`,
           operation: "inspect_web_network_capture",
           normalizedResult,

@@ -1,5 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 
 describe("JavaScript cooperative computation lifecycle", () => {
@@ -15,9 +16,19 @@ describe("JavaScript cooperative computation lifecycle", () => {
       }
     }
     const cancellation = setImmediate().then(() => controller.abort(reason));
-    await expect(
-      completeJavaScriptAnalysisSteps(work(), controller.signal),
-    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    const failure = await completeJavaScriptAnalysisSteps(
+      work(),
+      controller.signal,
+    ).then(
+      () => {
+        throw new Error("Expected cancellation");
+      },
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.cause).toBe(reason);
     await cancellation;
     expect(released).toBe(true);
   });
@@ -32,9 +43,19 @@ describe("JavaScript cooperative computation lifecycle", () => {
       yield;
       return 42;
     }
-    await expect(
-      completeJavaScriptAnalysisSteps(work(), controller.signal),
-    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    const failure = await completeJavaScriptAnalysisSteps(
+      work(),
+      controller.signal,
+    ).then(
+      () => {
+        throw new Error("Expected cancellation");
+      },
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.cause).toBe(reason);
     expect(started).toBe(false);
     expect(await completeJavaScriptAnalysisSteps(work())).toBe(42);
   });

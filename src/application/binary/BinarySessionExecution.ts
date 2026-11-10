@@ -15,9 +15,11 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
+  ExecutionOptions,
 } from "../AnalysisProvider.js";
 import {
   isSnapshotCacheable,
+  requestsFreshIndependentDecompile,
   requiresNativeSourceAdmissionBeforeReplay,
 } from "./AnalysisSnapshotCache.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
@@ -41,6 +43,7 @@ interface PrepareSessionExecutionInput {
   readonly active: ActiveExecutionBinding | undefined;
   readonly operation: AnalysisOperation;
   readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly snapshotContext?: ExecutionOptions["snapshotContext"];
   readonly nativeSourceAdmitted: boolean;
   readonly unboundOperationError: (
     operation: AnalysisOperation,
@@ -53,6 +56,19 @@ interface PrepareSessionExecutionInput {
     parameters: Readonly<Record<string, JsonValue>>,
   ) => AnalysisExecution | undefined;
 }
+
+/** Recovery for an operation absent from the selected binary route. */
+export const undeclaredOperationGuidance = (
+  operation: string,
+  entryCommentAvailable = false,
+): string => {
+  const entryComment =
+    entryCommentAvailable &&
+    (operation === "set_comment" || operation === "set_inline_comment")
+      ? `If the address is exactly a function entry and an entry comment is intended, use MCP annotate_native_function with procedure set to that entry and ${operation === "set_comment" ? "comment" : "inline_comment"}, or CLI rea annotate-native-function with the target, entry and ${operation === "set_comment" ? "--comment" : "--inline-comment"}. This edits session metadata, not arbitrary-address comments; whether CLI edits persist after the invocation depends on the provider and selected checkpoint mode. `
+      : "";
+  return `${entryComment}In MCP, inspect binary_session with detail: "complete" for candidate availability, target support, and capabilities. If a suitable candidate is available, explicitly call open_binary with the same target and its provider_id. In CLI, use rea providers to inspect readiness and capabilities; target support remains unknown until a target is selected. Select an available candidate with --provider and check the result. Switching may discard provider session edits; retained Evidence does not restore them. Candidate availability does not guarantee support for this target.`;
+};
 
 /** Resolve capability, profile, and snapshot state before invoking a provider. */
 export const prepareSessionExecution = (
@@ -71,14 +87,48 @@ export const prepareSessionExecution = (
   if (capability?.available !== true) {
     const selectionError = unboundOperationError(operation, active.route);
     if (selectionError !== undefined) return err(selectionError);
+    const entryCommentAvailable =
+      active.route.binding !== null &&
+      active.route.capabilities.get("annotate_native_function")?.available ===
+        true &&
+      active.route.capabilities.get("annotate_native_function")?.provider.id ===
+        active.route.binding.identity.id;
+    const undeclaredGuidance =
+      capability === undefined
+        ? undeclaredOperationGuidance(operation, entryCommentAvailable)
+        : undefined;
     return err(
       new AnalysisCapabilityUnavailableError(
         active.route.binding?.identity.id ?? active.route.identity.id,
         operation,
         capability?.reason ?? "operation is not declared by this provider",
+        undeclaredGuidance === undefined
+          ? {
+              ...(capability?.userMessage === undefined
+                ? {}
+                : { userMessage: capability.userMessage }),
+              ...(capability?.remediation === undefined
+                ? {}
+                : { remediationAction: capability.remediation }),
+            }
+          : {
+              userMessage: `The selected provider does not declare ${operation}.`,
+              fallbackRemediationAction: undeclaredGuidance,
+            },
       ),
     );
   }
+  if (
+    requestsFreshIndependentDecompile(operation, parameters) &&
+    capability.independentDecompile !== true
+  )
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        capability.provider.id,
+        operation,
+        "This provider does not declare fresh independent decompilation.",
+      ),
+    );
   const profile =
     active.profile !== null &&
     capability.provider.id === active.profile.provider.id
@@ -86,7 +136,12 @@ export const prepareSessionExecution = (
       : undefined;
   const cacheable =
     profile !== undefined &&
-    isSnapshotCacheable(operation, capability, parameters);
+    isSnapshotCacheable(
+      operation,
+      capability,
+      parameters,
+      input.snapshotContext,
+    );
   const cached =
     cacheable &&
     (!requiresNativeSourceAdmissionBeforeReplay(capability.provider.id) ||

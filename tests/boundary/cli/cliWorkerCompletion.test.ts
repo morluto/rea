@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { z } from "zod";
 
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createCliSessionFrameReader,
@@ -41,22 +43,45 @@ process.stdout.write = (chunk, ...arguments_) => {
 };
 `,
     );
-    const result = await processes.run(
-      process.execPath,
-      ["--import", preload, worker],
-      {
-        input: encodeCliSessionFrame({
-          id: 1,
-          arguments: ["--help"],
-          cwd: root,
-          env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
-        }),
-        timeoutMs: 15_000,
-      },
+    const child = processes.spawn(process.execPath, [
+      "--import",
+      preload,
+      worker,
+    ]);
+    const closed = new Promise<void>((resolve) => {
+      child.once("close", () => resolve());
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    const ready = createDeferred<void>();
+    child.stdout.on(
+      "data",
+      createCliSessionFrameReader((value: unknown) => {
+        const frame = z.object({ ready: z.boolean() }).parse(value);
+        if (frame.ready) ready.resolve();
+      }),
     );
-    expect(result.signal, result.stderr).toBeNull();
-    expect(result.exitCode, result.stderr).toBe(1);
-    expect(result.stderr).toContain("selected CLI response frame write failed");
+    await awaitAcknowledgement(
+      ready.promise,
+      closed,
+      "CLI worker startup",
+      15_000,
+    );
+    child.stdin.end(
+      encodeCliSessionFrame({
+        id: 1,
+        arguments: ["--help"],
+        cwd: root,
+        env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      }),
+    );
+    expect(await waitForExit(child, 15_000), stderr).toBe(true);
+    await closed;
+    expect(child.signalCode, stderr).toBeNull();
+    expect(child.exitCode, stderr).toBe(1);
+    expect(stderr).toContain("selected CLI response frame write failed");
   },
 );
 
@@ -136,8 +161,23 @@ processTest(
   "publishes one fatal CLI response and does not dispatch commands queued behind it",
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-cli-worker-fatal-");
-    const result = await processes.run(process.execPath, [worker], {
-      input: Buffer.concat([
+    const child = processes.spawn(process.execPath, [worker]);
+    const closed = new Promise<void>((resolve) => {
+      child.once("close", () => resolve());
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    const frames: unknown[] = [];
+    child.stdout.on(
+      "data",
+      createCliSessionFrameReader((frame: unknown) => {
+        frames.push(frame);
+      }),
+    );
+    child.stdin.end(
+      Buffer.concat([
         encodeCliSessionFrame({ id: 1, arguments: null, cwd: root, env: {} }),
         encodeCliSessionFrame({
           id: 2,
@@ -146,15 +186,17 @@ processTest(
           env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
         }),
       ]),
-      timeoutMs: 15_000,
-    });
-    expect(result.signal, result.stderr).toBeNull();
-    expect(result.exitCode, result.stderr).toBe(1);
-    expect(result.stderr).toContain(
+    );
+    expect(await waitForExit(child, 15_000), stderr).toBe(true);
+    await closed;
+    expect(child.signalCode, stderr).toBeNull();
+    expect(child.exitCode, stderr).toBe(1);
+    expect(stderr).toContain(
       "CLI session command is missing its arguments, cwd, or environment",
     );
-    expect(result.stdout).toContain('"id":1');
-    expect(result.stdout).toContain('"fatal":true');
-    expect(result.stdout).not.toContain('"id":2');
+    expect(frames).toEqual([
+      { ready: true },
+      expect.objectContaining({ id: 1, fatal: true, exitCode: 1 }),
+    ]);
   },
 );

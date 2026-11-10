@@ -184,7 +184,6 @@ it("preserves a native plist probe read denial over a simultaneous abort", async
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected native plist read denial");
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(physical);
@@ -215,7 +214,6 @@ it.each([false, true])(
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected plist probe cancellation");
       const primary = closeFails ? result.error.cleanupPrimary : result.error;
       expect(primary).toBeInstanceOf(AnalysisCancelledError);
@@ -388,10 +386,11 @@ it("preserves cancellation during continued short reads and releases the descrip
   const path = join(root, "Electron");
   await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
   const controller = new AbortController();
+  const reason = new Error("cancel continued read");
   fault.path = path;
   fault.maximum = 2;
   fault.onRead = () => {
-    if (fault.reads === 2) controller.abort(new Error("cancel continued read"));
+    if (fault.reads === 2) controller.abort(reason);
   };
   const provider = new ElectronFuseProvider();
   try {
@@ -399,9 +398,9 @@ it("preserves cancellation during continued short reads and releases the descrip
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
     expect(fault.reads).toBe(2);
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
   } finally {

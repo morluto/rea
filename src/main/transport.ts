@@ -11,10 +11,10 @@ import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
 import {
-  MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
   MCP_HTTP_LISTEN_FAILED,
 } from "./messages.js";
+import { reportMcpTransportError } from "./reportMcpTransportError.js";
 
 interface ServerContext {
   readonly analysisSettings?: AnalysisSettings;
@@ -134,6 +134,11 @@ export const startMcpTransport = async (
             serverContext.analysisSettings?.read,
           );
           androidProviders.add(android);
+          const closeAndroidProvider = android.close.bind(android);
+          android.close = async () => {
+            await closeAndroidProvider();
+            androidProviders.delete(android);
+          };
           const server = (dependencies.createServer ?? createServer)(
             { kind: "session", session },
             {
@@ -151,10 +156,12 @@ export const startMcpTransport = async (
           return server;
         }),
       {
-        onerror: () => {
-          serverLogger.error(MCP_CONNECTION_LOST);
-          dependencies.writeStderr(`${MCP_CONNECTION_LOST}\n`);
-        },
+        onerror: (error) =>
+          reportMcpTransportError(
+            error,
+            serverLogger,
+            dependencies.writeStderr,
+          ),
         logger: serverLogger,
         ...(serverContext.signal === undefined
           ? {}

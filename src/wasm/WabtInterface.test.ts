@@ -121,36 +121,41 @@ it("preserves custom memory page sizes and treats unadmitted nested declarations
   expect(unknown.entries[0]?.signature).toBeNull();
 });
 
-it("refuses typed name expansion within the source WABT byte cap before retaining interface output", () => {
-  const name = "x".repeat(6 * 1024 * 1024);
-  expect(
-    parseWabtWat(`(module (import "${name}" "f" (func)))`).interface,
-  ).toMatchObject({
+it("recovers typed name expansion with a larger selected interface allowance", () => {
+  const name = "x".repeat(500);
+  const wat = `(module (import "${name}" "f" (func)))`;
+  expect(parseWabtWat(wat, 1024).interface).toMatchObject({
     state: "partial",
     entries: [],
-    issues: [expect.stringMatching(/representation budget/u)],
+    issues: expect.arrayContaining([
+      expect.stringContaining("max_interface_bytes"),
+    ]),
+  });
+  expect(parseWabtWat(wat, 8192).interface).toMatchObject({
+    state: "complete",
+    entries: [{ direction: "import", module: name, name: "f" }],
+    issues: [],
   });
 });
 
 it("charges shared type signatures at every retained occurrence and preserves bounded partial facts", () => {
-  const params = Array(1000).fill("i32").join(" ");
+  const params = Array(64).fill("i32").join(" ");
   const exports = Array.from(
-    { length: 10000 },
+    { length: 100 },
     (_, i) => `(export "f${i}" (func 0))`,
   ).join(" ");
   const report = parseWabtWat(
     `(module (type (func (param ${params}))) (import "e" "f" (func (type 0))) ${exports})`,
+    16384,
   ).interface;
   expect(report.state).toBe("partial");
   expect(report.entries.length).toBeGreaterThan(1);
-  expect(report.entries.length).toBeLessThan(10001);
+  expect(report.entries.length).toBeLessThan(101);
   expect(report.entries[0]?.signature).toMatchObject({
     kind: "func",
     params: expect.any(Array),
   });
-  expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(
-    32 * 1024 * 1024,
-  );
+  expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(16384);
 });
 
 it("keeps collided labels unknown in each index space and preserves numeric and unique identities", () => {
@@ -217,11 +222,19 @@ it("rejects unfinished nested comments rather than projecting a truncated interf
     "(module (type (func (param (; unfinished ) i32))))",
     "(module) (; outer (; inner ;) still open",
   ])
-    expect(() => parseWabtWat(source)).toThrow("Incomplete WABT WAT comment");
+    expect(() => parseWabtWat(source)).toThrow(
+      expect.objectContaining({
+        _tag: "WabtAdmissionError",
+        code: "incomplete_comment",
+      }),
+    );
 });
 
 it("rejects a second module after a CR-terminated line comment", () => {
   expect(() => parseWabtWat("(module) ;; comment\r(module)")).toThrow(
-    "Unexpected second WABT WAT module",
+    expect.objectContaining({
+      _tag: "WabtAdmissionError",
+      code: "unexpected_second_module",
+    }),
   );
 });

@@ -215,3 +215,52 @@ describe("merging a later create into a plan", () => {
     ).toBeUndefined();
   });
 });
+
+describe("merging a later create's made object", () => {
+  const made = (counts: { member: string; start: number }[]): FieldRule => ({
+    field: "subscription",
+    rule: "made-object",
+    clocks: ["created"],
+    format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    own: ["entity_id"],
+    counts,
+  });
+  const body = {
+    accepted: ["title"],
+    fixed: [],
+    required: ["title"],
+    identity: null,
+    kinds: [],
+  };
+  const title: FieldRule = { field: "title", rule: "echo" };
+  const subscription = (id: number, task: number) => ({
+    id,
+    entity: "task",
+    entity_id: task,
+    created: "2026-10-26T10:00:00Z",
+  });
+  const plan = { rules: [title, made([])], body };
+  const exemplar = { title: "First", subscription: subscription(31, 20) };
+  const later = {
+    entity: { title: "Third", subscription: subscription(32, 22) },
+    body: { title: "Third" },
+    rules: [title, made([{ member: "id", start: 32 }])],
+    contract: body,
+  };
+  const earlier = (accepted: number) => ({
+    kept: new Set<string>(),
+    clockOf: () => undefined,
+    createCollections: Array.from({ length: accepted }, () => "/api/tasks"),
+  });
+
+  it("counts a member only the later create shows while the exemplar is the one create accepted", () => {
+    expect(
+      mergedCreatePlan(plan, exemplar, later, earlier(1))?.rules,
+    ).toContainEqual(made([{ member: "id", start: 31 }]));
+  });
+
+  it("makes no count of a member creates past the exemplar held alike", () => {
+    // Creates of 31 and 31 then 32 are no count: serving would make 31, 32, 33.
+    expect(mergedCreatePlan(plan, exemplar, later, earlier(2))).toBeUndefined();
+  });
+});

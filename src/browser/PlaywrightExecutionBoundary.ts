@@ -3,6 +3,8 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 
+export const PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS = 5_000;
+
 const OPERATION = "capture_browser_scenario" as const;
 
 // Chrome shutdown can take several seconds; expiry bounds the response, not ownership.

@@ -2,6 +2,7 @@ import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import { parseJebMcpTimeoutMs } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
 import { err } from "../domain/result.js";
 import type { JebMcpConnectionFactory } from "../jeb/JebMcpConnection.js";
 import { JebProvider } from "../jeb/JebProvider.js";
@@ -53,6 +54,7 @@ const unconfiguredJebProvider = (
         status: "unavailable",
         code: "not_configured",
         reason: `${setting} is invalid: ${error.settings[0]?.constraint ?? error.message}`,
+        remediation: analysisErrorRemediationAction(error),
         diagnostics: { setting },
       }),
     close: () => Promise.resolve(),

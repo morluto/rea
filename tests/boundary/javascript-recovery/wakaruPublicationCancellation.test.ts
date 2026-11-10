@@ -8,6 +8,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const publicationCancellation = vi.hoisted(() => ({
   controller: undefined as AbortController | undefined,
   directorySyncs: 0,
+  reportCleanup: false,
+  allowCleanup: false,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -72,6 +74,32 @@ vi.mock(
       prepareWakaruExecution: async (
         context: Parameters<typeof actual.prepareWakaruExecution>[0],
       ) => {
+        if (publicationCancellation.reportCleanup) {
+          const cleanup = await context.resources.release({
+            kind: "lease",
+            resource: "provenance descriptor",
+            lease: {
+              release: async () => {
+                if (!publicationCancellation.allowCleanup)
+                  throw new Error("close denied");
+              },
+            },
+          });
+          if (cleanup.kind !== "failed")
+            throw new Error("Expected cleanup failure");
+          const { WakaruReportReadFailure } =
+            await import("../../../src/javascript/recovery/WakaruReport.js");
+          throw new WakaruReportReadFailure(
+            context.resources.cleanupFailure({ kind: "completed" }, [cleanup]),
+            {
+              stdout: "report output",
+              stderr: "engine diagnostic",
+              exit_code: 1,
+              signal: null,
+              truncated: false,
+            },
+          );
+        }
         const source = context.sources[0];
         if (source === undefined) throw new Error("Missing recovery source");
         const bytes = Buffer.from("module.exports = 42;");
@@ -98,6 +126,39 @@ vi.mock(
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { WakaruProvider } from "../../../src/javascript/recovery/WakaruProvider.js";
+
+it("retains report command output and cleanup ownership through provider retry", async () => {
+  const root = await createTestTempDirectory("rea-wakaru-report-cleanup-");
+  const sourcePath = join(root, "source.js");
+  await writeFile(sourcePath, "module.exports = 42;");
+  publicationCancellation.reportCleanup = true;
+  publicationCancellation.allowCleanup = false;
+  const provider = new WakaruProvider({});
+  try {
+    const result = await provider.recover({
+      path: sourcePath,
+      output_directory: join(root, "output"),
+      extraction_mode: "structural",
+      rewrite_level: "standard",
+    });
+    if (result.ok) throw new Error("Expected cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: "report output",
+      stderr: "engine diagnostic",
+      exit_code: 1,
+      signal: null,
+    });
+    publicationCancellation.allowCleanup = true;
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.capturedOutput?.stdout).toBe("report output");
+  } finally {
+    publicationCancellation.allowCleanup = true;
+    publicationCancellation.reportCleanup = false;
+    await provider.close();
+  }
+});
 
 it.skipIf(process.platform === "win32")(
   "keeps mid-commit output-tree cancellation typed through the provider",

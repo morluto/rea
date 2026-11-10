@@ -206,6 +206,45 @@ try {
     );
     cases++;
   }
+  // Verify Python float spellings through the actual native producer and both public adapters.
+  for (const mode of ["cli", "mcp"]) {
+    for (const marked of [false, true]) {
+      const value = await inspect(mode, {
+        capture_path: join(runtime.path, "flows.mitm"),
+        format: "mitmproxy",
+        sensitive_values: marked ? ["1e-7", "000000"] : [],
+      });
+      for (const record of value.records) {
+        assert.deepEqual(record.reported.metadata.numeric_spellings, {
+          small: marked ? null : 1e-7,
+          large: marked ? null : 1e20,
+          ordinary: 42,
+        });
+        for (const [key, literal] of [
+          ["small", "1e-07"],
+          ["large", "1e+20"],
+        ]) {
+          const pointer = "/metadata/numeric_spellings/" + key;
+          assert.equal(
+            record.numeric_literals.some(
+              (number) =>
+                number.pointer === pointer && number.literal === literal,
+            ),
+            !marked,
+          );
+          assert.equal(
+            record.redactions.some(
+              (redaction) =>
+                redaction.pointer === pointer &&
+                redaction.reason === "explicit-sensitive-value",
+            ),
+            marked,
+          );
+        }
+      }
+      cases++;
+    }
+  }
   for (const sensitive_values of [
     ["REDACTED", "["],
     ["secret", "REDACTED"],

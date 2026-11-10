@@ -42,7 +42,6 @@ for (const format of ["toml", "grok"] as const)
           format,
           source,
         );
-        expect(result.ok).toBe(true);
         if (!result.ok) throw new Error("TOML edit was refused");
         for (const comment of [
           "# server header note",
@@ -85,7 +84,6 @@ it("retains comments from dotted REA assignments and nested inline values", () =
       "toml",
       source,
     );
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("TOML removal was refused");
     expect(result.value).toContain(
       source.includes("# dotted note")

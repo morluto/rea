@@ -132,6 +132,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       directory: "app.asar/app/widget/app",
       package: { path: `app.asar/${nestedManifest}` },
     });
+    expect(nested?.id).toEqual(expect.any(String));
+    expect(recovered?.id).toEqual(expect.any(String));
     expect(recovered?.id).not.toBe(nested?.id);
     expect(
       restored.route_inventory?.routes.map(({ path, source_count }) => ({

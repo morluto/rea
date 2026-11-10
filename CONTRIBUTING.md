@@ -11,15 +11,14 @@ incorrect user instructions warrant standalone corrections. Collect other
 cosmetic-only suggestions in an issue rather than separate PRs.
 
 For selected architectural owners and dependency paths, use the
-[architecture map](docs/architecture.mermaid). It is not a complete directory or
+[architecture map](docs/architecture/architecture.mermaid). It is not a complete directory or
 import inventory. For current provider wiring, start with
 [`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
 the other `src/composition/` factories for tool services, including
 [`gpu.ts`](src/composition/gpu.ts) and [`model.ts`](src/composition/model.ts).
-Live Frida and Cutter adapters are constructed directly in
-[`src/cli/fridaCommands.ts`](src/cli/fridaCommands.ts),
-[`src/cli/cutterCommands.ts`](src/cli/cutterCommands.ts), and
-[`src/server/createServer.ts`](src/server/createServer.ts).
+Live Frida, Cutter, GDB and Rizin construction also uses shared composition
+factories. For service ownership, availability and catalog declarations, follow
+the [capability composition guide](docs/capability-composition.md).
 Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
@@ -33,7 +32,7 @@ removing it. Preserve validation, lazy loading, caller policy, and resource
 acquisition and cleanup supplied by the old boundary. Published APIs, persisted
 formats, and independently versioned bridges require an explicit compatibility
 decision; an internal representation alone does not establish that obligation.
-See [interpreting boundary facts once](docs/tool-design.md#interpret-boundary-facts-once)
+See [interpreting boundary facts once](docs/development/tool-design.md#interpret-boundary-facts-once)
 for admission ownership and the distinction between repeated validation and
 independent checks.
 
@@ -45,7 +44,7 @@ Use the [analysis optimization skill](.agents/skills/rea-analysis-optimization/S
 to locate provider and shared-workflow bottlenecks, preserve Evidence, and
 compare equivalent real tasks before claiming an improvement.
 
-When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
+When adding or changing an MCP tool, follow the [tool design guide](docs/development/tool-design.md) and preserve the canonical contracts and generated catalog.
 When adding or changing an admission ceiling, budget, or deadline, follow
 [analysis settings, limits, and recovery](docs/design/limits-and-recovery.md)
 for ownership, operation snapshots, provider integration, and the steps for
@@ -94,7 +93,8 @@ Before requesting maintainer review, the human owner must:
   passing. Follow the [verification requirements](#development-feedback-and-pr-verification)
   for required checks and real-provider coverage.
 - Complete the **Author readiness** declaration in the PR template, explicitly
-  stating that the PR is ready for initial review.
+  stating that the PR is ready for initial review, unless the PR author is
+  exempt from the declaration as listed below.
 
 Keep the PR description concise and current. Explain the problem, observable
 outcome, approach, and useful evidence; link long logs or put them in optional
@@ -115,9 +115,12 @@ validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
 The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. It checks that the
-declaration is filled, not whether the code or evidence is correct. Existing PRs
-can copy the **Author readiness** section from the current template.
+owner and all three template declarations for non-drafts. PRs authored by
+@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
+the declaration; their human ownership, review, and evidence responsibilities
+above still apply. The check identifies authors by GitHub account ID. It checks
+that the declaration is filled, not whether the code or evidence is correct.
+Existing PRs can copy the **Author readiness** section from the current template.
 Open PRs must have distinct head commits because GitHub shares commit statuses.
 
 Maintainers enable merge enforcement after the workflow is merged: run
@@ -126,6 +129,19 @@ open PRs, then add `PR readiness` from GitHub Actions to the branch's required
 status checks alongside its existing checks. Deploy the workflow to each
 protected target branch before requiring it there. The workflow reads PR
 metadata using trusted default-branch code and writes only a commit status.
+
+When an open PR may overlap another open change or a recently landed fix, note
+the related PR, issue, or commit in the description or a comment as soon as the
+overlap is known. Prefer one clear pointer over repeated status updates.
+
+If an overlapping change merges while a PR awaits review, link that commit on
+the open PR and state what remains useful. Rebase or otherwise align with the
+current base when the remaining work is still wanted, narrow the PR to the
+uncovered portion, or close it when the change is fully superseded. Keep the
+description and validation current after that update. Maintainers may also note
+the expected disposition (rebase, narrow, or close) when they land or recognize
+an overlapping fix. Readiness still does not grant merge permission or a review
+date.
 
 Maintainers may return a PR to the author or close it when the problem is
 unsupported, validation is missing, or the owner cannot explain the change.
@@ -231,7 +247,9 @@ guarantee.
 Use the development toolchain pinned in `.nvmrc` and
 `package.json#packageManager`. Run `nvm use` before installing dependencies;
 installed-package runtime support is documented in
-[installation](docs/installation.md#start-setup).
+[installation](docs/getting-started/installation.md#start-setup).
+Use Node.js and npm for source builds and verifier scripts; the installed
+package's Bun runtime support does not extend to those development scripts.
 
 ```bash
 npm ci
@@ -245,6 +263,15 @@ CLI or MCP server; it compiles the runtime and bundles the authored skill.
 catalogs, documentation projections, or managed verification evidence. Turbo
 caches deterministic builds and static checks across Git worktrees. After a package, lockfile, or managed-skill version change, run
 `npm run metadata:generate` before building.
+
+Dependabot proposes updates for the npm lockfiles, website Python requirements,
+and GitHub Actions. Review dependency changes and run the checks relevant to
+their consumers. For dependencies maintained outside Dependabot, including
+`third_party/` and the HTTP/3 lab's pinned requirements, the maintainer should
+review upstream security advisories when updating or using them. Preserve source
+and version provenance, update license notices when needed, and report which
+verification was actually repeated. The lab requirements describe a recorded
+environment; a dependency update does not verify the revised environment.
 
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
@@ -272,15 +299,22 @@ The general source suite (`npm run test:fast`, `npm run test:changed`, and
 On a Windows checkout, some source tests fail because fixtures use POSIX paths,
 `#!/bin/sh` tool stubs, or POSIX rename semantics. Compare failures against the
 base revision, or run the suite on Linux or WSL, before attributing them to a
-change. See [testing](docs/testing.md#developer-commands) for command scopes
+change. The embedded-artifact parent-swap tests exercise the selected-path
+replacement when the rename succeeds; if Windows refuses it while the admitted
+file is open, they instead verify the refusal and cleanup. See
+[testing](docs/development/testing.md#developer-commands) for command scopes
 and lane selection.
 
 `git submodule update --init --recursive` fails at the pinned Unblob submodule
 on Windows and can leave later submodules unchecked out. Apply the
-[Unblob checkout workaround](docs/firmware-analysis.md#windows-submodule-checkout),
+[Unblob checkout workaround](docs/guides/firmware/firmware-analysis.md#windows-submodule-checkout),
 then rerun the command.
 
 ## Documentation website
+
+Use the [documentation directory](docs/README.md) and
+[authoring guide](docs/development/documentation.md) for document ownership,
+domain-based feature specifications and architectural decision records.
 
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
 for live editing, `npm run docs:build` to check the production build and
@@ -335,7 +369,7 @@ npm run check:fast
 `test:local` runs source tests without building. `check:changed` combines cached
 static checks with source tests affected since the merge base with `origin/main`.
 Import-graph selection can miss runtime registration, bridges, and generated data;
-select relevant boundary tests explicitly. See [testing](docs/testing.md#developer-commands)
+select relevant boundary tests explicitly. See [testing](docs/development/testing.md#developer-commands)
 for commands, test placement, pruning, and real-provider prerequisites.
 
 Before requesting review, run relevant tests and `npm run check`; add
@@ -410,8 +444,8 @@ Run `npm run verify:hopper` on a supported macOS host or
 `npm run verify:hopper:linux` on the supported Linux demo runner. These build
 native fixtures and verify the installed engine through CLI/MCP; package or
 simulated-provider checks do not establish engine behavior. See
-[real-toolchain verification](docs/testing.md#end-to-end-integration-and-golden-evidence)
-for prerequisites and scope, and [Hopper setup](docs/installation.md#hopper)
+[real-toolchain verification](docs/development/testing.md#end-to-end-integration-and-golden-evidence)
+for prerequisites and scope, and [Hopper setup](docs/getting-started/installation.md#hopper)
 for supported hosts and unattended startup.
 
 Use the default `build/conformance/manifest.json` unless explicitly verifying
@@ -420,7 +454,7 @@ Generated fixtures and manifests remain ignored.
 
 ## Maintainer release checklist
 
-Use the [release guide](docs/releasing.md). Main pushes automatically refresh a
+Use the [release guide](docs/development/releasing.md). Main pushes automatically refresh a
 Release Please PR with the next version and changelog. Review its migration
 notes, wait for the current CI checks to pass, and merge it into main to publish.
 

@@ -92,5 +92,15 @@ export const parseUtf8Json = (
       cause: undefined,
       userMessage: JSON_BYTE_ORDER_MARK_MESSAGE,
     };
-  return safeParseJson(text);
+  const parsed = safeParseJson(text);
+  // Native syntax errors can quote source snippets containing transport
+  // credentials. Keep the original exception internal, never in public text.
+  return parsed.ok
+    ? parsed
+    : {
+        ok: false,
+        error:
+          "JSON input is not valid JSON. Check syntax in the selected file.",
+        cause: parsed.cause,
+      };
 };

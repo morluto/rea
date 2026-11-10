@@ -315,8 +315,20 @@ cliTest(
       arguments: ["inspect-artifact", source, "--json"],
     });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain(
-      "Node SEA asset count exceeds",
-    );
+    expect(result.json).toMatchObject({
+      code: "truncated",
+      retryable: true,
+      details: {
+        reason: "limit",
+        boundary: "capacity",
+        reader_limit: {
+          parameter: "artifact_limits.node_sea.asset_count",
+          effective_value: 100_000,
+          required_value: 100_001,
+          unit: "count",
+          can_increase: true,
+        },
+      },
+    });
   },
 );

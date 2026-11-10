@@ -6,7 +6,7 @@ import {
 } from "./mcpClientSchemaConstraints.js";
 
 /** Advertised schema pair as a client receives it from `tools/list`. */
-export interface AdvertisedToolSchemas {
+interface AdvertisedToolSchemas {
   readonly name: string;
   readonly inputSchema: Record<string, unknown>;
   readonly outputSchema?: Record<string, unknown> | undefined;

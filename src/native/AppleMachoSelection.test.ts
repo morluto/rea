@@ -17,8 +17,8 @@ import {
   selectMachoSlice,
   UnsupportedMachoMetadataFormatError,
 } from "./AppleMachoSelection.js";
-import { parsePointerFixups } from "./AppleMachoFixups.js";
-import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
+import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
 /** macOS 27 system binaries ship CPU_SUBTYPE_ARM64E_X1 (12) with the PAC ABI bit. */
 const ARM64E_X1 = { type: 0x0100000c, subtype: 0x8000000c } as const;
@@ -106,6 +106,41 @@ it.each([false, true])(
       alignmentExponent: 12,
       reserved: wide ? 0x89abcdef : null,
       tableEnd: 8 + (wide ? 32 : 20),
+    });
+  },
+);
+
+it.each([
+  { container: "thin", corrupt: false },
+  { container: "thin", corrupt: true },
+  { container: "fat", corrupt: false },
+  { container: "fat", corrupt: true },
+])(
+  "walks the entire selected command table beyond 4096 commands ($container, corrupt=$corrupt)",
+  ({ container, corrupt }) => {
+    const command = Buffer.alloc(16);
+    command.writeUInt32LE(0x2a); // LC_SOURCE_VERSION
+    command.writeUInt32LE(16, 4);
+    const thin = machoImage({
+      commands: Array.from({ length: 4097 }, () => command),
+    });
+    if (corrupt)
+      new DataView(thin.buffer).setUint32(32 + 4096 * 16 + 4, 4, true);
+    const bytes = Buffer.from(
+      container === "fat" ? fatImage([{ cpu: CPU.arm64, bytes: thin }]) : thin,
+    );
+    const decode = () =>
+      decodeAppleDispatchMetadata(bytes, 10, {
+        path: "/many-commands",
+        sha256: "fixture",
+      });
+    if (corrupt) {
+      expect(decode).toThrow(/load command 4096 .*invalid cmdsize 4/u);
+      return;
+    }
+    expect(decode()).toMatchObject({
+      objc_classes: [],
+      target_selection: { container, byte_length: thin.byteLength },
     });
   },
 );

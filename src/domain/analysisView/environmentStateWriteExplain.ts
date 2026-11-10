@@ -12,6 +12,8 @@ import {
   type StateEntity,
 } from "./environmentStateRules.js";
 import {
+  emptySpellings,
+  isBlankValue,
   siblingTrimmedClocks,
   type FieldRule,
   type InsertRule,
@@ -30,6 +32,7 @@ import {
   slugSpellings,
   sortedStrings,
   type ClockFormat,
+  type ClockReading,
 } from "./environmentStateWriteValues.js";
 import {
   composedValue,
@@ -53,6 +56,7 @@ import {
   GENERATED,
 } from "./environmentStateWriteGenerated.js";
 import {
+  createdMadeObject,
   createdNestedClock,
   createdToken,
   isClockNear,
@@ -279,7 +283,10 @@ const generatedRule = (
     return { field, rule: "unique" };
   if (createdToken(field, evidence.entity, evidence.type) === "independent")
     return { field, rule: "unique" };
-  return createdNestedClock(field, value, evidence);
+  return (
+    createdNestedClock(field, value, evidence) ??
+    createdMadeObject(field, value, evidence)
+  );
 };
 
 /** Pinned members less those a reference reads: it rebuilds the object they name for any held entity. */
@@ -442,17 +449,24 @@ export const explainCreate = (
     rules.filter((rule) => !stranded.has(rule.field)),
     evidence.entity,
   );
+  // A member sent empty is one a form sends for a field left as it was, which a caller may leave out.
+  const blank = Object.entries(evidence.call.body).flatMap(([member, sent]) =>
+    isBlankValue(sent) ? [{ member, sent }] : [],
+  );
+  const shaped = bodyOf(
+    evidence.call.body,
+    new Set(
+      [...stored].filter(
+        (member) => !referenced.has(member) && !pinned.has(member),
+      ),
+    ),
+    Object.keys(evidence.call.body).filter(
+      (member) => !isBlankValue(evidence.call.body[member]),
+    ),
+  );
   return {
     rules,
-    body: bodyOf(
-      evidence.call.body,
-      new Set(
-        [...stored].filter(
-          (member) => !referenced.has(member) && !pinned.has(member),
-        ),
-      ),
-      Object.keys(evidence.call.body),
-    ),
+    body: blank.length === 0 ? shaped : { ...shaped, blank },
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
     tied: [
       ...[...constants, ...templates].map((field) =>
@@ -509,6 +523,8 @@ export const explainUpdate = (
   const rules: FieldRule[] = [];
   const echoed = new Set<string>();
   const unexplained: string[] = [];
+  // A whole-object PUT clears a member it leaves out: that value is the member's default.
+  const defaults: { readonly member: string; readonly value: JsonValue }[] = [];
   // A member the application replaces with a value it generates is accepted with any value.
   const generated = new Set<string>();
   let identity: string | null = null;
@@ -567,13 +583,27 @@ export const explainUpdate = (
       if (kept !== undefined) rules.push(kept);
       continue;
     }
+    // An empty list or map one answer spells `null` and another `[]` or `{}` is unchanged.
+    if (
+      emptySpellings(
+        ownMember(evidence.before, field),
+        ownMember(evidence.after, field),
+      )
+    )
+      continue;
     const rule = heldSlugRule(
       changeRule(evidence, field, slugs),
       body,
       knownEntities,
     );
-    if (rule === undefined) unexplained.push(field);
-    else rules.push(rule);
+    if (rule !== undefined) rules.push(rule);
+    else if (
+      evidence.method === "PUT" &&
+      isBlankValue(ownMember(evidence.after, field)) &&
+      !isBlankValue(ownMember(evidence.before, field))
+    )
+      defaults.push({ member: field, value: evidence.after[field]! });
+    else unexplained.push(field);
   }
   rules.push(...pairedStamps(evidence, rules));
   // A member a reference reads names an entity, which any held one may be.
@@ -593,7 +623,11 @@ export const explainUpdate = (
   );
   return {
     rules,
-    body: { ...shaped, identity },
+    body: {
+      ...shaped,
+      identity,
+      ...(defaults.length === 0 ? {} : { defaults }),
+    },
     unexplained,
     unstamped: sameSecondClocks(evidence),
   };
@@ -631,6 +665,11 @@ export const responseShapeOf = (
   return { ordinal, shape: "recorded", pointer: null };
 };
 
+const compareClockReadings = (
+  left: ClockReading,
+  right: ClockReading,
+): number => left.ms - right.ms || left.subMillisecond - right.subMillisecond;
+
 /** Order two field values as numbers, instants or text; undefined when they are not comparable. */
 export const compareValues = (
   left: JsonValue | undefined,
@@ -639,15 +678,14 @@ export const compareValues = (
   const [a, b] = [integerOf(left), integerOf(right)];
   if (a !== undefined && b !== undefined) return a - b;
   const [c, d] = [readClock(left), readClock(right)];
-  if (c !== undefined && d !== undefined)
-    return c.ms - d.ms || c.subMillisecond - d.subMillisecond;
+  if (c !== undefined && d !== undefined) return compareClockReadings(c, d);
   return typeof left === "string" && typeof right === "string"
     ? compare(left, right)
     : undefined;
 };
 
 /** Whether the members are strictly ordered by the field in the direction. */
-const orderedBy = (
+export const orderedBy = (
   members: readonly JsonObject[],
   field: string,
   direction: "ascending" | "descending",
@@ -669,7 +707,8 @@ const UUID_V4 =
 
 /**
  * Whether a collection's identities order nothing: version 4 UUIDs, or values every creation clock
- * lists in another order. Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
+ * lists in another order. Only recognized clock observations establish that order.
+ * Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
  */
 export const randomIdentities = (
   members: readonly JsonObject[],
@@ -685,16 +724,16 @@ export const randomIdentities = (
     (left, right) =>
       compareValues(ownMember(left, idField), ownMember(right, idField)) ?? 0,
   );
-  return clocks.every((clock) =>
-    byId.some(
-      (member, index) =>
-        index > 0 &&
-        (compareValues(
-          ownMember(byId[index - 1]!, clock),
-          ownMember(member, clock),
-        ) ?? 1) > 0,
-    ),
-  );
+  return clocks.every((clock) => {
+    const values = byId.flatMap((member) => {
+      const reading = readClock(ownMember(member, clock));
+      return reading === undefined ? [] : [reading];
+    });
+    return values.some((value, index) => {
+      if (index === 0) return false;
+      return compareClockReadings(values[index - 1]!, value) > 0;
+    });
+  });
 };
 
 /**
@@ -748,6 +787,41 @@ export const insertIndex = (
     );
   });
   return index < 0 ? members.length : index;
+};
+
+/**
+ * A sorted collection's members after writes move each entity whose sorted field changed to where its new value sorts,
+ * one after another, as replay applies them; other written entities keep their places.
+ */
+export const resortedMembers = <
+  Entity extends { readonly id: string; readonly fields: JsonObject },
+>(
+  rule: Extract<InsertRule, { rule: "sorted" }>,
+  members: readonly Entity[],
+  writes: readonly { readonly before: Entity; readonly after: Entity }[],
+): Entity[] => {
+  const order = [...members];
+  for (const { before, after } of writes) {
+    const at = order.findIndex((member) => member.id === before.id);
+    if (at < 0) continue;
+    order.splice(at, 1);
+    const moved = !same(
+      ownMember(before.fields, rule.field),
+      ownMember(after.fields, rule.field),
+    );
+    order.splice(
+      moved
+        ? insertIndex(
+            rule,
+            order.map((member) => member.fields),
+            after.fields,
+          )
+        : at,
+      0,
+      after,
+    );
+  }
+  return order;
 };
 
 /** The object in a document value, at the root or in one member, that holds most of a body's members. */

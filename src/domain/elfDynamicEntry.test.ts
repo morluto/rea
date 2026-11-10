@@ -51,7 +51,10 @@ it.each(formats)(
         ),
       ).toEqual({
         ok: false,
-        error: { kind: "malformed", message: "ELF dynamic entry is truncated" },
+        error: {
+          kind: "malformed",
+          message: expect.stringContaining("truncated"),
+        },
       });
   },
 );

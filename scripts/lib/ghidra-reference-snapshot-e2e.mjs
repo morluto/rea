@@ -126,11 +126,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
     assert.equal(reply.isError, true);
     const mcpRejection = requireMcpToolError(reply);
     assert.equal(mcpRejection.code, "evidence_integrity_mismatch");
-    assert.match(mcpRejection.details.reason, /profile_mismatch/u);
-    assert.match(
-      mcpRejection.remediation.action,
-      /without this snapshot.*fresh snapshot/u,
-    );
+    assert.deepEqual(mcpRejection.details.binding_mismatch.profile_digest, {
+      snapshot: legacyProfile.digest,
+      selected: observed.analysis_profile.digest,
+    });
+    assert.match(mcpRejection.remediation.action, /fresh snapshot/u);
     assert.deepEqual(
       requireMcpLifecycleResult(
         await client.callTool({ name: "binary_session", arguments: {} }),

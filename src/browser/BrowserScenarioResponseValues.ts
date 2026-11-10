@@ -122,6 +122,33 @@ interface ResponseBodySource {
   body(): Promise<Buffer>;
 }
 
+/** DEFLATE decodes at most 1032 bytes per byte it reads (zlib's limit), so a gzip or deflate body's received size bounds its decoded size. */
+const DEFLATE_MAX_EXPANSION = 1032;
+
+/** The most bytes a response decodes to, from the bytes received (or its declared length, for one served from cache) and its content codings; undefined when they cannot bound it. */
+export const decodedBodyBound = (
+  received: number | undefined,
+  headers: Readonly<Record<string, string>>,
+): number | undefined => {
+  const declared = headers["content-length"]?.trim();
+  const bytes =
+    received !== undefined && Number.isSafeInteger(received) && received > 0
+      ? received
+      : declared !== undefined && /^[1-9]\d{0,14}$/u.test(declared)
+        ? Number(declared)
+        : undefined;
+  if (bytes === undefined) return undefined;
+  let bound = bytes;
+  for (const coding of (headers["content-encoding"] ?? "").split(",")) {
+    const name = coding.trim().toLowerCase();
+    if (name === "" || name === "identity") continue;
+    if (name !== "gzip" && name !== "x-gzip" && name !== "deflate")
+      return undefined;
+    bound *= DEFLATE_MAX_EXPANSION;
+  }
+  return bound;
+};
+
 /** The caller owns deadline/cancellation; unknown decoded bounds never request a whole body. */
 export const readBoundedResponseBody = async (
   response: ResponseBodySource,
@@ -134,16 +161,17 @@ export const readBoundedResponseBody = async (
       : (await request.sizes()).responseBodySize;
   if (size !== undefined && size > maxBytes)
     return err(issue("the response is too large to save values from."));
-  const encoding = response.headers()["content-encoding"]?.trim().toLowerCase();
-  if (
-    size === undefined ||
-    !Number.isSafeInteger(size) ||
-    size <= 0 ||
-    (encoding !== undefined && encoding !== "" && encoding !== "identity")
-  )
+  const bound = decodedBodyBound(size, response.headers());
+  if (bound === undefined)
     return err(
       issue(
         "the decoded response size cannot be bounded before reading it; this response body was not read.",
+      ),
+    );
+  if (bound > maxBytes)
+    return err(
+      issue(
+        "the response could decode past the size limit; this response body was not read.",
       ),
     );
   const body = await response.body();

@@ -21,6 +21,9 @@ import {
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
+// Inert process models exercise escalation without waiting for real I/O.
+const MOCK_SHUTDOWN_GRACE_MS = 1;
+
 const requestSchema = z.object({
   id: z.number(),
   arguments: z.array(z.string()),
@@ -118,6 +121,7 @@ test("reads a CLI session frame delivered one byte at a time", () => {
 test("stops an unready shared CLI process when the session closes", async () => {
   let spawned: FakeCliProcess | undefined;
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     spawnWorker: () => {
       spawned = fakeProcess(41);
       return asCliProcess(spawned);
@@ -147,6 +151,7 @@ test("stops an in-flight shared CLI command when the session closes", async () =
   let received = false;
   let spawned: FakeCliProcess | undefined;
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     spawnWorker: () => {
       const child = fakeProcess(42);
       spawned = child;
@@ -172,6 +177,7 @@ test("stops an in-flight shared CLI command when the session closes", async () =
 test("reuses one process and restarts it when the environment changes", async () => {
   let spawns = 0;
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     spawnWorker: (environment) => {
       spawns += 1;
       const child = fakeProcess(50 + spawns);
@@ -624,6 +630,7 @@ test("shares one shared CLI cleanup attempt across concurrent close calls", asyn
 test("starts another process after the shared CLI process exits", async () => {
   const children: FakeCliProcess[] = [];
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     spawnWorker: () => {
       const child = fakeProcess(70 + children.length);
       children.push(child);
@@ -667,6 +674,7 @@ test("starts another process after the shared CLI process exits", async () => {
 test("retires a fatal worker before starting the next command", async () => {
   const events: string[] = [];
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     spawnWorker: () => {
       const generation = events.filter((event) =>
         event.startsWith("spawn"),
@@ -709,6 +717,7 @@ test("retires a fatal worker before starting the next command", async () => {
 test("retires a transport failure before the next command reuses the worker", async () => {
   const events: string[] = [];
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     spawnWorker: () => {
       const generation = events.filter((event) =>
         event.startsWith("spawn"),
@@ -753,6 +762,7 @@ test("retires a transport failure before the next command reuses the worker", as
 test("restarts the shared CLI process after the command limit", async () => {
   const children: FakeCliProcess[] = [];
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     commandLimit: 2,
     spawnWorker: () => {
       const child = respondingProcess(
@@ -783,6 +793,7 @@ test("restarts the shared CLI process after the command limit", async () => {
 test("restarts the shared CLI process after the resident-set limit", async () => {
   const children: FakeCliProcess[] = [];
   const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
     commandLimit: 100,
     residentLimitBytes: 100,
     spawnWorker: () => {
@@ -811,6 +822,7 @@ test("restarts the shared CLI process after the resident-set limit", async () =>
 
 test("starts a new process after the real worker reports a fatal failure", async () => {
   const session = createCliCommandSession();
+  onTestFinished(() => session.close());
   const failed = await session.run({
     arguments: ["--version"],
     cwd: "/workspace/this-directory-does-not-exist",
@@ -830,6 +842,7 @@ test("starts a new process after the real worker reports a fatal failure", async
 });
 
 test("keeps a malformed JSON command's failure status and serves the next command", async () => {
+  const root = await createTestTempDirectory("rea-warm-cli-status-");
   const session = createCliCommandSession();
   onTestFinished(() => session.close());
   const environment = {
@@ -843,7 +856,6 @@ test("keeps a malformed JSON command's failure status and serves the next comman
   expect(failed.stdout).toContain("invalid_request");
   const worker = session.processId();
   expect(worker).toEqual(expect.any(Number));
-  const root = await createTestTempDirectory("rea-warm-cli-status-");
   await writeFixtureFiles(root, {
     "app.mjs": "export function current() { return 1; }\n",
   });
@@ -859,8 +871,12 @@ test("keeps a malformed JSON command's failure status and serves the next comman
 });
 
 test("closes the real JavaScript CLI worker through its resource cleanup", async () => {
+  const root = await createTestTempDirectory("rea-warm-cli-graceful-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   const session = createCliCommandSession({
+    // Verify real EOF cleanup, whose process-ownership checks depend on host I/O,
+    // independently of the default one-second force-escalation policy.
+    shutdownGraceMs: 5_000,
     spawnWorker: (environment) => {
       worker = spawn(
         process.execPath,
@@ -882,7 +898,6 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
     },
   });
   onTestFinished(() => session.close());
-  const root = await createTestTempDirectory("rea-warm-cli-graceful-");
   await writeFixtureFiles(root, {
     "app.mjs": "export function current() { return 1; }\n",
   });
@@ -899,7 +914,10 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
   expect(worker?.exitCode).toBeNull();
   expect(worker?.signalCode).toBeNull();
   await session.close();
-  expect(worker?.exitCode).toBe(0);
+  expect(
+    worker?.exitCode,
+    `worker signal after cleanup: ${String(worker?.signalCode)}`,
+  ).toBe(0);
   expect(worker?.signalCode).toBeNull();
   expect(session.processId()).toBeUndefined();
 });

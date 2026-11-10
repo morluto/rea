@@ -27,7 +27,6 @@ it.each([
       new RustBinaryService(new RustBinaryProvider()),
     ]) {
       const result = await service.inspect({ path });
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.subject).toMatchObject({
         architecture: canonical,

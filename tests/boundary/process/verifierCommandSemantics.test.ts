@@ -454,7 +454,6 @@ it.skipIf(process.platform === "win32")(
       expect(closeSettled).toBe(false);
       release.resolve();
       const [execution, close] = await Promise.all([running, closeOutcome]);
-      expect(execution.ok).toBe(false);
       if (execution.ok) throw new Error("Expected cancelled execution");
       const failure = z
         .object({

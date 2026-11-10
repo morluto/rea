@@ -55,7 +55,6 @@ const service = (value: PeLoadConfig = report) =>
   });
 it("retains absent directories and artifact provenance", async () => {
   const result = await service().inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",

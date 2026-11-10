@@ -215,23 +215,23 @@ export const readSafetensorsHeader = async (
   // Lengths such as 640 (80 02 ...) also begin like a pickle PROTO opcode.
   const protocol = first[1] ?? 0;
   const pickle = first[0] === 0x80 && protocol >= 2 && protocol <= 5;
-  if (pickle && reader.size < 9) rejectPickle();
+  // ZIP's four-byte signature is also a valid little-endian header length.
+  const zip = first.equals(Buffer.from([0x50, 0x4b, 3, 4]));
+  if ((pickle || zip) && reader.size < 9) rejectPickle();
   const second = await reader.take(4);
   reader.excludeSafetensorsLengthPrefix();
   const length =
     BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
   const brace = length === 0n ? undefined : (await reader.take(1))[0];
   // A brace after an admissible length is safetensors, even if truncated.
-  if (pickle && (brace !== 0x7b || length > BigInt(MODEL_HEADER_BYTES)))
+  if (
+    (pickle || zip) &&
+    (brace !== 0x7b || length > BigInt(MODEL_HEADER_BYTES))
+  )
     rejectPickle();
   if (brace !== 0x7b)
     rejectModel("File does not contain a GGUF or safetensors header");
-  if (length > BigInt(Number.MAX_SAFE_INTEGER))
-    throw new ModelFormatFailure(
-      "capacity",
-      "Safetensors header length exceeds exact host offset precision",
-      "exact-offset",
-    );
+  reader.requireFileExtent(8, length);
   const size = Number(length);
   reader.guarantee(size - 1);
   // Native UTF-8 decode and the bounded JSON parser both retain header text.
@@ -299,12 +299,13 @@ export const readSafetensorsHeader = async (
     const offsets = integersOf(entry.data_offsets);
     if (offsets.length !== 2)
       rejectModel(`Safetensors tensor ${name} requires two data offsets`);
-    const start = exactOffset(offsets[0] ?? 0n);
-    const end = exactOffset(offsets[1] ?? 0n);
-    if (end < start || end > reader.size - tensor_data_offset)
-      rejectModel(
-        `Safetensors tensor ${name} range [${String(start)},${String(end)}) is outside the data buffer`,
-      );
+    const rawStart = offsets[0] ?? 0n;
+    const rawEnd = offsets[1] ?? 0n;
+    if (rawStart < 0n || rawEnd < rawStart)
+      rejectModel(`Safetensors tensor ${name} has an invalid data range`);
+    reader.requireFileExtent(tensor_data_offset, rawEnd);
+    const start = exactOffset(rawStart);
+    const end = exactOffset(rawEnd);
     let parameters = 1n;
     for (const dimension of shape) {
       parameters *= dimension;

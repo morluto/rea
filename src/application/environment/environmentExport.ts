@@ -5,7 +5,6 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -27,6 +26,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   BundleFileHostFailure,
   bundleTarballDigest,
+  changedArtifact,
   packageTarballRefusal,
   withBundleTarball,
   writeEnvironmentBundle,
@@ -149,6 +149,10 @@ const accessDeniedError = (
     if (code === "EACCES" || code === "EPERM") {
       const options = {
         cause,
+        ...(cause instanceof ArtifactReaderFailure &&
+        cause.partialObservation !== undefined
+          ? { partialObservation: cause.partialObservation }
+          : {}),
         ...(diagnostics === undefined ? {} : { diagnostics }),
         ...(cause instanceof ArtifactReaderFailure &&
         cause.cleanup !== undefined
@@ -243,7 +247,7 @@ export const environmentExportEvidenceFile = async (
       const refused = headroomRefusal(operation, path, size);
       if (refused !== undefined) throw refused;
     });
-    return await environmentExportFile(role, path, bytes, operation);
+    return await environmentExportFile(role, path, bytes, { operation });
   } catch (cause: unknown) {
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     throw cause;
@@ -255,8 +259,12 @@ export const environmentExportFile = async (
   role: "manifest" | "evidence",
   path: string,
   bytes: Buffer,
-  operation: string = ENVIRONMENT_EXPORT_OPERATION,
+  context: {
+    operation?: string;
+    fieldPath?: AnalysisInputIssue["path"] | undefined;
+  } = {},
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
+  const operation = context.operation ?? ENVIRONMENT_EXPORT_OPERATION;
   const refusal = headroomRefusal(operation, path, bytes.length);
   if (refusal !== undefined) return err(refusal);
   let parsed: ReturnType<typeof parseUtf8Json>;
@@ -271,7 +279,7 @@ export const environmentExportFile = async (
       inputError(
         operation,
         {
-          path: [role],
+          path: context.fieldPath ?? [role],
           reason: "invalid_format",
           expected: "JSON",
           message: parsed.error,
@@ -289,6 +297,7 @@ export const readEnvironmentExportFile = async (
   role: "manifest" | "evidence",
   path: string,
   operation: string = ENVIRONMENT_EXPORT_OPERATION,
+  fieldPath?: AnalysisInputIssue["path"],
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
   const resources = new ArtifactResourceScope();
   let bytes: Buffer;
@@ -336,7 +345,7 @@ export const readEnvironmentExportFile = async (
         inputError(
           operation,
           {
-            path: [role],
+            path: fieldPath ?? [role],
             reason: "invalid_value",
             expected: "one stable regular file snapshot",
             message: `The ${role} file changed while it was read.`,
@@ -349,9 +358,12 @@ export const readEnvironmentExportFile = async (
         inputError(
           operation,
           {
-            path: [role],
+            path: fieldPath ?? [role],
             reason: "invalid_value",
-            message: `The ${role} argument must be a readable file path; inline JSON cannot be exported.`,
+            message:
+              fieldPath === undefined
+                ? `The ${role} argument must be a readable file path; inline JSON cannot be exported.`
+                : "The selected source path must be a readable regular file.",
           },
           `${path} could not be read as the ${role} file.`,
         ),
@@ -360,7 +372,7 @@ export const readEnvironmentExportFile = async (
     if (denied !== undefined) return err(denied);
     throw cause;
   }
-  return environmentExportFile(role, path, bytes, operation);
+  return environmentExportFile(role, path, bytes, { operation, fieldPath });
 };
 
 /** Read both files once; the caller authenticates the parsed values and the export copies the same bytes. */
@@ -380,36 +392,41 @@ const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
     ? { kind: "registry", specifier: source.specifier }
     : { kind: "tarball", path: source.path };
 
-const changedArtifact = (
-  cause: RegularFileChangedError,
-): AnalysisArtifactChangedError =>
-  new AnalysisArtifactChangedError(
-    ENVIRONMENT_EXPORT_OPERATION,
-    cause.path,
-    cause.message,
-    { cause },
-  );
-
 /** A reader failure as an output refusal that keeps an unconfirmed cleanup bound to its owner. */
 const readerFailureError = (
   cause: ArtifactReaderFailure,
   directory: string | undefined,
 ): AnalysisOutputError => {
   const host = hostSystemError(cause);
+  const publication = cause.partialObservation;
+  const published =
+    publication !== undefined &&
+    "kind" in publication &&
+    publication.kind === "environment-bundle-publication";
   const error = new AnalysisOutputError(
     ENVIRONMENT_EXPORT_OPERATION,
     host === undefined ? cause.message : `${cause.message}: ${host.message}`,
     {
       cause,
+      ...(cause.partialObservation === undefined
+        ? {}
+        : { partialObservation: cause.partialObservation }),
       // Only a host failure gets host recovery; an integrity or other
       // refusal keeps its own message without disk-space advice.
       ...(cause.cleanup !== undefined
         ? { cleanup: cause.cleanup }
         : directory === undefined
           ? {}
-          : host === undefined
-            ? { diagnostics: { output_directory: directory } }
-            : hostWriteFailure(directory)),
+          : published
+            ? {
+                userMessage: `The bundle was published to ${directory}, but a later operation failed: ${cause.message}`,
+                remediationAction:
+                  "Inspect the published bundle and resolve the reported failure before using or replacing it.",
+                diagnostics: { output_directory: directory },
+              }
+            : host === undefined
+              ? { diagnostics: { output_directory: directory } }
+              : hostWriteFailure(directory)),
     },
   );
   bindArtifactFileCleanup(cause, error);

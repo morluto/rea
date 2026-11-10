@@ -60,7 +60,6 @@ it("charges environment identity, aggregate tools and escaped text before produc
     ).ok,
   ).toBe(false);
   const normal = environmentToolDefinitions(source);
-  expect(normal.ok).toBe(true);
   if (!normal.ok) throw normal.error;
   expect(
     Buffer.byteLength(

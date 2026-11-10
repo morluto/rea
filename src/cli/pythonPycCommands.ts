@@ -15,6 +15,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { pythonPycDeliverySchema } from "../domain/analysisView/pythonPycView.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { cliDecimalField } from "./options.js";
 
 /** Inspect operator-selected pyc files through the same shared workflow as MCP. */
 export const registerPythonPycCommands = (
@@ -28,10 +29,18 @@ export const registerPythonPycCommands = (
       path: localPathStringSchema.describe("Local CPython .pyc file"),
     }),
     options: z.object({
-      maxFileBytes: inspectPythonPycInputSchema.shape.max_file_bytes,
-      maxObjects: inspectPythonPycInputSchema.shape.max_objects,
-      maxDepth: inspectPythonPycInputSchema.shape.max_depth,
-      maxStringBytes: inspectPythonPycInputSchema.shape.max_string_bytes,
+      // Decimal tokens only: numeric coercion would read "0x10" as 16 and
+      // "1e2" as 100. The shared fields keep their bounds and defaults.
+      maxFileBytes: cliDecimalField(
+        inspectPythonPycInputSchema.shape.max_file_bytes,
+      ),
+      maxObjects: cliDecimalField(
+        inspectPythonPycInputSchema.shape.max_objects,
+      ),
+      maxDepth: cliDecimalField(inspectPythonPycInputSchema.shape.max_depth),
+      maxStringBytes: cliDecimalField(
+        inspectPythonPycInputSchema.shape.max_string_bytes,
+      ),
       ...analysisEvidenceDeliveryOptions,
       view: z
         .string()
@@ -51,6 +60,7 @@ export const registerPythonPycCommands = (
           if (!delivery.ok) return projectAnalysisError(delivery.error);
           const service = createPythonPycService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

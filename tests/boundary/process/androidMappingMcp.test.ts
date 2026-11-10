@@ -227,7 +227,7 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
 
 it.each([
   ["missing", "invalid_request", "invalid_value"],
-  ["relative", "invalid_request", undefined],
+  ["relative", "invalid_request", "invalid_format"],
   ["not UTF-8", "invalid_request", "invalid_format"],
   ["no class records", "invalid_request", "invalid_format"],
   ["over budget", "resource_constraint", undefined],
@@ -258,9 +258,15 @@ it.each([
       });
     // The advertised schema refuses a relative path before Android admission.
     if (scenario === "relative")
-      expect(JSON.stringify(error.details)).toContain(
-        "mapping_path: must be an absolute local filesystem path",
-      );
+      expect(error.details).toMatchObject({
+        issues: [
+          {
+            path: ["mapping_path"],
+            reason: "invalid_format",
+            expected: "regex",
+          },
+        ],
+      });
     if (scenario === "not UTF-8" || scenario === "no class records")
       expect(JSON.stringify(error)).toContain(
         createHash("sha256")

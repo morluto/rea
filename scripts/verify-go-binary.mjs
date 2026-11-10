@@ -12,6 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
+import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -280,7 +281,7 @@ async function prepareFixture() {
   );
   await writeFile(
     join(sourceRoot, "dependency", "dependency.go"),
-    'package dependency\nfunc Value() string { return "REA fixture" }\n',
+    'package dependency\nvar Endpoints = []string{"ListResourceProviders", "genai", "https://example.invalid/v1"}\nfunc Value() string { return "REA fixture:" + Endpoints[0] + Endpoints[1] + Endpoints[2] }\n',
   );
   await writeFile(
     join(sourceRoot, "main.go"),
@@ -345,18 +346,29 @@ func main() {
   );
 }
 
-async function inspect(mode, path) {
+async function inspect(mode, path, includeStringLiterals = false) {
   let envelope;
   if (mode === "cli") {
-    const { stdout } = await execute(
-      process.execPath,
-      [entrypoint, "inspect-go-binary", path, "--json"],
-      { env: environment, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 },
-    );
+    const args = [
+      entrypoint,
+      "inspect-go-binary",
+      path,
+      ...(includeStringLiterals ? ["--include-string-literals"] : []),
+      "--json",
+    ];
+    const { stdout } = await execute(process.execPath, args, {
+      env: environment,
+      timeout: 30_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
     envelope = JSON.parse(stdout);
   } else {
-    const response = await client.callTool(
-      { name: "inspect_go_binary", arguments: { path } },
+    const argumentsPayload = includeStringLiterals
+      ? { path, include_string_literals: true }
+      : { path };
+    const response = await artifactMcpCall(
+      client,
+      { name: "inspect_go_binary", arguments: argumentsPayload },
       { timeout: 30_000 },
     );
     envelope = requireMcpOutput(response, "inspect_go_binary");
@@ -366,6 +378,37 @@ async function inspect(mode, path) {
   const report = goBinarySchema.parse(evidence.normalized_result);
   assert.equal(evidence.subject.digest.sha256, report.artifact.sha256);
   return { evidence, report };
+}
+
+async function verifyStringLiterals(path, bytes) {
+  const cliResult = await inspect("cli", path, true);
+  const mcpResult = await inspect("mcp", path, true);
+  assert.deepEqual(
+    cliResult.report,
+    mcpResult.report,
+    "CLI and MCP string_literals projections disagree",
+  );
+  const literals = cliResult.report.string_literals;
+  assert.notEqual(literals, undefined);
+  assert.equal(literals.evidence_kind, "inferred");
+  for (const item of literals.items) {
+    const slice = bytes.subarray(
+      item.location.offset,
+      item.location.offset + item.location.bytes,
+    );
+    assert.equal(slice.toString("utf8"), item.value);
+  }
+  const values = new Set(literals.items.map((item) => item.value));
+  for (const expected of [
+    "ListResourceProviders",
+    "genai",
+    "https://example.invalid/v1",
+  ])
+    assert.equal(
+      values.has(expected),
+      true,
+      `Missing expected Go string literal ${expected} in ${path}`,
+    );
 }
 
 async function verify(
@@ -406,6 +449,7 @@ async function verify(
       report.artifact.sha256,
       createHash("sha256").update(bytes).digest("hex"),
     );
+    assert.equal(report.string_literals, undefined);
     const info = report.build_info;
     assert.notEqual(info, null);
     assert.equal(info.go_version, expected.GoVersion);
@@ -443,6 +487,7 @@ async function verify(
     reports[1],
     "Public CLI and MCP projections disagree",
   );
+  if (byteExpected === null) await verifyStringLiterals(path, bytes);
   verified.push({
     target: `${target[0]}/${target[1]}`,
     file: byteExpected === null ? fileKind : "byte-valued-strings",

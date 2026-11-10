@@ -33,8 +33,12 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   capturedPwntoolsOutput,
   pwntoolsDecoderFailure,
+  pwntoolsBudgetRecovery,
 } from "../pwntools/PwntoolsFailures.js";
-import { PWNTOOLS_LIMITS } from "../pwntools/PwntoolsRelease.js";
+import {
+  resolvePwntoolsLimits,
+  type PwntoolsProducerLimits,
+} from "../../domain/native/pwntoolsResourceLimits.js";
 import { readPwntoolsFailureEvidence } from "../pwntools/PwntoolsResourceLimits.js";
 import type { PwntoolsCommand } from "../pwntools/PwntoolsDecoder.js";
 
@@ -71,6 +75,7 @@ export const inspectPwndbgCore = async ({
   runCommand,
   timeoutMs,
   probePath,
+  producerLimits = resolvePwntoolsLimits(),
 }: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly architecture: RecordedCrash["architecture"];
@@ -81,6 +86,7 @@ export const inspectPwndbgCore = async ({
   readonly runCommand: PwntoolsCommand;
   /** Effective `pwntools_timeout_ms` for this debugger command. */
   readonly timeoutMs: number;
+  readonly producerLimits?: PwntoolsProducerLimits;
   readonly probePath?: (
     path: string,
     kind: "file" | "directory",
@@ -149,6 +155,7 @@ export const inspectPwndbgCore = async ({
       architecture,
       gdbinit: entry,
       venv,
+      producer_limits: producerLimits,
     }),
     { flag: "wx", mode: 0o600 },
   );
@@ -158,6 +165,7 @@ export const inspectPwndbgCore = async ({
     providerId: "pwndbg-core",
     precedingOutput: diagnostics,
     timeoutMs,
+    producerLimits,
   };
   const failure = (cause: unknown) =>
     pwntoolsDecoderFailure(
@@ -207,7 +215,7 @@ export const inspectPwndbgCore = async ({
       try {
         raw = await readStableArtifact(
           replyPath,
-          PWNTOOLS_LIMITS.outputBytes,
+          producerLimits.output_bytes,
           options?.signal,
           undefined,
           resources,
@@ -249,6 +257,9 @@ export const inspectPwndbgCore = async ({
         `Core-only debugger reply failed: ${cause instanceof Error ? cause.message : String(cause)}`,
         {
           cause,
+          ...(cause instanceof ArtifactReaderFailure && cause.reason === "limit"
+            ? { remediationAction: pwntoolsBudgetRecovery(producerLimits) }
+            : {}),
           ...(cause instanceof ArtifactReaderFailure
             ? { cleanup: cause.cleanup }
             : {}),
@@ -276,6 +287,9 @@ export const inspectPwndbgCore = async ({
         throw pwndbgContextFinalizationFailure(
           new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput: recordedCrashStageOutput(diagnostics, output),
+            ...(reply.reason === "output-limit"
+              ? { remediationAction: pwntoolsBudgetRecovery(producerLimits) }
+              : {}),
           }),
           finalization,
         );
@@ -309,7 +323,12 @@ export const inspectPwndbgCore = async ({
       "debugger",
       gdb,
       environment.REA_PWNTOOLS_PYTHON ?? "",
-      await readPwntoolsFailureEvidence(cause, stage, resources),
+      await readPwntoolsFailureEvidence(
+        cause,
+        stage,
+        resources,
+        producerLimits,
+      ),
       failureContext,
     );
     throw primary;

@@ -1,7 +1,8 @@
-import { ok as javaProbeOk } from "../domain/result.js";
-import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
-import { err } from "../domain/result.js";
-import type { GhidraJavaProbeFailure } from "./GhidraJavaProbe.js";
+import { ok as javaProbeOk, err } from "../domain/result.js";
+import type {
+  GhidraJavaObservation,
+  GhidraJavaProbeFailure,
+} from "./GhidraJavaProbe.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 
 /** Simulated valid installation for profile tests; never starts Ghidra or Java. */

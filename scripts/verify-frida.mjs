@@ -2,7 +2,7 @@ import { basename } from "node:path";
 
 import { FridaInstrumentationService } from "../dist/application/frida/FridaInstrumentationService.js";
 import { FridaInstrumentationManager } from "../dist/frida/FridaInstrumentationManager.js";
-import { isValidFridaRemoteAddress } from "../dist/contracts/fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../dist/domain/fridaRemoteAddress.js";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 const options = parseArguments(process.argv.slice(2));
@@ -80,6 +80,10 @@ try {
       !Array.isArray(observed.messages)
     )
       throw new Error("Frida returned no message observation");
+    if (!Number.isSafeInteger(observed.pid) || observed.pid <= 0)
+      throw new Error("Frida returned no valid target PID");
+    if (remote !== undefined && observed.pid !== options.pid)
+      throw new Error("Frida observed a different target PID");
     const messageObserved = observed.messages.some(
       (message) =>
         typeof message === "object" &&

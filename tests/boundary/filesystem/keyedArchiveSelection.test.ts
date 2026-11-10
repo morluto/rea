@@ -13,6 +13,8 @@ import { build } from "plist";
 import { expect, it } from "vitest";
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -402,3 +404,49 @@ const asAnalysisError = (value: unknown): AnalysisError => {
   if (!(value instanceof AnalysisError)) throw value;
   return value;
 };
+
+it.skipIf(process.platform === "win32")(
+  "reads bundle-relative archives from a bundle whose executable is a plist",
+  async () => {
+    const root = await createTestTempDirectory("rea-keyed-plist-bundle-");
+    const bundlePath = join(root, "Fixture.app");
+    await mkdir(join(bundlePath, "Contents", "Resources"), { recursive: true });
+    await writeFile(
+      join(bundlePath, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>Settings.plist</string></dict></plist>",
+    );
+    await writeFile(
+      join(bundlePath, "Settings.plist"),
+      build({ setting: "value" }),
+    );
+    await writeFile(
+      join(bundlePath, "Contents", "Resources", "Model.plist"),
+      Buffer.from(archive),
+    );
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([], "auto", () => true),
+      [new ArtifactProvider(process.env, "darwin")],
+    );
+    try {
+      const opened = await session.open(bundlePath);
+      if (!opened.ok) throw opened.error;
+      expect(session.activeTarget()).toMatchObject({
+        kind: "artifact",
+        format: "plist",
+        bundleInfoPlist: join(bundlePath, "Info.plist"),
+      });
+      const inspected = await session.execute("inspect_keyed_archive", {
+        path: "Contents/Resources/Model.plist",
+      });
+      if (!inspected.ok) throw inspected.error;
+      expect(inspected.value.result).toMatchObject({
+        archive_path: "Contents/Resources/Model.plist",
+        objects: expect.arrayContaining([
+          expect.objectContaining({ value: "value" }),
+        ]),
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);

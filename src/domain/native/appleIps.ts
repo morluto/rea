@@ -1,7 +1,8 @@
+import type { FileSnapshotPartialObservation } from "../fileSnapshotObservation.js";
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const recordedIntegerSchema = z.strictObject({
@@ -20,6 +21,8 @@ export const MAX_INSPECT_APPLE_IPS_THREADS = 4096;
 export const MAX_INSPECT_APPLE_IPS_FRAMES = 65536;
 /** Hard ceiling on usedImages rows. */
 export const MAX_INSPECT_APPLE_IPS_IMAGES = 4096;
+/** Hard ceiling on the optional join Mach-O/dSYM read budget. */
+export const MAX_INSPECT_APPLE_IPS_JOIN_BYTES = 256 * 1024 * 1024;
 /** Hard ceiling on threadState register slots across every thread. */
 export const MAX_INSPECT_APPLE_IPS_REGISTERS = 262144;
 /** Conservative retained decimal/hex text capacity, measured as UTF-16 bytes. */
@@ -52,7 +55,7 @@ export const APPLE_IPS_IMAGE_SOURCE_MEANING: Readonly<
 
 /** Complete bounded inspection of one Apple .ips crash report. */
 export const inspectAppleIpsInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an Apple .ips crash report",
   ),
   max_file_bytes: z
@@ -106,6 +109,20 @@ export const inspectAppleIpsInputSchema = z.strictObject({
     .default(DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES)
     .describe(
       "Conservative UTF-16 byte allowance for all retained decimal/hex integer text, including derived addresses (default 8 MiB, maximum 64 MiB); checked before conversion and allocation",
+    ),
+  join_path: absoluteLocalPathStringSchema
+    .optional()
+    .describe(
+      "Optional Mach-O executable or dSYM whose slice LC_UUID matches report images; unsigned images never join",
+    ),
+  max_join_bytes: z
+    .number()
+    .int()
+    .min(2)
+    .max(MAX_INSPECT_APPLE_IPS_JOIN_BYTES)
+    .default(67108864)
+    .describe(
+      "Maximum stable artifact bytes read from join_path (default 64 MiB)",
     ),
 });
 export type InspectAppleIpsInput = z.infer<typeof inspectAppleIpsInputSchema>;
@@ -253,6 +270,63 @@ const coverageSchema = z.strictObject({
   type_mismatches: z.array(typeMismatchSchema),
 });
 
+const imageJoinMatchSchema = z.strictObject({
+  image_index: uint,
+  uuid: uuidSchema,
+  recorded_arch: z.string().nullable(),
+  slice_index: uint,
+  slice_offset: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
+  slice_arch: z.string().min(1),
+  text_vmaddr: recordedIntegerSchema,
+  runtime_base: recordedIntegerSchema.nullable(),
+});
+
+const frameJoinSchema = z.strictObject({
+  thread_index: uint,
+  frame_index: uint,
+  status: z.enum(["joined", "unjoined"]),
+  reason: z
+    .string()
+    .min(1)
+    .nullable()
+    .describe("Why the frame's image did not join the selected artifact."),
+  static_address: recordedIntegerSchema
+    .nullable()
+    .describe("Slice __TEXT vmaddr plus the frame's recorded imageOffset."),
+});
+
+/** Slice identity resolution against one caller-selected Mach-O or dSYM. */
+const joinSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("selected"),
+    path: z.string().min(1),
+    sha256: digestSchema,
+    bytes: uint,
+    slices: z.array(
+      z.strictObject({
+        index: uint,
+        offset: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
+        arch: z.string().min(1),
+        cpu_type: z.string().min(1),
+        cpu_subtype: z.string().min(1),
+        uuid: uuidSchema.nullable(),
+        text_vmaddr: recordedIntegerSchema.nullable(),
+        unexamined: z.array(z.string().min(1)),
+      }),
+    ),
+    image_matches: z.array(imageJoinMatchSchema),
+    frames: z.array(frameJoinSchema),
+    limitations: z.array(z.string().min(1)),
+  }),
+  z.strictObject({
+    status: z.literal("unreadable"),
+    path: z.string().min(1),
+    sha256: digestSchema,
+    bytes: uint,
+    reason: z.string().min(1),
+  }),
+]);
+
 const osVersionSchema = z
   .discriminatedUnion("form", [
     z.strictObject({ form: z.literal("text"), text: z.string() }),
@@ -302,6 +376,7 @@ export const appleIpsSchema = z.strictObject({
   ]),
   coverage: coverageSchema,
   unlisted_body_keys: z.array(z.string()),
+  join: joinSchema.nullable(),
   limitations: z.array(z.string().min(1)),
 });
 export type AppleIps = z.infer<typeof appleIpsSchema>;
@@ -309,6 +384,7 @@ export type AppleIpsThread = z.infer<typeof threadSchema>;
 export type AppleIpsImage = z.infer<typeof imageSchema>;
 export type AppleIpsFrame = z.infer<typeof frameSchema>;
 export type AppleIpsTypeMismatch = z.infer<typeof typeMismatchSchema>;
+export type AppleIpsJoin = z.infer<typeof joinSchema>;
 export type RecordedInteger = z.infer<typeof recordedIntegerSchema>;
 
 /** Count each appearance, including repeated objects serialized at different paths. */
@@ -342,5 +418,26 @@ export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
   }
   for (const mismatch of report.coverage.type_mismatches)
     bytes += 2 * (mismatch.recorded_integer?.length ?? 0);
+  if (report.join?.status === "selected") {
+    for (const slice of report.join.slices)
+      bytes +=
+        2 *
+          (slice.offset.length +
+            slice.cpu_type.length +
+            slice.cpu_subtype.length) +
+        appleIpsIntegerTextBytes(slice.text_vmaddr);
+    for (const match of report.join.image_matches)
+      bytes +=
+        2 * match.slice_offset.length +
+        appleIpsIntegerTextBytes(match.text_vmaddr) +
+        appleIpsIntegerTextBytes(match.runtime_base);
+    for (const frame of report.join.frames)
+      bytes += appleIpsIntegerTextBytes(frame.static_address);
+  }
   return bytes;
+};
+
+/** Decoded report and independently completed join identity retained on failure. */
+export type AppleIpsPartialObservation = AppleIps & {
+  readonly join_artifact?: FileSnapshotPartialObservation;
 };

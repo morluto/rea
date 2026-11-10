@@ -291,8 +291,9 @@ it("reports a premature input close as a collection failure", async () => {
   ).rejects.toMatchObject({
     reason: "process",
     collectionFailure: true,
-    message:
-      "stdin stream failed: closed before writable finalization completed",
+    message: expect.stringMatching(
+      /stdin stream failed.*closed before writable finalization completed/i,
+    ),
     processError: {
       message: "closed before writable finalization completed",
     },
@@ -437,3 +438,53 @@ it.each([undefined, "pipe"] as const)(
     expect(ended).not.toHaveBeenCalled();
   },
 );
+
+it("reports a deadline that elapses during final cleanup as a timeout", async () => {
+  // Controlled time: collection never races the deadline, which elapses only
+  // after cleanup has demonstrably started.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const fixture = ownedInput(null);
+    const observeCompleted = vi.fn();
+    const cleanupStarted = createDeferred<void>();
+    const releaseCleanup = createDeferred<void>();
+    fixture.cleanup.mockImplementation(async () => {
+      cleanupStarted.resolve();
+      await releaseCleanup.promise;
+      return { cleaned: true, signaled: false };
+    });
+    const pending = runOwnedCommand(
+      spawn,
+      { timeoutMs: 1_000, diagnosticBytes: 1024, observeCompleted },
+      {
+        launcher: async () => {
+          setImmediate(() => {
+            fixture.child.stdout.write("completed output");
+            fixture.child.complete();
+          });
+          return {
+            process: fixture.child,
+            ownership: fixture.ownership,
+            cleanup: fixture.cleanup,
+          };
+        },
+      },
+    );
+    const rejected = expect(pending).rejects.toMatchObject({
+      reason: "timeout",
+      cleanupFailure: null,
+      snapshot: { exitCode: 0, stdout: { text: "completed output" } },
+    });
+    let started = false;
+    void cleanupStarted.promise.then(() => (started = true));
+    while (!started) await vi.advanceTimersByTimeAsync(10);
+    expect(performance.now()).toBeLessThan(1_000);
+    expect(observeCompleted).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1_000);
+    releaseCleanup.resolve();
+    await rejected;
+    expect(fixture.cleanup).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});

@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 import { graphForJavaScript as graphFor } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
-import { resolveJavaScriptSemanticEvidence } from "../../domain/javascript/javascriptSemanticGraph.js";
+import { resolveJavaScriptSemanticEvidence } from "../../../tests/support/javascriptSemanticGraphFixture.js";
 
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
@@ -360,7 +360,13 @@ it("does not promote transformed return expressions to resolved aliases", () => 
       ({ relation, target_node_id }) =>
         relation === "aliases" && target_node_id === returnNode.node_id,
     ),
-  ).toEqual([expect.objectContaining({ resolution: "candidate" })]);
+  ).toEqual([]);
+  expect(
+    graph.relations.filter(
+      ({ relation, target_node_id }) =>
+        relation === "influences" && target_node_id === returnNode.node_id,
+    ),
+  ).toEqual([expect.objectContaining({ resolution: "resolved" })]);
   const output = graph.nodes.find(
     ({ kind, label }) => kind === "binding" && label === "output",
   );
@@ -376,10 +382,8 @@ it("does not promote transformed return expressions to resolved aliases", () => 
       direction: "backward-provenance",
     }),
   );
-  expect(strict.nodes.map(({ node_id }) => node_id)).not.toContain(
-    input.node_id,
-  );
-  expect(strict.status).toBe("ambiguous");
+  expect(strict.nodes.map(({ node_id }) => node_id)).toContain(input.node_id);
+  expect(strict.status).toBe("partial");
 });
 
 it("uses unavailable evidence when no source produced semantic IR", () => {
@@ -396,4 +400,34 @@ it("uses unavailable evidence when no source produced semantic IR", () => {
       location: { available: false, reason: "not-observed" },
     },
   );
+});
+
+it("retains conditional Node timer and child effects without proving a loader", () => {
+  const graph = graphFor(`
+    const { spawn } = require('child_process');
+    const { setTimeout } = require('timers');
+    const child = spawn('tool', []); child.kill();
+    setTimeout(() => {}, 1);
+  `);
+  const child = graph.nodes.find((node) => node.kind === "child-process");
+  const timer = graph.nodes.find((node) => node.kind === "timer");
+  for (const node of [child, timer]) {
+    expect(node?.properties.builtin_authority).toBe("candidate");
+    if (node === undefined) throw new Error("Expected candidate node");
+    expect(
+      resolveJavaScriptSemanticEvidence(graph, node.evidence),
+    ).toMatchObject({ state: "inferred", confidence: "low" });
+  }
+  for (const kind of [
+    "spawns",
+    "schedules-timer",
+    "forwards-signal",
+  ] as const) {
+    const relation = graph.relations.find((item) => item.relation === kind);
+    expect(relation).toMatchObject({ resolution: "candidate" });
+    if (relation === undefined) throw new Error(`Expected ${kind} relation`);
+    expect(
+      resolveJavaScriptSemanticEvidence(graph, relation.evidence),
+    ).toMatchObject({ state: "inferred", confidence: "low" });
+  }
 });

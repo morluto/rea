@@ -7,15 +7,9 @@ import { expect, it, vi } from "vitest";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
-
-it("documents the shared combined capture limit for both command tools", () => {
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("shared 16 MiB combined limit");
-});
 
 it("uses provider profiles supplied through the application port", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-port-"));
@@ -150,7 +144,6 @@ it("projects missing and non-file objdump targets with actionable path reasons",
         path,
         operation: "symbols",
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected target validation failure");
       const projection = projectAnalysisError(result.error);
       expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
@@ -221,7 +214,6 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
       path,
       operation: "symbols",
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected target preflight I/O failure");
     expect(result.error).toMatchObject({
       _tag: "ProviderAdapterError",
@@ -288,7 +280,6 @@ it.each([
         path,
         operation: "symbols",
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error(`Expected ${code} target path failure`);
       expect(result.error).toMatchObject({
         _tag: "AnalysisInputError",

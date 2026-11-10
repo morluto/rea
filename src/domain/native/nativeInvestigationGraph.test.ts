@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { objcSwiftMetadataSchema } from "./objcSwiftMetadata.js";
+import {
+  inspectNativeDispatchMetadata,
+  objcSwiftMetadataSchema,
+} from "./objcSwiftMetadata.js";
 
 import {
   nativeInvestigationGraphSchema,
@@ -191,9 +194,18 @@ describe("native investigation graph traces", () => {
 });
 
 describe("Interface Builder dispatch joins", () => {
-  it.each(["BuildViewController", "BuildView", "BuildButton", "BuildHandler"])(
-    "joins an action to its declared %s receiver class",
-    (className) => {
+  it.each([
+    {
+      className: "BuildViewController",
+      recordOffset: 1944,
+      existingOffset: null,
+    },
+    { className: "BuildView", recordOffset: 6040, existingOffset: null },
+    { className: "BuildButton", recordOffset: null, existingOffset: null },
+    { className: "BuildHandler", recordOffset: 1944, existingOffset: 1916 },
+  ])(
+    "joins the declared $className without mixing record and implementation offsets",
+    ({ className, recordOffset, existingOffset }) => {
       const ui = buildInterfaceBuilderAnalysis({
         targetSha256: "b".repeat(64),
         toolVersion: "test",
@@ -221,37 +233,79 @@ describe("Interface Builder dispatch joins", () => {
         ],
         limits: interfaceBuilderLimitsSchema.parse({}),
       });
-      const joined = joinInterfaceBuilderDispatch(ui.graph, {
-        objc_classes: [],
-        objc_protocols: [],
-        objc_categories: [],
-        swift_decls: [],
-        objc_ivars: [],
-        objc_protocol_records: [],
+      const recordLocation = {
+        address: recordOffset === null ? "0x1000" : "0x2000",
+        file_offset: recordOffset,
+      };
+      const recordEvidence = [
+        {
+          kind: recordOffset === null ? "symbol" : "binary_metadata",
+          description: "Explicit synthetic method-record location",
+          location: recordLocation,
+          artifact_path: "/synthetic/Fixture",
+          artifact_sha256: "b".repeat(64),
+        },
+      ];
+      const mappedEvidence = [
+        {
+          ...recordEvidence[0],
+          kind: "reference",
+          description: "Explicit independently mapped handler",
+          location: { address: "0x1000", file_offset: existingOffset },
+        },
+      ];
+      const inputGraph =
+        existingOffset === null
+          ? ui.graph
+          : nativeInvestigationGraphSchema.parse({
+              ...ui.graph,
+              nodes: [
+                ...ui.graph.nodes,
+                {
+                  id: "native:function:0x1000",
+                  kind: "function",
+                  name: "Already mapped handler",
+                  location: { address: "0x1000", file_offset: existingOffset },
+                  attributes: {},
+                  evidence: mappedEvidence,
+                },
+              ],
+            });
+      const metadata = objcSwiftMetadataSchema.parse({
+        ...inspectNativeDispatchMetadata([], 1),
         objc_dispatch_implementations: [
           {
             class_name: className,
             selector: "buildTapped:",
             method_type: "instance",
             implementation_address: "0x1000",
-            location: { address: "0x1000", file_offset: 0 },
+            location: recordLocation,
             decode: { status: "decoded", reason: null },
-            evidence,
+            evidence: recordEvidence,
           },
         ],
-        swift_conformances: [],
-        swift_dispatch_slots: [],
-        swift_symbols: [],
-        relative_pointers: [],
-        coverage: [],
-        db_save_result: null,
       });
+      const joined = joinInterfaceBuilderDispatch(inputGraph, metadata);
       expect(joined.edges).toContainEqual(
         expect.objectContaining({
           relation: "objc_dispatch",
           resolution: "resolved",
           to: "native:function:0x1000",
+          evidence: expect.arrayContaining(recordEvidence),
         }),
+      );
+      const handler = joined.nodes.find(
+        ({ id }) => id === "native:function:0x1000",
+      );
+      expect(handler?.location).toEqual({
+        address: "0x1000",
+        file_offset: existingOffset,
+      });
+      expect(handler?.evidence).toEqual(
+        existingOffset === null ? recordEvidence : mappedEvidence,
+      );
+      expect(metadata.objc_dispatch_implementations[0]?.location).toEqual(
+        recordLocation,
       );
     },
   );

@@ -401,8 +401,7 @@ describe("state data plane intake", () => {
         id: 1,
         error: {
           code: -32602,
-          message:
-            "invalid params: a file:// uri names a path on this host, not a network share",
+          message: expect.stringMatching(/this host.*not a network share/iu),
         },
       });
     }
@@ -431,9 +430,28 @@ describe("state data plane intake", () => {
     ]);
     expect(batch.json).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
-    expect(JSON.stringify(batch.json)).toContain('"login":"renamed"');
     const notified = await plane.post({ jsonrpc: "2.0", method: "data/reset" });
     expect(notified.status).toBe(202);
     expect(loginOf(plane.store)).toBe("probe");
@@ -542,10 +560,29 @@ describe("state data plane timing and order", () => {
     const replies = (await batch).json;
     expect(replies).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
     // The get arrived with the add, before the reset, so it reports the loaded state.
-    expect(JSON.stringify(replies)).toContain('"login":"renamed"');
     await expect(reset).resolves.toMatchObject({ result: {} });
     expect(loginOf(plane.store)).toBe("probe");
   });
@@ -576,7 +613,9 @@ describe("state data plane cancellation", () => {
         id: 1,
         error: {
           code: -32000,
-          message: "the state document could not be downloaded",
+          message: expect.stringMatching(
+            /state document.*could not be downloaded/iu,
+          ),
           data: { reason: "cancelled" },
         },
       },
@@ -585,7 +624,7 @@ describe("state data plane cancellation", () => {
         id: 2,
         error: {
           code: -32000,
-          message: "the call was cancelled and left the state unchanged",
+          message: expect.stringMatching(/cancelled.*state unchanged/iu),
           data: { reason: "cancelled" },
         },
       },
@@ -879,7 +918,71 @@ const withClient = async (
   }
 };
 
+it("loads a padded inline state file and keeps the RPC result compact", async () => {
+  const environment = await serveState({ source, state });
+  const document = JSON.stringify(renamedDocument()).padEnd(
+    2 * 1024 * 1024,
+    " ",
+  );
+  const added = await fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "data/add",
+      params: {
+        parts: [
+          {
+            kind: "file",
+            file: { bytes: Buffer.from(document).toString("base64") },
+          },
+        ],
+      },
+    }),
+  });
+  expect(added.status).toBe(200);
+  const reply = await added.text();
+  expect(JSON.parse(reply)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+  expect(Buffer.byteLength(reply)).toBeLessThan(128);
+  await withClient(environment, async (client) => {
+    const read = await client.callTool({
+      name: "get_users_by_id",
+      arguments: { id: "2" },
+    });
+    expect(read.isError).toBeFalsy();
+    expect(read.structuredContent).toMatchObject({
+      body: { login: "renamed" },
+    });
+  });
+  await expect(environment.close()).resolves.toBeUndefined();
+});
+
 describe("serveEnvironment with a state", () => {
+  it("replays safe non-GET methods with the recorded-view reason", async () => {
+    const environment = await serveState(
+      environmentStateServeInputs(
+        environmentStateServeFixture(
+          timedCaptureEvidence([
+            ["GET", "/api/items", [{ id: 1 }]],
+            ["HEAD", "/api/items"],
+            ["OPTIONS", "/api/items", { allow: "GET, HEAD, OPTIONS" }],
+            ["TRACE", "/api/items", { trace: true }],
+          ]),
+        ),
+      ),
+    );
+    await withClient(environment, async (client) => {
+      for (const name of ["head_items", "options_items", "trace_items"]) {
+        const response = await client.callTool({ name, arguments: {} });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          state: { source: "recording", reason: "method-replay" },
+        });
+      }
+    });
+  });
+
   it("declares the data plane, serves read tools from the state and reflects data/add in the next answer", async () => {
     const environment = await serveState({ source, state });
     const url = new URL(environment.url);
@@ -1063,9 +1166,7 @@ describe("serveEnvironment with a state", () => {
     expect(tools.map(({ name }) => name)).toEqual(["get_items", "post_search"]);
     expect(
       tools.find(({ name }) => name === "post_search")?.description,
-    ).toContain(
-      "answers from the served environment state where the state backs this tool",
-    );
+    ).toMatch(/answers.*served environment state.*state backs this tool/iu);
     await withClient(environment, async (client) => {
       const searched = await client.callTool({
         name: "post_search",

@@ -17,7 +17,7 @@ import {
   withPassiveDroppedEvents,
 } from "../../fixtures/passiveNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 type Capture = {
   inspection: CompareWebCapturesInput["before"]["inspection"];
@@ -251,6 +251,81 @@ add(
   "webmcp",
   "changed",
 );
+const knownSource = structuredClone(discovery);
+knownSource.tools.items[0]!.registration_source = {
+  url: "https://app.example.test/app.js",
+  line: 12,
+  column: 3,
+};
+const malformedSource = structuredClone(discovery);
+malformedSource.completeness.unavailable_sections.push("webmcp_tools");
+malformedSource.completeness.excluded.push({
+  section: "webmcp_tools",
+  reason: "invalid_protocol_value",
+  count: 1,
+});
+for (const [name, before, after] of [
+  ["WebMCP unknown registration source", knownSource, malformedSource],
+  ["WebMCP unknown registration source reversed", malformedSource, knownSource],
+] as const)
+  add(
+    name,
+    { inspection, webmcp: before },
+    { inspection, webmcp: after },
+    "webmcp",
+    "unknown",
+  );
+const malformedChanged = structuredClone(malformedSource);
+malformedChanged.tools.items[0]!.description = "Changed description";
+add(
+  "WebMCP known description change despite unknown source",
+  { inspection, webmcp: knownSource },
+  { inspection, webmcp: malformedChanged },
+  "webmcp",
+  "changed",
+);
+const otherSource = structuredClone(knownSource);
+otherSource.tools.items[0]!.registration_source!.line = 13;
+add(
+  "WebMCP known registration source change",
+  { inspection, webmcp: knownSource },
+  { inspection, webmcp: otherSource },
+  "webmcp",
+  "changed",
+);
+const missingCoordinate = structuredClone(knownSource);
+missingCoordinate.tools.items[0]!.registration_source!.line = null;
+add(
+  "WebMCP unknown registration coordinate",
+  { inspection, webmcp: knownSource },
+  { inspection, webmcp: missingCoordinate },
+  "webmcp",
+  "unknown",
+);
+const malformedAnnotation = structuredClone(discovery);
+malformedAnnotation.completeness = structuredClone(
+  malformedSource.completeness,
+);
+malformedAnnotation.tools.items[0]!.annotations.read_only = null;
+add(
+  "WebMCP malformed annotation",
+  { inspection, webmcp: discovery },
+  { inspection, webmcp: malformedAnnotation },
+  "webmcp",
+  "unknown",
+);
+const knownSchema = structuredClone(discovery);
+knownSchema.tools.items[0]!.input_schema = { type: "object" };
+knownSchema.tools.items[0]!.input_schema_sha256 = "b".repeat(64);
+const malformedSchema = structuredClone(discovery);
+malformedSchema.completeness = structuredClone(malformedSource.completeness);
+add(
+  "WebMCP malformed schema",
+  { inspection, webmcp: knownSchema },
+  { inspection, webmcp: malformedSchema },
+  "webmcp",
+  "unknown",
+);
 const droppedTools = structuredClone(discovery);
 droppedTools.completeness = withPassiveDroppedEvents(inspection, {
   webmcp_tools: 1,
@@ -413,6 +488,8 @@ const cliCaseNames = new Set([
   "observed HTTP value absent from complete peer",
   "same-length partial WebSocket streams",
   "WebMCP capture-local identity renamed",
+  "WebMCP unknown registration source",
+  "WebMCP known description change despite unknown source",
   "script retained digest change without producer hash",
   "script digest unavailable",
 ]);
@@ -435,10 +512,13 @@ cliTest.for(cases.filter(({ name }) => cliCaseNames.has(name)))(
         ),
       ),
     );
-    const response = await cli.run({
+    const invocation = {
       arguments: ["compare-web-captures", ...paths, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
-    });
+    };
+    const response = await (scenario.name === "heterogeneous HTTP omission 0"
+      ? cli.run(invocation)
+      : runFileCli(cli, invocation));
     expect(response.exitCode, response.stderr).toBe(0);
     expectComparison(response.json, scenario);
   },

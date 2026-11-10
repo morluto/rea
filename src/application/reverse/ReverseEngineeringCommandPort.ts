@@ -9,6 +9,8 @@ export interface ReverseEngineeringProviderCommand {
   readonly executable: string;
   readonly arguments: readonly string[];
   readonly identity: EvidenceProvider;
+  /** What the provider cannot attest about the arguments it built. */
+  readonly limitations?: readonly string[];
   readonly environmentOverrides?: Readonly<NodeJS.ProcessEnv>;
 }
 

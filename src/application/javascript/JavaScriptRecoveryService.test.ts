@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { JavaScriptRecoveryService } from "./JavaScriptRecoveryService.js";
@@ -153,7 +154,13 @@ describe("JavaScript recovery workflow", () => {
     expect(invoked).toBe(false);
     if (result.ok) throw new Error("expected invalid path");
     expect(result.error).toMatchObject({
-      issues: [{ path: ["additional_paths"], reason: "invalid_format" }],
+      issues: [
+        {
+          path: ["additional_paths", 0],
+          reason: "invalid_format",
+          expected: "regex",
+        },
+      ],
     });
   });
 });
@@ -179,7 +186,17 @@ it("returns cancellation with the validated Evidence when the caller aborts afte
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
-  expect(result.error.partialObservation).toMatchObject({
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
     operation: "recover_javascript_sources",
+    provider: providerIdentity,
+    parameters: input,
+    subject: {
+      local_path: artifact.path,
+      digest: { sha256: artifact.sha256 },
+      format: "javascript",
+    },
+    confidence: "derived",
+    authority: "shipped-artifact",
+    normalized_result: recoveryResult(),
   });
 });

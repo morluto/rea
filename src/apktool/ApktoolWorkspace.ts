@@ -181,7 +181,7 @@ export class ApktoolWorkspace {
         signal,
         async ({ handle: file, initial }) => {
           admitted = true;
-          const bytes = Buffer.alloc(budget + 1);
+          const bytes = Buffer.alloc(Math.min(initial.size, budget) + 1);
           let length = 0;
           while (length < bytes.length) {
             assertArtifactReadActive(signal);

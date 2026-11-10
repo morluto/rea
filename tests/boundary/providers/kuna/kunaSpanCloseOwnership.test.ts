@@ -143,9 +143,10 @@ it.each([
       const handle = fault.handles[0];
       if (handle === undefined) throw new Error("missing span descriptor");
       if (short) {
-        expect(result.error.cleanupPrimary?.userMessage).toContain(
-          "shorter than its recorded span",
-        );
+        expect(result.error.cleanupPrimary?.cause).toMatchObject({
+          _tag: "KunaDocumentError",
+          code: "span_short",
+        });
         expect(result.error.diagnostics?.span_read).toBeUndefined();
       } else {
         expect(result.error).toBeInstanceOf(ProviderCleanupError);
@@ -259,7 +260,6 @@ it.each(
         { procedure: "main" },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected physical span failure");
       const primary = closeFails ? result.error.cleanupPrimary : result.error;
       expect(primary?._tag).toBe("ProviderAdapterError");
@@ -324,7 +324,6 @@ it.each([false, true])(
         { procedure: "main" },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected continued-read cancellation");
       const primary = closeFails ? result.error.cleanupPrimary : result.error;
       expect(primary).toBeInstanceOf(AnalysisCancelledError);

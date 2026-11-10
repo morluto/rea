@@ -45,6 +45,15 @@ export function assertMipsProbe(
   address: string,
 ): void;
 export function assertMipsGlobal(bytes: string, byteOrder: string): void;
+export function carveMipsElfBeforeSectionTable(
+  bytes: Buffer,
+  byteOrder: string,
+): { bytes: Buffer; sectionOffset: number; reason: string };
+export function assertMipsCarvedTargetRefusal(
+  error: unknown,
+  path: string,
+  reason: string,
+): void;
 export function assertMipsSoftFloatStorage(
   boundaries: Record<string, unknown>,
   byteOrder: string,

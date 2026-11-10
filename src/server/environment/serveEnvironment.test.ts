@@ -118,9 +118,18 @@ describe("replay value fidelity over MCP", () => {
         name: "get_users_by_id",
         arguments: { id: "3" },
       });
-      expect(JSON.stringify(ownKeys.structuredContent)).toContain(
-        '"__proto__":{"retained":true}',
-      );
+      const content = ownKeys.structuredContent;
+      if (
+        typeof content !== "object" ||
+        content === null ||
+        !("body" in content)
+      )
+        throw new Error("Expected a structured replay body");
+      const body = content.body;
+      expect(body).toEqual(JSON.parse(proto));
+      if (typeof body !== "object" || body === null)
+        throw new Error("Expected an object replay body");
+      expect(Object.hasOwn(body, "__proto__")).toBe(true);
     } finally {
       await transport.terminateSession();
       await client.close();

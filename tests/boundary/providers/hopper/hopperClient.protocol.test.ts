@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
-import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderCapabilities.js";
+import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";
 import { providerCleanupFailure } from "../../../../src/hopper/HopperDiagnostics.js";

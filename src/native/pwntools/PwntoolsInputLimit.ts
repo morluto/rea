@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { PWNTOOLS_LIMITS } from "./PwntoolsRelease.js";
+import { PWNTOOLS_LIMITS } from "../../domain/native/pwntoolsResourceLimits.js";
 
 // The artifact is read into one in-memory buffer and staged again as a private
 // snapshot before the owned bridge parses it under a 3 GiB address-space
@@ -32,7 +32,7 @@ export const pwntoolsInputBytes = (
 ): PwntoolsInputBytes => {
   const value = environment.REA_PWNTOOLS_MAX_INPUT_BYTES;
   if (value === undefined)
-    return { configured: true, bytes: PWNTOOLS_LIMITS.inputBytes };
+    return { configured: true, bytes: PWNTOOLS_LIMITS.input_bytes };
   const parsed = pwntoolsInputBytesSchema.safeParse(value);
   return parsed.success
     ? { configured: true, bytes: parsed.data }

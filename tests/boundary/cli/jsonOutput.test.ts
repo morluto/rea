@@ -61,6 +61,9 @@ describe("SDK output completion", () => {
           });
         },
       });
+      // Terminal JSON stays with Incur; only pipes buffer for compact rewrite.
+      if (format === "json")
+        Object.defineProperty(destination, "isTTY", { value: true });
       const output = createCliResultOutput(
         parseCliOutputArguments(["--format", format]),
         destination,
@@ -75,6 +78,105 @@ describe("SDK output completion", () => {
       expect(destination.writableEnded).toBe(false);
     },
   );
+
+  it("rewrites piped SDK JSON diagnostics compactly", async () => {
+    const value = {
+      code: "VALIDATION_ERROR",
+      message: "REA could not read the command arguments.",
+      fieldErrors: [{ path: "symbols", missing: true, expected: "array" }],
+    };
+    const indented = `${JSON.stringify(value, null, 2)}\n`;
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["--json"]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    expect(output.captureSdkOutput(indented)).toBe(true);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe("");
+    await output.finishSdkOutput(1);
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toBe(`${JSON.stringify(value)}\n`);
+    expect(text).not.toContain("\n  ");
+    expect(JSON.parse(text)).toEqual(value);
+  });
+
+  it("counts tokens for piped SDK JSON documents instead of rewriting them", async () => {
+    const value = {
+      version: "incur.v1",
+      commands: [{ name: "inspect-devicetree" }],
+    };
+    const indented = `${JSON.stringify(value, null, 2)}\n`;
+    const compact = `${JSON.stringify(value)}\n`;
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "--llms-full",
+        "--format",
+        "json",
+        "--token-count",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    expect(
+      output.sdkArguments(["--llms-full", "--format", "json", "--token-count"]),
+    ).toEqual(expect.any(Array));
+    expect(output.captureSdkOutput(indented)).toBe(true);
+    await output.finishSdkOutput(0);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(
+      `${estimateTokenCount(compact)}\n`,
+    );
+  });
+
+  it("preserves non-JSON piped --json output under --token-count (completion hooks)", async () => {
+    const hook = "# bash completion hook\ncomplete -F _rea rea\n";
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "completions",
+        "bash",
+        "--json",
+        "--token-count",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    output.sdkArguments(["completions", "bash", "--json", "--token-count"]);
+    expect(output.captureSdkOutput(hook)).toBe(true);
+    await output.finishSdkOutput(0);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(hook);
+  });
 });
 
 describe("incremental CLI JSON", () => {

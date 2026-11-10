@@ -4,7 +4,9 @@ import type {
   HeaderArchitecture,
   MipsElfMetadata,
   PeCodeViewRecord,
+  RiscvElfMetadata,
   UniversalMachOSlice,
+  UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import {
@@ -46,7 +48,7 @@ export type ExecutableMetadata =
       readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
-      readonly riscv: ElfFamilyMetadata;
+      readonly riscv: RiscvElfMetadata;
     }
   | {
       readonly format: "elf";
@@ -76,6 +78,7 @@ export type ExecutableMetadata =
       readonly architecture: HeaderArchitecture;
       readonly availableArchitectures: readonly HeaderArchitecture[];
       readonly universalSlice: UniversalMachOSlice;
+      readonly universalSlices: readonly UniversalMachOSliceIdentity[];
     }
   | {
       readonly format: "pe";
@@ -148,10 +151,7 @@ const parseThinMachO = (
   if (!table.ok) return table;
   if (table.value === null) return err("unsupported binary format");
   const { identity } = table.value;
-  const architecture =
-    identity.cpuType === CPU_TYPE_ARM64_32
-      ? "arm64_32"
-      : machArchitecture(identity.cpuType);
+  const architecture = machoBinaryArchitecture(identity.cpuType);
   if (architecture === undefined) return err("unsupported Mach-O architecture");
   const commands = new MachoLoadCommandCursor(table.value);
   while (commands.nextOffset !== null) {
@@ -301,6 +301,15 @@ const parseFatMachO = (
     architecture: selected.architecture,
     availableArchitectures: declaredFamilies(declarations),
     universalSlice: { offset: selected.offset, size: selected.size },
+    universalSlices:
+      header.state === "parsed"
+        ? header.slices.map(({ offset, size, cpuType, cpuSubtype }) => ({
+            offset,
+            size,
+            cpuType,
+            cpuSubtype,
+          }))
+        : [],
   });
 };
 
@@ -385,8 +394,10 @@ const parseElf = (
 ): Result<ExecutableMetadata, string> => {
   const fixedHeader = readElfFixedHeader(bytes, fileSize);
   if (!fixedHeader.ok) return fixedHeader;
-  const { elfClass, byteOrder, architecture, type, flags } = fixedHeader.value;
-  if (architecture === null) return err("unsupported ELF architecture");
+  const { elfClass, byteOrder, architecture, machine, type, flags } =
+    fixedHeader.value;
+  if (architecture === null)
+    return err(`unsupported ELF architecture: e_machine ${String(machine)}`);
   if (
     architecture === "mips" ||
     architecture === "riscv" ||
@@ -709,6 +720,12 @@ export const parsePeCodeViewFromBuffer = (
   }
   return undefined;
 };
+
+/** CPU family a Mach-O cpu type names, or undefined when it names none here. */
+export const machoBinaryArchitecture = (
+  cpu: number,
+): HeaderArchitecture | "arm64_32" | undefined =>
+  cpu === CPU_TYPE_ARM64_32 ? "arm64_32" : machArchitecture(cpu);
 
 const machArchitecture = (cpu: number): HeaderArchitecture | undefined => {
   switch (cpu) {

@@ -64,6 +64,56 @@ const compare = (...probes: (readonly TimedCaptureRow[])[]) => {
   return report.value;
 };
 
+describe("step difference coverage", () => {
+  it("keeps categories from differences beyond the returned prefix", () => {
+    const fields = Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [`field${String(index)}`, 0]),
+    );
+    const capture = timedCaptureEvidence([["GET", "/api/config", fields]]);
+    const served = environmentStateServeFixture(capture);
+    const report = compareEnvironment({
+      source: environmentServeSource(served),
+      captureValue: capture,
+      probes: [
+        {
+          label: "changed",
+          value: timedCaptureEvidence([
+            [
+              "GET",
+              "/api/config",
+              {
+                ...Object.fromEntries(
+                  Object.keys(fields).map((key) => [key, 1]),
+                ),
+                z_missing: true,
+              },
+            ],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    const step = report.value.probes[0]!.results[0]!;
+    expect(step).toMatchObject({
+      equal: false,
+      equal_ignoring_order: false,
+      categories: ["value", "missing-field"],
+      differences_total: 21,
+      differences_omitted: 1,
+      differences_truncated: true,
+    });
+    expect(step.differences).toHaveLength(20);
+    expect(step.differences.every(({ category }) => category === "value")).toBe(
+      true,
+    );
+    expect(report.value.summary.categories).toMatchObject({
+      value: 1,
+      "missing-field": 1,
+    });
+  });
+});
+
 describe("matchProbeRequest", () => {
   it("compares a repeated-query probe against the matching recorded response", () => {
     const recorded = timedCaptureEvidence([

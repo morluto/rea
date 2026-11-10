@@ -20,6 +20,7 @@ import {
   writeOutputParts,
   writeOutputText,
 } from "./jsonOutput.js";
+import { retainCliPublicationOnError } from "./cliEvidencePublication.js";
 
 interface CliJsonLinesInput {
   readonly source: unknown;
@@ -66,7 +67,7 @@ export const writeCliJsonLines = async (
         })
       : undefined;
   if (plan?.ok === false) {
-    error = projectAnalysisError(plan.error);
+    error = projectAnalysisError(retainCliPublicationOnError(plan.error));
     failureRecord = jsonLinesErrorRecord(
       options.fullOutput ? { ok: false, error, meta } : error,
     );
@@ -81,18 +82,20 @@ export const writeCliJsonLines = async (
         for (const part of jsonLineParts(record)) characters += part.length;
         if (characters > constants.MAX_STRING_LENGTH) {
           error = projectAnalysisError(
-            new AnalysisResourceConstraintError(
-              options.command,
-              "memory",
-              "A JSON Lines record exceeds the token estimator's runtime string limit.",
-              {
-                formatted_characters: characters,
-                max_string_characters: constants.MAX_STRING_LENGTH,
-              },
-              {
-                remediationAction:
-                  "Remove --token-count to stream the records, or select smaller fields with --filter-output.",
-              },
+            retainCliPublicationOnError(
+              new AnalysisResourceConstraintError(
+                options.command,
+                "memory",
+                "A JSON Lines record exceeds the token estimator's runtime string limit.",
+                {
+                  formatted_characters: characters,
+                  max_string_characters: constants.MAX_STRING_LENGTH,
+                },
+                {
+                  remediationAction:
+                    "Remove --token-count to stream the records, or select smaller fields with --filter-output.",
+                },
+              ),
             ),
           );
           break;

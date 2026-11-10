@@ -110,3 +110,24 @@ describe("web bundle Evidence origin scope", () => {
     expect(evidence.parameters.allowed_origins).toEqual([]);
   });
 });
+
+it.each([undefined, {}, { decoded_records: 1024 }])(
+  "preserves the selected source-map admission policy %j without resolving defaults",
+  (selection) => {
+    const selected = analyzeWebBundleInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page-1",
+      fetch_source_maps: true,
+      ...(selection === undefined ? {} : { source_map_limits: selection }),
+    });
+    const evidence = createBrowserEvidence(
+      "analyze_web_bundle",
+      selected,
+      result,
+      provider,
+    );
+    if (selection === undefined)
+      expect(evidence.parameters).not.toHaveProperty("source_map_limits");
+    else expect(evidence.parameters.source_map_limits).toEqual(selection);
+  },
+);

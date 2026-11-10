@@ -76,6 +76,38 @@ describe("rea environment-serve refusals", () => {
     },
   );
 
+  cliTest.for([
+    ["--port=", "port"],
+    ["--port=0x1F90", "port"],
+    ["--port=1e3", "port"],
+    ["--host= ", "host"],
+  ] as const)(
+    "refuses listener flag %s like rea mcp --http, before binding",
+    async ([flag, field], { cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-serve-listener-",
+      );
+      const files = await writeEnvironmentServeFiles(root);
+      const result = await cli.run({
+        arguments: [
+          "environment-serve",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          flag,
+          "--json",
+        ],
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [expect.objectContaining({ path: field })],
+      });
+      expect(result.stderr).not.toContain("MCP transport listening");
+    },
+  );
+
   cliTest(
     "refuses an unreadable manifest path before binding",
     async ({ cli }) => {

@@ -55,7 +55,7 @@ import { prepareProcessOwnershipInspection } from "../../../src/process/ProcessO
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
 import { PwntoolsDecoder } from "../../../src/native/pwntools/PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const makeDecoder = () =>
@@ -104,7 +104,6 @@ it("reports the read failure without stale incomplete-cleanup state when close r
     const decoder = makeDecoder();
     try {
       const result = await decoder.inspect({ path });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Injected close failure was not returned");
       expect(result.error.partialObservation).toEqual({
         kind: "file-snapshot-hash",
@@ -152,7 +151,6 @@ it("retains a persistent failed input descriptor and refuses the next acquisitio
       const openedAfterFailure = closeState.opened;
 
       const retry = await decoder.inspect({ path });
-      expect(retry.ok).toBe(false);
       if (retry.ok) throw new Error("Retained descriptor was not retried");
       expect(projectAnalysisError(retry.error).code).toBe("cleanup_incomplete");
       expect(closeState.opened).toBe(openedAfterFailure);

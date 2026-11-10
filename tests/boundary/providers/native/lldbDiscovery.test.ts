@@ -70,7 +70,6 @@ for (const [reason, code] of [
         },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected discovery failure");
       expect(launch).not.toHaveBeenCalled();
       expect(result.error.cause).toBe(

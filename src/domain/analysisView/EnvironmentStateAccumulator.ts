@@ -11,7 +11,6 @@ import {
   WEB_NETWORK_CAPTURE_LIMITS,
   type WebNetworkCaptureRecord,
 } from "../webNetworkCapture.js";
-import type { UnsignedAnalysisView } from "./analysisView.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 import { isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
 import { readRecordedRequestBody } from "./recordedExchangeBody.js";
@@ -39,23 +38,6 @@ import {
   type RecordedRequestLine,
   textBytes,
 } from "./webNetworkRouteTemplates.js";
-
-type StateView = Extract<UnsignedAnalysisView, { kind: "environment-state" }>;
-type StateFields = Pick<
-  StateView,
-  | "origin"
-  | "name"
-  | "timeline"
-  | "types"
-  | "entities"
-  | "documents"
-  | "views"
-  | "writes"
-  | "write_clock"
-  | "unknowns"
-  | "coverage"
-  | "limitations"
->;
 
 /**
  * Levels the state's own nesting adds above a recorded value: Evidence, a `data/get` reply and a
@@ -102,19 +84,19 @@ interface RecordEntry {
   readonly record: WebNetworkCaptureRecord;
 }
 
-const UNKNOWNS: StateView["unknowns"] = [
+const UNKNOWNS = [
   {
-    kind: "authorization-model",
+    kind: "authorization-model" as const,
     statement:
       "Authorization headers and cookies are structurally excluded from captures; the state states no authorization model.",
   },
   {
-    kind: "response-semantics",
+    kind: "response-semantics" as const,
     statement:
       "Views reproduce their recorded responses from the state; they do not establish how the application computes responses, derived values or values copied outside entity objects.",
   },
   {
-    kind: "state-transition",
+    kind: "state-transition" as const,
     statement:
       "The state is one snapshot from before the first related recorded write; write effects are modelled only from the calls the capture recorded, and served only where its later reads confirmed them.",
   },
@@ -340,7 +322,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   }
 
   /** Project the init state of the manifest's primary origin; records keep timeline order. */
-  finishState(): Result<StateFields, AnalysisError> {
+  finishState() {
     const manifest = this.finish();
     if (!manifest.ok) return manifest;
     const entries = [...this.#entries.values()].filter(

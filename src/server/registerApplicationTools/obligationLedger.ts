@@ -48,6 +48,7 @@ export const registerReconstructionObligationLedgerTool = (
           const recorded = recordEvidenceSources(
             options.recordEvidence,
             resolved.value.sources.bundle.records,
+            { evidence: result.value },
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, contract);

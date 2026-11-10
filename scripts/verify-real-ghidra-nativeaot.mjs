@@ -375,8 +375,13 @@ try {
       JSON.stringify(report, null, 2) + "\n",
     );
   }
+  const outcome = report.typed_failure
+    ? "MCP refusal"
+    : mode === "default-native"
+      ? "native load image without metadata recovery"
+      : "MCP metadata";
   console.log(
-    `PASS real Ghidra NativeAOT ${oracle.runtime}/${mode}: MCP metadata, source identity and owned cleanup${report?.compute ? ", independent type/slot oracle and pseudocode" : ""}${report?.cli_metadata ? ", equivalent CLI" : ""}`,
+    `PASS real Ghidra NativeAOT ${oracle.runtime}/${mode}: ${outcome}, source unchanged and runtime directory empty${report?.compute ? ", independent type/slot oracle and pseudocode" : ""}${report?.cli_metadata ? ", equivalent CLI" : ""}`,
   );
 } catch (error) {
   console.error(stderr);

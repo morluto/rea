@@ -15,6 +15,8 @@ interface ProcessCaptureErrorOptions extends AnalysisErrorOptions {
   readonly executionFailure?: string;
   readonly partialObservation?: PartialProcessCaptureObservation;
   readonly cleanupReport?: ProcessCaptureCleanupReport;
+  /** Whether the producer identified a transient failure that can be retried. */
+  readonly retryable?: boolean;
 }
 
 /** Typed application failure produced by controlled process capture. */
@@ -29,6 +31,11 @@ export class ProcessCaptureError extends AnalysisError {
     | PartialProcessCaptureObservation
     | undefined;
   override readonly cleanupReport: ProcessCaptureCleanupReport | undefined;
+  readonly #retryable: boolean;
+
+  get retryable(): boolean {
+    return this.#retryable && !this.cleanupIncomplete;
+  }
 
   constructor(message: string, options?: ProcessCaptureErrorOptions) {
     super(message, options);
@@ -41,6 +48,7 @@ export class ProcessCaptureError extends AnalysisError {
     this.executionFailure = options?.executionFailure ?? message;
     this.partialObservation = options?.partialObservation;
     this.cleanupReport = options?.cleanupReport;
+    this.#retryable = options?.retryable === true;
   }
 
   /** Add final capture observations while preserving primary facts and cleanup ownership. */
@@ -82,6 +90,7 @@ export class ProcessCaptureError extends AnalysisError {
       ...(executionFailure === undefined ? {} : { executionFailure }),
       ...(partialObservation === undefined ? {} : { partialObservation }),
       ...(cleanupReport === undefined ? {} : { cleanupReport }),
+      ...(this.#retryable ? { retryable: true } : {}),
     }).bindCleanupDependencies([
       this,
       ...(secondary === undefined ? [] : [secondary]),
@@ -135,6 +144,9 @@ export const normalizeCaptureFailure = (
       ...(cause.capturedOutput === undefined
         ? {}
         : { capturedOutput: cause.capturedOutput }),
+      ...(cause.compilerOutcome?.outcome === "timed_out"
+        ? { retryable: true }
+        : {}),
     });
     return cause.cleanupFailure === undefined
       ? normalized

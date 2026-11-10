@@ -1,3 +1,8 @@
+import {
+  selectedSourceMapLimits,
+  type SourceMapLimits,
+} from "../domain/sourceMapLimits.js";
+import { WEB_SOURCE_LOCATION_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -18,7 +23,6 @@ import {
 } from "../domain/webScriptArtifacts.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
-  WEB_SOURCE_MAP_LIMITS,
   webSourceLocationInputSchema,
   webSourceLocationResultSchema,
   webSourceMapReportSchema,
@@ -26,7 +30,7 @@ import {
   type WebSourceMapReport,
 } from "../domain/webSourceLocation.js";
 import type { WebTraceObservation } from "../domain/webTraceObservation.js";
-import { webSourceOffset } from "../domain/webSourcePosition.js";
+import { resolveWebSourcePosition } from "../domain/webSourcePosition.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import {
   capturedWebManifestIdentity,
@@ -50,21 +54,22 @@ const artifactsSchema = selectedWebScriptArtifactsSchema.extend({
 const LIMITATIONS = [
   "The source/map pairing and source-map URL context are caller-selected. Deployment authenticity and execution remain unknown.",
   "Capture metadata and its Evidence reference are historical context; this trace independently verifies only the selected manifest, script and map bytes.",
-  "Source names and sourceRoot are reported declarations. Resolved URLs are derived by the pinned upstream codec; no original source is fetched or executed.",
+  "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.",
   "Embedded source hashes identify the UTF-8 encoding of decoded sourcesContent text, not an independently retained original file. Missing or out-of-range original content positions remain explicit.",
   "Lookup returns all segments at the greatest generated position not greater than the selected point, including earlier lines and generated-only segments. A mapped point does not establish an executed range or UI causality.",
   "Regular maps and inline indexed sections are supported. External section URLs are unsupported; unknown extensions are retained in raw map text and are not interpreted.",
 ];
-const codecBudget = (timeoutMs: number): string =>
-  `Complete evidence has a 4 MiB map, 32 MiB reply, 262144 decoded rows/segments and 64-level section budget. The owned codec has a ${String(timeoutMs)} ms decode_timeout_ms deadline`;
+const codecBudget = (timeoutMs: number, limits: SourceMapLimits): string =>
+  `Complete evidence has a ${String(limits.mapBytes)}-byte map, ${String(limits.outputBytes)}-byte reply and a ${String(limits.decodedRecords)}-record shared decoder budget for generated rows, mapping segments, leaf maps, source and name declarations, sourcesContent entries, and indexed sections. Generated rows and mapping segments have separate ${String(limits.decodedRows)} and ${String(limits.decodedSegments)} limits, and indexed maps have a ${String(limits.sectionDepth)}-level section budget. The owned codec has a ${String(timeoutMs)} ms decode_timeout_ms deadline`;
 /** Bun accepts but ignores the codec's V8 heap flags; Windows enforces a commit limit instead. */
 const codecBudgetLimitation = (
   runtime: WebSourceMapReport["runtime"],
   timeoutMs: number,
+  limits: SourceMapLimits,
 ): string => {
-  const budget = codecBudget(timeoutMs);
+  const budget = codecBudget(timeoutMs, limits);
   if (runtime.id === "node-v8")
-    return `${budget}, ${String(WEB_SOURCE_MAP_LIMITS.codecHeapMiB)} MiB old-generation heap and one V8 worker; cleanup may extend the deadline. V8 heap limits do not establish aggregate RSS limits.`;
+    return `${budget}, ${String(limits.codecHeapMiB)} MiB old-generation heap and one V8 worker; cleanup may extend the deadline. V8 heap limits do not establish aggregate RSS limits.`;
   return runtime.process_memory_limit_bytes === null
     ? `${budget}; cleanup may extend the deadline. The codec ran on Bun, which does not enforce REA's V8 heap flags, so no codec heap limit is established.`
     : `${budget}; cleanup may extend the deadline. The codec ran on Bun, which does not enforce REA's V8 heap flags; a Windows Job Object limited its committed memory to ${String(runtime.process_memory_limit_bytes)} bytes, which is not a heap or RSS limit.`;
@@ -144,21 +149,9 @@ export class WebSourceLocationService {
     const pairing = verifyPairing(input, data);
     if (!pairing.ok) return incomplete(pairing.error);
     observation.source_map = map.file;
-    const generatedOffset = webSourceOffset(
-      data.source,
-      input.generated_position,
-    );
-    if (generatedOffset === undefined)
-      return incomplete(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["generated_position"],
-            reason: "invalid_format",
-            message:
-              "Selected generated position is outside the retained script text (one-based lines; zero-based UTF-16 columns).",
-          },
-        ]),
-      );
+    const generated = admitGeneratedOffset(input, data.source);
+    if (!generated.ok) return incomplete(generated.error);
+    const generatedOffset = generated.value;
     if (options?.signal?.aborted)
       return incomplete(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
@@ -169,6 +162,9 @@ export class WebSourceLocationService {
         path: map.file.path,
         url: map.url,
         position: input.generated_position,
+        ...(input.source_map_limits === undefined
+          ? {}
+          : { limits: input.source_map_limits }),
         ...(input.decode_timeout_ms === undefined
           ? {}
           : { decodeTimeoutMs: input.decode_timeout_ms }),
@@ -182,7 +178,11 @@ export class WebSourceLocationService {
       input.decode_timeout_ms ?? DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS;
     const limitations = [
       ...LIMITATIONS,
-      codecBudgetLimitation(report.value.runtime, decodeTimeoutMs),
+      codecBudgetLimitation(
+        report.value.runtime,
+        decodeTimeoutMs,
+        selectedSourceMapLimits(input.source_map_limits),
+      ),
     ];
     const normalized = webSourceLocationResultSchema.safeParse({
       ...report.value,
@@ -209,11 +209,7 @@ export class WebSourceLocationService {
           sha256: data.sourceFile.sha256,
           format: "file",
         },
-        {
-          id: "rea-web-source-location",
-          name: "REA captured source-map point trace",
-          version: "1",
-        },
+        WEB_SOURCE_LOCATION_PROVIDER,
         {
           operation: OPERATION,
           parameters: input,
@@ -250,6 +246,35 @@ const invalid = (
     ]),
   );
 
+const admitGeneratedOffset = (
+  input: WebSourceLocationInput,
+  source: string,
+): Result<number, AnalysisError> => {
+  const resolved = resolveWebSourcePosition(source, input.generated_position);
+  if (resolved === undefined)
+    return invalid(
+      ["generated_position"],
+      "Selected generated position is outside the retained script text (one-based lines; zero-based UTF-16 columns).",
+    );
+  if ("offset" in resolved) return ok(resolved.offset);
+  // Valid coordinates past the retained script are a caller selection fault.
+  const { line, column } = input.generated_position;
+  return err(
+    new AnalysisInputError(OPERATION, undefined, [
+      {
+        path: ["generated_position", resolved.field],
+        reason: "out_of_range",
+        minimum: resolved.field === "line" ? 1 : 0,
+        maximum: resolved.maximum,
+        message:
+          resolved.field === "line"
+            ? `No line ${String(line)}; the retained script ends at line ${String(resolved.maximum)} (one-based lines).`
+            : `No column ${String(column)} on line ${String(line)}; it ends at column ${String(resolved.maximum)} (zero-based UTF-16 columns).`,
+      },
+    ]),
+  );
+};
+
 const admitContext = (
   input: WebSourceLocationInput,
 ): Result<null, AnalysisError> => {
@@ -271,7 +296,7 @@ const verifyPairing = (
     map.url !== input.source_map.url ||
     Buffer.byteLength(map.text) !== map.file.bytes ||
     createHash("sha256").update(map.text).digest("hex") !== map.file.sha256 ||
-    map.file.bytes > WEB_SOURCE_MAP_LIMITS.mapBytes
+    map.file.bytes > selectedSourceMapLimits(input.source_map_limits).mapBytes
   )
     return invalidOutput(
       "Artifact port changed the selected source-map byte identity or URL context.",

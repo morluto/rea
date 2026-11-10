@@ -196,6 +196,11 @@ export const firmwareResultSchemas = {
         relative_path: z.string(),
         kind: z.enum(["symlink", "special"]),
         link_target: z.string().nullable(),
+        // Older retained Evidence may lack raw target bytes.
+        link_target_hex: z
+          .string()
+          .regex(/^(?:[0-9a-f]{2})*$/u)
+          .optional(),
       }),
     ),
     chunks: z.array(chunk),

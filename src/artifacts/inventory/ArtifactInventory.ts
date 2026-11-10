@@ -23,7 +23,12 @@ export const inventoryArtifact = async (
   const snapshot = await options.resourceScope.run(() =>
     scanArtifactInventoryInScope(inputPath, options),
   );
-  return artifactInventoryResultSchema.parse(snapshot);
+  return artifactInventoryResultSchema.parse({
+    ...snapshot,
+    ...(options.readerLimits === undefined
+      ? {}
+      : { effective_limits: options.readerLimits }),
+  });
 };
 
 export const scanArtifactInventoryInScope = async (

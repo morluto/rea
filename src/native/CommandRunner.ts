@@ -359,7 +359,6 @@ const ALLOWED_TOOLS = new Set([
   "file",
   "lipo",
   "nm",
-  "otool",
   "plutil",
   "strings",
   "swift-demangle",

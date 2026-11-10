@@ -173,7 +173,7 @@ it.skipIf(process.platform === "win32")(
       expect(
         snapshot.files.find(({ path }) => path === "root_0:readable.txt")
           ?.sha256,
-      ).not.toBeNull();
+      ).toEqual(expect.any(String));
       expect(
         snapshot.files.find(({ path }) => path === "root_0:unreadable.txt"),
       ).toMatchObject({ type: "file", size: 17, sha256: null });

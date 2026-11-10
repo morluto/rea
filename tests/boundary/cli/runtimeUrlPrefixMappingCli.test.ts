@@ -197,6 +197,31 @@ const mappedLocation = (path: string) => ({
 });
 
 it(
+  "matches a source-free webpack script to its containing asset",
+  async () => {
+    const root = await createTestTempDirectory("rea-url-bundler-asset-");
+    temporary.push(root);
+    await mkdir(join(root, "chunks"));
+    await writeFile(
+      join(root, "chunks", "runtime.js"),
+      '(globalThis["webpackChunkfixture"] = globalThis["webpackChunkfixture"] || []).push([["main"],{1:(module)=>{module.exports=1;}},(__webpack_require__)=>{__webpack_require__(1);}]);\n',
+    );
+    const analysis = await analyzeFixture(root);
+    const result = await reconcileThroughCli(root, analysis, [
+      "chunks/runtime.js",
+    ]);
+    expect(result.scripts.get("chunks/runtime.js")).toEqual(
+      mappedLocation("chunks/runtime.js"),
+    );
+    expect(result.loadStates.get("chunks/runtime.js")).toEqual({
+      status: "loaded",
+      reason: "runtime-script-correspondence",
+    });
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+it(
   "keeps an encoded slash inside one URL segment rather than naming a nested artifact",
   async () => {
     const root = await createTestTempDirectory("rea-url-prefix-segments-");

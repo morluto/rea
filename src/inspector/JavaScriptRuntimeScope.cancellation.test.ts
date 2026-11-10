@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const fileAccess = vi.hoisted(() => ({
   path: undefined as string | undefined,
@@ -137,7 +139,6 @@ it("stops Inspector target authorization after the current stat settles", async 
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Inspector listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -146,7 +147,9 @@ it("stops Inspector target authorization after the current stat settles", async 
       complete: false,
       targets_examined: 1,
       limitations: expect.arrayContaining([
-        "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
+        expect.stringMatching(
+          /cancellation.*authorization.*unexamined targets.*unknown.*not excluded/iu,
+        ),
       ]),
     },
   });
@@ -177,14 +180,14 @@ it("stops Electron target authorization after the current stat settles", async (
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
   expect(result.error.diagnostics).toMatchObject({
     completed_prefix: {
-      coverage:
-        "partial: target authorization stopped; remaining targets are unknown",
+      coverage: expect.stringMatching(
+        /partial.*authorization stopped.*targets are unknown/iu,
+      ),
     },
   });
   const prefix = record(record(result.error.diagnostics)?.completed_prefix);
@@ -215,7 +218,6 @@ it("retains a target whose authorization completes before the next abort check",
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -248,31 +250,43 @@ it("drains pending Electron discovery before shutdown cleanup completes", async 
   const listing = provider.listTargets(
     listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
   );
-  await started;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
-  const closedBeforeDiscovery = await Promise.race([
-    closing.then(() => true),
-    new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
-  ]);
-  expect(closedBeforeDiscovery).toBe(false);
-  expect(closed).toBe(false);
-  releaseDiscovery();
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, listing, "Electron discovery");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
+    const closedBeforeDiscovery = await Promise.race([
+      closing.then(() => true),
+      new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+    ]);
+    expect(closedBeforeDiscovery).toBe(false);
+    expect(closed).toBe(false);
+    releaseDiscovery();
 
-  const [listed] = await Promise.all([listing, closing]);
-  expect(closed).toBe(true);
-  expect(listed.ok).toBe(true);
-  expect(fileAccess.calls).toContain("stat");
-  const rejected = await provider.listTargets(
-    listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
-  );
-  expect(rejected.ok).toBe(false);
-  if (rejected.ok)
-    throw new Error("Expected closed provider admission failure");
-  expect(rejected.error.cleanupIncomplete).toBe(false);
-  expect(rejected.error.cleanupResources).toEqual([]);
+    const [listed] = await Promise.all([listing, closing]);
+    expect(closed).toBe(true);
+    expect(listed.ok).toBe(true);
+    expect(fileAccess.calls).toContain("stat");
+    const rejected = await provider.listTargets(
+      listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
+    );
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok)
+      throw new Error("Expected closed provider admission failure");
+    expect(rejected.error.cleanupIncomplete).toBe(false);
+    expect(rejected.error.cleanupResources).toEqual([]);
+  }, [
+    releaseDiscovery,
+    async () => {
+      await listing;
+    },
+    async () => {
+      await closing;
+    },
+    () => provider.close(),
+  ]);
 });
 
 it("keeps ordinary and malformed file-location authorization unchanged", async () => {

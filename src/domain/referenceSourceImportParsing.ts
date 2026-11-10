@@ -1,9 +1,4 @@
-import type {
-  CallExpression,
-  File,
-  OptionalCallExpression,
-  Node,
-} from "@babel/types";
+import type { File, Node } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
 import {
@@ -14,6 +9,7 @@ import {
 import {
   referenceSourceRequireCalls,
   type ReferenceSourceRequireCall,
+  type ReferenceSourceRequireInvocation,
 } from "./referenceSourceRequireBindings.js";
 import { isRelativeJavaScriptModuleSpecifier } from "./javascript/javascriptModuleSpecifier.js";
 import {
@@ -22,6 +18,7 @@ import {
   isExportNamedDeclaration,
   isImportDeclaration,
   isImportExpression,
+  isNewExpression,
   isOptionalCallExpression,
   isTSImportType,
   isStringLiteral,
@@ -156,7 +153,7 @@ const extractImports = (
   relationships: ReferenceSourceImportRelationship[],
   limitations: string[],
   requireCalls: ReadonlyMap<
-    CallExpression | OptionalCallExpression,
+    ReferenceSourceRequireInvocation,
     ReferenceSourceRequireCall
   >,
 ): void => {
@@ -193,7 +190,11 @@ const extractImports = (
           parseState: specifier === undefined ? "partial" : "parsed",
           ...(specifier === undefined ? { resolution: "unknown" } : {}),
         });
-      } else if (isCallExpression(node) || isOptionalCallExpression(node)) {
+      } else if (
+        isCallExpression(node) ||
+        isOptionalCallExpression(node) ||
+        isNewExpression(node)
+      ) {
         const requireCall = requireCalls.get(node);
         if (requireCall === undefined) return;
         const specifier = exactStringModuleName(requireCall.arguments?.[0]);

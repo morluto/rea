@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
 import { authenticateEvidenceBundleValue } from "../EvidenceBundleFiles.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -5,13 +6,14 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { projectInputIssuesBounded } from "../../domain/inputIssueProjection.js";
 import { readJsonFile } from "../JsonFiles.js";
 
 /** The request cancellation and the scope retaining descriptors whose close failed. */
@@ -20,27 +22,45 @@ export interface EvidenceFileReadOptions {
   readonly resources?: ArtifactResourceScope;
 }
 
-const selectionError = (message: string): AnalysisInputError =>
-  new AnalysisInputError(
-    INSPECT_ANALYSIS_VIEW_OPERATION,
-    { userMessage: message },
-    [
-      {
-        path: ["source", "evidence_id"],
-        reason: "invalid_value",
-        message,
-      },
-    ],
-  );
+/** Caller context and related-record resolution for this admitted file. */
+export interface EvidenceFileSourceContext {
+  readonly operation: string;
+  readonly path: readonly (string | number)[];
+  readonly resolveSelected?: EvidenceFileRecordResolver;
+}
+
+/** Resolve related facts while the authenticated file records are in scope. */
+export type EvidenceFileRecordResolver = (
+  selected: Evidence,
+  lookup: (evidenceId: string) => Evidence | undefined,
+) => Result<Evidence, AnalysisError>;
+
+const ANALYSIS_VIEW_SOURCE: EvidenceFileSourceContext = {
+  operation: INSPECT_ANALYSIS_VIEW_OPERATION,
+  path: ["source"],
+};
+
+const selectionError = (
+  site: EvidenceFileSourceContext,
+  message: string,
+): AnalysisInputError =>
+  new AnalysisInputError(site.operation, { userMessage: message }, [
+    {
+      path: [...site.path, "evidence_id"],
+      reason: "invalid_value",
+      message,
+    },
+  ]);
 
 /** Listed identities stay bounded so a large bundle cannot grow the error itself. */
 const RECORD_REFERENCE_PREVIEW_BYTES = 2048;
 
-/** Select the one record a view projects from an authenticated bundle. */
+/** Select the one record a source names from an authenticated bundle. */
 const selectBundleRecord = (
   records: readonly Evidence[],
   path: string,
   evidenceId: string | undefined,
+  site: EvidenceFileSourceContext,
 ): Result<Evidence, AnalysisError> => {
   if (evidenceId !== undefined) {
     const selected = records.find(
@@ -49,6 +69,7 @@ const selectBundleRecord = (
     return selected === undefined
       ? err(
           selectionError(
+            site,
             `Evidence bundle ${path} holds no record ${evidenceId}. It holds ${listRecordIds(records)}.`,
           ),
         )
@@ -56,11 +77,14 @@ const selectBundleRecord = (
   }
   const only = records[0];
   if (only === undefined)
-    return err(selectionError(`Evidence bundle ${path} holds no records.`));
+    return err(
+      selectionError(site, `Evidence bundle ${path} holds no records.`),
+    );
   if (records.length > 1)
     return err(
       selectionError(
-        `Evidence bundle ${path} holds ${String(records.length)} records; select one with source.evidence_id. It holds ${listRecordIds(records)}.`,
+        site,
+        `Evidence bundle ${path} holds ${String(records.length)} records; select one with ${[...site.path, "evidence_id"].join(".")}. It holds ${listRecordIds(records)}.`,
       ),
     );
   return ok(only);
@@ -96,14 +120,44 @@ const listRecordIds = (records: readonly Evidence[]): string => {
   return omitted > 0 ? `${listed} and ${String(omitted)} more` : listed;
 };
 
+/**
+ * Budget for projected field-level diagnostics. A malformed file can carry tens
+ * of thousands of issues, and projecting all of them pushes the error past the
+ * MCP response budget, which then hides the typed file error and its path. Keep
+ * the leading issues that fit and say how many were omitted.
+ */
+const EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES = 65_536;
+
+const boundedContentIssues = (
+  issues: readonly z.core.$ZodIssue[],
+  input: unknown,
+): readonly AnalysisInputIssue[] => {
+  const bounded = projectInputIssuesBounded(
+    issues,
+    input,
+    EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES,
+  );
+  if (bounded.omittedIssueCount === 0) return bounded.issues;
+  return [
+    ...bounded.issues,
+    {
+      path: [],
+      reason: "invalid_value",
+      message: `${String(bounded.omittedIssueCount)} of ${String(issues.length)} validator issues were omitted because they do not fit the response budget; repair the reported fields and retry.`,
+    },
+  ];
+};
 /** Read one Evidence record or select from an authenticated bundle without rereading the file. */
 export const readEvidenceFileSource = async (
   path: string,
   options: EvidenceFileReadOptions = {},
   evidenceId?: string,
+  site: EvidenceFileSourceContext = ANALYSIS_VIEW_SOURCE,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const { signal, resources } = options;
-  const operation = INSPECT_ANALYSIS_VIEW_OPERATION;
+  const { operation } = site;
+  const resolveSelected =
+    site.resolveSelected ?? ((selected: Evidence) => ok(selected));
   if (signal?.aborted)
     return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
   const loaded = await readJsonFile(path, signal, resources, operation);
@@ -117,10 +171,22 @@ export const readEvidenceFileSource = async (
     !Array.isArray(value) &&
     Object.hasOwn(value, "records")
   ) {
-    const bundle = authenticateEvidenceBundleValue(value, path, { operation });
-    return bundle.ok
-      ? selectBundleRecord(bundle.value.records, path, evidenceId)
-      : bundle;
+    const bundle = authenticateEvidenceBundleValue(value, path, {
+      operation,
+      immutable: true,
+    });
+    if (!bundle.ok) return bundle;
+    const selected = selectBundleRecord(
+      bundle.value.records,
+      path,
+      evidenceId,
+      site,
+    );
+    return selected.ok
+      ? resolveSelected(selected.value, (id) =>
+          bundle.value.records.find((record) => record.evidence_id === id),
+        )
+      : selected;
   }
   const headroom = requireAuthenticationHeadroom(value, {
     operation,
@@ -128,13 +194,13 @@ export const readEvidenceFileSource = async (
     description: "Insufficient heap headroom to authenticate the Evidence file",
   });
   if (!headroom.ok) return headroom;
-  const parsed = safeParseEvidence(value);
+  const parsed = safeParseImmutableEvidence(value);
   if (!parsed.ok)
     return err(
       new EvidenceFileError("read", "wrong-kind", {
         path,
         cause: parsed.error,
-        contentIssues: projectInputIssues(parsed.error.issues, value),
+        contentIssues: boundedContentIssues(parsed.error.issues, value),
         userMessage:
           "The selected file does not contain valid Evidence. Repair or recreate the file and try again.",
       }),
@@ -142,8 +208,11 @@ export const readEvidenceFileSource = async (
   if (evidenceId !== undefined && parsed.value.evidence_id !== evidenceId)
     return err(
       selectionError(
+        site,
         `Evidence file ${path} holds ${parsed.value.evidence_id}, not selected record ${evidenceId}.`,
       ),
     );
-  return parsed;
+  return resolveSelected(parsed.value, (id) =>
+    parsed.value.evidence_id === id ? parsed.value : undefined,
+  );
 };

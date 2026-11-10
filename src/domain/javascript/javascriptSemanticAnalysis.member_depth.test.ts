@@ -16,6 +16,7 @@ const ordinaryMemberChain = ".next".repeat(64);
 it("preserves a 12,000-member native import through both analyzers", () => {
   const parsed = parseJavaScriptSource(
     `const value = require("./addon.node")${memberChain}.last; const ordinary = root.next.last;`,
+    "fixture.cjs",
   );
   if (parsed === null) throw new Error("Expected valid JavaScript");
 

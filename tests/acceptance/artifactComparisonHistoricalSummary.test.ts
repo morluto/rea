@@ -14,6 +14,7 @@ import {
   rebindEvidenceToTargetPath,
   type Evidence,
 } from "../../src/domain/evidence.js";
+import { FIT_EMBEDDED } from "../../src/artifacts/fit/FitImage.fixture.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -139,5 +140,52 @@ it("compares a historical alias summary through its retained complete MCP parent
     parent_evidence_id: parent.evidence_id,
     artifact: { path },
     summary: { source_coverage: { scope: "root", status: "complete" } },
+  });
+});
+
+it("rejects a fabricated pre-coverage FIT summary while accepting its current projection", async () => {
+  const root = await createTestTempDirectory("rea-fit-summary-identity-");
+  const path = join(root, "boot.itb");
+  await writeFile(path, FIT_EMBEDDED);
+  const { call } = await connectLocalToolsMcp({
+    REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+    REA_MCP_TOOL_FAMILIES: "artifact,application,session",
+  });
+  const opened = await call("open_binary", { path });
+  expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+  const inspected = await call("inspect_artifact", { detail: "complete" });
+  expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+  const parent = parseEvidence(inspected.structuredContent);
+  const projected = await call("inspect_analysis_view", {
+    source: { kind: "inline", evidence: parent },
+    view: { kind: "summary" },
+  });
+  expect(projected.isError, JSON.stringify(projected)).not.toBe(true);
+  const current = parseEvidence(projected.structuredContent);
+  const result = artifactInventorySummaryViewResultSchema.parse(
+    current.normalized_result,
+  );
+  expect(result.summary.manifest.root_format).toBe("fit");
+  expect(result.summary.source_coverage?.status).toBe("complete");
+  const accepted = await call("compare_artifacts", {
+    left: current,
+    right: parent,
+  });
+  expect(accepted.isError, JSON.stringify(accepted)).not.toBe(true);
+  expect(
+    artifactComparisonResultSchema.parse(
+      parseEvidence(accepted.structuredContent).normalized_result,
+    ).status,
+  ).toBe("unchanged");
+  const { source_coverage: _coverage, ...summary } = result.summary;
+  const fabricated = resealSummary(current, { ...result, summary });
+  expect(fabricated.evidence_id).not.toBe(current.evidence_id);
+  const rejected = await call("compare_artifacts", {
+    left: fabricated,
+    right: parent,
+  });
+  expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: { code: "evidence_integrity_mismatch" },
   });
 });

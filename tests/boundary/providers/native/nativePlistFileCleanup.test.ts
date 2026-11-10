@@ -47,7 +47,6 @@ it("does not adopt a command's arbitrary thrown cleanup marker as a file owner",
   const run = vi.spyOn(runner, "run").mockRejectedValueOnce(foreign);
   onTestFinished(() => run.mockRestore());
   const result = await client.execute("inspect_plist", { path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected opaque command failure");
   expect(result.error.cause).toBe(foreign);
   expect(result.error.cleanupIncomplete).toBe(false);
@@ -110,7 +109,6 @@ it("keeps mixed client cleanup live until both file and tracer owners resolve", 
   });
   expect((await client.execute("inspect_plist", { path })).ok).toBe(false);
   const first = await client.close();
-  expect(first.ok).toBe(false);
   if (first.ok) throw new Error("Expected both pending owners");
   expect(new Set(first.error.cleanupResources)).toEqual(
     new Set([path, "trace-owner"]),
@@ -170,7 +168,6 @@ it.for(["path-input", "target"] as const)(
       "inspect_plist",
       selection === "target" ? {} : { path },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained cleanup failure");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
@@ -238,7 +235,6 @@ for (const readFails of [false, true])
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained close failure");
     const failure = result.error.cause;
     expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
@@ -270,7 +266,6 @@ it.each([null, 0, new ProviderCleanupError("foreign", ["unowned"], {})])(
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected pre-admission cancellation");
     expect(result.error.cause).toBe(reason);
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -290,7 +285,6 @@ it("retains a failed admission close before any native command", async () => {
     run.mockRestore();
   });
   const result = await client.execute("inspect_plist", { path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed admission close");
   expect(result.error.cleanupResources).toContain(path);
   expect(result.error.cleanupIncomplete).toBe(true);
@@ -323,7 +317,6 @@ it("preserves an opaque cancellation observed during successful prefix close", a
     { path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected late cancellation");
   expect(result.error).toMatchObject({
     operation: "inspect_plist",

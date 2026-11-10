@@ -623,3 +623,31 @@ it.each([false, true])(
     expect(result.error.cleanupIncomplete).toBe(false);
   },
 );
+
+it("reads an admitted file even when Windows casing lookup is unavailable", async () => {
+  const root = await createTestTempDirectory("rea-entropy-casing-unavailable-");
+  const path = join(root, "readable.bin");
+  await writeFile(path, Buffer.from([1, 2, 3, 4]));
+  // The injected descriptor represents a readable share while the optional
+  // host spelling lookup has no path on this filesystem.
+  const selected = join(root, "share-selection.bin");
+  const platform = vi
+    .spyOn(process, "platform", "get")
+    .mockReturnValue("win32");
+  const service = new ByteEntropyService({
+    stat: ((...args: Parameters<typeof stat>) =>
+      stat(path, args[1])) as typeof stat,
+    open: async () => open(path, "r"),
+  });
+  try {
+    const result = await service.inspect({ path: selected });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      artifact: { bytes: 4 },
+    });
+    expect(result.value.caller_input_path).toBe(selected);
+  } finally {
+    await service.close();
+    platform.mockRestore();
+  }
+});

@@ -556,7 +556,11 @@ export class KunaProjectCache {
     request: KunaProjectRequest,
   ): Promise<Result<KunaProject, AnalysisError>> {
     if (request.signal?.aborted === true)
-      return err(new AnalysisCancelledError(KUNA_EXPORT_OPERATION));
+      return err(
+        new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
+          cause: request.signal.reason,
+        }),
+      );
     const key = kunaProjectKey({
       targetSha256: request.targetSha256,
       targetBasename: basename(request.targetPath),
@@ -878,7 +882,13 @@ export class KunaProjectCache {
         settled = true;
         leave();
         if (entry.waiters === 0) entry.controller.abort();
-        resolve(err(new AnalysisCancelledError(KUNA_EXPORT_OPERATION)));
+        resolve(
+          err(
+            new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
+              cause: request.signal?.reason,
+            }),
+          ),
+        );
       };
       request.signal?.addEventListener("abort", onAbort, { once: true });
       void entry.promise.then((result) => {

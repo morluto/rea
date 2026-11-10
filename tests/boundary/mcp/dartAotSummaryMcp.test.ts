@@ -26,17 +26,61 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 const dynamicSegmentOffset = (image: Buffer): number =>
   Number(image.readBigUInt64LE(64 + 56 + 8));
 
-it("honors explicit ABI and old full requests, validates SDK schemas and reuses complete Evidence after APK removal", async () => {
+/** Two exact ABI sources shared by full/retained and selected-summary workflows. */
+const aotViewFixture = async () => {
   const path = await createFlutterApk("views.apk", [
     { path: "lib/arm64-v8a/libapp.so", bytes: aotFixtureImage() },
     { path: "lib/x86_64/libapp.so", bytes: aotFixtureImage("b".repeat(32)) },
   ]);
   const provider = createFlutterBuildAnalysisProvider();
-  const execute = vi.spyOn(provider, "execute");
   const harness = await createApplicationMcpHarness({
     serverOptions: { flutterAnalysis: provider },
   });
   onTestFinished(harness.close);
+  return { path, provider, harness };
+};
+
+it("retains the selected pool policy through MCP summary projection", async () => {
+  const { path, harness } = await aotViewFixture();
+  const { client, session } = harness;
+  const definition = (await client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_dart_aot",
+  );
+  if (definition?.outputSchema === undefined)
+    throw new Error("Missing AOT output schema");
+  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const filteredReply = await client.callTool({
+    name: "inspect_dart_aot",
+    arguments: {
+      path,
+      detail: "summary",
+      pool_policy: { contains: "package:animations/", uri_limit: 1 },
+    },
+  });
+  expect(filteredReply.isError).not.toBe(true);
+  expect(
+    ajv.validate(outputSchema, filteredReply.structuredContent),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+  const filteredView = dartAotSummaryViewResultSchema.parse(
+    parseEvidence(filteredReply.structuredContent).normalized_result,
+  );
+  expect(filteredView.summary.string_pool.policy).toMatchObject({
+    contains: "package:animations/",
+    uri_limit: 1,
+  });
+  expect(filteredView.summary.string_pool.returned_counts.package_uris).toBe(1);
+  const filteredParent = session.evidenceById(filteredView.parent_evidence_id);
+  expect(filteredParent?.parameters.pool_policy).toEqual({
+    contains: "package:animations/",
+    uri_limit: 1,
+  });
+});
+
+it("honors explicit ABI and old full requests, validates SDK schemas and reuses complete Evidence after APK removal", async () => {
+  const { path, provider, harness } = await aotViewFixture();
+  const execute = vi.spyOn(provider, "execute");
   const { client, session } = harness;
   const catalog = (await client.listTools()).tools;
   const definition = catalog.find((tool) => tool.name === "inspect_dart_aot");

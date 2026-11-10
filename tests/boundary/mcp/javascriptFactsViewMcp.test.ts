@@ -364,11 +364,9 @@ it("uses exact evidence locations without normalizing display properties or drop
   expect(discovery.page.rows.map(({ evidence }) => evidence)).toEqual(
     all.page.rows.map(({ evidence }) => evidence),
   );
-  expect(
-    all.page.rows.every(
-      ({ properties }) => JSON.stringify(properties) === '{"nullable":null}',
-    ),
-  ).toBe(true);
+  expect(all.page.rows.map(({ properties }) => properties)).toEqual(
+    all.page.rows.map(() => ({ nullable: null })),
+  );
   expect(all.page.rows.map(({ evidence }) => evidence)).toEqual(
     node.observations.map(({ evidence }) => evidence),
   );

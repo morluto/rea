@@ -38,34 +38,60 @@ type ElectronFileOperation =
   | "observe_javascript_runtime"
   | "list_javascript_runtime_targets";
 
-// ASAR descriptor ownership outlives an individual provider call; every later
-// authorization retries retained close leases before admitting new work.
-const resources = new ArtifactResourceScope();
+/**
+ * ASAR descriptor ownership for one host. Authorization and shutdown share
+ * this scope so another host's file work does not block or fail this one.
+ */
+export class ElectronFileScope {
+  readonly #resources = new ArtifactResourceScope();
+
+  async authorize(
+    value: string,
+    signal?: AbortSignal,
+    operation: ElectronFileOperation = "inspect_electron_page",
+    asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  ): Promise<string | undefined> {
+    try {
+      return await this.#resources.run(
+        async () =>
+          await resolveAuthorizedElectronFile(
+            value,
+            signal,
+            asarHeaderAdmission,
+            this.#resources,
+          ),
+      );
+    } catch (cause: unknown) {
+      if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+        throw cause;
+      if (signal?.aborted === true)
+        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      throw cause;
+    }
+  }
+
+  retryCleanup(): Promise<void> {
+    return this.#resources.retryCleanup();
+  }
+}
+
+/** Electron providers that do not pass a host scope. */
+const processElectronFiles = new ElectronFileScope();
 
 /** Resolve one local file URL while rejecting remote hosts and encoded separators. */
-export const authorizedElectronFile = async (
+export const authorizedElectronFile = (
   value: string,
   signal?: AbortSignal,
   operation: ElectronFileOperation = "inspect_electron_page",
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
-): Promise<string | undefined> => {
-  try {
-    return await resources.run(
-      async () =>
-        await resolveAuthorizedElectronFile(value, signal, asarHeaderAdmission),
-    );
-  } catch (cause: unknown) {
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      throw cause;
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
-    throw cause;
-  }
-};
+  files: ElectronFileScope = processElectronFiles,
+): Promise<string | undefined> =>
+  files.authorize(value, signal, operation, asarHeaderAdmission);
 
 /** Retry retained ASAR descriptor cleanup during provider shutdown. */
-export const retryElectronFileCleanup = async (): Promise<void> =>
-  await resources.retryCleanup();
+export const retryElectronFileCleanup = (
+  files: ElectronFileScope = processElectronFiles,
+): Promise<void> => files.retryCleanup();
 
 /** Translate a retained ASAR descriptor failure at its provider boundary. */
 export const mapElectronFileAuthorizationFailure = (
@@ -129,6 +155,7 @@ const resolveAuthorizedElectronFile = async (
   value: string,
   signal: AbortSignal | undefined,
   asarHeaderAdmission: AsarHeaderAdmission,
+  resources: ArtifactResourceScope,
 ): Promise<string | undefined> => {
   throwIfAborted(signal);
   let url: URL;
@@ -171,7 +198,12 @@ const resolveAuthorizedElectronFile = async (
     void cause;
   }
   throwIfAborted(signal);
-  return await authorizedAsarMember(path, signal, asarHeaderAdmission);
+  return await authorizedAsarMember(
+    path,
+    signal,
+    asarHeaderAdmission,
+    resources,
+  );
 };
 
 /**
@@ -183,6 +215,7 @@ const authorizedAsarMember = async (
   path: string,
   signal: AbortSignal | undefined,
   asarHeaderAdmission: AsarHeaderAdmission,
+  resources: ArtifactResourceScope,
 ): Promise<string | undefined> => {
   const segments = path.split(sep);
   for (let index = 1; index < segments.length - 1; index += 1) {

@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 import { pwntoolsUnavailable } from "./PwntoolsFailures.js";
-import {
-  PWNTOOLS_LIMITS,
-  PWNTOOLS_PROVIDER_IDENTITY,
-} from "./PwntoolsRelease.js";
+import { PWNTOOLS_LIMITS } from "../../domain/native/pwntoolsResourceLimits.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 
 const CONSTRAINT =
   "REA_PWNTOOLS_MAX_INPUT_BYTES must be a decimal integer from 1 to " +
@@ -15,9 +13,9 @@ describe("pwntools input bound", () => {
   it("keeps the shipped default when the override is absent", () => {
     expect(pwntoolsInputBytes({})).toEqual({
       configured: true,
-      bytes: PWNTOOLS_LIMITS.inputBytes,
+      bytes: PWNTOOLS_LIMITS.input_bytes,
     });
-    expect(PWNTOOLS_LIMITS.inputBytes).toBe(32 * 1024 * 1024);
+    expect(PWNTOOLS_LIMITS.input_bytes).toBe(32 * 1024 * 1024);
   });
 
   it.each([
@@ -64,7 +62,7 @@ describe("pwntools input bound", () => {
   });
 
   it("never narrows the bound below the shipped default implicitly", () => {
-    const accepted = [1, 1024, PWNTOOLS_LIMITS.inputBytes].map((bytes) =>
+    const accepted = [1, 1024, PWNTOOLS_LIMITS.input_bytes].map((bytes) =>
       pwntoolsInputBytes({ REA_PWNTOOLS_MAX_INPUT_BYTES: String(bytes) }),
     );
     expect(accepted.every((limit) => limit.configured)).toBe(true);

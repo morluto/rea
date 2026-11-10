@@ -31,6 +31,7 @@ it("parses command names containing parentheses and retains native relation fact
     parseLinuxProcessStat(statRecord({ command: "worker ) old ) name" })),
   ).toEqual({
     pid: 42,
+    name: "worker ) old ) name",
     startTime: "987654",
     lifecycle: "non-zombie",
     parentPid: 17,
@@ -62,6 +63,7 @@ it("retains identity when Linux teardown reports unavailable group and session I
     ),
   ).toEqual({
     pid: 42,
+    name: "worker",
     startTime: "987654",
     lifecycle: "dead",
     parentPid: 0,
@@ -114,6 +116,7 @@ it.each(["invalid", "-1", "4.1", "9007199254740992"])(
   (flags) => {
     expect(parseLinuxProcessStat(statRecord({ flags }))).toEqual({
       pid: 42,
+      name: "worker",
       startTime: "987654",
       lifecycle: undefined,
       parentPid: 17,

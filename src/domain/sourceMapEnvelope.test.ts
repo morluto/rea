@@ -109,7 +109,7 @@ describe("source-map envelope walk", () => {
       invalid_sections: [
         {
           section_path: [2],
-          reason: "External source-map section URL must be a string.",
+          reason: expect.stringMatching(/section URL.*must be a string/iu),
         },
       ],
     });
@@ -125,8 +125,9 @@ describe("source-map envelope walk", () => {
       invalid_sections: [
         {
           section_path: [0],
-          reason:
-            "Indexed source-map section requires an embedded map or external URL.",
+          reason: expect.stringMatching(
+            /source-map section requires.*embedded map or external URL/i,
+          ),
         },
       ],
     });
@@ -149,7 +150,7 @@ describe("malformed source-map envelope facts", () => {
       invalid_sections: [
         {
           section_path: [],
-          reason: "Indexed source-map sections must be an array.",
+          reason: expect.stringMatching(/sections.*must be an array/iu),
         },
       ],
     });

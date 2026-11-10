@@ -141,6 +141,9 @@ export const publishFirmwareExtraction = async (context: {
           relative_path: entry.relativePath,
           kind: entry.kind,
           link_target: entry.linkTarget,
+          ...(entry.linkTargetHex === undefined
+            ? {}
+            : { link_target_hex: entry.linkTargetHex }),
         });
         continue;
       }

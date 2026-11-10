@@ -23,14 +23,19 @@ const metaInfoTag = {
 };
 
 /**
- * Read the producer's metadata dialect once. Apktool 3 emits an untagged,
- * line-oriented document with Java-escaped strings; older tagged documents
- * use YAML core semantics. Numeric values retain their source spelling.
+ * Read the producer's metadata dialect once. Apktool 2.9.0 and later (including
+ * 3) emit an untagged, line-oriented document with Java-escaped strings; older
+ * tagged documents use YAML core semantics. Numeric values retain their source
+ * spelling.
  */
 export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   const source = yml.replace(/^\uFEFF/u, "");
   const header = source.split(/\r\n?|\n/u, 1)[0] ?? "";
-  if (/^version: 3\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u.test(header))
+  if (
+    /^version: (?:2\.(?:9|[1-9]\d)|3\.\d+)\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u.test(
+      header,
+    )
+  )
     return parseApktool3Metadata(source);
   const document = parseDocument(yml, {
     schema: "core",
@@ -65,9 +70,10 @@ const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
 ]);
 
 /**
- * Apktool 3.0.3 YamlWriter writes strings without YAML quoting or comment
- * syntax. Read its direct mapping records before a YAML parser can discard
- * hashes, consume quotes, or reinterpret an empty string or literal `null`.
+ * Apktool 3.0.3 YamlWriter, like the 2.9.0 writer it descends from, writes
+ * strings without YAML quoting or comment syntax. Read its direct mapping
+ * records before a YAML parser can discard hashes, consume quotes, or
+ * reinterpret an empty string or literal `null`.
  */
 const parseApktool3Metadata = (source: string): ApktoolMetadata => {
   const values = new Map<keyof ApktoolMetadata, string>();

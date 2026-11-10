@@ -9,6 +9,7 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import {
   JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS,
+  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
 } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import type {
@@ -24,8 +25,7 @@ import {
 } from "./JavaScriptAnalysisWorkerSchemas.js";
 
 // Budgets bound transfer representation, independently of source length.
-/** Record bound whose transient decoding expansion is reserved by the consumer. */
-export const JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES = 8 * 1024 * 1024;
+export { JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 const FRAME_BYTES = JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
 const TRANSFER_BYTES = 512 * 1024 * 1024;
 const MAX_TRANSFER_BYTES = 2 * 1024 * 1024 * 1024;

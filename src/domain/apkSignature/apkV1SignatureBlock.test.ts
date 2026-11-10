@@ -380,3 +380,34 @@ it("keeps exact issuer identity when its comparison key cannot be interpreted", 
   );
   expect(block.signerInfos[0]?.certificateIndex).toBe(0);
 });
+
+it.each([0, 1])(
+  "refuses a non-minimal PKCS#7 content OID at subidentifier %i",
+  (at) => {
+    const block = signedDataBlock({
+      certificates: [LEAF_CERTIFICATE],
+      signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+    });
+    const contentAt = block[1]! > 0x80 ? 2 + (block[1]! & 0x7f) : 2;
+    const signedDataOid = oid("1.2.840.113549.1.7.2");
+    expect(block.subarray(contentAt, contentAt + signedDataOid.length)).toEqual(
+      signedDataOid,
+    );
+    const content = signedDataOid.subarray(2);
+    const paddedOid = tlv(
+      0x06,
+      content.subarray(0, at),
+      Uint8Array.of(0x80),
+      content.subarray(at),
+    );
+    const malformedBlock = indefinite(
+      0x30,
+      paddedOid,
+      block.subarray(contentAt + signedDataOid.length),
+    );
+    expect(decodeV1SignatureBlock(malformedBlock)).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-pkcs7" },
+    });
+  },
+);

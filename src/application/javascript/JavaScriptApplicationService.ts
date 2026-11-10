@@ -3,6 +3,7 @@ import {
   ASAR_HEADER_ADMISSION_SETTING,
   parseAsarHeaderAdmission,
 } from "../../config/asarHeaderAdmission.js";
+import { parseAsarListingAdmission } from "../../config/asarListingAdmission.js";
 import { z } from "zod";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -69,12 +70,22 @@ export const analyzeJavaScriptApplicationValidated = async (
     options.environment?.[ASAR_HEADER_ADMISSION_SETTING],
   );
   if (!asarHeaderAdmission.ok) return asarHeaderAdmission;
+  const listingAdmission = parseAsarListingAdmission(
+    options.environment?.REA_ASAR_MAX_LISTING_BYTES,
+  );
+  if (!listingAdmission.ok) return listingAdmission;
   const overrides = options.settings?.().overrides;
   const header = overrides?.["asar.max_header_bytes"];
-  const acceptedAdmission =
-    header === undefined
+  const listing = overrides?.["asar.max_listing_bytes"];
+  const acceptedAdmission = {
+    ...(header === undefined
       ? asarHeaderAdmission.value
-      : { maximumBytes: header, source: "runtime" as const };
+      : { maximumBytes: header, source: "runtime" as const }),
+    listing:
+      listing === undefined
+        ? listingAdmission.value
+        : { maximumBytes: listing, source: "runtime" as const },
+  };
   let reconstructed: JavaScriptArtifactReconstructionResult | undefined;
   let result: JavaScriptApplicationAnalysisResult | undefined;
   let evidence: Evidence | undefined;

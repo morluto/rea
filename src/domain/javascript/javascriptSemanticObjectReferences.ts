@@ -19,23 +19,11 @@ import {
   SemanticGetterQuery,
   type GetterQueryJob,
 } from "./javascriptSemanticGetterQueries.js";
-import { expandSemanticGetterResult } from "./javascriptSemanticGetterResults.js";
+import { expandSemanticGetterResult } from "./javascriptSemanticGetterResultWalker.js";
 
-export interface JavaScriptSemanticObjectReference {
-  readonly node: t.Node;
-  readonly path: PropertyPath;
-  /** This selection crossed the object's prototype, rather than an own slot. */
-  readonly inherited?: true;
-  /** A shallow copy selects this prefix now while retaining its child identity. */
-  readonly capturedSelectionAt?: t.Node;
-  readonly ownEnumerable?: true;
-  readonly iterableFallbackPath?: PropertyPath;
-  readonly escapes?: true;
-  /** A retry omitted suffixes, so escaping constructed children must cover them. */
-  readonly widenedGetterResult?: true;
-  /** The allocation owned by this binding, rather than a read of its prior value. */
-  readonly ownerInitializer?: t.Node;
-}
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
+
+export type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 
 export const semanticClassCandidates = (
   root: t.Node,

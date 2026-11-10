@@ -60,6 +60,7 @@ const workflow = async () =>
         test: z.object({ steps: stepsSchema }),
         build: z.object({ steps: stepsSchema }),
         docs: z.object({ steps: stepsSchema }),
+        python: z.object({ if: z.string(), steps: stepsSchema }),
         static: z.object({ steps: stepsSchema }),
         "static-deep": z.object({
           if: z.string(),
@@ -415,9 +416,27 @@ it("runs the existing onboarding and Python producer guards from their selected 
   expect(scripts["check:ci:fast:tasks"]).toBe(
     "node scripts/run-turbo.mjs run typecheck lint format:check",
   );
-  expect(scripts["test:python"]).toContain(
-    "bridge/native/test_rea_lldb_tracer.py",
+  expect(scripts["test:python"]).toBe("python3 scripts/run-python-tests.py");
+  expect(jobs.python.if).toContain("outputs.python == 'true'");
+  expect(jobs.python.if).toContain("tier == 'fast'");
+  const downloadCache = jobs.python.steps.findIndex(
+    (step) => step.uses === "./.github/actions/npm-cache",
   );
+  const install = jobs.python.steps.findIndex((step) => step.run === "npm ci");
+  const prepare = jobs.python.steps.findIndex(
+    (step) => step.run === "npm run test:prepare",
+  );
+  const suite = jobs.python.steps.findIndex(
+    (step) => step.run === "npm run test:python",
+  );
+  const cache = jobs.python.steps.findIndex(
+    (step) => step.uses === "./.github/actions/portable-build-cache",
+  );
+  expect(downloadCache).toBeGreaterThanOrEqual(0);
+  expect(install).toBeGreaterThan(downloadCache);
+  expect(cache).toBeGreaterThan(install);
+  expect(prepare).toBeGreaterThan(cache);
+  expect(suite).toBeGreaterThan(prepare);
 });
 
 it("exports portable timing history and removes it on a failed, partial, or invalid rerun", async () => {
@@ -712,4 +731,158 @@ it("records failed omissions from full reports without treating partial or unhan
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("requires executed Python analysis-efficiency cases while allowing optional skips", async () => {
+  const root = await createTestTempDirectory("rea-python-analysis-inventory-");
+  await mkdir(join(root, "scripts"), { recursive: true });
+  await writeFile(
+    join(root, "scripts", "run-python-tests.py"),
+    await readFile(
+      new URL("../../../scripts/run-python-tests.py", import.meta.url),
+    ),
+  );
+  const passing =
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n";
+  for (const family of ["mitmproxy", "native", "pwndbg"]) {
+    await mkdir(join(root, "bridge", family), { recursive: true });
+    await writeFile(join(root, "bridge", family, "test_case.py"), passing);
+  }
+  const directory = join(root, "tests", "support", "analysis-efficiency");
+  await mkdir(directory, { recursive: true });
+  const testFile = join(directory, "test_example.py");
+  const run = () =>
+    execute("python3", ["scripts/run-python-tests.py"], { cwd: root });
+
+  await writeFile(join(root, "checkout_support.py"), "VALUE = 42\n");
+  await writeFile(
+    testFile,
+    "import unittest\nfrom checkout_support import VALUE\nclass Example(unittest.TestCase):\n def test_case(self): self.assertEqual(VALUE, 42)\n",
+  );
+  expect((await run()).stderr).toContain("OK");
+
+  for (const content of [
+    "# A present file can contain no tests.\n",
+    "import unittest\nclass Example(unittest.TestCase):\n @unittest.skip('unavailable')\n def test_case(self): pass\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x): self.skipTest('unavailable')\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(outer=1):\n   with self.subTest(inner=2): self.skipTest('unavailable')\n",
+  ]) {
+    await writeFile(testFile, content);
+    await expect(run()).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        '"code": "no_executed_analysis_efficiency_tests"',
+      ),
+    });
+  }
+  for (const content of [
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n @unittest.skip('optional')\n def test_skipped(self): pass\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x):\n    if x == 0: self.skipTest('optional')\n    self.assertEqual(x, 1)\n",
+  ]) {
+    await writeFile(testFile, content);
+    expect((await run()).stderr).toContain("skipped 'optional'");
+  }
+  await writeFile(
+    testFile,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(value=1): self.fail('subtest failed')\n",
+  );
+  await expect(run()).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("subtest failed"),
+  });
+});
+
+it("requires executed Python cases in every bridge family", async () => {
+  const root = await createTestTempDirectory("rea-python-inventory-");
+  await mkdir(join(root, "scripts"), { recursive: true });
+  await mkdir(join(root, "bridge", "example"), { recursive: true });
+  await mkdir(join(root, "tests", "support", "analysis-efficiency"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(root, "scripts", "run-python-tests.py"),
+    await readFile(
+      new URL("../../../scripts/run-python-tests.py", import.meta.url),
+    ),
+  );
+  const passing =
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n";
+  for (const family of ["mitmproxy", "native", "pwndbg"]) {
+    await mkdir(join(root, "bridge", family), { recursive: true });
+    await writeFile(join(root, "bridge", family, "capture.py"), "VALUE = 1\n");
+    await writeFile(join(root, "bridge", family, "test_case.py"), passing);
+  }
+  await writeFile(join(root, "bridge", "example", "test_first.py"), passing);
+  await writeFile(
+    join(root, "tests", "support", "analysis-efficiency", "test_example.py"),
+    passing,
+  );
+  const command = ["scripts/run-python-tests.py"];
+  const discovered = await execute("python3", command, { cwd: root });
+  expect(discovered.stderr).toContain("bridge.mitmproxy.test_case");
+  expect(discovered.stderr).toContain("bridge.native.test_case");
+  expect(discovered.stderr).toContain("bridge.pwndbg.test_case");
+  expect(discovered.stderr).toContain("OK");
+  const native = join(root, "bridge", "native", "test_case.py");
+  for (const content of [
+    "# A present file can contain no tests.\n",
+    "import unittest\nclass Example(unittest.TestCase):\n @unittest.skip('unavailable')\n def test_case(self): pass\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x): self.skipTest('unavailable')\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(outer=1):\n   with self.subTest(inner=2): self.skipTest('unavailable')\n",
+  ]) {
+    await writeFile(native, content);
+    await expect(
+      execute("python3", command, { cwd: root }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('"code": "no_executed_bridge_tests"'),
+    });
+  }
+  await writeFile(
+    native,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n @unittest.skip('optional')\n def test_skipped(self): pass\n",
+  );
+  expect((await execute("python3", command, { cwd: root })).stderr).toContain(
+    "skipped 'optional'",
+  );
+  await writeFile(
+    native,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x):\n    if x == 0: self.skipTest('optional')\n    self.assertEqual(x, 1)\n",
+  );
+  expect((await execute("python3", command, { cwd: root })).stderr).toContain(
+    "skipped 'optional'",
+  );
+  await writeFile(
+    native,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(value=1): self.fail('subtest failed')\n",
+  );
+  await expect(
+    execute("python3", command, { cwd: root }),
+  ).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("subtest failed"),
+  });
+  await writeFile(native, passing);
+  await writeFile(
+    join(root, "bridge", "example", "test_second.py"),
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): self.fail('new test executed')\n",
+  );
+  await expect(
+    execute("python3", command, { cwd: root }),
+  ).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("new test executed"),
+  });
+  await rm(join(root, "bridge", "mitmproxy", "test_case.py"));
+  const missingFamily = await execute("python3", command, { cwd: root }).then(
+    () => undefined,
+    (error: { code?: unknown; stderr?: unknown }) => error,
+  );
+  expect(missingFamily).toMatchObject({ code: 1 });
+  expect(
+    JSON.parse(String(missingFamily?.stderr).trim().split("\n").at(-1)!),
+  ).toEqual({
+    code: "missing_bridge_family",
+    families: ["mitmproxy"],
+  });
 });

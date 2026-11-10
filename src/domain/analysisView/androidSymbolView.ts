@@ -1,14 +1,14 @@
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { androidResultSchemas } from "../android/androidAnalysis.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -27,9 +27,9 @@ const PAGE_BYTES = 1024 * 1024;
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
 
-const boundedSummary = (
-  result: UnsignedAnalysisView,
-): Result<UnsignedAnalysisView, AnalysisError> =>
+const boundedSummary = <View extends { readonly parent_evidence_id: string }>(
+  result: View,
+) =>
   jsonValueByteLength(result as unknown as JsonValue, PROJECTION_BYTES) >
   PROJECTION_BYTES
     ? err(
@@ -53,9 +53,10 @@ const boundedSummary = (
 /** Reuse authenticated Android facts without reopening the APK, mapping or engine. */
 export const projectAndroidSymbolSummary = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<SummaryAnalysisView>(admitted, "summary");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -115,7 +116,7 @@ export const projectAndroidSymbolSummary = (
     if (!parsed.ok) return parsed;
     return boundedSummary({
       ...shared,
-      parent_operation: "inspect_android_class",
+      parent_operation: "inspect_android_class" as const,
       summary: parsed.value,
     });
   }
@@ -123,7 +124,7 @@ export const projectAndroidSymbolSummary = (
   if (!parsed.ok) return parsed;
   return boundedSummary({
     ...shared,
-    parent_operation: "inspect_android_method",
+    parent_operation: "inspect_android_method" as const,
     summary: parsed.value,
     unknowns: [
       ...shared.unknowns,

@@ -4,6 +4,11 @@ import type { AnalysisSettingId } from "../domain/analysisSettings.js";
 import { analysisSettingDefinition } from "../domain/analysisSettingDefinitions.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
+import { asarMaxListingBytesSchema } from "./asarListingAdmission.js";
+import {
+  ghidraValueFlowCountSchema,
+  ghidraDecompilePayloadMiBSchema,
+} from "./ghidraValueFlowLimits.js";
 import {
   providerStartupTimeoutSchema,
   ghidraDecompileTimeoutSchema,
@@ -15,6 +20,11 @@ import { parseNativeMatchingAllowance } from "./nativeMatchingAllowance.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
+    REA_ASAR_MAX_LISTING_BYTES: asarMaxListingBytesSchema,
+    REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: ghidraValueFlowCountSchema,
+    REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION: ghidraValueFlowCountSchema,
+    REA_GHIDRA_VALUE_FLOW_MAX_EDGES: ghidraValueFlowCountSchema,
+    REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: ghidraDecompilePayloadMiBSchema,
     REA_GHIDRA_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_HOPPER_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: ghidraDecompileTimeoutSchema,

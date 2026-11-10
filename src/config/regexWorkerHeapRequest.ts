@@ -22,7 +22,7 @@ export const DEFAULT_REGEX_WORKER_HEAP_REQUEST: RegexWorkerHeapRequest = {
   source: "default",
 };
 
-export const regexWorkerHeapRequestConstraint = `${REGEX_WORKER_HEAP_REQUEST_SETTING} must be a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB; the default is ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB. A request below ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB aborts the worker during startup, and a larger value is refused.`;
+const regexWorkerHeapRequestConstraint = `${REGEX_WORKER_HEAP_REQUEST_SETTING} must be a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB; the default is ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB. A request below ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB aborts the worker during startup, and a larger value is refused.`;
 
 /** Optional decimal mebibyte count for the regex worker old-generation request. */
 export const regexWorkerHeapRequestMiBSchema = positiveDecimalIntegerSchema(

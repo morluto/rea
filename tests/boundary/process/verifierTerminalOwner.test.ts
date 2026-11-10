@@ -11,6 +11,7 @@ import {
   type VerifierTerminalResult,
 } from "../../../scripts/lib/owned-verifier-terminal.mjs";
 import { createPackageVerifierCommands } from "../../../scripts/lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import type { VerifierCleanupOwner } from "../../../scripts/lib/verifier-command-owner.mjs";
 import {
   cleanupOwnedProcessGroup,
@@ -20,6 +21,7 @@ import {
 import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 type Outcome<Value> =
   | { readonly ok: true; readonly value: Value }
@@ -42,16 +44,7 @@ const deferred = () => {
 const waitForBoundary = (
   boundary: Promise<void>,
   running: Promise<Outcome<unknown>>,
-) =>
-  Promise.race([
-    boundary,
-    running.then((outcome) => {
-      throw new Error(
-        "Terminal settled before the authored lifecycle boundary",
-        { cause: outcome },
-      );
-    }),
-  ]);
+) => awaitAcknowledgement(boundary, running, "terminal lifecycle", 5_000);
 
 const terminalFixture = async () => {
   const parent = await createTestTempDirectory("rea-verifier-terminal-");
@@ -362,7 +355,7 @@ posix(
     let closeObservation: ReturnType<typeof observeClose> | undefined;
     let closing: Promise<Outcome<void>> | undefined;
     let outcome: Outcome<VerifierTerminalResult> | undefined;
-    try {
+    await withVerifierCleanup(async () => {
       await waitForBoundary(cleanupEntered.promise, running);
       const owner = fixture.adopted[0];
       if (owner === undefined) throw new Error("Terminal was not adopted");
@@ -370,14 +363,16 @@ posix(
       closing = observed(fixture.commands.close());
       await waitForBoundary(closeObservation.entered, closing);
       allowCleanup.resolve();
-      await closing;
+      expect(await closing).toEqual({ ok: true, value: undefined });
       outcome = await running;
-    } finally {
-      allowCleanup.resolve();
-      await fixture.commands.close();
-      await running;
-      closeObservation?.restore();
-    }
+    }, [
+      () => allowCleanup.resolve(),
+      () => fixture.commands.close(),
+      async () => {
+        await running;
+      },
+      () => closeObservation?.restore(),
+    ]);
 
     expect(outcome).toEqual({
       ok: false,
@@ -426,7 +421,7 @@ posix(
     let closeObservation: ReturnType<typeof observeClose> | undefined;
     let closing: Promise<Outcome<void>> | undefined;
     let outcome: Outcome<VerifierTerminalResult> | undefined;
-    try {
+    await withVerifierCleanup(async () => {
       await waitForBoundary(loadEntered.promise, running);
       const owner = fixture.adopted[0];
       if (owner === undefined) throw new Error("Terminal was not adopted");
@@ -434,14 +429,16 @@ posix(
       closing = observed(fixture.commands.close());
       await waitForBoundary(closeObservation.entered, closing);
       allowLoad.resolve();
-      await closing;
+      expect(await closing).toEqual({ ok: true, value: undefined });
       outcome = await running;
-    } finally {
-      allowLoad.resolve();
-      await fixture.commands.close();
-      await running;
-      closeObservation?.restore();
-    }
+    }, [
+      () => allowLoad.resolve(),
+      () => fixture.commands.close(),
+      async () => {
+        await running;
+      },
+      () => closeObservation?.restore(),
+    ]);
 
     expect(outcome).toEqual({
       ok: false,

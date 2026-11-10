@@ -27,7 +27,11 @@ export const registerImportManagedReconstruction = (
         reconstructionContract.name,
         context.mcpReq.signal,
         async () => {
-          const resolved = resolveManagedReconstructionEvidenceInput(input);
+          const resolved = resolveManagedReconstructionEvidenceInput(
+            input,
+            options.session.evidenceForAnalysis.bind(options.session),
+            { signal: context.mcpReq.signal },
+          );
           if (!resolved.ok)
             return server.delivery.toCallToolResult(
               resolved,

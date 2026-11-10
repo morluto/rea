@@ -5,6 +5,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import type { AnalysisInputIssue } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -20,8 +21,18 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
+/** Shortest valid registration request timeout. */
+const MIN_IDA_REQUEST_TIMEOUT_MS = 1;
 /** Node timer ceiling. Larger registration values would be clamped instead of honored. */
 export const MAX_IDA_REQUEST_TIMEOUT_MS = 2_147_483_647;
+/** Loopback names plus the Docker and Podman gateway names for the container's host. */
+const LOCAL_IDA_HTTP_HOSTS: ReadonlySet<string> = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "host.docker.internal",
+  "host.containers.internal",
+]);
 
 const common = {
   sensitive: z
@@ -34,7 +45,7 @@ const common = {
   protocol: z.literal("native").optional(),
   timeoutMs: z
     .int()
-    .positive()
+    .min(MIN_IDA_REQUEST_TIMEOUT_MS)
     .max(MAX_IDA_REQUEST_TIMEOUT_MS)
     .default(DEFAULT_IDA_REQUEST_TIMEOUT_MS),
   workspaceRoot: z
@@ -61,7 +72,7 @@ const registrationSchema = z
           const url = new URL(value);
           return (
             ["http:", "https:"].includes(url.protocol) &&
-            ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+            LOCAL_IDA_HTTP_HOSTS.has(url.hostname) &&
             url.username === "" &&
             url.password === ""
           );
@@ -77,6 +88,17 @@ const registrationSchema = z
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
+
+/** Render only schema-owned constraints, never rejected registration values. */
+const registrationConstraint = (
+  issue: AnalysisInputIssue,
+): string | undefined => {
+  if (issue.path.length === 1 && issue.path[0] === "timeoutMs")
+    return `timeoutMs must be an integer from ${String(MIN_IDA_REQUEST_TIMEOUT_MS)} to ${String(MAX_IDA_REQUEST_TIMEOUT_MS)} milliseconds`;
+  return issue.message === undefined
+    ? undefined
+    : `${issue.path.join(".") || "registration"}: ${issue.message}`;
+};
 
 /** Resolved compatibility facts; persisted identities and diagnostics intentionally differ. */
 export const IDA_COMPATIBILITY_PROFILES = {
@@ -171,21 +193,20 @@ export const readIdaConfiguration = (
       const constraints = projectInputIssues(
         parsed.error.issues,
         registration,
-      ).flatMap((issue) =>
-        issue.message === undefined
-          ? []
-          : [`${issue.path.join(".") || "registration"}: ${issue.message}`],
-      );
+      ).flatMap((issue) => {
+        const constraint = registrationConstraint(issue);
+        return constraint === undefined ? [] : [constraint];
+      });
       if (constraints.length === 0)
         return err(
           idaConfigurationError(
-            "REA_IDA_MCP_CONFIG must contain an IDA MCP command/args or local url registration; see docs/ida-provider.md.",
+            "REA_IDA_MCP_CONFIG must contain an IDA MCP command/args or local url registration; see docs/providers/ida-provider.md.",
             parsed.error,
           ),
         );
       return err(
         new ConfigurationError(
-          `REA_IDA_MCP_CONFIG: ${constraints.join("; ")}. See docs/ida-provider.md.`,
+          `REA_IDA_MCP_CONFIG: ${constraints.join("; ")}. See docs/providers/ida-provider.md.`,
           {
             cause: parsed.error,
             settings: constraints.map((constraint) => ({

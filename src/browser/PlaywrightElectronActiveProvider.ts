@@ -6,7 +6,7 @@ import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { _electron as electron } from "playwright-core";
@@ -155,11 +155,25 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
         throw new BrowserObservationError(OPERATION, "cancelled");
+      const applicationArgs = [
+        "-r",
+        hookPath,
+        paths.application,
+        ...input.args,
+      ];
       const launchOptions: Parameters<typeof electron.launch>[0] = {
         executablePath: paths.executable,
         cwd: paths.root,
-        env: safeElectronEnvironment(this.environment, runId),
-        args: ["-r", hookPath, paths.application, ...input.args],
+        env: {
+          ...safeElectronEnvironment(this.environment, runId),
+          REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
+            length: applicationArgs.length,
+            sha256: createHash("sha256")
+              .update(JSON.stringify(applicationArgs))
+              .digest("hex"),
+          }),
+        },
+        args: applicationArgs,
         timeout: Math.max(1, startupDeadline - performance.now()),
       };
       application = await containLaunchRejections(() => {

@@ -127,6 +127,39 @@ const makeUnknown = (
   };
 };
 
+it("retains only linked cross-target source closure in a target snapshot", () => {
+  const leaf = createEvidence(undefined, provider, {
+    operation: "source_leaf",
+    parameters: {},
+    result: "leaf",
+  });
+  const otherTarget = { ...ANALYSIS_SNAPSHOT_TARGET, sha256: foreignDigest };
+  const source = createEvidence(otherTarget, provider, {
+    operation: "source",
+    parameters: {},
+    result: "source",
+    evidenceLinks: [leaf.evidence_id],
+  });
+  const trace = createEvidence(ANALYSIS_SNAPSHOT_TARGET, provider, {
+    operation: "trace",
+    parameters: {},
+    result: "trace",
+    evidenceLinks: [source.evidence_id, "ev_" + "c".repeat(64)],
+  });
+  const unrelated = createEvidence(otherTarget, provider, {
+    operation: "unrelated",
+    parameters: {},
+    result: "unrelated",
+  });
+  const selected = evidenceBundleForTarget(
+    createEvidenceBundle([trace, source, leaf, unrelated]),
+    targetDigest,
+  );
+  expect(selected).toEqual(createEvidenceBundle([trace, source, leaf]));
+  expect(evidenceBundleForTarget(selected, targetDigest)).toEqual(selected);
+  expect(parseEvidenceBundle(selected)).toEqual(selected);
+});
+
 describe("evidenceBundleForTarget", () => {
   it("retains mutation evidence from other targets for complete revision histories", () => {
     const first = makeUnknown(

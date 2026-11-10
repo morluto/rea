@@ -1,9 +1,14 @@
 /** Runtime policy overrides, separate from target state and launch environment. */
 export interface AnalysisSettingValues {
   readonly "asar.max_header_bytes": number;
+  readonly "asar.max_listing_bytes": number;
+  readonly "ghidra.value_flow_max_operations": number;
+  readonly "ghidra.value_flow_max_inputs_per_operation": number;
+  readonly "ghidra.value_flow_max_edges": number;
   readonly "ghidra.startup_timeout_ms": number;
   readonly "hopper.startup_timeout_ms": number;
   readonly "ghidra.decompile_timeout_seconds": number | null;
+  readonly "ghidra.decompile_max_payload_mib": number | null;
   readonly "jadx.operation_timeout_ms": number;
   readonly "regex.matching_deadline_ms": number;
   readonly "regex.worker_heap_request_mib": number;
@@ -25,7 +30,7 @@ export type AnalysisSettingsReader = () => AnalysisSettingsSnapshot;
 export interface AnalysisSettingLimit {
   readonly setting: AnalysisSettingId;
   readonly effective_value: number | null;
-  readonly unit: "bytes" | "ms" | "seconds" | "MiB";
+  readonly unit: "bytes" | "ms" | "seconds" | "MiB" | "count";
   readonly minimum: number;
   readonly maximum: number;
   readonly source?: "default" | "setting" | "runtime" | "request";
@@ -35,4 +40,20 @@ export interface AnalysisSettingLimit {
   readonly rea_restart_required: false;
   readonly required_value?: number;
   readonly parameter?: string;
+}
+
+/**
+ * The same limit for a caller whose REA runtime ended with one invocation. No
+ * runtime override can reach it; a new invocation reads the launch
+ * environment seed or the per-call argument. The caller can still choose that
+ * value, and no running REA process needs a restart.
+ */
+export interface AnalysisInvocationSettingLimit extends Omit<
+  AnalysisSettingLimit,
+  "applies_at" | "scope"
+> {
+  readonly applies_at: "next_invocation";
+  readonly scope: "rea-invocation";
+  /** Launch-environment seed that a new invocation reads, when one exists. */
+  readonly environment?: string;
 }
