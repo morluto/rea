@@ -39,8 +39,12 @@ budget.
 - When further unique literals are omitted, `completeness.status` is `partial`
   and `endpoint_literal_candidates` names the setting, the effective count, the
   source (`default`, `setting` or `runtime`), the admitted and omitted counts,
-  and the allowed range, with `rea_restart_required: false`. The ceiling does
-  not raise the worker result budget.
+  and the allowed range, with `update_mode: "runtime"` and
+  `pending_restart: false`. A literal whose serialized record, including
+  provenance, does not fit the remaining worker result budget is omitted
+  instead of failing the script. When the effective count is already the
+  maximum, `ceiling` is `maximal`: no accepted setting value reveals the
+  omitted literals. The ceiling does not raise the worker result budget.
 - Read the traversal parent that is already available. Copy the ancestor list
   only after a node is a URL-shaped variable initializer that still needs its
   grandparent.

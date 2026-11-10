@@ -15,13 +15,19 @@ export const analyzeWebBundleFixture = (
     items: [],
   },
   endpointLiterals?: WebBundleEndpointLiteralAdmission,
+  resultBudgetBytes?: number,
 ): WebBundleAnalysis => {
   const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
   return buildCapturedWebBundleAnalysis(
     inspection,
     sourceMaps,
     sourceScripts.map((script) =>
-      analyzeCapturedWebScript(script, undefined, endpointLiterals),
+      analyzeCapturedWebScript(
+        script,
+        undefined,
+        endpointLiterals,
+        resultBudgetBytes,
+      ),
     ),
   );
 };

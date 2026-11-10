@@ -24,7 +24,9 @@ const endpointLiteralCandidatesSchema = z.strictObject({
   default_count: z.number().int().positive(),
   floor_count: z.number().int().positive(),
   maximum_setting_count: z.number().int().positive(),
-  rea_restart_required: z.literal(false),
+  update_mode: z.literal("runtime"),
+  pending_restart: z.literal(false),
+  ceiling: z.enum(["adjustable", "maximal"]),
 });
 
 const observationsSchema = z.strictObject({

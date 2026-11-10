@@ -31,6 +31,7 @@ export interface WebBundleScriptAnalyzer {
     script: IncludedScript,
     precision?: JavaScriptSemanticPrecisionInput,
     endpointLiterals?: import("../domain/webBundleEndpointLiteralBudget.js").WebBundleEndpointLiteralAdmission,
+    resultBudgetBytes?: number,
   ): WebBundleScriptAnalysis;
 }
 
@@ -142,6 +143,7 @@ const analyzeJob = async (
                 maximumCount: request.endpoint_literal_candidates.maximum_count,
                 source: request.endpoint_literal_candidates.source,
               },
+          request.result_budget_bytes,
         ),
       );
     } catch (cause) {

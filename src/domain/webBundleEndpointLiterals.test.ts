@@ -8,6 +8,7 @@ import {
   MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
   WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
+  webBundleEndpointLiteralLimit,
 } from "./webBundleEndpointLiteralBudget.js";
 
 const analyze = (source: string) =>
@@ -160,7 +161,9 @@ fetch("/api/kept");`;
     default_count: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     floor_count: MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     maximum_setting_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
+    ceiling: "adjustable",
   });
   expect(result.completeness.status).toBe("partial");
   expect(result.unknowns).toContainEqual(
@@ -193,7 +196,9 @@ it("records a runtime ceiling on the same structured limit", () => {
     omitted_count: 1,
     maximum_count: 1,
     source: "runtime",
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
+    ceiling: "adjustable",
   });
 });
 
@@ -274,4 +279,73 @@ let other = "https://other.example.test";`;
   ]);
   expect(ancestry.inspectionNodes).toBeGreaterThan(ancestry.snapshots);
   expect(ancestry.snapshots).toBe(2);
+});
+
+it("omits a literal whose serialized record exceeds the remaining result budget", () => {
+  const huge = `/${"a".repeat(50_000)}`;
+  const source = `const routes = ${JSON.stringify([huge, "/api/small"])};
+fetch("/api/kept");`;
+  const result = analyzeWebBundleFixture(
+    createWebPageInspection([
+      {
+        source,
+        scriptKey: `scr_${"b".repeat(64)}`,
+        url: "https://app.example.test/app.js",
+        origin: "https://app.example.test",
+        cdpHash: "hash",
+      },
+    ]),
+    undefined,
+    { maximumCount: 16, source: "runtime" },
+    8_000,
+  );
+  const values = result.inferences
+    .filter(({ kind }) => kind === "endpoint_candidate")
+    .map(({ value }) => value);
+  expect(values).not.toContain(huge);
+  expect(values).toContain("/api/small");
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/api/kept",
+  ]);
+  expect(result.endpoint_literal_candidates).toMatchObject({
+    code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
+    admitted_count: 1,
+    omitted_count: 1,
+    maximum_count: 16,
+    update_mode: "runtime",
+    pending_restart: false,
+    ceiling: "adjustable",
+  });
+  expect(result.completeness.status).toBe("partial");
+});
+
+it("marks the candidate ceiling maximal when it is already at the setting maximum", () => {
+  const maximal = webBundleEndpointLiteralLimit(
+    {
+      maximumCount: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+      source: "setting",
+    },
+    MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    1,
+  );
+  const adjustable = webBundleEndpointLiteralLimit(
+    { maximumCount: 2, source: "runtime" },
+    2,
+    1,
+  );
+  expect(maximal).toMatchObject({
+    maximum_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    maximum_setting_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    admitted_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    omitted_count: 1,
+    ceiling: "maximal",
+    update_mode: "runtime",
+    pending_restart: false,
+  });
+  expect(adjustable).toMatchObject({
+    maximum_count: 2,
+    omitted_count: 1,
+    ceiling: "adjustable",
+    pending_restart: false,
+  });
 });

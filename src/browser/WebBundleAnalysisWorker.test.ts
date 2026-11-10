@@ -57,7 +57,7 @@ const sourceWorkerProgram = (
 ): string => `
   const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(new URL("./WebBundleAnalysisWorkerServer.ts", import.meta.url).href)});
   const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
-  const analyze = (script, _precision, endpointLiterals) => {
+  const analyze = (script, _precision, endpointLiterals, resultBudgetBytes) => {
     if (${JSON.stringify(hangMarker)} !== undefined && script.source.artifact.text === ${JSON.stringify(hangMarker)}) {
       for (;;) {}
     }
@@ -67,7 +67,7 @@ const sourceWorkerProgram = (
     }
     if (${JSON.stringify(stderrMarker)} !== undefined)
       process.stderr.write(${JSON.stringify(stderrMarker)} + "\\n");
-    return analyzeCapturedWebScript(script, undefined, endpointLiterals);
+    return analyzeCapturedWebScript(script, undefined, endpointLiterals, resultBudgetBytes);
   };
   await serveWebBundleAnalysisWorker(analyze);
 `;
@@ -350,7 +350,9 @@ it("applies the literal-candidate ceiling sent with that script", async () => {
       source: "runtime",
       admitted_count: 1,
       omitted_count: 1,
-      rea_restart_required: false,
+      update_mode: "runtime",
+      pending_restart: false,
+      ceiling: "adjustable",
     });
   } finally {
     await worker.close();

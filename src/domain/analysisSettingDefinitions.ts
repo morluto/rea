@@ -43,7 +43,6 @@ import {
   DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
-  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
 } from "./webBundleEndpointLiteralBudget.js";
 interface SettingDefinition {
   readonly environment?: string;
@@ -322,7 +321,8 @@ export const ANALYSIS_SETTINGS = {
     operations: ["match_native_functions"],
   },
   "web.bundle_endpoint_literal_candidates": {
-    environment: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+    updateMode: "runtime",
+    environment: "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
     defaultValue: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     minimum: MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     maximum: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,

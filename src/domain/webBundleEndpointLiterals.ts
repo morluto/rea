@@ -6,6 +6,19 @@ export interface WebBundleEndpointLiteral {
   readonly detector: "literal:path-shaped" | "literal:url-shaped";
 }
 
+const LITERAL_DETECTORS: ReadonlySet<string> = new Set([
+  "literal:path-shaped",
+  "literal:url-shaped",
+]);
+
+/** Count and byte ceilings apply only to path/URL literals, not other inferences. */
+export const isLiteralEndpointCandidate = (candidate: {
+  readonly kind: string;
+  readonly basis: readonly { readonly detector: string }[];
+}): boolean =>
+  candidate.kind === "endpoint_candidate" &&
+  candidate.basis.some((item) => LITERAL_DETECTORS.has(item.detector));
+
 /** A discovery heuristic, not proof that a literal is used for networking. */
 export const webBundleEndpointLiteral = (
   node: t.Node | null | undefined,

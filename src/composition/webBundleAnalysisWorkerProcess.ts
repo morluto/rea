@@ -15,9 +15,15 @@ const analyze: WebBundleScriptAnalyzer = (
   script,
   precision,
   endpointLiterals,
+  resultBudgetBytes,
 ) => {
   const admission = endpointLiterals ?? launchAdmissionOrThrow();
-  return analyzeCapturedWebScript(script, precision, admission);
+  return analyzeCapturedWebScript(
+    script,
+    precision,
+    admission,
+    resultBudgetBytes,
+  );
 };
 
 const launchAdmissionOrThrow = (): WebBundleEndpointLiteralAdmission => {
