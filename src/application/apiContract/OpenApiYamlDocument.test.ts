@@ -495,6 +495,43 @@ it("refuses an integer key the parser has already rounded", async () => {
   });
 });
 
+it("refuses a quoted integer key an explicit tag still compiles to a number", async () => {
+  const unsafe = await importText(
+    "tagged-integer-key.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  /pets:",
+      "    additionalOperations:",
+      '      !!int "9007199254740993": {get: {operationId: rounded}}',
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  // The node type is `QUOTE_DOUBLE`, but the explicit tag resolves the scalar
+  // to the rounded number, so the projected member name is not the source key.
+  expect(contractError(unsafe)).toContain(
+    "numeric mapping key the parser cannot project exactly",
+  );
+});
+
+it("keeps a quoted key an explicit tag resolves to a string", async () => {
+  const exact = await importText(
+    "tagged-string-key.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  /pets:",
+      "    additionalOperations:",
+      '      !!str "9007199254740993": {get: {operationId: exact}}',
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  // The tag resolves the quoted text to itself, which is the member name.
+  expect(exact.ok).toBe(true);
+});
+
 it("returns a typed refusal for nesting deeper than the decoder's own stack", async () => {
   const depth = 2000;
   const nested = `openapi: "3.0.4"\npaths: ${"[".repeat(depth)}1${"]".repeat(depth)}\n`;

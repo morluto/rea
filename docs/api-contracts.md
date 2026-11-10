@@ -14,7 +14,12 @@ authorized runtime behavior. AsyncAPI, callbacks/webhooks, schema graphs,
 contract diffs and traffic correlation are outside this version.
 
 YAML is composed into the same JSON-compatible shape before inventory, so
-anchors, aliases, tags and comments change nothing in the reported facts.
+anchors, aliases, recognised tags and comments change nothing in the reported
+facts. A local tag the parser cannot resolve (for example `!custom`) is refused
+with an `AnalysisInputError` instead of being inventoried: the tag may define
+the value's meaning, so composing the document without it would report facts
+the author did not write. Remove the tag or use a recognised one to inventory
+the document.
 Unlike JSON, a repeated mapping key is rejected instead of resolving
 last-value-wins: YAML composition cannot express which declaration the author
 meant. `source_coverage.duplicate_json_members` records `last-value-wins` for

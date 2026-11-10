@@ -279,10 +279,14 @@ export const decodeOpenApiYaml = (
       // The name has to match `toJS`'s own projection (`stringifyKey`): a null
       // key becomes the empty member name, not `"null"`, so an unquoted `null`
       // and a quoted `"null"` are distinct members. The parser has already
-      // resolved the plain scalar to a JavaScript number, so any key whose
-      // compiled value does not round-trip to the member name it projects
-      // would name a member the source never wrote. Quoted scalars are strings,
-      // and that is already the member name, so only plain scalars are checked.
+      // resolved the scalar to a JavaScript number, so any key whose compiled
+      // value does not round-trip to the member name it projects would name a
+      // member the source never wrote.
+      //
+      // The node type cannot decide this: an explicit `!!int "9007199254740993"`
+      // is tagged `QUOTE_DOUBLE` yet still compiles to the rounded number, so
+      // the check is on the resolved value and its source text, not on PLAIN.
+      // A quoted string keeps its exact text, so it round-trips and passes.
       const scalar: {
         readonly value: unknown;
         readonly type?: string | undefined;
@@ -290,7 +294,6 @@ export const decodeOpenApiYaml = (
       } = resolved;
       if (
         typeof scalar.value === "number" &&
-        scalar.type === "PLAIN" &&
         scalar.source !== undefined &&
         String(scalar.value) !== scalar.source
       )
