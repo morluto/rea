@@ -274,7 +274,7 @@ export const registerAdbCommands = (
     description: "Find installed packages by case-insensitive name substring",
     args: z.object({
       serial,
-      query: z.string().min(2).describe("Package-name substring to find"),
+      query: z.string().min(2).max(256).describe("Package-name substring to find"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", {
