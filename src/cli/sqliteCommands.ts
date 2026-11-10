@@ -1,4 +1,8 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { resolve } from "node:path";
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -21,7 +25,7 @@ export const registerSqliteCommands = (
     description:
       "Inspect SQLite schema and optional ordinary-table rows from a local snapshot",
     args: z.object({
-      path: z.string().describe("Local SQLite database snapshot"),
+      path: localPath.describe("Local SQLite database snapshot"),
     }),
     options: z.object({
       table: z
