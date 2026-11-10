@@ -1,27 +1,32 @@
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { runDoctor } from "./Doctor.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
 import { FakeSetupHost } from "./Setup.fixture.js";
 import { readClientRegistrationStatuses } from "./ClientRegistrationStatus.js";
 import { discoverSetupState } from "./SetupPlan.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../tests/support/workspace/workspaceFixture.js";
 
 it.skipIf(process.platform === "win32")(
   "retains doctor ownership observations when a launcher alias becomes unavailable before discovery",
   async () => {
-    const home = await createTestTempDirectory("rea-plan-command-identity-");
+    const workspace = await createTestWorkspace("rea-plan-command-identity-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const home = workspace.path(".");
     const entrypoint = CURRENT_ENTRYPOINT_PATH;
     if (entrypoint === undefined)
       throw new Error("Missing current REA entrypoint");
-    const alias = join(home, "alias.mjs");
+    const alias = workspace.path("alias.mjs");
     await symlink(entrypoint, alias);
-    await mkdir(join(home, ".cursor"));
+    await mkdir(workspace.path(".cursor"));
+    const configPath = workspace.path(".cursor", "mcp.json");
     await writeFile(
-      join(home, ".cursor", "mcp.json"),
+      configPath,
       JSON.stringify({
         mcpServers: {
           rea: { command: process.execPath, args: [alias, "mcp"] },
@@ -47,9 +52,7 @@ it.skipIf(process.platform === "win32")(
     ]);
     await rm(alias);
     const host = new FakeSetupHost();
-    host.clients = [
-      { name: "cursor", configPath: join(home, ".cursor", "mcp.json") },
-    ];
+    host.clients = [{ name: "cursor", configPath }];
     const discovery = await discoverSetupState({
       host,
       providerConfigured: true,
@@ -89,9 +92,11 @@ it.each([
 ] as const)(
   "keeps $identity launcher ownership separate from $state readiness",
   async ({ settings, launcher, state, identity, status }) => {
-    const home = await createTestTempDirectory("rea-plan-readiness-identity-");
-    const configPath = join(home, ".cursor", "mcp.json");
-    await mkdir(join(home, ".cursor"));
+    const workspace = await createTestWorkspace("rea-plan-readiness-identity-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const home = workspace.path(".");
+    const configPath = workspace.path(".cursor", "mcp.json");
+    await mkdir(workspace.path(".cursor"));
     await writeFile(
       configPath,
       JSON.stringify({ mcpServers: { rea: { ...launcher, ...settings } } }),
@@ -127,11 +132,14 @@ it.each([
 );
 
 it("offers detected missing and manual clients without treating absent launcher identity as unknown readiness", async () => {
-  const home = await createTestTempDirectory("rea-plan-absent-launcher-");
-  const configPath = join(home, ".cursor", "mcp.json");
-  await mkdir(join(home, ".cursor"));
+  const workspace = await createTestWorkspace("rea-plan-absent-launcher-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const home = workspace.path(".");
+  const configPath = workspace.path(".cursor", "mcp.json");
+  await mkdir(workspace.path(".cursor"));
   await writeFile(configPath, JSON.stringify({ mcpServers: {} }));
-  await mkdir(join(home, ".grokbot"));
+  const grokbotPath = workspace.path(".grokbot");
+  await mkdir(grokbotPath);
   const registrations = await readClientRegistrationStatuses(home, undefined, {
     environment: {},
   });
@@ -156,7 +164,7 @@ it("offers detected missing and manual clients without treating absent launcher 
     { name: "cursor", configPath },
     {
       name: "grok_bot",
-      configPath: join(home, ".grokbot"),
+      configPath: grokbotPath,
       format: "unsupported",
     },
   ];
