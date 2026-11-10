@@ -5,6 +5,8 @@ import { inspectBinaryHardeningInputSchema } from "../domain/native/binaryHarden
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
+import { producerLimitsOption } from "./producerLimitsOption.js";
+import { pwntoolsProducerLimitsSchema } from "../domain/native/pwntoolsResourceLimits.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -272,6 +274,12 @@ export const registerBinaryDiagnosticsCommands = (
       maxEntries: cliDecimalField(
         inspectKernelModuleInputSchema.shape.max_entries,
       ),
+      maxModinfoKeyBytes: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_modinfo_key_bytes,
+      ),
+      maxModinfoValueBytes: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_modinfo_value_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -288,6 +296,8 @@ export const registerBinaryDiagnosticsCommands = (
                     path: absoluteCallerPath(args.path),
                     max_file_bytes: options.maxFileBytes,
                     max_entries: options.maxEntries,
+                    max_modinfo_key_bytes: options.maxModinfoKeyBytes,
+                    max_modinfo_value_bytes: options.maxModinfoValueBytes,
                   },
                   { signal },
                 ),
@@ -745,6 +755,7 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
+      producerLimits: producerLimitsOption(pwntoolsProducerLimitsSchema),
       pwntoolsTimeoutMs: cliDecimalField(
         inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
       ),
@@ -755,6 +766,9 @@ export const registerBinaryDiagnosticsCommands = (
           const result = await service.inspectAndClose(
             {
               path: absoluteCallerPath(args.path),
+              ...(options.producerLimits === undefined
+                ? {}
+                : { producer_limits: options.producerLimits }),
               ...(options.pwntoolsTimeoutMs === undefined
                 ? {}
                 : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
@@ -777,6 +791,7 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
+      producerLimits: producerLimitsOption(pwntoolsProducerLimitsSchema),
       debuggerContext: z
         .boolean()
         .default(false)
@@ -792,6 +807,9 @@ export const registerBinaryDiagnosticsCommands = (
             {
               path: absoluteCallerPath(args.path),
               include_debugger_context: options.debuggerContext,
+              ...(options.producerLimits === undefined
+                ? {}
+                : { producer_limits: options.producerLimits }),
               ...(options.pwntoolsTimeoutMs === undefined
                 ? {}
                 : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),

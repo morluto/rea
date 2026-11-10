@@ -13,9 +13,15 @@ import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { analysisDetailSchema } from "./analysisDetail.js";
+import { artifactReaderLimitsInputSchema } from "../domain/artifactReaderLimits.js";
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.strictObject({
   integrity_policy: artifactIntegrityPolicySchema,
+  artifact_limits: artifactReaderLimitsInputSchema
+    .exactOptional()
+    .describe(
+      "Per-call Bun, .NET bundle, Node SEA and Godot producer admission, plus optional aggregate expanded plaintext work. Omitted fields retain existing defaults; changes apply on the next call without restart. Independent of summary/paging and MCP response limits.",
+    ),
 });
 
 /** Delivery selection belongs to the adapter, not the inventory producer. */
@@ -31,6 +37,7 @@ export const artifactInspectionInputSchema =
 
 /** Omitted selection preserves complete extraction of the active reader. */
 export const artifactExtractionInputSchema = z.strictObject({
+  artifact_limits: artifactInventoryInputSchema.shape.artifact_limits,
   integrity_policy: artifactIntegrityPolicySchema,
   output_root: absoluteLocalPathStringSchema
     .exactOptional()

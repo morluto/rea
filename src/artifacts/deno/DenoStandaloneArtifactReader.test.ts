@@ -34,6 +34,38 @@ import {
   machOWithSegment,
 } from "./DenoStandalone.fixture.js";
 import { MAX_DENO_PATH_COMPONENT_BYTES } from "./DenoVirtualFs.js";
+import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
+
+it("keeps a confirmed Deno inventory when another pack recognizer is limited", async () => {
+  const original = denoElf();
+  // Add a valid empty section table without changing the existing PT_NOTE.
+  const bytes = Buffer.concat([original, Buffer.alloc(3 * 64)]);
+  bytes.writeBigUInt64LE(BigInt(original.length), 40);
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt16LE(3, 60);
+  bytes.writeUInt16LE(0, 62);
+  const path = await writeCarrier("deno-with-sections", bytes);
+  const inventory = await scanCanonicalArtifactInventory(path, {
+    readerLimits: resolveArtifactReaderLimits({
+      bun: { recognition_table_bytes: 191 },
+    }),
+  });
+  expect(inventory.manifest).toMatchObject({
+    root_format: "deno-standalone",
+    root_sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  expect(inventory.limitations).toContainEqual(
+    expect.stringContaining("Bun graph recognition remains unknown:"),
+  );
+  expect(inventory.limitations).toContainEqual(
+    expect.stringContaining(
+      "artifact_limits.bun.recognition_table_bytes (191 bytes)",
+    ),
+  );
+  expect(inventory.occurrences[0]?.limitations).toContainEqual(
+    expect.stringContaining("Bun graph recognition remains unknown:"),
+  );
+});
 
 const secret = "super-secret-value";
 
