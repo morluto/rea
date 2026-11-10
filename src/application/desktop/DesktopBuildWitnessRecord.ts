@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
+import { isScreenTask } from "../../domain/desktop/appTaskScreen.js";
 import type {
   WitnessStage,
   WitnessStageRecord,
@@ -213,6 +214,38 @@ const logLimitations = (
     : []),
 ];
 
+/** Which stages graded files that had not settled by the bound, and which of them had a read cut there. */
+const unsettledLimitation = (
+  stages: readonly WitnessStageRecord[],
+): string[] => {
+  const named = (cut: boolean) =>
+    stages.flatMap(({ stage, settled, read_cut }) =>
+      settled || (cut && !read_cut) ? [] : [stage],
+    );
+  const [unsettled, cut] = [named(false), named(true)];
+  return [
+    ...(unsettled.length === 0
+      ? []
+      : [
+          `The app's files had not held for the settle window by its bound when these stages were checked, so each graded its last completed read, with settled false: ${unsettled.join(", ")}.`,
+        ]),
+    ...(cut.length === 0
+      ? []
+      : [
+          `A read still running at the settle bound was cut, with read_cut true, in: ${cut.join(", ")}.`,
+        ]),
+  ];
+};
+
+/** How the witness reached its check results, by the kind of task. */
+const howChecked = (task: DesktopTask): string => {
+  if (isScreenTask(task))
+    return "Checks took a screenshot of the computer and ran the bundle's own verifier as its judge, with the agentenv runner's Python and model endpoint, three votes a question; the judge sent each screenshot and the build's two examples to that model.";
+  return task.readers === undefined
+    ? "Checks read the app's data/get views with REA's evaluator, as the exported verifier does; the verifier itself did not run."
+    : "Checks read the app's data/get views and the task's readers' views, the readers run in the computer through computer-exec/v1, with REA's evaluator, as the exported verifier does; the verifier itself did not run.";
+};
+
 /** How a witness write ended: saved, retryable, or published with cleanup still open. */
 export type WitnessWrite =
   | { readonly kind: "saved"; readonly record: WitnessRecord }
@@ -239,8 +272,16 @@ export const writeWitnessRecord = async (
   computer: RecordedComputer,
   witness: EndedWitness,
   log: Pick<ReadonlyActionLog, "entries" | "dropped">,
-  signal: AbortSignal,
-  pendingManifest?: RecordingManifest,
+  {
+    signal,
+    redact = (value) => value,
+    pendingManifest,
+  }: {
+    readonly signal: AbortSignal;
+    /** Puts each known secret's handle in place of its value in what the record holds. */
+    readonly redact?: (value: JsonValue) => JsonValue;
+    readonly pendingManifest?: RecordingManifest | undefined;
+  },
 ): Promise<WitnessWrite> => {
   const actions = log.entries.map(
     ({ truncated_arguments: cut, ...entry }): RecordedAction =>
@@ -264,7 +305,7 @@ export const writeWitnessRecord = async (
     };
   const { recording, segments } = fetched;
   const failed = witness.stages.find((stage) => !stage.held);
-  const result = {
+  const recorded = {
     verdict: failed === undefined ? ("held" as const) : ("failed" as const),
     failed_stage: failed?.stage ?? null,
     task: { name: witness.task.name, sha256: witness.digest },
@@ -273,19 +314,24 @@ export const writeWitnessRecord = async (
     actions_dropped: dropped,
     recording,
   };
+  // Redacting keeps every string a string, so the record keeps its shape.
+  const result = redact(
+    recorded as unknown as JsonValue,
+  ) as unknown as typeof recorded;
   const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-build-witness",
     operation: CHECK,
-    parameters: { task: witness.task.name, stages: witness.stages.length },
+    parameters: { task: result.task.name, stages: witness.stages.length },
     result: result as unknown as JsonValue,
     confidence: "observed",
     authority: "controlled-replay",
     limitations: [
-      "Checks read the app's data/get views with REA's evaluator, as the exported verifier does; the verifier itself did not run.",
+      howChecked(witness.task),
       ...("error" in recording
         ? [`The recording is missing: ${recording.error}`]
         : []),
       ...logLimitations(actions, dropped),
+      ...unsettledLimitation(result.stages),
     ],
   });
   const files = [

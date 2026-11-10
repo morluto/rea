@@ -5,6 +5,11 @@ import type {
   UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import { manualRegistrationRemediation } from "./SupportedClients.js";
+import { isDesktopBuildInformationalCheck } from "./DesktopBuildDoctor.js";
+import {
+  DESKTOP_BUILD_PROVIDER_ID,
+  isDesktopBuildCheck,
+} from "./DoctorProviderIds.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
@@ -79,7 +84,9 @@ export const scopeDoctorChecks = (
     ? [selectedSkillCheck(input.skillState, input.checks)]
     : [];
   const selectedProviderChecks = input.scope.providers.flatMap((providerId) =>
-    selectedProviderChecksFor(providerId, providerChecks, input.providers),
+    providerId === DESKTOP_BUILD_PROVIDER_ID
+      ? requiredDesktopBuildChecks(input.checks)
+      : selectedProviderChecksFor(providerId, providerChecks, input.providers),
   );
   const hopperHostChecks = input.scope.providers.includes("hopper")
     ? input.checks.filter(({ name }) => name === "host")
@@ -183,6 +190,27 @@ const selectedProviderChecksFor = (
       remediation: `Configure the ${providerId} provider, then rerun rea doctor.`,
     },
   ];
+};
+
+/** Informational desktop build checks stay outside the scope that decides health. */
+const requiredDesktopBuildChecks = (
+  checks: readonly DoctorCheck[],
+): readonly DoctorCheck[] => {
+  const required = checks.filter(
+    ({ name }) =>
+      isDesktopBuildCheck(name) && !isDesktopBuildInformationalCheck(name),
+  );
+  return required.length > 0
+    ? required
+    : [
+        {
+          name: `provider:${DESKTOP_BUILD_PROVIDER_ID}`,
+          ok: false,
+          classification: "unknown",
+          detail: "This doctor host does not check desktop build hosts.",
+          remediation: "Run rea doctor --provider desktop_build from the CLI.",
+        },
+      ];
 };
 
 const selectedRegistrationCheck = (

@@ -16,7 +16,11 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Native binary investigation](guides/native/native-investigation.md)
 - [Go binary build metadata](guides/native/go-binaries.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
+- [ELF and Mach-O initializer functions](guides/native/native-initializers.md)
+- [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
+- [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
+- [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 
 ## JavaScript and Electron
 
@@ -27,6 +31,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Passive Node and Electron runtime observation](guides/javascript/javascript-runtime-observation.md)
 - [JavaScript static/runtime reconciliation](guides/javascript/javascript-runtime-reconciliation.md)
 - [Electron file-page observation](guides/javascript/electron-observation.md)
+- [V8 code cache inspection](guides/javascript/v8-code-cache.md)
 
 ## Browser and captured websites
 
@@ -143,6 +148,7 @@ the exact commit messages and references from the release they describe.
 
 - [Offline API contract inventory](api-contracts.md)
 - [Bun standalone executables](bun-standalone.md)
+- [Deno compile executables](deno-standalone.md)
 - [Capability composition and ownership](capability-composition.md)
 - [.NET single-file bundles](dotnet-bundles.md)
 - [ESP flash images](esp-flash-image.md)

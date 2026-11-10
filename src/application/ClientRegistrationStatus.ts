@@ -40,6 +40,7 @@ import {
   recordedProviderSettings,
 } from "./ClientRegistrationEnvironment.js";
 import type {
+  OwnedProviderSetting,
   ProviderRequestBudgetResolver,
   RecordedProviderSettings,
 } from "./ClientRegistrationEnvironment.js";
@@ -110,6 +111,14 @@ interface ClientRegistrationReadOptions {
   readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
   /** Settings to compare with each registration's file; omitted skips that read. */
   readonly providerSettings?: Readonly<Record<string, string>>;
+  /** Which recorded provider settings hold a value the caller owns. */
+  readonly ownedProviderSetting?: OwnedProviderSetting;
+  /** Inspect selected resolved settings without returning their values in status. */
+  readonly observeProviderSetting?: (
+    client: string,
+    name: string,
+    value: string,
+  ) => void;
 }
 
 /** Registration facts shared by diagnostics and update maintenance. */
@@ -283,6 +292,7 @@ export const readClientRegistrationInspections = async (
         compactInputSchemaByDefault(client) || client.name === "codex"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
+              client.name,
               {},
               "effective",
               client.name === "kimi" || client.name === "codex"
@@ -379,8 +389,14 @@ export const readClientRegistrationInspections = async (
             ? undefined
             : recordedProviderSettings(
                 parsed,
+                client.name,
                 options.providerSettings,
                 options.platform,
+                options.ownedProviderSetting,
+                options.observeProviderSetting === undefined
+                  ? undefined
+                  : (name, value) =>
+                      options.observeProviderSetting!(client.name, name, value),
               ),
         ),
         activation,

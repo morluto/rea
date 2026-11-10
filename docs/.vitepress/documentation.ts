@@ -44,9 +44,29 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF and Mach-O initializer functions",
+        source: "guides/native/native-initializers.md",
+        route: "/native-initializers",
+      },
+      {
+        text: "ELF unwind function ranges",
+        source: "guides/native/elf-unwind-ranges.md",
+        route: "/elf-unwind-ranges",
+      },
+      {
+        text: "Linux kernel build config",
+        source: "guides/native/kernel-build-config.md",
+        route: "/kernel-build-config",
+      },
+      {
         text: "Recorded crash evidence",
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
+      },
+      {
+        text: "Windows Shell Link shortcuts",
+        source: "guides/native/windows-shortcut.md",
+        route: "/windows-shortcut",
       },
     ],
   },
@@ -87,6 +107,11 @@ export const documentationSections = [
         text: "Electron file-page observation",
         source: "guides/javascript/electron-observation.md",
         route: "/electron-observation",
+      },
+      {
+        text: "V8 code cache inspection",
+        source: "guides/javascript/v8-code-cache.md",
+        route: "/v8-code-cache",
       },
     ],
   },
@@ -397,6 +422,11 @@ export const documentationSections = [
         text: "Bun standalone executables",
         source: "bun-standalone.md",
         route: "/bun-standalone",
+      },
+      {
+        text: "Deno compile executables",
+        source: "deno-standalone.md",
+        route: "/deno-standalone",
       },
       {
         text: "Capability composition and ownership",

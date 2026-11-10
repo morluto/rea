@@ -1,4 +1,4 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -194,10 +194,363 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   });
 });
 
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication desktop file ids",
+  () => {
+    it("resolves a nested entry by its desktop file id before a lower-priority flat one", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      await mkdir(join(home, ".local/share/applications/vendor"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(
+          home,
+          ".local/share/applications/vendor/org.example.nested.desktop",
+        ),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app --high\n",
+      );
+      // The spec's id for the nested entry above, installed at lower priority.
+      await writeFile(
+        join(share, "applications/vendor-org.example.nested.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app --low\n",
+      );
+
+      const inventory = await inventoryOf("vendor-org.example.nested", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "vendor-org.example.nested",
+        name: "High",
+      });
+      expect(inventory.argv).toEqual(["notes-app", "--high"]);
+    });
+
+    it("resolves an id whose directory name itself contains a dash", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(home, ".local/share/applications/org.example");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "my-app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Dashed\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("org.example-my-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "org.example-my-app",
+        name: "Dashed",
+      });
+    });
+
+    it("refuses a lower-priority entry when an applicable path cannot be probed", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      const applications = join(home, ".local/share/applications");
+      const vendor = join(applications, "vendor");
+      await mkdir(vendor, { recursive: true });
+      await writeFile(
+        join(vendor, "org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app --high\n",
+      );
+      await writeFile(
+        join(share, "applications/vendor-org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app --low\n",
+      );
+      // The exact higher-priority path cannot be examined without directory
+      // traversal permission; it must remain unknown rather than absent.
+      await chmod(vendor, 0o000);
+
+      try {
+        const inspected = await inspectLinuxApplication({
+          desktopEntry: "vendor-org.example.app",
+          executable: undefined,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+
+        // Root ignores the mode bits, so the directory stays listable and the
+        // scenario this asserts cannot be built.
+        if (inspected.ok) expect(process.getuid?.()).toBe(0);
+        else
+          expect(inspected.error.reason).toBe(
+            "desktop_entry_search_incomplete",
+          );
+      } finally {
+        await chmod(vendor, 0o755);
+      }
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "unresolved desktop entry link targets",
+  () => {
+    it
+      .skipIf(process.getuid?.() === 0)
+      .each(["directory", "flat-file", "nested-file"] as const)(
+      "refuses a lower-priority entry when a %s link target cannot be examined",
+      async (kind) => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        const blocked = join(home, "blocked");
+        const target = join(blocked, "vendor");
+        await mkdir(target, { recursive: true });
+        await mkdir(applications, { recursive: true });
+        await writeFile(
+          join(target, "app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+        );
+        await writeFile(
+          join(environment.XDG_DATA_DIRS, "applications/vendor-app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+        );
+        let link: string;
+        if (kind === "directory") {
+          link = join(applications, "vendor");
+          await symlink(target, link);
+        } else {
+          if (kind === "nested-file") await mkdir(join(applications, "vendor"));
+          link = join(
+            applications,
+            kind === "flat-file" ? "vendor-app.desktop" : "vendor/app.desktop",
+          );
+          await symlink(join(target, "app.desktop"), link);
+        }
+        await chmod(blocked, 0o000);
+        try {
+          const probe = await stat(link).then(
+            () => undefined,
+            (cause: unknown) => cause,
+          );
+          expect(probe).toMatchObject({ code: "EACCES" });
+          const result = await inspectLinuxApplication({
+            desktopEntry: "vendor-app",
+            executable: undefined,
+            arguments: [],
+            environment,
+            home,
+            callerDirectory: home,
+          });
+          expect(result).toMatchObject({
+            ok: false,
+            error: { reason: "desktop_entry_search_incomplete" },
+          });
+        } finally {
+          await chmod(blocked, 0o755);
+        }
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "remaining desktop file id controls",
+  () => {
+    it("ignores an unreadable sibling that cannot encode the requested ID", async () => {
+      const { home, environment } = await fixture();
+      const applications = join(home, ".local/share/applications");
+      const found = join(applications, "zz-vendor");
+      const unreadable = join(applications, "aa-vendor");
+      await mkdir(found, { recursive: true });
+      await mkdir(unreadable, { recursive: true });
+      await writeFile(
+        join(found, "org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+      );
+      await chmod(unreadable, 0o000);
+
+      try {
+        const inventory = await inventoryOf("zz-vendor-org.example.app", {
+          home,
+          environment,
+        });
+
+        // This sibling cannot encode the requested ID and is irrelevant to
+        // selecting the known matching path.
+        expect(inventory.desktop_entry).toMatchObject({
+          id: "zz-vendor-org.example.app",
+          name: "High",
+        });
+      } finally {
+        await chmod(unreadable, 0o755);
+      }
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "finds a same-root spelling after an applicable probe fails",
+      async () => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        const blocked = join(home, "blocked");
+        await mkdir(join(blocked, "aa"), { recursive: true });
+        await mkdir(join(applications, "aa-bb"), { recursive: true });
+        await symlink(join(blocked, "aa"), join(applications, "aa"));
+        await writeFile(
+          join(applications, "aa-bb/app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=Matched\nExec=notes-app\n",
+        );
+        await chmod(blocked, 0o000);
+        try {
+          await expect(stat(join(applications, "aa"))).rejects.toMatchObject({
+            code: "EACCES",
+          });
+          const inventory = await inventoryOf("aa-bb-app", {
+            home,
+            environment,
+          });
+          expect(inventory.desktop_entry).toMatchObject({
+            id: "aa-bb-app",
+            name: "Matched",
+          });
+        } finally {
+          await chmod(blocked, 0o755);
+        }
+      },
+    );
+
+    it.each(["plain", "vendor-app", "loop-vendor-app"])(
+      "ignores unrelated directory-link cycles when resolving %s in a later root",
+      async (id) => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        await mkdir(applications, { recursive: true });
+        await symlink(".", join(applications, "loop"));
+        await writeFile(
+          join(environment.XDG_DATA_DIRS, "applications", id + ".desktop"),
+          "[Desktop Entry]\nType=Application\nName=Selected\nExec=notes-app\n",
+        );
+        const inventory = await inventoryOf(id, { home, environment });
+        expect(inventory.desktop_entry).toMatchObject({ id, name: "Selected" });
+      },
+    );
+
+    it("keeps an applicable path beyond the depth allowance unresolved", async () => {
+      const { home, environment } = await fixture();
+      const applications = join(home, ".local/share/applications");
+      const directory = join(applications, "one/two/three/four/five");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+      );
+      const id = "one-two-three-four-five-app";
+      await writeFile(
+        join(environment.XDG_DATA_DIRS, "applications", id + ".desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+      );
+      const result = await inspectLinuxApplication({
+        desktopEntry: id,
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_search_incomplete" },
+      });
+    });
+
+    it("searches a directory whose own name ends in .desktop", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(home, ".local/share/applications/vendor.desktop");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Nested\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("vendor.desktop-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "vendor.desktop-app",
+        name: "Nested",
+      });
+    });
+
+    it("keeps a dash inside a directory name, not only inside the file name", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(
+        home,
+        ".local/share/applications/org.example-tools",
+      );
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "my-app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Both\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("org.example-tools-my-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "org.example-tools-my-app",
+        name: "Both",
+      });
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication incomplete desktop file searches",
+  () => {
+    it("ignores deep trees that cannot encode the requested desktop ID", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      const applications = join(home, ".local/share/applications");
+      // An unrelated deep tree cannot change the requested ID's applicability.
+      for (let index = 0; index < 6; index += 1)
+        await mkdir(
+          join(applications, ...Array<string>(index + 1).fill("deep")),
+          { recursive: true },
+        );
+      await writeFile(
+        join(share, "applications/buried-org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+      );
+
+      const inspected = await inspectLinuxApplication({
+        desktopEntry: "buried-org.example.app",
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+
+      expect(inspected).toMatchObject({
+        ok: true,
+        value: {
+          inventory: {
+            desktop_entry: { id: "buried-org.example.app", name: "Low" },
+          },
+        },
+      });
+    });
+  },
+);
+
 /** The inventory of an installed desktop entry, launched with no arguments. */
 const inventoryOf = async (
   desktopEntry: string,
-  { home, environment }: Awaited<ReturnType<typeof fixture>>,
+  {
+    home,
+    environment,
+  }: Pick<Awaited<ReturnType<typeof fixture>>, "home" | "environment">,
 ) => {
   const inspected = await inspectLinuxApplication({
     desktopEntry,
@@ -351,6 +704,25 @@ describe.skipIf(process.platform === "win32")(
       );
       expect(paths).not.toContain(join(home, ".notesy"));
       expect(paths).not.toContain(join(home, ".other.ini"));
+    });
+
+    it("adds KDE's ~/.config/<name>rc, which the application may first write during the capture", async () => {
+      const installed = await fixture();
+      const { home } = installed;
+      await mkdir(join(home, ".config"), { recursive: true });
+      await writeFile(join(home, ".config/org.example.notesrc"), "x\n");
+
+      const inventory = await inventoryOf("org.example.notes", installed);
+
+      expect(inventory.state_directories).toEqual(
+        expect.arrayContaining([
+          { path: join(home, ".config/notesrc"), exists_at_start: false },
+          {
+            path: join(home, ".config/org.example.notesrc"),
+            exists_at_start: true,
+          },
+        ]),
+      );
     });
   },
 );

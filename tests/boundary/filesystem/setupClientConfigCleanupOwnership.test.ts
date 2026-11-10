@@ -752,7 +752,7 @@ describe("setup client configuration cleanup ownership", () => {
         const failure = await filterClientsNeedingConfigure(
           host,
           [client],
-          {},
+          { providerEnvironment: {} },
           ["rea", "mcp"],
         )
           .then((detectedClients) =>

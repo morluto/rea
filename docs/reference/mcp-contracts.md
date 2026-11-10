@@ -10,6 +10,9 @@ and [session discovery](#identity-and-discovery). See [transports](#transports)
 for the opt-in HTTP listener, [cancellation](#progress-and-cancellation)
 for partial-result recovery and [first-query deadlines](#ghidra-first-query-deadlines-and-recovery)
 when a cold provider exceeds the client's wait.
+The shared [caller-path](#caller-selected-paths) and
+[publication](#evidence-publication-and-source-recovery) fields also apply to CLI
+Evidence.
 
 ## Tool results
 
@@ -221,7 +224,7 @@ graph, while `search_scope.discovery` describes whether discovery of applicable
 direct relationships is established. A missing goal is `unknown` when either
 discovery or a relationship read is unestablished. A found path is shortest
 within the observed graph; undiscovered calls may produce a shorter path.
-`truncated` describes relationship reads, not unestablished discovery.
+`truncated` describes relationship reads, not unestablished discovery. Ghidra's recorded incoming references do not establish every computed caller; computed outgoing candidates likewise retain unknown callee discovery. IDA function-edge replies retain their observed truncation status while unclassified call targets remain unknown in discovery.
 `build_call_path` applies the same distinction to supplied function Evidence:
 its `search_scope.exhaustive` describes the supplied graph and
 `search_scope.observed_status` preserves that graph's result. Evidence without
@@ -518,6 +521,23 @@ that buffer. It does not raise REA's reserved single-string limit, which is
 1024 UTF-16 code units below Node's single-string ceiling, and it does not
 raise that Node ceiling. It does not change analysis coverage or retained
 content. Ordinary responses keep their existing complete result contract.
+
+### Caller-selected paths
+
+Evidence can include `caller_input_path` for the verbatim primary selection and
+`caller_input_paths` for named auxiliary selections. Each auxiliary value is a
+string or an ordered array of strings; repeated selections preserve order and
+duplicates. Consumers must accept both forms.
+
+These fields record request provenance outside semantic Evidence identity.
+They do not replace the inspected identity in `subject` or prove format validity.
+One-shot binary CLI requests retain relative spelling and symlink aliases;
+provider inspections also keep the established `parameters.input_path` field.
+
+Older records and workflows without a caller-path binding omit these fields.
+A workflow's explicit sensitive-value policy can exclude primary and auxiliary
+spellings independently; do not infer a missing primary from an auxiliary value.
+See [capture redaction](../guides/web/web-network-captures.md) for its policy.
 
 ### Input validation resource allowance
 
@@ -990,6 +1010,13 @@ from an older request does not override a newer outcome. Request deadlines and
 cancellations neither mark nor clear availability. A new provider client starts
 without these outcomes.
 
+Standalone command operations (such as `inspect_with_objdump` and
+`execute_rizin_command`) similarly reflect observed executable launch failures:
+an unprobed executable is reported available; once a launch failure is observed,
+discovery reports the operation unavailable with the executable remediation
+until a request for it dispatched later succeeds. Direct retry remains available
+without restarting REA.
+
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route
 `capabilities`, run, activity and health status, and each provider candidate's
@@ -1349,11 +1376,9 @@ uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
 Once those owners confirm cleanup, composed failures recover their original
 typed primary outcome and recovery guidance. Historical composition diagnostics
 remain in `details.cleanup_history`, separate from the primary diagnostics.
-An atomic Evidence bundle or snapshot write can publish its complete output
-before staging cleanup fails. In that case, `details.published: true`,
-`details.published_path`, and `details.bytes` retain the publication receipt.
-Use that receipt to distinguish completed publication from a write that never
-committed. Staging resources remain owned until cleanup is verified.
+For written Evidence and snapshot outcomes, use the
+[publication receipt](#evidence-publication-and-source-recovery) separately from
+cleanup status.
 Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
@@ -1424,6 +1449,46 @@ SIGTERM into the same AbortSignal used by providers. Signal guards remain active
 through provider cleanup, including repeated delivery by package runners.
 Existing controlled-process cleanup and provider shutdown rules still apply;
 REA never kills a process it cannot prove it owns.
+
+### Evidence publication and source recovery
+
+An atomic Evidence bundle or snapshot write can commit before later cancellation
+or staging cleanup failure. Cancellation observed before publication leaves the
+destination unchanged; once publication has started, the owning operation can
+complete it.
+Inspect the returned receipt before retrying or replacing output:
+
+| Outcome                                                                 | Receipt                                                                    |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Evidence or snapshot publication committed, then staging cleanup failed | `details.published: true`, `details.published_path`, and `details.bytes`   |
+| CLI Evidence delivery cancelled after its bundle committed              | `details.diagnostics.evidence_bundle` with the written path and byte count |
+
+Receipt paths can be omitted when unavailable or explicitly excluded. A missing
+path alone does not establish that publication failed.
+
+A publication failure can retain completed Evidence in
+`details.partial_observation`. The receipt confirms written output, not that
+cleanup succeeded or every analysis stage completed. Staging resources remain
+owned until cleanup is verified. Other output kinds use their own contracts,
+such as [environment directory publication](../getting-started/cli.md#export-an-environment-bundle)
+and [decompile output receipts](../guides/native/native-investigation.md).
+
+For a requested one-shot Evidence bundle that did not commit, the error can
+include `details.source_closure` when completed Evidence has source records or
+links, or source collection failed. `publication` is `not_published`.
+When collection yields source facts, `records` contains captured Evidence within
+64 KiB; explicit sensitivity exclusions can withhold all inline records.
+`omitted` lists up to 64 other identities, and `omitted_count` gives the total:
+
+- `not_captured`: this invocation has no record to return; its ancestry remains unknown.
+- `not_inlined`: the record was captured but is outside this bounded response.
+
+`complete` is true only when source inspection succeeded and every cited record
+is included or embedded in the observation. On inspection failure,
+`collection_failure` names the error type and closure stays unknown. Captured
+records can still be returned, but record and omission fields can be absent if
+collection itself failed. The original operation failure remains primary.
+The one-shot process retains nothing after exit; rerunning is a new observation.
 
 ## Request scope and local effects
 
