@@ -77,8 +77,7 @@ it("keeps the 128 MiB request when the setting is unset", () => {
   );
   expect(projected.remediation.action).toContain("--max-old-space-size");
   expect(projected.remediation.action).toContain("NODE_OPTIONS");
-  expect(projected.remediation.action).toMatch(/restart REA/i);
-  expect(projected.remediation.action).toMatch(/without a REA restart/i);
+  expect(projected.remediation.action).toContain("launch seed");
   expect(projected.remediation.action).toMatch(/overrides this request/i);
 });
 

@@ -6,7 +6,10 @@ import { z } from "zod";
 import { mcpInputBudgetSchema } from "./mcpInputBudget.js";
 import { isAbsolute } from "node:path";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  ConfigurationError,
+  type ConfigurationSettingIssue,
+} from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import {
@@ -165,6 +168,31 @@ const environmentSchema = z.object({
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
 
+/** Copy producer-owned update facts from a Zod issue without inventing them. */
+const configurationSettingFromIssue = (issue: {
+  readonly path: readonly PropertyKey[];
+  readonly message: string;
+  readonly code: string;
+  readonly params?: Readonly<Record<string, unknown>> | undefined;
+}): ConfigurationSettingIssue => {
+  const setting = String(issue.path[0] ?? "environment");
+  const constraint = issue.message;
+  if (issue.code !== "custom" || issue.params === undefined)
+    return { setting, constraint };
+  const updateMode = issue.params.update_mode;
+  const pendingRestart = issue.params.pending_restart;
+  return {
+    setting,
+    constraint,
+    ...(updateMode === "runtime" || updateMode === "restart"
+      ? { update_mode: updateMode }
+      : {}),
+    ...(typeof pendingRestart === "boolean"
+      ? { pending_restart: pendingRestart }
+      : {}),
+  };
+};
+
 /** Parse the JEB-only timeout at its isolated provider-composition boundary. */
 export const parseJebMcpTimeoutMs = (
   value: string | undefined,
@@ -229,10 +257,10 @@ export const parseEnvironmentValues = (
   const parsed = environmentSchema.safeParse(literals);
   if (!parsed.success) {
     // Zod messages name the constraint, never the rejected value.
-    const settings = parsed.error.issues.map((issue) => ({
-      setting: String(issue.path[0] ?? "environment"),
-      constraint: issue.message,
-    }));
+    // A producer may attach update_mode and pending_restart on a custom issue.
+    const settings = parsed.error.issues.map((issue) =>
+      configurationSettingFromIssue(issue),
+    );
     return err(
       new ConfigurationError("Invalid REA environment configuration", {
         cause: parsed.error,

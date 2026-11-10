@@ -1044,9 +1044,15 @@ const lifecycleErrorDetails = (
   }
   if (error instanceof ConfigurationError && error.settings.length > 0)
     return {
-      settings: error.settings.map(({ setting, constraint }) => ({
-        setting,
-        constraint,
+      settings: error.settings.map((issue) => ({
+        setting: issue.setting,
+        constraint: issue.constraint,
+        ...(issue.update_mode === undefined
+          ? {}
+          : { update_mode: issue.update_mode }),
+        ...(issue.pending_restart === undefined
+          ? {}
+          : { pending_restart: issue.pending_restart }),
       })),
     };
   if (error instanceof BinaryTargetError)

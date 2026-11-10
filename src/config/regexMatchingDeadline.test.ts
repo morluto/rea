@@ -66,8 +66,7 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
   expect(projected.remediation.action).toContain("source default");
   expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.remediation.action).toContain("regex.matching_deadline_ms");
-  expect(projected.remediation.action).toMatch(/restart REA/i);
-  expect(projected.remediation.action).toMatch(/without a REA restart/i);
+  expect(projected.remediation.action).toContain("launch seed");
   expect(projected.remediation.action).toMatch(
     /heap does not raise this deadline/i,
   );

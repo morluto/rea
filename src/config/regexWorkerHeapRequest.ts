@@ -72,6 +72,6 @@ export const regexWorkerHeapRequestRecovery = (
 ): string =>
   [
     `The effective ${REGEX_WORKER_HEAP_REQUEST_SETTING} value is ${String(request.heapMiB)} MiB (source ${request.source}; default ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB, floor ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB, maximum ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB).`,
-    `Set ${REGEX_WORKER_HEAP_REQUEST_SETTING} in the environment that starts REA to a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)}, then restart REA. In a running MCP server, use update_analysis_settings with setting regex.worker_heap_request_mib and action set instead; the new value applies to new work without a REA restart.`,
+    `regex.worker_heap_request_mib can be changed at runtime with update_analysis_settings. The launch seed is ${REGEX_WORKER_HEAP_REQUEST_SETTING}, a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)}.`,
     "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides this request and sets the effective heap. That flag is not limited by this setting's floor or maximum. Raising host memory alone does not raise the request.",
   ].join(" ");
