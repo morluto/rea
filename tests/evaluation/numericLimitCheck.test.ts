@@ -3,6 +3,7 @@ import {
   NUMERIC_LIMIT_DECLARATION,
   discoverNumericLimitUses,
   isNumericLimit,
+  requiredRuntimeLimitFailure,
 } from "../../scripts/verify/rea-numeric-limits.mjs";
 
 const ENDPOINT_CANDIDATES = "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES";
@@ -38,4 +39,49 @@ it("does not treat a registry declaration as a producer", () => {
       { path: NUMERIC_LIMIT_DECLARATION, source: `name: "${name}",` },
     ]).has(name),
   ).toBe(false);
+});
+
+it("does not treat a registration allowlist or a comment as a producer", () => {
+  const discovered = discoverNumericLimitUses([
+    {
+      path: NUMERIC_LIMIT_DECLARATION,
+      source: `name: "${ENDPOINT_CANDIDATES}",`,
+    },
+    {
+      path: "src/application/SetupRegistrationEnvironment.ts",
+      source: `const SELECTED_REGISTRATION_SETTINGS = ["${ENDPOINT_CANDIDATES}"] as const;`,
+    },
+    {
+      path: "src/config/removedLimit.ts",
+      source: `// ${ENDPOINT_CANDIDATES} used to be read here\nconst unrelated = 1;\n`,
+    },
+  ]);
+  expect(discovered.has(ENDPOINT_CANDIDATES)).toBe(false);
+});
+
+it("requires the tracked endpoint-candidate limit to be an analysis setting", () => {
+  expect(
+    requiredRuntimeLimitFailure(ENDPOINT_CANDIDATES, {
+      inRuntime: false,
+      inRegistry: true,
+    }),
+  ).toMatch(/ANALYSIS_SETTINGS/);
+  expect(
+    requiredRuntimeLimitFailure(ENDPOINT_CANDIDATES, {
+      inRuntime: true,
+      inRegistry: false,
+    }),
+  ).toBeUndefined();
+  expect(
+    requiredRuntimeLimitFailure("REA_NTFS_MFT_MAX_FILE_BYTES", {
+      inRuntime: false,
+      inRegistry: false,
+    }),
+  ).toMatch(/ANALYSIS_SETTINGS/);
+  expect(
+    requiredRuntimeLimitFailure("REA_REGF_HIVE_MAX_FILE_BYTES", {
+      inRuntime: true,
+      inRegistry: true,
+    }),
+  ).toMatch(/numericLimitRegistry/);
 });
