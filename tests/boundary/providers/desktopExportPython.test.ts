@@ -763,7 +763,7 @@ print(json.dumps({"deep": deep, "peak": peak, "edge": _deeper_than(nested, 501),
   expect(result.peak).toBeLessThan(1024 * 1024);
 });
 
-it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does", () => {
+it("keeps special SQLite numbers distinct from text in exported table views", () => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -772,12 +772,33 @@ it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does",
       "-I",
       "-B",
       "-c",
-      `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_cell(v, "utf-8") for v in (math.inf, -math.inf, -0.0, 0.0, 1.5)]))`,
+      `${imports}${PYTHON_HELPERS}
+with sqlite3.connect(":memory:") as db:
+    db.execute("create table cells(value)")
+    db.executemany("insert into cells values(?)", [(v,) for v in (math.inf, -math.inf, "Infinity", "-Infinity", "-0", 9007199254740993, "9007199254740993")])
+    print(json.dumps({"table": _table(db, "cells", [], "utf-8"), "reals": [_cell(v, "utf-8") for v in (-0.0, 0.0, 1.5)]}))
+`,
     ],
     { encoding: "utf8" },
   );
 
-  expect(JSON.parse(cells)).toEqual(["Infinity", "-Infinity", "-0", 0, 1.5]);
+  expect(JSON.parse(cells)).toEqual({
+    table: {
+      columns: ["value"],
+      primary_key: [],
+      rows: [
+        [{ real: "Infinity" }],
+        [{ real: "-Infinity" }],
+        ["Infinity"],
+        ["-Infinity"],
+        ["-0"],
+        [{ integer: "9007199254740993" }],
+        ["9007199254740993"],
+      ],
+      truncated: false,
+    },
+    reals: [{ real: "-0" }, 0, 1.5],
+  });
 });
 
 it("keeps the same keyfile whitespace as the retained state view", async () => {
