@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
@@ -92,44 +93,69 @@ export const readDesktopCapture = async (
   signal: AbortSignal | undefined,
 ): Promise<{ evidence: Evidence; capture: DesktopApplicationCapture }> => {
   const resources = new ArtifactResourceScope();
+  const outcome = await resources
+    .run(async () => {
+      const loaded = await readJsonFile(
+        join(folder, "capture.json"),
+        signal,
+        resources,
+        OPERATION,
+      );
+      if (!loaded.ok) {
+        if (loaded.error instanceof AnalysisError) throw loaded.error;
+        throw inputError(
+          `${join(folder, "capture.json")} could not be read as JSON.`,
+          "Pass a folder written by capture-desktop-application.",
+        );
+      }
+      const evidence = safeParseEvidence(loaded.value);
+      if (
+        !evidence.ok ||
+        evidence.value.operation !== DESKTOP_OPERATION ||
+        evidence.value.predicate_type !== "rea.desktop-application-capture" ||
+        evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
+        evidence.value.provider.version !== DESKTOP_PROVIDER.version
+      )
+        throw inputError(
+          "capture.json is not desktop application capture Evidence.",
+          "Pass a folder written by capture-desktop-application.",
+        );
+      const capture = desktopApplicationCaptureSchema.safeParse(
+        evidence.value.normalized_result,
+      );
+      if (!capture.success)
+        throw inputError(
+          `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
+          "Capture the application again.",
+        );
+      return { evidence: evidence.value, capture: capture.data };
+    })
+    .then(ok, (cause: unknown) => err(cause));
   try {
-    const loaded = await readJsonFile(
-      join(folder, "capture.json"),
-      signal,
-      resources,
-      OPERATION,
-    );
-    if (!loaded.ok) {
-      if (loaded.error instanceof AnalysisError) throw loaded.error;
-      throw inputError(
-        `${join(folder, "capture.json")} could not be read as JSON.`,
-        "Pass a folder written by capture-desktop-application.",
-      );
-    }
-    const evidence = safeParseEvidence(loaded.value);
-    if (
-      !evidence.ok ||
-      evidence.value.operation !== DESKTOP_OPERATION ||
-      evidence.value.predicate_type !== "rea.desktop-application-capture" ||
-      evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
-      evidence.value.provider.version !== DESKTOP_PROVIDER.version
-    )
-      throw inputError(
-        "capture.json is not desktop application capture Evidence.",
-        "Pass a folder written by capture-desktop-application.",
-      );
-    const capture = desktopApplicationCaptureSchema.safeParse(
-      evidence.value.normalized_result,
-    );
-    if (!capture.success)
-      throw inputError(
-        `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
-        "Capture the application again.",
-      );
-    return { evidence: evidence.value, capture: capture.data };
-  } finally {
     await resources.close();
+  } catch (cause: unknown) {
+    const cleanup = desktopOperationFailure(
+      cause,
+      signal,
+      OPERATION,
+      "Desktop capture input",
+    );
+    if (outcome.ok)
+      throw cleanup.retainPartialObservation(outcome.value.evidence);
+    const primary = desktopOperationFailure(
+      outcome.error,
+      signal,
+      OPERATION,
+      "Desktop capture input",
+    );
+    throw analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      OPERATION,
+    ).bindCleanupDependencies([primary, cleanup]);
   }
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
 };
 
 interface ViewContext {

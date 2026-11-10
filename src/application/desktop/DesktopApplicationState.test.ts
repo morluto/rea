@@ -1,10 +1,17 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
+import { EvidenceFileError } from "../../domain/evidenceErrors.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import type {
   DesktopApplicationCapture,
   DesktopCheckpoint,
@@ -12,6 +19,7 @@ import type {
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
 import {
   inspectDesktopApplicationState,
+  readDesktopCapture,
   type DesktopStateReaders,
 } from "./DesktopApplicationState.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
@@ -26,6 +34,49 @@ import {
   retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+
+it("retains invalid capture JSON and the descriptor owner through failed final cleanup", async () => {
+  const root = await createTestTempDirectory("rea-capture-read-cleanup-");
+  await writeFile(join(root, "capture.json"), '{"broken":');
+  await expect(readDesktopCapture(root, undefined)).rejects.toMatchObject({
+    _tag: "EvidenceFileError",
+    reason: "invalid-json",
+  });
+  const scopes = new Set<ArtifactResourceScope>();
+  const originalClose = ArtifactResourceScope.prototype.close;
+  const scopeClose = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementation(function (this: ArtifactResourceScope) {
+      scopes.add(this);
+      return originalClose.call(this);
+    });
+  const fileClose = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValue(new Error("descriptor close remains unavailable"));
+  let failure: AnalysisError | undefined;
+  try {
+    const reported = await readDesktopCapture(root, undefined).catch(
+      (cause: unknown) => cause,
+    );
+    expect(reported).toBeInstanceOf(AnalysisError);
+    if (!(reported instanceof AnalysisError)) throw reported;
+    failure = reported;
+    expect(primaryAnalysisError(failure)).toBeInstanceOf(EvidenceFileError);
+    expect(primaryAnalysisError(failure)).toMatchObject({
+      reason: "invalid-json",
+    });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual([join(root, "capture.json")]);
+  } finally {
+    fileClose.mockRestore();
+    scopeClose.mockRestore();
+    for (const scope of scopes) await scope.close();
+  }
+  expect(failure?.cleanupIncomplete).toBe(false);
+  expect(primaryAnalysisError(failure!)).toMatchObject({
+    reason: "invalid-json",
+  });
+});
 
 /** The fixture capture with extra files at the baseline and the second checkpoint. */
 const extended = (extra: {

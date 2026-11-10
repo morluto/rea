@@ -1,11 +1,12 @@
 import { lstat } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, isAbsolute } from "node:path";
 
 import type { DesktopApplicationInventory } from "../../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { SQLITE_SIDECARS } from "../../domain/desktop/stateFormats.js";
 import type { WindowMatching } from "../../desktop/DesktopSessionObservations.js";
-import { canonicalPath } from "./DesktopCaptureOutput.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import type { CheckpointScope } from "./DesktopCheckpointRecorder.js";
 
 const unique = (paths: readonly string[]) => [...new Set(paths)];
@@ -14,7 +15,10 @@ const unique = (paths: readonly string[]) => [...new Set(paths)];
 const pathKind = async (path: string): Promise<"file" | "directory"> =>
   (await lstat(path).then(
     (stats) => stats.isDirectory(),
-    () => false,
+    (cause: unknown) => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw cause;
+    },
   ))
     ? "directory"
     : "file";
@@ -55,12 +59,12 @@ export const captureScope = async (
   output: string,
 ): Promise<CaptureScope> => {
   const canonical = (paths: readonly string[]) =>
-    Promise.all(paths.map((path) => canonicalPath(path)));
+    Promise.all(paths.map((path) => canonicalCallerPath(path)));
   const named = (paths: readonly string[]) =>
     Promise.all(
       paths.map(async (path) => ({
-        path: resolve(path),
-        physical: await canonicalPath(path),
+        path: absoluteCallerPath(path),
+        physical: await canonicalCallerPath(path),
       })),
     );
   const stateDirectories = await canonical(

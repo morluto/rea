@@ -141,6 +141,36 @@ describe("captureScope", () => {
     );
     expect(scope.contentRoots).not.toContain(linked);
   });
+
+  it("follows a selected symlink before its parent segment for capture and exclusion", async () => {
+    const root = await realpath(
+      await createTestTempDirectory("desktop-scope-parent-"),
+    );
+    const home = join(root, "home");
+    await mkdir(home);
+    await mkdir(join(root, "physical", "child"), { recursive: true });
+    await mkdir(join(root, "named"));
+    await symlink(join(root, "physical", "child"), join(root, "named", "link"));
+    await writeFile(join(root, "physical", "selected"), "selected");
+    await writeFile(join(root, "named", "selected"), "decoy");
+    const selected = `${root}/named/link/../selected`;
+    const { scope, selectedPaths } = await captureScope(
+      { ...request([]), statePaths: [selected], excludes: [selected] },
+      inventory(),
+      home,
+      join(root, "out"),
+    );
+    expect(selectedPaths).toEqual([
+      {
+        path: selected,
+        physical: join(root, "physical", "selected"),
+        kind: "file",
+      },
+    ]);
+    expect(scope.contentRoots).toContain(join(root, "physical", "selected"));
+    expect(scope.excluded).toContain(join(root, "physical", "selected"));
+    expect(scope.excluded).not.toContain(join(root, "named", "selected"));
+  });
 });
 
 describe("applicationWindowMatching", () => {
