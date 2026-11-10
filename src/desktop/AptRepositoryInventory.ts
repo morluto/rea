@@ -160,11 +160,13 @@ const signedRelease = async (
   if (inRelease === null) return null;
   if (inRelease) return [`${prefix}InRelease`];
   const signed = await hostFileKind(`${prefix}Release.gpg`);
-  if (signed === null) return null;
-  if (!signed) return undefined;
+  if (!signed && signed !== null) return undefined;
   const release = await hostFileKind(`${prefix}Release`);
-  if (release === null) return null;
-  return release ? [`${prefix}Release.gpg`, `${prefix}Release`] : undefined;
+  // A detached release needs both members, so a Release known to be absent
+  // settles the pair even when Release.gpg could not be probed.
+  if (release === false) return undefined;
+  if (signed === null || release === null) return null;
+  return [`${prefix}Release.gpg`, `${prefix}Release`];
 };
 
 /** The keys gpgv checks a release with: candidate key files, or the one key the sources entry holds. */
