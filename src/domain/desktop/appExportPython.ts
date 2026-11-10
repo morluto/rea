@@ -163,6 +163,10 @@ def _ensure_state_aliases(home: Path) -> None:
         has_children = any(Path(alias) in Path(child).parents for child, *_ in aliases)
         if kind == "directory" or (kind == "unknown" and has_children):
             destination.mkdir(parents=True, exist_ok=True)
+        elif kind == "file":
+            # The file itself stays absent so the app can create it. Its parent
+            # has to exist or that write fails with ENOENT.
+            destination.parent.mkdir(parents=True, exist_ok=True)
         if link.is_symlink() and link.resolve() == destination.resolve():
             continue
         if os.path.lexists(link):

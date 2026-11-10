@@ -310,6 +310,13 @@ _ensure_state_aliases(home)
   expect((await stat(join(absent, ".config", "tellicorc"))).isFile()).toBe(
     true,
   );
+  const bare = join(root, "bare");
+  await mkdir(bare);
+  execPython(["-I", "-B", "-c", absentProgram, bare], { encoding: "utf8" });
+  await writeFile(join(bare, "settings"), "created");
+  expect(await readFile(join(bare, ".config", "tellicorc"), "utf8")).toBe(
+    "created",
+  );
 
   const legacy = join(root, "legacy");
   await mkdir(join(legacy, ".config"), { recursive: true });
