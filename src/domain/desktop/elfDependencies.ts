@@ -18,10 +18,37 @@ import { err, ok, type Result } from "../result.js";
 /** Read up to `length` bytes at `offset`; fewer at the end of the file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
 
-/** What the dynamic linker needs to load an ELF image's dependencies. */
-export interface ElfDependencies {
+/** Fixed-header identity needed before selecting a library candidate. */
+export interface ElfLibraryIdentity {
   readonly machine: number;
   readonly bits: 32 | 64;
+  readonly byte_order: "little" | "big";
+}
+
+/** A readable identity survives a later dependency-table failure. */
+export type ElfDependenciesFailure =
+  | {
+      readonly kind: "incompatible";
+      readonly identity: ElfLibraryIdentity;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "unreadable";
+      readonly identity: ElfLibraryIdentity | null;
+      readonly reason: string;
+    };
+
+/** The same ABI identity is required before dependency tables can select a library. */
+export const elfLibraryIdentityMatches = (
+  expected: ElfLibraryIdentity,
+  observed: ElfLibraryIdentity,
+): boolean =>
+  expected.machine === observed.machine &&
+  expected.bits === observed.bits &&
+  expected.byte_order === observed.byte_order;
+
+/** What the dynamic linker needs to load an ELF image's dependencies. */
+export interface ElfDependencies extends ElfLibraryIdentity {
   /** Distinct DT_NEEDED sonames in order. */
   readonly needed: readonly string[];
   /** DT_RUNPATH directories as written; undefined without DT_RUNPATH. */
@@ -231,15 +258,50 @@ export const readElfDependencies = async (
   read: ReadAt,
   size: number,
   policy: DesktopLibraryPolicy = desktopLibraryPolicy(),
-): Promise<Result<ElfDependencies, string>> => {
+  expected?: ElfLibraryIdentity,
+): Promise<Result<ElfDependencies, ElfDependenciesFailure>> => {
   const header = Buffer.from(await read(0, 64));
   const fixed = readElfFixedHeader(header, size);
-  if (!fixed.ok) return fixed;
-  const { elfClass: bits, machine } = fixed.value;
-  const little = fixed.value.byteOrder === "little";
+  if (!fixed.ok)
+    return err({ kind: "unreadable", identity: null, reason: fixed.error });
+  const identity: ElfLibraryIdentity = {
+    machine: fixed.value.machine,
+    bits: fixed.value.elfClass,
+    byte_order: fixed.value.byteOrder,
+  };
+  if (expected !== undefined && !elfLibraryIdentityMatches(expected, identity))
+    return err({
+      kind: "incompatible",
+      identity,
+      reason: `Incompatible ELF library: expected machine ${expected.machine}, ELF${expected.bits}, ${expected.byte_order}-endian; observed machine ${identity.machine}, ELF${identity.bits}, ${identity.byte_order}-endian`,
+    });
+  const dependencies = await readDependencyTables(
+    read,
+    header,
+    size,
+    identity,
+    policy,
+  );
+  return dependencies.ok
+    ? ok({ ...identity, ...dependencies.value })
+    : err({ kind: "unreadable", identity, reason: dependencies.error });
+};
+
+/** Parse dependency tables only after their candidate identity has been retained. */
+const readDependencyTables = async (
+  read: ReadAt,
+  header: Buffer,
+  size: number,
+  identity: ElfLibraryIdentity,
+  policy: DesktopLibraryPolicy,
+): Promise<
+  Result<Pick<ElfDependencies, "needed" | "runpath" | "rpath">, string>
+> => {
+  const { bits } = identity;
+  const little = identity.byte_order === "little";
   const headers = await programHeaders(read, header, size, bits, policy);
   if (!headers.ok) return headers;
-  const none = { machine, bits, needed: [], runpath: undefined, rpath: [] };
+  const none = { needed: [], runpath: undefined, rpath: [] };
   const dynamic = headers.value.find((program) => program.type === PT_DYNAMIC);
   if (dynamic === undefined) return ok(none);
   if (dynamic.fileSize > BigInt(policy.table_bytes))
@@ -271,8 +333,6 @@ export const readElfDependencies = async (
   );
   if (!search.ok) return search;
   return ok({
-    machine,
-    bits,
     needed: [...new Set(names.value)],
     runpath: runpath.size > 0 ? directories(search.value) : undefined,
     rpath: runpath.size > 0 ? [] : directories(search.value),
