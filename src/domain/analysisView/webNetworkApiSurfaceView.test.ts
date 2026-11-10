@@ -245,6 +245,40 @@ it("keeps header names typed when recorded members are malformed", () => {
   );
 });
 
+it("treats a recorded non-array header collection as an unreadable member", () => {
+  const capture = analysisViewCaptureFixture();
+  capture.records = capture.records.slice(0, 1);
+  capture.total_records = 1;
+  capture.records[0]!.reported = {
+    request: {
+      method: "GET",
+      url: "https://api.test/malformed-collection",
+      headers: [{ name: "Accept", value: "text/plain" }],
+      cookies: { name: "crafted-cookie-name", value: "secret" },
+    },
+    response: { status: 200, content: { mimeType: "text/plain" } },
+  };
+  const result = project(
+    capture,
+    0,
+    50,
+    { sensitive_value_count: 0 },
+    undefined,
+    true,
+  );
+  if (!result.ok || result.value.kind !== "api-surface")
+    throw new Error("Expected surface");
+  expect(result.value.groups[0]?.request_header_names).toEqual({
+    request_headers: [{ name: "Accept", record_ordinals: [0] }],
+    cookie_names: [],
+    set_cookie_names: [],
+  });
+  expect(JSON.stringify(result.value)).not.toContain("crafted-cookie-name");
+  expect(result.value.unknowns).toContain(
+    "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
+  );
+});
+
 it("keeps a recorded empty header or cookie name apart from an omitted member", () => {
   const capture = analysisViewCaptureFixture();
   capture.records = capture.records.slice(0, 1);

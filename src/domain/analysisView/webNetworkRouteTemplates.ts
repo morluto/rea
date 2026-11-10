@@ -114,6 +114,11 @@ export const readRecordedHeaderNames = (
     if (bytes > 0 && !temporary(bytes)) return null;
   }
   const groups = arrays.map(memberNames);
+  // A collection that is recorded but not an array cannot establish that the
+  // name list is empty; only an omitted collection is observed absence.
+  const unreadableCollection = arrays.some(
+    (value) => value !== undefined && !Array.isArray(value),
+  );
   const names = (members: readonly unknown[]) => {
     const selected = new Set<string>();
     for (const member of members) {
@@ -126,9 +131,11 @@ export const readRecordedHeaderNames = (
     request: names(groups[0]!),
     cookie: names(groups[1]!),
     setCookie: names(groups[2]!),
-    unreadableMember: groups.some((members) =>
-      members.some((member) => typeof member !== "string"),
-    ),
+    unreadableMember:
+      unreadableCollection ||
+      groups.some((members) =>
+        members.some((member) => typeof member !== "string"),
+      ),
   };
 };
 // Conservative representation allowances, not an enforced V8 heap limit.
