@@ -322,14 +322,22 @@ const capturedStateAliases = (
       const state = index < 0 ? undefined : roots[index]?.path;
       const alias = relative(path);
       const target = state === undefined ? null : relative(state);
-      const recorded =
-        kind === "file" || kind === "directory" ? kind : "unknown";
+      const recorded: "file" | "directory" | "unknown" =
+        kind === "directory"
+          ? "directory"
+          : kind === "file"
+            ? "file"
+            : "unknown";
       return alias === null || target === null || alias === target
         ? []
         : [{ alias, target, kind: recorded }];
     },
   );
-  const retained: typeof aliases = [];
+  const retained: {
+    alias: string;
+    target: string;
+    kind: "file" | "directory" | "unknown";
+  }[] = [];
   for (const entry of aliases.toSorted(
     (left, right) => left.alias.length - right.alias.length,
   )) {
