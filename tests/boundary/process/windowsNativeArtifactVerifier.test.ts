@@ -106,6 +106,35 @@ for (const mode of ["preinstall source", "packed source-free"]) {
         ...manifest,
         artifactBytes: bytes.length,
       });
+
+      const arm64 = windowsNativeArtifactFixture("arm64");
+      await writeFile(join(artifactRoot, arm64.manifest.artifact), arm64.bytes);
+      const unindexed = await run();
+      expect(unindexed.exitCode).not.toBe(0);
+      expect(unindexed.stderr).toContain("Unindexed Windows native artifact");
+
+      const multiManifest = {
+        ...arm64.manifest,
+        artifacts: {
+          x64: {
+            artifact: manifest.artifact,
+            artifactSha256: manifest.artifactSha256,
+          },
+          arm64: {
+            artifact: arm64.manifest.artifact,
+            artifactSha256: arm64.manifest.artifactSha256,
+          },
+        },
+      };
+      await writeFile(manifestPath, JSON.stringify(multiManifest));
+      const validMulti = await run();
+      expect(validMulti.exitCode, validMulti.stderr).toBe(0);
+      expect(JSON.parse(validMulti.stdout)).toEqual({
+        ok: true,
+        ...multiManifest,
+        artifactBytes: arm64.bytes.length,
+      });
+
       await writeFile(
         manifestPath,
         JSON.stringify({ ...manifest, extra: true }),

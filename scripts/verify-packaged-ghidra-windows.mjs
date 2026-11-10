@@ -32,9 +32,12 @@ import {
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 
-if (process.platform !== "win32" || process.arch !== "x64")
+if (
+  process.platform !== "win32" ||
+  (process.arch !== "x64" && process.arch !== "arm64")
+)
   throw new Error(
-    "Packaged Windows Ghidra acceptance requires a Windows x64 host.",
+    "Packaged Windows Ghidra acceptance requires a Windows x64 or ARM64 host.",
   );
 const arguments_ = process.argv.slice(2);
 const internalWorkspace = arguments_[0] === "--internal-workspace";
@@ -231,7 +234,7 @@ try {
   const report = {
     ok: false,
     platform: "win32",
-    architecture: "x64",
+    architecture: process.arch,
     nonAdmin: true,
     targetSha256: sha256,
     targetArchitecture: parsedTarget.value.architecture,
