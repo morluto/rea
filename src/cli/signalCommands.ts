@@ -1,5 +1,10 @@
 import { inspectSignalDecodersInputSchema } from "../domain/signals/signalDecoders.js";
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
 import { resolve } from "node:path";
 import { createSignalRecordingService } from "../composition/signals.js";
@@ -69,7 +74,7 @@ export const registerSignalCommands = (
   cli.command(CLI_COMMANDS.decodeSignalRecording, {
     description:
       "Decode an existing signal recording with caller-supplied sigrok",
-    args: z.object({ path: z.string().describe("Local signal recording") }),
+    args: z.object({ path: localPath.describe("Local signal recording") }),
     options: z
       .object({
         ...signalRecordingOptionsSchema.shape,
