@@ -2,10 +2,7 @@ import type { Readable } from "node:stream";
 
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
-import {
-  createMftDecoder,
-  type MftImage,
-} from "../domain/windows/ntfsMft.js";
+import { createMftDecoder, type MftImage } from "../domain/windows/ntfsMft.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
