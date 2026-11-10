@@ -99,7 +99,7 @@ export const existingMaintenanceScope = async (
   // maintenance keeps every selected client instead of deferring one view of
   // a registration to another client's inspection: ZCode writes
   // ~/.zcode/cli/config.json and deliberately leaves the ~/.agents/mcp.json
-  // fallback untouched (docs/client-configuration.md), while FreeBuff writes
+  // fallback untouched (docs/getting-started/client-configuration.md), while FreeBuff writes
   // the shared file itself. Dropping FreeBuff because ZCode reads that
   // fallback would leave the row both products load pinned to the old
   // version.

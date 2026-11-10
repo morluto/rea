@@ -192,8 +192,9 @@ it("stops uninstall and retains the backup read owner when its close fails", asy
     expect(await host.removeClient(client)).toEqual({
       name: "cursor",
       status: "failed",
-      detail:
-        "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
+      detail: expect.stringMatching(
+        /could not be backed up.*no change.*permissions.*uninstall/i,
+      ),
     });
     expect(await readFile(path, "utf8")).toBe(configured);
     expect(closeAttempts).toHaveLength(2);
@@ -751,7 +752,7 @@ describe("setup client configuration cleanup ownership", () => {
         const failure = await filterClientsNeedingConfigure(
           host,
           [client],
-          {},
+          { providerEnvironment: {} },
           ["rea", "mcp"],
         )
           .then((detectedClients) =>

@@ -572,9 +572,12 @@ it("ignores process settings on an explicitly selected library root through MCP"
         ?.dyld_environment,
     ).toEqual(settings);
     expect(
-      trace.findings.find(({ kind }) => kind === "dyld-environment-present")
-        ?.explanation,
-    ).toContain("entries in this non-executable root are observations");
+      trace.findings.find(({ kind }) => kind === "dyld-environment-present"),
+    ).toMatchObject({
+      image: "library.dylib",
+      basis: "derived",
+      explanation: expect.stringContaining(settings[0]!),
+    });
   });
 });
 

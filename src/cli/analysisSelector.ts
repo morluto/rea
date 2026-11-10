@@ -12,6 +12,10 @@ export const addressOrProcedureGuidance = requiredSelectorGuidance(
 export const equalSelectorGuidance =
   "Equal values are accepted; conflicts fail.";
 
+/** Data type selectors stay optional in the options schema; exactly one is required. */
+export const dataTypeSelectorGuidance =
+  "Supply exactly one of --type or --address.";
+
 /** Preserve a CLI selector supplied positionally or through its named option. */
 export const resolveCliAnalysisSelector = (
   positional: string | undefined,

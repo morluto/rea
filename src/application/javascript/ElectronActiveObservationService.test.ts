@@ -249,7 +249,6 @@ it.skipIf(process.platform === "win32")(
       application_path: canonicalApplication,
       application_root: await realpath(readable),
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.parameters).toEqual({
       ...input,

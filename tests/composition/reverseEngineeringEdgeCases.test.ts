@@ -14,7 +14,10 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../../src/domain/analysisErrorCore.js";
-import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  ReverseEngineeringService as CoreReverseEngineeringService,
+  REVERSE_COMMAND_OUTPUT_LIMITATION,
+} from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
@@ -28,6 +31,63 @@ import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 registerSharedReverseEngineeringEdgeCaseTests();
 registerOwnedRizinCommandEvidenceTests({ sweepTokenOwnedProcesses: true });
+
+it.each(["objdump", "rizin"] as const)(
+  "retains %s output-limit Evidence when owned cleanup remains incomplete",
+  async (provider) => {
+    const { directory, path } = await createArtifact();
+    const service = new ReverseEngineeringService({
+      runOwned: async (_spawn, limits) => {
+        expect(limits.diagnosticBytes).toBe(16 * 1024 * 1024);
+        throw new OwnedCommandFailure(
+          "output-limit",
+          "diagnostic output exceeded its budget",
+          providerSnapshot({
+            exitCode: null,
+            signal: "SIGTERM",
+            diagnosticTruncated: true,
+          }),
+          "owned descendant remains",
+          undefined,
+          ["run-id", "pid:42"],
+        );
+      },
+    });
+    try {
+      const result =
+        provider === "objdump"
+          ? await service.inspectWithObjdump({ path, operation: "symbols" })
+          : await service.executeRizinCommand({ path, command: "iI" });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          cleanupIncomplete: true,
+          cleanup: {
+            reason: "owned descendant remains",
+            resources: ["run-id", "pid:42"],
+          },
+          partialObservation: {
+            raw_result: {
+              stdout: "captured owned output",
+              exit_code: null,
+              signal: "SIGTERM",
+              output_truncated: true,
+              completion_status: "unknown",
+              artifact_sha256_after: null,
+              artifact_changed: null,
+            },
+            limitations: expect.arrayContaining([
+              REVERSE_COMMAND_OUTPUT_LIMITATION,
+            ]),
+          },
+        },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("records pathless objdump architecture support as provider capability evidence", async () => {
   const { directory, path } = await createArtifact();
@@ -1024,8 +1084,10 @@ it("records an explicit loss marker when provider bytes are invalid UTF-8", asyn
       expect(result.value).toMatchObject({
         raw_result: { stdout: "captured � output" },
       });
-      expect(result.value.limitations).toContain(
-        "Captured stdout bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /stdout bytes.*invalid or incomplete UTF-8.*replacement characters.*do not preserve the original bytes/iu,
+        ),
       );
     }
   } finally {
@@ -1076,8 +1138,13 @@ it.each([
       const result = await service.executeRizinCommand({ path, command: "iI" });
       expect(result.ok).toBe(true);
       if (result.ok)
-        expect(result.value.limitations).toContain(
-          `Captured ${streams} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
+        expect(result.value.limitations).toContainEqual(
+          expect.stringMatching(
+            new RegExp(
+              `${streams} bytes.*invalid or incomplete UTF-8.*replacement characters.*do not preserve the original bytes`,
+              "iu",
+            ),
+          ),
         );
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -1103,8 +1170,10 @@ it.each(["objdump", "rizin"] as const)(
         output_truncated: true,
         completion_status: "complete",
       });
-      expect(result.value.limitations).toContain(
-        "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /output is partial.*bytes were omitted.*process completion.*separately/iu,
+        ),
       );
     } finally {
       await service.close();

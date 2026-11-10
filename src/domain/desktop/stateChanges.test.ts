@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
-import { diffStateViews } from "./stateChanges.js";
+import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
 import { keyfileView } from "./stateFormats.js";
-import { resolvePointer } from "./viewPointer.js";
+import { locatePointer, resolvePointer } from "./viewPointer.js";
 
 describe("diffStateViews", () => {
   it("reports added and removed lines as a multiset", () => {
@@ -80,6 +80,49 @@ describe("diffStateViews", () => {
       added: ["notes:[3]"],
       removed: ["notes:[2]", 'log:["x"]#1'],
       changed: ["notes:[1]"],
+    });
+  });
+
+  it("compares NULL primary-key rows as a multiset while retaining keyed matches", () => {
+    const table = (rows: (string | null)[][]) => ({
+      tables: {
+        items: { columns: ["id", "body"], primary_key: ["id"], rows },
+      },
+    });
+    const before = table([
+      [null, "alpha"],
+      [null, "beta"],
+      ["fixed", "old"],
+    ]);
+    expect(
+      diffStateViews(
+        "sqlite",
+        before,
+        table([
+          ["fixed", "old"],
+          [null, "beta"],
+          [null, "alpha"],
+        ]),
+      ),
+    ).toMatchObject({
+      added_count: 0,
+      removed_count: 0,
+      changed_count: 0,
+    });
+    expect(
+      diffStateViews(
+        "sqlite",
+        before,
+        table([
+          [null, "gamma"],
+          [null, "beta"],
+          ["fixed", "new"],
+        ]),
+      ),
+    ).toMatchObject({
+      added: ['items:[null,"gamma"]'],
+      removed: ['items:[null,"alpha"]'],
+      changed: ['items:["fixed"]'],
     });
   });
 });
@@ -293,7 +336,7 @@ describe("diffStateViews selector lookups", () => {
     ]);
     for (const key of Object.keys(keyed))
       expect(
-        resolvePointer({ items: listed }, `/items/${key}`) === undefined,
+        resolvePointer({ items: listed }, `/items/${key}`, "xml") === undefined,
       ).toBe(difference.removed.includes(`/items/${key}`));
   });
 
@@ -323,6 +366,51 @@ describe("diffStateViews selector lookups", () => {
       ),
       size,
     );
+  });
+});
+
+describe("archive entry format changes", () => {
+  it("names each end by selectors its own declared format can resolve", () => {
+    const node = (title: string) => ({
+      name: "node",
+      attributes: {},
+      children: [{ name: "title", attributes: {}, children: [title] }],
+    });
+    const archive = (format: string, titles: string[]): JsonValue => ({
+      entries: [
+        {
+          name: "data",
+          format,
+          view: {
+            root: { name: "doc", attributes: {}, children: titles.map(node) },
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+    for (const [beforeFormat, afterFormat] of [
+      ["json", "xml"],
+      ["xml", "json"],
+    ] as const) {
+      const before = archive(beforeFormat, ["Old", "Keep"]);
+      const after = archive(afterFormat, ["New", "Keep", "More"]);
+      const diff = diffNamedMembers(before, after, "zip");
+      expect(
+        [...diff.added, ...diff.changed].some((pointer) =>
+          pointer.includes("/view/"),
+        ),
+      ).toBe(true);
+      for (const pointer of diff.removed)
+        expect(locatePointer(before, pointer, "zip").kind, pointer).toBe(
+          "value",
+        );
+      for (const pointer of [...diff.added, ...diff.changed])
+        expect(locatePointer(after, pointer, "zip").kind, pointer).toBe(
+          "value",
+        );
+    }
   });
 });
 

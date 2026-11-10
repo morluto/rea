@@ -1,17 +1,24 @@
 import { describe, expect, it } from "vitest";
 
+import type { DesktopApplicationCapture } from "./desktopCapture.js";
+
 import {
+  capturedHomePath,
   appModuleFile,
   className,
   environmentName,
   launchCommand,
+  launchDocumentLimitation,
+  launchDocumentNote,
   ownedPaths,
   renderAppClass,
   renderEnvToml,
   renderInstallScript,
   renderReadme,
+  seedWording,
   type DesktopAppExportPlan,
 } from "./appExport.js";
+import type { LaunchDocument } from "./seedDocument.js";
 
 const plan: DesktopAppExportPlan = {
   name: "mousepad",
@@ -26,13 +33,19 @@ const plan: DesktopAppExportPlan = {
   packageFile: null,
   electron: false,
   command: ["mousepad"],
+  opens: { kind: "empty" },
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
   seedCheckpoint: "baseline",
+  syntheticSeed: false,
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
+  seedModes: {},
+  leftOutLocks: [],
+  unownedFolders: [],
+  runtimeSeeds: [],
   dconf: "",
   captureEvidenceId: "ev_1",
 };
@@ -47,6 +60,26 @@ describe("names", () => {
     expect(className("7zip")).toBe("App7zip");
     expect(className("none")).toBe("NoneApp");
     expect(className("true")).toBe("TrueApp");
+  });
+
+  it("names the app by a reverse-DNS id's last part, and by any other id without its trailing version", () => {
+    const names = [
+      "org.gnumeric.gnumeric",
+      "com.github.xournalpp.xournalpp",
+      "glabels-3.0",
+      "gimp-2.10",
+      "display-im6.q16",
+      "mousepad",
+    ].map((id) => environmentName(id, notNumeric));
+
+    expect(names).toEqual([
+      "gnumeric",
+      "xournalpp",
+      "glabels",
+      "gimp",
+      "display-im6-q16",
+      "mousepad",
+    ]);
   });
 
   it("ends a shortened name without a hyphen and prefixes one the name check refuses", () => {
@@ -90,6 +123,11 @@ describe("ownedPaths", () => {
     ).toEqual([".config/GIMPshop/2.10"]);
   });
 
+  it("owns the folder a log sits in, and a lock in the home as itself", () => {
+    expect(ownedPaths([".qet/20261106.log"], [], [])).toEqual([".qet"]);
+    expect(ownedPaths(["poedit.lock"], [], [])).toEqual(["poedit.lock"]);
+  });
+
   it("owns a file directly in the home or a shared folder as itself", () => {
     expect(ownedPaths(["books.gnucash"], [], [])).toEqual(["books.gnucash"]);
     expect(
@@ -99,9 +137,11 @@ describe("ownedPaths", () => {
 });
 
 describe("launchCommand", () => {
-  it("keeps commands without home paths and respells home arguments under $HOME", () => {
+  it("starts in the captured working directory, respelling the home and home arguments under $HOME", () => {
     expect(launchCommand(["mousepad"], "/home/ada", "/home/ada")).toEqual([
-      "mousepad",
+      "sh",
+      "-c",
+      `cd "$HOME" 2>/dev/null; exec 'mousepad'`,
     ]);
     expect(
       launchCommand(
@@ -109,7 +149,11 @@ describe("launchCommand", () => {
         "/home/ada",
         "/home/ada",
       ),
-    ).toEqual(["sh", "-c", `exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`]);
+    ).toEqual([
+      "sh",
+      "-c",
+      `cd "$HOME" 2>/dev/null; exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`,
+    ]);
   });
 
   it("respells the home itself and option values under it", () => {
@@ -122,11 +166,11 @@ describe("launchCommand", () => {
     ).toEqual([
       "sh",
       "-c",
-      `exec 'notes' "$HOME" '--config='"$HOME"/'.notes' '--x=/home/adam'`,
+      `cd '/' 2>/dev/null; exec 'notes' "$HOME" '--config='"$HOME"/'.notes' '--x=/home/adam'`,
     ]);
   });
 
-  it("tries the captured working directory, the home included, only for relative arguments", () => {
+  it("never leaves the app in the framework's own folder, whatever its arguments", () => {
     expect(
       launchCommand(
         ["notes", "today.md"],
@@ -139,11 +183,12 @@ describe("launchCommand", () => {
       `cd "$HOME"/'project/docs' 2>/dev/null; exec 'notes' 'today.md'`,
     ]);
     expect(
-      launchCommand(["notes", "today.md"], "/home/ada", "/home/ada"),
-    ).toEqual(["sh", "-c", `cd "$HOME" 2>/dev/null; exec 'notes' 'today.md'`]);
-    expect(
       launchCommand(["notes", "--wrap"], "/home/ada", "/home/ada/project"),
-    ).toEqual(["notes", "--wrap"]);
+    ).toEqual([
+      "sh",
+      "-c",
+      `cd "$HOME"/'project' 2>/dev/null; exec 'notes' '--wrap'`,
+    ]);
     expect(launchCommand(["./app"], "/home/ada", "/opt/app")).toEqual([
       "sh",
       "-c",
@@ -168,6 +213,17 @@ describe("renderers", () => {
   it("declares data hooks only when the app owns paths", () => {
     expect(renderAppClass(plan)).toContain("keep_initial(self.paths)");
     expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@get_data");
+  });
+
+  it("gives an app without owned paths a reset that only relaunches it when its task judges the screen", () => {
+    const relaunched = renderAppClass({
+      ...plan,
+      paths: [],
+      relaunchOnReset: true,
+    });
+    expect(relaunched).toContain("@reset_data\n    async def relaunch(self)");
+    expect(relaunched).not.toContain("@get_data");
+    expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@reset_data");
   });
 
   it("loads captured dconf settings even without owned paths", () => {
@@ -299,6 +355,345 @@ describe("renderers", () => {
     expect(readme).toContain("Vendor sites may refuse automated downloads");
     expect(readme).toContain(
       "such as a trial's terms, is the operator's to check",
+    );
+  });
+});
+
+describe("README and class wording", () => {
+  it("adds one README line on what the launch opens: the seed's document, or why it opens none", () => {
+    const command = launchCommand(
+      ["mousepad", "/home/ada/Documents/todo.txt"],
+      "/home/ada",
+      "/home/ada",
+    );
+    const readme = (opens: LaunchDocument) =>
+      renderReadme({ ...plan, command, opens });
+    const bare = readme({ kind: "empty" });
+    const seed = { kind: "seed", document: "Documents/todo.txt" } as const;
+    const none = {
+      kind: "none",
+      reason: "the test gives this reason",
+    } as const;
+
+    expect(command.join(" ")).toContain(`"$HOME"/'Documents/todo.txt'`);
+    expect(bare).toContain(`\`${command.join(" ")}\``);
+    for (const opens of [seed, none]) {
+      const note = launchDocumentNote({ opens });
+      expect(note).not.toBe("");
+      expect(readme(opens).replace(note, "")).toBe(bare);
+    }
+    expect(readme(seed)).toContain("`~/Documents/todo.txt`");
+    expect(bare).not.toContain("~/Documents/todo.txt");
+    const limitation = launchDocumentLimitation(none);
+    expect(limitation).toContain(none.reason);
+    expect(launchDocumentNote({ opens: none })).toContain(limitation);
+    expect(readme({ kind: "captured" })).toBe(bare);
+    for (const opens of [
+      seed,
+      { kind: "captured" },
+      { kind: "empty" },
+    ] as const)
+      expect(launchDocumentLimitation(opens)).toBeUndefined();
+  });
+
+  it("says the seed is the user's own data to keep local, unless it was made for the task", () => {
+    const own = { ...plan, seedCheckpoint: "drafted" };
+    const made = { ...own, syntheticSeed: true };
+    const wording = { own: seedWording(own), made: seedWording(made) };
+    // The README's seed line and closing notice, and the class's docstring.
+    const renderedIn = {
+      origin: renderReadme,
+      notice: renderReadme,
+      docstring: renderAppClass,
+    } satisfies Record<
+      keyof typeof wording.own,
+      (from: DesktopAppExportPlan) => string
+    >;
+
+    for (const [from, kept, other] of [
+      [own, wording.own, wording.made],
+      [made, wording.made, wording.own],
+    ] as const)
+      for (const key of ["origin", "notice", "docstring"] as const) {
+        const rendered = renderedIn[key](from);
+        expect(rendered).toContain(kept[key]);
+        expect(rendered).not.toContain(other[key]);
+      }
+    for (const { origin, docstring } of [wording.own, wording.made]) {
+      expect(origin).toContain("`drafted`");
+      expect(docstring).toContain("drafted");
+    }
+    expect(renderReadme(made)).toContain("`envs/mousepad/seed/`");
+    expect(renderReadme(own)).not.toContain("`envs/mousepad/seed/`");
+  });
+});
+
+it("keeps a nested selection under the state path of a selected alias", () => {
+  const home = "/home/ada";
+  const state = `${home}/.config/geany`;
+  const path = capturedHomePath({
+    host: { home },
+    application: { state_directories: [{ path: state }] },
+    state: {
+      state_directories: [state],
+      selected_paths: [
+        { path: `${home}/settings`, physical: state, kind: "directory" },
+        {
+          path: `${home}/settings/profiles/work`,
+          physical: `${state}/profiles/work`,
+          kind: "directory",
+        },
+      ],
+    },
+  } as unknown as DesktopApplicationCapture);
+  expect(path(`${state}/profiles/work/geany.conf`)).toBe(
+    ".config/geany/profiles/work/geany.conf",
+  );
+});
+
+describe("capturedHomePath", () => {
+  it("keeps the application's state directory when a selected link points to it", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [{ path: `${home}/.config/geany` }] },
+      state: {
+        state_directories: [`${home}/.config/geany`],
+        selected_paths: [
+          {
+            path: `${home}/settings`,
+            physical: `${home}/.config/geany`,
+            kind: "directory",
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+    expect(path(`${home}/.config/geany/geany.conf`)).toBe(
+      ".config/geany/geany.conf",
+    );
+  });
+
+  it("uses the selected spelling of a linked settings folder, and a database's logs", () => {
+    const home = "/home/ada";
+    const physical = `${home}/settings/vendor`;
+    const database = `${home}/data/books.db`;
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+          { path: `${home}/.config/vendor`, physical },
+          { path: `${home}/Documents/linked.db`, physical: database },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${physical}/app.conf`)).toBe(".config/vendor/app.conf");
+    expect(path(`${home}/Documents/note.txt`)).toBe("Documents/note.txt");
+    expect(path(database)).toBe("Documents/linked.db");
+    expect(path(`${database}-wal`)).toBe("Documents/linked.db-wal");
+    expect(path(`${database}-journal`)).toBe("Documents/linked.db-journal");
+  });
+
+  it("maps a database selected through a link together with its write-ahead log", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/.config/app.db`, physical: `${home}/data/app.db` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+    expect(path(`${home}/data/app.db`)).toBe(".config/app.db");
+    expect(path(`${home}/data/app.db-wal`)).toBe(".config/app.db-wal");
+    expect(path(`${home}/data/app.db-journal`)).toBe(".config/app.db-journal");
+  });
+
+  it("keeps a walked settings folder when a broader directory was also selected", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: {
+        state_directories: [{ path: `${home}/.config/notes` }],
+      },
+      state: {
+        state_directories: [`${home}/settings/notes`],
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/notes/settings.ini`)).toBe(
+      ".config/notes/settings.ini",
+    );
+    expect(path(`${home}/settings/other.txt`)).toBe("settings/other.txt");
+  });
+
+  it("does not treat a database log name as a directory of other files", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+          {
+            path: `${home}/.config/notes`,
+            physical: `${home}/settings/notes`,
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/notes/settings.ini`)).toBe(
+      ".config/notes/settings.ini",
+    );
+    expect(path(`${home}/settings/notes-journal/today.txt`)).toBe(
+      "settings/notes-journal/today.txt",
+    );
+  });
+
+  it("moves a walked state database's logs with the database", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: {
+        state_directories: [{ path: `${home}/.notes-state.db` }],
+      },
+      state: {
+        state_directories: [`${home}/settings/notes.db`],
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/notes.db`)).toBe(".notes-state.db");
+    expect(path(`${home}/settings/notes.db-wal`)).toBe(".notes-state.db-wal");
+    expect(path(`${home}/settings/notes.db-journal`)).toBe(
+      ".notes-state.db-journal",
+    );
+  });
+
+  it("keeps a selected file whose name ends in -journal", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          {
+            path: `${home}/.config/vendor/state`,
+            physical: `${home}/data/vendor-journal`,
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/data/vendor-journal`)).toBe(".config/vendor/state");
+  });
+});
+
+describe("capturedHomePath outside the home", () => {
+  it("keeps a database log when the database link leaves the home", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          {
+            path: `${home}/Documents/books.db`,
+            physical: "/mnt/data/books.db",
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path("/mnt/data/books.db")).toBe("Documents/books.db");
+    expect(path("/mnt/data/books.db-wal")).toBe("Documents/books.db-wal");
+    expect(path("/mnt/data/books.db-journal")).toBe(
+      "Documents/books.db-journal",
+    );
+  });
+
+  it("keeps a database's own name for its log when a parent folder moves", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/.config/app`, physical: `${home}/settings` },
+          {
+            path: `${home}/settings/book.db`,
+            physical: `${home}/settings/book.db`,
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/book.db`)).toBe("settings/book.db");
+    expect(path(`${home}/settings/book.db-wal`)).toBe("settings/book.db-wal");
+    expect(path(`${home}/settings/book.db-journal`)).toBe(
+      "settings/book.db-journal",
+    );
+    expect(path(`${home}/settings/other.txt`)).toBe(".config/app/other.txt");
+  });
+
+  it("keeps an ordinary file beside a selected directory in the parent folder", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        content_roots: [
+          `${home}/settings/work`,
+          `${home}/settings/work/notes.txt`,
+          `${home}/settings/work-journal`,
+        ],
+        selected_paths: [
+          { path: `${home}/.config/app`, physical: `${home}/settings` },
+          { path: `${home}/settings/work`, physical: `${home}/settings/work` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/work-journal`)).toBe(
+      ".config/app/work-journal",
+    );
+  });
+
+  it("keeps a neighbor of a selected directory recorded as a directory", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          {
+            path: `${home}/.config/app`,
+            physical: `${home}/settings`,
+            kind: "directory",
+          },
+          {
+            path: `${home}/settings/work`,
+            physical: `${home}/settings/work`,
+            kind: "directory",
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/work-journal`)).toBe(
+      ".config/app/work-journal",
+    );
+    expect(path(`${home}/settings/work/notes.txt`)).toBe(
+      "settings/work/notes.txt",
     );
   });
 });

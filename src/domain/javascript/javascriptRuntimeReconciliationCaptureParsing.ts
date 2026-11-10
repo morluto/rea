@@ -25,7 +25,6 @@ import {
   type JavaScriptRuntimeTargetLocation,
 } from "./javascriptRuntimeObservation.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { Evidence } from "../evidence.js";
 import { parseActiveElectronCapture } from "./javascriptRuntimeReconciliationActive.js";
 import {
@@ -123,22 +122,6 @@ export type ParsedRuntimeCapture =
         readonly completeness: BrowserCompleteness;
       };
     });
-
-/** Parse only supported passive web/Electron inspection Evidence. */
-export const parseRuntimeCaptures = (
-  observations: readonly unknown[],
-  path: readonly (string | number)[] = ["runtime_observations"],
-): ParsedRuntimeCapture[] =>
-  observations
-    .map((observation, index) =>
-      parseRuntimeCapture(observation, [...path, index]),
-    )
-    .sort((left, right) =>
-      compareUnicodeCodePoints(
-        left.evidence.evidence_id,
-        right.evidence.evidence_id,
-      ),
-    );
 
 /** Authenticate one source before interpreting its runtime capture. */
 export const parseRuntimeCapture = (

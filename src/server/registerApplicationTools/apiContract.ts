@@ -42,7 +42,11 @@ export const registerApiContractTool = (
               }),
           );
           if (!result.ok)
-            return server.delivery.toCallToolResult(result, contract);
+            return server.delivery.toPartialErrorToolResult(
+              result.error,
+              contract.returnsTargetContent,
+              options.recordEvidence,
+            );
           return deliverApplicationEvidence(
             server,
             options,

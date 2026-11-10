@@ -1,9 +1,12 @@
+import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
+import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectRecordedArrayView } from "./recordedArrayView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
@@ -152,6 +155,7 @@ import {
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -159,7 +163,10 @@ import {
   sourceToBundlePageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
   apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
   apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
@@ -225,6 +232,7 @@ export {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -232,7 +240,10 @@ export {
   sourceToBundlePageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
   apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
   apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
@@ -328,6 +339,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("procedure_references", projectNativeProcedureReferencesView),
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
@@ -362,6 +374,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
   retain("inspect_api_contract", projectApiContractView),
+  retain("inspect_playwright_trace", projectPlaywrightTraceView),
   retain(
     "compare_static_and_observed_endpoints",
     projectEndpointComparisonView,
@@ -467,6 +480,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_references" ||
           parent.operation === "procedure_pseudo_code" ||
           parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
@@ -489,6 +503,9 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "recorded-array") {
+    return sealProjected(projectRecordedArrayView(parent, view));
+  }
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

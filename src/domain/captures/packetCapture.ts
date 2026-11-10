@@ -51,7 +51,7 @@ const captureInputShape = z.strictObject({
     .int()
     .nonnegative()
     .default(0)
-    .describe("Skip this many matching packets after filtering; default 0"),
+    .describe("Skip this many matching packets after filtering"),
   match_limit: z
     .number()
     .int()

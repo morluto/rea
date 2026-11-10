@@ -1,7 +1,11 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -169,7 +173,7 @@ const verifyPortableCli = async (
   );
   const original = await readFile(bundlePath);
   await writeFile(inputPath, JSON.stringify({ ...input, detail: "complete" }));
-  const cliFull = await cli.run({
+  const cliFull = await runFileCli(cli, {
     arguments: [
       "match-native-functions",
       inputPath,
@@ -183,7 +187,7 @@ const verifyPortableCli = async (
   expect(cliFull.exitCode, cliFull.stderr).toBe(0);
   expect(parseEvidence(cliFull.json).evidence_id).toBe(evidenceId);
   await writeFile(inputPath, JSON.stringify(input));
-  const cliSummary = await cli.run({
+  const cliSummary = await runFileCli(cli, {
     arguments: [
       "match-native-functions",
       inputPath,
@@ -218,7 +222,7 @@ const verifyPortableCli = async (
   expect(ids.has(unrelated.evidence_id)).toBe(false);
   expect(ids.has(evidenceId)).toBe(true);
   expect(Buffer.compare(await readFile(bundlePath), original)).toBe(0);
-  const incomplete = await cli.run({
+  const incomplete = await runFileCli(cli, {
     arguments: [
       "match-native-functions",
       inputPath,
@@ -313,11 +317,46 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
         },
       ],
     });
+    const selectedPage = parseEvidence(page.structuredContent)
+      .normalized_result as {
+      items: Record<string, unknown>[];
+    };
+    expect(selectedPage.items[0]).not.toHaveProperty("limitations");
     expect(parseEvidence(page.structuredContent).locations).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "artifact-path" }),
       ]),
     );
+    const withoutBytes = await call("match_native_functions", {
+      left: reference(left.evidence_id),
+      right: reference(right.evidence_id),
+    });
+    expect(withoutBytes.isError, JSON.stringify(withoutBytes)).not.toBe(true);
+    const missingParent = parseEvidence(withoutBytes.structuredContent)
+      .normalized_result as { parent_evidence_id: string };
+    const missingPage = await call("inspect_analysis_view", {
+      source: reference(missingParent.parent_evidence_id),
+      view: {
+        kind: "function-matches",
+        collection: "functions",
+        sides: ["left"],
+        names: ["main"],
+      },
+    });
+    expect(missingPage.isError, JSON.stringify(missingPage)).not.toBe(true);
+    expect(
+      parseEvidence(missingPage.structuredContent).normalized_result,
+    ).toMatchObject({
+      items: [
+        {
+          name: "main",
+          body_sha256: null,
+          limitations: [
+            "No complete unambiguous bytes for the observed function body.",
+          ],
+        },
+      ],
+    });
     const compared = await call(
       "compare_functions",
       report.matches[0]!.compare_functions_input!,
@@ -470,6 +509,9 @@ cliTest(
       "left_observations",
       "right_observations",
     ] as const) {
+      // Keep fresh-process coverage for both source-admission routes on left.
+      const run =
+        field === "left" ? cli.run.bind(cli) : runFileCli.bind(undefined, cli);
       const observation = field.endsWith("observations");
       const request = {
         left,
@@ -494,7 +536,7 @@ cliTest(
       const requestPath = join(root, "request.json");
       await writeFile(requestPath, JSON.stringify(request));
       for (const sourceArguments of [[], ["--source_bundle", bundlePath]]) {
-        const rejected = await cli.run({
+        const rejected = await run({
           arguments: [
             "match-native-functions",
             requestPath,
@@ -541,7 +583,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(inlineRequest));
-    const inline = await cli.run({
+    const inline = await runFileCli(cli, {
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     await writeFile(
@@ -549,7 +591,7 @@ cliTest(
       JSON.stringify(createEvidenceBundle([wrongRole, right])),
     );
     await writeFile(requestPath, JSON.stringify(portableRequest));
-    const portable = await cli.run({
+    const portable = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,
@@ -571,7 +613,7 @@ cliTest(
 
     const corruptRequest = { left: badCoordinate, right, detail: "complete" };
     await writeFile(requestPath, JSON.stringify(corruptRequest));
-    const corruptInline = await cli.run({
+    const corruptInline = await runFileCli(cli, {
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     const corruptPortableRequest = {
@@ -583,7 +625,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(corruptPortableRequest));
-    const corruptPortable = await cli.run({
+    const corruptPortable = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,
@@ -601,7 +643,7 @@ cliTest(
 
     const malformedBundlePath = join(root, "malformed-outer-frame.json");
     await writeFile(malformedBundlePath, JSON.stringify({ records: [left] }));
-    const malformedBundle = await cli.run({
+    const malformedBundle = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,

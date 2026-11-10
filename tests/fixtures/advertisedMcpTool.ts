@@ -21,6 +21,8 @@ export const advertisedMcpToolSchemas = async (
   ajv: AdvertisedSchemaAssertions = new Ajv2020({
     strict: false,
     validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
   }),
 ) => {
   const matches = (await client.listTools()).tools.filter(

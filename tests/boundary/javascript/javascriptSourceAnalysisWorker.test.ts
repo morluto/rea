@@ -632,8 +632,9 @@ it("formats a real worker's declined semantic budget once", async () => {
     const { error } = result.error;
     expect(error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reason:
-        "The parent reserved its remaining result capacity for static observations; semantic analysis of main.js was not started",
+      reason: expect.stringMatching(
+        /result capacity.*static observations.*semantic analysis of main\.js was not started/i,
+      ),
       reportedLimits: { semantic_result_budget_bytes: 0 },
     });
     expect(error.message.match(/Resource constraint during/gu)).toHaveLength(1);

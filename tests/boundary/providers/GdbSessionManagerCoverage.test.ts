@@ -13,12 +13,10 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import {
   commandMayChangeInferiorOutput,
-  gdbErrorMessage,
   gdbOneShotCommandMayInvalidateDetachProof,
   gdbThreadGroupCount,
   GdbSessionManager,
   miStringField,
-  waitForGdbCommandTurn,
 } from "../../../src/gdb/GdbSessionManager.js";
 import type {
   OwnedProviderProcessSpawnOptions,
@@ -145,11 +143,16 @@ it.each([
 it.each([
   ["show version", false],
   ["show inferior-tty", false],
+  ["  show inferior-tty  ", false],
+  ["-inferior-tty-show", false],
   ["help inferior-tty", false],
   ["show inferior-tty\nset inferior-tty /tmp/other", true],
   ["help inferior-tty; run > /tmp/other", true],
   ["set pagination off", false],
   ["set inferior-t /tmp/output", true],
+  ["set inferior-tty /tmp/output", true],
+  ["show inferior-t; set inferior-tty /tmp/output", true],
+  ["show inferior-tty; define redirect = run > /tmp/output", true],
   ["inferior-tty /tmp/output", true],
   ["tty /dev/pts/2", true],
   ["source commands.gdb", true],
@@ -180,24 +183,6 @@ it.each([
   ["show inferior-tty", false],
 ] as const)("classifies one-shot GDB commands: %s", (command, expected) => {
   expect(gdbOneShotCommandMayInvalidateDetachProof(command)).toBe(expected);
-});
-
-it.each([
-  ["show inferior-tty", false],
-  ["  show inferior-tty  ", false],
-  ["-inferior-tty-show", false],
-  ["set inferior-tty /tmp/output", true],
-  ["show inferior-t; set inferior-tty /tmp/output", true],
-  ["show inferior-tty; define redirect = run > /tmp/output", true],
-] as const)("classifies inferior TTY commands: %s", (command, expected) => {
-  expect(commandMayChangeInferiorOutput(command)).toBe(expected);
-});
-
-it.each([
-  [new Error("provider failure"), "provider failure"],
-  ["non-error provider failure", "non-error provider failure"],
-] as const)("formats unknown GDB boundary failures", (cause, message) => {
-  expect(gdbErrorMessage(cause)).toBe(message);
 });
 
 it("rejects an invalid caller TTY and platforms without safe GDB ownership", async () => {
@@ -1556,7 +1541,7 @@ it("keeps inferior TTY readback when the caller output cap is smaller than that 
     );
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    maxCommandOutputBytes: 80,
+    environment: { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "80" },
   });
 
   const started = await manager.start(undefined, { inferiorTty: tty });
@@ -1599,10 +1584,10 @@ const managerWithFakeSpawner = (
 ): GdbSessionManager => {
   const manager = new GdbSessionManager({
     platform: "linux",
-    environment: { REA_GDB_COMMAND: "fake-gdb" },
     spawnProcess,
     verifyInferiorOutputSink: async () => undefined,
     ...options,
+    environment: { REA_GDB_COMMAND: "fake-gdb", ...options.environment },
   });
   managers.push(manager);
   return manager;
@@ -1913,7 +1898,7 @@ it("handles a provider with no MI stdout stream as a startup timeout", async () 
 it("preserves a timeout while startup waits for the automatic-loading response", async () => {
   const fake = createFakeSpawner((_child, _token, _command) => undefined);
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 25,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
   });
 
   const started = await manager.start();
@@ -1928,7 +1913,7 @@ it("preserves a timeout while startup waits for the automatic-loading response",
       diagnostics: {
         setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
         effective_value: 25,
-        source: "runtime",
+        source: "setting",
         unit: "ms",
         restart_required: true,
       },
@@ -1940,7 +1925,7 @@ it("preserves a timeout while startup waits for the automatic-loading response",
 it("maps an acknowledged startup-command timeout to the startup operation", async () => {
   const fake = createFakeSpawner((_child, _token, _command) => undefined);
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
     stopProcess: async () => ({ status: "stopped" }),
   });
 
@@ -1995,7 +1980,7 @@ it("maps startup command timeout and preserves initial no-inferior evidence when
   let retainedSessionId = "";
   const fake = createFakeSpawner((_child, _token, _command) => undefined);
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 25,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
     stopProcess: async (session) => {
       retainedSessionId = (session as typeof session & { id: string }).id;
       const debuggerSession = session as typeof session & {
@@ -2244,7 +2229,7 @@ it("rejects the command queued behind a timed-out GDB request", async () => {
       fake.children[0]?.stdout.write(`${_token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 25,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
   });
   const started = await expectGdbSessionStarted(manager);
 
@@ -2258,43 +2243,6 @@ it("rejects the command queued behind a timed-out GDB request", async () => {
 
   expect(rejected.ok).toBe(false);
   if (!rejected.ok) expect(rejected.error._tag).toBe("AnalysisInputError");
-});
-
-it("waits for the prior command and preserves cancellation and queue failures", async () => {
-  const resolved = Promise.resolve();
-  expect(waitForGdbCommandTurn(resolved)).toBe(resolved);
-
-  const preAborted = new AbortController();
-  const queueReason = "queue cancelled before admission";
-  preAborted.abort(queueReason);
-  await expect(
-    waitForGdbCommandTurn(Promise.resolve(), preAborted.signal),
-  ).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-    cause: queueReason,
-  });
-
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const controller = new AbortController();
-  const activeQueueReason = { source: "active queue cancellation" };
-  const cancelledWait = waitForGdbCommandTurn(pending, controller.signal);
-  controller.abort(activeQueueReason);
-  await expect(cancelledWait).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-    cause: activeQueueReason,
-  });
-  release();
-
-  const queueFailure = new Error("previous command queue failed");
-  await expect(
-    waitForGdbCommandTurn(
-      Promise.reject(queueFailure),
-      new AbortController().signal,
-    ),
-  ).rejects.toBe(queueFailure);
 });
 
 it("retains a multi-run console command through its completion query before dispatching a follower", async () => {
@@ -2502,14 +2450,18 @@ it("correlates command output records and reports invalid or cancelled requests"
   );
   expect(signalled.ok).toBe(true);
   const cancelled = new AbortController();
-  cancelled.abort();
+  const reason = { source: "cancelled before admission" };
+  cancelled.abort(reason);
   const rejected = await manager.execute(
     started.value.session_id,
     "info registers",
     cancelled.signal,
   );
   expect(rejected.ok).toBe(false);
-  if (!rejected.ok) expect(rejected.error._tag).toBe("AnalysisCancelledError");
+  if (!rejected.ok) {
+    expect(rejected.error._tag).toBe("AnalysisCancelledError");
+    expect(rejected.error.cause).toBe(reason);
+  }
   const closed = await manager.close(started.value.session_id);
   expect(closed.ok).toBe(false);
   expect(manager.status(started.value.session_id)).toBeDefined();
@@ -3075,7 +3027,7 @@ it("retains ownership and sends no signal when MI state is saturated or unknown"
       fake.children[0]?.stdout.write(`${token}^error,msg="unknown"\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
   });
   const started = await expectGdbSessionStarted(manager);
 
@@ -3264,34 +3216,40 @@ it("retains an exited GDB session when provider stop verification is incomplete"
   expect(manager.status(started.value.session_id)?.state).toBe("closed");
 });
 
-it("preserves a command timeout when stopping the owned process rejects", async () => {
-  let stopCalls = 0;
-  const provider = await createProvider(
-    responsiveProvider(`
+it.each([new Error("simulated stop failure"), "simulated stop failure"])(
+  "preserves a command timeout when stopping the owned process rejects: %s",
+  async (failure) => {
+    let stopCalls = 0;
+    const provider = await createProvider(
+      responsiveProvider(`
     if (match[2].includes('auto-load off')) process.stdout.write(match[1] + '^done\\n');
   `),
-  );
-  const manager = new GdbSessionManager({
-    platform: "linux",
-    environment: { REA_GDB_COMMAND: provider },
-    commandTimeoutMs: 25,
-    stopProcess: async (session, name) => {
-      stopCalls += 1;
-      if (stopCalls === 1) throw new Error("simulated stop failure");
-      return stopOwnedDebuggerProcess(session, name);
-    },
-  });
-  managers.push(manager);
-  const started = await expectGdbSessionStarted(manager);
+    );
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "25",
+      },
+      stopProcess: async (session, name) => {
+        stopCalls += 1;
+        if (stopCalls === 1) throw failure;
+        return stopOwnedDebuggerProcess(session, name);
+      },
+    });
+    managers.push(manager);
+    const started = await expectGdbSessionStarted(manager);
 
-  const timedOut = await manager.execute(started.value.session_id, "stall");
+    const timedOut = await manager.execute(started.value.session_id, "stall");
 
-  expect(timedOut.ok).toBe(false);
-  if (!timedOut.ok) {
-    expect(timedOut.error._tag).toBe("AnalysisCapabilityUnavailableError");
-    expect(timedOut.error.message).toContain("shutdown failed");
-  }
-});
+    expect(timedOut.ok).toBe(false);
+    if (!timedOut.ok) {
+      expect(timedOut.error._tag).toBe("AnalysisCapabilityUnavailableError");
+      expect(timedOut.error.message).toContain("shutdown failed");
+      expect(timedOut.error.message).toContain("simulated stop failure");
+    }
+  },
+);
 
 it("retains caller cancellation and cleanup authority after active-command stop rejects", async () => {
   const controller = new AbortController();
@@ -3383,7 +3341,7 @@ it("returns partial command evidence when the active MI request times out after 
     else _child.stdout.write(`${token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
     stopProcess: async () => ({ status: "stopped" }),
   });
   const started = await expectGdbSessionStarted(manager);
@@ -3987,7 +3945,7 @@ it("reports command timeout when an incomplete stop cannot confirm process exit"
     fake.children[0]?.stdout.write(`${_token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
     stopProcess: async (session, name) => {
       stopCalls += 1;
       if (stopCalls === 1)

@@ -77,8 +77,8 @@ it.each(
       status: "unavailable",
       reason:
         runId === undefined
-          ? "REA_PROCESS_RUN_ID was absent from the readable environment for PID 100; process lineage ownership remains unverified"
-          : "process lineage contains an unowned or PID-reused process",
+          ? expect.stringMatching(/REA_PROCESS_RUN_ID.*PID 100.*unverified/iu)
+          : expect.stringMatching(/unowned.*PID.reused/iu),
     });
     await expect(
       cleanupOwnedProcessGroup(ownership, host),

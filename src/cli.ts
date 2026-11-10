@@ -19,17 +19,20 @@ import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
 import { registerRustCommands } from "./cli/rustCommands.js";
 import { registerPythonPycCommands } from "./cli/pythonPycCommands.js";
 import { registerErlangCommands } from "./cli/erlangCommands.js";
+import { registerV8CodeCacheCommands } from "./cli/v8CodeCacheCommands.js";
 import { registerSqliteCommands } from "./cli/sqliteCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
 import { Cli, z } from "incur";
+import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
 import {
   adaptCliOutputArgumentsForIncur,
   classifyMcpAddDiscovery,
   expandMcpAddEqualsArguments,
-  mcpAddAgents,
+  declaredSensitiveValues,
+  readMcpAddArguments,
   normalizeCliArguments,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
@@ -81,12 +84,13 @@ import {
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
-import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
+import { validateCliArguments } from "./cli/strictPositionals.js";
 import {
   encodeCliArgumentErrors,
   presentCliArgumentErrors,
 } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
+import { reportUnknownMcpSubcommand } from "./cli/mcpBuiltinCommands.js";
 import {
   closeCliGuidanceResources,
   registerGuidanceCommands,
@@ -208,6 +212,7 @@ export const createCli = (
       registerRustCommands(cli, logger);
       registerPythonPycCommands(cli, logger);
       registerErlangCommands(cli, logger);
+      registerV8CodeCacheCommands(cli, logger);
       registerSqliteCommands(cli, logger, environment);
       registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
     },
@@ -250,7 +255,7 @@ export const createCli = (
   });
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
-  const serveStrict = rejectSurplusCliArguments(cli);
+  const serveStrict = validateCliArguments(cli);
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   encodeCliArgumentErrors(cli);
@@ -310,37 +315,21 @@ export const createCli = (
         )(1);
         return Promise.resolve();
       }
-      // Incur's `mcp add` silently skips a valued option with no value and
-      // swallows the next flag as the value: the registration succeeds without
-      // the requested agent or command. Reject a trailing --agent/--command/-c,
-      // a value position occupied by another flag, and an empty `--flag=` form
-      // up front.
-      const valued = ["--agent", "--command", "-c"];
-      let missingValue: string | undefined;
-      for (let index = 0; index < command.length; index += 1) {
-        const next = command[index + 1];
-        if (
-          valued.includes(command[index]!) &&
-          (next === undefined || next.startsWith("-"))
-        ) {
-          missingValue = command[index];
-          break;
-        }
-      }
-      const emptyValue = command.find(
-        (token) =>
-          (token.startsWith("--agent=") ||
-            token.startsWith("--command=") ||
-            token.startsWith("-c=")) &&
-          token.length === token.indexOf("=") + 1,
+      // Validate before reading settings, creating a backup or invoking Incur's
+      // writer. The same owner supplies the agent selection used below.
+      const parsedRegistration = readMcpAddArguments(
+        command.slice(builtin + 2),
       );
-      if (missingValue !== undefined || emptyValue !== undefined) {
-        const flag = missingValue ?? emptyValue!;
-        const message = `Missing value for flag: ${flag.replace(/=.*$/, "")}`;
+      if (!parsedRegistration.validation.ok) {
+        const failure = parsedRegistration.validation.error;
+        const message = redactExplicitText(
+          failure.kind === "missing_value"
+            ? `Missing value for flag: ${failure.flag}`
+            : `Unexpected argument: ${failure.token}`,
+          declaredSensitiveValues(command),
+        );
         const field =
-          flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
-            ? "command"
-            : "agent";
+          failure.kind === "missing_value" ? failure.field : "arguments";
         const output = parseCliOutputArguments(normalized);
         if (!output.validation.ok)
           write(renderCliOutputArgumentError(output.validation));
@@ -389,8 +378,7 @@ export const createCli = (
       // non-Amp equals forms. Incur consumes command values before agent flags.
       normalized = serveArguments;
       const registration = splitIncurBuiltinArguments(serveArguments);
-      const rest = registration.command.slice(builtin + 2);
-      const agents = mcpAddAgents(rest);
+      const { agents } = parsedRegistration;
       const ampRequested =
         ![
           "--help",
@@ -601,7 +589,9 @@ export const createCli = (
     }
     const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
       serveDeclared(tokens, selected, (declared, declaredOptions) =>
-        serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
+        reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
+          ? Promise.resolve()
+          : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
       ),
     );
     const note = completionHelpNote(normalized);

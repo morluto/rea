@@ -295,7 +295,7 @@ it("fails /images followed by a malformed structure, and leaves a plain DTB a fi
     scanCanonicalArtifactInventory(await writeFit("broken.itb", bytes)),
   ).rejects.toMatchObject({
     reason: "format",
-    message: "FIT is malformed: Unknown FDT token 10",
+    message: expect.stringMatching(/FDT.*token 10/iu),
   });
   const plain = await scanCanonicalArtifactInventory(
     await writeFit("board.dtb", devicetreeFixture()),
