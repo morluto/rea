@@ -6,14 +6,17 @@ before applying these instructions to an older published package.
 Native x86 (32-bit) PE support is available on repository main; npm releases
 through 5.0.0 admit x86-64 PE targets on Windows.
 
-Status: experimental Windows x64 support for the read-only P0 boundary. Windows
-package builds bundle native process, filesystem, and DACL controls. REA
-uses them automatically when the analyst selects a Ghidra operation; no
-additional permission flag or degraded mode is required.
+Status: experimental Windows x64 and ARM64 support for the read-only P0
+boundary. Windows package builds bundle native process, filesystem, and DACL
+controls for the architecture named in the native manifest. REA uses them
+automatically when the analyst selects a Ghidra operation; no additional
+permission flag or degraded mode is required. Windows ARM64 uses the same
+controls when `rea-windows-arm64.node` loads and Ghidra's `win_arm_64`
+decompiler matches the JDK. That ARM64 host lane is not yet in CI.
 
 ## Supported boundary
 
-- Windows 10+ x64 with fixed local NTFS target and temporary volumes;
+- Windows 10+ x64 or ARM64 with fixed local NTFS target and temporary volumes;
 - Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+;
 - an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
@@ -76,9 +79,10 @@ rea inspect "C:\fixtures\sample.exe" --provider ghidra --format json
 ```
 
 `rea doctor` distinguishes installation prerequisites from native artifact or
-OS failures. It checks the Ghidra release, headless launcher, full JDK, x64
-host, and native controls. A missing or mismatched addon requires the matching
-Windows x64 package; changing MCP registration cannot supply that artifact.
+OS failures. It checks the Ghidra release, headless launcher, full JDK, x64 or
+ARM64 host, and native controls. A missing or mismatched addon requires the
+matching Windows package for that architecture; changing MCP registration
+cannot supply that artifact.
 A filesystem or access failure identifies the failed native constraint.
 An incompatible host uses `unsupported_host`. Missing, mismatched or unloadable
 native artifacts use `runtime_missing` and doctor classification
@@ -87,7 +91,7 @@ example under Smart App Control or an App Control policy, reports failure stage
 `load`; restoring or reinstalling the file cannot fix it. A failed native
 invocation or invalid inspection uses `runtime_unavailable` and doctor
 classification `runtime_failure`; it does not
-mean Windows x64 itself is unsupported. Provider diagnostics retain the failure
+mean Windows x64 or ARM64 itself is unsupported. Provider diagnostics retain the failure
 stage under `windows_native_failure`; the availability's `remediation` carries
 the corresponding repair.
 Self-test failures preserve the native operation and OS error text. Check the
