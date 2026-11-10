@@ -111,17 +111,25 @@ import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.j
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
+import { NativeInitializersProvider } from "../../src/native/initializers/NativeInitializersProvider.js";
+import { ElfUnwindRangesProvider } from "../../src/native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
+import { KernelBuildConfigProvider } from "../../src/native/elf/KernelBuildConfigProvider.js";
 import { PeCertificatesProvider } from "../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../src/native/pe/PeImportsProvider.js";
+import { WindowsShortcutProvider } from "../../src/native/windows/WindowsShortcutProvider.js";
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
+import { inspectNativeInitializersInputSchema } from "../../src/domain/native/nativeInitializers.js";
+import { inspectElfUnwindRangesInputSchema } from "../../src/domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
+import { inspectKernelBuildConfigInputSchema } from "../../src/domain/native/kernelBuildConfig.js";
 import { inspectPeCertificatesInputSchema } from "../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../src/domain/native/peImports.js";
+import { inspectWindowsShortcutInputSchema } from "../../src/domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeExports.js";
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
@@ -998,12 +1006,16 @@ it.each([
 const stableArtifactProviders = [
   ...staticProviders,
   ["ELF notes", () => new ElfNotesProvider()],
+  ["native initializers", () => new NativeInitializersProvider()],
+  ["ELF unwind ranges", () => new ElfUnwindRangesProvider()],
   ["Apple IPS", () => new AppleIpsProvider()],
   ["kernel module", () => new KernelModuleProvider()],
+  ["kernel build config", () => new KernelBuildConfigProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
   ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
+  ["Windows shortcut", () => new WindowsShortcutProvider()],
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
 ] as const;
@@ -1029,6 +1041,16 @@ const inspectFileFailure = (
       inspectElfNotesInputSchema.parse({ path }),
       options,
     );
+  if (provider instanceof NativeInitializersProvider)
+    return provider.inspect(
+      inspectNativeInitializersInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof ElfUnwindRangesProvider)
+    return provider.inspect(
+      inspectElfUnwindRangesInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof AppleIpsProvider)
     return provider.inspect(
       inspectAppleIpsInputSchema.parse({ path }),
@@ -1037,6 +1059,11 @@ const inspectFileFailure = (
   if (provider instanceof KernelModuleProvider)
     return provider.inspect(
       inspectKernelModuleInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof KernelBuildConfigProvider)
+    return provider.inspect(
+      inspectKernelBuildConfigInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof PeCertificatesProvider)
@@ -1057,6 +1084,11 @@ const inspectFileFailure = (
   if (provider instanceof PeImportsProvider)
     return provider.inspect(
       inspectPeImportsInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof WindowsShortcutProvider)
+    return provider.inspect(
+      inspectWindowsShortcutInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof NativeExportsProvider)
@@ -1105,7 +1137,9 @@ it.each(
       expect(result.error._tag).toBe(
         expectedTag ??
           (provider instanceof ElfNotesProvider ||
+          provider instanceof ElfUnwindRangesProvider ||
           provider instanceof KernelModuleProvider ||
+          provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
           provider instanceof PeResourcesProvider
             ? "ArtifactOperationError"

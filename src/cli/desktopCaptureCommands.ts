@@ -6,7 +6,12 @@ import type { Logger } from "pino";
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
 import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import type { Evidence } from "../domain/evidence.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { err, ok } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
@@ -45,18 +50,17 @@ const captureOptions = z.object({
     .array(z.string())
     .optional()
     .describe("Argument appended to the launch command (repeatable)"),
-  output: z
-    .string()
-    .min(1)
-    .describe("New or empty directory for capture.json and retained content"),
+  output: localPathStringSchema.describe(
+    "New or empty directory for capture.json and retained content",
+  ),
   statePath: z
-    .array(z.string().min(1))
+    .array(localPathStringSchema)
     .optional()
     .describe(
       "File or directory whose starting content is retained in addition to the application's state directories; a file brings its SQLite write-ahead log and rollback journal (repeatable)",
     ),
   exclude: z
-    .array(z.string().min(1))
+    .array(localPathStringSchema)
     .optional()
     .describe("Path left out of every checkpoint walk (repeatable)"),
   maxDurationSeconds: positive(
@@ -71,8 +75,7 @@ const captureOptions = z.object({
   maxContentBytes: positive(DESKTOP_CAPTURE_DEFAULTS.maxContentBytes).describe(
     "Total retained content",
   ),
-  packageFile: z
-    .string()
+  packageFile: localPathStringSchema
     .optional()
     .describe(
       "The .deb file the application was installed from; its control fields, SHA-256 and size are recorded, never the file",
@@ -93,7 +96,34 @@ const checkpointOptions = {
     .describe(
       "Checkpoint whose state a task must pass on; the capture's last by default",
     ),
+  withholdFrom: z
+    .string()
+    .optional()
+    .describe(
+      "Checkpoint marked before a sign-in or licence activation; files under the owned paths that changed after it, up to --withhold-to, are withheld from the seed and the draft",
+    ),
+  withholdTo: z
+    .string()
+    .optional()
+    .describe("Checkpoint marked after the sign-in or licence activation"),
+  withholdPath: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Home-relative file under the owned paths to withhold as sign-in or licence state, such as one written at first launch; repeat for more",
+    ),
 };
+
+/** The withhold selection the checkpoint options name. */
+const withholdOf = (options: {
+  readonly withholdFrom?: string | undefined;
+  readonly withholdTo?: string | undefined;
+  readonly withholdPath?: readonly string[] | undefined;
+}) => ({
+  from: options.withholdFrom,
+  to: options.withholdTo,
+  paths: options.withholdPath ?? [],
+});
 
 /**
  * Run a desktop operation with SQLite and dconf readers, finishing through
@@ -127,12 +157,101 @@ const withStateReaders = async (
       });
       return result instanceof AnalysisError ? err(result) : ok(result);
     },
-    sqlite,
+    {
+      close: async () => {
+        const failures: unknown[] = [];
+        try {
+          await sqlite.close();
+        } catch (cause: unknown) {
+          failures.push(cause);
+        }
+        if (operation === "export_desktop_application") {
+          try {
+            const { OwnedWorkerRuntime } =
+              await import("../process/OwnedWorkerRuntime.js");
+            await OwnedWorkerRuntime.retryPending();
+          } catch (cause: unknown) {
+            failures.push(cause);
+          }
+        }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          const typed = failures.map((cause) => {
+            if (cause instanceof AnalysisError) return cause;
+            const observation =
+              cause instanceof ArtifactReaderFailure
+                ? ArtifactReaderFailure.cleanupObservation(cause, [])
+                : {
+                    resources: [],
+                    reason:
+                      cause instanceof Error ? cause.message : String(cause),
+                  };
+            const failure = new ProviderCleanupError(
+              "rea-desktop",
+              observation.resources,
+              { reason: observation.reason },
+              { operation, cause },
+            );
+            bindArtifactFileCleanup(cause, failure);
+            return failure;
+          });
+          const combined = analysisErrorWithCleanupFailure(
+            typed[0]!,
+            typed[1]!,
+            operation,
+          );
+          combined.bindCleanupDependencies(typed);
+          throw combined;
+        }
+      },
+    },
     "rea-desktop",
     operation,
     signal,
   ).then(projectCliAnalysisResult);
 };
+
+/** The export's options for withheld state beyond the window: seeding it with consent, the consent file and the copy. */
+const withheldExportOptions = {
+  seedWithheld: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Seed the withheld files after all, which needs a seed_sign_in consent in --consent",
+    ),
+  consent: z
+    .string()
+    .optional()
+    .describe(
+      "consent.json holding the person's consents, which the bundle ships",
+    ),
+  withheldCopy: z
+    .string()
+    .optional()
+    .describe(
+      "New or empty folder outside the bundle the withheld files are copied into, for whoever supplies them at run time",
+    ),
+};
+
+/** The export request's withheld fields from the CLI options, paths made absolute. */
+const withheldRequestOf = (
+  options: Parameters<typeof withholdOf>[0] & {
+    readonly seedWithheld: boolean;
+    readonly consent?: string | undefined;
+    readonly withheldCopy?: string | undefined;
+  },
+) => ({
+  withhold: withholdOf(options),
+  seedWithheld: options.seedWithheld,
+  consent:
+    options.consent === undefined
+      ? undefined
+      : absoluteCallerPath(options.consent),
+  withheldCopy:
+    options.withheldCopy === undefined
+      ? undefined
+      : absoluteCallerPath(options.withheldCopy),
+});
 
 /** Register the export of a capture folder as a computer app bundle. */
 const registerDesktopExportCommand = (
@@ -144,10 +263,12 @@ const registerDesktopExportCommand = (
     description:
       "Export a desktop application capture folder as an agentenv computer app bundle: class, env.toml, skill and seed",
     args: z.object({
-      capture: z
-        .string()
-        .describe("Folder written by capture-desktop-application"),
-      directory: z.string().describe("New or empty bundle directory"),
+      capture: localPathStringSchema.describe(
+        "Folder written by capture-desktop-application",
+      ),
+      directory: localPathStringSchema.describe(
+        "New or empty bundle directory",
+      ),
     }),
     options: z.object({
       name: z
@@ -157,7 +278,7 @@ const registerDesktopExportCommand = (
           "Environment name; defaults to one derived from the application",
         ),
       task: z
-        .array(z.string())
+        .array(localPathStringSchema)
         .optional()
         .describe(
           "Task file to validate against the capture and add with its verifier and eval; a capture yields one",
@@ -168,12 +289,31 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
+      downloadInstall: z
+        .string()
+        .optional()
+        .describe(
+          "JSON file naming the AppImage or tarball a build computer unpacked the application from: kind, desktop_entry, url, sha256, architecture, and a tarball's program and name",
+        ),
+      extraPackage: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Ubuntu 24.04 archive package installed beside the application, such as a runtime piece its package does not install; repeat for more",
+        ),
       syntheticSeed: z
         .boolean()
         .default(false)
         .describe(
           "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
         ),
+      screens: z
+        .string()
+        .optional()
+        .describe(
+          "Folder holding checkpoint screenshots for screen-judge examples.",
+        ),
+      ...withheldExportOptions,
       ...checkpointOptions,
     }),
     run: ({ args, options }) =>
@@ -198,9 +338,19 @@ const registerDesktopExportCommand = (
                       absoluteCallerPath(path),
                     ),
                     packageUrl: options.packageUrl,
+                    downloadInstall:
+                      options.downloadInstall === undefined
+                        ? undefined
+                        : absoluteCallerPath(options.downloadInstall),
+                    extraPackages: options.extraPackage,
                     seedCheckpoint: options.seedCheckpoint,
                     endCheckpoint: options.endCheckpoint,
                     syntheticSeed: options.syntheticSeed,
+                    screens:
+                      options.screens === undefined
+                        ? undefined
+                        : absoluteCallerPath(options.screens),
+                    ...withheldRequestOf(options),
                   },
                   readers,
                   signal,
@@ -222,9 +372,9 @@ const registerDesktopTaskCommand = (
     description:
       "Describe how a desktop application capture's files changed from the seed checkpoint to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
     args: z.object({
-      capture: z
-        .string()
-        .describe("Folder written by capture-desktop-application"),
+      capture: localPathStringSchema.describe(
+        "Folder written by capture-desktop-application",
+      ),
     }),
     options: z.object(checkpointOptions),
     run: ({ args, options }) =>
@@ -244,7 +394,11 @@ const registerDesktopTaskCommand = (
                   absoluteCallerPath(args.capture),
                   readers,
                   signal,
-                  { seed: options.seedCheckpoint, end: options.endCheckpoint },
+                  {
+                    seed: options.seedCheckpoint,
+                    end: options.endCheckpoint,
+                    withhold: withholdOf(options),
+                  },
                 ),
             );
           },
@@ -263,9 +417,9 @@ const registerDesktopStateCommand = (
     description:
       "Read a desktop application capture folder into the application's state: roles, typed JSON views of each version and kinds of change",
     args: z.object({
-      capture: z
-        .string()
-        .describe("Folder written by capture-desktop-application"),
+      capture: localPathStringSchema.describe(
+        "Folder written by capture-desktop-application",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
