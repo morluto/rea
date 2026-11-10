@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
@@ -187,16 +187,17 @@ registerHooks({ load(url, context, nextLoad) {
     const { run }: { run: string } = JSON.parse(
       await readFile(receipt, "utf8"),
     );
+    // Copied authentication is removed even when the owned command stays
+    // incomplete. The run directory stays until that command releases.
+    await expect(readFile(join(run, "codex/auth.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     if (incomplete) {
       expect(result.stderr).toContain("Artifact cleanup remains incomplete");
       expect(result.stderr).toContain("fixture cleanup denied");
-      expect(await readFile(join(run, "codex/auth.json"), "utf8")).toBe(
-        "inert fixture",
-      );
+      expect((await stat(run)).isDirectory()).toBe(true);
     } else {
-      await expect(
-        readFile(join(run, "codex/auth.json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(run)).rejects.toMatchObject({ code: "ENOENT" });
     }
   },
 );
@@ -295,16 +296,19 @@ registerHooks({ load(url, context, nextLoad) {
       expect(await readFile(retried, "utf8")).toBe(
         "exact preparation owner retried",
       );
+    // Copied authentication is removed even when preparation stays incomplete.
+    // The run directory stays until that command releases.
+    await expect(
+      readFile(join(observed.run, "codex/auth.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
     if (incomplete) {
       expect(result.stderr).toContain("Artifact cleanup remains incomplete");
       expect(result.stderr).toContain("darwin-fixture-reader");
-      expect(
-        await readFile(join(observed.run, "codex/auth.json"), "utf8"),
-      ).toBe("inert preparation fixture");
+      expect((await stat(observed.run)).isDirectory()).toBe(true);
     } else {
-      await expect(
-        readFile(join(observed.run, "codex/auth.json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(observed.run)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     }
   },
 );
