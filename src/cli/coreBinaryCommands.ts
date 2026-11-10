@@ -109,8 +109,8 @@ const registerOverviewCommands = (
           "binary_overview",
           {},
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        );
+      }),
   });
 };
 
@@ -447,8 +447,10 @@ const registerSearchCommand = (
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "search", () =>
-        runDirectAnalysis(
+      logCliCommand(logger, "search", () => {
+        if (args.pattern === undefined && options.pattern === undefined)
+          throw new Error("search requires a pattern or --pattern");
+        return runDirectAnalysis(
           args.path,
           options.kind === "strings" ? "search_strings" : "search_procedures",
           {
