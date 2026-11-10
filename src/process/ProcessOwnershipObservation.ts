@@ -33,6 +33,7 @@ import {
 import { darwinHelperCacheDirectory } from "./DarwinHelperCache.js";
 import {
   ProcessRunTokenReadError,
+  readProcessRunToken,
   readProcessRunTokens,
 } from "./ProcessRunTokenObservations.js";
 import type {
@@ -1668,39 +1669,35 @@ export const observeProcessStartIdentity = async (
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
   expectedRunId?: string,
 ): Promise<ProcessIdentityObservation | undefined> => {
-  const process = (await host.listProcesses()).find(
-    (entry) => entry.pid === pid,
-  );
-  if (process === undefined || liveProcesses([process]).length === 0)
-    return undefined;
   if (host.processIdentities === undefined)
     return { state: "unavailable", reason: "process identity is unsupported" };
   const identity: ProcessIdentityObservation = (
-    await host.processIdentities([process])
+    await host.processIdentities([{ pid }])
   ).get(pid) ?? {
     state: "unavailable",
     reason: "process identity was not returned",
   };
+  if (identity.state === "absent" || processIdentityHasExited(identity))
+    return undefined;
   if (expectedRunId === undefined || identity.state !== "readable")
     return identity;
-  let owned = false;
-  for await (const { observation } of readProcessRunTokens(host, [process])) {
-    if (observation.state === "unavailable")
-      return {
-        state: "unavailable",
-        reason: `process ownership token could not be read for PID ${String(pid)}: ${observation.reason}`,
-      };
-    if (observation.runId !== expectedRunId)
-      return {
-        state: "unavailable",
-        reason: `process ownership token did not match the captured run for PID ${String(pid)}`,
-      };
-    owned = true;
-  }
-  if (!owned)
+  const process = (await host.listProcesses()).find(
+    (entry) => entry.pid === pid,
+  );
+  let token: ProcessRunTokenObservation | undefined;
+  if (process === undefined) token = await readProcessRunToken(host, pid);
+  else
+    for await (const { observation } of readProcessRunTokens(host, [process]))
+      token = observation;
+  if (token === undefined || token.state === "unavailable")
     return {
       state: "unavailable",
-      reason: `process ownership token was not returned for PID ${String(pid)}`,
+      reason: `process ownership token could not be read for PID ${String(pid)}: ${token?.reason ?? "token was not returned"}`,
+    };
+  if (token.runId !== expectedRunId)
+    return {
+      state: "unavailable",
+      reason: `process ownership token did not match the captured run for PID ${String(pid)}`,
     };
   const confirmed = await observeProcessStartIdentity(pid, host);
   if (confirmed === undefined || confirmed.state !== "readable")

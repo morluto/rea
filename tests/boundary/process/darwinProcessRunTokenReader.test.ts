@@ -1189,18 +1189,16 @@ it.skipIf(process.platform === "win32")(
     const baselineSpy = vi
       .spyOn(systemProcessOwnershipHost, "captureBaseline")
       .mockImplementation(async (signal) => {
-        await reader.identities(
-          [
-            {
-              pid: process.pid,
-              parentPid: process.ppid,
-              processGroupId: process.pid,
-              state: "S",
-              command: process.execPath,
-            },
-          ],
-          signal,
-        );
+        const processes = [
+          {
+            pid: process.pid,
+            parentPid: process.ppid,
+            processGroupId: process.pid,
+            state: "S",
+            command: process.execPath,
+          },
+        ];
+        await reader.identities(processes, signal);
         return [];
       });
     const launchSpy = vi.spyOn(electron, "launch");
