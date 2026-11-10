@@ -727,8 +727,11 @@ and status when publisher verification cannot download the current package.
 When the package itself authenticates under the pinned publisher key but its
 launcher digest differs from the release feed's `main_exe_hash`, the setup
 result reports `code: integrity_mismatch` with a `launcherDigestMismatch` field
-naming the `packageFamily`, the `declaredSha256` from the feed and the
-`observedSha256` measured inside the signed package. That pair means the vendor
+naming the `packageFamily`, the `releaseVersion` the feed declared, the
+`declaredSha256` from the feed and the `observedSha256` measured inside the
+signed package. The release version is the feed-reported value, not
+authenticated identity, so it identifies the row that carried the stale hash
+after the feed moves on. That pair means the vendor
 feed is stale rather than the download being tampered with, so retrying the
 same release fails identically. Retry once the vendor republishes a matching
 hash.

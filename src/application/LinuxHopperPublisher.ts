@@ -257,6 +257,7 @@ export class LinuxHopperPublisher {
             {
               launcherDigestMismatch: {
                 packageFamily: family,
+                releaseVersion: release.version,
                 declaredSha256: release.main_exe_hash,
                 observedSha256: mainExeHash,
               },

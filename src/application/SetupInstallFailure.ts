@@ -148,16 +148,18 @@ export const setupInstallFailure = (
 /**
  * Recovery for a package that authenticated under the pinned publisher key but
  * whose launcher digest differs from the feed's `main_exe_hash`. The report
- * suggests the vendor feed is stale; this names the two digests so the user can
- * tell that apart from an untrusted download without rerunning setup.
+ * suggests the vendor feed is stale; this names the feed release and the two
+ * digests so the user can tell that apart from an untrusted download without
+ * rerunning setup.
  */
 const launcherDigestMismatchRemediation = ({
   packageFamily,
+  releaseVersion,
   declaredSha256,
   observedSha256,
 }: HopperLauncherDigestMismatch): string =>
   [
-    `The ${packageFamily} package signature verified under the pinned publisher key, but its Hopper launcher SHA-256 ${observedSha256} differs from the release feed's main_exe_hash ${declaredSha256};`,
+    `The ${packageFamily} package signature verified under the pinned publisher key, but its Hopper launcher SHA-256 ${observedSha256} differs from main_exe_hash ${declaredSha256} declared by release ${releaseVersion};`,
     "this indicates stale feed metadata rather than a tampered download, so retrying the same release will fail identically.",
     "Retry setup once the vendor republishes a main_exe_hash that matches the package.",
   ].join(" ");

@@ -297,6 +297,7 @@ describe("optional Hopper installation failures", () => {
   it("returns the launcher digest mismatch beside the setup code", async () => {
     const launcherDigestMismatch = {
       packageFamily: "rpm",
+      releaseVersion: "2.1.0",
       declaredSha256: "a".repeat(64),
       observedSha256: "b".repeat(64),
     } as const;

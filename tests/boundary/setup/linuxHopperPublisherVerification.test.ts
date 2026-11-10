@@ -713,6 +713,7 @@ linux(
           message: expect.stringContaining(f.release.main_exe_hash),
           launcherDigestMismatch: {
             packageFamily: "deb",
+            releaseVersion: f.release.version,
             declaredSha256: "a".repeat(64),
             observedSha256: f.release.main_exe_hash,
           },

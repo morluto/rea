@@ -116,11 +116,14 @@ const suffixes = { deb: ".deb", rpm: ".rpm", arch: ".pkg.tar.xz" } as const;
 
 /**
  * The launcher digest a release feed declared next to the digest observed in
- * its already authenticated package. Both values are retained so a caller can
- * tell a stale feed field from an untrusted download without rerunning setup.
+ * its already authenticated package, with the feed-reported release version
+ * that declared it. All values are retained so a caller can tell a stale feed
+ * field from an untrusted download without rerunning setup, and can name the
+ * release that carried the stale field after the feed moves on.
  */
 export type HopperLauncherDigestMismatch = {
   readonly packageFamily: LinuxPackageFamily;
+  readonly releaseVersion: string;
   readonly declaredSha256: string;
   readonly observedSha256: string;
 };

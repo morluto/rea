@@ -106,6 +106,7 @@ it.each([
 describe("Linux Hopper launcher digest mismatch", () => {
   const mismatch = {
     packageFamily: "rpm",
+    releaseVersion: "2.1.0",
     declaredSha256: "74b5".padEnd(64, "0"),
     observedSha256: "b41e".padEnd(64, "0"),
   } as const;
@@ -119,6 +120,7 @@ describe("Linux Hopper launcher digest mismatch", () => {
     expect(result.code).toBe("integrity_mismatch");
     expect(result.launcherDigestMismatch).toEqual(mismatch);
     expect(result.remediation).toContain("signature verified");
+    expect(result.remediation).toContain(mismatch.releaseVersion);
     expect(result.remediation).toContain(mismatch.observedSha256);
     expect(result.remediation).toContain(mismatch.declaredSha256);
     expect(result.remediation).toContain("stale feed metadata");
