@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -46,7 +50,7 @@ transport.stderr?.on("data", (bytes) => {
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
 const measurements = [];
 const contract = toolContract("inspect_web_network_capture");
-try {
+await withVerifierCleanup(async () => {
   try {
     await client.connect(transport);
   } catch (cause) {
@@ -213,7 +217,11 @@ try {
       report: reportPath,
     }),
   );
-} finally {
-  await client.close();
-  await transport.close();
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  },
+]);
