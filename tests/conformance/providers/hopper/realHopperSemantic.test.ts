@@ -52,8 +52,14 @@ describe("Hopper verifier semantic fixture resolution", () => {
 
 describe("Hopper verifier dossier coverage", () => {
   const procedure = { address: "0x1000", name: "rea_entry" };
-  const normalizeStructured = (value: unknown) =>
-    (value as { structuredContent?: unknown }).structuredContent ?? value;
+  const normalizeStructured = (value: unknown) => {
+    const content = (
+      value as { structuredContent?: { normalized_result?: unknown } }
+    ).structuredContent;
+    if (content?.normalized_result === undefined)
+      throw new Error("Expected Evidence normalized_result");
+    return content.normalized_result;
+  };
 
   it("accepts the caller and callee coverage the provider declares", async () => {
     await expect(
@@ -121,40 +127,42 @@ const facetAvailability = () =>
   );
 
 const clientWithDossier = (relationshipCoverage: unknown) => {
+  // Facets live in the Evidence normalized result. Coverage stays on the
+  // envelope, which is where the verifier reads it.
   const structuredContent = {
     relationship_coverage: relationshipCoverage,
-    facet_availability: facetAvailability(),
-    outgoing_references: [],
+    normalized_result: {
+      facet_availability: facetAvailability(),
+      outgoing_references: [],
+    },
   };
   // A declared coverage that leaves caller or callee discovery unestablished
   // makes compare_functions report the calls dimension as unknown, so the stub
   // derives it the way the comparison does rather than pinning one shape.
   const callsUnknown =
     (relationshipCoverage as { status?: string } | null)?.status !== "complete";
+  const dimensions = [
+    "identity",
+    "pseudocode",
+    "assembly",
+    "comments",
+    "calls",
+    "references",
+    "strings_names",
+    "cfg",
+  ].map((dimension) => ({
+    dimension,
+    status:
+      dimension === "references" || (dimension === "calls" && callsUnknown)
+        ? "unknown"
+        : "unchanged",
+  }));
   return {
     callTool: async (request: { readonly name: string }) => {
       if (request.name === "analyze_function") return { structuredContent };
-      return {
-        structuredContent: {
-          dimensions: [
-            "identity",
-            "pseudocode",
-            "assembly",
-            "comments",
-            "calls",
-            "references",
-            "strings_names",
-            "cfg",
-          ].map((dimension) => ({
-            dimension,
-            status:
-              dimension === "references" ||
-              (dimension === "calls" && callsUnknown)
-                ? "unknown"
-                : "unchanged",
-          })),
-        },
-      };
+      if (request.name === "compare_functions")
+        return { structuredContent: { normalized_result: { dimensions } } };
+      throw new Error(`Unexpected Hopper tool ${request.name}`);
     },
   };
 };
