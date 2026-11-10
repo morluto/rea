@@ -33,7 +33,10 @@ export const registerAndroidCommands = (
       }),
     );
   const path = z.string().describe("Local standalone APK path");
-  const className = z.string().describe("Exact fully qualified class name");
+  const className = z
+    .string()
+    .min(1)
+    .describe("Exact fully qualified class name");
   cli.command(CLI_COMMANDS.inspectAndroidPackage, {
     description:
       "Inspect APK declarations and decoded manifest without executing it",
@@ -76,7 +79,7 @@ export const registerAndroidCommands = (
     args: z.object({
       path,
       className,
-      methodName: z.string().describe("Exact declared method name"),
+      methodName: z.string().min(1).describe("Exact declared method name"),
     }),
     options: z.object({
       overloadIndex: z
