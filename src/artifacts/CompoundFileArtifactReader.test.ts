@@ -84,7 +84,13 @@ const rootWith = (
   child: number | undefined,
   extra: readonly FixtureEntry[],
 ): readonly FixtureEntry[] => [
-  { name: "Root Entry", type: 5, start: END, size: 0, ...(child === undefined ? {} : { child }) },
+  {
+    name: "Root Entry",
+    type: 5,
+    start: END,
+    size: 0,
+    ...(child === undefined ? {} : { child }),
+  },
   ...extra,
 ];
 
@@ -143,9 +149,7 @@ it("reports a stream whose FAT chain leaves the file", async () => {
   const path = await write(
     "broken.automaticDestinations-ms",
     compoundFile({
-      entries: rootWith(1, [
-        { name: "Broken", type: 2, start: 2, size: 4096 },
-      ]),
+      entries: rootWith(1, [{ name: "Broken", type: 2, start: 2, size: 4096 }]),
       // Sector 2 claims sector 99, which is outside the ten declared sectors.
       fat: [END, END, 99, END],
     }),
