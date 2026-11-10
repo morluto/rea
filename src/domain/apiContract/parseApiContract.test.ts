@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { apiContractSchema, type ApiContractArtifact } from "./apiContract.js";
 import { parseApiContractSteps } from "./parseApiContract.js";
+import { AnalysisCancelledError } from "../analysisErrorCore.js";
 
 const artifact: ApiContractArtifact = {
   path: "/contract.json",
@@ -305,9 +306,39 @@ it("handles 3.2 QUERY and case-sensitive additional methods, diagnosing invalid 
 
 it("bounds expanded identities and source pointers before building a giant row", () => {
   const result = parse(
-    document({ [`/${"a".repeat(1_100_000)}`]: { get: {} } }),
+    document({
+      "/retained": { get: {} },
+      [`/${"a".repeat(1_100_000)}`]: { get: {} },
+    }),
   );
   expect(result.ok).toBe(false);
-  if (!result.ok)
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  if (result.ok) throw new Error("Expected a retained-facts refusal");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  const partial = apiContractSchema.parse(result.error.partialObservation);
+  expect(partial.operations.map((row) => row.path)).toEqual(["/retained"]);
+  expect(partial.source_coverage.status).toBe("partial");
+});
+
+it("retains an interpreted path when cancellation interrupts traversal", () => {
+  const input = document({
+    "/first": { get: { operationId: "first" } },
+    "/second": { get: { operationId: "second" } },
+  });
+  const steps = parseApiContractSteps(input, artifact);
+  for (let checkpoint = 0; checkpoint < 3; checkpoint++)
+    expect(steps.next().done).toBe(false);
+  const cancellation = new AnalysisCancelledError("inspect_api_contract");
+  const stopped = steps.throw(cancellation);
+  if (!stopped.done || stopped.value.ok)
+    throw new Error("Expected cancellation");
+  expect(stopped.value.error).toBe(cancellation);
+  const partial = apiContractSchema.parse(cancellation.partialObservation);
+  const complete = report(input);
+  expect(partial.operations).toEqual(complete.operations.slice(0, 1));
+  expect(partial.summary.operation_slots).toBe(1);
+  expect(partial.source_coverage).toMatchObject({
+    status: "partial",
+    path_entries_examined: 1,
+  });
+  expect(complete.source_coverage.status).toBe("complete-within-scope");
 });

@@ -5,6 +5,8 @@ import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { apiContractSchema } from "../../domain/apiContract/apiContract.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { parseEvidence } from "../../domain/evidence.js";
+import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inspectApiContractEvidence } from "./ApiContractService.js";
 import * as readOwner from "./ApiContractRead.js";
@@ -317,3 +319,89 @@ it("cancels a cooperative document traversal after the actual verified file read
     await resources.close();
   }
 });
+
+it.each(["between-paths", "after-projection"] as const)(
+  "preserves authenticated OpenAPI facts on cancellation %s",
+  async (stage) => {
+    const bytes = JSON.stringify({
+      openapi: "3.1.2",
+      info: { title: "Cancellation", version: "1" },
+      paths: { "/first": { get: {} }, "/second": { post: {} } },
+    });
+    const { path } = await inputFile(bytes);
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const realParse = parser.parseApiContractSteps;
+    try {
+      const baseline = await inspectApiContractEvidence({ path }, resources);
+      if (!baseline.ok) throw baseline.error;
+      const complete = apiContractSchema.parse(
+        baseline.value.normalized_result,
+      );
+      const scheduled = vi
+        .spyOn(parser, "parseApiContractSteps")
+        .mockImplementationOnce(function* (...args) {
+          const steps = realParse(...args);
+          if (stage === "between-paths") {
+            expect(steps.next().done).toBe(false);
+            expect(steps.next().done).toBe(false);
+            setImmediate(() => controller.abort(stage));
+            return yield* steps;
+          }
+          const result = yield* steps;
+          setImmediate(() => controller.abort(stage));
+          return result;
+        });
+      try {
+        const result = await inspectApiContractEvidence({ path }, resources, {
+          signal: controller.signal,
+        });
+        if (result.ok) throw new Error("Expected cancellation");
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(stage);
+        const evidence = parseEvidence(result.error.partialObservation);
+        const retained = apiContractSchema.parse(evidence.normalized_result);
+        expect(evidence.subject).toEqual(baseline.value.subject);
+        expect(evidence.parameters).toEqual(baseline.value.parameters);
+        expect(retained.artifact).toEqual(complete.artifact);
+        expect(retained.contract_id).toBe(complete.contract_id);
+        if (stage === "between-paths") {
+          expect(retained.operations).toEqual(complete.operations.slice(0, 1));
+          expect(retained.source_coverage.status).toBe("partial");
+          expect(evidence.evidence_id).not.toBe(baseline.value.evidence_id);
+          const page = projectAnalysisView(
+            {
+              evidenceId: evidence.evidence_id,
+              operation: evidence.operation,
+              predicateType: evidence.predicate_type,
+              normalizedResult: evidence.normalized_result,
+              limitations: evidence.limitations,
+            },
+            {
+              kind: "api-contract",
+              collection: "operations",
+              offset: 0,
+              limit: 1,
+            },
+          );
+          expect(page).toMatchObject({
+            ok: true,
+            value: {
+              parent_evidence_id: evidence.evidence_id,
+              items: [{ path: "/first", state: "declared" }],
+              coverage: { exhausted: true },
+              source_coverage: { status: "partial" },
+            },
+          });
+        } else {
+          expect(retained).toEqual(complete);
+          expect(evidence.evidence_id).toBe(baseline.value.evidence_id);
+        }
+      } finally {
+        scheduled.mockRestore();
+      }
+    } finally {
+      await resources.close();
+    }
+  },
+);
