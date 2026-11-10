@@ -289,6 +289,14 @@ export const readAndroidJniLibraries = async (input: {
           inProgress = undefined;
         }
         inventory.selected_libraries = libraries.length;
+        if (!failed && manifest !== undefined)
+          await noteUnbundledSplitLibraries({
+            reader,
+            entry: manifest,
+            signal: input.signal,
+            interruption: input.interruption,
+            inventory,
+          });
         throwIfJadxInterrupted(input.signal);
       } catch (cause: unknown) {
         failed = true;
@@ -311,14 +319,6 @@ export const readAndroidJniLibraries = async (input: {
         // its digest only if those bytes actually completed authentication.
         libraries.push(inProgress);
       }
-      if (!failed && manifest !== undefined)
-        await noteUnbundledSplitLibraries({
-          reader,
-          entry: manifest,
-          signal: input.signal,
-          interruption: input.interruption,
-          inventory,
-        });
       inventory.selected_libraries = libraries.length;
       const checkpoint: AndroidJniLibraryCheckpoint = {
         scan_state:

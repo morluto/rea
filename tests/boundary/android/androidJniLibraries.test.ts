@@ -551,6 +551,60 @@ it("reports required split types as an inventory unknown instead of a bare compl
   );
 });
 
+it("cancels a manifest read through the same finalization path as the scan", async () => {
+  const bytes = jniElfFixture().bytes;
+  const source = await fixture([
+    ["AndroidManifest.xml", binaryManifestFixture({ attributes: [] })],
+    [LIBRARY, bytes],
+  ]);
+  const controller = new AbortController(),
+    reason = { caller: "stop while reading the manifest" };
+  const originalOpen = ZipArtifactReader.prototype.open;
+  const open = vi
+    .spyOn(ZipArtifactReader.prototype, "open")
+    .mockImplementation(async function (
+      this: ZipArtifactReader,
+      entry,
+      signal,
+    ) {
+      if (entry.path === "AndroidManifest.xml") {
+        controller.abort(reason);
+        throw new JadxInterruption(reason);
+      }
+      return originalOpen.call(this, entry, signal);
+    });
+  let checkpoint: AndroidJniLibraryCheckpoint | undefined;
+  try {
+    const failure = await read(
+      source,
+      {},
+      controller.signal,
+      undefined,
+      (value) => {
+        checkpoint = value;
+      },
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError)) throw failure;
+    expect(failure.cause).toBe(reason);
+    expect(checkpoint).toMatchObject({
+      scan_state: "interrupted",
+      inventory: { status: "partial", selected_libraries: 1 },
+    });
+    expect(checkpoint?.libraries[0]).toMatchObject({
+      sha256: digest(bytes),
+      size: bytes.length,
+      facts: { tables: expect.any(Array) },
+    });
+    expect(checkpoint?.inventory.unknowns.join("\n")).toContain(
+      "unexamined selected occurrences remain unknown",
+    );
+    expect(source.resources.hasPending).toBe(false);
+  } finally {
+    open.mockRestore();
+  }
+});
+
 it("reports an isSplitRequired manifest as an inventory unknown", async () => {
   const source = await fixture([
     [
