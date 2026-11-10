@@ -82,7 +82,6 @@ also match the independent oracle. `xinzexi_2_n_tex` (2017.4.37f1) uses LZMA
 data: its member names and sizes are retained with unavailable hashes and
 unknown coverage. UnityPy-produced repacks additionally verify format 7/8,
 padded and unpadded front tables, end tables, and unsupported LZMA directories.
-These repacks are library-produced tests, not Unity engine executions. The PR
-records producer parameters, source digests and measured task costs; synthetic
+These repacks are library-produced tests, not Unity engine executions. Synthetic
 fixtures alone do not establish real Unity version coverage. SerializedFile objects, textures and runtime
 behavior are outside this container reader's verification scope.

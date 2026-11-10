@@ -308,14 +308,27 @@ Run `rea describe-desktop-application-task CAPTURE --format json`. Read:
   and last version, with its `role`, the `baseline` and `final` versions and
   the net `change`. Text changes list each added and removed line once, and
   `line_counts` gives lines found at both ends whose count changed.
+- `values` in each of those files: what the change added, changed and
+  removed, `before` and `after`, at the pointer a check names it by, with
+  `refers_to` naming the element a key such as `category="44"` stands for.
+  Skip entries noted `by_position` or as noise. Only XML files, archives,
+  JSON and key files have values: a text file's or database's change
+  already lists its lines and rows.
 - `task`: a draft whose `checks` are suggestions from the net change of the
   documents the user worked on, or of the app's own state when no document
   changed.
+- `guards`: optional checks that the rest kept its seed values, such as a
+  like sibling's field or a text file's neighbouring lines; add one or two
+  to show the rest is untouched.
+- `notes`: why `files` is empty, or why a file's suggestions are thin, such
+  as `by_position` when no attribute names the changed element.
 
 ### Write the prompt
 
-Say what the user wants done, in their words and the app's terms: "Add buy
-milk to my to-do list and save it". Never say how the file stores it: no
+Say what the user wants done, in their words and the app's terms, naming the
+app: "In Mousepad, add buy milk to my to-do list and save it". A solving
+agent's own shell cannot see the computer's files; the app's name sends it to
+the screen. Never say how the file stores it: no
 paths the user would not name, line formats, XML, keys or SQL, and never the
 checks. Replace the draft's placeholder; the export refuses it.
 
@@ -346,13 +359,18 @@ document saved as a zip archive, such as FreeCAD's `.FCStd`, reads as its
 entries: point into an entry's view, and name array members by selector
 rather than position, as
 `/entries/[name=Document.xml]/view/root/children/[name=Object][@name=Hole]`,
-so the check survives an app version that writes them in another order. Give
+so the check survives an app version that writes them in another order. A
+gzip-compressed document, such as Gnumeric's `.gnumeric`, reads as the
+document inside: point into it as into the same document uncompressed. Give
 `value_equals` a `tolerance` to compare a number the app writes as text, such
 as `"5.0000000000000000"`, with a number. Check what the user wrote in a
 document with `text_equals` on its paragraph element, not `value_equals` on a
 text node: apps such as AbiWord and Writer split a paragraph into runs as they
 save, so its first text node holds only part of it; use `text_contains` for a
-value within a sentence, such as a time. The
+value within a sentence, such as a time. A binary document, such as GIMP's
+`.xcf`, has no view: give the task a `readers` entry, the app's own headless
+command printing `REA ` lines, and a check naming it in `reader`, as
+[desktop builds](desktop-build.md#read-a-binary-file-with-a-reader) shows. The
 [desktop application tasks](https://github.com/morluto/rea/blob/main/docs/desktop-application-tasks.md)
 guide has the exact rules.
 
@@ -374,5 +392,7 @@ user's to choose.
 
 Tell the user the task's name, prompt and checks, and how to measure a solve
 rate: run `agent-env run DIRECTORY --task NAME --agent claude-code` with
-`--model MODEL` three times and count the runs reported `passed`. Do not run
+`--model MODEL` three times and count the runs reported `passed`. The runs
+need a model endpoint: `LITELLM_BASE_URL` and `LITELLM_API_KEY`, or
+`base_url` and `api_key` under `[model]` in `.agentenv/config.toml`. Do not run
 agents unless asked. The bundle's seed is the user's real data: keep it local.

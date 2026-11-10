@@ -6,6 +6,7 @@ import {
   semanticStaticPropertyKey,
   staticObjectProperty,
   staticObjectPropertyReader,
+  staticObjectCopyPropertyReader,
   staticObjectPropertyNames,
 } from "./javascriptAstValues.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
@@ -423,4 +424,45 @@ it("keeps primitive unary results propertyless and typeof results index-only", (
     value: value.value,
   });
   expect(staticObjectProperty(object, "0")).toEqual({ status: "dynamic" });
+});
+
+it("keeps enumerable-copy facts separate from inherited lookup", () => {
+  const inherited = t.objectExpression([
+    t.objectProperty(
+      t.identifier("__proto__"),
+      t.objectExpression([
+        t.objectProperty(
+          t.identifier("minVersion"),
+          t.stringLiteral("TLSv1.2"),
+        ),
+      ]),
+    ),
+  ]);
+  expect(staticObjectPropertyReader(inherited)("minVersion").status).toBe(
+    "dynamic",
+  );
+  expect(staticObjectCopyPropertyReader(inherited)("minVersion").status).toBe(
+    "missing",
+  );
+  const value = t.objectExpression([]);
+  const copied = t.objectExpression([
+    t.objectProperty(t.stringLiteral("__proto__"), value, true),
+  ]);
+  expect(staticObjectCopyPropertyReader(copied)("__proto__")).toMatchObject({
+    status: "explicit",
+    value,
+  });
+});
+it("ignores null and propertyless copy sources without erasing indexed strings", () => {
+  for (const source of [
+    t.nullLiteral(),
+    t.numericLiteral(1),
+    t.arrowFunctionExpression([], t.numericLiteral(1)),
+  ])
+    expect(staticObjectCopyPropertyReader(source)("minVersion").status).toBe(
+      "missing",
+    );
+  const read = staticObjectCopyPropertyReader(t.stringLiteral("abc"));
+  expect(read("0").status).toBe("dynamic");
+  expect(read("minVersion").status).toBe("missing");
 });

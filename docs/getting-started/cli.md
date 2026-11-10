@@ -439,6 +439,19 @@ descriptors, and a pefile-compatible import hash of the standard import table.
 A missing import directory is observed absence of that table. See
 [PE import and delay-load tables](../pe-imports.md).
 
+Inspect a Windows Shell Link (`.lnk`) without resolving or executing the
+target:
+
+```bash
+rea inspect-windows-shortcut /absolute/path/to/shortcut.lnk --json
+```
+
+The workflow reports header flags and FILETIMEs, IDList items, LinkInfo volume
+and network names, StringData arguments and icon location, ExtraData blocks
+including Tracker droid facts labelled derived, and derived observations such
+as argument length and a minimized ShowCommand. See
+[Windows Shell Link shortcuts](../guides/native/windows-shortcut.md).
+
 Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
 
 ```bash
@@ -448,6 +461,32 @@ rea inspect-elf-notes /absolute/path/to/program --json
 The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
+
+List ELF and Mach-O initializer and finalizer functions without executing the
+image:
+
+```bash
+rea inspect-native-initializers /absolute/path/to/program --json
+```
+
+The workflow reports `DT_INIT`, init/fini arrays, legacy `.ctors`/`.dtors`, and
+Mach-O `__mod_init_func`, `__init_offsets` and `__mod_term_func` entries with
+their resolved targets. Universal Mach-O files need `--architecture`. See
+[ELF and Mach-O initializer functions](../guides/native/native-initializers.md).
+
+Inspect ELF unwind function ranges without executing the image:
+
+```bash
+rea inspect-elf-unwind-ranges /absolute/path/to/program --json
+```
+
+The workflow reports FDE start, end, and size, the containing section, an exact
+symbol name when one exists, CIE identity, LSDA, and personality. Coverage
+counts ranges that match a symbol, ranges without a symbol, and whether the
+`.eh_frame_hdr` search table agrees with the decoded FDEs. `.debug_frame` is
+reported present, absent, or incomplete and is not decoded. A missing unwind table is
+observed absence of those declarations. See
+[ELF unwind function ranges](../guides/native/elf-unwind-ranges.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 
@@ -475,6 +514,22 @@ applicable. gzip, xz, and zstd containers are unsupported and name
 `external_decompression` as the next probe: decompress with an external
 utility, then inspect the decompressed file. See
 [Linux kernel modules](../kernel-modules.md).
+
+Read a Linux kernel image's version banner and embedded `CONFIG_IKCONFIG`
+build config without executing it:
+
+```bash
+rea inspect-kernel-build-config /absolute/path/to/vmlinux --json
+rea inspect-kernel-build-config /absolute/path/to/bzImage --name CONFIG_MODULE_SIG --json
+```
+
+The workflow reports the banner version, builder, and compiler, the config
+option count, and paged `CONFIG_*` entries (`y`, `m`, strings, numbers, and
+`not_set`). An `IKCFG_ST` string counts as a config only when a valid gzip
+member follows it and `IKCFG_ED` follows that member. A gzip bzImage payload
+is inflated and searched; other payload codecs are unsupported and name
+`external_decompression` as the next probe. See
+[Linux kernel build config](../guides/native/kernel-build-config.md).
 
 Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
 3.15 headers are qualified but their marshal layout is not pinned)
@@ -596,10 +651,11 @@ be verified. See [MCP contracts](../reference/mcp-contracts.md) for session life
 [Ghidra first-query deadlines](../reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
-A one-shot command releases its provider session and REA runtime before it
-prints a failure, so it omits the same-session reuse and
-`update_analysis_settings` guidance an MCP connection receives. Its
-`details.limit` reports `scope: "rea-invocation"` and
+A one-shot command attempts provider-session and runtime cleanup before reporting
+a failure. If cleanup remains incomplete, inspect the reported resources and
+follow the error's remediation. [Same-session cleanup retry](../reference/mcp-contracts.md#retained-cleanup-retry),
+reuse and `update_analysis_settings` apply to a live MCP connection.
+For one-shot commands, `details.limit` reports `scope: "rea-invocation"` and
 `applies_at: "next_invocation"`; set the named `environment` (or the per-call
 `parameter`) for a new invocation and rerun. For example, a Ghidra decompile
 deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
@@ -628,12 +684,10 @@ an exact result when the target bytes, operation, parameters, provider and
 settings match. Mutations and cursor-dependent calls are excluded from the
 cache. Snapshot files are local and use owner-only permissions.
 
-One-shot binary CLI Evidence reports the exact path argument in `caller_input_path`,
-including relative spelling and symlink aliases. Its subject identifies the
-inspected artifact; `caller_input_path` does not change the Evidence ID or
-snapshot query. A replay reports the current invocation's path while leaving
-the saved Evidence unchanged. Provider inspections continue to include the
-established `parameters.input_path` field.
+A binary CLI replay reports the current invocation's selected path while leaving
+the saved Evidence and snapshot query unchanged. See
+[caller-selected paths](../reference/mcp-contracts.md#caller-selected-paths)
+for primary and auxiliary path fields and their relation to Evidence identity.
 
 Importing an Evidence bundle refreshes retained request and subject display metadata.
 It preserves cached analysis results, including observations for other targets.
@@ -1139,6 +1193,23 @@ of the serve command's stopped document. See
 [agent environments](../agent-environments.md#export-a-bundle) for the folder
 layout and what the smoke task checks.
 
+`rea environment-export` prints the written files and exits `0` on success.
+Input-pair refusals, an occupied destination, a missing package tarball, and
+invalid labels fail before writing output. Host permission failures identify
+whether reading or writing was denied and retain the affected path.
+
+A failure during writing can leave a partial folder. Inspect it before removing
+it and retrying; the next attempt refuses a non-empty destination. When one
+file caused the failure, the diagnostic names that file. A folder-sync failure
+can report only its cause.
+
+If `details.partial_observation.kind` is `environment-bundle-publication`, the
+bundle was already published. Its `directory` and `files` record the committed
+output, even when a later identity check or cleanup failed. Inspect that bundle
+and resolve the reported failure before using or replacing it; the receipt is
+not an instruction to delete published output. Cleanup resources remain a
+separate obligation.
+
 ## Compare an environment with its application
 
 `rea environment-compare <manifest.json> --evidence <capture.json> --probe <probe.json> [--probe <probe.json> ...]`
@@ -1330,62 +1401,17 @@ retains failed stages for retry; the CLI exposes no separate retry command.
 or prints the refusing stage's structured error and exits `1`, writing nothing
 when the refusal comes before the bundle is written. SIGINT cancels it with a
 `cancelled` error; a cancellation before the bundle stage writes nothing.
-`rea environment-export` is one-shot: it prints the written files and exits
-`0`, or prints a structured `invalid_request` error and exits `1` for the same
-pair refusals, a non-empty or file-occupied directory, a missing package
-tarball or a name that is not a kebab-case label or is a Windows device name,
-writing nothing in each case. A file occupying the destination is reported as
-requiring a directory; identity-change diagnostics are reserved for admitted
-paths that fail later identity checks. Host permission failures identify whether
-input reading or bundle writing was denied and retain the reported path.
-A write that fails after the first file (a permission, disk-space or
-pathname-length failure on a later path) propagates as the host's failure,
-naming its cause and, when it failed on one bundle file or the package
-tarball, that file. A failure while syncing the finished folder names only its
-cause. Either way the partial folder stays in place for inspection; remove it
-before retrying, since the next attempt refuses the non-empty directory.
+A `cancelled` result does not by itself determine the exit status. Commands
+that handle SIGINT or SIGTERM assign `130` or `143` after their operation and
+cleanup settle; their structured result can be printed before that status is
+assigned. Read the process status and typed result separately.
 
-A `cancelled` result does not by itself determine the exit status; it depends on
-the command's signal handling. Commands routed through the shared
-`withCommandCancellation` handler in the CLI set status `130` for SIGINT or
-`143` for SIGTERM after their operation settles. Current source registrations
-use that handler for process capture and comparison (`capture-process`,
-`compare-process-captures`), desktop application capture and state
-(`capture-desktop-application`, `inspect-desktop-application-state`,
-`export-desktop-application`, `describe-desktop-application-task`), JavaScript application analysis (`analyze` when it
-selects the JavaScript lane, and `analyze-javascript-application`), selected
-browser, web and Electron commands (including `analyze-web-bundle`,
-`observe-web-execution`, `capture-browser-scenario` and
-`capture-electron-scenario`), and the platform and provider command families
-for Android/ADB, Apktool/JEB/Flutter, firmware, PCAP and signal analysis,
-WASM/EVM, Go/Rust and binary diagnostics, Frida instrumentation, the Cutter
-command, objdump, Rizin and GDB, and the agent environment server
-(`environment-serve`). The handler also wraps `doctor`,
-`inspect-sqlite-database`, `recover-javascript-sources`,
-`inspect-il2cpp-metadata`, and `inspect-desktop-application`. In these paths, a returned structured
-`cancelled` result can be printed before the wrapper assigns the
-signal-derived status. This describes the current source routing; it is not a
-claim that every command or provider runtime has been independently exercised.
-
-Commands with `--evidence_output` select their delivered view, then publish the
-complete Evidence bundle atomically. Cancellation before publication leaves no
-new file. A publication that has committed can win a later cancellation; the
-`cancelled` result then keeps the written path and byte count under
-`details.diagnostics.evidence_bundle`. If staging cleanup stays incomplete
-after commit, the `cleanup_incomplete` error reports the same file as
-`details.published_path` and `details.bytes`.
-
-When a failure retains a completed observation and no bundle committed,
-`details.source_closure` states what that observation cites. `publication` is
-`not_published`. `records` holds authentic source Evidence this invocation
-captured, within 64 KiB. `omitted` lists up to 64 other identities and
-`omitted_count` the total: `not_captured` means the invocation holds no such
-record, so nothing is shown for it or its ancestors; `not_inlined` means it was
-captured but is not in this response. `complete` is true only when every cited
-record is in `records` or embedded in the observation. If examining the closure
-itself fails, `collection_failure` names the error type and the closure state is
-unknown; the original failure is still returned. Nothing is retained after exit,
-and running the command again is a new observation.
+Commands with `--evidence_output` save the complete Evidence bundle before
+delivering the selected view. For committed-file receipts, retained partial
+Evidence and missing source records, see
+[Evidence publication and source recovery](../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
+Other outputs have their own receipt shapes; for example,
+[environment export](#export-an-environment-bundle) reports a published directory.
 
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a
@@ -1461,3 +1487,10 @@ Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,
 sourcemaps and bytecode without running the executable. See
 [Bun standalone executables](../bun-standalone.md) for layout coverage and limits.
+
+Deno compile executables use the same commands to inventory and materialize the
+embedded virtual filesystem, remote modules, and recorded options. Inventory retains
+embedded environment-file values and certificate bytes in local Evidence with their
+counts and byte lengths, and extraction does not write them as files. The npm snapshot
+length is reported and not decoded, and the executable is not run. See
+[Deno compile executables](../deno-standalone.md).
