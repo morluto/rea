@@ -94,13 +94,59 @@ export const sourceForLimitDiscovery = (source) => {
   return out;
 };
 
-/** A quoted name in an array is an allowlist entry, not a limit producer. */
+const ARRAY_KEYWORDS = new Set([
+  "return",
+  "const",
+  "let",
+  "var",
+  "of",
+  "in",
+  "case",
+  "throw",
+  "yield",
+  "await",
+  "typeof",
+  "void",
+  "new",
+  "delete",
+  "if",
+  "else",
+  "for",
+  "while",
+  "do",
+  "switch",
+  "export",
+  "default",
+  "as",
+  "satisfies",
+]);
+
+const identifierEndingAt = (source, index) => {
+  let cursor = index;
+  while (cursor >= 0 && /\s/u.test(source[cursor] ?? "")) cursor -= 1;
+  const end = cursor;
+  while (cursor >= 0 && /[A-Za-z0-9_$]/u.test(source[cursor] ?? ""))
+    cursor -= 1;
+  return source.slice(cursor + 1, end + 1);
+};
+
+/**
+ * A quoted name in a declaration array is an allowlist entry.
+ * `environment["REA_..."]` and `value?.["REA_..."]` are producers.
+ */
 const isArrayElementLiteral = (source, index) => {
   if (source[index - 1] !== '"') return false;
   let cursor = index - 2;
   while (cursor >= 0 && /\s/u.test(source[cursor] ?? "")) cursor -= 1;
   const previous = source[cursor];
-  return previous === "[" || previous === ",";
+  if (previous === ",") return true;
+  if (previous !== "[") return false;
+  let before = cursor - 1;
+  while (before >= 0 && /\s/u.test(source[before] ?? "")) before -= 1;
+  const mark = source[before];
+  if (mark === "?" || mark === ")" || mark === "]") return false;
+  const token = identifierEndingAt(source, cursor - 1);
+  return token.length === 0 || ARRAY_KEYWORDS.has(token);
 };
 
 export const isNumericLimit = (name) =>
