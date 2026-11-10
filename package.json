@@ -151,7 +151,7 @@
     "build:termux:run": "npm run compile:termux && npm run artifacts:skills",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "node scripts/ci/static-check-report.mjs lint && npm run verify:module-boundaries",
+    "lint": "node scripts/ci/static-check-report.mjs lint && npm run verify:module-boundaries && node scripts/verify/rea-numeric-limits.mjs",
     "lint:details": "oxlint && npm run verify:module-boundaries",
     "lint:fix": "oxlint --fix && npm run verify:module-boundaries",
     "knip": "knip --cache",
