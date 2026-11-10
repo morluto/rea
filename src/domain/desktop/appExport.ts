@@ -303,7 +303,13 @@ export const capturedHomePath = (capture: DesktopApplicationCapture) =>
   capturedHomePlan(capture).homePath;
 
 /** Selected links to an app state root must keep both the app's name and the selected name. */
-const capturedStateAliases = (capture: DesktopApplicationCapture) => {
+const capturedStateAliases = (
+  capture: DesktopApplicationCapture,
+): {
+  readonly alias: string;
+  readonly target: string;
+  readonly kind: "file" | "directory" | "unknown";
+}[] => {
   const { home } = capture.host;
   const walked = capture.state.state_directories ?? [];
   const roots = capture.application.state_directories;
@@ -316,9 +322,11 @@ const capturedStateAliases = (capture: DesktopApplicationCapture) => {
       const state = index < 0 ? undefined : roots[index]?.path;
       const alias = relative(path);
       const target = state === undefined ? null : relative(state);
+      const recorded =
+        kind === "file" || kind === "directory" ? kind : "unknown";
       return alias === null || target === null || alias === target
         ? []
-        : [{ alias, target, kind: kind ?? "unknown" }];
+        : [{ alias, target, kind: recorded }];
     },
   );
   const retained: typeof aliases = [];
