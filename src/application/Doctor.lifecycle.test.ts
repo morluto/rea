@@ -55,7 +55,7 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
       return [];
     },
   });
-  const inspection = host.providerInspections!();
+  const inspection = host.providerInspections!([]);
   let closing: Promise<unknown> | undefined;
   await withVerifierCleanup(async () => {
     await awaitAcknowledgement(
@@ -90,7 +90,7 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
     await host.close!();
     expect(failure.cleanupIncomplete).toBe(false);
     expect(closes).toEqual({ successful: 1, refused: 2 });
-    await expect(host.providerInspections!()).rejects.toMatchObject({
+    await expect(host.providerInspections!([])).rejects.toMatchObject({
       _tag: "AnalysisCancelledError",
       cause: STARTUP_OWNER_CLOSED,
       diagnostics: {
@@ -112,6 +112,59 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
     },
     () => host.close!(),
   ]);
+});
+
+it("creates client-selected inspection groups afresh and drains cleanup between groups", async () => {
+  const events: string[] = [];
+  const selections: readonly string[][] = [["claude"], ["codex"]];
+  let factories = 0;
+  const host = systemDoctorHost({
+    environment: {},
+    providerInspectionGroups: (selectedClients) => {
+      factories++;
+      const selected = selectedClients[0]!;
+      let cleaned = false;
+      return [
+        async (owner, _signal, clients) => {
+          expect(clients).toBe(selectedClients);
+          events.push(`inspect:${selected}`);
+          owner.retain(
+            {
+              close: async () => {
+                cleaned = true;
+                events.push(`cleanup:${selected}`);
+              },
+            },
+            `selected-registration:${selected}`,
+          );
+          return [providerInspection(selected, true)];
+        },
+        async (_owner, _signal, clients) => {
+          expect(clients).toBe(selectedClients);
+          expect(cleaned).toBe(true);
+          events.push(`continue:${selected}`);
+          return [];
+        },
+      ];
+    },
+  });
+  try {
+    for (const selection of selections)
+      await expect(host.providerInspections!(selection)).resolves.toEqual([
+        providerInspection(selection[0]!, true),
+      ]);
+    expect(factories).toBe(2);
+    expect(events).toEqual([
+      "inspect:claude",
+      "cleanup:claude",
+      "continue:claude",
+      "inspect:codex",
+      "cleanup:codex",
+      "continue:codex",
+    ]);
+  } finally {
+    await host.close!();
+  }
 });
 
 it("retains a completed healthy report when cancellation arrives during final cleanup", async () => {

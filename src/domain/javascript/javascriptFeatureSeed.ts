@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "./javascriptModuleUnits.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import {
@@ -96,10 +97,7 @@ const kindMatches = (
         node.observations.some((o) => o.properties.step_kind === "exposure"))
     );
   if (kind === "channel") return node.kind === "ipc-channel";
-  if (kind === "module")
-    return ["javascript-asset", "javascript-module", "source-module"].includes(
-      node.kind,
-    );
+  if (kind === "module") return isJavaScriptModuleUnit(node);
   return node.kind === "native-export";
 };
 

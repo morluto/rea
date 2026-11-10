@@ -17,7 +17,10 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDoctorHost } from "./FirmwareDoctor.js";
 import * as commandPath from "../process/ArtifactCommandPath.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { runDoctor } from "../application/Doctor.js";
+import {
+  runDoctor,
+  type DoctorProviderInspection,
+} from "../application/Doctor.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
 import { FirmwareDoctor } from "./FirmwareDoctor.js";
 
@@ -73,6 +76,101 @@ it("does not launch host probes for unconfigured optional firmware tools", async
   expect(prepareOwnership).not.toHaveBeenCalled();
   expect(runCommand).not.toHaveBeenCalled();
   expect(await doctor.close()).toBeUndefined();
+});
+
+const unresolvedFirmware = (
+  id: "binwalk" | "unblob",
+): DoctorProviderInspection => ({
+  id,
+  configured: null,
+  available: null,
+  providerVersion: null,
+  registrationEnvironment: {},
+  checks: [
+    {
+      name: "configuration",
+      ok: false,
+      code: "registration_environment_unknown",
+      classification: "unknown",
+      detail: "The selected client's command is an unresolved expression.",
+      remediation: "Inspect the selected client's registration.",
+    },
+  ],
+});
+
+it("does not launch firmware or host probes for unresolved client settings", async () => {
+  const prepareOwnership =
+    vi.fn<NonNullable<FirmwareDoctorHost["prepareOwnership"]>>();
+  const runCommand = vi.fn<NonNullable<FirmwareDoctorHost["runCommand"]>>();
+  const doctor = new FirmwareDoctor(
+    {
+      REA_BINWALK_COMMAND: "/terminal/binwalk",
+      REA_UNBLOB_COMMAND: "/terminal/unblob",
+    },
+    "linux",
+    { prepareOwnership, runCommand },
+  );
+  const binwalk = unresolvedFirmware("binwalk");
+  const unblob = unresolvedFirmware("unblob");
+  try {
+    expect(await doctor.inspect({ binwalk, unblob })).toEqual([
+      binwalk,
+      unblob,
+    ]);
+    expect(prepareOwnership).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+  } finally {
+    await doctor.close();
+  }
+});
+
+linuxIt.each(["binwalk", "unblob"] as const)(
+  "preserves a ready peer without probing unresolved %s",
+  async (engine) => {
+    const { doctor, host, environment } = await fixture();
+    const unresolved = unresolvedFirmware(engine);
+    try {
+      const inspections = await doctor.inspect({ [engine]: unresolved });
+      expect(inspections.map(({ id }) => id)).toEqual(["binwalk", "unblob"]);
+      expect(inspections.find(({ id }) => id === engine)).toBe(unresolved);
+      expect(inspections.find(({ id }) => id !== engine)?.available).toBe(true);
+      const ignoredCommand =
+        engine === "binwalk"
+          ? environment.REA_BINWALK_COMMAND
+          : environment.REA_UNBLOB_COMMAND;
+      expect(
+        vi
+          .mocked(host.runCommand!)
+          .mock.calls.every(
+            ([spawn]) => !spawn.arguments.includes(ignoredCommand),
+          ),
+      ).toBe(true);
+      expect(host.runCommand).toHaveBeenCalledTimes(
+        engine === "binwalk" ? 3 : 2,
+      );
+    } finally {
+      await doctor.close();
+    }
+  },
+);
+
+it("retains unresolved client observations when cancellation stops peer inspection", async () => {
+  const controller = new AbortController();
+  controller.abort("stop before peer probe");
+  const unblob = unresolvedFirmware("unblob");
+  const doctor = new FirmwareDoctor({}, "linux", {}, controller.signal);
+  try {
+    await expect(doctor.inspect({ unblob })).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: "stop before peer probe",
+      diagnostics: {
+        firmware_inspections: [unblob],
+        firmware_inspection_count: { completed: 1, total: 2 },
+      },
+    });
+  } finally {
+    await doctor.close();
+  }
 });
 
 linuxIt.each(["limiter", "engine"] as const)(

@@ -60,6 +60,44 @@ const statePathsOf = async (folder: string, using = readers) => {
   return new Map(state.paths.map((entry) => [entry.home_path, entry]));
 };
 
+it("treats both explicitly selected files as documents when one ends in -journal", async () => {
+  const report = `${HOME}/Documents/report`;
+  const journal = `${report}-journal`;
+  const base = extended({
+    baseline: [
+      retained(report, "old report"),
+      retained(journal, "old journal"),
+    ],
+    changes: [
+      change(report, { before: "old report", after: "new report" }),
+      change(journal, { before: "old journal", after: "new journal" }),
+    ],
+    later: [retained(report, "new report"), retained(journal, "new journal")],
+  });
+  const folder = await writeCaptureFolder(
+    {
+      ...base,
+      state: {
+        ...base.state,
+        content_roots: [...base.state.content_roots, report, journal],
+        selected_paths: [report, journal].map((path) => ({
+          path,
+          physical: path,
+          kind: "file" as const,
+        })),
+      },
+    },
+    undefined,
+    ["old report", "old journal", "new report", "new journal"],
+  );
+  const byPath = await statePathsOf(folder);
+  for (const file of ["Documents/report", "Documents/report-journal"])
+    expect(byPath.get(file)).toMatchObject({
+      role: "document",
+      reasons: ["selected_path"],
+    });
+});
+
 describe("inspectDesktopApplicationState", () => {
   it("assigns roles and reads each version into typed views and changes", async () => {
     const folder = await writeCaptureFolder(capture());

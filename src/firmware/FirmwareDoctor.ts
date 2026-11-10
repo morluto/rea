@@ -1,5 +1,8 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { processTableMaxBytesConstraint } from "../config/processTableOutputBudget.js";
+import {
+  PROCESS_TABLE_MAX_BYTES_SETTING,
+  processTableMaxBytesConstraint,
+} from "../config/processTableOutputBudget.js";
 import { randomUUID } from "node:crypto";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type {
@@ -47,6 +50,30 @@ const PROBE_LIMITS = {
 const DEPENDENCY_HEADER =
   "The following executables found installed, which are needed by unblob:";
 
+const FIRMWARE_ENGINES = ["binwalk", "unblob"] as const;
+const FIRMWARE_HOST_SETTINGS = [
+  "REA_FIRMWARE_PRLIMIT_COMMAND",
+  PROCESS_TABLE_MAX_BYTES_SETTING,
+  "PATH",
+] as const;
+
+/** Client settings consulted by each firmware readiness probe. */
+export const FIRMWARE_DOCTOR_SETTINGS = {
+  binwalk: [
+    FIRMWARE_TOOL_REQUIREMENTS.binwalk.commandEnvironment,
+    ...FIRMWARE_HOST_SETTINGS,
+  ],
+  unblob: [
+    FIRMWARE_TOOL_REQUIREMENTS.unblob.commandEnvironment,
+    ...FIRMWARE_HOST_SETTINGS,
+  ],
+} as const;
+
+/** Registration expressions are interpreted by the outer client adapter. */
+type UnresolvedFirmwareInspections = Readonly<
+  Partial<Record<FirmwareEngineName, DoctorProviderInspection>>
+>;
+
 interface ProbeOutput {
   readonly stdout: string;
   readonly stderr: string;
@@ -80,10 +107,16 @@ export class FirmwareDoctor {
   ) {}
 
   /** Inspect each optional tool independently and share host prerequisite probes. */
-  async inspect(): Promise<readonly DoctorProviderInspection[]> {
-    const progress: InspectionProgress = { inspections: [] };
+  async inspect(
+    unresolved: UnresolvedFirmwareInspections = {},
+  ): Promise<readonly DoctorProviderInspection[]> {
+    const progress: InspectionProgress = {
+      inspections: FIRMWARE_ENGINES.flatMap(
+        (engine) => unresolved[engine] ?? [],
+      ),
+    };
     try {
-      return await this.#inspectProviders(progress);
+      return await this.#inspectProviders(progress, unresolved);
     } catch (cause: unknown) {
       const failure =
         cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
@@ -123,6 +156,7 @@ export class FirmwareDoctor {
 
   async #inspectProviders(
     progress: InspectionProgress,
+    unresolved: UnresolvedFirmwareInspections,
   ): Promise<readonly DoctorProviderInspection[]> {
     this.#throwIfCancelled();
     const platform = diagnostic(
@@ -134,9 +168,12 @@ export class FirmwareDoctor {
     );
     const checks: DoctorProviderCheck[] = [platform];
     let limiter: string | undefined;
-    const hasConfiguredEngine = Object.values(FIRMWARE_TOOL_REQUIREMENTS).some(
-      ({ commandEnvironment }) =>
-        this.environment[commandEnvironment] !== undefined,
+    const hasConfiguredEngine = FIRMWARE_ENGINES.some(
+      (engine) =>
+        unresolved[engine] === undefined &&
+        this.environment[
+          FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment
+        ] !== undefined,
     );
     if (platform.ok && hasConfiguredEngine) {
       const ps = await this.#inspectPs();
@@ -193,14 +230,17 @@ export class FirmwareDoctor {
       }
     }
     const { inspections } = progress;
-    for (const engine of ["binwalk", "unblob"] as const) {
+    for (const engine of FIRMWARE_ENGINES) {
       this.#throwIfCancelled();
+      if (unresolved[engine] !== undefined) continue;
       inspections.push(
         await this.#inspectEngine(engine, checks, limiter, progress),
       );
     }
     this.#throwIfCancelled();
-    return inspections;
+    return FIRMWARE_ENGINES.flatMap((engine) =>
+      inspections.filter(({ id }) => id === engine),
+    );
   }
 
   get hasPendingCleanup(): boolean {
@@ -356,7 +396,7 @@ export class FirmwareDoctor {
               ? admitted.limitation
               : admitted.message,
           admitted.status === "unresolved" ? "unknown" : "config_drift",
-          `Select a supported ${engine} release; see docs/firmware-analysis.md.`,
+          `Select a supported ${engine} release; see docs/guides/firmware/firmware-analysis.md.`,
         );
         if (engine === "unblob" && accepted) {
           const dependenciesIndex = checks.length;

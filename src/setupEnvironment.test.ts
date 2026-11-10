@@ -110,7 +110,7 @@ it("composes provider diagnostics from selected configuration rather than ambien
     GHIDRA_INSTALL_DIR: "/selected/ghidra",
     REA_IDA_MCP_CONFIG: "/selected/ida.json",
   });
-  const inspections = await host.providerInspections?.();
+  const inspections = await host.providerInspections?.([]);
   expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(true);
   expect(JSON.stringify(inspections)).toContain("/selected/ghidra");
   expect(JSON.stringify(inspections)).toContain("/selected/ida.json");
