@@ -69,7 +69,11 @@ const registerDylibResolutionCommand = (
     description:
       "Trace dyld load-path resolution for a Mach-O or every executable in an app bundle",
     args: z.object({
-      path: z.string().describe("Mach-O file or Apple .app bundle path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Mach-O file or Apple .app bundle path"),
     }),
     options: z.object({
       root: z
