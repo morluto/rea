@@ -624,6 +624,22 @@ export class EvidenceLedger {
     this.#unknownHeads = unknownHeads;
   }
 
+  /**
+   * Whether the value carries the admission this ledger's reader skips: a
+   * sealed record. A record this ledger holds is sealed; asking costs one map
+   * lookup and no payload traversal.
+   */
+  holdsSealedEvidence(input: unknown): boolean {
+    if (typeof input !== "object" || input === null) return false;
+    const evidenceId = (input as { readonly evidence_id?: unknown })
+      .evidence_id;
+    if (typeof evidenceId !== "string") return false;
+    const held = this.#records.get(evidenceId);
+    // Only a held value that is this exact object establishes the provenance;
+    // matching IDs alone would admit an unvalidated lookalike.
+    return held !== undefined && held === input && isImmutableEvidence(held);
+  }
+
   #readEvidence(
     input: Evidence,
     message: string,

@@ -4,6 +4,7 @@ import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { Evidence } from "../../domain/evidence.js";
 import {
+  isImmutableEvidence,
   tryParseEvidence,
   withEvidenceProviderSelection,
   type ProviderSelectionProvenance,
@@ -161,18 +162,20 @@ export abstract class BinarySessionRecords {
     // Attribution seals its result, and a sealed record skips the owning
     // ledger's ordinary-JSON and heap-headroom admission, so admit the caller's
     // own value first — validating a large record must not wait until after it
-    // has been copied and sealed.
-    const admitted = this.#records.admitSealedEvidenceInput(
-      evidence,
-      "record_evidence",
-    );
-    if (!admitted.ok) return admitted;
-    // A tampered record must still come back as the declared `Result` rather
-    // than a thrown schema error, so let the ledger reject what it cannot parse
-    // instead of sealing it here.
+    // has been copied and sealed. A record that reaches here already sealed has
+    // been through both steps, so only a fresh value pays for them again.
     const authenticated = tryParseEvidence(evidence);
     if (authenticated === undefined)
       return this.#records.recordEvidence(evidence);
+    // A sealed record has already been traversed and admitted; re-validating
+    // it here would repeat that work without adding a fact.
+    if (!isImmutableEvidence(evidence)) {
+      const admitted = this.#records.admitSealedEvidenceInput(
+        evidence,
+        "record_evidence",
+      );
+      if (!admitted.ok) return admitted;
+    }
     const attributed = withEvidenceProviderSelection(
       authenticated,
       this.activeAnalysisBinding()?.providerSelection,

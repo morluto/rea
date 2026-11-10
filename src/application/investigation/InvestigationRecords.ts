@@ -9,7 +9,7 @@ import type {
   UnknownStatus,
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
-import type { Result } from "../../domain/result.js";
+import { ok, type Result } from "../../domain/result.js";
 import { EvidenceLedger, type EvidenceImportDelta } from "./EvidenceLedger.js";
 import { unknownMutationEvidence } from "./UnknownEvidence.js";
 import type {
@@ -71,11 +71,14 @@ export class InvestigationRecords
    *
    * A sealed value skips those checks inside the ledger, so a workflow that
    * re-attributes a record must admit the raw input it received here first.
+   * A record the ledger already holds is that sealed value: it was admitted
+   * when it was recorded, so re-reading it here would only repeat the work.
    */
   admitSealedEvidenceInput(
     input: unknown,
     operation: string,
   ): Result<void, AnalysisError> {
+    if (this.#evidence.holdsSealedEvidence(input)) return ok(undefined);
     return admitInvestigationAuthentication(
       input,
       operation,

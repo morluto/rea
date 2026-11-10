@@ -259,6 +259,33 @@ it("admits record Evidence before attributing it to the session", async () => {
   }
 });
 
+it("re-attributes a sealed record it already holds without a second admission", async () => {
+  const [target] = await createBinarySessionTargets();
+  let headroom = 0;
+  const session = createTestBinarySession(
+    createCacheProvider([]),
+    {},
+    new InvestigationRecords({ availableAuthenticationBytes: () => headroom }),
+  );
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // Record while there is room, then withdraw it: the record the ledger holds
+    // is already sealed, so re-attributing it must not read it again and must
+    // not be refused by an allowance that only applies to fresh input.
+    headroom = 1_000_000;
+    const first = session.recordEvidence(observation("sealed"));
+    if (!first.ok) throw first.error;
+    const borrowed = session.evidenceForAnalysis(
+      session.exportEvidenceBundle().records[0]!.evidence_id,
+    );
+    if (borrowed === undefined) throw new Error("Expected a held record");
+    headroom = 0;
+    expect(session.recordEvidence(borrowed).ok).toBe(true);
+  } finally {
+    await session.dispose();
+  }
+});
+
 it("preserves records through failed disposal and clears them only after its owned cleanup succeeds", async () => {
   const [target] = await createBinarySessionTargets();
   const client = new ControllableAnalysisClient();
