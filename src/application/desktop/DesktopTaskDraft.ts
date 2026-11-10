@@ -1,3 +1,4 @@
+import type { DesktopViewPolicyInput } from "../../domain/desktop/desktopViewPolicy.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { exportedStateFiles } from "../../domain/desktop/appExport.js";
 import { DRAFT_PROMPT } from "../../domain/desktop/appTask.js";
@@ -56,12 +57,14 @@ const draft = async (
   readers: DesktopStateReaders,
   signal: AbortSignal | undefined,
   selection: DraftSelection,
+  viewPolicy: DesktopViewPolicyInput | undefined,
 ): Promise<Evidence> => {
   const { evidence, capture } = await readDesktopCapture(folder, signal);
   const stateEvidence = await inspectDesktopApplicationState(
     folder,
     readers,
     signal,
+    { viewPolicy },
   );
   if (stateEvidence instanceof AnalysisError) throw stateEvidence;
   const state = desktopApplicationStateSchema.parse(
@@ -114,6 +117,9 @@ const draft = async (
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {
+    ...(state.effective_view_policy === undefined
+      ? {}
+      : { effective_view_policy: state.effective_view_policy }),
     application: {
       environment,
       title: capture.application.desktop_entry?.name ?? environment,
@@ -160,6 +166,9 @@ const draft = async (
       capture_evidence_id: evidence.evidence_id,
       seed_checkpoint: selection.seed ?? null,
       end_checkpoint: selection.end ?? null,
+      ...(stateEvidence.parameters.view_policy === undefined
+        ? {}
+        : { view_policy: stateEvidence.parameters.view_policy }),
     },
     result,
     confidence: "inferred",
@@ -177,9 +186,10 @@ export const draftDesktopApplicationTask = async (
   readers: DesktopStateReaders,
   signal?: AbortSignal,
   selection: DraftSelection = {},
+  viewPolicy?: DesktopViewPolicyInput,
 ): Promise<Evidence | AnalysisError> => {
   try {
-    return await draft(folder, readers, signal, selection);
+    return await draft(folder, readers, signal, selection, viewPolicy);
   } catch (cause: unknown) {
     return desktopOperationFailure(
       cause,

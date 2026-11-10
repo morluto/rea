@@ -1,3 +1,7 @@
+import {
+  fridaCapturePolicySchema,
+  fridaCapturePolicyInputSchema,
+} from "../domain/fridaCapturePolicy.js";
 import { z } from "zod";
 
 import { localPathStringSchema } from "../domain/localPath.js";
@@ -56,6 +60,7 @@ const exclusiveDeviceSelector = <Schema extends z.ZodTypeAny>(schema: Schema) =>
 const sessionId = z.string().uuid();
 
 const scriptOutput = z.strictObject({
+  capture_limits: fridaCapturePolicySchema.optional(),
   script_id: z.string().uuid(),
   source_kind: z.enum(["inline", "file"]),
   source_path: z.string().nullable(),
@@ -107,6 +112,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     inputSchema: z
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
+        capture_limits: fridaCapturePolicyInputSchema.optional(),
         ...deviceSelector.shape,
         pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),
@@ -245,6 +251,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     inputSchema: z
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
+        capture_limits: fridaCapturePolicyInputSchema.optional(),
         ...deviceSelector.shape,
         pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),

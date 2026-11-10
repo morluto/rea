@@ -5,10 +5,6 @@
  * with REA's limits and wording. Part of the module's helpers.
  */
 export const PYTHON_ZIP_HELPERS = String.raw`
-MAX_ZIP_ENTRIES = 1000
-MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
-MAX_ZIP_BYTES = 64 * 1024 * 1024
-MAX_ZIP_RATIO = 100
 ZIP_READ_CHUNK = 64 * 1024
 #: Small, since the end of each gzip member copies what is left of the piece it was read from.
 GZIP_READ_CHUNK = 4 * 1024
@@ -37,11 +33,11 @@ def _zip_refusal(info, spent: int):
     if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
         return f"compressed with method {info.compress_type}, which the view does not read"
     if info.file_size > MAX_ZIP_ENTRY_BYTES:
-        return "larger than the 16 MiB an entry's view reads"
+        return f"larger than the {_view_byte_limit(MAX_ZIP_ENTRY_BYTES)} an entry's view reads"
     if info.file_size > MAX_ZIP_RATIO * info.compress_size:
         return f"expands more than {MAX_ZIP_RATIO} times, so it is not read"
     if spent + info.file_size > MAX_ZIP_BYTES:
-        return "past the 64 MiB read from one archive"
+        return f"past the {_view_byte_limit(MAX_ZIP_BYTES)} read from one archive"
     return None
 
 
@@ -271,7 +267,7 @@ def _gzip(name: str, data: bytes) -> dict:
     if document is None:
         return {**compressed, "error": f"expands more than {MAX_ZIP_RATIO} times, so it is not read"
                 if MAX_ZIP_RATIO * len(data) < MAX_ZIP_ENTRY_BYTES
-                else "larger than the 16 MiB a compressed document's view reads"}
+                else f"larger than the {_view_byte_limit(MAX_ZIP_ENTRY_BYTES)} a compressed document's view reads"}
     for header, form, inside in NOT_READ_INSIDE:
         if form != "zip" and document.startswith(header):
             return {**compressed, "format": form, "error": f"{inside} inside a gzip file is not read"}

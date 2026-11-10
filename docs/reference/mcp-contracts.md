@@ -148,7 +148,10 @@ returned: `pseudocode`, `native_api` and `native_value_flow` are unavailable
 with the decompiler's failure as the reason, while the listing-backed facets
 are collected as usual. These failed decompiler observations and workflows
 derived from them retain Evidence but skip snapshot reuse, so a later request
-can observe backend recovery; healthy dossiers keep their existing cache policy.
+can observe backend recovery. Ghidra function dossiers also skip snapshot reuse
+so each new operation honors its accepted value-flow budgets; completed source
+Evidence remains accessible through retained views and bundle export. Other
+healthy provider observations keep their existing cache policy.
 `procedure_pseudo_code` still fails for that function. Hopper's unavailable reference-kind metadata and reported unresolved
 calls still prevent equality conclusions for those dimensions. Analysis profiles
 version these declarations so older snapshots are not reused as current results.

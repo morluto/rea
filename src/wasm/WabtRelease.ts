@@ -18,11 +18,6 @@ export const WABT_PROVIDER_IDENTITY = {
   name: "REA WABT artifact adapter",
   version: `wabt@${WABT_VERSION}`,
 } as const;
-export const WABT_LIMITS = {
-  inputBytes: 8 * 1024 * 1024,
-  toolBytes: 64 * 1024 * 1024,
-  outputBytes: 32 * 1024 * 1024,
-} as const;
 
 /** Admission of the banners reported by one configured WABT tool directory. */
 export type WabtVersionAdmission =

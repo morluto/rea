@@ -1,3 +1,14 @@
+import { z } from "zod";
+import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
+import {
+  webSourceLocationCompleteDeliveryShape,
+  webSourceLocationSummaryDeliveryShape,
+} from "../domain/analysisView/webSourceLocationView.js";
+import {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
+} from "../domain/analysisView/analysisView.js";
 import {
   exportWebScriptsInputSchema,
   webScriptExportResultSchema,
@@ -10,25 +21,40 @@ import {
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
+  WEB_SOURCE_MAP_LIMITS,
   webSourceLocationInputSchema,
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
+
+export const webSourceLocationRequestSchema = z
+  .discriminatedUnion("detail", [
+    webSourceLocationInputSchema.extend(webSourceLocationCompleteDeliveryShape),
+    webSourceLocationInputSchema.extend(webSourceLocationSummaryDeliveryShape),
+  ])
+  .meta({ "x-rea-root-discriminator": "detail" });
 
 /** Local captured-script publication contracts shared by CLI and MCP. */
 export const WEB_SCRIPT_TOOL_CONTRACTS = [
   {
     name: "trace_web_source_location",
     ...toolContractMetadata("trace_web_source_location"),
-    description:
-      "Trace one generated position in an exported website script through an explicitly paired local source map. Verifies manifest, selected script and map SHA-256/byte identities; returns every equal-position mapping, reported source/root, resolved source URL, embedded sourcesContent and original position inline. One-based lines and zero-based UTF-16 columns; greatest generated position <= requested across lines. Duplicate sources and generated-only mappings remain distinct. Caller-selected pairing does not establish deployment authenticity or execution. Regular maps and inline indexed sections only; external section URLs are unsupported. No network access or application execution; uses the pinned upstream codec in an owned Node process with private temporary files, independent 192 MiB old-generation heap and 20-second deadline. 4 MiB map, 32 MiB reply; complete evidence or actionable resource failure. Cleanup may extend the deadline.",
+    description: `Trace one generated position in an exported website script through an explicitly paired local source map. Verifies manifest, selected script and map SHA-256/byte identities; returns every equal-position mapping, reported source/root, resolved source URL, embedded sourcesContent and original position inline. One-based lines and zero-based UTF-16 columns; greatest generated position <= requested across lines. Duplicate sources and generated-only mappings remain distinct. Caller-selected pairing does not establish deployment authenticity or execution. Regular maps and inline indexed sections only; external section URLs are unsupported. No network access or application execution; uses the pinned upstream codec in an owned Node process with private temporary files, independent default ${WEB_SOURCE_MAP_LIMITS.codecHeapMiB} MiB old-generation heap and ${WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs / 1000}-second deadline. Defaults: ${WEB_SOURCE_MAP_LIMITS.mapBytes / (1024 * 1024)} MiB map, ${WEB_SOURCE_MAP_LIMITS.outputBytes / (1024 * 1024)} MiB reply, ${WEB_SOURCE_MAP_LIMITS.decodedRecords} decoder records. Select source_map_limits to change byte, decoder or heap admission for the next call without restart; failures name the exhausted field and recovery. Complete delivery remains the default. Select detail summary to retain complete Evidence and return source/lookup identities and body-free match metadata with explicit page coverage. An optional source-location matches view selects offset/limit/max_bytes; source-text selects an exact match_index and UTF-16 offset/limit, returning content identity and only the requested text. inspect_analysis_view queries the same parent without rereading artifacts; export_evidence_bundle preserves the complete record. Summary requires session retention. Complete evidence or actionable resource failure. Cleanup may extend the deadline.`,
     kind: "application",
-    inputSchema: webSourceLocationInputSchema,
-    outputSchema: evidenceResultOf(webSourceLocationResultSchema),
+    inputSchema: webSourceLocationRequestSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      webSourceLocationResultSchema,
+      z.union([
+        webSourceLocationSummaryViewResultSchema,
+        webSourceLocationMatchesViewResultSchema,
+        webSourceLocationTextViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title:
-          "Trace a selected captured JavaScript point to embedded original source",
+          "Trace a selected captured JavaScript point with retained compact delivery",
         input: {
+          detail: "summary",
           manifest_path: "/analysis/scripts/manifest.json",
           script_index: 0,
           source_map: {
