@@ -317,6 +317,9 @@ MCP returns a `partial_observation` retained reference after recording succeeds;
 open it with `inspect_analysis_view` on the same connection. If the SDK stopped
 waiting before receiving the reply, follow [MCP cancellation recovery](../../reference/mcp-contracts.md#progress-and-cancellation)
 to find the record. CLI failure output contains the complete partial Evidence.
+With `--evidence_output`, the CLI also publishes it to that file and, with
+`--detail summary`, prints only its summary view; see
+[evidence publication](../../getting-started/cli.md#output-and-exit-status).
 Owned analyzer cleanup is verified before private files are released; uncertain
 cleanup retains ownership for retry and is reported separately.
 Typed cancellation or another primary interruption remains attached while
