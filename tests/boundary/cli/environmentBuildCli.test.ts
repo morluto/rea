@@ -3,6 +3,7 @@ import { join, sep } from "node:path";
 
 import { expect } from "vitest";
 
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { environmentManifestHar } from "../../fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -25,6 +26,25 @@ const listFiles = async (root: string): Promise<string[]> =>
     )
     .sort();
 
+/** Both paths publish the same seven files, including exactly equal Evidence bytes. */
+const expectMatchingBundles = async (
+  root: string,
+  left: string,
+  right: string,
+) => {
+  const files = await listFiles(join(root, left));
+  expect(files).toEqual(await listFiles(join(root, right)));
+  expect(files).toHaveLength(7);
+  for (const file of files)
+    expect(
+      Buffer.compare(
+        await readFile(join(root, left, file)),
+        await readFile(join(root, right, file)),
+      ),
+      file,
+    ).toBe(0);
+};
+
 cliTest(
   "attributes invalid capture JSON to the capture argument",
   async ({ cli }) => {
@@ -44,14 +64,16 @@ cliTest(
   },
 );
 
-cliTest(
-  "builds the bundle the three CLI steps build, byte for byte",
-  async ({ cli }) => {
+cliTest.for(["absolute", "relative"] as const)(
+  "builds the bundle the three CLI steps build, byte for byte (%s caller path)",
+  async (selection, { cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");
     const har = join(root, "grafana.har");
     await writeFile(har, JSON.stringify(environmentManifestHar()));
+    const selected = selection === "absolute" ? har : "./grafana.har";
     const built = await cli.run({
-      arguments: ["environment-build", har, join(root, "built"), "--json"],
+      arguments: ["environment-build", selected, join(root, "built"), "--json"],
+      cwd: root,
       timeoutMs: 60_000,
     });
     expect(built.exitCode, built.stderr).toBe(0);
@@ -67,11 +89,12 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        har,
+        selected,
         "har",
         "--format",
         "json",
       ],
+      cwd: root,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const capture = join(root, "capture.json");
@@ -103,17 +126,30 @@ cliTest(
     });
     expect(exported.exitCode, exported.stderr).toBe(0);
 
-    const files = await listFiles(join(root, "built"));
-    expect(files).toEqual(await listFiles(join(root, "three-step")));
-    expect(files).toHaveLength(7);
-    for (const file of files)
-      expect(
-        Buffer.compare(
-          await readFile(join(root, "built", file)),
-          await readFile(join(root, "three-step", file)),
+    await expectMatchingBundles(root, "built", "three-step");
+    const recorded = parseEvidence(
+      JSON.parse(
+        await readFile(
+          join(root, "built", "envs", "grafana-example", "evidence.json"),
+          "utf8",
         ),
-        file,
-      ).toBe(0);
+      ),
+    );
+    expect(recorded.caller_input_path).toBe(selected);
+    expect(recorded.evidence_id).toBe(
+      parseEvidence(inspected.json).evidence_id,
+    );
+    const retained = await cli.run({
+      arguments: [
+        "environment-build",
+        capture,
+        join(root, "retained"),
+        "--json",
+      ],
+      timeoutMs: 60_000,
+    });
+    expect(retained.exitCode, retained.stderr).toBe(0);
+    await expectMatchingBundles(root, "retained", "three-step");
     expect(built.json).toMatchObject({
       tool_count: (exported.json as { tool_count: number }).tool_count,
       files: (exported.json as { files: unknown[] }).files,
