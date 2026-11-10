@@ -1,5 +1,8 @@
 import { err, ok, type Result } from "../result.js";
-import type { RegionDecodeFailure, RegionDecoder } from "../firmware/regionDecoder.js";
+import type {
+  RegionDecodeFailure,
+  RegionDecoder,
+} from "../firmware/regionDecoder.js";
 
 /** REGF base block: `regf`, a 4-byte sequence pair, then fixed offsets. */
 export const REGF_MAGIC = "regf";
@@ -94,7 +97,8 @@ export interface RegfMetadata {
   readonly allocated_cell_count: number;
 }
 
-const text = (ascii: Uint8Array): string => Buffer.from(ascii).toString("latin1");
+const text = (ascii: Uint8Array): string =>
+  Buffer.from(ascii).toString("latin1");
 
 /** The stored checksum is the XOR of the first 127 base-block dwords. */
 const baseChecksum = (base: Uint8Array): number => {
@@ -229,7 +233,10 @@ export const parseRegfHive = (
       ).getInt32(0, true);
       if (size === 0) break;
       const magnitude = Math.abs(size);
-      if (magnitude < REGF_CELL_ALIGNMENT || magnitude % REGF_CELL_ALIGNMENT !== 0) {
+      if (
+        magnitude < REGF_CELL_ALIGNMENT ||
+        magnitude % REGF_CELL_ALIGNMENT !== 0
+      ) {
         limitations.push(
           `cell at ${String(cellOffset)} declares a size of ${String(size)} bytes, which is not a positive multiple of ${String(REGF_CELL_ALIGNMENT)}`,
         );

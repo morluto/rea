@@ -16,7 +16,11 @@ const checksumOf = (base: Uint8Array): number => {
 };
 
 /** One `hbin` of `size` bytes whose cells are the given signed sizes. */
-const hbinOf = (binOffset: number, size: number, cellSizes: number[]): Uint8Array => {
+const hbinOf = (
+  binOffset: number,
+  size: number,
+  cellSizes: number[],
+): Uint8Array => {
   const bin = new Uint8Array(size);
   bin.set(Buffer.from("hbin", "latin1"), 0);
   const view = new DataView(bin.buffer);
@@ -152,7 +156,9 @@ describe("parseRegfHive", () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.cells.map((cell) => cell.storedSize)).toEqual([-32]);
-    expect(parsed.value.limitations.join(" ")).toContain("crossing the hive bin");
+    expect(parsed.value.limitations.join(" ")).toContain(
+      "crossing the hive bin",
+    );
   });
 
   it("stops at a cell size that is not a multiple of eight", () => {
@@ -210,6 +216,8 @@ describe("createRegfDecoder", () => {
     const image = decoder.value.finish();
     expect(image.ok).toBe(true);
     if (!image.ok) return;
-    expect(image.value.cells.map((cell) => cell.storedSize)).toEqual([-32, -48]);
+    expect(image.value.cells.map((cell) => cell.storedSize)).toEqual([
+      -32, -48,
+    ]);
   });
 });

@@ -2,7 +2,10 @@ import { Readable } from "node:stream";
 
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
-import { createRegfDecoder, type RegfImage } from "../domain/windows/registryHive.js";
+import {
+  createRegfDecoder,
+  type RegfImage,
+} from "../domain/windows/registryHive.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -31,7 +34,11 @@ export class RegistryHiveArtifactReader implements ArtifactReader {
   #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#source = new ArtifactFileSource(path, "Windows registry hive", admitted);
+    this.#source = new ArtifactFileSource(
+      path,
+      "Windows registry hive",
+      admitted,
+    );
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {
@@ -136,9 +143,7 @@ export class RegistryHiveArtifactReader implements ArtifactReader {
   }
 }
 
-const coverageOf = (
-  limitations: readonly string[],
-): ArtifactReaderTraversal =>
+const coverageOf = (limitations: readonly string[]): ArtifactReaderTraversal =>
   limitations.length === 0
     ? { status: "complete", limitations: [] }
     : { status: "unknown", limitations };
