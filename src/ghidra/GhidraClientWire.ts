@@ -71,6 +71,12 @@ export class GhidraWire {
       ...(options.decompileTimeoutSeconds === undefined
         ? {}
         : { decompile_timeout_seconds: options.decompileTimeoutSeconds }),
+      ...(options.valueFlowLimits === undefined
+        ? {}
+        : { value_flow_limits: options.valueFlowLimits }),
+      ...(options.decompileMaxPayloadMiB === undefined
+        ? {}
+        : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
     };
     const payloadBytes = jsonValueByteLength(payloadValue);
     // Refuse before registering the operation and before any socket write, so

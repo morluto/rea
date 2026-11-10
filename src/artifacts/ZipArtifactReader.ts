@@ -39,11 +39,8 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
-import {
-  ARTIFACT_EXPANSION_RATIO,
-  artifactExpansionBudgetBytes,
-  MINIMUM_ARTIFACT_EXPANDED_BYTES,
-} from "../domain/artifactExpansionBudget.js";
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
+import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
@@ -189,6 +186,7 @@ export class ZipArtifactReader implements ArtifactReader {
     format: ZipPackageFormat,
     maximumMetadataReadBytes?: number,
     admitted?: StableRegularFileDescriptor,
+    private readonly expandedBytes?: number,
   ) {
     this.format = format;
     this.#source = new NodeFileReader(path, maximumMetadataReadBytes, admitted);
@@ -199,7 +197,7 @@ export class ZipArtifactReader implements ArtifactReader {
     this.#assertOpen(signal);
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
-    let declaredFileBytes = 0;
+    let declaredFileBytes = 0n;
     const enumeration = typedZipFailures(
       this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
     );
@@ -220,12 +218,16 @@ export class ZipArtifactReader implements ArtifactReader {
           Number.isSafeInteger(metadata.declaredSize) &&
           metadata.declaredSize >= 0
         ) {
-          declaredFileBytes += metadata.declaredSize;
-          const budget = artifactExpansionBudgetBytes(this.#source.size);
-          if (declaredFileBytes > budget)
-            throw new ArtifactReaderFailure(
-              "limit",
-              `ZIP entries declare ${String(declaredFileBytes)} uncompressed bytes, exceeding this archive's ${String(budget)}-byte decompression budget (${String(MINIMUM_ARTIFACT_EXPANDED_BYTES)}-byte minimum, ${String(ARTIFACT_EXPANSION_RATIO)}x archive size); a small archive cannot expand this far`,
+          declaredFileBytes += BigInt(metadata.declaredSize);
+          const budget =
+            this.expandedBytes ??
+            artifactExpansionBudgetBytes(this.#source.size);
+          if (declaredFileBytes > BigInt(budget))
+            throw artifactReaderLimitFailure(
+              "artifact_limits.expanded_bytes",
+              budget,
+              "bytes",
+              declaredFileBytes,
             );
         }
         const stored = this.#entries.get(metadata.adapterKey);

@@ -93,6 +93,38 @@ include the smallest useful reproduction, impact and coverage limits. Do not
 claim autonomous-agent selection from a scripted trace. Check related reports
 before proposing another issue, and avoid treating lack of API parity as a bug.
 
+### Write descriptions for selection and a valid first call
+
+Start with the analyst task, selected source and useful result. Put material
+effects and the deciding boundary between neighboring tools early. Progressive
+discovery previews the first 240 characters, so those characters should identify
+the operation without requiring the rest of its reference documentation.
+
+Keep exact call syntax where the advertised schema cannot convey it. The compact
+input profile strips most annotation prose and can reduce nested controls to
+`{type: "object"}`. Moving selectors into parameter descriptions alone does not
+make them available to those clients. For example, retained pseudocode needs
+both `source.kind: "retained-evidence"` and `view: {kind: "native", facet:
+"pseudocode"}`; a short exact example can be more useful than many paragraphs.
+Use the producer's handoff for other supported views rather than maintaining
+another supposedly exhaustive list in the shared consumer description.
+
+Keep configuration tutorials and detailed matching algorithms with their owning
+parameter contracts, product guides and actionable failures. Retain applicability,
+source identity, uncertainty, authority and cleanup facts needed to choose or
+safely continue the operation. An unresolved symbol lookup is not a completed
+reference search; an exhausted page does not establish absence in unexamined
+source. Shorter copy must preserve these distinctions.
+
+For wording changes, use a small set of representative agent tasks at the affected
+boundaries. Hold schemas, tool order, fixtures and host configuration fixed when
+comparing copy; add repetitions only for failures or ambiguous outcomes. Score
+actual arguments, corrective calls and supported final claims separately. A
+correct eventual answer can conceal malformed-call loops, while a valid call
+can still produce an overstated answer. Report whole-task usage, including
+retries and cached input, rather than treating fewer description bytes as proof
+of lower token cost.
+
 ## Design recovery around the failure
 
 Distinguish a request that violates its input contract from a valid selection
