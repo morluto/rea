@@ -481,6 +481,12 @@ updated stops the remaining removals. Uninstall reports each candidate
 their individual `actions` alongside its aggregate status and detail,
 including earlier removals when a later file fails. The paths name
 the discovered configuration candidates, not resolved physical file identities.
+If resource cleanup remains incomplete, uninstall reports a failed
+`uninstall_cleanup` item alongside the completed removals, with a structured
+`cleanup` observation naming the outstanding resources. An embedded host retains
+the exact cleanup owners: retrying that host's `close()` updates previously
+returned cleanup observations when release is confirmed. A new CLI invocation
+does not inherit those owners; inspect the reported resources before proceeding.
 For JSON clients, uninstall removes every repeated `rea` member in the effective
 server table only when each registration is REA-owned. An unowned earlier
 member, or an unowned OpenCode V1 entry that removing V2 would expose, stops

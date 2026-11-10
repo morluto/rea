@@ -16,6 +16,12 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  AnalysisError,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -54,7 +60,9 @@ import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   InvalidUtf8FileError,
   readRegularFileText,
+  bindRegularFileCleanup,
 } from "./RegularFileRead.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   appDataRedirection,
@@ -132,6 +140,7 @@ export interface UninstallItem extends UninstallAction {
 export interface UninstallResult {
   readonly status: "complete" | "failed";
   readonly items: readonly UninstallItem[];
+  readonly cleanup?: AnalysisCleanupObservation | undefined;
 }
 
 /** Applicability established once from product-specific discovery evidence. */
@@ -151,8 +160,29 @@ export interface UninstallHost {
   inspectSkill?(): Promise<UninstallItem | undefined>;
   removeSkill(): Promise<UninstallItem>;
   purgeData(): Promise<readonly UninstallItem[]>;
-  close?(): Promise<string | undefined>;
+  close?(): Promise<AnalysisError | undefined>;
 }
+
+/** Preserve the resource owner's explicit retry capabilities through uninstall reporting. */
+const uninstallCleanupError = (cause: unknown): AnalysisError => {
+  if (
+    cause instanceof AnalysisError &&
+    (cause.cleanupIncomplete ||
+      cause.hasCleanupOwner ||
+      cause.cleanup !== undefined ||
+      cause instanceof ProviderCleanupError)
+  )
+    return cause;
+  const cleanup = ArtifactReaderFailure.cleanupObservation(cause, []);
+  const error = new ProviderCleanupError(
+    "uninstall",
+    cleanup.resources,
+    { reason: cleanup.reason },
+    { cause, cleanup, operation: "uninstall" },
+  );
+  bindRegularFileCleanup(cause, error);
+  return error;
+};
 
 /**
  * Remove only REA-owned registrations and managed files, optionally including
@@ -206,19 +236,30 @@ export const runUninstall = async (
     failed = true;
     primaryFailure = cause;
   }
-  let cleanupFailure: string | undefined;
+  let cleanupFailure: AnalysisError | undefined;
   try {
-    cleanupFailure = await host.close?.();
+    const report = await host.close?.();
+    cleanupFailure =
+      report === undefined ? undefined : uninstallCleanupError(report);
   } catch (cause: unknown) {
-    cleanupFailure = `Uninstall resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    cleanupFailure = uninstallCleanupError(cause);
   }
+  if (cleanupFailure !== undefined && !cleanupFailure.cleanupIncomplete)
+    cleanupFailure = undefined;
   if (failed) {
-    if (cleanupFailure !== undefined)
+    if (cleanupFailure !== undefined) {
+      if (primaryFailure instanceof AnalysisError)
+        throw analysisErrorWithCleanupFailure(
+          primaryFailure,
+          cleanupFailure,
+          "uninstall",
+        ).bindCleanupDependencies([primaryFailure, cleanupFailure]);
       throw new AggregateError(
-        [primaryFailure, new Error(cleanupFailure)],
+        [primaryFailure, cleanupFailure],
         "Uninstall failed and its resource cleanup remains incomplete.",
         { cause: primaryFailure },
       );
+    }
     throw primaryFailure;
   }
   if (result === undefined)
@@ -226,9 +267,25 @@ export const runUninstall = async (
   if (cleanupFailure === undefined) return result;
   const items = collapseUninstallItems([
     ...result.items,
-    item("uninstall_cleanup", "failed", cleanupFailure),
+    item(
+      "uninstall_cleanup",
+      "failed",
+      `Uninstall resource cleanup failed: ${cleanupFailure.cleanup?.reason ?? cleanupFailure.message}${cleanupFailure.cleanupResources.length === 0 ? "" : ` (${cleanupFailure.cleanupResources.join(", ")})`}`,
+    ),
   ]);
-  return { status: "failed", items };
+  const retained = cleanupFailure;
+  return {
+    status: "failed",
+    items,
+    get cleanup() {
+      return retained.cleanupIncomplete
+        ? {
+            reason: retained.cleanup?.reason ?? retained.message,
+            resources: retained.cleanupResources,
+          }
+        : undefined;
+    },
+  };
 };
 
 /**
@@ -719,7 +776,7 @@ export const systemUninstallHost = (
         await resources.close();
         return undefined;
       } catch (cause: unknown) {
-        return `Uninstall resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return uninstallCleanupError(cause);
       }
     },
   };
