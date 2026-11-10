@@ -273,7 +273,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "resolve_adb_packages",
     ...toolContractMetadata("resolve_adb_packages"),
     description:
-      "Find installed packages by case-insensitive substring of the package name (e.g. `whatsapp` → `com.whatsapp`), returning each match's base APK device path. The first step of an easy get: resolve, then pull_adb_package the exact name. Read-only.",
+      "Find installed packages by case-insensitive package-name substring and return each base APK device path. Pass an exact returned name to pull_adb_package to retrieve its base and split APKs. Read-only.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.resolve_adb_packages,
     outputSchema: evidenceResultOf(adbResultSchemas.resolve_adb_packages),
