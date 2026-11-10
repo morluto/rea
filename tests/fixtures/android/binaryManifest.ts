@@ -89,12 +89,19 @@ export const binaryManifestFixture = (input: {
           : intern(attribute.stringValue),
     resourceId: attribute.resourceId,
   }));
-  const resourceMap = flatten(
-    rows
-      .flatMap((row) =>
-        row.resourceId === undefined ? [] : bytes32(row.resourceId),
-      )
-      .map((value) => [value]),
+  // The resource map is indexed by string-pool index, not by attribute order:
+  // slot N holds the framework ID of the attribute name interned at N. Rows
+  // without an ID leave their slot as 0 so later slots keep their alignment.
+  const resourceMap: number[] = [];
+  for (const row of rows) {
+    if (row.resourceId === undefined) continue;
+    while (resourceMap.length < row.nameIndex) resourceMap.length++;
+    resourceMap[row.nameIndex] = row.resourceId;
+  }
+  const resourceMapBytes = flatten(
+    Array.from({ length: resourceMap.length }, (_, index) =>
+      bytes32(resourceMap[index] ?? 0),
+    ),
   );
   // Every name is interned now; only then is the pool's offset table meaningful.
   const pool = stringPool(strings);
@@ -130,7 +137,7 @@ export const binaryManifestFixture = (input: {
   ]);
   const body = [
     ...pool,
-    ...(resourceMap.length === 0 ? [] : chunk(0x0180, 8, resourceMap)),
+    ...(resourceMap.length === 0 ? [] : chunk(0x0180, 8, resourceMapBytes)),
     ...startElement,
     ...endElement,
   ];

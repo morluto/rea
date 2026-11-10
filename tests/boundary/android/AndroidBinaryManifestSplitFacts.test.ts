@@ -36,6 +36,23 @@ it("reads required split types from the binary <manifest> element", () => {
   });
 });
 
+it("finds a split attribute by its resource ID rather than its name", () => {
+  // The fixture writes the resource map at the string-pool index of each name,
+  // so this resolves through resourceIds[nameIndex]. A renamed attribute keeps
+  // the framework ID and must still be read.
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypesV2", {
+          resourceId: 0x0101064c,
+          stringValue: "base__abi",
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok && facts.value.required_split_types).toEqual(["base__abi"]);
+});
+
 it("reads an isSplitRequired boolean and ignores non-Android namespaces", () => {
   const facts = readAndroidBinaryManifestSplitFacts(
     binaryManifestFixture({
