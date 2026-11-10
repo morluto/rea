@@ -182,6 +182,16 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     "windows.change_time_settle_poll_ms",
     "windows.change_time_settle_max_polls",
   ]);
+  for (const operation of [
+    "procedure_pseudo_code",
+    "procedure_assembly",
+    "analyze_function",
+  ] as const)
+    expect(
+      store
+        .inspect({ provider: "kuna", operation })
+        .settings.map(({ setting }) => setting),
+    ).toContain("kuna.project_timeout_ms");
   expect(
     store.update({
       changes: [

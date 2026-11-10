@@ -29,6 +29,7 @@ import {
 } from "../../../src/config/debuggerSessionLimits.js";
 import { DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import {
@@ -1554,6 +1555,33 @@ it("keeps inferior TTY readback when the caller output cap is smaller than that 
   expect(started.value.session_id).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
   );
+});
+
+it("applies a lowered command output cap to a console command after the session starts", async () => {
+  const fake = createFakeSpawner((child, token, command) => {
+    child.stdout.write(
+      command.includes("echo REA_CAPPED")
+        ? `~"${"x".repeat(80)}\\n"\n${token}^done\n`
+        : command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+    );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager);
+  const result = await runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: { "debugger.max_command_output_bytes": 40 },
+    },
+    () => manager.execute(started.value.session_id, "echo REA_CAPPED\\n"),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.result.output_truncated).toBe(true);
+  expect(result.value.result.output_limits).toEqual([
+    { kind: "command_bytes", maximum: 40 },
+  ]);
 });
 
 it.each([
