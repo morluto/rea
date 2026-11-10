@@ -535,6 +535,7 @@
 * **electron:** share wrapped member identity parsing ([c11fb48](https://github.com/morluto/rea/commit/c11fb48c98a2d5db58cc9f3ab68c5beca2968835))
 * **elf:** qualify Linux CORE notes by the declared ABI ([#9613](https://github.com/morluto/rea/issues/9613)) ([6a24e80](https://github.com/morluto/rea/commit/6a24e801ea5639cb299dd1d0b4ed6910d62c1a6e))
 * **elf:** report incomplete kernel module coverage ([#9475](https://github.com/morluto/rea/issues/9475)) ([5553acf](https://github.com/morluto/rea/commit/5553acfe500b4ae32fee9fa9e147d0996a45917a))
+* **elf:** report the link-time kernel banner, not the kbuild placeholder ([#9690](https://github.com/morluto/rea/issues/9690)) ([99e7902](https://github.com/morluto/rea/commit/99e79026c5a6ada0634001beeaa5009b1dbf1016))
 * **elf:** share section-table presence validation with notes ([#7706](https://github.com/morluto/rea/issues/7706)) ([c01ed78](https://github.com/morluto/rea/commit/c01ed783ac970a47546d664b6792f69cacc2fca9))
 * **elf:** validate completed note coverage ([3655dfd](https://github.com/morluto/rea/commit/3655dfd7d5db25f52a0a68c2651527d80935be2d))
 * **enhanced:** bound batch decompile input size ([#5937](https://github.com/morluto/rea/issues/5937)) ([585fe56](https://github.com/morluto/rea/commit/585fe56712105bf4d791def65fda054b4b28d5f6))
