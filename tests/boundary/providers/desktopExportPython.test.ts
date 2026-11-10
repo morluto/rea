@@ -253,6 +253,29 @@ _ensure_state_aliases(home)
   },
 );
 
+it("creates a legacy parent alias when a child alias proves it is a directory", async () => {
+  const root = await createTestTempDirectory("desktop-legacy-parent-alias-");
+  const home = join(root, "home");
+  await mkdir(join(home, ".config", "notes"), { recursive: true });
+  await writeFile(join(home, ".config", "notes", "profile.ini"), "profile");
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+STATE_ALIASES = [("settings", ".local/share/notes", "unknown"), ("settings/profile", ".config/notes", "directory")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+  expect(
+    await readFile(join(home, "settings", "profile", "profile.ini"), "utf8"),
+  ).toBe("profile");
+  expect(
+    (await stat(join(home, ".local", "share", "notes"))).isDirectory(),
+  ).toBe(true);
+});
+
 it("restores a selected alias to an existing settings file", async () => {
   const root = await createTestTempDirectory("desktop-file-alias-");
   const home = join(root, "home");

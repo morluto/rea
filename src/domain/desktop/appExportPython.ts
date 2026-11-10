@@ -156,9 +156,12 @@ def _ensure_state_aliases(home: Path) -> None:
     for alias, target, kind in aliases:
         link = home / alias
         destination = home / target
-        # Kind comes from the capture. A missing file must stay a file so the
-        # app can create it; only a directory alias needs its target created.
-        if kind == "directory":
+        # A recorded directory is created. A legacy alias with no kind is
+        # created only when another alias is inside it, which proves it is a
+        # directory. A legacy leaf stays unclassified so a missing file is not
+        # turned into a directory.
+        has_children = any(Path(alias) in Path(child).parents for child, *_ in aliases)
+        if kind == "directory" or (kind == "unknown" and has_children):
             destination.mkdir(parents=True, exist_ok=True)
         if link.is_symlink() and link.resolve() == destination.resolve():
             continue
