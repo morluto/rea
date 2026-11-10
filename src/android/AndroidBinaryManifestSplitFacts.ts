@@ -172,6 +172,7 @@ const walkChunks = (
     if (
       chunk.chunkSize < 8 ||
       chunk.headerSize < 8 ||
+      chunk.headerSize > chunk.chunkSize ||
       start + chunk.chunkSize > declared
     )
       return err({
@@ -299,6 +300,9 @@ export const readAndroidBinaryManifestSplitFacts = (
         resourceIds.push(reader.u32(offset));
     }
     let manifest: StartElement | undefined;
+    let application: StartElement | undefined;
+    // A bundle-built base APK may declare isSplitRequired on <application>
+    // instead of the root, so both elements are retained and read below.
     const scanned = walkChunks(reader, declared, (chunk) => {
       if (chunk.type !== RES_XML_START_ELEMENT_TYPE) return true;
       const element = readStartElement(
@@ -309,9 +313,9 @@ export const readAndroidBinaryManifestSplitFacts = (
         chunk.headerSize,
         chunk.chunkSize,
       );
-      if (element?.name !== "manifest") return true;
-      manifest = element;
-      return false;
+      if (element?.name === "manifest") manifest = element;
+      else if (element?.name === "application") application = element;
+      return true;
     });
     if (!scanned.ok) return scanned;
     if (manifest === undefined)
@@ -319,9 +323,17 @@ export const readAndroidBinaryManifestSplitFacts = (
         kind: "malformed",
         message: "The binary manifest has no <manifest> start element.",
       });
-    const android = manifest.attributes.filter(
-      (attribute) => attribute.namespace === ANDROID_NS,
-    );
+    const androidOf = (element: StartElement) =>
+      element.attributes.filter(
+        (attribute) => attribute.namespace === ANDROID_NS,
+      );
+    const manifestAndroid = androidOf(manifest);
+    // The root owns the split-type declarations; isSplitRequired falls back to
+    // <application>, which is where a bundle-generated base APK carries it.
+    const android =
+      application === undefined
+        ? manifestAndroid
+        : [...manifestAndroid, ...androidOf(application)];
     const toValue = (attribute: (typeof android)[number]): string | null =>
       attribute.dataType === TYPE_STRING
         ? (strings[attribute.data] ?? null)

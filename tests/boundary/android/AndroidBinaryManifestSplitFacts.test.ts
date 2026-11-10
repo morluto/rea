@@ -195,3 +195,43 @@ it("treats an attribute table that starts inside the node extension as malformed
     error: { kind: "malformed" },
   });
 });
+
+it("reads an isSplitRequired declared on the <application> element", () => {
+  // Bundle-generated base APKs put the flag on <application>; reading only the
+  // root would report complete coverage for libraries that live in a split.
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [],
+      application: [
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          booleanValue: true,
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok && facts.value.is_split_required).toBe(true);
+  expect(facts.ok && facts.value.required_split_types).toBeNull();
+});
+
+it("rejects a chunk whose header exceeds its own size", () => {
+  // An oversized resource-map header consumes the whole chunk, leaving no IDs,
+  // so a split attribute identified only by its framework ID reads as absent.
+  const bytes = Buffer.from(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: "base__abi",
+        }),
+      ],
+    }),
+  );
+  const map = bytes.indexOf(Buffer.from([0x80, 0x01, 0x08, 0x00]));
+  expect(map).toBeGreaterThan(0);
+  bytes.writeUInt16LE(0x2000, map + 2);
+  expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+});

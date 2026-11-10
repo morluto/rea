@@ -61,9 +61,58 @@ const stringPool = (values: readonly string[]): number[] => {
   ]);
 };
 
-/** <manifest> with the given attributes, followed by its matching end element. */
+interface Row {
+  readonly namespaceIndex: number;
+  readonly nameIndex: number;
+  readonly rawIndex: number;
+  readonly dataType: number;
+  readonly data: number;
+  readonly resourceId: number | undefined;
+}
+
+/** A start element and its matching end element, ready to be nested in a document. */
+const element = (
+  nameIndex: number,
+  rows: readonly Row[],
+): { readonly start: number[]; readonly end: number[] } => ({
+  start: chunk(0x0102, 16, [
+    ...bytes32(0xffffffff), // lineNumber
+    ...bytes32(0xffffffff), // comment
+    ...bytes32(0xffffffff), // attrExt.ns
+    ...bytes32(nameIndex),
+    ...bytes16(20), // attrExt.attributeStart, relative to attrExt
+    ...bytes16(20), // attrExt.attributeSize
+    ...bytes16(rows.length),
+    ...bytes16(0),
+    ...bytes16(0),
+    ...bytes16(0),
+    ...flatten(
+      rows.map((row) => [
+        ...bytes32(row.namespaceIndex),
+        ...bytes32(row.nameIndex),
+        ...bytes32(row.rawIndex),
+        ...bytes16(8),
+        0,
+        row.dataType,
+        ...bytes32(row.data),
+      ]),
+    ),
+  ]),
+  end: chunk(0x0103, 16, [
+    ...bytes32(0xffffffff),
+    ...bytes32(0xffffffff),
+    ...bytes32(0xffffffff),
+    ...bytes32(nameIndex),
+  ]),
+});
+
+/**
+ * <manifest> with the given attributes, optionally wrapping an <application>
+ * child with its own attributes. Elements nest in document order.
+ */
 export const binaryManifestFixture = (input: {
   readonly attributes: readonly BinaryManifestAttributeInput[];
+  readonly application?: readonly BinaryManifestAttributeInput[];
 }): Buffer => {
   const strings = [ANDROID_NS, "manifest"];
   const intern = (value: string): number => {
@@ -72,37 +121,41 @@ export const binaryManifestFixture = (input: {
     strings.push(value);
     return strings.length - 1;
   };
-  const rows = input.attributes.map((attribute) => ({
-    namespaceIndex:
-      attribute.namespace === null ? 0xffffffff : intern(attribute.namespace),
-    nameIndex: intern(attribute.name),
-    rawIndex:
-      attribute.stringValue === undefined
-        ? 0xffffffff
-        : intern(attribute.stringValue),
-    dataType:
-      attribute.typedValue !== undefined
-        ? attribute.typedValue.dataType
-        : attribute.booleanValue === undefined
-          ? 0x03
-          : 0x12,
-    data:
-      attribute.typedValue !== undefined
-        ? attribute.typedValue.data
-        : attribute.booleanValue !== undefined
-          ? attribute.booleanValue
-            ? 0xffffffff
-            : 0
-          : attribute.stringValue === undefined
-            ? 0
-            : intern(attribute.stringValue),
-    resourceId: attribute.resourceId,
-  }));
+  const rowsOf = (attributes: readonly BinaryManifestAttributeInput[]): Row[] =>
+    attributes.map((attribute) => ({
+      namespaceIndex:
+        attribute.namespace === null ? 0xffffffff : intern(attribute.namespace),
+      nameIndex: intern(attribute.name),
+      rawIndex:
+        attribute.stringValue === undefined
+          ? 0xffffffff
+          : intern(attribute.stringValue),
+      dataType:
+        attribute.typedValue !== undefined
+          ? attribute.typedValue.dataType
+          : attribute.booleanValue === undefined
+            ? 0x03
+            : 0x12,
+      data:
+        attribute.typedValue !== undefined
+          ? attribute.typedValue.data
+          : attribute.booleanValue !== undefined
+            ? attribute.booleanValue
+              ? 0xffffffff
+              : 0
+            : attribute.stringValue === undefined
+              ? 0
+              : intern(attribute.stringValue),
+      resourceId: attribute.resourceId,
+    }));
+  const rootRows = rowsOf(input.attributes);
+  const applicationRows =
+    input.application === undefined ? undefined : rowsOf(input.application);
   // The resource map is indexed by string-pool index, not by attribute order:
   // slot N holds the framework ID of the attribute name interned at N. Rows
   // without an ID leave their slot as 0 so later slots keep their alignment.
   const resourceMap: number[] = [];
-  for (const row of rows) {
+  for (const row of [...rootRows, ...(applicationRows ?? [])]) {
     if (row.resourceId === undefined) continue;
     while (resourceMap.length < row.nameIndex) resourceMap.length++;
     resourceMap[row.nameIndex] = row.resourceId;
@@ -112,43 +165,23 @@ export const binaryManifestFixture = (input: {
       bytes32(resourceMap[index] ?? 0),
     ),
   );
+  const applicationName = intern("application");
+  const root = element(1, rootRows);
+  const application =
+    applicationRows === undefined
+      ? []
+      : (() => {
+          const child = element(applicationName, applicationRows);
+          return [...child.start, ...child.end];
+        })();
   // Every name is interned now; only then is the pool's offset table meaningful.
   const pool = stringPool(strings);
-  const attributeTable = flatten(
-    rows.map((row) => [
-      ...bytes32(row.namespaceIndex),
-      ...bytes32(row.nameIndex),
-      ...bytes32(row.rawIndex),
-      ...bytes16(8),
-      0,
-      row.dataType,
-      ...bytes32(row.data),
-    ]),
-  );
-  const startElement = chunk(0x0102, 16, [
-    ...bytes32(0xffffffff), // lineNumber
-    ...bytes32(0xffffffff), // comment
-    ...bytes32(0xffffffff), // attrExt.ns
-    ...bytes32(1), // attrExt.name = "manifest"
-    ...bytes16(20), // attrExt.attributeStart, relative to attrExt
-    ...bytes16(20), // attrExt.attributeSize
-    ...bytes16(rows.length),
-    ...bytes16(0),
-    ...bytes16(0),
-    ...bytes16(0),
-    ...attributeTable,
-  ]);
-  const endElement = chunk(0x0103, 16, [
-    ...bytes32(0xffffffff),
-    ...bytes32(0xffffffff),
-    ...bytes32(0xffffffff),
-    ...bytes32(1),
-  ]);
   const body = [
     ...pool,
     ...(resourceMap.length === 0 ? [] : chunk(0x0180, 8, resourceMapBytes)),
-    ...startElement,
-    ...endElement,
+    ...root.start,
+    ...application,
+    ...root.end,
   ];
   return Buffer.from([
     ...bytes16(0x0003),
