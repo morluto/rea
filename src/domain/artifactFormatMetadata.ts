@@ -299,6 +299,19 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   last_line: offset,
 });
 
+/** NTFS $MFT record-header facts; attributes, names and the USN journal are later steps. */
+export const ntfsMftMetadataSchema = z.strictObject({
+  kind: z.literal("ntfs-mft"),
+  record_bytes: offset,
+  record_count: offset,
+  in_use_record_count: offset,
+  directory_record_count: offset,
+  extension_record_count: offset,
+  fixup_mismatch_count: offset,
+  fixup_unverified_record_count: offset,
+  truncated_tail_bytes: offset,
+});
+
 /**
  * U-Boot FIT root facts. Configuration references are declared names; a
  * reference that names no image is reported as a limitation, not removed.
@@ -886,6 +899,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageSignatureBlockMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  ntfsMftMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
@@ -1035,6 +1049,10 @@ const declarationsByKind: {
   "uf2-region": {
     notCompared:
       "Its familyID and addresses are in its path, family_name is REA's label for the familyID, and its block counts and positions are layout; content comparison covers its bytes.",
+  },
+  "ntfs-mft": {
+    notCompared:
+      "Its fields come from the record headers in the file's own FILE records, which content comparison covers.",
   },
   dfuse: {
     notCompared:
