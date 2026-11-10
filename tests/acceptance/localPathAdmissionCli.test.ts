@@ -31,6 +31,8 @@ const fileCommands = [
   "inspect-gpu-code-objects",
   "inspect-il2cpp-metadata",
   "inspect-native-data-type",
+  "analyze-javascript-application",
+  "inspect-electron-fuses",
 ] as const;
 
 cliTest(

@@ -11,6 +11,7 @@ import {
   listElectronTargetsInputSchema,
 } from "../domain/javascript/electronObservation.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
@@ -64,11 +65,9 @@ const registerElectronFuseCommand = (
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
     args: z.object({
-      path: z
-        .string()
-        .describe(
-          "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
-        ),
+      path: localPathStringSchema.describe(
+        "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -92,7 +91,6 @@ const registerElectronFuseCommand = (
 
 /** Anchor relative input without changing which file symlink/.. selects. */
 const absoluteElectronFusePath = (path: string): string => {
-  if (path === "") return path;
   // Win32 resolves dot components before directory links, including drive-relative paths.
   if (sep === "\\") return resolve(path);
   if (isAbsolute(path)) return path;
@@ -344,7 +342,9 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z.string().describe("ASAR or extracted application path"),
+      path: localPathStringSchema.describe(
+        "ASAR or extracted application path",
+      ),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -367,9 +367,7 @@ const registerJavaScriptApplicationCommand = (
             if (!sourcePaths.ok) return sourcePaths.error;
             return runCliJavaScriptApplicationAnalysis(
               {
-                // An empty path names no file; leave it for input validation.
-                input_path:
-                  args.path === "" ? args.path : absoluteCallerPath(args.path),
+                input_path: absoluteCallerPath(args.path),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined

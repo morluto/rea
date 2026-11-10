@@ -168,3 +168,65 @@ describe("decimal integer CLI admission", () => {
     expect(failures).toEqual([]);
   });
 });
+
+/** The sixteen integer arguments from #9344, plus the environment-serve port. */
+const DECIMAL_PATTERN_FIELDS = [
+  "capture-native-ui-scenario options.pid",
+  "capture-native-ui-scenario options.windowId",
+  "capture-native-ui-scenario options.maxNodes",
+  "observe-native-ui options.pid",
+  "observe-native-ui options.windowId",
+  "observe-native-ui options.maxNodes",
+  "cutter-command args.expectedGeneration",
+  "import-reference-source options.outlineDepth",
+  "inspect-android-method options.overloadIndex",
+  "trace-android-references options.overloadIndex",
+  "inspect-web-network-capture options.record",
+  "trace-web-module-imports args.scriptIndex",
+  "trace-web-source-location args.scriptIndex",
+  "trace-web-source-location args.line",
+  "trace-web-source-location args.column",
+] as const;
+
+describe("decimal token advertisement", () => {
+  it("publishes the decimal token pattern for every integer argument", () => {
+    const cli = createCli({});
+    const found = new Set<string>();
+    const failures: string[] = [];
+    visitRegisteredCommands(cli, (command, path) => {
+      for (const group of ["args", "options"] as const) {
+        const parser = command[group];
+        if (!(parser instanceof z.ZodObject)) continue;
+        const advertised = Schema.toJsonSchema(parser);
+        if (!isRecord(advertised) || !isRecord(advertised.properties)) continue;
+        for (const [name, property] of Object.entries(advertised.properties)) {
+          const label = `${path} ${group}.${name}`;
+          if (
+            !(DECIMAL_PATTERN_FIELDS as readonly string[]).includes(label)
+          )
+            continue;
+          found.add(label);
+          if (!JSON.stringify(property).includes("^[0-9]+$"))
+            failures.push(`${label}: advertised schema omits ^[0-9]+$`);
+        }
+      }
+    });
+    expect([...found].sort()).toEqual([...DECIMAL_PATTERN_FIELDS].sort());
+    expect(failures).toEqual([]);
+  });
+
+  it("publishes the decimal port pattern for environment-serve", () => {
+    const cli = createCli({});
+    let port: unknown;
+    visitRegisteredCommands(cli, (command, path) => {
+      if (path !== "environment-serve") return;
+      const parser = command.options;
+      if (!(parser instanceof z.ZodObject)) return;
+      const advertised = Schema.toJsonSchema(parser);
+      if (!isRecord(advertised) || !isRecord(advertised.properties)) return;
+      port = advertised.properties.port;
+    });
+    expect(port).toBeDefined();
+    expect(port).toMatchObject({ pattern: "^(?:0|[1-9]\\d*)$" });
+  });
+});

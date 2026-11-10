@@ -20,6 +20,7 @@ import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
+  AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
@@ -48,7 +49,9 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
+import { regularFileSymlinkRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
+  RejectedRegularFileSymlink,
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
@@ -177,6 +180,28 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           primary.message,
           {},
           { cause: primary },
+        );
+      else if (primary instanceof RejectedRegularFileSymlink)
+        error = new AnalysisInputError(
+          OPERATION,
+          {
+            cause,
+            ...(primary.resolvedPath !== undefined
+              ? {
+                  remediationAction: regularFileSymlinkRecovery(
+                    primary.resolvedPath,
+                  ),
+                  conformsToInputContract: true,
+                }
+              : {}),
+          },
+          [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: `Expected a regular file without a symlink: ${input.path}`,
+            },
+          ],
         );
       else if (isSelectedRegularFileError(primary))
         error = selectedFileTargetError(input.path, primary, cause);

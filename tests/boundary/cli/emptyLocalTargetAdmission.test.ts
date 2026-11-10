@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
+import { registerElectronCommands } from "../../../src/cli/electronCommands.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { registerUtilityCommands } from "../../../src/cli/utilityCommands.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -20,6 +21,7 @@ const registry = () => {
   registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);
+  registerElectronCommands(cli, silentLogger, {});
   registerManagedCommands(cli, silentLogger, runProviderAnalysis);
   registerUtilityCommands(
     cli,
@@ -127,6 +129,27 @@ it.each([
       code: "VALIDATION_ERROR",
       fieldErrors: [
         expect.objectContaining({ path: field, code: "too_small" }),
+      ],
+    });
+  },
+);
+
+// Electron commands run real analysis services, so only the parse-time
+// rejections are covered here; the working-directory case is not exercised.
+it.each([["analyze-javascript-application"], ["inspect-electron-fuses"]])(
+  "rejects an empty or NUL %s target before analysis starts",
+  async (command) => {
+    const { serve } = registry();
+    expect(await serve([command, ""])).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({ path: "path", code: "too_small" }),
+      ],
+    });
+    expect(await serve([command, "target\x00name"])).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({ path: "path", code: "invalid_format" }),
       ],
     });
   },

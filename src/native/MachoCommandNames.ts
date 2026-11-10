@@ -656,7 +656,19 @@ export const readMachoCommandNames = async (
         frame.size ===
           (segmentWide ? 72 : 56) +
             sections.length * (segmentWide ? 80 : 68)) ||
-      (build !== undefined && frame.size === 24 + build.tools.length * 8);
+      (build !== undefined && frame.size === 24 + build.tools.length * 8) ||
+      // Linker options are a count plus NUL-terminated strings; the command
+      // size is 8-byte aligned, so trailing zero padding is expected.
+      (linkerOptions !== undefined &&
+        frame.size ===
+          Math.ceil(
+            (12 +
+              linkerOptions.reduce(
+                (total, option) => total + option.length + 1,
+                0,
+              )) /
+              8,
+          ) * 8);
     let rawSha256: string | null = null;
     if (!fullyDecoded && frame.size <= maximumStringBytes) {
       const digest = createHash("sha256");

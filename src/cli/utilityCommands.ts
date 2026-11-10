@@ -1,6 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
-import { cliDecimalField, cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
@@ -52,10 +52,12 @@ const cliNativeDeadline = (field: typeof nativeUiDeadlineField) =>
 
 // Decimal tokens only, for the same reason as cliNativeDeadline.
 const nativeUiScopeOptions = {
-  pid: cliIntegerArgument(1).describe("Existing application PID"),
-  windowId: cliIntegerArgument(1).describe(
-    "Exact selected application window ID",
+  pid: cliDecimalField(nativeUiScenarioInputSchema.shape.pid).describe(
+    "Existing application PID",
   ),
+  windowId: cliDecimalField(
+    nativeUiScenarioInputSchema.shape.window_id,
+  ).describe("Exact selected application window ID"),
   screenshot: z
     .boolean()
     .default(true)
@@ -64,9 +66,9 @@ const nativeUiScopeOptions = {
     .boolean()
     .default(true)
     .describe("Read the selected window accessibility tree"),
-  maxNodes: cliIntegerArgument(1)
-    .default(500)
-    .describe("Maximum accessibility nodes per capture"),
+  maxNodes: cliDecimalField(
+    nativeUiScenarioInputSchema.shape.max_nodes,
+  ).describe("Maximum accessibility nodes per capture"),
   nativeUiDeadlineMs: cliNativeDeadline(nativeUiDeadlineField),
 };
 
@@ -364,11 +366,9 @@ const registerReferenceSourceCommand = (
         .describe(
           "Complete committed graph or compact historical-source summary",
         ),
-      outlineDepth: cliIntegerArgument(0)
-        .optional()
-        .describe(
-          "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
-        ),
+      outlineDepth: cliDecimalField(z.number().int().min(0).optional()).describe(
+        "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
+      ),
     }),
     run: ({ args, options }) =>
       logCliCommand(

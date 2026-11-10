@@ -228,6 +228,32 @@ it("retains bounded linker options and dylinker strings with embedded framing", 
   ).rejects.toThrow("records exceed");
 });
 
+it("marks a linker option command fully decoded when its strings account for the frame", async () => {
+  const strings = Buffer.from("-lz\0");
+  const optionSize = (12 + strings.length + 7) & ~7;
+  const image = Buffer.alloc(32 + optionSize);
+  image.writeUInt32LE(0xfeedfacf, 0);
+  image.writeUInt32LE(0x0100000c, 4);
+  image.writeUInt32LE(1, 16);
+  image.writeUInt32LE(optionSize, 20);
+  image.writeUInt32LE(0x2d, 32);
+  image.writeUInt32LE(optionSize, 36);
+  image.writeUInt32LE(1, 40);
+  strings.copy(image, 44);
+  const read = async (offset: number, size: number) =>
+    image.subarray(offset, offset + size);
+  const result = await readMachoCommandNames(read, image.length, 64, 2);
+  expect(
+    result.commands[0]?.linkerOptions?.map((value) =>
+      Buffer.from(value).toString(),
+    ),
+  ).toEqual(["-lz"]);
+  expect(result.commands[0]?.fullyDecoded).toBe(true);
+  const projected = projectMachoBinary(result);
+  expect(projected.commands[0]?.fields.command_sha256).toBeUndefined();
+  expect(projected.commandLimitations).toEqual([]);
+});
+
 it("bounds aggregate linker option bytes across read windows", async () => {
   const options = Buffer.from(`first\0${"x".repeat(4097)}\0`);
   const size = (12 + options.length + 7) & ~7;

@@ -43,12 +43,79 @@ it.skipIf(process.platform === "win32")(
       for (const result of results) {
         if (result.ok) throw new Error("symbolic link was admitted");
         const projected = projectAnalysisError(result.error);
-        expect(projected.message, link.kind).toMatch(/symbolic link/iu);
-        expect(projected.message, link.kind).toContain(link.path);
+        expect(projected.details, link.kind).toMatchObject({
+          issues: [
+            {
+              message: expect.stringMatching(/symlink/iu),
+            },
+          ],
+        });
+        expect(projected.details, link.kind).toMatchObject({
+          issues: [
+            {
+              message: expect.stringContaining(link.path),
+            },
+          ],
+        });
         if (link.kind === "file")
           expect(projected.remediation.action).toContain(file);
         else expect(projected.remediation.action).not.toContain(link.target);
       }
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "refuses a rejected link as invalid input, like the stable-artifact readers",
+  async () => {
+    const root = await createTestTempDirectory("rea-rejected-link-input-");
+    const file = join(root, "file.bin");
+    await writeFile(file, "fixture");
+    const link = join(root, "file-link");
+    await symlink(file, link);
+    const loop = join(root, "loop");
+    await symlink(loop, loop);
+    const model = new ModelArtifactProvider();
+    const gpu = new GpuCodeObjectsProvider();
+    onTestFinished(async () => {
+      await model.close();
+      await gpu.close();
+    });
+    const linked = [
+      await model.inspect({ path: link, hash: "header" }),
+      await gpu.inspect({ path: link, analysis: "inventory" }),
+    ];
+    for (const result of linked) {
+      if (result.ok) throw new Error("symbolic link was admitted");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("invalid_request");
+      expect(projected.category).toBe("invalid_input");
+      expect(projected.remediation.action).toContain(file);
+      expect(projected.details).toMatchObject({
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining(
+              "Expected a regular file without a symlink",
+            ),
+          }),
+        ]),
+      });
+    }
+    const looped = [
+      await model.inspect({ path: loop, hash: "header" }),
+      await gpu.inspect({ path: loop, analysis: "inventory" }),
+    ];
+    for (const result of looped) {
+      if (result.ok) throw new Error("symbolic link was admitted");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("invalid_request");
+      expect(projected.category).toBe("invalid_input");
+      expect(projected.remediation.action).not.toContain(
+        "resolved regular file path",
+      );
+      expect(projected.message).not.toMatch(/ELOOP/iu);
     }
   },
 );

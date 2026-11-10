@@ -22,7 +22,7 @@ import { parseAnalysisInput } from "../application/AnalysisInput.js";
 import { androidJniSelectionSchema } from "../domain/android/androidJniBindings.js";
 import { androidJniDeliverySchema } from "../domain/android/androidJniQuery.js";
 import { androidInputSchemas } from "../domain/android/androidAnalysis.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 
 /** Expose the same explicit APK requests through one-shot CLI commands. */
 export const registerAndroidCommands = (
@@ -230,11 +230,11 @@ export const registerAndroidCommands = (
         ),
     }),
     options: z.object({
-      overloadIndex: cliIntegerArgument(0)
-        .optional()
-        .describe(
-          "Explicit zero-based index among same-name methods; required when ambiguous",
-        ),
+      overloadIndex: cliDecimalField(
+        androidInputSchemas.inspect_android_method.shape.overload_index,
+      ).describe(
+        "Explicit zero-based index among same-name methods; required when ambiguous",
+      ),
       mappingPath,
       ...analysisEvidenceDeliveryOptions,
     }),
@@ -262,11 +262,11 @@ export const registerAndroidCommands = (
     options: z.object({
       methodName:
         androidInputSchemas.trace_android_references.shape.method_name,
-      overloadIndex: cliIntegerArgument(0)
-        .optional()
-        .describe(
-          "Index among defined methods or observed external prototypes listed by an ambiguous query",
-        ),
+      overloadIndex: cliDecimalField(
+        androidInputSchemas.trace_android_references.shape.overload_index,
+      ).describe(
+        "Index among defined methods or observed external prototypes listed by an ambiguous query",
+      ),
     }),
     run: ({ args, options }) =>
       execute(
