@@ -1,5 +1,10 @@
 import { Cli, z } from "incur";
 
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
+
 import { logCliCommand } from "../cliLogging.js";
 import {
   inspectElectronPageInputSchema,
