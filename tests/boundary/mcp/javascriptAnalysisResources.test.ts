@@ -256,7 +256,8 @@ it("returns a directly usable partial analysis reference for an oversized timeou
         maximum: 2_147_483_647,
         applies_at: "next_operation",
         agent_editable: true,
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
     });
     expect(error.recovery).toEqual({

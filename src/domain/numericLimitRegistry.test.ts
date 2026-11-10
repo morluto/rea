@@ -37,6 +37,7 @@ it("gives every numeric exception a reason and a matching inventory row", () => 
     ),
   );
   for (const entry of NUMERIC_LIMIT_REGISTRY) {
+    expect(entry.update_mode).toBe("restart");
     expect(entry.reason.trim().length).toBeGreaterThanOrEqual(40);
     if (entry.policy === "restart-only")
       expect(["startup", "construction"]).toContain(entry.read);

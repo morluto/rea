@@ -21,14 +21,14 @@ with an injected timeout; `npm run test:local -- src/hopper/bridgeBootstrapLimit
 verifies the separate launcher output. Neither test is run by Node lint. A
 skipped Python test leaves its behavior unverified.
 
-The field that says when a change takes effect is `effect`: `immediate` or
-`next_process`. Runtime analysis settings, per-call parameters, and artifact
-reader limits use `immediate`. Debugger pool caps and an invalid Windows
-ChangeTime launch value use `next_process`. `rea_restart_required`,
-`restart_required`, and `restartRequired` remain as compatibility aliases and
-are true only for `next_process`. Prose that only says to restart REA is marked
-`prose`. `mcp_server_restart_required` is a server-identity alignment state in
-`src/serverIdentity.ts`, not a setting flag.
+`update_mode` is `runtime` when `update_analysis_settings` can change the active
+value, and `restart` when this process keeps the value it started with.
+`pending_restart` is true only when a configured value is not the one this
+process is using. A rejected Windows ChangeTime launch value is not active, so
+that failure reports `pending_restart: true`. Every other value reported here
+is the one in force, so `pending_restart` is false. Prose that only says to
+restart REA is marked `prose`. `mcp_server_restart_required` is a
+server-identity alignment state in `src/serverIdentity.ts`, not a setting field.
 
 Three numeric limits are absent from this tree and are being moved into the
 runtime system on their own PRs. This audit does not change them:
@@ -58,8 +58,8 @@ settings. They are not on the restart-only list.
 
 Already adjustable with `update_analysis_settings`. Each call reads the snapshot
 accepted for that operation. Launch source is `default` or `setting`; a runtime
-override is `source: "runtime"`. The structured field is `effect: "immediate"`. `rea_restart_required: false`
-remains as a compatibility alias. `applies_at` is the finer point
+override is `source: "runtime"`. The structured field is `update_mode: "runtime"` and `pending_restart: false`.
+`applies_at` is the finer point
 (`next_operation`, `next_worker`, or `next_startup`).
 
 | Setting                                      | Environment seed                                 | Owner                                                         | Default                                   |            Floor |                                Maximum | Read                  |
@@ -93,41 +93,41 @@ floor, and maximum, and the migration reads the accepted snapshot instead of a
 value copied at process start. Until that lands they are `policy: "per-call"` in
 the registry so the static check still requires a reason.
 
-| Environment                                | Owner                                       |                 Default | Floor |    Maximum | Read today                                                                            | Restart field                                                                 |
-| ------------------------------------------ | ------------------------------------------- | ----------------------: | ----: | ---------: | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `REA_BRIDGE_MAX_REQUEST_BYTES`             | `src/config/bridgeMaxRequestBytes.ts`       |                16777216 |  7464 |  536870887 | each bridge request, from the launch value                                            | prose                                                                         |
-| `REA_DEBUGGER_COMMAND_DEADLINE_MS`         | `src/domain/analysisResourceLimits.ts`      |                  120000 |     1 | 2147483647 | copied when the debugger manager is constructed; applied to each command              | `effect: "next_process"` (`restart_required: true`)                           |
-| `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`    | `src/domain/analysisResourceLimits.ts`      |                16777216 |     1 |   89303718 | copied when the debugger manager is constructed; applied to each command              | `effect: "next_process"` (`restart_required: true`)                           |
-| `REA_HOPPER_CALLER_SCAN_BUDGET_MS`         | `src/domain/analysisResourceLimits.ts`      |                    2000 |     1 | 2147483647 | each caller-scan operation, from config resolved at launch                            | prose                                                                         |
-| `REA_JEB_MCP_TIMEOUT_MS`                   | `src/jeb/JebMcpConnection.ts`               | 60000 (MCP SDK default) |     1 | 2147483647 | captured when the JEB connection is created; applied to discovery and each tools/call | prose                                                                         |
-| `REA_KUNA_PROJECT_TIMEOUT_MS`              | `src/kuna/KunaConfiguration.ts`             |                 1800000 |     1 | 2147483647 | project export and whole-program scans, from the launch configuration                 | prose                                                                         |
-| `REA_KUNA_TIMEOUT_MS`                      | `src/kuna/KunaConfiguration.ts`             |                  120000 |     1 | 2147483647 | each function decompile, from the launch configuration                                | prose                                                                         |
-| `REA_PWNTOOLS_MAX_INPUT_BYTES`             | `src/native/pwntools/PwntoolsInputLimit.ts` |                33554432 |     1 | 1073741824 | each pwntools decode, unless the call passes `producer_limits.input_bytes`            | prose                                                                         |
-| `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`         | `src/config/windowsChangeTimeSettle.ts`     |                    2000 |     1 |      60000 | each ChangeTime observation                                                           | `effect: "next_process"` (`restartRequired: true`) on an invalid launch value |
-| `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`   | `src/config/windowsChangeTimeSettle.ts`     |                      25 |     1 |       1000 | each ChangeTime observation                                                           | `effect: "next_process"` (`restartRequired: true`) on an invalid launch value |
-| `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS` | `src/config/windowsChangeTimeSettle.ts`     |                      40 |     1 |       1000 | each ChangeTime observation                                                           | `effect: "next_process"` (`restartRequired: true`) on an invalid launch value |
+| Environment                                | Owner                                       |                 Default | Floor |    Maximum | Read today                                                                            | Restart field                                                                   |
+| ------------------------------------------ | ------------------------------------------- | ----------------------: | ----: | ---------: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `REA_BRIDGE_MAX_REQUEST_BYTES`             | `src/config/bridgeMaxRequestBytes.ts`       |                16777216 |  7464 |  536870887 | each bridge request, from the launch value                                            | prose                                                                           |
+| `REA_DEBUGGER_COMMAND_DEADLINE_MS`         | `src/domain/analysisResourceLimits.ts`      |                  120000 |     1 | 2147483647 | copied when the debugger manager is constructed; applied to each command              | `update_mode: "restart"` and `pending_restart: false`                           |
+| `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`    | `src/domain/analysisResourceLimits.ts`      |                16777216 |     1 |   89303718 | copied when the debugger manager is constructed; applied to each command              | `update_mode: "restart"` and `pending_restart: false`                           |
+| `REA_HOPPER_CALLER_SCAN_BUDGET_MS`         | `src/domain/analysisResourceLimits.ts`      |                    2000 |     1 | 2147483647 | each caller-scan operation, from config resolved at launch                            | prose                                                                           |
+| `REA_JEB_MCP_TIMEOUT_MS`                   | `src/jeb/JebMcpConnection.ts`               | 60000 (MCP SDK default) |     1 | 2147483647 | captured when the JEB connection is created; applied to discovery and each tools/call | prose                                                                           |
+| `REA_KUNA_PROJECT_TIMEOUT_MS`              | `src/kuna/KunaConfiguration.ts`             |                 1800000 |     1 | 2147483647 | project export and whole-program scans, from the launch configuration                 | prose                                                                           |
+| `REA_KUNA_TIMEOUT_MS`                      | `src/kuna/KunaConfiguration.ts`             |                  120000 |     1 | 2147483647 | each function decompile, from the launch configuration                                | prose                                                                           |
+| `REA_PWNTOOLS_MAX_INPUT_BYTES`             | `src/native/pwntools/PwntoolsInputLimit.ts` |                33554432 |     1 | 1073741824 | each pwntools decode, unless the call passes `producer_limits.input_bytes`            | prose                                                                           |
+| `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`         | `src/config/windowsChangeTimeSettle.ts`     |                    2000 |     1 |      60000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart: true` on an invalid launch value |
+| `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`   | `src/config/windowsChangeTimeSettle.ts`     |                      25 |     1 |       1000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart: true` on an invalid launch value |
+| `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS` | `src/config/windowsChangeTimeSettle.ts`     |                      40 |     1 |       1000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart: true` on an invalid launch value |
 
 ## Restart-only numeric limits
 
 These stay out of `update_analysis_settings`.
 
-| Environment                         | Owner                                  |             Default |    Floor |                   Maximum | Read                                        | Why restart-only                                                                                          |
-| ----------------------------------- | -------------------------------------- | ------------------: | -------: | ------------------------: | ------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `REA_DEBUGGER_MAX_PENDING_COMMANDS` | `src/domain/analysisResourceLimits.ts` |                  16 |        1 |                       256 | debugger manager construction               | Queue capacity of the manager created at startup. `effect: "next_process"` (`restart_required: true`).    |
-| `REA_DEBUGGER_MAX_SESSIONS`         | `src/domain/analysisResourceLimits.ts` |                   8 |        1 |                        64 | debugger manager construction               | Session-pool size of the manager created at startup. `effect: "next_process"` (`restart_required: true`). |
-| `REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS` | `src/domain/hopperStartupFailure.ts`   |               10000 |        1 |                2147483647 | Linux private-display adapter start         | The helper reads the process environment. Prose restart.                                                  |
-| `REA_JADX_ACTIVE_PROCESSOR_COUNT`   | `src/android/JadxConfiguration.ts`     | unset (JVM default) |        1 |                2147483647 | JADX JVM launch                             | `-XX:ActiveProcessorCount` is fixed for that JVM. Prose on invalid values.                                |
-| `REA_JADX_HEAP_MIB`                 | `src/android/JadxConfiguration.ts`     | unset (JVM default) |        1 | `Number.MAX_SAFE_INTEGER` | JADX JVM launch                             | `-Xmx` is fixed for that JVM. Prose on invalid values.                                                    |
-| `REA_KUNA_CACHE_MAX_BYTES`          | `src/kuna/KunaConfiguration.ts`        |          4294967296 |  1048576 | `Number.MAX_SAFE_INTEGER` | Kuna cache construction                     | The cache is sized once for the provider. Prose restart.                                                  |
-| `REA_KUNA_JOBS`                     | `src/kuna/KunaConfiguration.ts`        |                   1 |        1 |                        32 | Kuna run-slot construction                  | Worker-pool width for the provider. Prose restart.                                                        |
-| `REA_MCP_DOCTOR_DEADLINE_MS`        | `src/config/mcpStartupBudgets.ts`      |               30000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                            |
-| `REA_MCP_FIRST_CATALOG_BUDGET_MS`   | `src/config/mcpStartupBudgets.ts`      |               20000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                            |
-| `REA_MCP_INITIALIZE_BUDGET_MS`      | `src/config/mcpStartupBudgets.ts`      |               15000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                            |
-| `REA_MCP_MAX_INPUT_ELEMENTS`        | `src/config/mcpInputBudget.ts`         |                1024 |        1 | `Number.MAX_SAFE_INTEGER` | MCP server creation                         | Argument admission for the server process. Prose restart.                                                 |
-| `REA_MCP_MAX_RESPONSE_BYTES`        | `src/config/mcpResponseBudget.ts`      | 10485760 when unset | 10485760 | `Number.MAX_SAFE_INTEGER` | MCP server creation                         | Stdio receive buffer and the paired client buffer. Prose restart.                                         |
-| `REA_MCP_TOOLS_LIST_BUDGET_MS`      | `src/config/mcpStartupBudgets.ts`      |                5000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                            |
-| `REA_RECONNECT_TIMEOUT_SECONDS`     | `src/hopper/BridgeLauncher.ts`         |                  30 |       30 |                        30 | written into the Hopper bridge helper       | Not a caller setting. It is `HOPPER_SHUTDOWN_TIMEOUT_MS / 1000`.                                          |
-| `REA_SWIFTC_COMPILE_TIMEOUT_MS`     | `src/config/providerStartupTimeout.ts` |              120000 |        1 |                2147483647 | Darwin ownership-helper reader construction | Captured at process start for that helper compile. Prose restart.                                         |
+| Environment                         | Owner                                  |             Default |    Floor |                   Maximum | Read                                        | Why restart-only                                                                                            |
+| ----------------------------------- | -------------------------------------- | ------------------: | -------: | ------------------------: | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `REA_DEBUGGER_MAX_PENDING_COMMANDS` | `src/domain/analysisResourceLimits.ts` |                  16 |        1 |                       256 | debugger manager construction               | Queue capacity of the manager created at startup. `update_mode: "restart"` and `pending_restart: false`.    |
+| `REA_DEBUGGER_MAX_SESSIONS`         | `src/domain/analysisResourceLimits.ts` |                   8 |        1 |                        64 | debugger manager construction               | Session-pool size of the manager created at startup. `update_mode: "restart"` and `pending_restart: false`. |
+| `REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS` | `src/domain/hopperStartupFailure.ts`   |               10000 |        1 |                2147483647 | Linux private-display adapter start         | The helper reads the process environment. Prose restart.                                                    |
+| `REA_JADX_ACTIVE_PROCESSOR_COUNT`   | `src/android/JadxConfiguration.ts`     | unset (JVM default) |        1 |                2147483647 | JADX JVM launch                             | `-XX:ActiveProcessorCount` is fixed for that JVM. Prose on invalid values.                                  |
+| `REA_JADX_HEAP_MIB`                 | `src/android/JadxConfiguration.ts`     | unset (JVM default) |        1 | `Number.MAX_SAFE_INTEGER` | JADX JVM launch                             | `-Xmx` is fixed for that JVM. Prose on invalid values.                                                      |
+| `REA_KUNA_CACHE_MAX_BYTES`          | `src/kuna/KunaConfiguration.ts`        |          4294967296 |  1048576 | `Number.MAX_SAFE_INTEGER` | Kuna cache construction                     | The cache is sized once for the provider. Prose restart.                                                    |
+| `REA_KUNA_JOBS`                     | `src/kuna/KunaConfiguration.ts`        |                   1 |        1 |                        32 | Kuna run-slot construction                  | Worker-pool width for the provider. Prose restart.                                                          |
+| `REA_MCP_DOCTOR_DEADLINE_MS`        | `src/config/mcpStartupBudgets.ts`      |               30000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                              |
+| `REA_MCP_FIRST_CATALOG_BUDGET_MS`   | `src/config/mcpStartupBudgets.ts`      |               20000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                              |
+| `REA_MCP_INITIALIZE_BUDGET_MS`      | `src/config/mcpStartupBudgets.ts`      |               15000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                              |
+| `REA_MCP_MAX_INPUT_ELEMENTS`        | `src/config/mcpInputBudget.ts`         |                1024 |        1 | `Number.MAX_SAFE_INTEGER` | MCP server creation                         | Argument admission for the server process. Prose restart.                                                   |
+| `REA_MCP_MAX_RESPONSE_BYTES`        | `src/config/mcpResponseBudget.ts`      | 10485760 when unset | 10485760 | `Number.MAX_SAFE_INTEGER` | MCP server creation                         | Stdio receive buffer and the paired client buffer. Prose restart.                                           |
+| `REA_MCP_TOOLS_LIST_BUDGET_MS`      | `src/config/mcpStartupBudgets.ts`      |                5000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                              |
+| `REA_RECONNECT_TIMEOUT_SECONDS`     | `src/hopper/BridgeLauncher.ts`         |                  30 |       30 |                        30 | written into the Hopper bridge helper       | Not a caller setting. It is `HOPPER_SHUTDOWN_TIMEOUT_MS / 1000`.                                            |
+| `REA_SWIFTC_COMPILE_TIMEOUT_MS`     | `src/config/providerStartupTimeout.ts` |              120000 |        1 |                2147483647 | Darwin ownership-helper reader construction | Captured at process start for that helper compile. Prose restart.                                           |
 
 ## Restart-only non-numeric settings
 

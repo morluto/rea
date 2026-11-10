@@ -87,7 +87,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
             setting: "capture.decoder_old_generation_mib",
             effective_value: testHeap.oldGenerationMiB,
             source: testHeap.source,
-            rea_restart_required: false,
+            update_mode: "runtime",
+            pending_restart: false,
           },
           reported_limits:
             jobLimit === null
@@ -147,7 +148,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
           setting: "capture.decoder_old_generation_mib",
           effective_value: testHeap.oldGenerationMiB,
           source: testHeap.source,
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
         },
       },
       remediation: {
