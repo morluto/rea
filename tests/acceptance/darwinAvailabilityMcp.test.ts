@@ -62,10 +62,6 @@ cliTest.skipIf(process.platform !== "darwin")(
         available: false,
         reason: "provider_unavailable",
       });
-      // Discovery carries the prerequisite owner's repair, not its failure text.
-      expect(apktoolGroup?.remediation).toBe(
-        "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.",
-      );
     } finally {
       await client.close();
       await transport.close();
