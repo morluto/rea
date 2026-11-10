@@ -8,7 +8,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliDecimalField, cliIntegerArgument } from "./options.js";
+import { cliDecimalArrayField, cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
@@ -50,11 +50,9 @@ export const registerWebNetworkCaptureCommands = (
         .string()
         .optional()
         .describe("Fully qualified message type in the descriptor set"),
-      record: z
-        .array(cliIntegerArgument(0))
-        .min(1)
-        .optional()
-        .describe("Zero-based producer ordinals; repeat to select several"),
+      record: cliDecimalArrayField(
+        inspectWebNetworkCaptureInputSchema.shape.record_ordinals,
+      ).describe("Zero-based producer ordinals; repeat to select several"),
       ...explicitSensitiveValueOptions,
       maxInputBytes: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.max_input_bytes,

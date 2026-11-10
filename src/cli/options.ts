@@ -162,6 +162,31 @@ export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
     ]),
   ) as Shape;
 
+/**
+ * Adapt a domain array of decimal integers for CLI argv options. Decimal
+ * text tokens are parsed and coerced before passing to the owning domain array
+ * schema, preserving the domain field's bounds, cardinality, description, and
+ * optionality.
+ */
+export const cliDecimalArrayField = <Field extends z.ZodType>(
+  field: Field,
+): z.ZodType<z.output<Field>> => {
+  const isOptional = field instanceof z.ZodOptional;
+  const base = z.array(
+    z.union([
+      z.number(),
+      z
+        .string()
+        .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
+        .pipe(z.coerce.number<string>().safe()),
+    ]),
+  );
+  const adapted = isOptional
+    ? base.optional().pipe(field as never)
+    : base.pipe(field as never);
+  return adapted as z.ZodType<z.output<Field>>;
+};
+
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()
   .describe(
