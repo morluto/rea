@@ -431,7 +431,7 @@ describe("README and class wording", () => {
 });
 
 it.each(["directory", "file", undefined] as const)(
-  "preserves a selected state alias's recorded kind (%s)",
+  "preserves a selected state alias's kind and marks an unrecorded kind unknown (%s)",
   (kind) => {
     const home = "/home/ada";
     const target = `${home}/.config/notes`;
@@ -457,7 +457,7 @@ it.each(["directory", "file", undefined] as const)(
       {
         alias: "settings",
         target: ".config/notes",
-        ...(kind === undefined ? {} : { kind }),
+        kind: kind ?? "unknown",
       },
     ]);
   },
