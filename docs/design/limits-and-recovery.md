@@ -172,17 +172,20 @@ checks all happen before publishing the replacement snapshot; a rejected batch
 cannot partially apply. Clients coordinating writes can supply
 `expected_revision`; without it, valid updates apply to the current state.
 
-| Runtime setting                                               | Application point                                                      |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `asar.max_header_bytes`                                       | Next archive operation, including full JavaScript application analysis |
-| `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`      | Next provider startup attempt                                          |
-| `ghidra.decompile_timeout_seconds`                            | Next operation on the existing Ghidra Program; `null` means unbounded  |
-| `jadx.operation_timeout_ms`                                   | Next JADX operation                                                    |
-| `regex.matching_deadline_ms`, `regex.worker_heap_request_mib` | Next search / new regex worker                                         |
-| `capture.decoder_old_generation_mib`                          | Next owned capture decoder                                             |
-| `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`    | Next source analysis / new JavaScript worker                           |
-| `wasm.command_timeout_ms`                                     | Next WABT operation                                                    |
-| `native.matching_representation_bytes`                        | Next `match_native_functions` request                                  |
+| Runtime setting                                                                                                 | Application point                                                               |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `asar.max_header_bytes`                                                                                         | Next archive operation, including full JavaScript application analysis          |
+| `asar.max_listing_bytes`                                                                                        | Next expanded ASAR listing, independently of packed header bytes                |
+| `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`                                                        | Next provider startup attempt                                                   |
+| `ghidra.decompile_timeout_seconds`                                                                              | Next operation on the existing Ghidra Program; `null` means unbounded           |
+| `ghidra.decompile_max_payload_mib`                                                                              | Next native decompile; `null` preserves the selected provider's payload default |
+| `ghidra.value_flow_max_operations`, `ghidra.value_flow_max_inputs_per_operation`, `ghidra.value_flow_max_edges` | Next function value-flow projection on the existing Program                     |
+| `jadx.operation_timeout_ms`                                                                                     | Next JADX operation                                                             |
+| `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                  |
+| `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                      |
+| `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
+| `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
+| `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
 
 ### Precedence and lifetime
 
@@ -201,6 +204,48 @@ for an unknown or omitted value elsewhere.
 
 A write does not extend active work, relaunch a provider, clear retained
 cleanup, or invalidate successful Evidence.
+
+Expanded ASAR listing admission defaults to 64 MiB and has its own launch seed,
+`REA_ASAR_MAX_LISTING_BYTES`. Raising `asar.max_header_bytes` alone cannot admit
+expanded paths and entries that exceed this separate budget. The listing bound
+uses exact safe-integer byte accounting; the host heap and transport constraints
+remain independent. A lower runtime value is enforced on the next listing even
+when the archive header was already examined.
+
+Ghidra value-flow controls default to 3,000 operations, 64 inputs per operation,
+and 12,000 edges. They accept positive Java integer counts and use the respective
+`REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS`,
+`REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION`, and
+`REA_GHIDRA_VALUE_FLOW_MAX_EDGES` launch seeds. Truncation names the exhausted
+control. Completed Evidence remains accessible, but a new function dossier is
+observed with the accepted controls instead of replaying an earlier projection.
+
+The native decompiler payload control is separate from those projections and
+from decompile time. Its launch seed is
+`REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB`. Accepted explicit values are 1..2047 MiB:
+the supported Ghidra implementation shifts that value into a signed integer byte
+capacity. Omission or runtime `null` keeps the provider's own default; REA does
+not guess that default from a different provider version. Changing payload
+options takes effect before the next native decompile.
+
+### Per-call resource policies and selection
+
+An agent can also use controls declared directly by an operation. These do not
+require a runtime setter or restart. Keep omitted fields omitted in Evidence;
+report the resolved policy separately where needed. See the owning guides for
+[Apktool string pages](../guides/android/apktool-resource-analysis.md),
+[source maps](../guides/web/web-source-location.md),
+[historical captures](../guides/web/web-network-captures.md),
+[JavaScript precision](../guides/javascript/javascript-application-graph.md),
+[managed inspection](../guides/managed/managed-code-analysis.md), and
+[Frida capture](../guides/runtime/frida-instrumentation.md).
+
+The same accepted policy must reach acquisition, parsing, worker requests,
+serialization, cached-result admission and generated consumers where those
+stages exist. Desktop state views and emitted AgentEnv Python share one policy;
+delivery pagination never substitutes for producer selection. Capture limits
+must be selected before an experiment: another experiment cannot recover bytes
+that were dropped from a previous live observation.
 
 Overrides belong to one REA runtime, survive target close/open, and disappear
 when REA exits. Connections sharing that runtime share its overrides. No files,
@@ -419,14 +464,107 @@ editable setting or active worker telemetry.
 
 ## Bun standalone module graphs
 
-`MAX_BUN_MODULE_COUNT` admits at most 100,000 module records.
-`MAX_BUN_RETAINED_BYTES` admits at most 256 MiB of serialized graph payload and
-separately bounds retained entry metadata. Physical metadata read work is also
-limited to 256 MiB per preparation, including repeated uncached ranges. A
-256 KiB / 1,024-entry exact-range cache avoids full-page amplification. The
-combined logical path tree admits at most 250,000 distinct prefixes; this is
-checked before adding nodes, with shared prefixes counted once. The shared
-artifact expansion budget also bounds the sum of referenced member lengths. Refusals name the boundary.
-There is no runtime override; additional host memory or `NODE_OPTIONS` does not
-raise these ceilings. Use a smaller producer fixture or a separately reviewed
-reader for larger graphs. No partial extraction is claimed on admission failure.
+`inspect_artifact` and `extract_artifact` accept per-call `artifact_limits`.
+The `bun` group defaults to 100,000 modules, independent 256 MiB payload,
+retained-representation and physical metadata-read allowances, 256 path parts
+and 250,000 logical path nodes. Recognition separately admits a 1 MiB ELF
+section table and 16 MiB Mach-O load commands. Exhausted recognition remains
+unknown rather than proving the carrier has no Bun graph. Inventory preserves
+native-root facts or another confirmed pack and reports the exact unexamined
+alternative inline; it does not assert Bun presence. ELF section names
+are examined with exact bounded reads, including names beyond the former
+prefix window.
+
+For example, keep the same complete carrier and retry a reported recognition
+limitation with `{"artifact_limits":{"bun":{"recognition_table_bytes":2097152}}}`.
+The CLI spelling is `--artifact-limits '{"bun":{"recognition_table_bytes":2097152}}'`.
+No REA restart is needed. A smaller later selection is re-admitted; previously
+parsed facts cannot bypass it. The 256 KiB / 1,024-entry exact-range cache
+avoids full-page amplification and remains an internal optimization, not an agent
+resource setting. Shared logical path prefixes count once before nodes are added.
+
+## Artifact reader admission
+
+The same request provides `dotnet_bundle`, `node_sea` and `godot` groups. Their
+controls apply when recognition or inventory encounters that format; supplying
+a policy does not assert the format is present. Unsupported keys are rejected.
+Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
+[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
+[Bun standalone](../bun-standalone.md) for format semantics.
+
+`artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
+SEA and PCK readers, including repeated readable logical occurrences. Omission
+retains each archive's encoded-size-derived default. The .NET bundle group's
+own `expanded_bytes` controls its independently enforced bundle expansion.
+
+Failures preserve `details.reader_limit` with the exact parameter, effective
+value, units, supported range, required value when known, next-call scope and
+`can_increase`. When `can_increase` is true, raise that field and retry the same
+complete artifact. At the supported maximum, or when the required representation
+exceeds it, the failure is not retryable by increasing that budget; inspect the
+declared dimensions and input validity, or explicitly choose a suitable reader.
+Summary, pagination and
+selected extraction do not bypass producing admission. Intrinsic format,
+safe-integer, path validity and runtime representation constraints remain fixed.
+
+Evidence parameters retain the exact selected object, including omission or
+`{}`. When an object was selected, inventory and extraction report the resolved
+`effective_limits`; summaries preserve those facts. These are accepted policies,
+not process-memory telemetry or a claim that every format reader ran. Complete
+source identities and graph manifests remain content-addressed independently
+of delivery selection. No partial extraction is claimed on admission failure.
+
+## Deno compile sections
+
+`MAX_DENO_METADATA_JSON_BYTES` admits at most 8 MiB of metadata JSON.
+`MAX_DENO_VFS_HEADER_JSON_BYTES` admits at most 32 MiB of virtual-filesystem
+header JSON. Specifier, redirect, and remote tables each admit at most 100,000
+records. Specifier text admits at most 8 MiB, and remote module bodies admit at
+most 256 MiB. The virtual filesystem admits at most 100,000 directory, file,
+and symlink records and at most 512 nested levels (`MAX_DENO_VFS_DEPTH`). A
+name longer than 4,096 UTF-16 code units is indexed and is not retained.
+`MAX_DENO_VFS_RETAINED_UNITS` admits at most 32 million UTF-16 code units across
+the source path built for every entry, directories included, and retained
+symlink parts. A logical path deeper than 256 parts, a name that is not a safe
+relative path, a path component longer than 255 UTF-8 bytes
+(`MAX_DENO_PATH_COMPONENT_BYTES`, POSIX `NAME_MAX`), or a logical path longer
+than 512 UTF-8 bytes (`MAX_DENO_LOGICAL_PATH_BYTES`, half of the Darwin
+`PATH_MAX`) uses an indexed path and keeps the original spelling when that
+spelling is within the name allowance. Component and path lengths include the
+`.deno-*` suffix of the stored regions a member has. A descendant has no source
+path when an ancestor spelling was not retained. Cancellation is checked before
+the virtual-filesystem walk. The walk does not yield, so it does not observe a
+cancellation that arrives while it is running; the retained allowance bounds its
+work. The combined logical path tree admits at most 250,000 distinct prefixes.
+`MAX_DENO_RETAINED_BYTES` admits at most 256 MiB of retained header and entry
+metadata. The shared artifact expansion budget also bounds the sum of referenced
+member lengths, with a 256 MiB floor.
+
+Carrier location claims a file only after it confirms the carrier name: a
+Mach-O `__SUI` segment, a `SUI` ELF note descriptor named `d3n0l4nd`, a PE
+`D3N0L4ND` resource, or an Intel trailer opening with `d3n0l4nd`. Before that,
+malformed tables and exhausted search budgets leave the file with native
+inventory, and that inventory makes no claim that the file holds no Deno
+section. ELF location reads ELF and note headers, not the whole image, and does
+not hash note descriptors. An ELF larger than 512 MiB is still located when
+those headers fit. Program and section tables are read at their canonical record
+size, so the 16-bit header count bounds each read at 65,535 records. A table
+that cannot be read, or that uses extended program numbering, is skipped and
+another table can still hold the note. At most 256 notes are examined
+(`MAX_INSPECT_ELF_NOTE_ENTRIES`). A damaged table or the note ceiling is a
+refusal only when a `SUI` note was also confirmed. Intel Mach-O trailer search
+reads each scanned byte at most once and examines at most 64 `<~sui-data~>`
+sentinels (`MAX_DENO_INTEL_TRAILER_SENTINELS`). The search continues past a
+confirmed trailer, because an enclosing trailer can hold it as a stored file, so
+reaching that allowance after a confirmation is a refusal. PE location walks the resource directories to the named payload and
+does not read the image whole, so a PE of any size is located when the
+`D3N0L4ND` payload is within the 512 MiB resource reader ceiling. A larger
+payload, or a confirmed resource that cannot be resolved, is a named refusal.
+Refusals name the boundary. There is no runtime override; additional host memory
+or `NODE_OPTIONS` does not raise these ceilings. Duplicate-section verification
+rejects unequal lengths before hashing, stops at the first digest mismatch,
+and reads at most the carrier file size in aggregate
+payload bytes. Overlapping copies that exceed that allowance are refused.
+Environment-file values and CA certificate bytes are retained in local Evidence
+with their counts and byte lengths. The npm snapshot length is retained and its
+bytes are not decoded.

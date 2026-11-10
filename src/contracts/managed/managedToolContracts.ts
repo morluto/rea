@@ -6,9 +6,11 @@ import { managedOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
 import { analysisDetailSchema } from "../analysisDetail.js";
+import { managedInspectionBudgetShape } from "../../domain/managed/managedInspectionLimits.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedTargetInputSchema = z.strictObject({
+  ...managedInspectionBudgetShape,
   path: absoluteLocalPathStringSchema
     .describe(
       "Explicit absolute managed PE/CLI path; omit to reuse the previously selected managed target",

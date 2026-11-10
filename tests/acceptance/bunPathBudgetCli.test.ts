@@ -1,7 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { expect } from "vitest";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
-import { artifactFixedLimitFailure } from "../../src/artifacts/ArtifactReader.js";
 import {
   bunModuleGraphPayload,
   elfAppendedBunPayload,
@@ -31,17 +30,19 @@ for (const shared of [false, true])
     });
     if (!shared) {
       expect(result.exitCode).toBe(1);
-      const limit = artifactFixedLimitFailure(
-        "Artifact path tree",
-        250_000,
-        "path nodes",
-      );
       expect(result.json).toMatchObject({
         code: "truncated",
+        retryable: true,
         details: {
           reason: "limit",
           boundary: "capacity",
-          detail: limit.message,
+          reader_limit: {
+            parameter: "artifact_limits.bun.path_nodes",
+            effective_value: 250_000,
+            required_value: 250_112,
+            unit: "count",
+            can_increase: true,
+          },
         },
       });
     } else {

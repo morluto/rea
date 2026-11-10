@@ -11,7 +11,6 @@ import {
 } from "./javascriptAstValues.js";
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   semanticRequireOriginCandidate,
@@ -187,7 +186,7 @@ const canonicalWebpackInteropBindings = (
       const node = pending.pop();
       if (node === undefined || seen.has(node)) continue;
       seen.add(node);
-      if (seen.size > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      if (seen.size > state.precision.alias_selections) {
         state.valueResourceLimits.add("alias-selections");
         return true;
       }
