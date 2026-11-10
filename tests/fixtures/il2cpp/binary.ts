@@ -49,11 +49,15 @@ export interface Il2cppBinaryFixtureOptions {
   readonly genericDefinitionTypeIndex?: number;
   /** Native type-table indices serialized in its generic argument vector. */
   readonly genericArgumentTypeIndices?: readonly number[];
+  /** Version 24 stores a TypeDefinitionIndex, not an Il2CppType pointer. */
+  readonly legacyGenericClass?: boolean;
 }
 
 export interface GenericMethodFixtureOptions {
   /** 16 writes the 27.1+ layout (genericAdjustorThunks); 12 the 27.0 layout. */
   readonly stride?: 12 | 16;
+  /** Distance to codeGenModulesCount; version 24 also retains custom attributes. */
+  readonly modulesOffset?: 96 | 104 | 112 | 120;
   /** Omit CodeRegistration's generic fields, leaving no layout to agree. */
   readonly codeRegistration?: boolean;
   /** methodIndex of row 0; 3 or more is past genericMethodPointersCount. */
@@ -258,8 +262,11 @@ export const createIl2cppBinaryFixture = (
     bytes.writeUInt32LE(kind << 16, at + 8);
     bytes.writeBigUInt64LE(address(at), TYPE_POINTERS + index * 8);
   });
-  // Version 29+ Il2CppGenericClass: definition type, then class_inst.
-  bytes.writeBigUInt64LE(address(TYPE_RECORDS + 32), GENERIC_CLASS);
+  // Version 24 uses a definition index with alignment padding; 27+ a type pointer.
+  if (options.legacyGenericClass === true) {
+    bytes.writeInt32LE(options.genericDefinitionTypeIndex ?? 3, GENERIC_CLASS);
+    bytes.writeUInt32LE(0xa5a5a5a5, GENERIC_CLASS + 4);
+  } else bytes.writeBigUInt64LE(address(TYPE_RECORDS + 32), GENERIC_CLASS);
   bytes.writeBigUInt64LE(address(GENERIC_INSTANCE), GENERIC_CLASS + 8);
   const genericArguments = options.genericArgumentTypeIndices ?? [3];
   bytes.writeUInt32LE(genericArguments.length, GENERIC_INSTANCE);
@@ -362,9 +369,9 @@ const writeGenericMethods = (
   metadataWord(8, BigInt(specs.length));
   metadataWord(9, options.methodSpecs ?? address(METHOD_SPECS));
   if (options.codeRegistration === false) return;
-  // CodeRegistration ends at codeGenModulesCount (REGISTRATION): 104 bytes
-  // before it in the 27.1+ layout, 96 in the 27.0 layout.
-  const start = REGISTRATION - (stride === 16 ? 104 : 96);
+  // CodeRegistration ends at codeGenModulesCount (REGISTRATION).
+  const start =
+    REGISTRATION - (options.modulesOffset ?? (stride === 16 ? 104 : 96));
   const codeWord = (offset: number, value: bigint) =>
     bytes.writeBigUInt64LE(value, start + offset);
   // A build without generic instances records no pointers and a null array,
