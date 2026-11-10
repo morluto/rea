@@ -160,7 +160,9 @@ describe("parseWarcArchive", () => {
     });
     expect(archive.summary.unknown_types).toBe(1);
   });
+});
 
+describe("archive compression and decode limits", () => {
   it("decodes concatenated gzip members", () => {
     const bytes = Buffer.concat([
       gzipSync(
