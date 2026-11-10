@@ -169,10 +169,23 @@ const PYTHON_KEYWORDS = new Set(
   ),
 );
 
+/** Pydantic >=2.12: configuration, its instance initialization hook and protected inherited methods. */
+const PYDANTIC_RESERVED_FIELDS = new Set([
+  "model_config",
+  "model_post_init",
+  "model_dump",
+  "model_dump_json",
+  "model_validate",
+  "model_validate_json",
+  "model_validate_strings",
+]);
+
 /** A setting Python takes as an argument's name, distinct from those `settings` holds, which it joins. */
 const distinctSetting = (named: string, settings: Set<string>): string => {
   const valid =
-    /^[a-z]/u.test(named) && !PYTHON_KEYWORDS.has(named)
+    /^[a-z]/u.test(named) &&
+    !PYTHON_KEYWORDS.has(named) &&
+    !PYDANTIC_RESERVED_FIELDS.has(named)
       ? named
       : `file_${named}`;
   let setting = valid;
