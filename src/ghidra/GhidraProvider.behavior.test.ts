@@ -64,6 +64,8 @@ import {
 } from "../domain/ghidraValues.fixture.js";
 
 import { parseConfig } from "../config/parseConfig.js";
+import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
@@ -1174,6 +1176,89 @@ describe("Ghidra startup configuration", () => {
   });
 });
 
+it("reobserves value-flow budgets on the same session while ordinary address lookups stay cached", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-ghidra-flow-budgets-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "fixture.elf");
+  await writeFile(path, elf(2, 1, 62));
+  const parsed = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
+  if (!parsed.ok) throw parsed.error;
+  const settings = new AnalysisSettings({});
+  const received: number[] = [];
+  let ordinaryReads = 0;
+  let clients = 0;
+  const ghidra = new GhidraProvider(
+    runtimeAnalysisConfig(parsed.value, settings.read),
+    silentLogger,
+    {},
+    installationHost(),
+    (options) => {
+      clients += 1;
+      return {
+        start: async () => {
+          const info = sessionInfo();
+          return ok({
+            ...info,
+            profile_digest: options.profileDigest,
+            target: { ...info.target, sha256: options.targetSha256 },
+          });
+        },
+        callTool: async (operation, _parameters, controls) => {
+          if (operation === "analyze_function") {
+            received.push(controls?.valueFlowLimits?.max_operations ?? -1);
+            return ok({ value: ghidraFunctionDossier(), limitations: [] });
+          }
+          if (operation === "address_name") {
+            ordinaryReads += 1;
+            return ok("fixture_main");
+          }
+          throw new Error(`Unexpected operation: ${operation}`);
+        },
+        close: async () => ok(null),
+      };
+    },
+  );
+  const session = composeBinarySession(new AnalysisProviderRegistry([ghidra]));
+  try {
+    const opened = await session.open(path, { providerId: "ghidra" });
+    if (!opened.ok) throw opened.error;
+    for (const value of [1, 6000, 2]) {
+      const updated = settings.update({
+        changes: [
+          {
+            setting: "ghidra.value_flow_max_operations",
+            action: "set",
+            value,
+          },
+        ],
+      });
+      if (!updated.ok) throw updated.error;
+      const result = await settings.run(() =>
+        session.execute("analyze_function", { procedure: "0x401000" }),
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.cachePolicy).toBe("live");
+    }
+    expect(received).toEqual([1, 6000, 2]);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await session.execute("address_name", {
+        document: "fixture",
+        address: "0x401000",
+      });
+      if (!result.ok) throw result.error;
+    }
+    expect(ordinaryReads).toBe(1);
+    expect(clients).toBe(1);
+    expect(
+      session
+        .exportEvidenceBundle()
+        .records.some((record) => record.operation === "analyze_function"),
+    ).toBe(true);
+  } finally {
+    await expect(session.close()).resolves.toMatchObject({ ok: true });
+  }
+});
+
 describe("Ghidra client projection", () => {
   it("commits exact provider, isolation, and resource semantics", async () => {
     const toolCalls: Array<{
@@ -1233,8 +1318,9 @@ describe("Ghidra client projection", () => {
     expect(resolved.value.profile.parameters).toMatchObject({
       language_id: "auto-from-header",
       compiler_spec_id: "auto-default",
-      call_relationship_coverage: "function-body-call-coverage-v5",
+      call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+      native_value_flow_projection: "accepted-runtime-budgets-v1",
     });
 
     const result = await ghidra
@@ -1257,7 +1343,15 @@ describe("Ghidra client projection", () => {
       {
         operation: "list_procedures",
         input: { document: null },
-        options: { decompileTimeoutSeconds: null },
+        options: {
+          decompileTimeoutSeconds: null,
+          decompileMaxPayloadMiB: null,
+          valueFlowLimits: {
+            max_operations: 3000,
+            max_inputs_per_operation: 64,
+            max_edges: 12000,
+          },
+        },
       },
     ]);
     expect(result).toMatchObject({

@@ -1,10 +1,13 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it, vi } from "vitest";
 
+import { seedEndCapture } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 import {
   VARICAD_URL,
   varicadPackage,
@@ -110,7 +113,7 @@ it("finishes a stop whose draft reply was lost when stop is asked again, and rep
   expect(await rea.notes("stopped.jsonl")).toHaveLength(1);
   const exported = await call(client, "export_build_environment", {
     computer_id: id,
-    task: BUILD_TASK,
+    tasks: [{ task: BUILD_TASK }],
     directory: join(await createTestTempDirectory("build-out-"), "bundle"),
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
@@ -183,6 +186,44 @@ it("downloads the package lists again on the next start after an update that fet
   }
 });
 
+it("releases a capture whose start was cancelled after launch, so another start can run", async () => {
+  const { computer, client } = await fakes({
+    screenshotDelaysMs: [0, 60_000],
+  });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  const screenshots = () =>
+    computer.calls.filter(({ name }) => name === "computer_screenshot").length;
+  const controller = new AbortController();
+  const started = client.callTool(
+    { name: "start_build_capture", arguments: { computer_id: id } },
+    { signal: controller.signal },
+  );
+  await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
+  controller.abort();
+  await expect(started).rejects.toThrow();
+  const again = await callOk(client, "start_build_capture", {
+    computer_id: id,
+  });
+  expect(again.structuredContent).toMatchObject({ package_lists: 1 });
+}, 60_000);
+
+it("stops a detached capture when the computer closes", async () => {
+  const { rea, client, computer } = await fakes();
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  const running = () =>
+    execFileSync("ps", ["-eo", "args="], { encoding: "utf8" })
+      .split("\n")
+      .filter(
+        (line) =>
+          line.includes(rea.home) &&
+          line.includes("capture-desktop-application"),
+      );
+  expect(running().length).toBeGreaterThan(0);
+  await computer.close();
+  expect(running()).toEqual([]);
+}, 60_000);
+
 it("cancels a capture's start when the computer closes while it waits for the opened app's screenshot", async () => {
   // The start's own screenshot answers at once; the capture's waits until its request is cancelled.
   const { computer, client } = await fakes({ screenshotDelaysMs: [0, 60_000] });
@@ -208,7 +249,7 @@ it("returns the bundle an export saved when the computer closes while it commits
   });
   const exported = await call(client, "export_build_environment", {
     computer_id: id,
-    task: BUILD_TASK,
+    tasks: [{ task: BUILD_TASK }],
     directory,
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
@@ -220,31 +261,32 @@ it("returns the bundle an export saved when the computer closes while it commits
   await closed;
 }, 60_000);
 
-/** Capture and export an app the request installs from a .deb at `url`; the stand-in's argv for capture and export. */
-const captureDebRequest = async (
-  fakeSet: Awaited<ReturnType<typeof fakes>>,
-  url: string,
+/** Capture and export an app the request installs with `install`; the start's result, the bundle's folder and the stand-in's argv for a command. */
+const captureRequest = async (
+  { rea, client }: Awaited<ReturnType<typeof fakes>>,
+  install: Record<string, unknown>,
 ) => {
-  const { rea, client } = fakeSet;
-  const id = await startBuildComputer(client, {
-    kind: "request",
-    desktop_entry: "org.example.notes",
-    install: {
-      kind: "package_file",
-      url,
-      sha256: "0".repeat(64),
-      architecture: "amd64",
-      dependencies: [],
-    },
-  });
+  const started = toolContract("start_build_computer").outputSchema.parse(
+    (
+      await callOk(client, "start_build_computer", {
+        source: {
+          kind: "request",
+          desktop_entry: "org.example.notes",
+          install,
+        },
+      })
+    ).structuredContent,
+  );
+  const id = started.computer_id;
   await captureSeedAndEnd(client, id);
   await callOk(client, "stop_build_capture", { computer_id: id });
+  const directory = join(await createTestTempDirectory("build-out-"), "bundle");
   const exported = toolContract("export_build_environment").outputSchema.parse(
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: BUILD_TASK,
-        directory: join(await createTestTempDirectory("build-out-"), "bundle"),
+        tasks: [{ task: BUILD_TASK }],
+        directory,
       })
     ).structuredContent,
   );
@@ -256,11 +298,38 @@ const captureDebRequest = async (
       (candidate) =>
         candidate[0] === command && !candidate.includes("--schema"),
     ) ?? [];
+  return { started, exported, directory, argv };
+};
+
+/** Capture and export an app the request installs from a .deb at `url` after `dependencies`; the stand-in's export argv. */
+const captureDebRequest = async (
+  fakeSet: Awaited<ReturnType<typeof fakes>>,
+  url: string,
+  dependencies: readonly string[] = [],
+) => {
+  const { started, exported, directory, argv } = await captureRequest(fakeSet, {
+    kind: "package_file",
+    url,
+    sha256: "0".repeat(64),
+    architecture: "amd64",
+    dependencies,
+  });
   expect(argv("capture-desktop-application")).toEqual(
     expect.arrayContaining(["--package-file", "/opt/rea/package.deb"]),
   );
-  return { exported, exportArgv: argv("export-desktop-application") };
+  return {
+    started,
+    exported,
+    directory,
+    exportArgv: argv("export-desktop-application"),
+  };
 };
+
+/** The values given to each `--extra-package` in an argv, in order. */
+const extraPackageFlags = (argv: readonly string[]) =>
+  argv.flatMap((value, index) =>
+    value === "--extra-package" ? [argv[index + 1]] : [],
+  );
 
 it("exports an app from its .deb file, at the request's URL, when no apt source offers it", async () => {
   const { exported, exportArgv } = await captureDebRequest(
@@ -276,15 +345,123 @@ it("exports an app from its .deb file, at the request's URL, when no apt source 
   expect(exported.files).toBeGreaterThan(0);
 });
 
-it("exports an app from apt, without the .deb's URL, when an apt source offers the captured version too", async () => {
-  // The capture found notes in noble/universe, so the export installs it by name.
-  const { exported, exportArgv } = await captureDebRequest(
-    await fakes(),
+it("exports an app from apt, without the .deb's URL, when an apt source offers the captured version too, keeping its dependencies beside it", async () => {
+  // The capture found notes in noble/universe, so the export installs it by
+  // name; as MyPaint's, its request named librsvg2-common, which GTK only recommends.
+  const { started, exported, directory, exportArgv } = await captureDebRequest(
+    await fakes({ install: { extraPackages: ["librsvg2-common"] } }),
     "https://downloads.example.com/notes_1.0_amd64.deb",
+    ["librsvg2-common"],
   );
 
+  expect(started.extra_packages).toEqual(["librsvg2-common"]);
   expect(exportArgv).not.toContain("--package-url");
-  expect(exported.files).toBeGreaterThan(0);
+  expect(extraPackageFlags(exportArgv)).toEqual(["librsvg2-common"]);
+  expect(
+    await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+  ).toContain('packages=Packages(apt=["notes", "librsvg2-common"])');
+  expect(
+    exported.limitations.filter((line) => line.includes("librsvg2-common")),
+  ).toHaveLength(1);
+});
+
+it("passes an archive request's extra packages to the export, whose bundle installs them beside the app", async () => {
+  const { exported, directory, argv } = await captureRequest(
+    await fakes({ install: { extraPackages: ["openjdk-17-jre"] } }),
+    { kind: "archive", package: "notes", extra_packages: ["openjdk-17-jre"] },
+  );
+
+  expect(extraPackageFlags(argv("export-desktop-application"))).toEqual([
+    "openjdk-17-jre",
+  ]);
+  expect(
+    await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+  ).toContain('packages=Packages(apt=["notes", "openjdk-17-jre"])');
+  expect(
+    exported.limitations.filter((line) => line.includes("openjdk-17-jre")),
+  ).toHaveLength(1);
+});
+
+it("passes an AppImage request's download to the export in a file, whose bundle downloads and extracts the app", async () => {
+  const appRun = "/opt/rea-apps/org.example.notes/squashfs-root/AppRun";
+  const base = seedEndCapture();
+  const recorded: DesktopApplicationCapture = {
+    ...base,
+    application: {
+      ...base.application,
+      desktop_entry: {
+        id: "org.example.notes",
+        path: "/usr/local/share/applications/org.example.notes.desktop",
+        name: "Notes",
+        exec: `${appRun} %F`,
+        icon: null,
+        startup_wm_class: null,
+        categories: [],
+        mime_types: [],
+        terminal: false,
+      },
+      argv: [appRun],
+      executable: { path: appRun, resolved_path: appRun, electron_markers: [] },
+      package: {
+        kind: "unknown",
+        name: null,
+        version: null,
+        architecture: null,
+        sources: [],
+        package_lists_present: null,
+      },
+    },
+  };
+  const download = {
+    url: "https://downloads.example.com/notes-2.0-x86_64.AppImage",
+    sha256: "f".repeat(64),
+    architecture: "amd64",
+  };
+  const fakeSet = await fakes({
+    recorded,
+    install: {
+      downloadInstall: {
+        kind: "appimage",
+        desktop_entry: "org.example.notes",
+        ...download,
+      },
+    },
+  });
+  const { directory, argv } = await captureRequest(fakeSet, {
+    kind: "appimage",
+    ...download,
+  });
+
+  const exportCall = (
+    (await fakeSet.rea.notes("calls.jsonl")) as {
+      argv: string[];
+      cwd: string;
+    }[]
+  ).find(
+    ({ argv: called }) =>
+      called[0] === "export-desktop-application" &&
+      !called.includes("--schema"),
+  );
+  const flag = exportCall?.argv.indexOf("--download-install") ?? -1;
+  expect(flag).toBeGreaterThan(0);
+  expect(
+    JSON.parse(
+      await readFile(
+        resolve(exportCall?.cwd ?? "", exportCall?.argv[flag + 1] ?? ""),
+        "utf8",
+      ),
+    ),
+  ).toEqual({
+    kind: "appimage",
+    desktop_entry: "org.example.notes",
+    ...download,
+  });
+  expect(argv("capture-desktop-application")).not.toContain("--package-file");
+  expect(
+    await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+  ).toContain(
+    `sha256="${"f".repeat(64)}", to="vendor/app.AppImage", arch="amd64")`,
+  );
 });
 
 it("brings back a bundle whose file list outgrows a command's 1 MiB of output", async () => {
@@ -304,7 +481,7 @@ it("brings back a bundle whose file list outgrows a command's 1 MiB of output", 
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: BUILD_TASK,
+        tasks: [{ task: BUILD_TASK }],
         directory,
       })
     ).structuredContent,

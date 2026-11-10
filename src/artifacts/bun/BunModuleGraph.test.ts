@@ -1,10 +1,13 @@
+import {
+  DEFAULT_BUN_READER_LIMITS,
+  type BunReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   probeBunStandaloneGraph,
-  bunModuleCountLimit,
   BUN_GRAPH_SUFFIX_BYTES,
 } from "./BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "./BunModuleGraphMembers.js";
@@ -52,7 +55,7 @@ async function locate(bytes: Buffer) {
 }
 
 /** Probe while counting bytes read through the handle. */
-async function probe(bytes: Buffer) {
+async function probe(bytes: Buffer, limits?: BunReaderLimits) {
   const path = join(await createTestTempDirectory("rea-bun-parser-"), "app");
   await writeFile(path, bytes);
   const handle = await open(path, "r");
@@ -70,7 +73,12 @@ async function probe(bytes: Buffer) {
   });
   try {
     return {
-      result: await probeBunStandaloneGraph(counted, bytes.length),
+      result: await probeBunStandaloneGraph(
+        counted,
+        bytes.length,
+        undefined,
+        limits,
+      ),
       bytesRead,
     };
   } finally {
@@ -308,7 +316,7 @@ it.each([
   },
 );
 
-it("matches ELF section names in bounded time when headers share one long name", async () => {
+it("reads a shared long ELF section name once without materializing its string table", async () => {
   const shnum = 16_383;
   const stringOffset = 64;
   const strings = Buffer.alloc(1024 * 1024, 0x61);
@@ -325,9 +333,9 @@ it("matches ELF section names in bounded time when headers share one long name",
     bytes.writeBigUInt64LE(BigInt(stringOffset), header + 24);
     bytes.writeBigUInt64LE(BigInt(strings.length), header + 32);
   }
-  const started = performance.now();
-  expect((await probe(bytes)).result).toEqual({ status: "absent" });
-  expect(performance.now() - started).toBeLessThan(2_000);
+  const observed = await probe(bytes);
+  expect(observed.result).toEqual({ status: "absent" });
+  expect(observed.bytesRead).toBeLessThan(shnum * 64 + 1024);
 });
 
 it("refuses an excessive table count before reading or allocating the module table", async () => {
@@ -340,7 +348,6 @@ it("refuses an excessive table count before reading or allocating the module tab
   if (result.status !== "present" || result.graph === undefined)
     throw new Error("Missing graph");
   const read = vi.fn(result.graph.data.read);
-  const expected = bunModuleCountLimit(count);
   await expect(
     decodeBunModuleGraph({
       ...result.graph,
@@ -349,7 +356,80 @@ it("refuses an excessive table count before reading or allocating the module tab
   ).rejects.toMatchObject({
     reason: "limit",
     boundary: "capacity",
-    message: expected.message,
+    readerLimit: {
+      parameter: "artifact_limits.bun.module_count",
+      effective_value: 100_000,
+      required_value: 100_001,
+      unit: "count",
+    },
   });
   expect(read).not.toHaveBeenCalled();
+});
+
+it.each([
+  {
+    carrier: "ELF",
+    encode: elfBunSection,
+    field: "recognition_table_bytes",
+    needed: 192,
+  },
+  {
+    carrier: "Mach-O",
+    encode: machoBunSection,
+    field: "recognition_load_command_bytes",
+    needed: 152,
+  },
+] as const)(
+  "keeps $carrier recognition unknown at its selected boundary and recovers the same graph",
+  async ({ encode, field, needed }) => {
+    const bytes = encode(
+      bunPrefixedPayload(
+        bunModuleGraphPayload({
+          modules: [{ name: "main.js", contents: Buffer.from("retained") }],
+        }),
+      ),
+    );
+    const limited = await probe(bytes, {
+      ...DEFAULT_BUN_READER_LIMITS,
+      [field]: needed - 1,
+    });
+    expect(limited.result).toMatchObject({
+      status: "limited",
+      failure: {
+        reason: "limit",
+        readerLimit: {
+          parameter: `artifact_limits.bun.${field}`,
+          effective_value: needed - 1,
+          required_value: needed,
+        },
+      },
+    });
+    const recovered = await probe(bytes, {
+      ...DEFAULT_BUN_READER_LIMITS,
+      [field]: needed,
+    });
+    expect(recovered.result).toMatchObject({
+      status: "present",
+      claim: {
+        carrier: encode === elfBunSection ? "elf-section" : "mach-o-section",
+      },
+    });
+  },
+);
+
+it("recognizes an ELF Bun name beyond the former string-table prefix without reading the prefix", async () => {
+  const bytes = elfBunSection(
+    bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("retained") }],
+      }),
+    ),
+    1024 * 1024 + 8,
+  );
+  const observed = await probe(bytes);
+  expect(observed.result).toMatchObject({
+    status: "present",
+    claim: { carrier: "elf-section" },
+  });
+  expect(observed.bytesRead).toBeLessThan(1024);
 });
