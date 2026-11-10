@@ -107,7 +107,13 @@ const registerAssetCatalogCommand = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectAssetCatalog, {
     description: "Inspect compiled Apple asset catalog metadata",
-    args: z.object({ path: z.string().describe("Apple .app bundle path") }),
+    args: z.object({
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Apple .app bundle path"),
+    }),
     options: z.object({
       offset: z
         .number()
