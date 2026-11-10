@@ -122,6 +122,24 @@ it.each([1234, 2_147_483_647])(
       },
       recovery: { kind: "inspect_timeout_state", timeout_ms: commandTimeoutMs },
     });
+    expect(
+      projectAnalysisError(
+        wabtFailure(
+          new OwnedCommandFailure("timeout", "deadline"),
+          "producer",
+          "/module.wasm",
+          { commandTimeoutMs, commandTimeoutSource: "request" },
+        ),
+      ),
+    ).toMatchObject({
+      details: {
+        limit: {
+          source: "request",
+          update_mode: "parameter",
+          effective_value: commandTimeoutMs,
+        },
+      },
+    });
   },
 );
 
