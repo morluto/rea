@@ -163,7 +163,13 @@ const registerNativeCommands = (
   }
   cli.command(CLI_COMMANDS.inspectPlist, {
     description: "Parse app plist metadata without launching Hopper",
-    args: z.object({ path: z.string().describe("App or Mach-O path") }),
+    args: z.object({
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("App or Mach-O path"),
+    }),
     options: z.object({
       relativePath: z
         .string()
