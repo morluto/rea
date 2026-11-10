@@ -1968,7 +1968,7 @@ npx rea-agents@6.8.0 setup
 
 <!-- x-release-please-end -->
 
-`@latest` is an explicit opt-in that follows every new publish:
+`@latest` explicitly selects npm's mutable `latest` tag:
 
 ```bash
 npx rea-agents@latest setup
@@ -2052,7 +2052,7 @@ without asking npm to resolve the workspace's dependency graph.
 
 The optional curl wrapper installs only the global npm package. Piping the
 `main`-branch script into bash runs whatever that branch holds at fetch time;
-the tagged download below gives a reviewable, version-pinned script instead:
+the tagged download below lets you review a release's script before running it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
@@ -2067,7 +2067,7 @@ curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
   bash -s -- --dry-run
 ```
 
-To review a version-pinned installer before running it, select the release
+To review a release-tagged installer before running it, select the release
 version, download its tagged script, and inspect the downloaded file:
 
 <!-- x-release-please-start-version -->
@@ -2086,8 +2086,10 @@ After reviewing it, install the same package version:
 bash rea-install.sh --version "$rea_version"
 ```
 
-The tag pins the selected script revision; `--version` selects the npm package
-version. Neither command verifies a signature on the downloaded script.
+A release tag selects the script revision, but can move unless protected by an
+immutable release. For a fixed script reference, use a verified full commit SHA
+in the download URL. `--version` selects the npm package version. Neither command
+verifies a signature on the downloaded script.
 
 Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-prompt`, and `--verbose`. Neither `--no-prompt` nor a non-interactive shell grants permission to install external dependencies.
 

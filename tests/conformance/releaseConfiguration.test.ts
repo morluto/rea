@@ -15,7 +15,7 @@ const readJson = async (path: string): Promise<unknown> =>
 const versionedDocumentation = [
   {
     path: "docs/getting-started/installation.md",
-    examples: ["doctor --provider ghidra --json"],
+    examples: ["doctor --provider ghidra --json", " setup", "rea_version="],
   },
 ] as const;
 const pluginManifests = [
