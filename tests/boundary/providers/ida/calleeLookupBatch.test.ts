@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
+import { IDA_CALLEE_DISCOVERY } from "../../../../src/ida/IdaCallGraph.js";
 import { IdaOperationRunner } from "../../../../src/ida/IdaOperationRunner.js";
 import { IdaSessionClient } from "../../../../src/ida/IdaSessionClient.js";
 import { createIdaTarget, RecordingIdaMcp } from "../../../fixtures/idaMcp.js";
@@ -12,11 +12,13 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 const queriesSchema = z.object({ queries: z.array(z.string()) });
-/** An uncapped page still cannot classify the call sites behind its edges. */
+/**
+ * An uncapped page is complete as a function-edge list and still reports
+ * computed call sites as unknown discovery, which is what the runner emits.
+ */
 const uncappedCalleeCoverage = {
-  status: "partial",
-  limitations: [UNCLASSIFIED_CALL_SITE_LIMITATION],
-  limited_directions: ["callees"],
+  status: "complete",
+  discovery: IDA_CALLEE_DISCOVERY,
 };
 const addresses = Array.from(
   { length: 20 },
