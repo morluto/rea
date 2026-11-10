@@ -139,13 +139,6 @@ export class FunctionByteCoverage {
       ) {
         const conflict = await this.#conflict(admitted[index]!, incoming);
         if (conflict !== undefined) conflicts.push(conflict);
-        else {
-          const existing = admitted[index]!;
-          admitted[index] = {
-            ...existing,
-            links: [...new Set([...existing.links, ...incoming.links])],
-          };
-        }
       }
       const end = admitted.at(-1)?.end;
       if (end === undefined || incoming.start >= end) admitted.push(incoming);

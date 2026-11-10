@@ -697,6 +697,94 @@ cliTest(
 );
 
 cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+  "keeps a prefix read out of another function's byte provenance ($profile)",
+  { timeout: 60000 },
+  async ({ profile }) => {
+    const left = nativeMatchingInventory("1", [
+      { address: "0x10", value: "left_prefix" },
+      { address: "0x12", value: "left_tail" },
+    ]);
+    const right = nativeMatchingInventory("2", [
+      { address: "0x20", value: "right_prefix" },
+      { address: "0x22", value: "right_tail" },
+    ]);
+    const [leftPrefix, prefixRead] = nativeMatchingDetails("1", "0x10", "90c3");
+    const [leftTail] = nativeMatchingDetails("1", "0x12", "31c0");
+    const [, coveringRead] = nativeMatchingDetails("1", "0x10", "90c331c0");
+    const [rightPrefix, rightPrefixRead] = nativeMatchingDetails(
+      "2",
+      "0x20",
+      "90c3",
+    );
+    const [rightTail, rightTailRead] = nativeMatchingDetails(
+      "2",
+      "0x22",
+      "31c0",
+    );
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
+    });
+
+    for (const reads of [
+      [coveringRead, prefixRead],
+      [prefixRead, coveringRead],
+    ]) {
+      const reply = await call("match_native_functions", {
+        left,
+        right,
+        left_observations: [leftPrefix, leftTail, ...reads],
+        right_observations: [
+          rightPrefix,
+          rightPrefixRead,
+          rightTail,
+          rightTailRead,
+        ],
+        detail: "complete",
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      const report = nativeFunctionMatchingSchema.parse(
+        parseEvidence(reply.structuredContent).normalized_result,
+      );
+      expect(report.summary).toMatchObject({ matched: 2, unresolved: 0 });
+      const tail = report.matches.find(
+        (match) => match.left[0]?.address === "0x12",
+      );
+      expect(tail).toMatchObject({
+        basis: "identical-bytes",
+        right: [expect.objectContaining({ address: "0x22" })],
+      });
+      expect(tail?.left[0]?.evidence_links).toContain(
+        coveringRead!.evidence_id,
+      );
+      expect(tail?.left[0]?.evidence_links).not.toContain(
+        prefixRead!.evidence_id,
+      );
+      expect(report.byte_sources).toHaveLength(3);
+      expect(report.byte_sources).toEqual(
+        expect.arrayContaining([
+          {
+            side: "left",
+            evidence_id: coveringRead!.evidence_id,
+            limitations: [],
+          },
+          {
+            side: "right",
+            evidence_id: rightPrefixRead!.evidence_id,
+            limitations: [],
+          },
+          {
+            side: "right",
+            evidence_id: rightTailRead!.evidence_id,
+            limitations: [],
+          },
+        ]),
+      );
+    }
+  },
+);
+
+cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
   "ties byte qualifications to selected observations through paged and offline MCP ($profile)",
   { timeout: 60000 },
   async ({ profile }) => {
