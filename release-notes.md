@@ -2,7 +2,7 @@
 ---
 
 
-## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-09)
+## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-10)
 
 
 ### ⚠ BREAKING CHANGES
@@ -1369,6 +1369,7 @@
 * archive historical verification and release inventories ([#7519](https://github.com/morluto/rea/issues/7519)) ([269630f](https://github.com/morluto/rea/commit/269630f4e1c93e45e5d133fde370736133865a3c))
 * celebrate 400,000 GitHub stars 🎉 ([#7801](https://github.com/morluto/rea/issues/7801)) ([7b6d872](https://github.com/morluto/rea/commit/7b6d872a25f84772a49bcdc7ea392028b7328857))
 * **changelog:** repair historical release heading links ([#7707](https://github.com/morluto/rea/issues/7707)) ([b69d8c5](https://github.com/morluto/rea/commit/b69d8c54678f2c6f9217c1609a5e9d64880e5392))
+* clarify coordination for overlapping PR fixes ([#8931](https://github.com/morluto/rea/issues/8931)) ([d4a7c20](https://github.com/morluto/rea/commit/d4a7c20e04024dced5e5d2d70e6b250cbd56f364))
 * clarify publication recovery and Evidence ownership ([#9654](https://github.com/morluto/rea/issues/9654)) ([b1f473f](https://github.com/morluto/rea/commit/b1f473fcf88168ef8c40462c1c15bcde56c51693))
 * clarify recovery for valid lookup failures ([60c0cf9](https://github.com/morluto/rea/commit/60c0cf977a34c99afa7942466625aeba74969bdf))
 * clarify test audits and organize verification lanes ([0354145](https://github.com/morluto/rea/commit/0354145a2ad9844f87b602bd457ae3df9982e0d3))
@@ -1473,6 +1474,7 @@
 * **firmware:** pin the staging ceiling at the request boundary ([#7775](https://github.com/morluto/rea/issues/7775)) ([4671947](https://github.com/morluto/rea/commit/4671947c97bb661b3507b7691f57227a2757a44f))
 * focus diagnostics and evidence checks on behavior ([#9303](https://github.com/morluto/rea/issues/9303)) ([5044e20](https://github.com/morluto/rea/commit/5044e20171564d201d5fe49c18e2ea6f90c53010))
 * **gdb:** expect configurable stream truncation diagnostics ([#8965](https://github.com/morluto/rea/issues/8965)) ([ce07d35](https://github.com/morluto/rea/commit/ce07d358cdaa3d3f69711d71d1d9e03106b12dbe))
+* **ghidra:** assert projected limitations instead of a stale literal ([#9268](https://github.com/morluto/rea/issues/9268)) ([27edc5c](https://github.com/morluto/rea/commit/27edc5c83f8403766a197fc828ac4cafb071a636))
 * **ghidra:** check regex recovery at its owning boundary ([#8578](https://github.com/morluto/rea/issues/8578)) ([2be2d00](https://github.com/morluto/rea/commit/2be2d006b8d4f949dfc58c6952b04d5ba70bd9c0))
 * **ghidra:** check retained historical snapshot evidence ([#8381](https://github.com/morluto/rea/issues/8381)) ([0aaa582](https://github.com/morluto/rea/commit/0aaa5829777d34b988dec955d2a6a0a894e92be1))
 * **ghidra:** check structured snapshot profile mismatch ([#8536](https://github.com/morluto/rea/issues/8536)) ([15107aa](https://github.com/morluto/rea/commit/15107aa81b9add8feda8c5d9363413a2e98ea6fc))
