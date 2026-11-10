@@ -168,14 +168,8 @@ const readAsciiBytes = (
 ): Result<string, PyInstallerFailure> => {
   const bytes = readBytes(cursor, length);
   if (!bytes.ok) return bytes;
-  if (bytes.value.some((byte) => byte > 0x7f))
-    return err(
-      pyInstallerFailure(
-        "format",
-        "PYZ marshal ASCII string contains a non-ASCII byte",
-      ),
-    );
-  return ok(bytes.value.toString("ascii"));
+  // CPython's marshal reads the ASCII types as Latin-1 without a range check.
+  return ok(bytes.value.toString("latin1"));
 };
 
 const readUtf8 = (

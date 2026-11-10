@@ -814,6 +814,34 @@ it("accepts empty code names", () => {
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
+it("reads marshal ASCII strings as Latin-1, as CPython does", () => {
+  const shortAscii = Buffer.from([0x7a, 0x01, 0xe9]);
+  const ascii = Buffer.concat([
+    Buffer.from([0x61]),
+    u32(1),
+    Buffer.from([0xe9]),
+  ]);
+  const report = parse(withConsts([shortAscii, ascii]));
+  expect(root(report).consts.slice(0, 2)).toMatchObject([
+    { kind: "str", value: "\u00e9", bytes: 1 },
+    { kind: "str", value: "\u00e9", bytes: 1 },
+  ]);
+
+  // Python compares the text, not the marshal type, so the Latin-1 ASCII
+  // form and the UTF-8 Unicode form of "\u00e9" are one set member.
+  const setOf = (...members: Buffer[]): Buffer =>
+    Buffer.concat([Buffer.from([0x3c]), u32(members.length), ...members]);
+  expect(
+    root(
+      parse(
+        withConsts([
+          setOf(shortAscii, marshalUnicode(Buffer.from([0xc3, 0xa9]))),
+        ]),
+      ),
+    ).consts[0],
+  ).toEqual({ kind: "set", length: 1 });
+});
+
 it("reports the marshal byte length of a string constant", () => {
   const report = parse(
     withConsts([

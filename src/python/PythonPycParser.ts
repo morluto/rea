@@ -1495,14 +1495,18 @@ class MarshalReader {
   utf8(length: number, ascii: boolean): MarshalValue {
     const bytes = this.blob(length);
     if (ascii) {
-      if (bytes.some((byte) => byte > 0x7f))
-        malformed("Marshal ASCII string contains a non-ASCII byte.");
+      // CPython's marshal reads the ASCII types as one-byte (Latin-1) text
+      // without checking for bytes above 0x7f. Identity keys use UTF-8 bytes,
+      // so the same text from TYPE_UNICODE compares equal.
+      const value = bytes.toString("latin1");
       return {
         kind: "str",
-        value: bytes.toString("latin1"),
+        value,
         previewEnd: Math.min(length, PYTHON_PYC_CONST_PREVIEW_LIMIT),
         bytes: length,
-        raw: bytes,
+        raw: bytes.some((byte) => byte > 0x7f)
+          ? Buffer.from(value, "utf8")
+          : bytes,
       };
     }
     const decoded = decodeMarshalUtf8(bytes, PYTHON_PYC_CONST_PREVIEW_LIMIT);

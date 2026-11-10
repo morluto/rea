@@ -33,6 +33,18 @@ it("decodes CPython marshal Unicode with surrogatepass", () => {
   });
 });
 
+it("reads marshal ASCII strings as Latin-1, as CPython does", () => {
+  // TYPE_SHORT_ASCII and TYPE_ASCII, each holding the byte 0xe9.
+  expect(readMarshalSubset(bytes("7a01e9"))).toEqual({
+    ok: true,
+    value: "\u00e9",
+  });
+  expect(readMarshalSubset(bytes("6101000000e9"))).toEqual({
+    ok: true,
+    value: "\u00e9",
+  });
+});
+
 it("retains a surrogate-bearing Unicode string in its marshal reference slot", () => {
   expect(readMarshalSubset(bytes("2902f50400000061edb3bf7200000000"))).toEqual({
     ok: true,
