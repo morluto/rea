@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { ok as resultOk, err, ok } from "../../../src/domain/result.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -561,16 +562,25 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
 
   const startup = fixture.holdStartup();
   const warming = client.callTool({ name: "list_documents", arguments: {} });
-  await startup.started;
-  expect(await complete(client, "document", "")).toEqual([]);
-  expect(await complete(client, "procedure", "")).toEqual([]);
-  expect(fixture.childrenCreated()).toBe(1);
-  startup.finish();
-  const warmed = await warming;
-  expect(warmed.isError, JSON.stringify(warmed)).not.toBe(true);
-  expect(fixture.childrenCreated()).toBe(1);
-  expect(await complete(client, "document", "fixture")).toEqual([
-    "fixture-document",
+  await withVerifierCleanup(async () => {
+    await startup.started;
+    expect(await complete(client, "document", "")).toEqual([]);
+    expect(await complete(client, "procedure", "")).toEqual([]);
+    expect(fixture.childrenCreated()).toBe(1);
+    startup.finish();
+    const warmed = await warming;
+    expect(warmed.isError, JSON.stringify(warmed)).not.toBe(true);
+    expect(fixture.childrenCreated()).toBe(1);
+    expect(await complete(client, "document", "fixture")).toEqual([
+      "fixture-document",
+    ]);
+  }, [
+    async () => {
+      startup.finish();
+    },
+    async () => {
+      await warming;
+    },
   ]);
 
   const cancellation = fixture.holdCompletion();
@@ -704,6 +714,10 @@ describe("guided prompt completion lifecycle", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let producerDone!: () => void;
+    const producerFinished = new Promise<void>((resolve) => {
+      producerDone = resolve;
+    });
     const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
     const server = new EvidenceMcpServer(
       { name: "prompt-cancellation-test", version: "1" },
@@ -716,8 +730,12 @@ describe("guided prompt completion lifecycle", () => {
         calls += 1;
         if (calls === 1) {
           markStarted();
-          await gate;
-          return observed(["late-document"]);
+          try {
+            await gate;
+            return observed(["late-document"]);
+          } finally {
+            producerDone();
+          }
         }
         return observed(["fresh-document"]);
       },
@@ -732,16 +750,29 @@ describe("guided prompt completion lifecycle", () => {
       },
       { signal: controller.signal },
     );
-    await started;
-    controller.abort();
-    await expect(pending).rejects.toThrow();
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await withVerifierCleanup(async () => {
+      await started;
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(await complete(client, "document", "fresh")).toEqual([
-      "fresh-document",
+      expect(await complete(client, "document", "fresh")).toEqual([
+        "fresh-document",
+      ]);
+      expect(calls).toBe(2);
+    }, [
+      async () => {
+        controller.abort();
+        release();
+      },
+      async () => {
+        await pending.catch(() => undefined);
+      },
+      async () => {
+        await producerFinished;
+      },
     ]);
-    expect(calls).toBe(2);
   });
 
   it("refreshes wire completions across open, switch, concurrency, and close", async () => {
