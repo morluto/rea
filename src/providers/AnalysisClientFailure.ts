@@ -201,6 +201,7 @@ export const analysisClientFailureForOperation = (
       ...(cause.remediationAction === undefined
         ? {}
         : { remediationAction: cause.remediationAction }),
+      ...(cause.limit === undefined ? {} : { limit: cause.limit }),
     });
   else if (cause instanceof AnalysisOutputError)
     result = new AnalysisOutputError(operation, cause.reason, {

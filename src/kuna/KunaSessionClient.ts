@@ -294,7 +294,7 @@ const exportUnavailable = (
   const exported = projectAnalysisError(failure);
   const restart =
     "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
-  if (failure instanceof AnalysisTimeoutError)
+  if (failure instanceof AnalysisTimeoutError && failure.limit === undefined)
     failure.bindLimit(
       analysisSettingLimit(
         "kuna.project_timeout_ms",

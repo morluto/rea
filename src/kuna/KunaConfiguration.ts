@@ -44,8 +44,10 @@ export interface KunaConfiguration {
   readonly cacheRoot: string;
   readonly cacheMaxBytes: number;
   readonly projectTimeoutMs: number;
+  readonly projectTimeoutSource: "default" | "setting";
   /** Deadline for one single-function `kuna decompile` run. */
   readonly functionTimeoutMs: number;
+  readonly functionTimeoutSource: "default" | "setting";
   readonly jobs: number;
 }
 
@@ -53,27 +55,42 @@ export interface KunaConfiguration {
 export interface KunaDeadline {
   readonly setting: "REA_KUNA_TIMEOUT_MS" | "REA_KUNA_PROJECT_TIMEOUT_MS";
   readonly ms: number;
+  readonly source: "default" | "setting" | "runtime";
 }
 
 /** Single-function decompiles and the standalone inventory. */
 export const kunaFunctionDeadline = (
   configuration: KunaConfiguration,
-): KunaDeadline => ({
-  setting: "REA_KUNA_TIMEOUT_MS",
-  ms:
-    currentAnalysisOperationSnapshot()?.overrides["kuna.function_timeout_ms"] ??
-    configuration.functionTimeoutMs,
-});
+): KunaDeadline => {
+  const override =
+    currentAnalysisOperationSnapshot()?.overrides["kuna.function_timeout_ms"];
+  return override === undefined
+    ? {
+        setting: "REA_KUNA_TIMEOUT_MS",
+        ms: configuration.functionTimeoutMs,
+        source: configuration.functionTimeoutSource,
+      }
+    : { setting: "REA_KUNA_TIMEOUT_MS", ms: override, source: "runtime" };
+};
 
 /** The project export and whole-program string, graph and xref scans. */
 export const kunaProjectDeadline = (
   configuration: KunaConfiguration,
-): KunaDeadline => ({
-  setting: "REA_KUNA_PROJECT_TIMEOUT_MS",
-  ms:
-    currentAnalysisOperationSnapshot()?.overrides["kuna.project_timeout_ms"] ??
-    configuration.projectTimeoutMs,
-});
+): KunaDeadline => {
+  const override =
+    currentAnalysisOperationSnapshot()?.overrides["kuna.project_timeout_ms"];
+  return override === undefined
+    ? {
+        setting: "REA_KUNA_PROJECT_TIMEOUT_MS",
+        ms: configuration.projectTimeoutMs,
+        source: configuration.projectTimeoutSource,
+      }
+    : {
+        setting: "REA_KUNA_PROJECT_TIMEOUT_MS",
+        ms: override,
+        source: "runtime",
+      };
+};
 
 /** Why the configured environment cannot select a Kuna installation. */
 export interface KunaConfigurationFailure {
@@ -186,7 +203,10 @@ export const readKunaConfiguration = (
       ),
     cacheMaxBytes,
     projectTimeoutMs: timeout?.data ?? DEFAULT_PROJECT_TIMEOUT_MS,
+    projectTimeoutSource: timeout === undefined ? "default" : "setting",
     functionTimeoutMs: functionTimeout?.data ?? DEFAULT_FUNCTION_TIMEOUT_MS,
+    functionTimeoutSource:
+      functionTimeout === undefined ? "default" : "setting",
     jobs,
   });
 };

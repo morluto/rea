@@ -68,6 +68,7 @@ const copiedTimeoutGuidance = (
   ...(cause.diagnostics === undefined
     ? {}
     : { diagnostics: cause.diagnostics }),
+  ...(cause.limit === undefined ? {} : { limit: cause.limit }),
 });
 /** A host executable refusal cannot be repaired by changing MI dialect. */
 class GdbExecutableRefusal extends AnalysisCapabilityUnavailableError {
