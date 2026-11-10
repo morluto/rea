@@ -153,12 +153,12 @@ def _seed_home(home: Path) -> None:
 def _ensure_state_aliases(home: Path) -> None:
     """Restore selected aliases without replacing any existing user data."""
     aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
-    for alias, target in aliases:
+    for alias, target, kind in aliases:
         link = home / alias
         destination = home / target
-        # A selected directory must exist so the app can create a file through
-        # the alias. An existing file alias, such as a settings file, stays a file.
-        if not destination.is_file():
+        # Kind comes from the capture. A missing file must stay a file so the
+        # app can create it; only a directory alias needs its target created.
+        if kind == "directory":
             destination.mkdir(parents=True, exist_ok=True)
         if link.is_symlink() and link.resolve() == destination.resolve():
             continue

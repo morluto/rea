@@ -237,8 +237,8 @@ it.each([true, false])(
       .filter((line) => !line.includes("agentenv_protocol"))
       .join("\n");
     const pairs = childFirst
-      ? '[("settings/profile", ".config/notes"), ("settings", ".local/share/notes")]'
-      : '[("settings", ".local/share/notes"), ("settings/profile", ".config/notes")]';
+      ? '[("settings/profile", ".config/notes", "directory"), ("settings", ".local/share/notes", "directory")]'
+      : '[("settings", ".local/share/notes", "directory"), ("settings/profile", ".config/notes", "directory")]';
     const program = `${imports}
 STATE_ALIASES = ${pairs}
 ${PYTHON_HELPERS}
@@ -262,7 +262,7 @@ it("restores a selected alias to an existing settings file", async () => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
-STATE_ALIASES = [("settings", ".config/tellicorc")]
+STATE_ALIASES = [("settings", ".config/tellicorc", "file")]
 ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
@@ -270,6 +270,23 @@ _ensure_state_aliases(home)
 `;
   execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
   expect(await readFile(join(home, "settings"), "utf8")).toBe("saved");
+
+  const absent = join(root, "absent");
+  await mkdir(join(absent, ".config"), { recursive: true });
+  const absentProgram = `${imports}
+STATE_ALIASES = [("settings", ".config/tellicorc", "file")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", absentProgram, absent], { encoding: "utf8" });
+  await writeFile(join(absent, "settings"), "created");
+  expect(await readFile(join(absent, ".config", "tellicorc"), "utf8")).toBe(
+    "created",
+  );
+  expect((await stat(join(absent, ".config", "tellicorc"))).isFile()).toBe(
+    true,
+  );
 });
 
 it("restores a selected settings alias without replacing an existing path", async () => {
@@ -294,7 +311,7 @@ it("restores a selected settings alias without replacing an existing path", asyn
 SEED_HOME = "/home/ada"
 TEXT_SEEDS = frozenset()
 SEED_MODES = {}
-STATE_ALIASES = [("settings", ".config/notes")]
+STATE_ALIASES = [("settings", ".config/notes", "directory")]
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 home = Path(sys.argv[2])
