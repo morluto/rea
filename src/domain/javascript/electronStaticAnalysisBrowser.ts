@@ -80,6 +80,13 @@ export const inspectElectronBrowserNode = (
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
   inspectContextBridge(node, context);
   inspectUtilityProcess(node, context);
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    semanticStaticPropertyKey(callee.property, callee.computed) ===
+      "setWindowOpenHandler"
+  )
+    context.accumulator.pendingWindowOpenHandlers.push(node);
 };
 
 const needsConstantOptions = (node: t.NewExpression): boolean => {
@@ -132,11 +139,38 @@ const inspectBrowserWindow = (
   constructorName: ElectronWindowConstructor,
   index?: JavaScriptBindingIndex,
 ): void => {
+  inspectElectronWindowOptions(
+    {
+      node,
+      argument: argumentNode(node.arguments[0]),
+      constructorName,
+      authority: electronCandidateAuthority(node.callee, context),
+    },
+    context,
+    index,
+  );
+};
+
+/** One owner for explicit constructor and popup-override preferences/preload facts. */
+export const inspectElectronWindowOptions = (
+  input: {
+    readonly node: t.Node;
+    readonly argument: t.Node | undefined;
+    readonly constructorName: ElectronWindowConstructor;
+    readonly authority: Pick<ElectronBrowserWindowFinding, "loader_authority">;
+    readonly windowOpenHandler?: NonNullable<
+      ElectronBrowserWindowFinding["window_open_handler"]
+    >;
+  },
+  context: JavaScriptFindingContext,
+  index?: JavaScriptBindingIndex,
+): void => {
+  const { node, argument, constructorName, authority, windowOpenHandler } =
+    input;
   // A constructor that accepts no webPreferences has none to read: the literal
   // option it carries is inert, so reporting it as a preference surface would
   // invent a preload the runtime never loads.
   const readsPreferences = constructorSurfaces(constructorName).preferences;
-  const argument = argumentNode(node.arguments[0]);
   const options =
     argument === undefined
       ? undefined
@@ -173,7 +207,10 @@ const inspectBrowserWindow = (
   );
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
-    ...electronCandidateAuthority(node.callee, context),
+    ...authority,
+    ...(windowOpenHandler === undefined
+      ? {}
+      : { window_open_handler: windowOpenHandler }),
     ...(constructorName === "BrowserWindow"
       ? {}
       : { window_constructor: constructorName }),
@@ -205,7 +242,10 @@ const inspectBrowserWindow = (
         role: "preload",
         path: finding.preload_path,
         resolution_context: finding.preload_resolution_context,
-        mechanism: `${constructorName}:webPreferences.preload`,
+        mechanism:
+          windowOpenHandler === undefined
+            ? `${constructorName}:webPreferences.preload`
+            : "setWindowOpenHandler:overrideBrowserWindowOptions.webPreferences.preload",
         module_key: null,
         location: range(node),
       },

@@ -144,6 +144,8 @@ const supportedReceiverPath = (
   // native frame, so none of those surfaces exist on the instance.
   if (!surfaces.webContents) return false;
   const operation = path.at(-1);
+  if (operation === "setWindowOpenHandler")
+    return path.length === 2 && path[0] === "webContents";
   if (operation === "loadFile" || operation === "loadURL")
     return (
       (surfaces.selfLoad && path.length === 1) ||
