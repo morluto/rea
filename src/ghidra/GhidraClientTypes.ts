@@ -7,6 +7,7 @@ import type { GhidraLauncher } from "./GhidraLauncher.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
+import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
 
 /** Result of opening and authenticating one headless Ghidra session. */
 export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
@@ -14,6 +15,8 @@ export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
 /** Cancellation and deadline controls shared by authenticated requests. */
 export interface GhidraRequestOptions {
   readonly decompileTimeoutSeconds?: number | null;
+  readonly decompileMaxPayloadMiB?: number | null;
+  readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;

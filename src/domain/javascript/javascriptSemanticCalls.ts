@@ -269,7 +269,7 @@ const directLiteral = (
 } => {
   const literal = readExactJavaScriptLiteral(node);
   if (!literal.found) return {};
-  const parsed = semanticPrimitiveSet([literal.value]);
+  const parsed = semanticPrimitiveSet([literal.value], state.precision);
   if (parsed.status === "literal") return { literal: parsed.value };
   if (
     parsed.status === "unknown" &&
