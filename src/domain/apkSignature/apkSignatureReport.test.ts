@@ -201,8 +201,32 @@ describe("deriveApkPosture", () => {
       inspectApkSignatureInputSchema.safeParse({ path: "/a/b.apk", extra: 1 })
         .success,
     ).toBe(false);
-    // The result schema rejects unknown keys (sanity that strictObject holds).
-    expect(apkSignatureResultSchema.safeParse({}).success).toBe(false);
+    expect(
+      inspectApkSignatureInputSchema.safeParse({ path: "relative.apk" })
+        .success,
+    ).toBe(false);
+    const report = {
+      artifact: { path: "/a/b.apk", sha256: "a".repeat(64), bytes: 0 },
+      schemes: {
+        v1: {
+          present: false,
+          has_manifest: false,
+          signature_files: [],
+          block_files: [],
+          signers: [],
+        },
+        v2: { present: false, signers: [], uninterpreted_bytes: 0 },
+        v3: { present: false, signers: [], uninterpreted_bytes: 0 },
+        "v3.1": { present: false, signers: [], uninterpreted_bytes: 0 },
+      },
+      source_stamp: { present: false, certificate: null, decode_error: null },
+      posture: derive({}),
+      runtime_execution: "not-performed",
+    };
+    expect(apkSignatureResultSchema.safeParse(report).success).toBe(true);
+    expect(
+      apkSignatureResultSchema.safeParse({ ...report, extra: 1 }).success,
+    ).toBe(false);
   });
 });
 
