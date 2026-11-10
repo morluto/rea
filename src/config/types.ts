@@ -41,6 +41,8 @@ export interface AppConfig {
   readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;
   readonly hopperStartupTimeoutMs: number;
+  /** Whether `hopperStartupTimeoutMs` came from the launch environment. */
+  readonly hopperStartupTimeoutSource: "default" | "setting" | "runtime";
   /** Cooperative per-operation budget for forward caller reconciliation. */
   readonly hopperCallerScanBudget: HopperCallerScanBudget;
   readonly hopperTargetPath: string | undefined;

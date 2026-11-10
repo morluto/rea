@@ -141,7 +141,18 @@ describe("runtime configuration", () => {
       expect(empty.value.hopperTargetPath).toBeUndefined();
       expect(empty.value.analysisProvider).toBe("auto");
       expect(empty.value.hopperStartupTimeoutMs).toBe(120_000);
+      expect(empty.value.hopperStartupTimeoutSource).toBe("default");
     }
+    const hopperTimeout = parseConfig({
+      REA_HOPPER_STARTUP_TIMEOUT_MS: "45000",
+    });
+    expect(hopperTimeout).toMatchObject({
+      ok: true,
+      value: {
+        hopperStartupTimeoutMs: 45_000,
+        hopperStartupTimeoutSource: "setting",
+      },
+    });
     const result = parseConfig({ HOPPER_TARGET_PATH: "/usr/bin/true" });
     expect(result.ok).toBe(true);
     if (result.ok) {

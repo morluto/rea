@@ -87,13 +87,27 @@ it("uses a runtime bridge ceiling for a Cutter client built from the launch valu
   });
 });
 
-it("rejects a bridge ceiling below the floor at client construction", () => {
-  expect(
-    () =>
-      new CutterBridgeClient({
-        REA_BRIDGE_MAX_REQUEST_BYTES: "7463",
-      }),
-  ).toThrow(ConfigurationError);
+it("rejects a bridge ceiling below the floor when the call has no override", async () => {
+  const client = new CutterBridgeClient({
+    REA_BRIDGE_MAX_REQUEST_BYTES: "7463",
+  });
+  await expect(client.listSessions()).rejects.toBeInstanceOf(
+    ConfigurationError,
+  );
+});
+
+it("uses a runtime bridge ceiling when the launch value is below the floor", async () => {
+  const client = new CutterBridgeClient({
+    REA_BRIDGE_MAX_REQUEST_BYTES: "7463",
+  });
+  await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "bridge.max_request_bytes": 8192 } },
+    async () => {
+      await expect(client.listSessions()).resolves.toMatchObject({
+        sessions: [],
+      });
+    },
+  );
 });
 
 it.each([false, true])(

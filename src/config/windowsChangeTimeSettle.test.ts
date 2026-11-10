@@ -2,11 +2,13 @@ import { expect, it } from "vitest";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { parseEnvironment } from "./environment.js";
 import {
   WINDOWS_CHANGE_TIME_DRIFT_MS,
   WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
+  applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "./windowsChangeTimeSettle.js";
 
@@ -116,5 +118,35 @@ it.each([
   expect(startup.error.settings[0]).not.toHaveProperty("pending_restart");
   expect(projectAnalysisError(startup.error).details).toMatchObject({
     settings: [facts],
+  });
+});
+
+it("applies a Windows settle override before rejecting the launch value", () => {
+  const limits = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "windows.change_time_drift_ms": 50,
+        "windows.change_time_settle_poll_ms": 10,
+        "windows.change_time_settle_max_polls": 4,
+      },
+    },
+    () => {
+      const resolved = resolveWindowsChangeTimeSettle({
+        REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "nope",
+        REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "0",
+        REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001",
+      });
+      if (!resolved.ok) throw resolved.error;
+      return applyWindowsChangeTimeSnapshot(resolved.value);
+    },
+  );
+  expect(limits).toMatchObject({
+    driftMs: 50,
+    driftSource: "runtime",
+    pollMs: 10,
+    pollSource: "runtime",
+    maxPolls: 4,
+    maxPollsSource: "runtime",
   });
 });

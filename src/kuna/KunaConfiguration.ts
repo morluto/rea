@@ -44,10 +44,10 @@ export interface KunaConfiguration {
   readonly cacheRoot: string;
   readonly cacheMaxBytes: number;
   readonly projectTimeoutMs: number;
-  readonly projectTimeoutSource: "default" | "setting";
+  readonly projectTimeoutSource: "default" | "setting" | "runtime";
   /** Deadline for one single-function `kuna decompile` run. */
   readonly functionTimeoutMs: number;
-  readonly functionTimeoutSource: "default" | "setting";
+  readonly functionTimeoutSource: "default" | "setting" | "runtime";
   readonly jobs: number;
 }
 
@@ -122,6 +122,41 @@ const positiveInteger = (value: string): number | undefined =>
     ? Number(value)
     : undefined;
 
+/**
+ * A runtime override replaces an invalid launch string. Cache size and jobs
+ * stay launch-only and still fail closed.
+ */
+const configuredTimeout = (
+  raw: string | undefined,
+  setting: string,
+  fallback: number,
+  override: number | undefined,
+): Result<
+  {
+    readonly ms: number;
+    readonly source: "default" | "setting" | "runtime";
+  },
+  KunaConfigurationFailure
+> => {
+  if (raw === undefined)
+    return ok({
+      ms: override ?? fallback,
+      source: override === undefined ? "default" : "runtime",
+    });
+  const parsed = providerStartupTimeoutSchema.safeParse(raw);
+  if (parsed.success)
+    return ok({
+      ms: override ?? parsed.data,
+      source: override === undefined ? "setting" : "runtime",
+    });
+  if (override !== undefined) return ok({ ms: override, source: "runtime" });
+  return failure(
+    "open_options_invalid",
+    `${setting} must be a decimal millisecond count from 1 to 2147483647; received ${String(raw)}.`,
+    setting,
+  );
+};
+
 /** Parse the Kuna settings without touching the filesystem or the executable. */
 export const readKunaConfiguration = (
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -159,29 +194,21 @@ export const readKunaConfiguration = (
       "REA_KUNA_CACHE_MAX_BYTES",
     );
 
-  const rawTimeout = environment.REA_KUNA_PROJECT_TIMEOUT_MS;
-  const timeout =
-    rawTimeout === undefined
-      ? undefined
-      : providerStartupTimeoutSchema.safeParse(rawTimeout);
-  if (timeout !== undefined && !timeout.success)
-    return failure(
-      "open_options_invalid",
-      `REA_KUNA_PROJECT_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${String(rawTimeout)}.`,
-      "REA_KUNA_PROJECT_TIMEOUT_MS",
-    );
-
-  const rawFunctionTimeout = environment.REA_KUNA_TIMEOUT_MS;
-  const functionTimeout =
-    rawFunctionTimeout === undefined
-      ? undefined
-      : providerStartupTimeoutSchema.safeParse(rawFunctionTimeout);
-  if (functionTimeout !== undefined && !functionTimeout.success)
-    return failure(
-      "open_options_invalid",
-      `REA_KUNA_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${String(rawFunctionTimeout)}.`,
-      "REA_KUNA_TIMEOUT_MS",
-    );
+  const overrides = currentAnalysisOperationSnapshot()?.overrides;
+  const projectTimeout = configuredTimeout(
+    environment.REA_KUNA_PROJECT_TIMEOUT_MS,
+    "REA_KUNA_PROJECT_TIMEOUT_MS",
+    DEFAULT_PROJECT_TIMEOUT_MS,
+    overrides?.["kuna.project_timeout_ms"],
+  );
+  if (!projectTimeout.ok) return projectTimeout;
+  const functionTimeout = configuredTimeout(
+    environment.REA_KUNA_TIMEOUT_MS,
+    "REA_KUNA_TIMEOUT_MS",
+    DEFAULT_FUNCTION_TIMEOUT_MS,
+    overrides?.["kuna.function_timeout_ms"],
+  );
+  if (!functionTimeout.ok) return functionTimeout;
 
   const rawJobs = environment.REA_KUNA_JOBS;
   const jobs = rawJobs === undefined ? DEFAULT_JOBS : positiveInteger(rawJobs);
@@ -202,11 +229,10 @@ export const readKunaConfiguration = (
         platform,
       ),
     cacheMaxBytes,
-    projectTimeoutMs: timeout?.data ?? DEFAULT_PROJECT_TIMEOUT_MS,
-    projectTimeoutSource: timeout === undefined ? "default" : "setting",
-    functionTimeoutMs: functionTimeout?.data ?? DEFAULT_FUNCTION_TIMEOUT_MS,
-    functionTimeoutSource:
-      functionTimeout === undefined ? "default" : "setting",
+    projectTimeoutMs: projectTimeout.value.ms,
+    projectTimeoutSource: projectTimeout.value.source,
+    functionTimeoutMs: functionTimeout.value.ms,
+    functionTimeoutSource: functionTimeout.value.source,
     jobs,
   });
 };

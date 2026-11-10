@@ -45,6 +45,11 @@ export const runtimeAnalysisConfig = (
         config.hopperStartupTimeoutMs
       );
     },
+    get hopperStartupTimeoutSource() {
+      return read().overrides["hopper.startup_timeout_ms"] === undefined
+        ? config.hopperStartupTimeoutSource
+        : "runtime";
+    },
     get ghidraDecompileTimeoutSeconds() {
       const value = read().overrides["ghidra.decompile_timeout_seconds"];
       return value === undefined
