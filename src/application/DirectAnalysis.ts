@@ -571,18 +571,26 @@ const runAnalysis = async (
       return executed;
     }
     const { cachePolicy } = executed.value;
-    const evidence = withEvidenceCallerInputPath(executed.value.evidence, path);
+    const callerEvidence = withEvidenceCallerInputPath(
+      executed.value.evidence,
+      path,
+    );
     // Provider execution may have already recorded the same semantic Evidence
     // without this invocation's request path. Import replaces that metadata
     // while retaining the authenticated result and snapshot binding.
-    const captured = captureSources(evidence);
+    const captured = captureSources(callerEvidence);
     if (!captured.ok)
-      return err(captured.error.retainPartialObservation(evidence));
+      return err(captured.error.retainPartialObservation(callerEvidence));
     const recorded = session.importEvidenceBundle(
-      createImmutableEvidenceBundle([evidence]),
+      createImmutableEvidenceBundle([callerEvidence]),
     );
     if (!recorded.ok)
-      return err(recorded.error.retainPartialObservation(evidence));
+      return err(recorded.error.retainPartialObservation(callerEvidence));
+    // Recorded outcomes carry session provenance the caller cannot infer, and
+    // import is where it is stamped. Returning the caller's own copy would
+    // describe an observation with less than the Evidence retained for it.
+    const evidence =
+      session.evidenceForAnalysis(callerEvidence.evidence_id) ?? callerEvidence;
     if (isWorkflowEvidenceTool(tool)) {
       const unknowns = recordWorkflowUnknowns({
         name: tool,
