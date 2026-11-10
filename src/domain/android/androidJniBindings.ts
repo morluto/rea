@@ -447,6 +447,7 @@ export const projectAndroidJniBindings = (input: {
       );
       const incomplete =
         input.libraryInventory.status !== "complete" ||
+        input.libraryInventory.unknowns.length > 0 ||
         abiLibraries.some(
           (library) =>
             library.failure !== null ||
