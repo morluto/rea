@@ -57,6 +57,66 @@ const parseMetadataSummary = (value: unknown) =>
   );
 
 cliTest(
+  "refuses ELF relocation file aliases through CLI and MCP while preserving source identity",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-relocation-alias-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "libil2cpp.so");
+    const metadata = createLinkedIl2cppMetadataFixture().bytes;
+    const elf = createElfFixture(createIl2cppBinaryFixture());
+    await writeFile(path, metadata);
+    await writeFile(binaryPath, elf);
+    const args = [
+      "inspect-il2cpp-metadata",
+      path,
+      "--binary",
+      binaryPath,
+      "--detail",
+      "complete",
+      "--json",
+    ];
+    const control = await runFileCli(cli, { arguments: args });
+    expect(control.exitCode, control.stderr).toBe(0);
+    expect(
+      parseCliMetadata(control.json).method_addresses.some(
+        (row) => row.state === "code",
+      ),
+    ).toBe(true);
+
+    // Append a fresh program-header table and a second view of PT_LOAD's file
+    // bytes at a different VA. The original file spans and RELA records stay intact.
+    const table = Number(elf.readBigUInt64LE(32));
+    const width = elf.readUInt16LE(54);
+    const count = elf.readUInt16LE(56);
+    const alias = Buffer.from(elf.subarray(table, table + width));
+    alias.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x10000n, 16);
+    alias.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x10000n, 24);
+    const bytes = Buffer.concat([
+      elf,
+      elf.subarray(table, table + count * width),
+      alias,
+    ]);
+    bytes.writeBigUInt64LE(BigInt(elf.length), 32);
+    bytes.writeUInt16LE(count + 1, 56);
+    await writeFile(binaryPath, bytes);
+    const result = await runFileCli(cli, { arguments: args });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({ code: "unsupported_target" });
+    expect(JSON.stringify(result.json)).toMatch(/distinct virtual mappings/);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_il2cpp_metadata", {
+      path,
+      binary_path: binaryPath,
+      detail: "complete",
+    });
+    expect(parseMcpToolError(response).error.code).toBe("unsupported_target");
+    expect(JSON.stringify(response)).toMatch(/distinct virtual mappings/);
+    expect(Buffer.compare(await readFile(binaryPath), bytes)).toBe(0);
+    expect(Buffer.compare(await readFile(path), metadata)).toBe(0);
+  },
+);
+
+cliTest(
   "rejects out-of-range module image references through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-il2cpp-module-image-");

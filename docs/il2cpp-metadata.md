@@ -459,6 +459,8 @@ ELF RELATIVE writes into zero-fill are kept as a private virtual-pointer overlay
 
 ELF relocation tables and file-backed destinations may span adjacent load ranges when every range agrees on the file translation. Any overlapping zero-fill declaration makes those bytes ambiguous; REA refuses the table or relocation destination instead of choosing the stored file bytes. Missing file bytes remain distinct from conflicting owners: supported unresolved relocations outside file-backed memory retain their unknown overlay, while ambiguous destinations refuse linking. Registration coverage uses the same file/zero-fill ownership checks as pointer reads.
 
+If a relocation destination's file bytes also back a different virtual address, linking returns `unsupported-pointer-encoding`: the private relocated file copy cannot represent independent loader values for those addresses. This includes partial file overlap and unresolved symbol writes. Duplicate mappings with the same file-to-virtual translation, and aliases of bytes not touched by relocations, remain supported. Omit `binary_path` to inspect the metadata independently; this does not recover native method associations for the refused image.
+
 Native address queries batch exact 64-bit hexadecimal `addresses` and `states` (`code`, `no-body`, `unknown`), intersecting indices and pagination; `generic_method_instances` accepts the same filters plus `method_indices` (generic definition indices). Numerically equal address spellings match; original row indices and every shared-body alternative survive:
 
 ```json

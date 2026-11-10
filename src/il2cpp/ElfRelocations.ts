@@ -9,6 +9,51 @@ import type {
 } from "../native/metadata/BinaryContainer.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 
+/** File bytes with more than one virtual identity cannot share a relocated copy.
+ * Sweep physical boundaries once, then test each write in logarithmic time.
+ * Consistent duplicate/adjacent mappings keep one identity and remain supported.
+ */
+function* aliasedFileBytesSteps(
+  mappings: readonly FileMapping[],
+): Generator<void, (offset: number, width: number) => boolean> {
+  const events: { offset: number; translation: bigint; delta: number }[] = [];
+  for (const mapping of mappings) {
+    if (mapping.size === 0) continue;
+    const translation = mapping.address - BigInt(mapping.offset);
+    events.push(
+      { offset: mapping.offset, translation, delta: 1 },
+      { offset: mapping.offset + mapping.size, translation, delta: -1 },
+    );
+  }
+  events.sort((a, b) => a.offset - b.offset);
+  const active = new Map<bigint, number>();
+  const aliases: { start: number; end: number }[] = [];
+  let previous = 0;
+  for (const [index, event] of events.entries()) {
+    if (index % 4096 === 0) yield;
+    if (event.offset > previous && active.size > 1) {
+      const last = aliases.at(-1);
+      if (last?.end === previous) last.end = event.offset;
+      else aliases.push({ start: previous, end: event.offset });
+    }
+    const count = (active.get(event.translation) ?? 0) + event.delta;
+    if (count === 0) active.delete(event.translation);
+    else active.set(event.translation, count);
+    previous = event.offset;
+  }
+  return (offset, width) => {
+    const end = offset + width;
+    let low = 0,
+      high = aliases.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (aliases[mid]!.start < end) low = mid + 1;
+      else high = mid;
+    }
+    return low > 0 && aliases[low - 1]!.end > offset;
+  };
+}
+
 /** Materialize the shared loader facts only for IL2CPP's existing private reader. */
 export function* applyElfRelativeRelocationsSteps(
   image: Buffer,
@@ -36,6 +81,7 @@ export function* applyElfRelativeRelocationsSteps(
       },
       { requireDynamic: true },
     );
+    const aliasesFileBytes = yield* aliasedFileBytesSteps(mappings);
     const bytes = Buffer.from(image),
       zeroFillPointers = new Map<bigint, bigint>(),
       unresolved = new Map<bigint, number>();
@@ -66,6 +112,11 @@ export function* applyElfRelativeRelocationsSteps(
         continue;
       }
       const at = write.file_offset;
+      if (at !== null && aliasesFileBytes(at, write.width))
+        throw new Il2cppBinaryFormatFailure(
+          "unsupported-pointer-encoding",
+          `ELF relocation at 0x${write.address.toString(16)} has distinct virtual mappings of its file bytes; a shared relocated file copy cannot preserve their independent loader values`,
+        );
       if (write.value === null) {
         unknown(write.address, write.width);
         if (at !== null) bytes.fill(0, at, at + write.width);

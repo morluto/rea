@@ -32,6 +32,7 @@ const withLoadRanges = (
     readonly offset: number;
     readonly size: number;
     readonly zeroFill?: number;
+    readonly address?: bigint;
   }[],
 ): Buffer => {
   const headers: Buffer[] = [];
@@ -47,7 +48,7 @@ const withLoadRanges = (
     header.writeUInt32LE(1);
     header.writeUInt32LE(7, 4);
     header.writeBigUInt64LE(BigInt(range.offset), 8);
-    const address = FIXTURE_BINARY_BASE + BigInt(range.offset);
+    const address = range.address ?? FIXTURE_BINARY_BASE + BigInt(range.offset);
     header.writeBigUInt64LE(address, 16);
     header.writeBigUInt64LE(address, 24);
     header.writeBigUInt64LE(BigInt(range.size), 32);
@@ -60,6 +61,74 @@ const withLoadRanges = (
   result.writeUInt16LE(headers.length, 56);
   return result;
 };
+
+it.each([183, 62])(
+  "refuses file-backed relocation writes shared by distinct virtual mappings (machine %s)",
+  (machine) => {
+    const original = createElfFixture(createIl2cppBinaryFixture(), { machine });
+    // RELA restores the zero stored at 0x308, but must not change the same
+    // file bytes independently mapped at base + 0x2000. A single file copy
+    // cannot represent those two different loader values.
+    expect(original.readBigUInt64LE(0x308)).toBe(0n);
+    for (const [offset, size] of [
+      [0x308, 8],
+      [0x307, 2],
+      [0x30f, 2],
+    ] as const) {
+      const bytes = withLoadRanges(original, [
+        { offset: 0, size: original.length },
+        {
+          offset,
+          size,
+          address: FIXTURE_BINARY_BASE + 0x2000n,
+        },
+      ]);
+      const snapshot = Buffer.from(bytes);
+      expect(() => open(bytes)).toThrow(
+        expect.objectContaining({
+          reason: "unsupported-pointer-encoding",
+          message: expect.stringMatching(/relocation.*distinct virtual.*file/i),
+        }),
+      );
+      expect(Buffer.compare(bytes, snapshot)).toBe(0);
+    }
+  },
+);
+
+it.each([183, 62])(
+  "refuses unresolved symbol writes whose zeroing would change another virtual mapping (machine %s)",
+  (machine) => {
+    const source = createIl2cppBinaryFixture();
+    source.writeBigUInt64LE(0x1234n, 0x700);
+    const original = createElfFixture(source, {
+      machine,
+      unresolvedRelocations: [
+        { offset: 0x700, kind: machine === 183 ? 257 : 1 },
+      ],
+    });
+    const bytes = withLoadRanges(original, [
+      { offset: 0, size: original.length },
+      { offset: 0x700, size: 8, address: FIXTURE_BINARY_BASE + 0x2000n },
+    ]);
+    expect(() => open(bytes)).toThrow(
+      expect.objectContaining({ reason: "unsupported-pointer-encoding" }),
+    );
+  },
+);
+
+it("keeps consistent aliases and distinct virtual mappings of untouched file bytes", () => {
+  const original = createElfFixture(createIl2cppBinaryFixture());
+  for (const alias of [
+    { offset: 0x300, size: 0x28 },
+    { offset: 0x200, size: 0x20, address: FIXTURE_BINARY_BASE + 0x2000n },
+  ]) {
+    const bytes = withLoadRanges(original, [
+      { offset: 0, size: original.length },
+      alias,
+    ]);
+    expect(link(bytes)).toEqual(link(original));
+  }
+});
 
 it("reuses admitted mappings for repeated file-backed loader reads", () => {
   const original = createIl2cppBinaryFixture();
