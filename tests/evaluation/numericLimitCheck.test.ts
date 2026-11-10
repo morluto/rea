@@ -41,6 +41,32 @@ it("does not treat a registry declaration as a producer", () => {
   ).toBe(false);
 });
 
+it("keeps a helper-call argument that is not the first argument", () => {
+  const name = "REA_NEW_MAX_BYTES";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/newLimit.ts",
+      source: `const setting = "${name}";\nconst value = read(environment, setting);`,
+    },
+    {
+      path: "src/config/literalLimit.ts",
+      source: `const value = read(environment, "${name}");`,
+    },
+  ]);
+  expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+});
+
+it("does not treat prose that mentions a limit name as a producer", () => {
+  const name = "REA_NEW_MAX_BYTES";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/domain/native/nativeDeadlines.ts",
+      source: `const guidance = "input_bytes overrides ${name}; otherwise that launch default applies.";`,
+    },
+  ]);
+  expect(discovered.has(name)).toBe(false);
+});
+
 it("keeps a bracket-access read as a producer", () => {
   const name = "REA_NEW_MAX_BYTES";
   const discovered = discoverNumericLimitUses([

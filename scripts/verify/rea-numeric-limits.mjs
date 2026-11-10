@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript6";
 
 // Every numeric REA_ limit under src must be an analysis setting or a
 // documented exception with a reason. restart-only is durable. per-call is a
@@ -50,102 +51,70 @@ export const REQUIRED_RUNTIME_LIMITS = [
   "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
 ];
 
-/** Drop comments without treating `//` inside a string as a comment. */
-export const sourceForLimitDiscovery = (source) => {
-  let out = "";
-  let quote = "";
-  for (let index = 0; index < source.length; index += 1) {
-    const current = source[index];
-    const next = source[index + 1];
-    if (quote !== "") {
-      out += current;
-      if (current === "\\" && quote !== "`") {
-        out += next ?? "";
-        index += 1;
-        continue;
+const unwrapExpression = (node) => {
+  let current = node;
+  while (
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isParenthesizedExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current)
+  )
+    current = current.expression;
+  return current;
+};
+
+const literalText = (node) =>
+  ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
+    ? node.text
+    : undefined;
+
+/** Same-file const strings and `setting` fields, so `environment[name]` still resolves. */
+const stringBindings = (sourceFile) => {
+  const bindings = new Map();
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined
+    ) {
+      const initializer = unwrapExpression(node.initializer);
+      const literal = literalText(initializer);
+      if (literal !== undefined) bindings.set(node.name.text, literal);
+      if (ts.isObjectLiteralExpression(initializer)) {
+        for (const property of initializer.properties) {
+          if (
+            !ts.isPropertyAssignment(property) ||
+            (!ts.isIdentifier(property.name) &&
+              !ts.isStringLiteral(property.name))
+          )
+            continue;
+          const value = literalText(unwrapExpression(property.initializer));
+          if (value !== undefined)
+            bindings.set(`${node.name.text}.${property.name.text}`, value);
+        }
       }
-      if (current === quote) quote = "";
-      continue;
     }
-    if (current === '"' || current === "'" || current === "`") {
-      quote = current;
-      out += current;
-      continue;
-    }
-    if (current === "/" && next === "/") {
-      while (index < source.length && source[index] !== "\n") index += 1;
-      out += "\n";
-      continue;
-    }
-    if (current === "/" && next === "*") {
-      index += 2;
-      while (
-        index < source.length &&
-        !(source[index] === "*" && source[index + 1] === "/")
-      )
-        index += 1;
-      index += 1;
-      out += " ";
-      continue;
-    }
-    out += current;
-  }
-  return out;
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return bindings;
 };
 
-const ARRAY_KEYWORDS = new Set([
-  "return",
-  "const",
-  "let",
-  "var",
-  "of",
-  "in",
-  "case",
-  "throw",
-  "yield",
-  "await",
-  "typeof",
-  "void",
-  "new",
-  "delete",
-  "if",
-  "else",
-  "for",
-  "while",
-  "do",
-  "switch",
-  "export",
-  "default",
-  "as",
-  "satisfies",
-]);
-
-const identifierEndingAt = (source, index) => {
-  let cursor = index;
-  while (cursor >= 0 && /\s/u.test(source[cursor] ?? "")) cursor -= 1;
-  const end = cursor;
-  while (cursor >= 0 && /[A-Za-z0-9_$]/u.test(source[cursor] ?? ""))
-    cursor -= 1;
-  return source.slice(cursor + 1, end + 1);
-};
-
-/**
- * A quoted name in a declaration array is an allowlist entry.
- * `environment["REA_..."]` and `value?.["REA_..."]` are producers.
- */
-const isArrayElementLiteral = (source, index) => {
-  if (source[index - 1] !== '"') return false;
-  let cursor = index - 2;
-  while (cursor >= 0 && /\s/u.test(source[cursor] ?? "")) cursor -= 1;
-  const previous = source[cursor];
-  if (previous === ",") return true;
-  if (previous !== "[") return false;
-  let before = cursor - 1;
-  while (before >= 0 && /\s/u.test(source[before] ?? "")) before -= 1;
-  const mark = source[before];
-  if (mark === "?" || mark === ")" || mark === "]") return false;
-  const token = identifierEndingAt(source, cursor - 1);
-  return token.length === 0 || ARRAY_KEYWORDS.has(token);
+const boundLimitName = (node, bindings) => {
+  const expression = unwrapExpression(node);
+  const literal = literalText(expression);
+  if (literal !== undefined) return literal;
+  if (ts.isIdentifier(expression)) return bindings.get(expression.text);
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    (ts.isIdentifier(expression.name) || ts.isStringLiteral(expression.name))
+  )
+    return bindings.get(
+      `${expression.expression.text}.${expression.name.text}`,
+    );
+  return undefined;
 };
 
 export const isNumericLimit = (name) =>
@@ -157,19 +126,84 @@ export const isNumericLimit = (name) =>
   /_(?:TIMEOUT|DEADLINE|BUDGET)(?:_|$)/u.test(name) ||
   /_HEAP(?:_|$)/u.test(name);
 
-/** Names used by producers. Registry declarations, comments, and allowlists are not usage. */
+const limitName = (text) =>
+  text !== undefined && /^REA_[A-Z0-9_]+$/u.test(text) && isNumericLimit(text)
+    ? text
+    : undefined;
+
+const remember = (discovered, path, name) => {
+  const limit = limitName(name);
+  if (limit === undefined || discovered.has(limit)) return;
+  discovered.set(limit, path);
+};
+
+/**
+ * Producers are syntax, not text. A read is a property or element access,
+ * including a const string used as the element, or a string argument to a call.
+ * Comments and array literals are not reads.
+ */
 export const discoverNumericLimitUses = (files) => {
   const discovered = new Map();
   for (const file of files) {
     const relativePath = file.path.split(sep).join("/");
     if (relativePath === NUMERIC_LIMIT_DECLARATION) continue;
-    const source = sourceForLimitDiscovery(file.source);
-    for (const match of source.matchAll(/(?<![A-Z0-9_])REA_[A-Z0-9_]+/gu)) {
-      const name = match[0];
-      if (!isNumericLimit(name) || discovered.has(name)) continue;
-      if (isArrayElementLiteral(source, match.index ?? 0)) continue;
-      discovered.set(name, relativePath);
-    }
+    const sourceFile = ts.createSourceFile(
+      relativePath,
+      file.source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const bindings = stringBindings(sourceFile);
+    const visit = (node) => {
+      if (
+        ts.isPropertyAccessExpression(node) ||
+        ts.isPropertyAccessChain?.(node)
+      )
+        remember(discovered, relativePath, node.name.text);
+      if (ts.isElementAccessExpression(node))
+        remember(
+          discovered,
+          relativePath,
+          boundLimitName(node.argumentExpression, bindings),
+        );
+      if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+        for (const argument of node.arguments ?? [])
+          remember(
+            discovered,
+            relativePath,
+            boundLimitName(argument, bindings),
+          );
+      }
+      if (ts.isVariableDeclaration(node) && node.initializer !== undefined)
+        remember(
+          discovered,
+          relativePath,
+          literalText(unwrapExpression(node.initializer)),
+        );
+      if (ts.isPropertyAssignment(node))
+        remember(
+          discovered,
+          relativePath,
+          literalText(unwrapExpression(node.initializer)),
+        );
+      if (
+        ts.isTemplateExpression(node) ||
+        ts.isNoSubstitutionTemplateLiteral(node)
+      ) {
+        const chunks = ts.isNoSubstitutionTemplateLiteral(node)
+          ? [node.text]
+          : [
+              node.head.text,
+              ...node.templateSpans.map((span) => span.literal.text),
+            ];
+        for (const chunk of chunks)
+          for (const token of chunk.match(/REA_[A-Z0-9_]+/gu) ?? [])
+            remember(discovered, relativePath, token);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
   }
   return discovered;
 };
