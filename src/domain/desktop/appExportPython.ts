@@ -438,6 +438,7 @@ export const ownlessBody = (
   title: string,
   dconf: boolean,
   relaunch: boolean,
+  aliases = false,
 ): string => {
   const reset = relaunch
     ? `
@@ -449,14 +450,22 @@ export const ownlessBody = (
   const serves = relaunch
     ? "and keeps its task's state on screen, so its reset only relaunches it"
     : "so it serves no data operations";
+  const restore = aliases ? "\n        _ensure_state_aliases(Path.home())" : "";
   if (dconf)
     return `    """${title}, launched at boot with its captured settings. It owns no files, ${serves}."""
 
     def __init__(self) -> None:
         super().__init__()
-        _load_dconf(Path.home())
+        _load_dconf(Path.home())${restore}
 ${reset}${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+  if (!aliases)
+    return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+  return `    """${title}, launched at boot. No state was observed, ${serves}."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        _ensure_state_aliases(Path.home())
+${reset}${PYTHON_READY_CHECK}`;
 };
 
 /** The data hooks of an app whose withheld files no get serves: neither as parts nor in the views. */

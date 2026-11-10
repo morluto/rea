@@ -556,6 +556,7 @@ ${withheld.length === 0 ? PYTHON_DATA_HOOKS : PYTHON_WITHHELD_DATA_HOOKS}${PYTHO
     title,
     plan.dconf.length > 0,
     plan.relaunchOnReset === true,
+    (plan.stateAliases ?? []).length > 0,
   );
 };
 
