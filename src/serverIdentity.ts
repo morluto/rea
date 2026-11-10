@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,52 @@ const packageRoot = (): string => {
     : resolve(moduleDirectory, "..");
 };
 
+/**
+ * Whether two entrypoint spellings select the same file.
+ *
+ * A launcher records the canonical path, while a caller passes the spelling it
+ * used to start REA, which can reach the same file through a symlink or a `..`
+ * segment. Resolving the spelling alone does not follow links, so compare the
+ * file each spelling selects and fall back to the resolved path when either
+ * cannot be read.
+ */
+const sameEntrypoint = (left: string, right: string): boolean => {
+  const selected = (candidate: string): string => {
+    try {
+      return realpathSync(candidate);
+    } catch {
+      return resolve(candidate);
+    }
+  };
+  return selected(left) === selected(right);
+};
+
+/** Every observation that disagrees with this runtime, in a stable order. */
+const identityReasons = (
+  expected: ExpectedServerIdentity | undefined,
+  serverPath: string | undefined,
+  catalog: ReturnType<typeof createCatalogIdentity>,
+): string[] => {
+  const reasons: string[] = [];
+  if (
+    expected?.package_version !== undefined &&
+    expected.package_version !== PRODUCT_IDENTITY.packageVersion
+  )
+    reasons.push("package_version_mismatch");
+  if (
+    expected?.catalog_digest !== undefined &&
+    expected.catalog_digest !== catalog.digests.combined_sha256
+  )
+    reasons.push("catalog_digest_mismatch");
+  if (
+    expected?.server_path !== undefined &&
+    serverPath !== undefined &&
+    !sameEntrypoint(expected.server_path, serverPath)
+  )
+    reasons.push("registration_path_mismatch");
+  return reasons;
+};
+
 /** Build one runtime identity without claiming alignment from absent observations. */
 export const createServerIdentity = (input: {
   readonly startedAt: string;
@@ -35,23 +82,7 @@ export const createServerIdentity = (input: {
 }) => {
   const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
-  const reasons: string[] = [];
-  if (
-    input.expected?.package_version !== undefined &&
-    input.expected.package_version !== PRODUCT_IDENTITY.packageVersion
-  )
-    reasons.push("package_version_mismatch");
-  if (
-    input.expected?.catalog_digest !== undefined &&
-    input.expected.catalog_digest !== catalog.digests.combined_sha256
-  )
-    reasons.push("catalog_digest_mismatch");
-  if (
-    input.expected?.server_path !== undefined &&
-    serverPath !== undefined &&
-    resolve(input.expected.server_path) !== serverPath
-  )
-    reasons.push("registration_path_mismatch");
+  const reasons = identityReasons(input.expected, serverPath, catalog);
   const observedExpectation =
     input.expected !== undefined &&
     Object.values(input.expected).some((value) => value !== undefined);

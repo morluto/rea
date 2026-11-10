@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -242,6 +242,29 @@ describe("server and catalog identity", () => {
       reasons: [],
       remediation: expect.stringContaining("entrypoint path is unavailable"),
     });
+  });
+});
+
+describe("server registration path identity", () => {
+  it("aligns a launch spelling that reaches the entrypoint through a symlink", async () => {
+    const root = await createTestTempDirectory("server-identity-symlink-");
+    const realDirectory = join(root, "real");
+    const canonicalEntrypoint = join(realDirectory, "rea.mjs");
+    const linkDirectory = join(root, "link");
+    await mkdir(realDirectory);
+    await writeFile(canonicalEntrypoint, "");
+    await symlink(realDirectory, linkDirectory);
+
+    // The launcher records the canonical entrypoint, while the caller passes the
+    // spelling it used to start REA. Both name the same file.
+    const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: canonicalEntrypoint,
+      expected: { server_path: join(linkDirectory, "rea.mjs") },
+    });
+
+    expect(identity.alignment).toMatchObject({ state: "aligned", reasons: [] });
   });
 });
 
