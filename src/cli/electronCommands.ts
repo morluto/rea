@@ -1,9 +1,9 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
 import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
-import { isAbsolute, resolve, sep } from "node:path";
 
 import { Cli, z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 import { logCliCommand } from "../cliLogging.js";
 import {
@@ -37,7 +37,6 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
-import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -65,11 +64,9 @@ const registerElectronFuseCommand = (
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
     args: z.object({
-      path: z
-        .string()
-        .describe(
-          "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
-        ),
+      path: localPathStringSchema.describe(
+        "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -78,7 +75,7 @@ const registerElectronFuseCommand = (
           return finishAnalysisCommand(
             () =>
               service.inspect(
-                { path: absoluteElectronFusePath(args.path) },
+                { path: absoluteCallerPath(args.path) },
                 { signal },
               ),
             service,
@@ -89,16 +86,6 @@ const registerElectronFuseCommand = (
         }),
       ),
   });
-};
-
-/** Anchor relative input without changing which file symlink/.. selects. */
-const absoluteElectronFusePath = (path: string): string => {
-  if (path === "") return path;
-  // Win32 resolves dot components before directory links, including drive-relative paths.
-  if (sep === "\\") return resolve(path);
-  if (isAbsolute(path)) return path;
-  const base = process.cwd();
-  return `${base}${base.endsWith(sep) ? "" : sep}${path}`;
 };
 
 const registerElectronActiveCommand = (

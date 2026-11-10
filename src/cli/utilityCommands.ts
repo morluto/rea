@@ -347,29 +347,37 @@ const registerReferenceSourceCommand = (
   cli.command(CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
-      root: z
-        .string()
-        .describe("Local source directory to import as historical reference"),
+      root: localPathStringSchema.describe(
+        "Local source directory to import as historical reference",
+      ),
     }),
-    options: z.object({
-      excludePaths: z
-        .string()
-        .optional()
-        .describe(
-          "JSON array of Git-ignore rules to exclude. Rules use Git-ignore syntax, including wildcards, directory suffixes, and negations; they are not literal path matches. An empty array adds no caller exclusions.",
-        ),
-      detail: z
-        .enum(["full", "summary"])
-        .default("full")
-        .describe(
-          "Complete committed graph or compact historical-source summary",
-        ),
-      outlineDepth: cliIntegerArgument(0)
-        .optional()
-        .describe(
-          "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
-        ),
-    }),
+    options: z
+      .object({
+        excludePaths: z
+          .string()
+          .optional()
+          .describe(
+            "JSON array of Git-ignore rules to exclude. Rules use Git-ignore syntax, including wildcards, directory suffixes, and negations; they are not literal path matches. An empty array adds no caller exclusions.",
+          ),
+        detail: z
+          .enum(["full", "summary"])
+          .default("full")
+          .describe(
+            "Complete committed graph or compact historical-source summary",
+          ),
+        outlineDepth: cliIntegerArgument(0)
+          .optional()
+          .describe(
+            "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
+          ),
+      })
+      .meta({
+        if: { required: ["outlineDepth"] },
+        then: {
+          required: ["detail"],
+          properties: { detail: { const: "summary" } },
+        },
+      }),
     run: ({ args, options }) =>
       logCliCommand(
         logger,
