@@ -246,7 +246,7 @@ sliceTest(
         {
           bytes: createGoBinaryFixture({ format: "macho" }).bytes,
           cpuType: CPU_ARM64,
-          cpuSubtype: 2,
+          cpuSubtype: 0,
         },
       ]).bytes,
     );
@@ -258,7 +258,7 @@ sliceTest(
         }),
       ).details.issues[0]?.message,
     ).toBe(
-      "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x2)); no slice was selected.",
+      "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x0)); no slice was selected.",
     );
 
     // A slice that runs past the file is damaged, not a selection to correct.
@@ -371,5 +371,41 @@ sliceTest(
         }),
       ).details.issues[0]?.path,
     ).toEqual(["architecture"]);
+  },
+);
+
+sliceTest(
+  "selects the preferred arm64 slice from a universal Mach-O holding arm64 and arm64e slices",
+  async ({ slices: { client, write } }) => {
+    const arm64AndArm64e = await write(
+      "arm64-and-arm64e",
+      universalMacho([
+        {
+          bytes: createGoBinaryFixture({ format: "macho" }).bytes,
+          cpuType: CPU_ARM64,
+          cpuSubtype: 0,
+        },
+        {
+          bytes: createGoBinaryFixture({ format: "macho" }).bytes,
+          cpuType: CPU_ARM64,
+          cpuSubtype: 2,
+        },
+      ]).bytes,
+    );
+    const resolvedArm64 = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: arm64AndArm64e, architecture: "arm64" },
+    });
+    expect(resolvedArm64.isError).toBeFalsy();
+    const contract = toolContract("inspect_go_binary");
+    const arm64Report = goBinarySchema.parse(
+      contract.outputSchema.parse(resolvedArm64.structuredContent)
+        .normalized_result,
+    );
+    expect(arm64Report.selected_slice).toMatchObject({
+      cpu_type: CPU_ARM64,
+      cpu_subtype: 0,
+      offset: 4096,
+    });
   },
 );

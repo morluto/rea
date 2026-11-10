@@ -4,6 +4,7 @@ import {
   readUniversalMachoImage,
   readUniversalMachoSlice,
 } from "../../domain/apple/machoImageSelection.js";
+import { machoCpuSubtypeBase } from "../../domain/apple/machoCpuIdentity.js";
 import {
   MACHO_CPU_TYPES,
   type MachoSliceArchitecture,
@@ -11,6 +12,10 @@ import {
 } from "../../domain/apple/machoTargetSelection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import {
+  MACHO_ARCHITECTURE_POLICIES,
+  machoSubtypeRank,
+} from "../MachoArchitectureSelection.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {
   const name = Object.entries(MACHO_CPU_TYPES).find(
@@ -64,18 +69,35 @@ export const selectNativeImage = (
       kind: "architecture",
       message: `Universal Mach-O holds ${available}; select one architecture.`,
     });
-  const matches = fat.slices.filter(
-    ({ cpuType }) => cpuType === MACHO_CPU_TYPES[architecture],
-  );
-  const [slice] = matches;
-  if (slice === undefined || matches.length > 1)
+  const policy = MACHO_ARCHITECTURE_POLICIES[architecture];
+  let best: (typeof fat.slices)[number] | undefined;
+  let bestRank = Number.POSITIVE_INFINITY;
+  let ambiguous = false;
+  for (const candidate of fat.slices) {
+    if (candidate.cpuType !== policy?.cpuType) continue;
+    const rank = machoSubtypeRank(policy, candidate.cpuSubtype);
+    if (best !== undefined && rank >= bestRank) {
+      if (
+        rank === bestRank &&
+        machoCpuSubtypeBase(candidate.cpuSubtype) ===
+          machoCpuSubtypeBase(best.cpuSubtype)
+      )
+        ambiguous = true;
+      continue;
+    }
+    best = candidate;
+    bestRank = rank;
+    ambiguous = false;
+  }
+  if (best === undefined || ambiguous)
     return err({
       kind: "architecture",
       message:
-        slice === undefined
+        best === undefined
           ? `Universal Mach-O holds ${available}, not ${architecture}.`
           : `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
     });
+  const slice = best;
   const selected = readUniversalMachoSlice(bytes, fat, slice);
   if (!selected.ok) return selected;
   return ok({
