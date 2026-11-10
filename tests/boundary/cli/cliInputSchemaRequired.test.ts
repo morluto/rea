@@ -15,6 +15,7 @@ import {
   MAX_SELECTED_LOCALES,
 } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
+import { dataTypeSelectorGuidance } from "../../../src/cli/analysisSelector.js";
 
 type CliInstance = ReturnType<typeof createCli>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
@@ -164,10 +165,13 @@ describe("CLI advertised input schemas", () => {
               : "./selected",
           ),
         };
-        expect(validate(input)).toBe(count === 16);
+        // WASM path count is admitted by the workflow's selected
+        // max_artifact_paths budget; JavaScript recovery retains its own cap.
+        const accepted = command === "inspect-wasm-artifact" || count === 16;
+        expect(validate(input)).toBe(accepted);
         expect(
           parserSchema(cli, command, "options")?.safeParse(input).success,
-        ).toBe(count === 16);
+        ).toBe(accepted);
       }
     }
     const scenario = await advertisedSchema(cli, "capture-native-ui-scenario");
@@ -328,6 +332,36 @@ describe("web module CLI advertised input schema", () => {
     expect(options({ importMapPath: "" })).toBe(false);
     expect(options({ importMapPath: "map\u0000.json" })).toBe(false);
     expect(options({ importMapBaseUrl: "" })).toBe(false);
+  });
+});
+
+describe("web source location CLI advertised input schema", () => {
+  it("advertises the shared path and URL constraints", async () => {
+    const cli = createCli({});
+    const advertised = await advertisedSchema(cli, "trace-web-source-location");
+    const ajv = new Ajv2020({ strict: false });
+    const args = ajv.compile(advertised.args ?? {});
+    const valid = {
+      manifestPath: resolve("manifest.json"),
+      scriptIndex: 0,
+      sourceMapPath: resolve("app.js.map"),
+      sourceMapUrl: "https://example.test/app.js.map",
+      line: 1,
+      column: 0,
+    };
+
+    expect(args(valid)).toBe(true);
+    expect(args({ ...valid, manifestPath: "" })).toBe(false);
+    expect(args({ ...valid, manifestPath: "./manifest.json" })).toBe(false);
+    expect(
+      args({ ...valid, manifestPath: `${resolve("manifest.json")}\u0000` }),
+    ).toBe(false);
+    expect(args({ ...valid, sourceMapPath: "" })).toBe(false);
+    expect(args({ ...valid, sourceMapPath: "app.js.map" })).toBe(false);
+    expect(
+      args({ ...valid, sourceMapPath: `${resolve("app.js.map")}\u0000` }),
+    ).toBe(false);
+    expect(args({ ...valid, sourceMapUrl: "" })).toBe(false);
   });
 });
 
@@ -707,6 +741,7 @@ const PATTERN_SELECTOR = atLeastOneSelector(
   "the positional pattern or --pattern",
 );
 const EXACTLY_ONE_SCRIPT = "Provide exactly one of --script or --script-file.";
+const DATA_TYPE_OPTIONS = ["--type", "--address"] as const;
 const TARGET = "target.bin";
 
 interface SelectorRequest {
@@ -957,6 +992,25 @@ const selectorDiscovery: readonly SelectorDiscovery[] = [
       { args: { mode: "debug", target: "71" } },
       { options: { scriptFile: "" } },
     ],
+  },
+  {
+    command: "inspect-native-data-type",
+    guidance: dataTypeSelectorGuidance,
+    choice: "exactly one",
+    fields: [
+      { group: "options", name: "type", preserved: DATA_TYPE_OPTIONS },
+      { group: "options", name: "address", preserved: DATA_TYPE_OPTIONS },
+    ],
+    representable: [
+      { args: { path: TARGET }, options: { type: "/MyStruct" } },
+      { args: { path: TARGET }, options: { address: "0x1000" } },
+      {
+        args: { path: TARGET },
+        options: { type: "/MyStruct", address: "0x1000" },
+      },
+    ],
+    omitted: { args: { path: TARGET }, options: {} },
+    rejected: [{ options: { type: 1 } }, { options: { address: 1 } }],
   },
 ];
 

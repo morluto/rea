@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
 import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
+import { elementText } from "../../../src/domain/desktop/viewPointer.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   expectSameCheckResults,
@@ -144,6 +146,48 @@ describe("XML with a DOCTYPE in the exported module", () => {
     });
   });
 
+  it("reads text that opens with an element as XML when it is well formed, whatever the file is called, alike in both", async () => {
+    const saved = (name: string, text: string) => ({
+      name,
+      bytes: new TextEncoder().encode(text),
+    });
+    const files = [
+      saved(
+        "weekend-trip.mm",
+        '<map version="freeplane 1.7.0">\n<node TEXT="Weekend Trip" ID="ID_1"><node TEXT="Packing" ID="ID_2"/></node>\n</map>\n',
+      ),
+      saved("notes.txt", "<b>bold</b> and <i>italic</b>\n"),
+      saved("plain.txt", "  <todo><item>milk</item></todo>\n"),
+    ];
+    await expectSameFileViews(files);
+
+    const formats = await Promise.all(
+      files.map(async (file) => (await typescriptFileView(file)).format),
+    );
+    expect(formats).toEqual(["xml", "text", "xml"]);
+  });
+
+  it("reads text that opens with a DOCTYPE naming no internal subset and then an element as XML, as KmPlot's plots, alike in both", async () => {
+    const saved = (name: string, text: string) => ({
+      name,
+      bytes: new TextEncoder().encode(text),
+    });
+    const files = [
+      saved(
+        "lesson_plots.fkt",
+        '<!DOCTYPE kmpdoc>\n<kmpdoc version="4">\n    <function type="cartesian"><equation-0 step="0.05">h(x) = 2x + 1</equation-0></function>\n</kmpdoc>\n',
+      ),
+      saved("entities.fkt", '<!DOCTYPE a [<!ENTITY e "boom">]>\n<a>&e;</a>\n'),
+      saved("broken.fkt", "<!DOCTYPE a>\n<a><b></a>\n"),
+    ];
+    await expectSameFileViews(files);
+
+    const formats = await Promise.all(
+      files.map(async (file) => (await typescriptFileView(file)).format),
+    );
+    expect(formats).toEqual(["xml", "text", "text"]);
+  });
+
   it("never reads the DTD a DOCTYPE names: neither its entities nor its default attributes apply", async () => {
     const folder = await createTestTempDirectory("desktop-xml-dtd-");
     const dtd = join(folder, "a.dtd");
@@ -208,5 +252,70 @@ describe("whole-text checks in both evaluators", () => {
     expect(passes(after)).toEqual([true, true, true, false]);
     // The value searched for is the collapsed one, " 9:30\n" read as "9:30".
     expect(after?.[1]?.description).toContain(JSON.stringify("9:30"));
+  });
+
+  it("leaves an element's text undecided where the readers dropped text from between its runs, and its attribute decided", async () => {
+    const deep = "Documents/deep.xml";
+    /** A paragraph of `before`, then `dropped` nested past the 64 levels both readers keep, then `after`. */
+    const paragraph = (before: string, dropped: string, after: string) => ({
+      name: "deep.xml",
+      bytes: new TextEncoder().encode(
+        `<p id="t">${before}${"<b>".repeat(65)}${dropped}${"</b>".repeat(65)}${after}</p>`,
+      ),
+    });
+    const files = [
+      paragraph("at 3", "WRONG", ":30 PM"),
+      paragraph("alpha", "zzz", "beta"),
+    ];
+    await expectSameFileViews(files);
+    // The kept runs join into text neither file has.
+    const kept = await Promise.all(
+      files.map(async (file) => {
+        const { view } = await typescriptFileView(file);
+        return elementText((view as { root: JsonValue }).root);
+      }),
+    );
+    expect(kept).toEqual(["at 3:30 PM", "alphabeta"]);
+
+    const results = await expectSameCheckResults(
+      deep,
+      [
+        {
+          id: "time",
+          kind: "text_contains",
+          file: deep,
+          pointer: "/root",
+          value: "at 3:30 PM",
+        },
+        {
+          id: "word",
+          kind: "text_contains",
+          file: deep,
+          pointer: "/root",
+          value: "alphabeta",
+        },
+        {
+          id: "id",
+          kind: "text_equals",
+          file: deep,
+          pointer: "/root/attributes/id",
+          value: "t",
+        },
+      ],
+      files,
+    );
+
+    expect(results).toHaveLength(files.length);
+    for (const outcomes of results) {
+      expect(
+        outcomes.map(({ id, passed, undecided }) => [id, passed, undecided]),
+      ).toEqual([
+        ["time", false, true],
+        ["word", false, true],
+        ["id", true, undefined],
+      ]);
+      for (const { description } of outcomes)
+        expect(description).toContain(deep);
+    }
   });
 });

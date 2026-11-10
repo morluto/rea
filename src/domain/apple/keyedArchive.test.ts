@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_PLIST_DEPTH, plistNestingLimitMessage } from "./plistValue.js";
+import { MAX_PLIST_DEPTH } from "./plistValue.js";
 import { projectKeyedArchive } from "./keyedArchive.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
@@ -46,7 +46,7 @@ describe("projectKeyedArchive input bound", () => {
         offset: 0,
         limit: 1,
       }),
-    ).toThrow(plistNestingLimitMessage());
+    ).toThrow(/128 nesting levels/iu);
   });
 });
 

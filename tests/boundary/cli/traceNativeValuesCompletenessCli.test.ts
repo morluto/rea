@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Cli } from "incur";
 import pino from "pino";
@@ -25,6 +25,7 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { nativeValueTraceSchema } from "../../../src/domain/native/nativeValueTrace.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -162,6 +163,37 @@ it("reports the CLI last page and its observed node budget separately", async ()
     address: null,
     reason: "Node budget reached",
   });
+});
+
+it("publishes the completed trace with its sources when final close fails", async () => {
+  const run = await serveTraceCli(
+    valueTraceDiamond({ sessionSubject: true }).port,
+    async () =>
+      err(
+        new ProviderCleanupError(valueTraceProvider.id, ["owned session"], {
+          reason: "controlled final close failure",
+        }),
+      ),
+  );
+  const directory = await createTestTempDirectory("rea-trace-close-sources-");
+  const destination = join(directory, "trace.json");
+  const { output } = await run(["--evidence_output", destination, "--json"]);
+
+  const failed = cliFailureSchema.parse(output);
+  expect(failed.code).toBe("cleanup_incomplete");
+  const trace = parseEvidence(failed.details.partial_observation);
+  expect(trace.evidence_links.length).toBeGreaterThan(0);
+  expect(failed.details).toMatchObject({
+    resources: ["owned session"],
+    diagnostics: { evidence_bundle: { path: destination } },
+  });
+  expect(failed.details).not.toHaveProperty("source_closure");
+  const bundle = parseEvidenceBundle(
+    JSON.parse(await readFile(destination, "utf8")),
+  );
+  expect(bundle.records.map((record) => record.evidence_id)).toEqual(
+    expect.arrayContaining([trace.evidence_id, ...trace.evidence_links]),
+  );
 });
 
 it.each([

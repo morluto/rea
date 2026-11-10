@@ -1,3 +1,4 @@
+import { createGdbFixtureOwner } from "./gdbTestHelpers.js";
 import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,9 +18,14 @@ import { waitForTestPidFile } from "../../support/process/pidFile.js";
 const createGdbManagerForInjectedPlatform = (
   options: ConstructorParameters<typeof GdbSessionManager>[0] = {},
 ): GdbSessionManager =>
-  new GdbSessionManager({ platform: "linux", ...options });
+  new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
+    platform: "linux",
+    ...options,
+  });
 
 let directory: string | undefined;
+const fixtureOwner = createGdbFixtureOwner();
 const managers: Array<{ closeAll(): Promise<void> }> = [];
 
 const expectOwnedProcessExited = async (pid: number): Promise<void> => {
@@ -308,8 +314,10 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 1,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "1",
+      },
     });
     managers.push(manager);
 
@@ -369,15 +377,17 @@ process.stdin.on("data", (chunk) => {
       releaseSecondSpawn = resolve;
     });
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 2,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "2",
+      },
       spawnProcess: async (options) => {
         spawnCalls += 1;
         if (spawnCalls === 2) {
           enterSecondSpawn?.();
           await secondSpawnGate;
         }
-        return spawnOwnedProviderProcess(options);
+        return fixtureOwner.spawnProcess(options);
       },
     });
     managers.push(manager);
@@ -483,14 +493,11 @@ process.stdin.resume();
 );
 
 afterEach(async () => {
-  await Promise.all(
-    managers
-      .splice(0)
-      .map((manager) => manager.closeAll().catch(() => undefined)),
-  );
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
+  await fixtureOwner.cleanup(managers, async () => {
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    directory = undefined;
+  });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -555,8 +562,10 @@ setTimeout(() => process.exit(0), 250).unref();
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
     });
     managers.push(manager);
     const started = await manager.start();
@@ -612,8 +621,10 @@ setTimeout(() => process.exit(0), 250);
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
       stopProcess: async () => ({
         status: "incomplete",
         reason: "simulated incomplete stop",
@@ -700,9 +711,14 @@ process.stdin.on("data", (chunk) => {
       controller.signal,
     );
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    controller.abort();
+    const reason = { source: "cancelled while queued" };
+    controller.abort(reason);
     const third = manager.execute(started.value.session_id, "third");
-    expect((await second).ok).toBe(false);
+    const cancelled = await second;
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
     expect((await first).ok).toBe(true);
     expect((await third).ok).toBe(true);
     await expect(readFile(overlapPath, "utf8")).rejects.toThrow();
@@ -975,7 +991,7 @@ setInterval(() => {}, 1000);
     const manager = createGdbManagerForInjectedPlatform({
       environment: { REA_GDB_COMMAND: provider },
       spawnProcess: async (options) => {
-        ownedLaunch = await spawnOwnedProviderProcess(options);
+        ownedLaunch = await fixtureOwner.spawnProcess(options);
         ownedProcessExit = new Promise<void>((resolve) => {
           const child = ownedLaunch!.process;
           if (child.exitCode !== null || child.signalCode !== null) resolve();

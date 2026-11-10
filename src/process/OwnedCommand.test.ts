@@ -291,8 +291,9 @@ it("reports a premature input close as a collection failure", async () => {
   ).rejects.toMatchObject({
     reason: "process",
     collectionFailure: true,
-    message:
-      "stdin stream failed: closed before writable finalization completed",
+    message: expect.stringMatching(
+      /stdin stream failed.*closed before writable finalization completed/i,
+    ),
     processError: {
       message: "closed before writable finalization completed",
     },

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { build } from "plist";
 
-import { plistNestingLimitMessage } from "../../../src/domain/apple/plistValue.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { deeplyNestedXmlPlist } from "../../fixtures/keyedArchiveXmlNesting.js";
@@ -38,7 +37,9 @@ for (const [name, xml] of [
         details: {
           reason: "limit",
           truncated: true,
-          detail: `Cannot decode selected Foundation keyed archive: ${plistNestingLimitMessage()}`,
+          detail: expect.stringMatching(
+            /keyed archive.*128 nesting levels.*no runtime override/iu,
+          ),
         },
       });
     },
