@@ -28,8 +28,8 @@ async def cleanup(root: Path) -> None:
     )
     for sandbox_id in local_sandbox_ids():
         await LocalSandboxProvider().terminate_sandbox(sandbox_id)
-        # The pinned provider can suppress container/network removal failures.
-        # Do not discard the only recovery folder until Docker confirms absence.
+        # The pinned provider reports incomplete teardown and retains the folder.
+        # Keep REA's independent Docker/Linux checks before releasing that owner.
         if _docker("ps", "-aq", "--filter", f"name=^agent-{sandbox_id}$"):
             raise RuntimeError(f"Sandbox {sandbox_id} still has its agent container")
         if _docker("ps", "-aq", "--filter", f"label=agentenv.sandbox={sandbox_id}"):

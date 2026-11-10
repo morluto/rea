@@ -51,3 +51,40 @@ validation allowed, and the $4.31 left could not cover 3 solves of another
 hardened task at the $1.50 to $2.07 a solve `apply-corrections` cost. Each
 solve's computer was torn down by its run. `difficulty.json` and the README
 of each bundle list the tasks measured.
+
+## Forced-stop cleanup qualification, 2026-11-10
+
+The original missing-identity review concern is addressed by the private root
+owned by each `SolveSandboxRoot` and the provider guarantees shipped in the
+pinned `agentenv-framework==0.9.1485`.
+[Upstream #555](https://github.com/scaleapi/agentenv-framework/pull/555) exposes
+`local_sandbox_ids()` for that root;
+[#561](https://github.com/scaleapi/agentenv-framework/pull/561) makes incomplete
+termination raise, so the teardown owner retains the work folder for retry.
+[Issue #546](https://github.com/scaleapi/agentenv-framework/issues/546) is closed.
+The published wheel was inspected, including folder creation before resource
+startup, provider termination, and task teardown's folder-removal ordering.
+
+The [qualification record](cleanup-qualification-2026-11-10.json) records the
+wheel digest and observations. In an isolated Linux arm64 container with the
+published provider, Python 3.12 and Docker Desktop's Linux daemon:
+
+- A helper created a provider-owned folder and was killed with SIGKILL before
+  returning any sandbox report. REA's cleanup helper discovered and removed it.
+- Another helper started a real named/labeled Docker container, labeled network,
+  and detached Linux process carrying the sandbox marker. After its process
+  group was killed, REA's cleanup helper removed all three and emptied the root.
+- A controlled Docker removal refusal made cleanup fail while preserving the
+  work folder and container. Removing the refusal and retrying that same root
+  removed the resources and folder.
+- A separate unrelated container stayed running through every case and was
+  removed by the qualification's own final cleanup.
+
+The probe invoked the production `solve_cleanup.py` and actual published
+`LocalSandbox`/`LocalSandboxProvider` with real Docker resources. It did not run
+a paid model or a complete `run_bundle` solve. Linux process checks were inside
+the qualification container's process namespace; this does not qualify native
+macOS host-process cleanup. Existing conservative REA checks remain in place.
+Controlled TypeScript cleanup/report/cancellation regressions also passed:
+22 tests across `AgentEnvSolveHelper`, `SolveSandboxRoot`, and
+`DesktopBuildSolves`.

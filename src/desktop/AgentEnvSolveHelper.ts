@@ -95,7 +95,7 @@ export class SolveCleanupError extends ProviderCleanupError {
       {
         operation,
         remediationAction: unknown
-          ? "The helper did not identify every sandbox. REA attempts to clean discoverable sandbox folders, but agentenv can remove a folder after an unverified teardown. Inspect agentenv's records and Docker containers for anything still running."
+          ? "REA could not verify cleanup of every sandbox under this solve's private root. Closing REA retries cleanup of the retained root; inspect its agentenv records and Docker containers for anything still running."
           : "Closing REA retries this cleanup; check that no agentenv run of the bundle is still up with docker ps.",
       },
     );
