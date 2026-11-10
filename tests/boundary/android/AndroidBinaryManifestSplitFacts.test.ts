@@ -214,6 +214,35 @@ it("reads an isSplitRequired declared on the <application> element", () => {
   expect(facts.ok && facts.value.required_split_types).toBeNull();
 });
 
+it("reports an unreadable <application> element as unknown rather than absent", () => {
+  // The <application> element is where a bundle-generated base APK carries
+  // isSplitRequired, so a malformed one must not read as a plain absence.
+  const bytes = Buffer.from(
+    binaryManifestFixture({
+      attributes: [],
+      application: [
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          booleanValue: true,
+        }),
+      ],
+    }),
+  );
+  // Rewrite the application start element's header size below the 16-byte
+  // ResXMLTree_node, which makes readStartElement return null. The root and
+  // the application share the same chunk type and header size prefix, so this
+  // takes the second occurrence.
+  const startElement = Buffer.from([0x02, 0x01, 0x10, 0x00]);
+  const root = bytes.indexOf(startElement, 8);
+  const application = bytes.indexOf(startElement, root + 1);
+  expect(application).toBeGreaterThan(0);
+  bytes.writeUInt16LE(12, application + 2);
+  expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
+    ok: true,
+    value: { is_split_required: "unknown" },
+  });
+});
+
 it("rejects a chunk whose header exceeds its own size", () => {
   // An oversized resource-map header consumes the whole chunk, leaving no IDs,
   // so a split attribute identified only by its framework ID reads as absent.

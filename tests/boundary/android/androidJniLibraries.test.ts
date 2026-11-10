@@ -697,6 +697,6 @@ it("reports a resource-referenced isSplitRequired as an inventory unknown", asyn
   ]);
   const result = await read(source);
   expect(result.inventory.unknowns.join("\n")).toContain(
-    "declares android:isSplitRequired as a resource reference",
+    "split declaration is present but not readable as a literal",
   );
 });

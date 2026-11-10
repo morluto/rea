@@ -301,6 +301,10 @@ export const readAndroidBinaryManifestSplitFacts = (
     }
     let manifest: StartElement | undefined;
     let application: StartElement | undefined;
+    // An unreadable <application> can still carry the split flag, so a
+    // malformed one is remembered and reported as a limitation below instead
+    // of reading as an absent declaration.
+    let unreadableApplication = false;
     // A bundle-built base APK may declare isSplitRequired on <application>
     // instead of the root, so both elements are retained and read below.
     const scanned = walkChunks(reader, declared, (chunk) => {
@@ -313,8 +317,9 @@ export const readAndroidBinaryManifestSplitFacts = (
         chunk.headerSize,
         chunk.chunkSize,
       );
-      if (element?.name === "manifest") manifest = element;
-      else if (element?.name === "application") application = element;
+      if (element === null) unreadableApplication = true;
+      else if (element.name === "manifest") manifest = element;
+      else if (element.name === "application") application = element;
       return true;
     });
     if (!scanned.ok) return scanned;
@@ -354,7 +359,9 @@ export const readAndroidBinaryManifestSplitFacts = (
     // reference can resolve to true at install time.
     const isSplitRequired: boolean | "unknown" | null =
       requiredFlag === undefined
-        ? null
+        ? unreadableApplication
+          ? "unknown"
+          : null
         : requiredFlag.dataType === TYPE_INT_BOOLEAN
           ? requiredFlag.data !== 0
           : requiredFlag.dataType === TYPE_STRING
