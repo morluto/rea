@@ -145,7 +145,7 @@ print(json.dumps(_view(Path(sys.argv[2]))))
     } else {
       if (withTask instanceof Error) throw withTask;
       expect(withTask.normalized_result).toMatchObject({
-        tasks: [{ failing_on_seed: ["done"] }],
+        tasks: [{ name: "finish", failing_on_seed: ["done"] }],
       });
     }
   },
