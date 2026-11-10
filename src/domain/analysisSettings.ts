@@ -29,8 +29,8 @@ export type AnalysisSettingsReader = () => AnalysisSettingsSnapshot;
 /**
  * Whether `update_analysis_settings` can change the active value.
  * `runtime` applies inside this process. `restart` stays at the value this
- * process already started with. Caller-selected parameters use `parameter`
- * on their own facts; they are not analysis settings.
+ * process already started with. A limit fact uses `parameter` when this call
+ * supplied the value; the setting definition itself stays `runtime`.
  */
 export type AnalysisSettingUpdateMode = "runtime" | "restart";
 
@@ -45,7 +45,7 @@ export interface AnalysisSettingLimit {
   readonly applies_at: "next_operation" | "next_worker" | "next_startup";
   readonly agent_editable: true;
   readonly scope: "rea-runtime";
-  readonly update_mode: AnalysisSettingUpdateMode;
+  readonly update_mode: AnalysisSettingUpdateMode | "parameter";
   /**
    * True only when a configured value is not the one this process is using.
    * The reported effective value is active, so limit errors leave this false.

@@ -333,6 +333,23 @@ export const analysisSettingValueSchema = (id: AnalysisSettingId) => {
     ? number.nullable()
     : number;
 };
+/**
+ * Caller argument, then the accepted runtime override, then the built-in
+ * default. The third value is that default, not a launch-environment seed.
+ */
+export const selectedAnalysisSetting = (
+  request: number | undefined,
+  override: number | undefined,
+  fallback: number,
+): {
+  readonly value: number;
+  readonly source: "default" | "runtime" | "request";
+} => {
+  if (request !== undefined) return { value: request, source: "request" };
+  if (override !== undefined) return { value: override, source: "runtime" };
+  return { value: fallback, source: "default" };
+};
+
 /** Project one owner's accepted budget, including the explicit per-call precedence. */
 export const analysisSettingLimit = (
   setting: AnalysisSettingId,
@@ -350,7 +367,7 @@ export const analysisSettingLimit = (
     applies_at: definition.appliesAt,
     agent_editable: true,
     scope: "rea-runtime",
-    update_mode: definition.updateMode,
+    update_mode: source === "request" ? "parameter" : definition.updateMode,
     pending_restart: false,
     ...(definition.parameter === undefined
       ? {}
