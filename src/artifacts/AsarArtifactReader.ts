@@ -79,7 +79,11 @@ export class AsarArtifactReader implements ArtifactReader {
         };
         assertAsarReadActive(signal);
         try {
-          return await readAsarListing(admitted.header, signal);
+          return await readAsarListing(
+            admitted.header,
+            signal,
+            this.options.headerAdmission?.listing,
+          );
         } catch (cause: unknown) {
           // Listing names members relative to this archive; keep which archive.
           if (

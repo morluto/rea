@@ -145,6 +145,16 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisTimeoutError) return timeoutRemediation(error);
   if (
     error instanceof ArtifactOperationError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
+  if (
+    error instanceof ArtifactOperationError &&
+    error.readerLimit !== undefined
+  )
+    return error.userMessage ?? error.detail ?? error.message;
+  if (
+    error instanceof ArtifactOperationError &&
     error.reason === "limit" &&
     error.boundary === "capacity"
   )
