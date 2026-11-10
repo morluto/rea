@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { build, buildBinary, parseBinary, type PlistValue } from "plist";
 import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { scanBinaryPlistScalars } from "./PlistScalars.js";
 import {
   decodeKeyedArchiveBytes,
   inspectBundleKeyedArchive,
@@ -884,9 +885,11 @@ describe("binary plist date object region", () => {
     });
 
     expect(graph.objects[1]).toMatchObject(dateScalar(null));
-    expect(graph.limitations).toContain(unknownDateLimitation(1));
-    expect(graph.limitations.join("\n")).not.toContain(
-      "number metadata could not be completely observed",
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(oneUnknownDate),
+    );
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(/number metadata.*could not.*observed/iu),
     );
     expect(Buffer.compare(overlapping, original)).toBe(0);
   });
