@@ -59,7 +59,7 @@ export interface JavaScriptAnalysisAccumulator {
   )[];
   readonly appPathChanges: LocatedJavaScriptFinding<ElectronAppPathChangeFinding>[];
   electronCallPaths?: readonly ElectronCallPath[];
-  electronCallPathLimitReached?: boolean;
+  electronCallPathLimits?: Set<"wrapper_visits" | "wrapper_depth">;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
   /** Target and receiver identities awaiting the shared mutation index. */

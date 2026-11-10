@@ -95,26 +95,10 @@ export const observeGhidraEndpoint = async (
         return { path: endpoint.path };
       }
       if (process.platform === "win32") {
-        let encoded: string;
-        try {
-          encoded = readWindowsPrivateRuntimeFile(
-            endpoint.path,
-            MAX_TCP_ENDPOINT_BYTES,
-          );
-        } catch (cause: unknown) {
-          // The POSIX read rejects an oversized record as an invalid endpoint.
-          // The Windows lease reports the same bound as a reader limit.
-          if (
-            cause instanceof ArtifactReaderFailure &&
-            cause.reason === "limit"
-          )
-            throw endpointFailure(
-              endpoint,
-              "Ghidra TCP endpoint is invalid",
-              cause,
-            );
-          throw cause;
-        }
+        const encoded = readWindowsPrivateRuntimeFile(
+          endpoint.path,
+          MAX_TCP_ENDPOINT_BYTES,
+        );
         assertArtifactReadActive(options.signal);
         return parseTcpEndpoint(endpoint, encoded);
       }
@@ -192,7 +176,9 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+  // Classify a bounded endpoint record without discarding its owned cleanup.
   const invalidRecord =
+    endpoint.transport === "authenticated-loopback-tcp" &&
     origin === "owned-or-classified" &&
     primary instanceof ArtifactReaderFailure &&
     primary.reason === "limit";

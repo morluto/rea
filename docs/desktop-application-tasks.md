@@ -3,11 +3,12 @@
 A [desktop application export](desktop-application-export.md) can carry one
 task: a prompt for a computer-use agent and checks that grade what the agent
 left in the application's files. An agent, not REA, writes the prompt and the
-checks from the change the capture recorded. REA validates the task against
-the capture and keeps it only when its checks fail on the seed and all pass on
-the captured end state. REA runs no model and no code the agent wrote: the
-checks are declarative, and the exported verifier evaluates them the same way
-REA does.
+checks from the change the capture recorded. For file checks, REA validates
+the task against the capture and keeps it only when its checks fail on the
+seed and all pass on the captured end state. The checks are declarative;
+optional [readers](#readers) run commands to interpret files, and
+[screen judges](#screen-judges) use a model when no file shows the change.
+The exported verifier uses the same checks and reader runner as REA.
 
 ```sh
 rea describe-desktop-application-task ./mousepad-capture --format json > draft.json
@@ -518,7 +519,7 @@ and `CIRCLE`, and only `CIRCLE` going from 5 to 9 is the user's change.
 and hyphens); `prompt` is what the user asks for, naming the app, since a
 solving agent's own shell cannot see the computer's files and the app's name
 sends it to the screen; `checks` holds 1 to 32
-checks. Each check has a `kind`, a `file` given as a path under the home such as
+checks. Each file check has a `kind`, a `file` given as a path under the home such as
 `Documents/todo.txt`, and an optional `id` (`check-1`, `check-2` and so on by
 position otherwise). A check reads the typed view `data/get` returns for that
 file, in the shapes of the state view.
@@ -588,6 +589,82 @@ value, or one of only whitespace with `normalize_whitespace`, an empty
 `asctime`'s form. Other volatile
 content, such as a
 counter the app bumps on every save, is for the author to leave out.
+
+## Readers
+
+For a file REA cannot interpret itself, such as an app's binary document,
+the task can define `readers`: 1 to 8 commands using the app's own reading
+capability. Each reader has a unique `id` of lowercase letters, digits and
+hyphens, a home-relative `file`, an `argv` array and `output`, either `json`
+or `lines`. Its `argv`, or optional `stdin` text, must contain `{file}`;
+the runner replaces it with the path of a private copy of that file.
+The command must be installed where the export runs and in the exported
+computer where the task will be graded.
+
+The command prints its answer in lines starting with `REA `; other stdout
+is ignored. With `output: "json"`, those marked lines join into one JSON
+value for `value_equals`, `value_absent` and `member_count`. With
+`output: "lines"`, they supply the lines for `lines_present`, `lines_absent`
+and `line_count`. A check selects a reader with `"reader": "READER-ID"`
+and must give that reader's file as its `file`. Every reader must be used by
+at least one check.
+
+Readers execute commands, including any code in `argv` or `stdin`; review
+them before exporting or running a task. The runner uses a private copy, a
+fresh home, no session bus or computer control token, and no display unless
+the reader requests `display: true`. This is execution isolation from the
+running app's normal profile, not a filesystem sandbox. `timeout_s` defaults
+to 60 seconds and accepts 1 to 300. A failed command, timeout, malformed
+answer or missing marked output reports a reader error; it does not establish
+that the document lacks the expected value. Correct the command or its output and retry; increase
+`timeout_s` within its accepted range when the reader needs longer.
+
+Export runs readers on both retained ends, using the seed bytes as the bundle
+actually ships them. The witness and exported verifier run them in the
+computer after the app's files settle. Cleanup failures retain the reader's
+reported resources: retry the check or close the build computer to retry
+cleanup; when the command's outcome is unknown, confirm it stopped before
+removing its folder.
+
+## Screen judges
+
+A task whose result exists only on screen can use `screen_judge` checks:
+
+```json
+{
+  "name": "show-list",
+  "prompt": "In Notes, show the shopping list.",
+  "checks": [
+    {
+      "id": "shown",
+      "kind": "screen_judge",
+      "question": "Does the window show the shopping list?"
+    }
+  ]
+}
+```
+
+Each question must be a nonempty yes-or-no question of at most 2,000
+characters, false on the seed and true when the task is done. A screen task
+contains only screen checks and takes no readers. Export refuses it when an
+owned file's readable change could be checked instead, or when the build
+computer's seed or end screenshot is missing or exceeds 2 MiB. Capture those
+checkpoints in a build computer before exporting.
+
+Export ships the two screenshots as labelled failing and passing examples;
+it does not call the judge or establish that the questions distinguish them.
+The [build witness](desktop-build-witness.md) runs the exported judge on a
+fresh screenshot at each stage. The verifier takes a screenshot after the
+solving agent stops. For each question, the judge sees both examples and
+votes three times; a majority of yes answers passes the check.
+
+The judge uses `[model.roles] judge` in the runner's
+`.agentenv/config.toml`, then `[model] default`, then
+`anthropic/claude-sonnet-5-5`. Configure its endpoint with
+`LITELLM_BASE_URL` and `LITELLM_API_KEY`, or `[model] base_url` and `api_key`.
+`agent-env run --judge-model` does not reach this verifier. Without an
+endpoint, grading raises and the run fails rather than scoring the agent;
+configure the endpoint and rerun the witness or task.
 
 ## Pointers and selectors
 
@@ -799,7 +876,7 @@ that may hold only part of the array.
 ## Validation and export
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`
-evaluates the checks on the capture's state view: on each file as it was at
+evaluates file checks on the capture's state view: on each file as it was at
 the seed checkpoint, which is the seed, as the bundle ships it with the
 capture host's name and user removed, and at the end checkpoint, the
 captured end state. Those are the capture's first and last checkpoints unless

@@ -1284,7 +1284,9 @@ it("reports nested bridge depth truncation while retaining shallow paths", () =>
   expect(result.electron.call_paths).toContainEqual(
     expect.objectContaining({ entry: "desktop.shallow", channel: "shallow" }),
   );
-  expect(result.limitations.join(" ")).toContain("depth 128");
+  expect(result.limitations.join(" ")).toContain(
+    "semantic_precision.wrapper_depth=128",
+  );
 });
 it("preserves conditions when a wrapper dispatches through conditional external methods", () => {
   const result = analyzeJavaScriptStaticSource(`

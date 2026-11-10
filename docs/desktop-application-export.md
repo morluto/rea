@@ -564,7 +564,21 @@ or whose retained value nests more than 500 levels deep, gets an `error` instead
 REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
-and are not read. XML is read with Python's `expat` twice: with namespace
+and are not read. The selected `file_bytes` also applies to scrubbed seed task
+views before admission, independently of how much seed data the export can
+copy. SQLite table views have a shared `sqlite_view_bytes` allowance, default
+16 MiB of compact UTF-8 JSON per table, checked before retaining each row.
+An oversized table keeps its error while other tables remain readable. Raising
+this view allowance does not raise the independent 16 MiB native SQLite
+value/record limit or REA worker reply limit; worker facts include additional
+schema and typed-cell metadata and may be refused earlier. The TypeScript
+and exported Python readers count their respective native compact JSON encodings;
+float and exponent spelling can make their exact byte thresholds differ even
+when they report equal numeric facts. The Python byte counter quotes large
+strings in bounded chunks before retention.
+Exported SQLite readers require Python 3.11 or later for the native connection limits; the
+AgentEnv compatibility workflow uses Python 3.12.
+XML is read with Python's `expat` twice: with namespace
 processing, which refuses what REA's parser refuses, such as an undeclared
 prefix, then without it, so element and attribute names keep the prefixes the
 document spells and namespace declarations stay attributes, as in REA's view;
