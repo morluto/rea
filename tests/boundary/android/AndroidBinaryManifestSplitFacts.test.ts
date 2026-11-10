@@ -112,3 +112,29 @@ it("treats a chunk that leaves the document as malformed", () => {
     error: { kind: "malformed" },
   });
 });
+
+it("treats an undersized start-element header as unreadable rather than empty", () => {
+  // ResXMLTree_node is 16 bytes; advertising 12 shifts the attribute table by
+  // four bytes, so the split declarations read as absent instead of failing.
+  const bytes = Buffer.from(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: "base__abi",
+        }),
+      ],
+    }),
+  );
+  const starts: number[] = [];
+  for (let at = 8; at + 8 <= bytes.length; at++) {
+    if (bytes.readUInt16LE(at) === 0x0102 && bytes.readUInt16LE(at + 2) === 16)
+      starts.push(at);
+  }
+  expect(starts).toHaveLength(1);
+  bytes.writeUInt16LE(12, starts[0]! + 2);
+  expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+});

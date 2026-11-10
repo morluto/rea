@@ -25,6 +25,7 @@ const MAXIMUM_STRING_BYTES = 1024 * 1024;
 const MAXIMUM_STRINGS = 100_000;
 const UTF8_FLAG = 0x100;
 const ATTRIBUTE_ROWS = 20;
+const RES_XML_NODE_HEADER = 16;
 /** Framework resource IDs disambiguate the attributes from name spelling and prefix binding. */
 const REQUIRED_SPLIT_TYPES_ID = 0x0101064c;
 const IS_SPLIT_REQUIRED_ID = 0x0101064d;
@@ -156,10 +157,13 @@ const readStartElement = (
   strings: readonly (string | null)[],
   resourceIds: readonly number[],
   start: number,
+  headerSize: number,
   chunkSize: number,
 ): StartElement | null => {
-  // A start element begins with the common 16-byte ResXMLNode header, so the
-  // attribute table starts at the chunk plus its header, not plus a node size.
+  // A start element begins with the common 16-byte ResXMLNode header; a chunk
+  // that advertises less than that places the name and attribute base outside
+  // its own header, so its declarations can only be read as absent.
+  if (headerSize < RES_XML_NODE_HEADER) return null;
   const attributeStart = reader.u16(start + 24);
   const attributeSize = reader.u16(start + 26);
   const attributeCount = reader.u16(start + 28);
@@ -270,6 +274,7 @@ export const readAndroidBinaryManifestSplitFacts = (
           strings,
           resourceIds,
           chunk.start,
+          chunk.headerSize,
           chunk.chunkSize,
         );
         return el;
