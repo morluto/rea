@@ -16,7 +16,7 @@ import {
   semanticOriginalGlobalProcessAt,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
-  semanticRequireOrigin,
+  semanticRequireOriginCandidate,
   semanticRequireLoaderAt,
   hasSemanticCreateRequireFactoryOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -67,7 +67,6 @@ import {
   semanticScopeExitEffect,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
@@ -148,7 +147,7 @@ const localAccessorMethods = (
     if (paths.has(key)) continue;
     paths.add(key);
     examined.set(node, paths);
-    if (++selections > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (++selections > state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return undefined;
     }
@@ -407,7 +406,7 @@ export function* collectSemanticMemberMutationsSteps(
       ]);
       if (examined.has(identity)) continue;
       examined.add(identity);
-      if (examined.size > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      if (examined.size > state.precision.alias_selections) {
         state.valueResourceLimits.add("alias-selections");
         return [{ node: root, path: [] }];
       }
@@ -483,6 +482,7 @@ export function* collectSemanticMemberMutationsSteps(
     path: PropertyPath,
     effect: ValueEffect,
     node: t.Node | undefined,
+    loaderAuthority?: "candidate",
   ): void => {
     const identity = semanticRequireExportsIdentity(specifier, path);
     let effectPath = identity.path;
@@ -508,6 +508,7 @@ export function* collectSemanticMemberMutationsSteps(
       "required",
       identity.specifier,
       effect,
+      loaderAuthority,
       effectPath,
       node?.start,
       node?.end,
@@ -516,7 +517,12 @@ export function* collectSemanticMemberMutationsSteps(
     recordedRequiredEffects.add(key);
     recordedEffectCount += 1;
     const effects = state.requiredModuleEffects.get(identity.specifier) ?? [];
-    effects.push({ path: effectPath, node, kind: effect });
+    effects.push({
+      path: effectPath,
+      node,
+      kind: effect,
+      ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
+    });
     state.requiredModuleEffects.set(identity.specifier, effects);
   };
   // Traversal states that differ only in coverage fields a record never
@@ -803,7 +809,7 @@ export function* collectSemanticMemberMutationsSteps(
         if (exact.has(selection)) return;
         if (
           exact.size > 0 &&
-          ++additionalAlternatives > SEMANTIC_ALIAS_SELECTION_LIMIT
+          ++additionalAlternatives > state.precision.alias_selections
         ) {
           projectionsWidened = true;
           state.valueResourceLimits.add("alias-selections");
@@ -866,13 +872,14 @@ export function* collectSemanticMemberMutationsSteps(
       )
         continue;
       const expression = unwrapJavaScriptExpression(current.node).node;
-      const required = semanticRequireOrigin(expression, state);
+      const required = semanticRequireOriginCandidate(expression, state, true);
       if (required !== undefined) {
         recordRequiredEffect(
           required.origin.specifier,
           [...required.origin.importedPath, ...current.path],
           effect,
           mutation,
+          required.origin.loaderAuthority,
         );
         continue;
       }
@@ -1156,6 +1163,7 @@ export function* collectSemanticMemberMutationsSteps(
                 shared.path,
                 effect,
                 mutation,
+                origin.loaderAuthority,
               );
           }
           const receiverInitializers = [
@@ -2108,7 +2116,7 @@ const observableMutationPaths = (
     // exact member paths instead of widening the first path to a wildcard.
     const hasParsedRequireOrigin = binding.initializers.some(
       ({ node }) =>
-        semanticRequireOrigin(node, state) !== undefined ||
+        semanticRequireOriginCandidate(node, state) !== undefined ||
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (

@@ -346,7 +346,9 @@ describe("ELF symbol-table ownership", () => {
       expect((await readElfSymbols(image, [name])).symbols).toEqual([]);
     },
   );
+});
 
+describe("stripped ELF symbol-table ownership", () => {
   it("uses DT_HASH's count when strings precede symbols instead of reading following payload", async () => {
     const image = strippedImageWithSections();
     const dynamic = Number(image.readBigUInt64LE(64 + 56 + 8));
@@ -363,8 +365,9 @@ describe("ELF symbol-table ownership", () => {
       { name: "_kDartVmSnapshotData", offset: 0x400, size: 52 },
     ]);
     expect(result.failures).toContainEqual({
-      reason:
-        "symbol _kDartIsolateSnapshotData is not in the dynamic symbol table",
+      reason: expect.stringMatching(
+        /_kDartIsolateSnapshotData.*not in the dynamic symbol table/i,
+      ),
     });
     image.writeBigUInt64LE(0x60000001n, dynamic + 4 * 16); // No recognized count table.
     expect(
@@ -487,8 +490,9 @@ describe.each(Object.entries(ELF_CLASSES))(
         symbols: [],
         failures: [
           {
-            reason:
-              "Dynamic symbol table section offset disagrees with its PT_LOAD mapping",
+            reason: expect.stringMatching(
+              /dynamic symbol table.*section offset.*disagrees.*PT_LOAD/i,
+            ),
           },
         ],
       });

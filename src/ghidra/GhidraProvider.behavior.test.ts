@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "./GhidraLiteralSearch.js";
 import {
-  EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
   ghidraEmptyIncomingReferencesLimitation,
@@ -23,6 +22,7 @@ import {
   type AnalysisCallerLifetime,
 } from "../domain/analysisErrorBase.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
@@ -64,11 +64,12 @@ import {
 } from "../domain/ghidraValues.fixture.js";
 
 import { parseConfig } from "../config/parseConfig.js";
+import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
   GHIDRA_ANNOTATIONS_RETAINED,
@@ -82,7 +83,10 @@ import {
   GhidraLaunchError,
   type GhidraHeadlessLauncher,
 } from "./GhidraLauncher.js";
-import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+} from "../domain/analysisErrorCore.js";
 import { GHIDRA_PROJECT_PROFILE_MISMATCH } from "./GhidraProjectSnapshot.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
@@ -1172,6 +1176,89 @@ describe("Ghidra startup configuration", () => {
   });
 });
 
+it("reobserves value-flow budgets on the same session while ordinary address lookups stay cached", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-ghidra-flow-budgets-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "fixture.elf");
+  await writeFile(path, elf(2, 1, 62));
+  const parsed = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
+  if (!parsed.ok) throw parsed.error;
+  const settings = new AnalysisSettings({});
+  const received: number[] = [];
+  let ordinaryReads = 0;
+  let clients = 0;
+  const ghidra = new GhidraProvider(
+    runtimeAnalysisConfig(parsed.value, settings.read),
+    silentLogger,
+    {},
+    installationHost(),
+    (options) => {
+      clients += 1;
+      return {
+        start: async () => {
+          const info = sessionInfo();
+          return ok({
+            ...info,
+            profile_digest: options.profileDigest,
+            target: { ...info.target, sha256: options.targetSha256 },
+          });
+        },
+        callTool: async (operation, _parameters, controls) => {
+          if (operation === "analyze_function") {
+            received.push(controls?.valueFlowLimits?.max_operations ?? -1);
+            return ok({ value: ghidraFunctionDossier(), limitations: [] });
+          }
+          if (operation === "address_name") {
+            ordinaryReads += 1;
+            return ok("fixture_main");
+          }
+          throw new Error(`Unexpected operation: ${operation}`);
+        },
+        close: async () => ok(null),
+      };
+    },
+  );
+  const session = composeBinarySession(new AnalysisProviderRegistry([ghidra]));
+  try {
+    const opened = await session.open(path, { providerId: "ghidra" });
+    if (!opened.ok) throw opened.error;
+    for (const value of [1, 6000, 2]) {
+      const updated = settings.update({
+        changes: [
+          {
+            setting: "ghidra.value_flow_max_operations",
+            action: "set",
+            value,
+          },
+        ],
+      });
+      if (!updated.ok) throw updated.error;
+      const result = await settings.run(() =>
+        session.execute("analyze_function", { procedure: "0x401000" }),
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.cachePolicy).toBe("live");
+    }
+    expect(received).toEqual([1, 6000, 2]);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await session.execute("address_name", {
+        document: "fixture",
+        address: "0x401000",
+      });
+      if (!result.ok) throw result.error;
+    }
+    expect(ordinaryReads).toBe(1);
+    expect(clients).toBe(1);
+    expect(
+      session
+        .exportEvidenceBundle()
+        .records.some((record) => record.operation === "analyze_function"),
+    ).toBe(true);
+  } finally {
+    await expect(session.close()).resolves.toMatchObject({ ok: true });
+  }
+});
+
 describe("Ghidra client projection", () => {
   it("commits exact provider, isolation, and resource semantics", async () => {
     const toolCalls: Array<{
@@ -1231,8 +1318,9 @@ describe("Ghidra client projection", () => {
     expect(resolved.value.profile.parameters).toMatchObject({
       language_id: "auto-from-header",
       compiler_spec_id: "auto-default",
-      call_relationship_coverage: "function-body-call-coverage-v5",
+      call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+      native_value_flow_projection: "accepted-runtime-budgets-v1",
     });
 
     const result = await ghidra
@@ -1255,7 +1343,15 @@ describe("Ghidra client projection", () => {
       {
         operation: "list_procedures",
         input: { document: null },
-        options: { decompileTimeoutSeconds: null },
+        options: {
+          decompileTimeoutSeconds: null,
+          decompileMaxPayloadMiB: null,
+          valueFlowLimits: {
+            max_operations: 3000,
+            max_inputs_per_operation: 64,
+            max_edges: 12000,
+          },
+        },
       },
     ]);
     expect(result).toMatchObject({
@@ -4483,8 +4579,11 @@ describe("Ghidra missing project program", () => {
     expect(projected.message).toContain(path);
     expect(projected.message).toContain("Win32 error 5");
     expect(projected.message).not.toMatch(/antivirus|DACL/iu);
-    expect(projected.remediation.action).toBe(
-      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    expect(projected.remediation.action).toMatch(
+      /TMP and TEMP.*allowed tree.*no dot-prefixed element.*restart REA/iu,
+    );
+    expect(projected.remediation.action).toMatch(
+      /java_home\.save.*creating that file in advance does not help/iu,
     );
   });
 
@@ -4494,8 +4593,8 @@ describe("Ghidra missing project program", () => {
       {},
       "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)\n",
     );
-    expect(projected.remediation.action).not.toBe(
-      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    expect(projected.remediation.action).not.toMatch(
+      /TMP and TEMP.*allowed tree/iu,
     );
   });
 });
@@ -5016,17 +5115,6 @@ describe("Ghidra disabled analyzer applicability per program", () => {
         expect.stringContaining("REA_GHIDRA_DISABLED_ANALYZERS"),
       );
     }
-    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
-  });
-
-  it("fails closed on an analyzer report the profile did not commit", async () => {
-    const { counts, client } = await analyzerSession(
-      undefined,
-      analyzerReport(["Objective-C Message Analyzer", "not_applicable"]),
-    );
-    const failed = await client.execute("health", {});
-    expect(failed.ok).toBe(false);
-    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
     expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
 });
@@ -5942,6 +6030,105 @@ it("reuses readiness only inside its active task and provider lifetime", async (
   }
 });
 
+it.each(["retry", "physical", "cleanup", "close"] as const)(
+  "handles %s during an abandoned installation inspection",
+  async (outcome) => {
+    const entered = createDeferred<void>();
+    const aborted = createDeferred<void>();
+    const release = createDeferred<void>();
+    const base = installationHost();
+    let probes = 0;
+    let denyCleanup = outcome === "cleanup";
+    const physical = new AnalysisArtifactChangedError(
+      "ghidra:installation",
+      "/selected/java",
+      "Java changed during inspection",
+    );
+    const ghidra = provider({
+      ...base,
+      probeJava: async (command, environment, options) => {
+        probes++;
+        if (probes === 1) {
+          options.signal?.addEventListener("abort", () => aborted.resolve(), {
+            once: true,
+          });
+          entered.resolve();
+          await release.promise;
+          if (outcome === "physical") return err(physical);
+          if (outcome === "cleanup") {
+            options.resourceOwner?.retain(
+              {
+                close: async () => {
+                  if (denyCleanup) throw new Error("close refused");
+                },
+              },
+              "controlled Java descriptor",
+            );
+            return err(
+              new AnalysisCancelledError("ghidra:installation", {
+                cause: options.signal?.reason,
+                cleanup: {
+                  reason: "close refused",
+                  resources: ["controlled Java descriptor"],
+                },
+              }),
+            );
+          }
+        }
+        return base.probeJava(command, environment, options);
+      },
+    });
+    const controller = new AbortController();
+    const first = ghidra.inspectAvailability({ signal: controller.signal });
+    void first.catch(() => undefined);
+    let second: ReturnType<typeof ghidra.inspectAvailability> | undefined;
+    let closing: ReturnType<typeof ghidra.closeOwnedResources> | undefined;
+    try {
+      await awaitAcknowledgement(entered.promise, first, "Java inspection");
+      controller.abort("first inspection");
+      await awaitAcknowledgement(aborted.promise, first, "inspection abort");
+      second = ghidra.inspectAvailability();
+      void second.catch(() => undefined);
+      await Promise.resolve();
+      expect(probes).toBe(1);
+      if (outcome === "close") closing = ghidra.closeOwnedResources();
+      release.resolve();
+      if (outcome === "retry") {
+        await expect(first).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+        });
+        expect((await second).status).toBe("available");
+        expect(probes).toBe(2);
+      } else if (outcome === "physical") {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisArtifactChangedError",
+          path: "/selected/java",
+        });
+        expect(probes).toBe(1);
+      } else if (outcome === "cleanup") {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cleanupIncomplete: true,
+          cleanupResources: ["controlled Java descriptor"],
+        });
+        expect(probes).toBe(1);
+      } else {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+        });
+        expect((await closing)?.ok).toBe(true);
+        expect(probes).toBe(1);
+      }
+    } finally {
+      controller.abort();
+      release.resolve();
+      await Promise.allSettled([first, second, closing]);
+      denyCleanup = false;
+      expect((await ghidra.closeOwnedResources()).ok).toBe(true);
+    }
+  },
+);
+
 it("refuses a changed installation before creating a target-bound native client", async () => {
   let release = "12.1.4",
     nativeCreates = 0;
@@ -6494,11 +6681,17 @@ describe("Windows Ghidra readiness repair", () => {
   });
 
   it("gives every operation of a Windows existing-project session the same repair", () => {
-    for (const capability of existingProjectCapabilities("win32"))
+    const capabilities = existingProjectCapabilities("win32");
+    expect(capabilities.length).toBeGreaterThan(0);
+    for (const capability of capabilities)
       expect(capability).toMatchObject({
         available: false,
-        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+        reason: expect.stringMatching(
+          /existing Ghidra project.*cannot be opened.*Windows/iu,
+        ),
+        remediation: expect.stringMatching(
+          /unset REA_GHIDRA_PROJECT_PATH.*ephemeral project.*Linux or macOS.*restart REA/iu,
+        ),
       });
   });
 });

@@ -323,6 +323,7 @@ it("preserves an opaque cancellation observed during successful prefix close", a
     cause: reason,
     cleanupIncomplete: false,
   });
+  expect(result.error.cause).toBe(reason);
   expect(result.error.cleanupResources).not.toContain("unowned-resource");
   expect((await client.close()).ok).toBe(true);
 });

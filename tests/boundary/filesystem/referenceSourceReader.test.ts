@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,28 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { readStableSymlinkTarget } from "../../../src/reference/ReferenceSourceReaderEntries.js";
 import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import { ok } from "../../../src/domain/result.js";
+
+it("retains the caller reason and observed entries when traversal is cancelled", async () => {
+  const root = await createTestTempDirectory("rea-reference-cancel-");
+  await writeFile(join(root, "observed.js"), "observed");
+  await mkdir(join(root, "nested"));
+  const controller = new AbortController();
+  const reason = { requested: "stop traversal" };
+  const result = await readReferenceSource(root, {
+    signal: controller.signal,
+    beforeDirectory: async (path) => {
+      if (path === "nested") controller.abort(reason);
+      return ok(undefined);
+    },
+  });
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error.code).toBe("cancelled");
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.partial?.entries).toContainEqual(
+    expect.objectContaining({ path: "observed.js", status: "read" }),
+  );
+});
 
 describe("readReferenceSource entries", () => {
   it("returns explicit entries in canonical code-point path order", async () => {
@@ -126,7 +149,8 @@ describe("readReferenceSource entries", () => {
   it("reads a source file larger than the former 16 MiB ceiling", async () => {
     const root = await createTestTempDirectory("rea-reference-large-");
     const size = 16 * 1024 * 1024 + 1;
-    await writeFile(join(root, "large.bin"), Buffer.alloc(size, 0x61));
+    const bytes = Buffer.alloc(size, 0x61);
+    await writeFile(join(root, "large.bin"), bytes);
 
     const result = await readReferenceSource(root);
 
@@ -139,6 +163,15 @@ describe("readReferenceSource entries", () => {
         path: "large.bin",
         size,
       }),
+    );
+    const entry = result.value.entries.find(
+      (entry) => entry.path === "large.bin",
+    );
+    if (entry?.status !== "read" || entry.kind !== "file")
+      throw new Error("Expected captured file bytes");
+    expect(entry.bytes.byteLength).toBe(size);
+    expect(createHash("sha256").update(entry.bytes).digest("hex")).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
     );
   });
 
@@ -231,6 +264,7 @@ describe("readReferenceSource failures and exclusions", () => {
         tag: "reference-source-reader",
         code: "cancelled",
         message: "Reference source traversal cancelled",
+        cause: controller.signal.reason,
       },
     });
 

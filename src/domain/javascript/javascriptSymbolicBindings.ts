@@ -11,6 +11,8 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
@@ -65,8 +67,6 @@ interface SymbolicReadBoundary {
 }
 type SymbolicNamespace = Extract<SymbolicValue, { kind: "namespace" }>;
 
-const SYMBOLIC_DEPTH_LIMIT = 128;
-
 const emptyEnvironment: SymbolicEnvironment = { values: new Map() };
 
 const containsOwnedReturn = (root: t.Node): boolean => {
@@ -118,9 +118,13 @@ export class JavaScriptSymbolicBindings {
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
   }> = [];
-  #remainingEvaluations = 1_000_000;
+  #remainingEvaluations: number;
   #depth = 0;
-  truncated = false;
+  readonly resourceLimits = new Set<"wrapper_visits" | "wrapper_depth">();
+
+  get truncated(): boolean {
+    return this.resourceLimits.size > 0;
+  }
   unresolved = false;
 
   constructor(
@@ -130,6 +134,7 @@ export class JavaScriptSymbolicBindings {
       indexJavaScriptElectronIdentitySteps(program, state),
     ),
   ) {
+    this.#remainingEvaluations = state.precision.wrapper_visits;
     this.#electronIdentity = electronIdentity;
     const shapes = createSemanticExpressionShapeResolver(state);
     const defineProperty = createGlobalReferenceReader(state, [
@@ -216,9 +221,11 @@ export class JavaScriptSymbolicBindings {
   #admitEvaluation(): boolean {
     if (
       --this.#remainingEvaluations < 0 ||
-      this.#depth >= SYMBOLIC_DEPTH_LIMIT
+      this.#depth >= this.state.precision.wrapper_depth
     ) {
-      this.truncated = true;
+      this.resourceLimits.add(
+        this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
+      );
       return false;
     }
     return true;
@@ -267,7 +274,7 @@ export class JavaScriptSymbolicBindings {
           : 0);
       if (cost > this.#remainingEvaluations) {
         this.#remainingEvaluations = 0;
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return symbolicUnknown("symbolic condition resource limit");
       }
       this.#remainingEvaluations -= cost;
@@ -317,7 +324,7 @@ export class JavaScriptSymbolicBindings {
       first === undefined ? undefined : this.#completionGroups.get(first);
     if (group === undefined || group.members.size !== values.length) return [];
     if (values.length > this.#remainingEvaluations) {
-      this.truncated = true;
+      this.resourceLimits.add("wrapper_visits");
       this.#remainingEvaluations = 0;
       return [];
     }
@@ -358,7 +365,13 @@ export class JavaScriptSymbolicBindings {
       ) {
         return symbolicUnknown("overwritten Electron API member");
       }
-      return { kind: "external", path };
+      return {
+        kind: "external",
+        path,
+        ...(value.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
+      };
     }
     if (value.kind === "record") {
       const property = value.values.get(key);
@@ -765,13 +778,25 @@ export class JavaScriptSymbolicBindings {
     if (!binding)
       return !semanticResolutionBlocked(this.state, node, node.name) &&
         ["require", "navigator", "String", "Boolean"].includes(node.name)
-        ? { kind: "external", path: [node.name] }
+        ? node.name === "require" &&
+          javaScriptRuntimeContext(this.state.program) === "module"
+          ? symbolicUnknown("CommonJS require is unavailable in an ES module")
+          : {
+              kind: "external",
+              path: [node.name],
+              ...(node.name === "require" &&
+              javaScriptRuntimeContext(this.state.program) === "unknown"
+                ? { loaderAuthority: "candidate" as const }
+                : {}),
+            }
         : symbolicUnknown("unbound identifier");
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     // Electron member identity is checked at the selected property. A write
     // to one method must not erase the module origin or unaffected siblings.
-    const electronOrigin = this.#electronIdentity.exportPath(node);
+    const electronOrigin =
+      this.#electronIdentity.exportPath(node) ??
+      this.#electronIdentity.candidateExportPath(node);
     if (electronOrigin === undefined && this.#mutated.has(binding.bindingId))
       return symbolicUnknown("dynamic member writes");
     for (let e: SymbolicEnvironment | undefined = env; e; e = e.parent) {
@@ -961,7 +986,7 @@ export class JavaScriptSymbolicBindings {
       current = current.parent
     ) {
       if (--this.#remainingEvaluations < 0) {
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return false;
       }
       if (current.activation === activation) return true;
@@ -980,7 +1005,7 @@ export class JavaScriptSymbolicBindings {
       current = current.caller
     ) {
       if (--this.#remainingEvaluations < 0) {
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return undefined;
       }
       const point = current.point;
@@ -1011,7 +1036,7 @@ export class JavaScriptSymbolicBindings {
     const boundary =
       read === undefined ? undefined : this.#namespaceReadBoundary(value, read);
     if (this.#remainingEvaluations <= 0) {
-      this.truncated = true;
+      this.resourceLimits.add("wrapper_visits");
       return undefined;
     }
     const sourcePoint = boundary?.node[boundary.edge];
@@ -1029,7 +1054,7 @@ export class JavaScriptSymbolicBindings {
     if (commonThrough != null) {
       if (writes.length > this.#remainingEvaluations) {
         this.#remainingEvaluations = 0;
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return undefined;
       }
       this.#remainingEvaluations -= writes.length;
@@ -1127,7 +1152,7 @@ export class JavaScriptSymbolicBindings {
       ) {
         if (variants.length > this.#remainingEvaluations) {
           this.#remainingEvaluations = 0;
-          this.truncated = true;
+          this.resourceLimits.add("wrapper_visits");
         } else {
           this.#remainingEvaluations -= variants.length;
           const exits = variants as readonly SymbolicNamespace[];
@@ -1176,7 +1201,15 @@ export class JavaScriptSymbolicBindings {
           const spec = args[0];
           result =
             spec?.kind === "literal" && typeof spec.value === "string"
-              ? { kind: "external", path: [spec.value] }
+              ? {
+                  kind: "external",
+                  path: [spec.value],
+                  ...(semanticRequireOriginCandidate(node, this.state)?.origin
+                    .loaderAuthority === "candidate" ||
+                  value.loaderAuthority === "candidate"
+                    ? { loaderAuthority: "candidate" as const }
+                    : {}),
+                }
               : symbolicUnknown("dynamic require");
         } else if (
           value.kind !== "function" ||
@@ -1249,8 +1282,13 @@ export class JavaScriptSymbolicBindings {
         ...(unresolvedFallthrough ? { conditionUnresolved: true } : {}),
       });
     for (const statement of statements) {
-      if (--this.#remainingEvaluations < 0 || depth >= 128) {
-        this.truncated = true;
+      if (
+        --this.#remainingEvaluations < 0 ||
+        depth >= this.state.precision.wrapper_depth
+      ) {
+        this.resourceLimits.add(
+          this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
+        );
         return {
           values: [...possible, symbolicUnknown("symbolic resource limit")],
           fallsThrough: false,

@@ -1,10 +1,11 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, onTestFinished } from "vitest";
 
 import { electronActiveTimelineEventSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -816,6 +817,38 @@ process.stdout.write(JSON.stringify({
   expect(invocations).toEqual(["ch"]);
 });
 
+it("does not infer hook dispatch from an application's listener metadata", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-indirect-owner-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "indirect-owner.cjs");
+  await writeFile(
+    script,
+    `const {ipcMain}=require("electron");
+ipcMain.on("seed",()=>{});
+let calls=0;
+const outer=()=>{calls++;};
+outer.listener=ipcMain.rawListeners("seed")[0];
+ipcMain.on("outer",outer);
+ipcMain.emit("outer", {sender:{id:9}});
+ipcMain.removeListener("outer",outer);
+const events=globalThis.__reaElectronActiveSnapshot().events;
+process.stdout.write(JSON.stringify({calls,remaining:ipcMain.listenerCount("outer"),
+ invocations:events.filter(e=>e.kind==="main-event-invocation"&&e.channel==="outer").length,
+ gaps:events.filter(e=>e.kind==="ipc-observation-gap"&&e.channel==="outer").map(e=>e.event)}));`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    calls: 1,
+    remaining: 0,
+    invocations: 0,
+    gaps: ["listener-chain"],
+  });
+});
+
 it("keeps ipcMain once self-removal through an on decorator that wraps the hook", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-wrap-");
   temporary.push(root);
@@ -1559,7 +1592,7 @@ it.each([
     depth: 16,
     prototypeDepth: 0,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 1,
   },
   {
@@ -1599,7 +1632,7 @@ it.each([
     depth: 1,
     prototypeDepth: 1,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -1623,7 +1656,7 @@ it.each([
     depth: 1,
     prototypeDepth: 16,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -3643,28 +3676,19 @@ const runNode = async (
   readonly stdout: string;
   readonly stderr: string;
 }> => {
-  const hook = await stageHook(root, sourceHook);
-  return new Promise((resolve, reject) => {
-    const child = spawn(
+  const processes = createTestProcessRegistry();
+  onTestFinished(() => processes.shutdown());
+  return withVerifierCleanup(async () => {
+    const hook = await stageHook(root, sourceHook);
+    const result = await processes.run(
       process.execPath,
       [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
-      {
-        cwd: root,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
+      { cwd: root, env: process.env, timeoutMs: 10_000 },
     );
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) =>
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
-    );
-  });
+    return {
+      code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }, [() => processes.shutdown()]);
 };

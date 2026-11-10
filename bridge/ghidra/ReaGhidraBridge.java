@@ -119,9 +119,9 @@ import ghidra.program.util.VarnodeContext;
 public final class ReaGhidraBridge extends HeadlessScript {
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
     private static final int PDB_ATTRIBUTE_UTF16_BUDGET = 4096;
-    private static final int MAX_HIGH_PCODE_OPS = 3000;
-    private static final int MAX_HIGH_PCODE_INPUTS_PER_OP = 64;
-    private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
+    private static final int DEFAULT_HIGH_PCODE_OPS = 3000;
+    private static final int DEFAULT_HIGH_PCODE_INPUTS_PER_OP = 64;
+    private static final int DEFAULT_HIGH_PCODE_DEF_USE_EDGES = 12000;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
     private String admittedTargetSha256;
@@ -179,10 +179,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
+    private Integer decompileMaxPayloadMiB;
+    // DecompileProcess converts MiB to bytes using a signed-int left shift.
+    private static final int MAX_DECOMPILE_PAYLOAD_MIB = Integer.MAX_VALUE >> 20;
+    private ValueFlowLimits valueFlowLimits = defaultValueFlowLimits();
     // DecompileProcess converts seconds to an int millisecond timer delay.
     private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
@@ -199,6 +204,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Path descriptorPath = Path.of(arguments[0]);
         checkpointDirectory = descriptorPath.toAbsolutePath().normalize().getParent();
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
+        existingProject = descriptor.existingProject;
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
@@ -424,6 +430,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
+                valueFlowLimits = request.valueFlowLimits();
+                applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
                 writeSuccess(writer, request.id, handleRequest(request, descriptor));
             }
             catch (RequestFailure failure) {
@@ -876,6 +884,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
+        JsonArray overlays = new JsonArray();
         List<ByteSearchBlock> eligible = new ArrayList<>();
         for (MemoryBlock block : ordered) {
             monitor.checkCancelled();
@@ -883,8 +892,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Address high = block.getEnd();
             Address bound = start == null ? end : start;
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
-            if (bound == null && (!block.isLoaded() || block.isOverlay())) {
+            // Without bounds, search loaded non-overlay memory. Unloaded file
+            // parts and loaded overlays stay reachable through explicit bounds.
+            if (bound == null && !block.isLoaded()) {
                 notLoaded.add(byteSearchCoverage(block, low, high));
+                continue;
+            }
+            if (bound == null && block.isOverlay()) {
+                overlays.add(byteSearchCoverage(block, low, high));
                 continue;
             }
             if (start != null && low.compareTo(start) < 0) low = start;
@@ -960,6 +975,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         searched.addProperty("bytes", covered);
         searched.add("skipped_uninitialized", skipped);
         searched.add("skipped_not_loaded", notLoaded);
+        searched.add("skipped_overlays", overlays);
         JsonObject result = new JsonObject();
         result.add("matches", matches);
         result.add("searched", searched);
@@ -1028,11 +1044,26 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private void initializeDecompiler() {
+    private DecompileOptions decompileOptions(Integer payloadMiB) {
         DecompileOptions options = new DecompileOptions();
         options.setMaxInstructions(Integer.MAX_VALUE);
+        if (payloadMiB != null) options.setMaxPayloadMBytes(payloadMiB);
+        return options;
+    }
+
+    private void applyDecompilePayloadLimit(Integer payloadMiB) {
+        if (java.util.Objects.equals(decompileMaxPayloadMiB, payloadMiB)) return;
+        // DecompInterface supports live setOptions: it updates the existing
+        // DecompileProcess result-size bound before sending native options.
+        if (!decompiler.setOptions(decompileOptions(payloadMiB)))
+            throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
+        decompiler.flushCache();
+        decompileMaxPayloadMiB = payloadMiB;
+    }
+
+    private void initializeDecompiler() {
         decompiler = new DecompInterface();
-        decompiler.setOptions(options);
+        decompiler.setOptions(decompileOptions(decompileMaxPayloadMiB));
         decompiler.toggleCCode(true);
         decompiler.toggleSyntaxTree(true);
         decompiler.toggleJumpLoads(true);
@@ -1846,7 +1877,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         while (operations.hasNext()) {
             monitor.checkCancelled();
             PcodeOpAST operation = operations.next();
-            if (selected.size() >= MAX_HIGH_PCODE_OPS) {
+            if (selected.size() >= valueFlowLimits.maxOperations()) {
                 omittedOperationsLowerBound = 1;
                 break;
             }
@@ -1874,6 +1905,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray effects = new JsonArray();
         int omittedInputs = 0;
         int omittedEdges = 0;
+        boolean edgeLimitReached = false;
         for (PcodeOpAST operation : selected) {
             monitor.checkCancelled();
             String operationId = operationIds.get(operation);
@@ -1889,14 +1921,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             value.addProperty("block_membership", operation.getParent() == null ? "detached" : "member");
             JsonArray inputs = new JsonArray();
             int inputCount = operation.getNumInputs();
-            int capturedInputs = Math.min(inputCount, MAX_HIGH_PCODE_INPUTS_PER_OP);
+            int capturedInputs = Math.min(inputCount, valueFlowLimits.maxInputsPerOperation());
             for (int inputIndex = 0; inputIndex < capturedInputs; inputIndex += 1) {
                 Varnode input = operation.getInput(inputIndex);
                 inputs.add(varnodeValue(input));
                 if (input instanceof VarnodeAST astInput) {
                     if (astInput.getHigh() instanceof HighParam parameter) {
-                        if (parameterUses.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) omittedEdges++;
-                        else {
+                        if (parameterUses.size() >= valueFlowLimits.maxEdges()) {
+                            edgeLimitReached = true;
+                            omittedEdges++;
+                        } else {
                             JsonObject use = new JsonObject();
                             use.addProperty("ordinal", parameter.getSlot());
                             use.addProperty("use", operationId);
@@ -1907,7 +1941,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     PcodeOp definition = astInput.getDef();
                     if (definition instanceof PcodeOpAST astDefinition) {
                         String definitionId = operationIds.get(astDefinition);
-                        if (definitionId == null || defUse.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) {
+                        if (definitionId == null || defUse.size() >= valueFlowLimits.maxEdges()) {
+                            if (defUse.size() >= valueFlowLimits.maxEdges()) edgeLimitReached = true;
                             omittedEdges += 1;
                         } else {
                             JsonObject edge = new JsonObject();
@@ -1930,6 +1965,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject result = new JsonObject();
         result.addProperty("available", true);
         result.addProperty("provenance", "ghidra-high-pcode");
+        JsonObject limits = new JsonObject();
+        limits.addProperty("max_operations", valueFlowLimits.maxOperations());
+        limits.addProperty("max_inputs_per_operation", valueFlowLimits.maxInputsPerOperation());
+        limits.addProperty("max_edges", valueFlowLimits.maxEdges());
+        result.add("limits", limits);
+        JsonArray limitsReached = new JsonArray();
+        if (omittedOperationsLowerBound > 0) limitsReached.add("max_operations");
+        if (omittedInputs > 0) limitsReached.add("max_inputs_per_operation");
+        if (edgeLimitReached) limitsReached.add("max_edges");
+        result.add("limits_reached", limitsReached);
         result.add("operations", operationValues);
         result.add("def_use", defUse);
         result.add("parameters", parameterValues);
@@ -1952,16 +1997,39 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "Def-use links do not cross function boundaries and may omit memory aliasing, call side effects, or unresolved indirect flow."
         );
         limitations.add(
+            "Memory read/write effects cover high-p-code LOAD and STORE operations only; direct memory address varnodes in other operations are not included. An empty effect list does not establish that no memory is accessed. Recorded instruction references may provide complementary evidence."
+        );
+        limitations.add(
             "Memory read/write effects include stack and temporary memory operations; they do not identify persistent state or business meaning."
         );
         limitations.add(
-            "Operation, input, and def-use limits can truncate large functions; inspect truncation, omitted lower bounds, and known omitted counts before drawing conclusions."
+            "Operation, input, and def-use limits can truncate large functions; inspect the effective limits, limits_reached and omitted counts before drawing conclusions."
         );
         limitations.add(
             "Known omitted-edge counts cover links omitted from retained operations; omitted operations may contain additional uncounted links."
         );
+        if (omittedOperationsLowerBound > 0)
+            limitations.add(valueFlowLimitRecovery("max_operations", valueFlowLimits.maxOperations()));
+        if (omittedInputs > 0)
+            limitations.add(valueFlowLimitRecovery("max_inputs_per_operation", valueFlowLimits.maxInputsPerOperation()));
+        if (edgeLimitReached)
+            limitations.add(valueFlowLimitRecovery("max_edges", valueFlowLimits.maxEdges()));
         result.add("limitations", limitations);
         return result;
+    }
+
+    private static String valueFlowLimitRecovery(String field, int effective) {
+        String setting = "ghidra.value_flow_" + field;
+        String environment = "REA_GHIDRA_VALUE_FLOW_" + field.toUpperCase(Locale.ROOT);
+        String adjustment = effective < Integer.MAX_VALUE
+            ? "In MCP, use update_analysis_settings with setting " + setting +
+                ", action set and a larger integer value from 1 to " + Integer.MAX_VALUE +
+                ", then repeat the selected function analysis on this Program without restarting REA. " +
+                "For a one-shot CLI retry, set " + environment +
+                " to a larger count in the environment that starts the next rea invocation, then repeat the selected analysis; the previous invocation's Program is no longer active."
+            : "The setting is at its Java integer maximum; select a smaller function for this projection.";
+        return setting + " reached its effective value of " + effective + ". " + adjustment +
+            " These controls do not raise the decompile deadline, bridge transport or MCP client limits.";
     }
 
     private String pcodeOperationId(PcodeOpAST operation) {
@@ -3686,10 +3754,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!results.decompileCompleted()) {
             throw new RequestFailure(
                 "decompile_failed",
-                "Ghidra decompilation failed: " + diagnosticMessage(results.getErrorMessage())
+                "Ghidra decompilation failed: " + diagnosticMessage(results.getErrorMessage()) +
+                ". The effective native decompiler payload allowance is " +
+                decompiler.getOptions().getMaxPayloadMBytes() +
+                " MiB. " + decompilePayloadRecovery()
             );
         }
         return results;
+    }
+
+    private String decompilePayloadRecovery() {
+        int effective = decompiler.getOptions().getMaxPayloadMBytes();
+        if (effective >= MAX_DECOMPILE_PAYLOAD_MIB)
+            return "If the diagnostic reports payload exhaustion, the native payload allowance is already at its supported maximum; no higher value is accepted. Use analyze_function for available listing facts or explicitly select a smaller function for decompilation.";
+        return "If the diagnostic reports payload exhaustion, in MCP raise ghidra.decompile_max_payload_mib with update_analysis_settings " +
+            "(integer MiB from 1 to " + MAX_DECOMPILE_PAYLOAD_MIB +
+            ") and repeat the selected operation on this Program without restarting REA. " +
+            "For a one-shot CLI retry, set REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB to a larger MiB value in the environment that starts the next rea invocation, then repeat the selected operation; the previous invocation's Program is no longer active. " +
+            "Runtime null or an omitted launch seed restores the installed Ghidra default. This does not raise the decompile deadline, high-pcode projection budgets or MCP client limits.";
     }
 
     private static String decompiledText(DecompileResults results) {
@@ -3737,9 +3819,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private static JsonObject callRelationshipCoverage(
+    private JsonObject callRelationshipCoverage(
             CallBoundaryObservation calls, Integer missingCallers) {
         JsonObject coverage = completeResolvedCallCoverage();
+        JsonObject discovery = new JsonObject();
+        if (missingCallers != null) {
+            JsonObject callers = new JsonObject();
+            callers.addProperty("status", "unknown");
+            callers.addProperty("reason", "Recorded incoming references do not establish additional computed callers elsewhere in the program.");
+            discovery.add("callers", callers);
+        }
+        if (calls != null && !calls.computedCallSites().isEmpty()) {
+            JsonObject callees = new JsonObject();
+            callees.addProperty("status", "unknown");
+            callees.addProperty("reason", computedCallTargetLimitation(calls.computedCallSites()));
+            discovery.add("callees", callees);
+        }
+        if (!discovery.isEmpty()) coverage.add("discovery", discovery);
         Integer omitted = calls == null ? null : calls.unrepresentedCalleeCalls();
         JsonArray directions = new JsonArray();
         if (missingCallers != null && missingCallers > 0) directions.add("callers");
@@ -3754,20 +3850,49 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (calls == null && missingCallers == null) directions.add("callers");
             directions.add("callees");
             coverage.add("limited_directions", directions);
-            return coverage;
+            return qualifyProjectCallCoverage(coverage, calls, missingCallers);
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
+        if (omitted != null && omitted > 0) directions.add("callees");
         if (omitted != null && omitted > 0) {
             limitations.add("Ghidra's callee inventory omits targets of " + omitted +
                 " call reference(s) or decoded call(s) without destinations.");
-            directions.add("callees");
         }
         if (!limitations.isEmpty()) {
             coverage.addProperty("status", "partial");
             coverage.add("limitations", limitations);
             coverage.add("limited_directions", directions);
         }
+        return qualifyProjectCallCoverage(coverage, calls, missingCallers);
+    }
+
+    private JsonObject qualifyProjectCallCoverage(
+            JsonObject coverage, CallBoundaryObservation calls, Integer missingCallers) {
+        if (!existingProject) return coverage;
+        String reason = "The selected project's prior analysis completeness is unknown; " +
+            "the recorded call relationships may omit undiscovered callers or callees.";
+        String status = coverage.get("status").getAsString();
+        // A single-direction read with known omissions is still partial; an
+        // unknown project history adds a limitation rather than erasing them.
+        if (status.equals("partial") && (calls == null || missingCallers == null)) {
+            coverage.getAsJsonArray("limitations").add(reason);
+            return coverage;
+        }
+        if (status.equals("unknown")) reason += " " + coverage.get("reason").getAsString();
+        if (status.equals("partial")) {
+            for (JsonElement limitation : coverage.getAsJsonArray("limitations"))
+                reason += " " + limitation.getAsString();
+        }
+        JsonArray directions = new JsonArray();
+        if (missingCallers != null || (calls == null && missingCallers == null))
+            directions.add("callers");
+        if (calls != null || (calls == null && missingCallers == null))
+            directions.add("callees");
+        coverage.addProperty("status", "unknown");
+        coverage.addProperty("reason", reason);
+        coverage.remove("limitations");
+        coverage.add("limited_directions", directions);
         return coverage;
     }
 
@@ -3780,6 +3905,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         );
         coverage.add("diagnostics", diagnostics);
         return coverage;
+    }
+
+    /** Name a few sites inline; reference reads and call-target queries recover the rest. */
+    private static final int NAMED_COMPUTED_CALL_SITES = 4;
+
+    /**
+     * A computed call's ReferenceManager targets are static candidates: Ghidra
+     * records no proof that other values cannot reach the call, so the callee
+     * set stays incomplete while the recorded candidates remain observed.
+     */
+    private static String computedCallTargetLimitation(List<String> sites) {
+        if (sites.isEmpty()) return null;
+        int named = Math.min(sites.size(), NAMED_COMPUTED_CALL_SITES);
+        String listed = String.join(", ", sites.subList(0, named)) +
+            (sites.size() > named ? " and " + (sites.size() - named) + " more" : "");
+        return "Ghidra records call reference targets at " + sites.size() +
+            " computed call site(s) (" + listed + "); these static references do not establish" +
+            " every possible target, so additional callees remain unknown.";
     }
 
     private boolean unrepresentedCaller(Reference reference, Set<Function> callers) {
@@ -3816,9 +3959,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             calls.observe(reference);
         }
+        List<String> computedCallSites = new ArrayList<>();
         for (Instruction instruction : instructions) {
             boundary.observe(instruction);
-            if (!instruction.getFlowType().isCall()) continue;
+            FlowType flow = instruction.getFlowType();
+            if (!flow.isCall()) continue;
             boolean destination = false;
             for (Reference reference : instruction.getReferencesFrom()) {
                 if (!reference.getReferenceType().isCall()) continue;
@@ -3830,9 +3975,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 calls.unresolved(instruction.getAddress(),
                     "Instruction decoder identifies a call but ReferenceManager supplies no call destination");
             }
+            // The same decoded flow classifies resolve_native_call_targets'
+            // mechanism; its recorded targets are candidates, not a closed set.
+            else if (flow.isComputed()) computedCallSites.add(canonicalAddress(instruction.getAddress()));
         }
         return new CallBoundaryObservation(boundary.values(),
-            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls());
+            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls(),
+            List.copyOf(computedCallSites));
     }
 
     private final class FunctionBoundaryLimitations {
@@ -5076,7 +5225,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Set<String> keys = new HashSet<>(REQUEST_KEYS);
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_timeout_seconds"))
             keys.add("decompile_timeout_seconds");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("value_flow_limits"))
+            keys.add("value_flow_limits");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_max_payload_mib"))
+            keys.add("decompile_max_payload_mib");
         JsonObject object = requireObject(parsed, keys);
+        Integer payloadMiB = null;
+        if (object.has("decompile_max_payload_mib") && !object.get("decompile_max_payload_mib").isJsonNull()) {
+            payloadMiB = requireInteger(object, "decompile_max_payload_mib");
+            if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
+                throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+        }
+        ValueFlowLimits flowLimits = defaultValueFlowLimits();
+        if (object.has("value_flow_limits")) {
+            JsonObject limits = requireObject(object.get("value_flow_limits"),
+                Set.of("max_operations", "max_inputs_per_operation", "max_edges"));
+            int operations = requireInteger(limits, "max_operations");
+            int inputs = requireInteger(limits, "max_inputs_per_operation");
+            int edges = requireInteger(limits, "max_edges");
+            if (operations < 1 || inputs < 1 || edges < 1)
+                throw new IllegalArgumentException("Invalid per-request value-flow limits");
+            flowLimits = new ValueFlowLimits(operations, inputs, edges);
+        }
         Integer timeout = null;
         if (object.has("decompile_timeout_seconds")) {
             JsonElement value = object.get("decompile_timeout_seconds");
@@ -5092,7 +5262,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout);
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payloadMiB, flowLimits);
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -5278,7 +5448,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
-    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
+    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, List<String> computedCallSites) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(
         String representation,
@@ -5300,7 +5470,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int decompileTimeoutSeconds,
         boolean existingProject
     ) {}
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds) {}
+    private static ValueFlowLimits defaultValueFlowLimits() {
+        return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
+    }
+    private record ValueFlowLimits(int maxOperations, int maxInputsPerOperation, int maxEdges) {}
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, Integer decompileMaxPayloadMiB, ValueFlowLimits valueFlowLimits) {}
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;

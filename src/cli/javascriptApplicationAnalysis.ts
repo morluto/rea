@@ -5,6 +5,7 @@ import { createProgressReporter } from "../application/ProgressReporter.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { completeProviderEvidence } from "../application/ProviderOperationExecution.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -133,19 +134,26 @@ export const runCliJavaScriptApplicationAnalysis = async (
       { reason: cleanup.reason },
       { cause, operation: "analyze_javascript_application" },
     );
+    const completed = result.ok
+      ? completeProviderEvidence(result.value, signal)
+      : result;
+    if (completed.ok) failure.retainPartialObservation(completed.value);
     return cliError(
-      result.ok
+      completed.ok
         ? failure
         : analysisErrorWithCleanupFailure(
-            result.error,
+            completed.error,
             failure,
             "analyze_javascript_application",
           ),
     );
   }
-  const finalized = result.ok
-    ? result
-    : { ok: false as const, error: cliError(result.error) };
+  const completed = result.ok
+    ? completeProviderEvidence(result.value, signal)
+    : result;
+  const finalized = completed.ok
+    ? completed
+    : { ok: false as const, error: cliError(completed.error) };
   return delivery === undefined
     ? finalized.ok
       ? finalized.value

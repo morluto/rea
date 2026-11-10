@@ -106,17 +106,36 @@ it("inspects the caller-selected nonstandard ABI through the public CLI", async 
     path,
     "--abi",
     "ARM64-V8A",
+    "--pool-policy",
+    '{"contains":"package:animations/","uri_limit":1}',
     "--json",
   ]);
   expect(selected.exitCode).toBe(0);
   expect(JSON.parse(selected.stdout)).toMatchObject({
     caller_input_path: path,
-    parameters: { path, abi: "ARM64-V8A" },
+    parameters: {
+      path,
+      abi: "ARM64-V8A",
+      pool_policy: { contains: "package:animations/", uri_limit: 1 },
+    },
     normalized_result: {
       abi: "ARM64-V8A",
+      string_pool: {
+        package_uris: ["package:animations/src/fade_scale_transition.dart"],
+        package_uri_count_at_least: 1,
+        policy: { uri_limit: 1, contains: "package:animations/" },
+      },
       libapp: { snapshot_hash: "a".repeat(32), coverage: "complete" },
     },
   });
+  const invalid = await serveCli([
+    "inspect-dart-aot",
+    path,
+    "--pool-policy",
+    '{"uri_limit":0}',
+    "--json",
+  ]);
+  expect(JSON.parse(invalid.stdout).code).toBe("VALIDATION_ERROR");
 });
 
 /** Serve one command whose first snapshot-root removal fails and is retried on close. */

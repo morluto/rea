@@ -173,7 +173,7 @@ const verifyPortableCli = async (
   );
   const original = await readFile(bundlePath);
   await writeFile(inputPath, JSON.stringify({ ...input, detail: "complete" }));
-  const cliFull = await cli.run({
+  const cliFull = await runFileCli(cli, {
     arguments: [
       "match-native-functions",
       inputPath,
@@ -187,7 +187,7 @@ const verifyPortableCli = async (
   expect(cliFull.exitCode, cliFull.stderr).toBe(0);
   expect(parseEvidence(cliFull.json).evidence_id).toBe(evidenceId);
   await writeFile(inputPath, JSON.stringify(input));
-  const cliSummary = await cli.run({
+  const cliSummary = await runFileCli(cli, {
     arguments: [
       "match-native-functions",
       inputPath,
@@ -222,7 +222,7 @@ const verifyPortableCli = async (
   expect(ids.has(unrelated.evidence_id)).toBe(false);
   expect(ids.has(evidenceId)).toBe(true);
   expect(Buffer.compare(await readFile(bundlePath), original)).toBe(0);
-  const incomplete = await cli.run({
+  const incomplete = await runFileCli(cli, {
     arguments: [
       "match-native-functions",
       inputPath,
@@ -583,7 +583,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(inlineRequest));
-    const inline = await cli.run({
+    const inline = await runFileCli(cli, {
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     await writeFile(
@@ -591,7 +591,7 @@ cliTest(
       JSON.stringify(createEvidenceBundle([wrongRole, right])),
     );
     await writeFile(requestPath, JSON.stringify(portableRequest));
-    const portable = await cli.run({
+    const portable = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,

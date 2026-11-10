@@ -5,6 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
+import { batchUnknowns } from "../../../src/domain/analysisView/batchDecompileView.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -195,6 +196,7 @@ const readBody = async (
 ) => {
   let text = "";
   let pages = 0;
+  const nextOffsets: (number | null)[] = [];
   let offset: number | null = 0;
   while (offset !== null) {
     const page = await view(harness, parentId, {
@@ -207,9 +209,10 @@ const readBody = async (
     offset = z
       .looseObject({ next_offset: z.number().nullable() })
       .parse(page.coverage).next_offset;
+    nextOffsets.push(offset);
     pages++;
   }
-  return { text, pages };
+  return { text, pages, nextOffsets };
 };
 
 /** A typed refusal whose issue names the rejected selection. */
@@ -264,10 +267,9 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(summary.unknowns).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("1 items have unknown procedure identity"),
-        expect.stringContaining("not attributed to one successful item"),
-      ]),
+      batchUnknowns(
+        batchDecompileResultSchema.parse(parent.normalized_result).items,
+      ),
     );
     const callsAfterBatch = harness.calls.count;
 
@@ -408,7 +410,8 @@ it("pages one body exactly without splitting a Unicode character", async () => {
   expect(JSON.stringify(evidence.normalized_result)).toContain("int main");
 
   // A limit ending inside a surrogate pair stops before it, so pages rebuild the text.
-  const { text, pages } = await readBody(harness, parent, 3, 30);
+  const { text, pages, nextOffsets } = await readBody(harness, parent, 3, 31);
+  expect(nextOffsets[0]).toBe(30);
   expect(text).toBe(EMOJI_BODY);
   expect(pages).toBeGreaterThan(1);
   expect(

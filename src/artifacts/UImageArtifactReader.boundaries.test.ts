@@ -1,4 +1,7 @@
-import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import {
+  artifactPreparationRecoveryCases,
+  artifactReaderLifecycleCases,
+} from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -91,6 +94,14 @@ it("preserves cancellation during payload CRC admission", async () => {
         }
       })(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    reads.mockRestore();
+    const recovered = await entries(reader);
+    expect(recovered).toHaveLength(1);
+    expect(
+      (await buffer(await reader.open(recovered[0]!))).equals(
+        Buffer.alloc(128 * 1024, 0x61),
+      ),
+    ).toBe(true);
   } finally {
     await reader.close();
     reads.mockRestore();
@@ -189,5 +200,24 @@ artifactReaderLifecycleCases({
       type: 4,
       payload: buildMultiPayload([Buffer.from("a"), Buffer.from("b")]),
     }),
+  createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
+});
+
+it("reports impossible over-cap component extents as malformed", async () => {
+  const payload = Buffer.alloc(UIMAGE_MULTI_TABLE_WINDOW);
+  for (let offset = 0; offset < payload.length; offset += 4)
+    payload.writeUInt32BE(1, offset);
+  const reader = new UImageArtifactReader(
+    await fixture(buildUImage({ type: 4, payload })),
+  );
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+  } finally {
+    await reader.close();
+  }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => buildUImage({ payload: Buffer.from("payload") }),
   createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
 });

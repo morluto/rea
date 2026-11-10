@@ -340,10 +340,15 @@ const CPU_SUBTYPES: Readonly<Record<string, number>> = {
 };
 
 /** Normalize known lipo names while retaining the producer's original text. */
+const ownCpuCode = (
+  codes: Readonly<Record<string, number>>,
+  name: string,
+): number | undefined => (Object.hasOwn(codes, name) ? codes[name] : undefined);
+
 const cpuTypeCode = (value: string | undefined): number | null => {
   if (value === undefined) return null;
   const numeric = unsigned32(value);
-  return numeric ?? CPU_TYPES[value] ?? null;
+  return numeric ?? ownCpuCode(CPU_TYPES, value) ?? null;
 };
 
 /** Normalize the subtype and its separately printed capability bits. */
@@ -354,7 +359,7 @@ const cpuSubtypeCode = (
   if (value === undefined) return null;
   const numeric = unsigned32(value);
   if (numeric !== null) return numeric;
-  const subtype = CPU_SUBTYPES[value];
+  const subtype = ownCpuCode(CPU_SUBTYPES, value);
   if (subtype === undefined) return null;
   if (value !== "CPU_SUBTYPE_ARM64E") {
     // Recent lipo prints an empty capabilities line, even for LIB64 slices.
@@ -378,7 +383,7 @@ const cpuSubtypeCode = (
 /** The subtype bits a lipo record names, without its capability byte. */
 const cpuSubtypeBase = (value: string | undefined): number | null => {
   if (value === undefined) return null;
-  const subtype = unsigned32(value) ?? CPU_SUBTYPES[value];
+  const subtype = unsigned32(value) ?? ownCpuCode(CPU_SUBTYPES, value);
   return subtype === undefined ? null : machoCpuSubtypeBase(subtype);
 };
 

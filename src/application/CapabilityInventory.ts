@@ -16,6 +16,10 @@ import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
 } from "./OptionalObservationProviders.js";
+import type {
+  CommandProviderLaunchFailures,
+  ReverseEngineeringOperation,
+} from "./reverse/ReverseEngineeringService.js";
 
 import {
   expandProviderCapabilities,
@@ -101,6 +105,7 @@ export type AvailabilityPolicy = {
   readonly evmLimiterAvailability?: ProviderAvailability;
   readonly processCaptureEnabled: boolean;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
+  readonly commandProviderFailures?: CommandProviderLaunchFailures;
   readonly binaryLayoutEnabled?: boolean;
   readonly recordedCrashEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
@@ -538,6 +543,7 @@ const workflowAvailabilityFor = (
     name === "inspect_python_pyc" ||
     name === "inspect_apple_ips" ||
     name === "inspect_erlang_beam" ||
+    name === "inspect_v8_code_cache" ||
     name === "inspect_electron_fuses"
   )
     return { reason: "available", remediation: null };
@@ -616,12 +622,19 @@ const workflowAvailabilityFor = (
         };
   if (name === "inspect_pe_resources" || name === "inspect_native_exports")
     return { reason: "available", remediation: null };
-  if (name === "inspect_pe_certificates" || name === "inspect_pe_imports")
+  if (
+    name === "inspect_pe_certificates" ||
+    name === "inspect_pe_imports" ||
+    name === "inspect_windows_shortcut"
+  )
     return { reason: "available", remediation: null };
   if (
     name === "inspect_elf_notes" ||
+    name === "inspect_native_initializers" ||
+    name === "inspect_elf_unwind_ranges" ||
     name === "inspect_devicetree" ||
     name === "inspect_kernel_module" ||
+    name === "inspect_kernel_build_config" ||
     name === "inspect_pe_load_config" ||
     name === "inspect_binary_hardening"
   )
@@ -903,8 +916,16 @@ const providerAvailability = ({
   descriptors,
   kind,
   name,
+  policy,
 }: AvailabilityContext): Availability => {
   if (kind === "enhanced") return composedAvailability(name, descriptors);
+  const launchFailure =
+    policy.commandProviderFailures?.[name as ReverseEngineeringOperation];
+  if (launchFailure !== undefined)
+    return {
+      reason: "provider_unavailable",
+      remediation: launchFailure.remediation,
+    };
   const descriptor = descriptors.get(name);
   if (
     descriptor === undefined &&

@@ -1,3 +1,5 @@
+import { projectWebSourceLocationView } from "./webSourceLocationView.js";
+import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
@@ -5,6 +7,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectRecordedArrayView } from "./recordedArrayView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
@@ -104,6 +107,9 @@ import {
   type InspectAnalysisViewInput,
 } from "./analysisViewRequest.js";
 import {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
@@ -153,6 +159,7 @@ import {
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -180,6 +187,9 @@ export {
   type AnalysisViewParent,
 };
 export {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   nativeFeatureTraceSummaryViewResultSchema,
@@ -229,6 +239,7 @@ export {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -335,6 +346,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("procedure_references", projectNativeProcedureReferencesView),
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
@@ -379,6 +391,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
 /** Budgets retained across source admission and the selected grouping projection. */
@@ -479,6 +492,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_references" ||
           parent.operation === "procedure_pseudo_code" ||
           parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
@@ -501,6 +515,9 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "recorded-array") {
+    return sealProjected(projectRecordedArrayView(parent, view));
+  }
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

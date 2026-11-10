@@ -359,7 +359,7 @@ A `request` step sends one HTTP request from the page with the page's own
 recorded in the step's network events like any request the application makes.
 Use it to record an application's API, including writes, when driving the UI
 for each call would be slower or less exact than calling the endpoint the UI
-calls. It is the only action that changes application state without a user
+calls. This action directly sends a caller-declared HTTP request without a user
 gesture, so run scenarios with write requests only against an instance whose
 data you may change. This scenario creates one item:
 

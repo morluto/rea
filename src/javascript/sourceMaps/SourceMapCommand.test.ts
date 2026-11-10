@@ -7,6 +7,10 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
+  createSystemProcessOwnershipHost,
+  LinuxOwnedProcessPrerequisiteError,
+} from "../../process/ProcessOwnershipObservation.js";
+import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
@@ -17,9 +21,13 @@ import {
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   runSourceMapCommand,
-  SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
   type SourceMapCleanupRetention,
 } from "./SourceMapCommand.js";
+
+const expectedProcessMemoryLimitBytes =
+  process.platform === "win32" && process.versions.bun !== undefined
+    ? 704 * 1024 * 1024
+    : null;
 
 const report = traceSourceMap(
   JSON.stringify({ version: 3, sources: [], names: [], mappings: "" }),
@@ -33,7 +41,7 @@ const completedReport: WebSourceMapReport = {
       ? { ...report.runtime, v8_heap_limit_bytes: 200 * 1024 * 1024 }
       : {
           ...report.runtime,
-          process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+          process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
         },
 };
 const completedCodec = `process.stdout.write(${JSON.stringify(JSON.stringify({ state: "success", report: completedReport }))})`;
@@ -80,6 +88,41 @@ const runChild = (
 
 const exitsAfterHoldingOutput =
   'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e","setTimeout(()=>{},400)"],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
+
+it("preserves Linux process inspection failure and recovery before launching the codec", async () => {
+  const cause = Object.assign(new Error("ps permission denied"), {
+    code: "EACCES",
+  });
+  const host = createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    {
+      execFileOutput: async () => {
+        throw cause;
+      },
+    },
+  );
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    undefined,
+    {
+      prepareOwnership: () => host.prepare!(),
+      launcher: async () => {
+        throw new Error("must not launch");
+      },
+    },
+    unexpectedCleanup,
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected prerequisite failure");
+  expect(result.error).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(result.error).toMatchObject({
+    cause,
+    remediationAction: expect.stringContaining("EACCES"),
+  });
+});
+
 const exitsThenDescendantExceedsStderrBudget =
   'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e",`setTimeout(()=>{process.stderr.write("x".repeat(1024*1024+64)); setInterval(()=>{},1000)},25)`],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
 
@@ -322,7 +365,7 @@ it("preserves an observed process-memory limit over the codec exit status", asyn
   expect(result.error).toMatchObject({
     resource: "memory",
     reportedLimits: {
-      codec_process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+      codec_process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
     },
     capturedOutput: { stderr: "memory limit reached" },
   });

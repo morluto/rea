@@ -25,6 +25,7 @@ type FormatsWithReaders =
   | ZipPackageFormat
   | "dotnet-bundle"
   | "bun-standalone"
+  | "deno-standalone"
   | "dmg"
   | "asar"
   | "ines"
