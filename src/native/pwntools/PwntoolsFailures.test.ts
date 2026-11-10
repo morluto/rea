@@ -7,6 +7,7 @@ import {
   pwntoolsHostSupported,
 } from "./PwntoolsDecoder.js";
 import { pwntoolsDecoderFailure } from "./PwntoolsFailures.js";
+import { resolvePwntoolsLimits } from "../../domain/native/pwntoolsResourceLimits.js";
 
 it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
   "preserves opaque cancellation from command and artifact owners: %s",
@@ -28,6 +29,35 @@ it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
     }
   },
 );
+
+it("keeps the caller-selected pwntools input-limit source", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        {},
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 4096),
+        inputBytesSource: "request",
+      },
+    ),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    setting: "pwntools.max_input_bytes",
+    effective_value: 4096,
+    source: "request",
+    update_mode: "runtime",
+    pending_restart: false,
+  });
+});
 
 it("distinguishes the wall deadline from caller-selected producer resource budgets", () => {
   const projected = projectAnalysisError(

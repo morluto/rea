@@ -1954,6 +1954,13 @@ it("preserves a timeout while startup waits for the automatic-loading response",
         update_mode: "runtime",
         pending_restart: false,
       },
+      limit: {
+        setting: "debugger.command_deadline_ms",
+        effective_value: 25,
+        source: "setting",
+        update_mode: "runtime",
+        pending_restart: false,
+      },
     },
   });
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);

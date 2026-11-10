@@ -420,7 +420,7 @@ const commandFailure = (
         : "kuna.project_timeout_ms";
     primary = new AnalysisTimeoutError(operation, ms, {
       ...details,
-      limit: analysisSettingLimit(analysisSetting, ms, undefined),
+      limit: analysisSettingLimit(analysisSetting, ms, request.deadline.source),
       userMessage: `kuna ${subcommand} did not finish within ${analysisSetting} (${String(ms)} ms).`,
       remediationAction: `${analysisSetting} is ${String(ms)} ms. It can be changed at runtime with update_analysis_settings. The launch seed is ${setting}.`,
     });

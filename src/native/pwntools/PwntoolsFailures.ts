@@ -45,6 +45,12 @@ export interface PwntoolsFailureContext {
   readonly configurationKey?: string;
   readonly timeoutMs?: number;
   readonly producerLimits?: PwntoolsProducerLimits;
+  readonly inputBytesSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
 }
 
 /** Recovery identifies the selected controls rather than unrelated wall deadlines. */
@@ -301,7 +307,7 @@ const classifyPwntoolsDecoderFailure = (
                 limit: analysisSettingLimit(
                   "pwntools.max_input_bytes",
                   limits.input_bytes,
-                  undefined,
+                  context.inputBytesSource,
                 ),
               }
             : {}),

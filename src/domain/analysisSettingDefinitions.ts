@@ -349,6 +349,8 @@ export const ANALYSIS_SETTINGS = {
       "analyze_function",
       "search_strings",
       "set_address_name",
+      "list_cutter_sessions",
+      "cutter_command",
     ],
   },
   "debugger.command_deadline_ms": {

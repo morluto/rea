@@ -24,7 +24,7 @@ export type PwntoolsInputBytes =
   | {
       readonly configured: true;
       readonly bytes: number;
-      readonly source: "default" | "setting" | "runtime";
+      readonly source: "default" | "setting" | "runtime" | "request";
     }
   | { readonly configured: false; readonly error: string };
 
