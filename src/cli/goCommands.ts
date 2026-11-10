@@ -1,4 +1,9 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { resolve } from "node:path";
 import { createGoBinaryService } from "../composition/go.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -14,7 +19,7 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
     description:
       "Inspect embedded Go compiler, modules and build settings without target execution",
     args: z.object({
-      path: z.string().describe("Local ELF, PE or thin Mach-O image"),
+      path: localPath.describe("Local ELF, PE or thin Mach-O image"),
     }),
     run: ({ args }) =>
       withCommandCancellation(async (signal) => {
