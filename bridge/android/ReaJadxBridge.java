@@ -8,12 +8,16 @@ import io.modelcontextprotocol.kotlin.sdk.server.*;
 import io.modelcontextprotocol.kotlin.sdk.types.*;
 import jadx.api.*;
 import jadx.api.plugins.input.data.annotations.EncodedValue;
+import jadx.api.plugins.input.data.annotations.IAnnotation;
+import jadx.api.plugins.input.data.attributes.types.AnnotationMethodParamsAttr;
+import jadx.api.plugins.input.data.attributes.types.AnnotationsAttr;
 import jadx.api.plugins.input.data.attributes.JadxAttrType;
 import jadx.api.plugins.input.data.ICodeReader;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.api.plugins.input.insns.InsnIndexType;
 import jadx.api.plugins.input.insns.Opcode;
 import jadx.core.codegen.TypeGen;
+import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.*;
@@ -590,6 +594,169 @@ class ReaJadxBridge {
     };
   }
 
+  /** Per-member bounds; a bound that drops a fact is reported where it applies. */
+  private static final int ANNOTATION_LIMIT = 32;
+  private static final int ANNOTATION_ELEMENT_LIMIT = 16;
+  private static final int ANNOTATION_ARRAY_LIMIT = 32;
+  private static final int ANNOTATION_STRING_LIMIT = 256;
+
+  /** Whole-summary budget, so a crafted APK cannot push a reply past the protocol frame limit. */
+  private static final class AnnotationBudget {
+    int values = 20_000;
+    int characters = 1_048_576;
+  }
+
+  /**
+   * The class summary with its parsed DEX annotations. Annotations are read from the parsed node's
+   * attributes, so no source is generated and no HTTP or framework meaning is inferred. A member
+   * without annotations carries no field. With a method name, only the methods of that name are
+   * annotated and the class-level list is not read; otherwise the class-level list is always present.
+   */
+  private static Map<String, Object> annotatedSummary(ClassSnapshot snapshot, Map<String, Object> base,
+      String onlyMethodName) {
+    AnnotationBudget budget = new AnnotationBudget();
+    ClassNode node = snapshot.node().getClassNode();
+    Map<String, MethodNode> nodes = new HashMap<>();
+    for (MethodNode method : node.getMethods()) nodes.put(method.getMethodInfo().getShortId(), method);
+    List<Map<String, Object>> methods = new ArrayList<>();
+    for (MethodSnapshot method : snapshot.methods()) {
+      Map<String, Object> entry = new LinkedHashMap<>(method.summary());
+      MethodNode methodNode = nodes.get(method.shortId());
+      if (methodNode != null && (onlyMethodName == null || method.name().equals(onlyMethodName))) {
+        putAnnotations(entry, methodNode.get(JadxAttrType.ANNOTATION_LIST), false, budget);
+        AnnotationMethodParamsAttr params = methodNode.get(JadxAttrType.ANNOTATION_MTH_PARAMETERS);
+        if (params != null) {
+          List<Map<String, Object>> parameters = new ArrayList<>();
+          List<AnnotationsAttr> list = params.getParamList();
+          for (int index = 0; index < list.size(); index++) {
+            Map<String, Object> parameter = new LinkedHashMap<>();
+            parameter.put("index", index);
+            putAnnotations(parameter, list.get(index), false, budget);
+            if (parameter.containsKey("annotations")) parameters.add(Collections.unmodifiableMap(parameter));
+          }
+          if (!parameters.isEmpty()) entry.put("parameter_annotations", List.copyOf(parameters));
+        }
+      }
+      methods.add(Collections.unmodifiableMap(entry));
+    }
+    Map<String, Object> result = new LinkedHashMap<>(base);
+    result.put("methods", List.copyOf(methods));
+    if (onlyMethodName == null)
+      putAnnotations(result, node.get(JadxAttrType.ANNOTATION_LIST), true, budget);
+    return Collections.unmodifiableMap(result);
+  }
+
+  /** Adds `annotations` and, when some were not listed, `annotations_omitted`. */
+  private static void putAnnotations(Map<String, Object> owner, AnnotationsAttr attribute, boolean always,
+      AnnotationBudget budget) {
+    List<IAnnotation> all = attribute == null ? List.of() : attribute.getList();
+    if (all.isEmpty()) {
+      if (always) owner.put("annotations", List.of());
+      return;
+    }
+    List<Map<String, Object>> shown = new ArrayList<>();
+    for (IAnnotation annotation : all) {
+      if (shown.size() >= ANNOTATION_LIMIT || budget.values <= 0) break;
+      shown.add(annotationJson(annotation, budget));
+    }
+    if (shown.isEmpty()) {
+      if (always) owner.put("annotations", List.of());
+    } else owner.put("annotations", List.copyOf(shown));
+    if (all.size() > shown.size()) owner.put("annotations_omitted", all.size() - shown.size());
+  }
+
+  private static Map<String, Object> annotationJson(IAnnotation annotation, AnnotationBudget budget) {
+    boolean[] truncated = {false};
+    budget.values--;
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("dex_type", annotation.getAnnotationClass());
+    result.put("visibility", annotation.getVisibility().name().toLowerCase(Locale.ROOT));
+    List<Map.Entry<String, EncodedValue>> values = new ArrayList<>(annotation.getValues().entrySet());
+    values.sort(Map.Entry.comparingByKey());
+    List<Map<String, Object>> elements = new ArrayList<>();
+    for (Map.Entry<String, EncodedValue> value : values) {
+      if (elements.size() >= ANNOTATION_ELEMENT_LIMIT || budget.values <= 0) {
+        truncated[0] = true;
+        break;
+      }
+      elements.add(Map.of("name", value.getKey(), "value", annotationValue(value.getValue(), truncated, false, budget)));
+    }
+    result.put("elements", List.copyOf(elements));
+    // Present only when this annotation lost a fact to a bound or holds an undecoded value.
+    if (truncated[0]) result.put("truncated", true);
+    return Collections.unmodifiableMap(result);
+  }
+
+  /** Scalar and enum values keep their DEX identity; wide and floating values keep Java text. */
+  private static Map<String, Object> annotationValue(EncodedValue encoded, boolean[] truncated, boolean inArray,
+      AnnotationBudget budget) {
+    budget.values--;
+    if (encoded == null) return Map.of("type", "null");
+    Object value = encoded.getValue();
+    return switch (encoded.getType()) {
+      case ENCODED_NULL -> Map.of("type", "null");
+      case ENCODED_BOOLEAN -> Map.of("type", "boolean", "value", value);
+      case ENCODED_BYTE -> Map.of("type", "byte", "value", value);
+      case ENCODED_SHORT -> Map.of("type", "short", "value", value);
+      case ENCODED_CHAR -> Map.of("type", "char", "value", (int) (Character) value);
+      case ENCODED_INT -> Map.of("type", "int", "value", value);
+      case ENCODED_LONG -> Map.of("type", "long", "value", value.toString());
+      case ENCODED_FLOAT -> Map.of("type", "float", "value", value.toString());
+      case ENCODED_DOUBLE -> Map.of("type", "double", "value", value.toString());
+      case ENCODED_STRING -> {
+        String text = (String) value;
+        int keep = Math.max(0, Math.min(Math.min(text.length(), ANNOTATION_STRING_LIMIT), budget.characters));
+        // Never split a surrogate pair, so the prefix stays valid text.
+        if (keep > 0 && keep < text.length() && Character.isHighSurrogate(text.charAt(keep - 1))) keep--;
+        budget.characters -= keep;
+        if (keep == text.length()) yield Map.of("type", "string", "value", text);
+        truncated[0] = true;
+        yield Map.of("type", "string", "value", text.substring(0, keep), "truncated", true, "length", text.length());
+      }
+      case ENCODED_TYPE -> value instanceof ArgType type
+          ? Map.of("type", "type", "value", TypeGen.signature(type)) : unsupportedValue(encoded, truncated);
+      case ENCODED_ENUM -> value instanceof FieldInfo field
+          ? Map.of("type", "enum", "declaring_type", TypeGen.signature(field.getDeclClass().getType()),
+              "name", field.getName())
+          : unsupportedValue(encoded, truncated);
+      case ENCODED_FIELD -> value instanceof FieldInfo field
+          ? Map.of("type", "field", "declaring_type", TypeGen.signature(field.getDeclClass().getType()),
+              "name", field.getName())
+          : unsupportedValue(encoded, truncated);
+      case ENCODED_METHOD -> value instanceof MethodInfo method
+          ? Map.of("type", "method", "declaring_type", TypeGen.signature(method.getDeclClass().getType()),
+              "name", method.getName(), "dex_descriptor", method.getShortId().substring(method.getName().length()))
+          : unsupportedValue(encoded, truncated);
+      case ENCODED_ARRAY -> {
+        if (inArray || !(value instanceof List<?> items)) yield unsupportedValue(encoded, truncated);
+        List<Map<String, Object>> shown = new ArrayList<>();
+        for (Object item : items) {
+          if (shown.size() >= ANNOTATION_ARRAY_LIMIT || budget.values <= 0) {
+            truncated[0] = true;
+            break;
+          }
+          shown.add(item instanceof EncodedValue element ? annotationValue(element, truncated, true, budget)
+              : unsupportedValue(encoded, truncated));
+        }
+        yield Map.of("type", "array", "item_count", items.size(), "items", List.copyOf(shown));
+      }
+      case ENCODED_ANNOTATION -> {
+        // Nested annotations are identified but not expanded, which keeps the contract non-recursive.
+        truncated[0] = true;
+        yield value instanceof IAnnotation nested
+            ? Map.of("type", "annotation", "dex_type", nested.getAnnotationClass(),
+                "element_count", nested.getValues().size(), "elements_omitted", true)
+            : unsupportedValue(encoded, truncated);
+      }
+      default -> unsupportedValue(encoded, truncated);
+    };
+  }
+
+  private static Map<String, Object> unsupportedValue(EncodedValue encoded, boolean[] truncated) {
+    truncated[0] = true;
+    return Map.of("type", "unsupported", "jadx_type", encoded.getType().name());
+  }
+
   private List<MethodSnapshot> methods(ClassSnapshot cls, JsonObject args) {
     String name = string(args, "method_name");
     List<MethodSnapshot> result = cls.methods().stream().filter(method -> method.name().equals(name)).toList();
@@ -920,8 +1087,12 @@ class ReaJadxBridge {
       throw new InputFailure("class_name", "External prototypes are only available to method reference queries");
     }
     ClassSnapshot cls = selected(args);
-    if (name.equals("get_class_summary"))
-      return json(flag(args, "dex_static_values") ? cls.summaryWithValues() : cls.summary());
+    if (name.equals("get_class_summary")) {
+      Map<String, Object> summary = flag(args, "dex_static_values") ? cls.summaryWithValues() : cls.summary();
+      return json(flag(args, "annotations")
+          ? annotatedSummary(cls, summary, args.has("method_name") ? string(args, "method_name") : null)
+          : summary);
+    }
     if (name.equals("get_method_body")) {
       List<MethodSnapshot> overloads = methods(cls, args);
       int index = integer(args, "overload_index", 0);
@@ -1057,6 +1228,9 @@ class ReaJadxBridge {
       if (name.equals("get_class_summary")) properties.put("dex_static_values",
           new kotlinx.serialization.json.JsonObject(Map.of(
               "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
+      if (name.equals("get_class_summary")) properties.put("annotations",
+          new kotlinx.serialization.json.JsonObject(Map.of(
+              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
       if (name.equals("get_class_summary") || name.equals("get_xrefs_to_method"))
         properties.put("reference_target", new kotlinx.serialization.json.JsonObject(Map.of(
             "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
@@ -1065,7 +1239,7 @@ class ReaJadxBridge {
               "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
       String description = switch (name) {
         case "list_classes" -> "Pages of case-sensitive matching top-level class names; offset and next_offset are inventory positions, limit bounds matching rows. Omitted or empty query inventories all names.";
-        case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation. Set dex_static_values to include encoded static final field values.";
+        case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation. Set dex_static_values to include encoded static final field values. Set annotations to include parsed DEX annotations of the class, its methods and their parameters; with method_name only that method's overloads are annotated.";
         case "get_method_body" -> "Source for an exact class and stable same-name overload index; static initializers use smali to preserve folded field initialization.";
         default -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
       };

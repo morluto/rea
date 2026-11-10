@@ -80,6 +80,15 @@ const methodsOf = (summary: Pick<ClassSummary, "methods">) => {
       overload_index: index,
       is_constructor: method.is_constructor,
       dex_descriptor: method.dex_descriptor,
+      ...(method.annotations === undefined
+        ? {}
+        : { annotations: method.annotations }),
+      ...(method.annotations_omitted === undefined
+        ? {}
+        : { annotations_omitted: method.annotations_omitted }),
+      ...(method.parameter_annotations === undefined
+        ? {}
+        : { parameter_annotations: method.parameter_annotations }),
     };
   });
 };
@@ -214,6 +223,15 @@ const classSummary = async (
       class_name: request.input.class_name,
       ...(request.operation === "inspect_android_class"
         ? { dex_static_values: true }
+        : {}),
+      // A method request annotates only its own overloads, so a large class cannot
+      // push the member lookup past the protocol frame limit.
+      ...(request.operation === "inspect_android_method"
+        ? { annotations: true, method_name: request.input.method_name }
+        : {}),
+      ...(request.operation === "inspect_android_class" &&
+      request.input.annotations === true
+        ? { annotations: true }
         : {}),
     }),
     request,
@@ -419,7 +437,12 @@ const inspectMethod = async (
   return androidResultSchemas.inspect_android_method.parse({
     engine,
     class_name: summary.full_name,
-    method: selected,
+    // The request always asks for annotations, so an omitted list means none were found.
+    method: {
+      ...selected,
+      annotations: selected.annotations ?? [],
+      parameter_annotations: selected.parameter_annotations ?? [],
+    },
     overload_count: candidates.length,
     representation: body.mode,
     body_status: body.body.length === 0 ? "not_available" : "available",
@@ -505,6 +528,12 @@ export const analyzeJadxRequest = async (
         dex_static_value: field.dex_static_value ?? null,
       })),
       inner_classes: summary.inner_classes,
+      ...(summary.annotations === undefined
+        ? {}
+        : { annotations: summary.annotations }),
+      ...(summary.annotations_omitted === undefined
+        ? {}
+        : { annotations_omitted: summary.annotations_omitted }),
       ...mappingOf(context.mapping, () => [
         classQuery(summary),
         ...innerClassQueries(summary),
