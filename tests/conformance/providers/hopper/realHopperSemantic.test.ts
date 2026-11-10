@@ -71,7 +71,11 @@ describe("Hopper verifier dossier coverage", () => {
   });
 
   it.each([
-    ["complete", { status: "complete" }],
+    [
+      "complete",
+      { status: "complete" },
+      { operator: "strictEqual", actual: "complete", expected: "unknown" },
+    ],
     [
       "one direction",
       {
@@ -79,12 +83,18 @@ describe("Hopper verifier dossier coverage", () => {
         limited_directions: ["callers"],
         reason: "Callers only.",
       },
+      {
+        operator: "deepStrictEqual",
+        actual: ["callers"],
+        expected: ["callers", "callees"],
+      },
     ],
     [
       "no reason",
       { status: "unknown", limited_directions: ["callers", "callees"] },
+      { operator: "strictEqual", actual: "undefined", expected: "string" },
     ],
-  ])("rejects %s coverage", async (_label, coverage) => {
+  ])("rejects %s coverage", async (_label, coverage, failure) => {
     await expect(
       analyzeFixtureProcedure(
         clientWithDossier(coverage),
@@ -92,7 +102,7 @@ describe("Hopper verifier dossier coverage", () => {
         procedure,
         normalizeStructured,
       ),
-    ).rejects.toThrow(/relationship|reason|Expected/u);
+    ).rejects.toMatchObject({ code: "ERR_ASSERTION", ...failure });
   });
 });
 
