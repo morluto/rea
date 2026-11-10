@@ -94,6 +94,10 @@ import { projectPcapCaptureView } from "./pcapCaptureView.js";
 import { projectAndroidPackageView } from "./androidPackageView.js";
 import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
 import { projectAndroidJniView } from "./androidJniView.js";
+import {
+  projectAndroidClassesView,
+  projectAndroidReferencesView,
+} from "./androidInventoryView.js";
 import { projectDartAotView } from "./dartAotView.js";
 import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
 
@@ -136,6 +140,10 @@ import {
   androidPackageSummaryViewResultSchema,
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
+  androidClassesSummaryViewResultSchema,
+  androidClassesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidManifestViewResultSchema,
@@ -214,6 +222,10 @@ export {
   androidPackageSummaryViewResultSchema,
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
+  androidClassesSummaryViewResultSchema,
+  androidClassesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidManifestViewResultSchema,
@@ -365,6 +377,8 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_android_class", projectAndroidSymbolSummary),
   retain("inspect_android_method", projectAndroidSymbolSummary),
   retain("inspect_android_jni_bindings", projectAndroidJniView),
+  retain("search_android_classes", projectAndroidClassesView),
+  retain("trace_android_references", projectAndroidReferencesView),
   retain("capture_browser_scenario", projectBrowserScenarioView),
   retain("inspect_dart_aot", projectDartAotView),
   retain("inspect_il2cpp_metadata", projectIl2cppMetadataView),
