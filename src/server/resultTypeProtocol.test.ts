@@ -66,11 +66,14 @@ describe("tools/call results carry resultType on revision 2026-07-28", () => {
     );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const results = collectResults(clientTransport);
     try {
       markModernEra(server);
       await server.connect(serverTransport);
       await client.connect(clientTransport);
+      // connect owns the transport and installs its onmessage handler.
+      // Recording before that assignment is dropped when connect replaces
+      // the callback, so the wrapper has to call the installed handler.
+      const results = collectResults(clientTransport);
 
       const ok = await client.callTool({ name: "echo", arguments: {} });
       expect(ok.isError).toBeFalsy();
@@ -108,11 +111,12 @@ describe("tools/call results carry resultType on revision 2026-07-28", () => {
     );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const results = collectResults(clientTransport);
     try {
       markModernEra(server);
       await server.connect(serverTransport);
       await client.connect(clientTransport);
+      // Same order as the success test: wrap the handler connect installed.
+      const results = collectResults(clientTransport);
 
       const oversizedKey = `unexpected_${"x".repeat(6000)}`;
       const oversized = await client.callTool({
