@@ -134,6 +134,7 @@ export class AnalysisSettings {
         };
       }),
       active_work_changed: false as const,
+      effect: "immediate" as const,
       rea_restart_required: false as const,
     });
   }

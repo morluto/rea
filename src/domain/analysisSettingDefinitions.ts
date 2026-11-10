@@ -332,6 +332,7 @@ export const analysisSettingLimit = (
     applies_at: definition.appliesAt,
     agent_editable: true,
     scope: "rea-runtime",
+    effect: "immediate",
     rea_restart_required: false,
     ...(definition.parameter === undefined
       ? {}

@@ -1512,6 +1512,7 @@ describe("analysis error projection: caller lifetime", () => {
       minimum: limit.minimum,
       maximum: limit.maximum,
       agent_editable: true,
+      effect: "immediate",
       rea_restart_required: false,
       applies_at: "next_invocation",
       scope: "rea-invocation",
