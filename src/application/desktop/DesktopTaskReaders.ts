@@ -94,7 +94,8 @@ export const readerViewsOfBytes = async (
       views.set(reader.id, { format: null, view: null, error: file.error });
       continue;
     }
-    const folder = await mkdtemp(join(tmpdir(), "rea-reader-bytes-"));
+    // The runner nests below this owner; leave room for temporary Unix sockets.
+    const folder = await mkdtemp(join(tmpdir(), "rea-"));
     let failure: { readonly cause: unknown } | undefined;
     try {
       const path = join(folder, reader.file.split("/").at(-1) ?? "file");

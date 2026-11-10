@@ -132,7 +132,7 @@ def _run(arguments: dict, source: str, work: str) -> dict:
     shutil.copyfile(source, copy)
     home = os.path.join(work, "home")
     os.makedirs(home)
-    temporary = os.path.join(work, "tmp")
+    temporary = os.path.join(work, "t")
     os.mkdir(temporary, 0o700)
     argv = [part.replace(PLACEHOLDER, copy) for part in arguments["argv"]]
     stdin = arguments.get("stdin")
@@ -191,7 +191,8 @@ def main(arguments: dict) -> int:
             owner.write(lease["token"])
         return _say(_run(arguments, source, work))
     # A caller that names a work folder removes it itself, even when this runner is killed.
-    work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-", dir=arguments.get("work")))
+    # Short private names leave room for the command's temporary Unix sockets.
+    work = os.path.realpath(tempfile.mkdtemp(prefix="", dir=arguments.get("work")))
     try:
         return _say(_run(arguments, source, work))
     finally:

@@ -3,7 +3,10 @@ import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+
+import { readerViewsOfBytes } from "../../../src/application/desktop/DesktopTaskReaders.js";
+import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
 
 import {
   readerAnswerView,
@@ -61,7 +64,7 @@ const reportOf = (stdout: string): ScratchReport => {
 };
 
 const expectOwnedTemporary = (report: ScratchReport, owned: string) => {
-  const temporary = join(owned, "tmp");
+  const temporary = join(owned, "t");
   expect(dirname(report.scratch)).toBe(temporary);
   expect(report.temporary).toEqual({
     TMPDIR: temporary,
@@ -69,6 +72,85 @@ const expectOwnedTemporary = (report: ScratchReport, owned: string) => {
     TEMP: temporary,
   });
 };
+
+const IPC_READER = String.raw`import json, os, sys, threading
+from multiprocessing.connection import Client, Listener
+data = open(sys.argv[1], "rb").read()
+with Listener() as listener:
+    address = listener.address
+    def send():
+        with Client(address) as peer:
+            peer.send_bytes(data)
+    sender = threading.Thread(target=send)
+    sender.start()
+    with listener.accept() as peer:
+        received = peer.recv_bytes()
+    sender.join()
+print("REA " + json.dumps({"received": received.decode(), "socket": address,
+                          "copy": sys.argv[1], "temporary": os.environ["TMPDIR"]}))`;
+
+it.skipIf(process.platform === "win32")(
+  "keeps Unix sockets usable in the nested local-export scratch layout",
+  async () => {
+    vi.stubEnv("TMPDIR", "/tmp");
+    try {
+      const root = await createTestTempDirectory("ipc-");
+      const length = process.platform === "darwin" ? 49 : 52;
+      const inherited = join(
+        root,
+        "x".repeat(length - Buffer.byteLength(root) - 1),
+      );
+      expect(Buffer.byteLength(inherited)).toBe(length);
+      await mkdir(inherited);
+      for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, inherited);
+      const source = join(root, "document.bin");
+      await writeFile(source, "original document");
+      const control = await execute("python3", ["-c", IPC_READER, source]);
+      const controlReport: unknown = JSON.parse(
+        control.stdout.slice("REA ".length),
+      );
+      expect(controlReport).toMatchObject({
+        received: "original document",
+      });
+      const views = await readerViewsOfBytes(
+        [
+          {
+            ...reader,
+            id: "ipc",
+            argv: ["python3", "-c", IPC_READER, "{file}"],
+          },
+        ],
+        async () => ({
+          kind: "bytes",
+          bytes: Buffer.from("original document"),
+        }),
+        (argv, timeoutS) => runReaderHere(argv, timeoutS),
+      );
+      expect(views.get("ipc")?.error).toBeUndefined();
+      expect(views.get("ipc")).toMatchObject({
+        format: "json",
+        view: { received: "original document" },
+      });
+      const view = views.get("ipc")?.view as unknown as {
+        readonly copy: string;
+        readonly socket: string;
+        readonly temporary: string;
+      };
+      const owned = dirname(dirname(view.copy));
+      expect(view.temporary).toBe(join(owned, "t"));
+      expect(view.socket.startsWith(`${view.temporary}/`)).toBe(true);
+      expect(Buffer.byteLength(view.socket)).toBeLessThan(
+        process.platform === "darwin" ? 104 : 108,
+      );
+      await expect(access(owned)).rejects.toThrow();
+      await expect(access(view.socket)).rejects.toThrow();
+      expect(await readdir(inherited)).toEqual([]);
+      expect(await readFile(source, "utf8")).toBe("original document");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "retains ordinary scratch files in the remote lease until its matching cleanup",
