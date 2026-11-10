@@ -62,9 +62,11 @@ export const PYTHON_PYC_MARSHAL_PROFILES: ReadonlyMap<
   ...consecutiveProfiles(3500, 3531, "py311"),
   ...consecutiveProfiles(3550, 3571, "py311"),
   // 3.14 and 3.15 keep the 3.11 code layout; 3.14a1 magic 3608 adds slice
-  // constants to marshal, which the reader gates by magic. Only magics read
-  // back from a real interpreter are pinned: 3627 (3.14.4), 3663 (3.15.0a8)
-  // and 3666 (3.15.2). Other pre-release magics stay unpinned.
+  // constants to marshal, which the reader gates by magic. Only magics checked
+  // against real CPython are pinned: 3627 (3.14.4) and 3663 (3.15.0a8) were
+  // read back from those interpreters; 3666 (3.15.2) was checked with real
+  // 3.15.2 release bytes decoded by the 3.15.0a8 interpreter. Other
+  // pre-release magics stay unpinned.
   ...profiles([3627, 3663, 3666], "py311"),
 ]);
 

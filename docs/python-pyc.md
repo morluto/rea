@@ -81,12 +81,14 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 - `magic`, the 16-bit little-endian field;
 - `python_version` and `code_layout`, mapped from the pinned CPython marshal
-  table (`py37`, `py38`, or `py311`): 3.7–3.13, plus the 3.14 and 3.15 magics
-  checked against a real interpreter (3627 for 3.14, 3663 for 3.15.0a8 and
-  3666 for the final 3.15). Other 3.14 and 3.15 pre-release magics are not
-  pinned and are unsupported. 3.11 alpha magics before 3494 used other code
-  layouts and are unsupported. The 3.7.0a1/a2 magics 3390/3391
-  used 12-byte headers and are outside this reader's supported format;
+  table (`py37`, `py38`, or `py311`): 3.7–3.13, plus three 3.14 and 3.15
+  magics: 3627 (3.14.4) and 3663 (3.15.0a8), both read back from real
+  interpreters, and 3666 (3.15.2), checked with real 3.15.2 release bytes
+  decoded by the 3.15.0a8 interpreter (3.15.2 itself was not run). Other 3.14
+  and 3.15 pre-release magics are not pinned and are unsupported. 3.11 alpha
+  magics before 3494 used other code layouts and are unsupported. The
+  3.7.0a1/a2 magics 3390/3391 used 12-byte headers and are outside this
+  reader's supported format;
 - `flags`, `hash_based`, and `check_source` from PEP 552;
 - `source_hash_hex` for hash-based pycs, or `source_mtime` and `source_size`
   for timestamp pycs.

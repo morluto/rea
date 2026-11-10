@@ -40,9 +40,10 @@ const inlineCacheProfiles = (
  * profile only where their source changes do not alter cache widths or IDs.
  * Final 3.13 magic 3571 matches the opcode IDs and cache widths in CPython
  * v3.13.17's Lib/_opcode_metadata.py and Lib/opcode.py.
- * The 3.14 and 3.15 tables are pinned only to magics whose files were read
- * back from a real build: 3627 (final 3.14, matches v3.14.4), 3663 (3.15.0a8)
- * and 3666 (final 3.15, matches v3.15.0). Each is the generated
+ * The 3.14 and 3.15 tables are pinned only to magics checked against real
+ * CPython: 3627 (final 3.14, matches v3.14.4) and 3663 (3.15.0a8) were read
+ * back from those builds; 3666 (final 3.15, matches v3.15.0) was checked with
+ * real 3.15.2 release bytes, not by running 3.15.2. Each is the generated
  * _PyOpcode_Caches and opmap from CPython's Include/internal/pycore_magic_number.h
  * history at the last cache-changing bump commit at or before it:
  * 60202609a2c2d0971aadfa4729ba30b50e89c6ea (3623, shared by 3624 to 3627),

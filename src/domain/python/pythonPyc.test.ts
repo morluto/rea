@@ -54,7 +54,7 @@ it("keeps pinned CPython identity separate from standalone marshal coverage", ()
   });
   expect(pythonPycMarshalProfile(3663)?.code_layout).toBe("py311");
   expect(pythonPycMarshalProfile(3666)?.code_layout).toBe("py311");
-  // Only magics read back from a real interpreter are pinned: the neighbouring
+  // Only magics checked against real CPython are pinned: the neighbouring
   // 3.14 and 3.15 pre-release magics and the 3.16 magics stay unknown.
   for (const magic of [3600, 3626, 3650, 3662, 3664, 3665, 3706]) {
     expect(pythonBytecodeIdentity(magic), String(magic)).toBeNull();
