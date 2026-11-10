@@ -257,7 +257,7 @@ const linesPresent = (...lines: string[]): DesktopTaskCheck => ({
 const graded = ({ results }: VerifierOutput) =>
   results.map(({ result, settled, read_cut }) => [result, settled, read_cut]);
 
-it("evaluates every kind of check without computer execution in the exported verifier as REA does", async () => {
+it("evaluates every kind of file check without computer-exec as REA does", async () => {
   const checks: DesktopTaskCheck[] = CHECK_CASES.map(([check], index) => ({
     ...check,
     id: `check-${String(index + 1)}`,

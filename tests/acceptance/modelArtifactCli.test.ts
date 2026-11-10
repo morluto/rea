@@ -527,6 +527,7 @@ cliTest(
       category: "unsupported_target",
       details: {
         constraint: "file_format_rejected",
+        path,
         reason: "Declared extent is outside the file",
       },
     });
