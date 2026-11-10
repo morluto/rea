@@ -510,22 +510,24 @@ cliTest(
       report,
     );
 
-    await writeFile(
-      path,
-      safetensorsFixture(
-        '{"x":{"dtype":"F32","shape":[0],"data_offsets":[9007199254740992,9007199254740992]}}',
-        Buffer.alloc(0),
-      ).bytes,
+    const outsideFile = safetensorsFixture(
+      '{"x":{"dtype":"F32","shape":[0],"data_offsets":[9007199254740992,9007199254740992]}}',
+      Buffer.alloc(0),
     );
+    await writeFile(path, outsideFile.bytes);
     const offsetFailure = parseMcpToolError(
       await call("inspect_model_artifact", { path }),
     );
     expect(offsetFailure.error).toMatchObject({
-      code: "resource_constraint",
+      code: "target_unavailable",
       details: {
-        reported_limits: { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+        constraint: "file_format_rejected",
+        path,
+        reason: "Declared extent is outside the file",
       },
     });
+    expect(offsetFailure.error.details).not.toHaveProperty("reported_limits");
+    expect((await readFile(path)).equals(outsideFile.bytes)).toBe(true);
   },
 );
 
