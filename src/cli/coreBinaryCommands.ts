@@ -386,8 +386,20 @@ const registerInstructionsCommand = (
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.instructions, () =>
-        runDirectAnalysis(
+      logCliCommand(logger, CLI_COMMANDS.instructions, () => {
+        if (args.address === undefined && options.procedure === undefined)
+          throw new AnalysisInputError(
+            "read_function_instructions",
+            undefined,
+            [
+              {
+                path: ["procedure"],
+                reason: "missing",
+                message: "Provide an address or --procedure.",
+              },
+            ],
+          );
+        return runDirectAnalysis(
           args.path,
           "read_function_instructions",
           {
@@ -399,8 +411,8 @@ const registerInstructionsCommand = (
             ),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        );
+      }),
   });
 };
 
