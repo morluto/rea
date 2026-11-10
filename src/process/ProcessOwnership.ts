@@ -628,6 +628,12 @@ const readProcessRelationSnapshot = async (
   ]);
   const currentRelations: ProcessTableEntry[] = [];
   const failures: ProcessOwnershipValidationFailure[] = [];
+  const listedPids = new Set(processes.map(({ pid }) => pid));
+  // An empty table can still describe a token-verified owner. A table that
+  // lists other processes and omits a live retained PID is incomplete: it
+  // cannot authorize a signal or certify cleanup.
+  const omittedFromListedTable = (pid: number): boolean =>
+    processes.length > 0 && !listedPids.has(pid);
   for (const process of observationRows) {
     const identity = identities.get(process.pid);
     if (processIdentityHasExited(identity)) continue;
@@ -635,6 +641,15 @@ const readProcessRelationSnapshot = async (
       identity?.state === "readable" &&
       identity.relation?.state === "observed"
     ) {
+      if (omittedFromListedTable(process.pid)) {
+        failures.push({
+          pid: process.pid,
+          reason: "process-identity-unavailable",
+          diagnostic:
+            "retained process was omitted from the current process table",
+        });
+        continue;
+      }
       currentRelations.push({
         ...process,
         parentPid: identity.relation.parentPid,
@@ -1009,8 +1024,14 @@ const createOwnedCleanupPlan = async (
           exitSettlement,
         )
       : { owned: [], failures: [], unverified: [], identities: new Map() };
+  const listedPids = new Set(processes.map(({ pid }) => pid));
+  const omittedFromListedTable = (pid: number): boolean =>
+    processes.length > 0 && !listedPids.has(pid);
+  const signalableOwned = tokenOwned.owned.filter(
+    ({ pid }) => !omittedFromListedTable(pid),
+  );
   const tokenOwnedGroupIds = new Set(
-    tokenOwned.owned.map(({ processGroupId }) => processGroupId),
+    signalableOwned.map(({ processGroupId }) => processGroupId),
   );
   const launcher = relationSnapshot.currentRelations.find(
     ({ pid }) => pid === ownership.leaderPid,
@@ -1026,10 +1047,18 @@ const createOwnedCleanupPlan = async (
   for (const failure of relationSnapshot.failures)
     if (!unresolved.some(({ pid }) => pid === failure.pid))
       mergeProcessOwnershipFailure(unresolved, failure);
+  for (const process of tokenOwned.owned)
+    if (omittedFromListedTable(process.pid))
+      mergeProcessOwnershipFailure(unresolved, {
+        pid: process.pid,
+        reason: "process-identity-unavailable",
+        diagnostic:
+          "retained process was omitted from the current process table",
+      });
   if (
     launcher === undefined &&
     rootMembers.length === 0 &&
-    tokenOwned.owned.length === 0 &&
+    signalableOwned.length === 0 &&
     escapedProcessGroupIds.size === 0 &&
     !relationSnapshot.currentRelations.some(({ processGroupId }) =>
       sampledProcessGroupIds.has(processGroupId),
@@ -1060,7 +1089,7 @@ const createOwnedCleanupPlan = async (
   const processGroupIds = new Set<number>([ownership.processGroupId]);
   for (const descendant of descendants)
     processGroupIds.add(descendant.processGroupId);
-  for (const process of tokenOwned.owned)
+  for (const process of signalableOwned)
     processGroupIds.add(process.processGroupId);
   for (const processGroupId of sampledProcessGroupIds)
     processGroupIds.add(processGroupId);
