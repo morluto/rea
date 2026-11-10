@@ -162,10 +162,11 @@ selection input. Authored regression fixtures use the source-derived sizes
 above; historical executables were not run.
 
 Safetensors reports the header extent, exact string `__metadata__` values, dtype,
-shape and declared data ranges. A null `__metadata__` is treated as omitted;
-unknown fields on tensor entries are ignored within the reader's 32-level JSON
-nesting limit, while the required dtype, shape and data offsets are still
-validated. JSON duplicate keys, invalid UTF-8, out-of-file
+shape and declared data ranges. A null `__metadata__` is treated as omitted.
+Unknown tensor fields are validated iteratively without retaining their values;
+the 32-level JSON nesting bound applies to retained required fields and
+`__metadata__`. Required dtype, shape and data offsets are still validated.
+JSON duplicate keys, invalid UTF-8, out-of-file
 ranges, overlaps, gaps, trailing unindexed data and known dtype/shape byte-length
 contradictions are rejected with a typed `file_format_rejected` constraint (public code `target_unavailable`, category `unsupported_target`).
 A missing, non-regular or otherwise unusable selected path is also `target_unavailable`;
