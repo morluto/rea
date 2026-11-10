@@ -3,6 +3,7 @@ import {
   mkdir,
   readFile,
   realpath,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -13,6 +14,7 @@ import {
   resolveNativePlistSelection,
   nativePlistFailure,
 } from "../../../../src/native/NativePlistSource.js";
+import { analysisErrorRemediationAction } from "../../../../src/domain/analysisErrorPresentation.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import {
   NativeFixtureRunner,
@@ -221,6 +223,90 @@ it("does not invent selection facts for unresolved scope failures", () => {
   expect(projectAnalysisError(error).code).not.toBe("invalid_request");
   expect(projectAnalysisError(error).code).not.toBe("capability_unavailable");
 });
+
+it.skipIf(process.platform === "win32")(
+  "refuses a bundle plist that resolves outside the opened bundle",
+  async () => {
+    const root = await createTestTempDirectory("rea-plist-bundle-bound-");
+    const app = join(root, "Probe.app");
+    const contents = join(app, "Contents");
+    const executable = join(contents, "MacOS", "Probe");
+    await mkdir(join(contents, "MacOS"), { recursive: true });
+    await mkdir(join(contents, "Resources"), { recursive: true });
+    await writeFile(executable, "probe");
+    const info = join(contents, "Info.plist");
+    await writeFile(info, "bundle info");
+    const nested = join(
+      contents,
+      "Frameworks/Helper.framework/Resources/Info.plist",
+    );
+    await mkdir(join(contents, "Frameworks/Helper.framework/Resources"), {
+      recursive: true,
+    });
+    await writeFile(nested, "nested info");
+    const outside = join(root, "Outside.plist");
+    await writeFile(outside, "outside");
+    await symlink(root, join(contents, "Resources", "escape"));
+    const target = {
+      ...nativeMachoTarget(executable, app),
+      bundleInfoPlist: info,
+    };
+
+    const selected = await resolveNativePlistSelection(target, nested);
+    if (!selected.ok) throw selected.error;
+    expect(selected.value).toEqual({ path: nested, origin: "selected" });
+    const relative = await resolveNativePlistSelection(
+      target,
+      "Contents/Info.plist",
+    );
+    if (!relative.ok) throw relative.error;
+    expect(relative.value.path).toBe(info);
+    const missing = await resolveNativePlistSelection(
+      target,
+      "Contents/Missing.plist",
+    );
+    if (!missing.ok) throw missing.error;
+    expect(missing.value).toEqual({
+      path: join(app, "Contents/Missing.plist"),
+      origin: "selected",
+    });
+
+    for (const requested of [
+      outside,
+      "../Outside.plist",
+      "Contents/Resources/escape/Outside.plist",
+    ]) {
+      const refused = await resolveNativePlistSelection(target, requested);
+      if (refused.ok) throw new Error(`admitted ${requested}`);
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [{ path: ["path"], reason: "invalid_value" }],
+        },
+      });
+      expect(analysisErrorRemediationAction(refused.error)).toBe(
+        "Open that plist as its own target.",
+      );
+    }
+
+    await rm(info);
+    await symlink(outside, info);
+    const escapedDefault = await resolveNativePlistSelection(target, undefined);
+    if (escapedDefault.ok) throw new Error("admitted escaped default plist");
+    expect(projectAnalysisError(escapedDefault.error)).toMatchObject({
+      code: "capability_unavailable",
+    });
+
+    const loosePath = join(root, "loose");
+    await writeFile(loosePath, "loose");
+    const loose = await resolveNativePlistSelection(
+      nativeMachoTarget(loosePath),
+      outside,
+    );
+    if (!loose.ok) throw loose.error;
+    expect(loose.value).toEqual({ path: outside, origin: "selected" });
+  },
+);
 
 it("refuses closed client admission before resolving a target or launching tools", async () => {
   const root = await createTestTempDirectory("rea-plist-origin-closed-");

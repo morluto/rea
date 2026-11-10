@@ -1186,6 +1186,9 @@ session. `open_binary` can switch back to executable analysis, and
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
+The selected file must resolve inside the opened bundle or resource root.
+`source_sha256` records the SHA-256 of the plist bytes read. While an
+executable is open, the Evidence subject remains that program.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
 The CLI `rea inspect-plist <path>` opens its selected artifact for one invocation.
 

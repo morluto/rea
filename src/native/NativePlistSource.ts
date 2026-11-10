@@ -1,7 +1,8 @@
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { isPathWithinRoot } from "../domain/localPath.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { FileHandle } from "node:fs/promises";
 import type { z } from "zod";
@@ -54,8 +55,6 @@ export const resolveNativePlistSelection = async (
   requested: string | undefined,
 ): Promise<Result<NativePlistSelection, AnalysisError>> => {
   try {
-    if (requested !== undefined && isAbsolute(requested))
-      return ok({ path: absoluteCallerPath(requested), origin: "selected" });
     if (
       requested === undefined &&
       target.kind === "artifact" &&
@@ -63,19 +62,44 @@ export const resolveNativePlistSelection = async (
     )
       return ok({ path: target.path, origin: "selected" });
     const source = target.sourcePath ?? target.path;
-    const sourceMetadata = await stat(source);
-    const root = sourceMetadata.isDirectory()
+    let sourceIsDirectory = false;
+    try {
+      sourceIsDirectory = (await stat(source)).isDirectory();
+    } catch (cause: unknown) {
+      // An absolute selection of a bare file does not need that file's source.
+      if (requested !== undefined && isAbsolute(requested))
+        return ok({ path: absoluteCallerPath(requested), origin: "selected" });
+      throw cause;
+    }
+    const layoutRoot = macOSBundleRoot(target.path);
+    const root = sourceIsDirectory
       ? source
-      : (macOSBundleRoot(target.path) ?? dirname(target.path));
-    if (requested !== undefined)
-      return ok({
-        path: absoluteCallerPath(requested, { cwd: root }),
-        origin: "selected",
-      });
-    return ok({
-      path: target.bundleInfoPlist ?? resolve(root, "Contents/Info.plist"),
-      origin: "default",
-    });
+      : (layoutRoot ?? dirname(target.path));
+    // A bundle session seals Evidence under the open executable. Only a plist
+    // that resolves inside that bundle may use that subject.
+    const bundleBound =
+      sourceIsDirectory ||
+      layoutRoot !== undefined ||
+      target.bundleInfoPlist !== undefined;
+    if (!bundleBound && requested !== undefined && isAbsolute(requested))
+      return ok({ path: absoluteCallerPath(requested), origin: "selected" });
+    const selection: NativePlistSelection =
+      requested === undefined
+        ? {
+            path:
+              target.bundleInfoPlist ?? resolve(root, "Contents/Info.plist"),
+            origin: "default",
+          }
+        : {
+            path: absoluteCallerPath(
+              requested,
+              isAbsolute(requested) ? {} : { cwd: root },
+            ),
+            origin: "selected",
+          };
+    return bundleBound
+      ? await containedPlistSelection(root, selection)
+      : ok(selection);
   } catch (cause: unknown) {
     return err(
       new ProviderAdapterError(IDENTITY.id, "inspect_plist", { cause }),
@@ -87,13 +111,71 @@ export const resolveNativePlistSelection = async (
 export const resolveBundleResourcePlistSelection = (
   root: ResolvedAppBundleResourceRoot,
   requested: string | undefined,
-): Result<NativePlistSelection, AnalysisError> => {
-  if (requested === undefined)
-    return ok({ path: root.infoPlistPath, origin: "default" });
-  return ok({
-    path: absoluteCallerPath(requested, { cwd: root.canonicalPath }),
-    origin: "selected",
-  });
+): Promise<Result<NativePlistSelection, AnalysisError>> => {
+  const selection: NativePlistSelection =
+    requested === undefined
+      ? { path: root.infoPlistPath, origin: "default" }
+      : {
+          path: absoluteCallerPath(requested, { cwd: root.canonicalPath }),
+          origin: "selected",
+        };
+  return containedPlistSelection(root.canonicalPath, selection);
+};
+
+/**
+ * Admit a plist only when its resolved file stays in the opened bundle.
+ * A missing or otherwise unreadable in-bundle path keeps its later read error.
+ */
+const containedPlistSelection = async (
+  root: string,
+  selection: NativePlistSelection,
+): Promise<Result<NativePlistSelection, AnalysisError>> => {
+  const canonicalRoot = await realpath(root);
+  let canonicalFile: string;
+  try {
+    canonicalFile = await realpath(selection.path);
+  } catch (cause: unknown) {
+    const code =
+      cause instanceof Error && "code" in cause ? cause.code : undefined;
+    if (
+      code === "ENOENT" ||
+      code === "ENOTDIR" ||
+      code === "ELOOP" ||
+      code === "ENAMETOOLONG" ||
+      code === "EACCES" ||
+      code === "EPERM"
+    )
+      return isPathWithinRoot(canonicalRoot, selection.path)
+        ? ok(selection)
+        : err(plistOutsideBundle(selection));
+    throw cause;
+  }
+  return isPathWithinRoot(canonicalRoot, canonicalFile)
+    ? ok(selection)
+    : err(plistOutsideBundle(selection));
+};
+
+const plistOutsideBundle = (selection: NativePlistSelection): AnalysisError => {
+  const { path } = selection;
+  if (selection.origin === "default") {
+    const message = `The target's default plist at ${path} resolves outside the opened bundle.`;
+    return new AnalysisCapabilityUnavailableError(
+      IDENTITY.id,
+      "inspect_plist",
+      message,
+      { userMessage: message },
+    );
+  }
+  const message = `Cannot inspect ${path}: it resolves outside the opened bundle. Open that plist as its own target.`;
+  return new AnalysisInputError(
+    "inspect_plist",
+    {
+      userMessage: message,
+      remediationAction: "Open that plist as its own target.",
+      conformsToInputContract: true,
+    },
+    [{ path: ["path"], reason: "invalid_value", message }],
+  );
 };
 
 /** The bundle whose Contents/MacOS directory directly holds the program. */

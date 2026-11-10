@@ -700,7 +700,11 @@ Selected plist paths preserve filesystem resolution, including `..` after a
 directory symlink and trailing directory separators. Resource-only bundle
 sessions resolve relative selections from the bundle root with the same path
 semantics as executable sessions; the reported source path retains those
-selected segments.
+selected segments. A selection whose resolved file leaves the opened bundle or
+resource root is refused, including an absolute path. `source_sha256` is the
+SHA-256 of the plist bytes read for the result. In an executable session the
+Evidence subject remains the open program, the same binding as other
+bundle-resource observations. A resource-only session keeps a null subject.
 
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte
