@@ -1,4 +1,9 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
@@ -47,7 +52,7 @@ export const registerApktoolCommands = (
     description:
       "Decode one APK's manifest, metadata, and string resources with apktool",
     args: z.object({
-      path: z.string().min(1).describe("Local APK file to decode"),
+      path: localPath.describe("Local APK file to decode"),
     }),
     options: z.object({
       locale: z
