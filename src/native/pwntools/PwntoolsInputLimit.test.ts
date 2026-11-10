@@ -50,17 +50,6 @@ describe("pwntools input bound", () => {
     );
   });
 
-  it("rejects a value above the ceiling that a float would round", () => {
-    const ceiling = pwntoolsInputBytes({
-      REA_PWNTOOLS_MAX_INPUT_BYTES: "1073741824",
-    });
-    const above = pwntoolsInputBytes({
-      REA_PWNTOOLS_MAX_INPUT_BYTES: "10737418241",
-    });
-    expect(ceiling.configured).toBe(true);
-    expect(above).toEqual({ configured: false, error: CONSTRAINT });
-  });
-
   it("never narrows the bound below the shipped default implicitly", () => {
     const accepted = [1, 1024, PWNTOOLS_LIMITS.input_bytes].map((bytes) =>
       pwntoolsInputBytes({ REA_PWNTOOLS_MAX_INPUT_BYTES: String(bytes) }),

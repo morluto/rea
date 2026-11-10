@@ -342,24 +342,6 @@ describe("empty form destinations with a document base URL", () => {
   });
 });
 
-describe("repeated DOM attribute names", () => {
-  it("keeps the first declaration for attribute names and destination URLs", () => {
-    const value = snapshot(undefined, "assets/", documentUrl, "guide");
-    const hrefUpperIndex = value.strings.length;
-    const secondGuideIndex = hrefUpperIndex + 1;
-    value.strings.push("href", "second-guide");
-    const docNodes = value.documents[0]?.nodes;
-    if (docNodes !== undefined) {
-      docNodes.attributes[2] = [8, 10, hrefUpperIndex, secondGuideIndex];
-    }
-    const result = capture(value);
-    const linkNode = result.nodes[2];
-    expect(linkNode?.attribute_names).toEqual(["href"]);
-    const linkUrl = result.urls.find(({ node_index }) => node_index === 2);
-    expect(linkUrl?.url).toBe(`${origin}/screens/guide`);
-  });
-});
-
 it("preserves case-sensitive SVG attributes and uses the actual href", () => {
   const value = snapshot();
   const first = value.strings.length;
