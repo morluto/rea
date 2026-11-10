@@ -57,7 +57,9 @@ import {
   uniqueSemanticOrigins,
 } from "./javascriptSemanticProvenance.js";
 import {
+  semanticPrimitiveCandidateCount as primitiveCandidateCount,
   semanticPrimitiveCandidates as primitiveCandidates,
+  semanticPrimitiveSampledProduct as primitiveSampledProduct,
   semanticPrimitiveSet as primitiveSet,
 } from "./javascriptSemanticPrimitives.js";
 import {
@@ -738,6 +740,13 @@ const evaluateTemplate = (
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
   let candidates = [""];
+  // Distinct-candidate scope of `candidates`, tracked across sampled
+  // interpolations so later products keep honest overflow accounting even
+  // though only the retained sample is carried forward.
+  let candidatesSeenCount = 1;
+  // Set once an interpolation overflows into sampling; the final result is
+  // then re-tagged because primitiveSet cannot know the true scope.
+  let sampledInterpolation = false;
   for (let index = 0; index < node.quasis.length; index += 1) {
     const quasi = node.quasis[index];
     const text = quasi?.value.cooked;
@@ -760,16 +769,78 @@ const evaluateTemplate = (
         reason: "Template expression is not a bounded primitive.",
       };
     }
-    if (candidates.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / values.length)
-      return semanticResourceLimitUnknown("primitive-candidates");
     const suffixes = values.map((value) => String(value));
+    const suffixesSeenCount = primitiveCandidateCount(evaluated);
+    if (
+      suffixesSeenCount !== null &&
+      candidatesSeenCount * suffixesSeenCount >
+        SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+    ) {
+      const sampled = primitiveSampledProduct({
+        left: candidates,
+        right: suffixes,
+        combine: (prefix, suffix) => `${String(prefix)}${String(suffix)}`,
+        leftSeenCount: candidatesSeenCount,
+        rightSeenCount: suffixesSeenCount,
+      });
+      if (sampled.status !== "union") return sampled;
+      candidates = sampled.values.map(String);
+      candidatesSeenCount = sampled.sampled?.seenCount ?? candidates.length;
+      sampledInterpolation = true;
+      continue;
+    }
     if (exceedsSemanticTemplateByteBudget(candidates, suffixes))
       return semanticResourceLimitUnknown("primitive-bytes");
     candidates = candidates.flatMap((prefix) =>
       suffixes.map((suffix) => `${prefix}${suffix}`),
     );
+    candidatesSeenCount = Math.min(
+      candidatesSeenCount * (suffixesSeenCount ?? suffixes.length),
+      Number.MAX_SAFE_INTEGER,
+    );
   }
-  return primitiveSet(candidates);
+  const result = primitiveSet(candidates);
+  // Sampling may leave 256 identical retained values even though the true
+  // scope is larger; the result then collapses to a literal, but it is still
+  // incomplete evidence and must keep its sampled provenance. Incomplete
+  // evidence is always a union (possibly one retained value): the worker's
+  // literal schema admits no provenance field, so tagging a literal would
+  // silently drop the tag in transfer.
+  if (sampledInterpolation)
+    return tagSampledEvidence(
+      result,
+      "systematic-candidate-stride-v1",
+      candidatesSeenCount,
+    );
+  return result;
+};
+
+/**
+ * Attach sampled provenance to a value-transforming operator's result. A
+ * collapsed literal is re-represented as a one-element sampled union because
+ * the literal lattice variant carries no provenance; an already-sampled union
+ * keeps the larger observed scope so re-sampling never understates coverage.
+ */
+const tagSampledEvidence = (
+  result: JavaScriptSemanticValue,
+  method: "systematic-candidate-stride-v1" | "grid-product-stride-v1",
+  seenCount: number,
+): JavaScriptSemanticValue => {
+  if (result.status === "literal")
+    return {
+      status: "union",
+      values: [result.value],
+      sampled: { method, seenCount },
+    };
+  if (result.status !== "union") return result;
+  if (result.sampled !== undefined) {
+    if (seenCount <= result.sampled.seenCount) return result;
+    return {
+      ...result,
+      sampled: { ...result.sampled, seenCount },
+    };
+  }
+  return { ...result, sampled: { method, seenCount } };
 };
 
 /**
@@ -815,6 +886,9 @@ const semanticCondition = (
 ): boolean | undefined => {
   if (value.status === "object" || value.status === "array")
     return objectResult;
+  // A sampled union is incomplete evidence: every retained alternative could
+  // agree while an omitted candidate disagrees, so no branch may be discarded.
+  if (value.status === "union" && value.sampled !== undefined) return undefined;
   const choices = primitiveCandidates(value)?.map(select);
   return choices !== undefined &&
     choices.length > 0 &&
@@ -1049,18 +1123,48 @@ const addPrimitiveValues = (
     if (isSemanticResourceLimit(rightValue)) return rightValue;
     return { status: "unknown", reason: "Non-primitive addition." };
   }
-  if (left.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / right.length)
-    return semanticResourceLimitUnknown("primitive-candidates");
+  const combine = (
+    left: string | number | boolean | null,
+    right: string | number | boolean | null,
+  ): string | number =>
+    typeof left === "string" || typeof right === "string"
+      ? `${String(left)}${String(right)}`
+      : Number(left) + Number(right);
+  const leftSeenCount = primitiveCandidateCount(leftValue);
+  const rightSeenCount = primitiveCandidateCount(rightValue);
+  if (
+    leftSeenCount !== null &&
+    rightSeenCount !== null &&
+    leftSeenCount * rightSeenCount > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+  )
+    return primitiveSampledProduct({
+      left,
+      right,
+      combine,
+      leftSeenCount,
+      rightSeenCount,
+    });
   if (exceedsSemanticPrimitiveAdditionByteBudget(left, right))
     return semanticResourceLimitUnknown("primitive-bytes");
-  const values = left.flatMap((leftValue) =>
-    right.map((rightValue) =>
-      typeof leftValue === "string" || typeof rightValue === "string"
-        ? `${String(leftValue)}${String(rightValue)}`
-        : Number(leftValue) + Number(rightValue),
-    ),
+  const values = left.flatMap((leftOne) =>
+    right.map((rightOne) => combine(leftOne, rightOne)),
   );
   return primitiveSet(values);
+};
+
+/** Carry incomplete-evidence provenance through value-transforming operators. */
+const preserveSampledTag = (
+  source: JavaScriptSemanticValue,
+  result: JavaScriptSemanticValue,
+  seenCount?: number,
+): JavaScriptSemanticValue => {
+  if (source.status !== "union" || source.sampled === undefined) return result;
+  if (result.status !== "union" && result.status !== "literal") return result;
+  return tagSampledEvidence(
+    result,
+    source.sampled.method,
+    seenCount ?? source.sampled.seenCount,
+  );
 };
 
 const evaluateUnary = (
@@ -1074,11 +1178,20 @@ const evaluateUnary = (
     return { status: "unknown", reason: "Non-primitive unary operand." };
   }
   if (node.operator === "!")
-    return primitiveSet(argument.map((value) => !value));
+    return preserveSampledTag(
+      evaluated,
+      primitiveSet(argument.map((value) => !value)),
+    );
   if (node.operator === "+")
-    return primitiveSet(argument.map((value) => Number(value)));
+    return preserveSampledTag(
+      evaluated,
+      primitiveSet(argument.map((value) => Number(value))),
+    );
   if (node.operator === "-")
-    return primitiveSet(argument.map((value) => -Number(value)));
+    return preserveSampledTag(
+      evaluated,
+      primitiveSet(argument.map((value) => -Number(value))),
+    );
   return { status: "unknown", reason: `Unsupported unary ${node.operator}.` };
 };
 
@@ -1417,6 +1530,37 @@ const mergeValues = (
   )
     ? primitiveSet(primitives)
     : { status: "ambiguous", reason: "Branches have incompatible values." };
+  // Merging a sampled union stays incomplete even when the retained sample
+  // collapses to one value; report the combined observed scope.
+  if (
+    merged.status === "union" ||
+    merged.status === "literal" ||
+    merged.status === "ambiguous"
+  ) {
+    const observedScope = values.reduce((total, value) => {
+      if (value.status !== "union" && value.status !== "literal") return total;
+      return (
+        total +
+        (value.status === "union"
+          ? (value.sampled?.seenCount ?? value.values.length)
+          : 1)
+      );
+    }, 0);
+    const sampledSource = values.find(
+      (value) => value.status === "union" && value.sampled !== undefined,
+    );
+    // Record the definedness proof before the sampled early-return so a
+    // merged value built only from defined branches stays provably defined
+    // even when its provenance is re-tagged below.
+    if (values.length > 0 && values.every(semanticValueDefinitelyDefined))
+      definitelyDefinedValues.add(merged);
+    if (sampledSource !== undefined)
+      return preserveSampledTag(
+        sampledSource,
+        merged,
+        Math.min(observedScope, Number.MAX_SAFE_INTEGER),
+      );
+  }
   if (values.length > 0 && values.every(semanticValueDefinitelyDefined))
     definitelyDefinedValues.add(merged);
   return merged;

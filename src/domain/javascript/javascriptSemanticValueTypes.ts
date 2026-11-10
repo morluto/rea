@@ -54,6 +54,20 @@ export type JavaScriptSemanticValue =
   | {
       readonly status: "union";
       readonly values: readonly JavaScriptSemanticPrimitive[];
+      /**
+       * Present when the distinct candidate count exceeded the candidate
+       * budget and `values` is a deterministic sample rather than the exact
+       * candidate set. Consumers must not treat absent candidates as
+       * disproven when this is present.
+       */
+      readonly sampled?:
+        | {
+            readonly method:
+              | "systematic-candidate-stride-v1"
+              | "grid-product-stride-v1";
+            readonly seenCount: number;
+          }
+        | undefined;
     }
   | JavaScriptSemanticObjectValue
   | JavaScriptSemanticArrayValue
