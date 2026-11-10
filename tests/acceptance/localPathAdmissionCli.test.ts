@@ -204,6 +204,10 @@ cliTest(
         field: "withheldCopy",
       },
       {
+        arguments: ["inspect-apple-ips", "unread", "--join-path", ""],
+        field: "joinPath",
+      },
+      {
         arguments: ["describe-desktop-application-task", ""],
         field: "capture",
       },
