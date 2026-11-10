@@ -1,5 +1,10 @@
 import { inspectPacketFieldsInputSchema } from "../domain/captures/packetFields.js";
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import { resolve } from "node:path";
 import { createPacketCaptureService } from "../composition/captures.js";
@@ -67,7 +72,7 @@ export const registerCaptureCommands = (
   cli.command(CLI_COMMANDS.inspectPacketCapture, {
     description:
       "Inspect an existing packet capture with caller-supplied TShark",
-    args: z.object({ path: z.string().describe("Local packet capture") }),
+    args: z.object({ path: localPath.describe("Local packet capture") }),
     options: z
       .object({
         ...packetCaptureOptionsSchema.shape,
