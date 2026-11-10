@@ -102,6 +102,9 @@ cliTest(
       limit: 100,
     });
     if (page.kind !== "page") throw new Error("expected modules page");
+    expect(page.items).toContainEqual(
+      expect.objectContaining({ path: "index.js" }),
+    );
     const pageNodeIds = page.items.map((item) =>
       String((item as { node_id?: unknown }).node_id),
     );

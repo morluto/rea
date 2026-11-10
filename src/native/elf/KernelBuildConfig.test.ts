@@ -732,7 +732,12 @@ it("retains incomplete coverage for a partial config end marker", async () => {
     bytes.indexOf(Buffer.from("IKCFG_ST")) + 20,
   );
   const report = await parse(bytes.subarray(0, end + 7));
-  expect(report.config.status).not.toBe("absent");
+  expect(report.config).toMatchObject({
+    status: "incomplete",
+    reason: "config_gzip_truncated",
+    entries: [],
+  });
+  expect(report.coverage.status).toBe("incomplete");
 });
 
 it("ignores marker bytes inside a gzip member", async () => {

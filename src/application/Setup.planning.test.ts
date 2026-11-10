@@ -481,7 +481,7 @@ describe("setup plan application", () => {
     expect(host.doctorCalls).toBe(1);
   });
 
-  it("treats an empty interactive selection as cancellation", async () => {
+  it("completes an empty interactive selection without changes", async () => {
     const host = new FakeSetupHost();
     host.clients = [{ name: "codex", configPath: "/codex.toml" }];
 
