@@ -1413,6 +1413,25 @@ Evidence and missing source records, see
 Other outputs have their own receipt shapes; for example,
 [environment export](#export-an-environment-bundle) reports a published directory.
 
+A failure that carries partial Evidence in `details.partial_observation`, such
+as `provider_timeout` or `resource_constraint`, publishes that partial Evidence
+to `--evidence_output` under the same new-file and atomic rules, then keeps its
+error code, message and remediation when cleanup is confirmed. With `--detail summary`,
+`details.partial_observation` holds the summary view of the partial Evidence
+instead of the complete record, and `details.diagnostics.evidence_bundle`
+reports the written path and byte count. If publication is refused before
+commit, for example because the file already exists, the complete partial
+Evidence stays inline and `details.diagnostics.evidence_bundle_error` gives the
+refusal's code, message and a limitation. A refusal after commit keeps the
+receipt in `details.diagnostics.evidence_bundle` and the delivered view: when
+staging cleanup stays incomplete, the code becomes `cleanup_incomplete`, the
+original failure is retained in `details.execution_failure`, and `details` also carries `published`,
+`published_path`, `bytes`, `cleanup: "incomplete"` and `resources`, as for a
+successful run, and a later cancellation reports `cancelled` in
+`evidence_bundle_error` with the signal's exit status. Without
+`--evidence_output`, and for cancellation before publication or raw provider
+observations, the failure output is unchanged.
+
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a
 SIGPIPE-terminated writer). The operation itself may have completed; only its
