@@ -23,7 +23,7 @@ import {
   expectDroppedPartial,
   expectKeptPartial,
   expectOwnerError,
-} from "../ownerObservationExpectation.fixture.js";
+} from "../../../tests/fixtures/ownerObservationExpectation.js";
 
 const identity = { id: "electron-fixture", name: "Fixture", version: "1" };
 const pageProvider = (failure: AnalysisError): ElectronObservationPort => ({
@@ -236,6 +236,7 @@ it.each(["list", "inspect"] as const)(
 
 it("keeps cancellation when the retained Electron inspection is incomplete", async () => {
   const reason = { requested: "stop before page inspection completed" };
+  // A JSON-safe but incomplete inspection cannot be converted into Evidence.
   const partial = {
     kind: "electron-page-observation",
     inspection: { target_id: "electron-page" },

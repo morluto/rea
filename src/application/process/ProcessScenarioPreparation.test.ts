@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import * as filesystemSnapshot from "../../process/capture/FilesystemSnapshot.js";
 
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -9,6 +10,8 @@ import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
 import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 /**
  * Windows refuses capture before root admission runs. The cancellation cases
@@ -51,23 +54,24 @@ it("reports cancellation normalized inside admission as planning cancellation", 
     working_directory: ".",
   });
   const controller = new AbortController();
+  vi.spyOn(
+    filesystemSnapshot,
+    "admitFilesystemObservationRoots",
+  ).mockImplementationOnce(() => {
+    controller.abort("caller stopped during admission");
+    return Promise.resolve(
+      err(
+        new ProcessCaptureError("filesystem observation admission failed", {
+          cause: controller.signal.reason,
+        }),
+      ),
+    );
+  });
   const prepared = await prepareProcessScenarioPlan(
     scenario,
     {},
     capturePlatform,
     controller.signal,
-    {
-      admitRoots: () => {
-        controller.abort("caller stopped during admission");
-        return Promise.resolve(
-          err(
-            new ProcessCaptureError("filesystem observation admission failed", {
-              cause: controller.signal.reason,
-            }),
-          ),
-        );
-      },
-    },
   );
 
   expect(prepared.ok).toBe(false);
@@ -96,18 +100,19 @@ it("reports cancellation after the last awaited admission step", async () => {
   );
   let admissionCalls = 0;
 
+  vi.spyOn(
+    filesystemSnapshot,
+    "admitFilesystemObservationRoots",
+  ).mockImplementationOnce(() => {
+    admissionCalls += 1;
+    admissionEntered();
+    return pendingAdmission;
+  });
   const planning = prepareProcessScenarioPlan(
     scenario,
     {},
     capturePlatform,
     controller.signal,
-    {
-      admitRoots: () => {
-        admissionCalls += 1;
-        admissionEntered();
-        return pendingAdmission;
-      },
-    },
   );
 
   // Abort only once admission is actually running. Aborting earlier would be

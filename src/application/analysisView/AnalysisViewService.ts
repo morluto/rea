@@ -21,6 +21,7 @@ import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import {
   createEvidence,
+  evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
   type EvidenceSubjectTarget,
@@ -327,22 +328,14 @@ export const projectRetainedAnalysis = (
   if (!retained.ok) return retained;
   // Duplicate semantic records retain their original ledger metadata. Detail
   // selection changes presentation, not the historical lookup or payload owner.
-  const subject = evidence.subject;
-  return projectResolvedAnalysisView(
+  const projected = projectResolvedAnalysisView(
     { source, view },
     prepareAnalysisViewProjection(view),
     retained.value,
-    subject === null
-      ? undefined
-      : {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
-          ...(subject.architecture === null
-            ? {}
-            : { architecture: subject.architecture }),
-        },
+    evidenceSubjectTarget(evidence.subject),
   );
+  if (!projected.ok) projected.error.retainPartialObservation(source);
+  return projected;
 };
 
 const resolveAnalysisViewSource = (
@@ -383,17 +376,7 @@ const createAnalysisViewEvidence = (
   parent: Evidence,
   result: AnalysisViewResult,
 ): Evidence => {
-  const target =
-    parent.subject === null
-      ? undefined
-      : {
-          path: parent.subject.local_path,
-          sha256: parent.subject.digest.sha256,
-          format: parent.subject.format,
-          ...(parent.subject.architecture === null
-            ? {}
-            : { architecture: parent.subject.architecture }),
-        };
+  const target = evidenceSubjectTarget(parent.subject);
   const nativeFunctionView =
     result.kind === "native" ||
     (result.kind === "summary" &&

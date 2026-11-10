@@ -92,8 +92,8 @@ it.each([
     expect(new Set(initial.tools.map(({ name }) => name))).toEqual(
       new Set([...HOT_TOOL_NAMES, "discover_tools"]),
     );
+    const ajv = new Ajv2020({ strict: false });
     for (const tool of initial.tools) {
-      const ajv = new Ajv2020({ strict: false });
       expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
       if (tool.outputSchema !== undefined)
         expect(ajv.validateSchema(tool.outputSchema as AnySchemaObject)).toBe(
@@ -780,11 +780,15 @@ const copyCompiledPackage = async (prefix: string): Promise<string> => {
   await cp(resolve("dist"), join(directory, "dist"), { recursive: true });
   await mkdir(join(directory, "scripts/lib"), { recursive: true });
   await cp(resolve("scripts/rea.mjs"), join(directory, "scripts/rea.mjs"));
-  // The launcher imports its process-environment owner, as the package ships it.
-  await cp(
-    resolve("scripts/lib/cli-process-environment.mjs"),
-    join(directory, "scripts/lib/cli-process-environment.mjs"),
-  );
+  // Copy the helpers selected by the package, so this fixture exercises the
+  // same launcher files that an installation receives.
+  const manifest = JSON.parse(await readFile("package.json", "utf8")) as {
+    files: string[];
+  };
+  for (const path of manifest.files.filter((file) =>
+    file.startsWith("scripts/lib/"),
+  ))
+    await cp(resolve(path), join(directory, path));
   await cp(resolve("package.json"), join(directory, "package.json"));
   await symlink(
     resolve("node_modules"),

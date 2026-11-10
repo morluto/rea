@@ -1,3 +1,7 @@
+import {
+  desktopLibraryPolicy,
+  type DesktopLibraryPolicyInput,
+} from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -37,6 +41,7 @@ const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
 
 /** Which application to launch, as the caller named it. */
 export interface LinuxApplicationRequest {
+  readonly libraryPolicy?: DesktopLibraryPolicyInput;
   readonly desktopEntry: string | undefined;
   readonly executable: string | undefined;
   readonly arguments: readonly string[];
@@ -52,6 +57,10 @@ export interface LinuxApplicationRequest {
 export type LinuxApplicationRefusal =
   | {
       readonly reason: "desktop_entry_not_found";
+      readonly searched: readonly string[];
+    }
+  | {
+      readonly reason: "desktop_entry_search_incomplete";
       readonly searched: readonly string[];
     }
   | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
@@ -95,9 +104,88 @@ export const desktopEntryDirectories = (
   );
 };
 
+/** How deep below one applications directory a nested id search may descend. */
+const NESTED_SEARCH_MAX_DEPTH = 4;
+/** How many applicable path probes one applications directory search may issue. */
+const NESTED_SEARCH_MAX_ENTRIES = 4096;
+
+type DesktopPathKind = "file" | "directory" | "other" | "absent";
+
+/** Only missing paths establish absence; failed identity probes remain unresolved. */
+const desktopPathKind = async (
+  path: string,
+): Promise<Result<DesktopPathKind, unknown>> => {
+  try {
+    const facts = await stat(path);
+    return ok(
+      facts.isFile() ? "file" : facts.isDirectory() ? "directory" : "other",
+    );
+  } catch (cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? ok("absent") : err(cause);
+  }
+};
+
+/**
+ * A desktop ID replaces path separators with dashes, while names can also
+ * contain dashes. Probe only spellings that encode this ID, rather than
+ * enumerating unrelated directories. Each descent consumes part of the ID.
+ */
+const findNestedDesktopEntry = async (
+  applicationsDirectory: string,
+  id: string,
+  signal: AbortSignal | undefined,
+): Promise<{ path: string } | { truncated: true } | undefined> => {
+  const pending = [{ path: applicationsDirectory, remaining: id, depth: 1 }];
+  let examined = 0;
+  let incomplete = false;
+  while (pending.length > 0) {
+    signal?.throwIfAborted();
+    const directory = pending.pop()!;
+    if (directory.depth > 1) {
+      if (examined >= NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      examined++;
+      const path = join(directory.path, directory.remaining);
+      const kind = await desktopPathKind(path);
+      signal?.throwIfAborted();
+      if (!kind.ok) incomplete = true;
+      else if (kind.value === "file") return { path };
+    }
+    for (
+      let split = directory.remaining.indexOf("-");
+      split !== -1;
+      split = directory.remaining.indexOf("-", split + 1)
+    ) {
+      const prefix = directory.remaining.slice(0, split);
+      if (prefix === "" || prefix === "." || prefix === "..") continue;
+      if (examined >= NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      examined++;
+      const path = join(directory.path, prefix);
+      const kind = await desktopPathKind(path);
+      signal?.throwIfAborted();
+      if (!kind.ok) {
+        incomplete = true;
+        continue;
+      }
+      if (kind.value !== "directory") continue;
+      if (directory.depth >= NESTED_SEARCH_MAX_DEPTH) {
+        incomplete = true;
+        continue;
+      }
+      pending.push({
+        path,
+        remaining: directory.remaining.slice(split + 1),
+        depth: directory.depth + 1,
+      });
+    }
+  }
+  return incomplete ? { truncated: true } : undefined;
+};
+
 const locateDesktopEntry = async (
   request: LinuxApplicationRequest,
   selector: string,
+  signal?: AbortSignal,
 ): Promise<
   Result<{ path: string; id: string | null }, LinuxApplicationRefusal>
 > => {
@@ -105,10 +193,23 @@ const locateDesktopEntry = async (
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
+    signal?.throwIfAborted();
     const path = join(directory, id);
-    // Flatpak exports and Nix profiles install entries as links to the file.
-    if ((await stat(path).catch(() => undefined))?.isFile() === true)
+    const kind = await desktopPathKind(path);
+    signal?.throwIfAborted();
+    if (!kind.ok)
+      return err({ reason: "desktop_entry_search_incomplete", searched });
+    if (kind.value === "file")
       return ok({ path, id: id.slice(0, -".desktop".length) });
+    // A nested entry in this directory outranks a flat one in a later root.
+    const nested = await findNestedDesktopEntry(directory, id, signal);
+    signal?.throwIfAborted();
+    if (nested !== undefined && "path" in nested)
+      return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
+    // The bounded search did not establish absence, so a later root must not
+    // supply a different application under the same id.
+    if (nested !== undefined)
+      return err({ reason: "desktop_entry_search_incomplete", searched });
   }
   return err({ reason: "desktop_entry_not_found", searched });
 };
@@ -265,7 +366,11 @@ const launchCommand = async (
       entry: null,
     });
   }
-  const located = await locateDesktopEntry(request, request.desktopEntry);
+  const located = await locateDesktopEntry(
+    request,
+    request.desktopEntry,
+    signal,
+  );
   if (!located.ok) return located;
   const entry = await readDesktopEntry(located.value.path, signal);
   if (!entry.ok) return entry;
@@ -328,6 +433,7 @@ export const inspectLinuxApplication = async (
   const { path } = found;
   const resolved = await realpath(path).catch(() => null);
   const context: InventoryContext = {
+    libraryPolicy: desktopLibraryPolicy(request.libraryPolicy),
     host,
     signal,
     limitations: [],

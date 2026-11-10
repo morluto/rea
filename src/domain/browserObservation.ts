@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { webRuntimeCommandTimeoutSchema } from "./browserDeadline.js";
+import {
+  browserDiscoveryTimeoutSchema,
+  webRuntimeCommandTimeoutSchema,
+} from "./browserDeadline.js";
 import { urlDeclaresQueryOrFragment } from "./urlComponents.js";
 import {
   parseRecordedTransportUrl,
@@ -194,12 +197,13 @@ export const browserAllowedOriginsSchema = z
 const browserInput = {
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
+  discovery_timeout_ms: browserDiscoveryTimeoutSchema,
 };
 
 /**
  * Public input for complete discovery, optionally filtered by exact origin.
- * Discovery uses the fixed deadline and the socket closes without a later
- * command, so this operation accepts no command_timeout_ms.
+ * Discovery uses discovery_timeout_ms (default 10000 ms) without running a
+ * post-discovery target command, so this operation accepts no command_timeout_ms.
  */
 export const listBrowserTargetsInputSchema = z.strictObject({
   ...browserInput,

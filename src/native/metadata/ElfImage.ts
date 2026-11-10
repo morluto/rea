@@ -82,6 +82,7 @@ export const readElfImage = (
       format: "elf",
       name: section.name,
       type: section.type,
+      flags: section.flags,
       address: section.address,
       declared_range: { offset: section.offset, size: section.size },
       ...range,

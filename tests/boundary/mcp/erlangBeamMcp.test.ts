@@ -17,6 +17,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   erlangBeamDeclaredRowsFixture,
+  erlangBeamRowsFixture,
   erlangBeamFixture,
 } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -106,7 +107,7 @@ mcpTest(
         ],
         [
           "rows",
-          erlangBeamDeclaredRowsFixture([
+          erlangBeamRowsFixture([
             ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
           ]),
           {},
@@ -176,4 +177,34 @@ mcpTest(
       await service.close();
     }
   },
+);
+
+mcpTest(
+  "reports impossible BEAM table counts as malformed input",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const root = await createTestTempDirectory("rea-beam-malformed-rows-");
+    try {
+      for (const chunk of ["ExpT", "ImpT", "FunT"]) {
+        const path = join(root, `${chunk}.beam`);
+        await writeFile(
+          path,
+          erlangBeamDeclaredRowsFixture([
+            [chunk, MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
+          ]),
+        );
+        const response = await client.callTool({
+          name: "inspect_erlang_beam",
+          arguments: { path },
+        });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code: "invalid_request",
+        });
+      }
+    } finally {
+      await session.close();
+    }
+  },
+  60_000,
 );

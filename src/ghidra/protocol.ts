@@ -1,14 +1,14 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { z } from "zod";
 
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const responseSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     id: z.int().positive(),
     ok: z.literal(true),
-    result: jsonValueSchema,
+    result: ownedJsonValueSchema,
   }),
   z.strictObject({
     id: z.int().positive(),

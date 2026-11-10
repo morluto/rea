@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { graphqlContractViewRequestSchema } from "./graphqlContractQuery.js";
 import {
   API_CONTRACT_MAX_FILE_BYTES,
@@ -59,7 +59,7 @@ export const apiContractViewSelectionSchema = z.discriminatedUnion("kind", [
   graphqlContractViewRequestSchema,
 ]);
 const commonInput = {
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to a local API contract document",
   ),
   max_file_bytes: apiContractFileBytesSchema,
@@ -79,7 +79,7 @@ export const inspectApiContractInputSchema = z
     z.strictObject({
       ...commonInput,
       format: z.literal("graphql-sdl"),
-      operations_path: localPathStringSchema
+      operations_path: absoluteLocalPathStringSchema
         .optional()
         .describe(
           "Optional absolute path to one local GraphQL operation/fragment document; parsed without execution",

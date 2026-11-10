@@ -1,3 +1,5 @@
+import { webSourceLocationViewRequestSchema } from "./webSourceLocationView.js";
+import { nativeProcedureReferencesViewRequestSchema } from "./nativeProcedureReferencesView.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
 import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
@@ -96,6 +98,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,
   summaryViewSchema,
+  webSourceLocationViewRequestSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,
   desktopViewRequestSchema,
@@ -106,6 +109,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   javascriptFactsViewRequestSchema,
   nativeViewSchema,
   nativeInventoryViewRequestSchema,
+  nativeProcedureReferencesViewRequestSchema,
   nativeLoadImageViewRequestSchema,
   artifactInventoryViewRequestSchema,
   wasmViewRequestSchema,

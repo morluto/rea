@@ -20,7 +20,7 @@ export const DEFAULT_REGEX_MATCHING_DEADLINE: RegexMatchingDeadline = {
   source: "default",
 };
 
-export const regexMatchingDeadlineConstraint = `${REGEX_MATCHING_DEADLINE_SETTING} must be a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms; the default is ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
+const regexMatchingDeadlineConstraint = `${REGEX_MATCHING_DEADLINE_SETTING} must be a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms; the default is ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
 
 /** Optional decimal millisecond count for the supervised regex matching deadline. */
 export const regexMatchingDeadlineMsSchema = positiveDecimalIntegerSchema(

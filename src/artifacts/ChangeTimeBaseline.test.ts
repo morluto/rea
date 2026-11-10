@@ -2,10 +2,7 @@ import type { Stats } from "node:fs";
 
 import { expect, it } from "vitest";
 
-import {
-  changeTimeMayStillDrift,
-  settleChangeTimeBaseline,
-} from "../filesystem/ChangeTimeBaseline.js";
+import { settleChangeTimeBaseline } from "../filesystem/ChangeTimeBaseline.js";
 
 const DRIFT_MS = 2_000;
 
@@ -85,13 +82,20 @@ it("exits on the window closing rather than on a repeated value", async () => {
   expect(seams.sleeps.length).toBe(2);
 });
 
-it("settles an unreadable ChangeTime rather than trusting it", () => {
-  expect(
-    changeTimeMayStillDrift(statsAt(Number.NaN), { platform: "win32" }),
-  ).toBe(true);
-  expect(
-    changeTimeMayStillDrift(statsAt(Number.NaN), { platform: "linux" }),
-  ).toBe(false);
+it("re-observes an unreadable Windows ChangeTime but does not wait on other hosts", async () => {
+  const windows = scriptedRead([Number.NaN, 1_000]);
+  const seams = advancingSeams(5_000, 100);
+  const settled = await settleChangeTimeBaseline(windows.read, seams);
+  expect(settled.ctimeMs).toBe(1_000);
+  expect(windows.reads()).toBe(2);
+  expect(seams.sleeps).toHaveLength(1);
+
+  const linux = scriptedRead([Number.NaN, 1_000]);
+  const unreadable = await settleChangeTimeBaseline(linux.read, {
+    platform: "linux",
+  });
+  expect(unreadable.ctimeMs).toBeNaN();
+  expect(linux.reads()).toBe(1);
 });
 
 it("gives up settling instead of stalling admission forever", async () => {

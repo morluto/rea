@@ -1320,8 +1320,17 @@ it("closes a context that launches after its deadline before removing the profil
 });
 
 it("closes a browser that connects after its deadline without waiting to report the timeout", async () => {
-  let closed = false;
-  const started = performance.now();
+  vi.useFakeTimers();
+  let releaseHandshake!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHandshake = resolve;
+  });
+  let handshakeEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    handshakeEntered = resolve;
+  });
+  const closed = vi.fn(async () => undefined);
+  const leases: AnalysisCleanupLease[] = [];
   const scenario = browserScenarioSchema.parse({
     browser: {
       mode: "connect",
@@ -1333,34 +1342,54 @@ it("closes a browser that connects after its deadline without waiting to report 
     command_timeout_ms: 40,
     actions: scenarioActions,
   });
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 80));
-            return {
-              close: async () => {
-                closed = true;
-              },
-              contexts: () => [],
-              isConnected: () => true,
-              version: () => "late-connect",
-            };
-          },
-          launchPersistentContext: async () => {
-            throw new Error("Unexpected launch");
-          },
+  let settled = false;
+  const opening = openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      retainCleanup: (lease) => leases.push(lease),
+      launcher: {
+        connectOverCDP: async () => {
+          handshakeEntered();
+          await held;
+          return {
+            close: closed,
+            contexts: () => [],
+            isConnected: () => true,
+            version: () => "late-connect",
+          };
+        },
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
         },
       },
-    ),
-  ).rejects.toMatchObject({ reason: "timeout" });
-  expect(performance.now() - started).toBeLessThan(2_000);
-  for (let attempt = 0; attempt < 50 && !closed; attempt += 1)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  expect(closed).toBe(true);
+    },
+  )
+    .catch((error: unknown) => error)
+    .finally(() => {
+      settled = true;
+    });
+  try {
+    await entered;
+    await vi.advanceTimersByTimeAsync(40);
+    expect(settled).toBe(true);
+    expect(closed).not.toHaveBeenCalled();
+    expect(await opening).toMatchObject({ reason: "timeout" });
+    expect(leases).toHaveLength(1);
+    expect(leases[0]?.released).toBe(false);
+    releaseHandshake();
+    await leases[0]!.release();
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(leases[0]?.released).toBe(true);
+  } finally {
+    releaseHandshake();
+    try {
+      await opening;
+      await Promise.all(leases.map((lease) => lease.release()));
+    } finally {
+      vi.useRealTimers();
+    }
+  }
 });
 
 it.each(["media", "focus"] as const)(

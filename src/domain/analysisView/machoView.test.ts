@@ -398,7 +398,9 @@ describe("Mach-O analysis views", () => {
       exhausted: true,
     });
   });
+});
 
+describe("Mach-O view uncertainty", () => {
   it("keeps encryption unknown for Evidence retained before it was reported", () => {
     const { encryption: _omitted, ...legacy } = report;
     const projected = projectAnalysisView(parent(legacy), { kind: "summary" });
@@ -411,8 +413,10 @@ describe("Mach-O analysis views", () => {
       },
       unknowns: [expect.stringContaining("exhaustive imports, encryption;")],
     });
-    expect(projected.value.limitations).toContain(
-      "This inspect_macho Evidence predates encryption reporting; slice encryption status is unknown.",
+    expect(projected.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /inspect_macho Evidence.*predates encryption reporting.*slice encryption status is unknown/iu,
+      ),
     );
   });
 

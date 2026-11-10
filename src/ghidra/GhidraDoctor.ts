@@ -17,6 +17,13 @@ import {
   type GhidraTemporaryDirectoryProbe,
 } from "./GhidraTemporaryDirectory.js";
 
+/** Client settings consulted by this readiness probe. */
+export const GHIDRA_DOCTOR_SETTINGS = [
+  "GHIDRA_INSTALL_DIR",
+  "JAVA_HOME",
+  "PATH",
+] as const;
+
 /** Project installation and runtime-authority facts into the doctor contract. */
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,

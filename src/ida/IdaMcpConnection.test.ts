@@ -78,6 +78,15 @@ describe("upstream IDA tool result decoding", () => {
     expect(
       decodeIdaToolResult({
         content: [],
+        structuredContent: { result: [{ address: "0x1" }] },
+      }),
+    ).toEqual([{ address: "0x1" }]);
+    expect(
+      decodeIdaToolResult({ content: [{ type: "text", text: '{"data":[]}' }] }),
+    ).toEqual({ data: [] });
+    expect(
+      decodeIdaToolResult({
+        content: [],
         structuredContent: { result: "code" },
       }),
     ).toBe("code");
@@ -707,6 +716,7 @@ it("keeps error, truncation and native-text precedence ahead of structured JSON 
 
 it("requires a valid content array even when IDA supplies structured evidence", () => {
   for (const content of [
+    "invalid",
     undefined,
     null,
     {},

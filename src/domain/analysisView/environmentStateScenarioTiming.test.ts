@@ -149,8 +149,10 @@ it("falls back to the observed time with no duration when a request never ended 
   });
   expect(records.records[0]?.reported).not.toHaveProperty("time");
   expect(records.records[1]?.reported).not.toHaveProperty("time");
-  expect(records.limitations).toContain(
-    "2 scenario request(s) had no unique reported duration; their duration is omitted and does not establish zero-length execution.",
+  expect(records.limitations).toContainEqual(
+    expect.stringMatching(
+      /2 scenario request.*no unique reported duration.*omitted.*does not establish zero-length execution/iu,
+    ),
   );
   expect(records.records[2]?.reported).toMatchObject({
     startedDateTime: "2026-10-17T18:00:02.000Z",

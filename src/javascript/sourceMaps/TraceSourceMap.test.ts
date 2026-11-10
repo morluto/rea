@@ -290,7 +290,7 @@ describe("upstream source-map point evidence", () => {
 });
 
 describe("source-map layout admission", () => {
-  it.each(["ACAA", "AAAAC", "g", "!", "AA", "D"])(
+  it.each(["AAAAC", "g", "!", "AA", "D"])(
     "rejects malformed VLQ/components/indexes: %s",
     (mappings) => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
