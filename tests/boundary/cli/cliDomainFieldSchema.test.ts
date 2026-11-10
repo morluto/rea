@@ -4,13 +4,14 @@ import { Cli, z } from "incur";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { androidInputSchemas } from "../../../src/domain/android/androidAnalysis.js";
 
 type CliInstance = ReturnType<typeof createCli>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
 
 const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
 
-const serve = async (cli: CliInstance, argv: readonly string[]) => {
+const serveRaw = async (cli: CliInstance, argv: readonly string[]) => {
   let stdout = "";
   let exitCode = 0;
   await cli.serve([...argv], {
@@ -22,6 +23,11 @@ const serve = async (cli: CliInstance, argv: readonly string[]) => {
       stdout += text;
     },
   });
+  return { stdout, exitCode };
+};
+
+const serve = async (cli: CliInstance, argv: readonly string[]) => {
+  const { stdout, exitCode } = await serveRaw(cli, argv);
   expect(exitCode, argv.join(" ")).toBe(0);
   return z
     .object({
@@ -38,10 +44,9 @@ const serve = async (cli: CliInstance, argv: readonly string[]) => {
 const absoluteMapping =
   process.platform === "win32" ? "C:\\mapping.txt" : "/tmp/mapping.txt";
 
-it("advertises the domain constraints for android, adb settings, and browser selectors", async () => {
-  const cli = createCli({});
+const createSchemaValidator = (cli: CliInstance) => {
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const validate = async (
+  return async (
     command: string,
     group: "args" | "options",
     value: Record<string, unknown>,
@@ -51,6 +56,11 @@ it("advertises the domain constraints for android, adb settings, and browser sel
     expect(schema, command).toBeDefined();
     return ajv.compile(schema as AnySchema)(value);
   };
+};
+
+it("advertises the domain constraints for android, adb settings, and browser selectors", async () => {
+  const cli = createCli({});
+  const validate = createSchemaValidator(cli);
 
   expect(
     await validate("inspect-android-class", "args", {
@@ -162,4 +172,157 @@ it("advertises the domain constraints for android, adb settings, and browser sel
     expect(
       parser.args.safeParse({ path: "app.apk", className: "" }).success,
     ).toBe(false);
+});
+
+it("requires nonempty Android class and method selectors in advertised CLI schemas", async () => {
+  const cli = createCli({});
+  const validate = createSchemaValidator(cli);
+
+  expect(
+    await validate("inspect-android-method", "args", {
+      path: "",
+      className: "com.example.Main",
+      methodName: "onCreate",
+    }),
+  ).toBe(false);
+  expect(
+    await validate("inspect-android-method", "args", {
+      path: "app.apk",
+      className: "",
+      methodName: "onCreate",
+    }),
+  ).toBe(false);
+  expect(
+    await validate("inspect-android-method", "args", {
+      path: "app.apk",
+      className: "com.example.Main",
+      methodName: "onCreate",
+    }),
+  ).toBe(true);
+  expect(
+    await validate("trace-android-references", "args", {
+      path: "",
+      className: "com.example.Main",
+    }),
+  ).toBe(false);
+  expect(
+    await validate("trace-android-references", "args", {
+      path: "app.apk",
+      className: "",
+    }),
+  ).toBe(false);
+  expect(
+    await validate("trace-android-references", "args", {
+      path: "app.apk",
+      className: "com.example.Main",
+    }),
+  ).toBe(true);
+  const traceSchema = await serve(cli, [
+    "trace-android-references",
+    "--schema",
+    "--json",
+  ]);
+  expect(traceSchema.args?.properties.className).toMatchObject({
+    minLength: 1,
+    description:
+      androidInputSchemas.trace_android_references.shape.class_name.description,
+  });
+  expect(await validate("trace-android-references", "options", {})).toBe(true);
+  expect(
+    await validate("trace-android-references", "options", {
+      methodName: "",
+    }),
+  ).toBe(false);
+  expect(
+    await validate("trace-android-references", "options", {
+      methodName: "onCreate",
+    }),
+  ).toBe(true);
+});
+
+it("rejects empty Android class and method selectors in CLI parsing before opening a target", async () => {
+  const cli = createCli({});
+  const rejectedCases = [
+    {
+      argv: ["inspect-android-class", "/nonexistent/missing.apk", ""],
+      path: "className",
+    },
+    {
+      argv: [
+        "inspect-android-method",
+        "/nonexistent/missing.apk",
+        "",
+        "onCreate",
+      ],
+      path: "className",
+    },
+    {
+      argv: [
+        "inspect-android-method",
+        "/nonexistent/missing.apk",
+        "com.example.Main",
+        "",
+      ],
+      path: "methodName",
+    },
+    {
+      argv: ["trace-android-references", "/nonexistent/missing.apk", ""],
+      path: "className",
+    },
+    {
+      argv: [
+        "trace-android-references",
+        "/nonexistent/missing.apk",
+        "com.example.Main",
+        "--method-name",
+        "",
+      ],
+      path: "methodName",
+    },
+    {
+      argv: [
+        "trace-android-references",
+        "/nonexistent/missing.apk",
+        "com.example.Main",
+        "--method-name=",
+      ],
+      path: "methodName",
+    },
+  ] as const;
+
+  for (const { argv, path } of rejectedCases) {
+    const result = await serveRaw(cli, [...argv, "--json"]);
+    expect(result.exitCode, argv.join(" ")).toBe(1);
+    expect(JSON.parse(result.stdout), argv.join(" ")).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          code: "too_small",
+          path,
+        }),
+      ],
+    });
+  }
+
+  for (const argv of [
+    ["inspect-android-class", "/nonexistent/missing.apk", "com.example.Main"],
+    [
+      "inspect-android-method",
+      "/nonexistent/missing.apk",
+      "com.example.Main",
+      "onCreate",
+    ],
+    [
+      "trace-android-references",
+      "/nonexistent/missing.apk",
+      "com.example.Main",
+      "--method-name",
+      "onCreate",
+    ],
+  ] as const) {
+    const result = await serveRaw(cli, [...argv, "--json"]);
+    expect(JSON.parse(result.stdout), argv.join(" ")).toMatchObject({
+      code: "target_unavailable",
+    });
+  }
 });

@@ -258,7 +258,10 @@ export const registerAndroidCommands = (
   cli.command(CLI_COMMANDS.traceAndroidReferences, {
     description:
       "Trace APK using nodes for a defined class/method or an externally invoked DEX method",
-    args: z.object({ path, className }),
+    args: z.object({
+      path,
+      className: androidInputSchemas.trace_android_references.shape.class_name,
+    }),
     options: z.object({
       methodName:
         androidInputSchemas.trace_android_references.shape.method_name,
