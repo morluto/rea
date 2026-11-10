@@ -79,7 +79,7 @@ cliTest(
         ),
       ),
     );
-    expect(builtEvidence.caller_input_path).toBe(har);
+    expect(builtEvidence.caller_input_path).toBe(selectedCapture);
 
     const inspected = await cli.run({
       arguments: [
