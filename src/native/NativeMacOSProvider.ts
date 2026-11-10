@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
@@ -66,7 +67,10 @@ import {
   nativeDispatchMetadataInputSchema,
 } from "../domain/native/objcSwiftMetadata.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import type { EvidenceLocation } from "../domain/evidence.js";
+import type {
+  EvidenceLocation,
+  EvidenceSubjectTarget,
+} from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisArtifactChangedError,
@@ -397,6 +401,9 @@ class NativeMacOSClient implements AnalysisClient {
             createAnalysisExecution(observation.value.result, IDENTITY, {
               limitations: observation.value.limitations,
               locations: observation.value.locations,
+              ...(observation.value.subject === undefined
+                ? {}
+                : { subject: observation.value.subject }),
             }),
           )
         : err(resolvedAnalysisError(observation.error));
@@ -1174,6 +1181,7 @@ class NativeMacOSClient implements AnalysisClient {
         parsed: parsed.value,
         format: "binary",
         path: fileInput.selection.path,
+        bytes: source.value,
         resourceRoot: this.bundleResourceRoot,
         provenance: [
           invocation(classified, fileInput.selection.path, "$PLIST"),
@@ -1247,6 +1255,7 @@ class NativeMacOSClient implements AnalysisClient {
         parsed: parsed.value,
         format,
         path: fileInput.selection.path,
+        bytes: source.value,
         resourceRoot: this.bundleResourceRoot,
         provenance,
       }),
@@ -1260,6 +1269,10 @@ class NativeMacOSClient implements AnalysisClient {
   ): Promise<Result<NativeObservation, AnalysisError>> {
     const { path } = fileInput.selection;
     const { signal, timeoutMs } = fileInput;
+    // Bind the observation to the verified bytes actually read, as the
+    // binary and text paths do, before converting them with plutil.
+    const source = await readNativePlistBytes(fileInput);
+    if (!source.ok) return source;
     const json = await this.#run(
       "inspect_plist",
       "plutil",
@@ -1309,6 +1322,7 @@ class NativeMacOSClient implements AnalysisClient {
         parsed: parsed.value,
         format,
         path,
+        bytes: source.value,
         resourceRoot: this.bundleResourceRoot,
         provenance,
       }),
@@ -1848,6 +1862,13 @@ interface NativeObservation {
   readonly result: JsonValue;
   readonly limitations: readonly string[];
   readonly locations: readonly EvidenceLocation[];
+  /**
+   * The artifact this observation is about, when it is not the session's
+   * active target. An omitted subject lets the session fall back to the
+   * active target, which is correct for inspect_macho and
+   * inspect_signature but misattributes auxiliary files such as plists.
+   */
+  readonly subject?: EvidenceSubjectTarget;
 }
 
 const isNativeOperation = (
@@ -1990,10 +2011,12 @@ const nativePlistObservation = (input: {
   readonly parsed: ParsedPlist;
   readonly format: z.infer<typeof inspectPlistSchema>["format"];
   readonly path: string;
+  /** The verified bytes actually read; their digest identifies the plist. */
+  readonly bytes: Buffer;
   readonly resourceRoot: ResolvedAppBundleResourceRoot | undefined;
   readonly provenance: readonly NativeCommandInvocation[];
 }): NativeObservation => {
-  const { parsed, format, path, resourceRoot, provenance } = input;
+  const { parsed, format, path, bytes, resourceRoot, provenance } = input;
   const result = inspectPlistSchema.parse({
     format,
     value: parsed.value,
@@ -2017,6 +2040,15 @@ const nativePlistObservation = (input: {
     result: jsonValueSchema.parse(result),
     limitations: parsed.limitations,
     locations: [{ kind: "artifact-path", path }],
+    // The observation is about the plist file actually read, not the
+    // session's Mach-O executable: bind its subject to the verified plist
+    // bytes so the session does not fall back to the active target.
+    subject: {
+      name: basename(path) || "artifact",
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      format: "plist",
+    },
   };
 };
 

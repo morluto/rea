@@ -4,11 +4,16 @@ import {
   readUniversalMachoImage,
   readUniversalMachoSlice,
 } from "../../domain/apple/machoImageSelection.js";
+import { machoCpuSubtypeBase } from "../../domain/apple/machoCpuIdentity.js";
 import {
   MACHO_CPU_TYPES,
   type MachoSliceArchitecture,
   type MachoTargetSelection,
 } from "../../domain/apple/machoTargetSelection.js";
+import {
+  MACHO_ARCHITECTURE_POLICIES,
+  machoSubtypeRank,
+} from "../MachoArchitectureSelection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
@@ -67,15 +72,48 @@ export const selectNativeImage = (
   const matches = fat.slices.filter(
     ({ cpuType }) => cpuType === MACHO_CPU_TYPES[architecture],
   );
-  const [slice] = matches;
-  if (slice === undefined || matches.length > 1)
+  if (matches.length === 0)
     return err({
       kind: "architecture",
-      message:
-        slice === undefined
-          ? `Universal Mach-O holds ${available}, not ${architecture}.`
-          : `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
+      message: `Universal Mach-O holds ${available}, not ${architecture}.`,
     });
+  // Several slices can share one CPU type (arm64 and arm64e). Resolve them
+  // with the same preference order inspect-macho uses, so one requested
+  // architecture always names one slice; only slices sharing a base subtype
+  // are genuinely ambiguous. A tie between distinct unlisted subtypes keeps
+  // the first slice in FAT table order, as inspect-macho does.
+  const policy = MACHO_ARCHITECTURE_POLICIES[architecture];
+  let slice = matches[0]!;
+  if (policy === undefined) {
+    if (matches.length > 1)
+      return err({
+        kind: "architecture",
+        message: `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
+      });
+  } else {
+    let bestRank = machoSubtypeRank(policy, slice.cpuSubtype);
+    let ambiguous = false;
+    for (const candidate of matches.slice(1)) {
+      const rank = machoSubtypeRank(policy, candidate.cpuSubtype);
+      if (rank < bestRank) {
+        slice = candidate;
+        bestRank = rank;
+        ambiguous = false;
+        continue;
+      }
+      if (
+        rank === bestRank &&
+        machoCpuSubtypeBase(candidate.cpuSubtype) ===
+          machoCpuSubtypeBase(slice.cpuSubtype)
+      )
+        ambiguous = true;
+    }
+    if (ambiguous)
+      return err({
+        kind: "architecture",
+        message: `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
+      });
+  }
   const selected = readUniversalMachoSlice(bytes, fat, slice);
   if (!selected.ok) return selected;
   return ok({

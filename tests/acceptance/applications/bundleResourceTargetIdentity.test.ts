@@ -30,10 +30,11 @@ cliTest.for([
     const executable = join(contents, "MacOS", "Probe");
     const original = thinMach(0xfeedfacf, 0x0100000c);
     await writeFile(executable, original);
-    await writeFile(
-      join(contents, "Info.plist"),
-      "<plist><dict><key>CFBundleExecutable</key><string>Probe</string></dict></plist>",
-    );
+    const initialPlist =
+      "<plist><dict><key>CFBundleExecutable</key><string>Probe</string></dict></plist>";
+    const changedPlist =
+      "<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>ChangedController</string></dict></plist>";
+    await writeFile(join(contents, "Info.plist"), initialPlist);
     const nib = await readFile(
       join(process.cwd(), "tests/fixtures/interface-builder/UIKitOutlet.xml"),
       "utf8",
@@ -49,9 +50,16 @@ cliTest.for([
     const before = await call(operation, parameters);
     expect(before.isError).not.toBe(true);
     const initial = parseEvidence(before.structuredContent);
-    expect(initial.subject?.digest.sha256).toBe(
-      createHash("sha256").update(original).digest("hex"),
-    );
+    // inspect_plist reports the plist file it read, not the open executable.
+    if (operation === "inspect_plist") {
+      expect(initial.subject?.format).toBe("plist");
+      expect(initial.subject?.digest.sha256).toBe(
+        createHash("sha256").update(initialPlist).digest("hex"),
+      );
+    } else
+      expect(initial.subject?.digest.sha256).toBe(
+        createHash("sha256").update(original).digest("hex"),
+      );
 
     const changed = Buffer.from(original);
     changed[31] = 1;
@@ -60,10 +68,7 @@ cliTest.for([
     expect(changedNib).not.toBe(nib);
     await writeFile(nibPath, changedNib);
     if (operation === "inspect_plist")
-      await writeFile(
-        join(contents, "Info.plist"),
-        "<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>ChangedController</string></dict></plist>",
-      );
+      await writeFile(join(contents, "Info.plist"), changedPlist);
     const stale = await call(operation, parameters);
     expect(parseMcpToolError(stale).error).toMatchObject({
       code:
@@ -77,9 +82,15 @@ cliTest.for([
     const after = await call(operation, parameters);
     expect(after.isError).not.toBe(true);
     const refreshed = parseEvidence(after.structuredContent);
-    expect(refreshed.subject?.digest.sha256).toBe(
-      createHash("sha256").update(changed).digest("hex"),
-    );
+    if (operation === "inspect_plist") {
+      expect(refreshed.subject?.format).toBe("plist");
+      expect(refreshed.subject?.digest.sha256).toBe(
+        createHash("sha256").update(changedPlist).digest("hex"),
+      );
+    } else
+      expect(refreshed.subject?.digest.sha256).toBe(
+        createHash("sha256").update(changed).digest("hex"),
+      );
     const nibHash = createHash("sha256").update(changedNib).digest("hex");
     if (operation === "inspect_plist")
       expect(

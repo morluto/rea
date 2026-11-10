@@ -1473,6 +1473,81 @@ describe("native macOS provider inspection", () => {
   });
 });
 
+describe("native plist Evidence subjects", () => {
+  it("binds plist Evidence subjects to the plist file, not the open executable", async () => {
+    directory = await createTestTempDirectory("rea-native-plist-subject-");
+    const app = join(directory, "Fixture.app");
+    const executable = join(app, "Contents/MacOS/Fixture");
+    const infoPlist = join(app, "Contents/Info.plist");
+    const nestedPlist = join(
+      app,
+      "Contents/Frameworks/Helper.framework/Resources/Info.plist",
+    );
+    await mkdir(join(app, "Contents/MacOS"), { recursive: true });
+    await mkdir(join(app, "Contents/Frameworks/Helper.framework/Resources"), {
+      recursive: true,
+    });
+    await writeFile(executable, "fixture");
+    await writeFixturePlist(infoPlist);
+    await writeFile(
+      nestedPlist,
+      build({
+        CFBundleIdentifier: "com.example.helper",
+        CFBundleVersion: "7",
+      }),
+    );
+    const target = {
+      ...(await nativeMachoTargetForFile(executable, app)),
+      bundleInfoPlist: infoPlist,
+    };
+    const client = new NativeMacOSProvider(
+      {},
+      new FixtureRunner(),
+      "darwin",
+    ).createClient(target);
+    const executableSha256 = createHash("sha256")
+      .update(await readFile(executable))
+      .digest("hex");
+    const plistSha256 = async (path: string) =>
+      createHash("sha256").update(await readFile(path)).digest("hex");
+
+    const defaultPlist = await client.execute("inspect_plist", {});
+    if (!defaultPlist.ok) throw defaultPlist.error;
+    expect(defaultPlist.value.result).toMatchObject({
+      source_path: infoPlist,
+    });
+    expect(defaultPlist.value.subject).toEqual({
+      name: "Info.plist",
+      path: infoPlist,
+      sha256: await plistSha256(infoPlist),
+      format: "plist",
+    });
+    expect(defaultPlist.value.subject?.sha256).not.toBe(executableSha256);
+
+    const nested = await client.execute("inspect_plist", {
+      path: nestedPlist,
+    });
+    if (!nested.ok) throw nested.error;
+    expect(nested.value.result).toMatchObject({
+      bundle: { identifier: "com.example.helper", version: "7" },
+      source_path: nestedPlist,
+    });
+    expect(nested.value.subject).toEqual({
+      name: "Info.plist",
+      path: nestedPlist,
+      sha256: await plistSha256(nestedPlist),
+      format: "plist",
+    });
+    expect(nested.value.subject?.sha256).not.toBe(executableSha256);
+
+    // The executable's own inspections keep the session fallback: their
+    // executions carry no subject of their own.
+    const signature = await client.execute("inspect_signature", {});
+    if (!signature.ok) throw signature.error;
+    expect(signature.value).not.toHaveProperty("subject");
+  });
+});
+
 describe("native macOS provider raw results", () => {
   it("records command provenance once, in the normalized result", async () => {
     directory = await createTestTempDirectory("rea-native-");

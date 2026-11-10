@@ -184,6 +184,53 @@ sliceTest(
   },
 );
 
+/** arm64 wins the shared CPU-type preference order; only a shared base subtype refuses. */
+const expectArm64SlicePreference = async (
+  client: Client,
+  write: (name: string, bytes: Buffer) => Promise<string>,
+): Promise<void> => {
+  const arm64 = createGoBinaryFixture({ format: "macho" }).bytes;
+  const preferred = universalMacho([
+    { bytes: arm64, cpuType: CPU_ARM64, cpuSubtype: 0 },
+    { bytes: arm64, cpuType: CPU_ARM64, cpuSubtype: 2 },
+  ]);
+  const preferredPath = await write("preferred-arm64", preferred.bytes);
+  const preferredResponse = await client.callTool({
+    name: "inspect_go_binary",
+    arguments: { path: preferredPath, architecture: "arm64" },
+  });
+  expect(preferredResponse.isError, JSON.stringify(preferredResponse.content))
+    .not.toBe(true);
+  const preferredReport = goBinarySchema.parse(
+    toolContract("inspect_go_binary").outputSchema.parse(
+      preferredResponse.structuredContent,
+    ).normalized_result,
+  );
+  expect(preferredReport.selected_slice).toMatchObject({
+    offset: preferred.slices[0]?.offset,
+    cpu_type: CPU_ARM64,
+    cpu_subtype: 0,
+  });
+
+  const duplicate = await write(
+    "duplicate-arm64",
+    universalMacho([
+      { bytes: arm64, cpuType: CPU_ARM64, cpuSubtype: 0 },
+      { bytes: arm64, cpuType: CPU_ARM64, cpuSubtype: 0 },
+    ]).bytes,
+  );
+  expect(
+    issues(
+      await client.callTool({
+        name: "inspect_go_binary",
+        arguments: { path: duplicate, architecture: "arm64" },
+      }),
+    ).details.issues[0]?.message,
+  ).toBe(
+    "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x0)); no slice was selected.",
+  );
+};
+
 sliceTest(
   "names the slices present when a universal selection is missing or does not match",
   async ({ slices: { client, write } }) => {
@@ -235,31 +282,7 @@ sliceTest(
       },
     });
 
-    const duplicate = await write(
-      "duplicate-arm64",
-      universalMacho([
-        {
-          bytes: createGoBinaryFixture({ format: "macho" }).bytes,
-          cpuType: CPU_ARM64,
-          cpuSubtype: 0,
-        },
-        {
-          bytes: createGoBinaryFixture({ format: "macho" }).bytes,
-          cpuType: CPU_ARM64,
-          cpuSubtype: 2,
-        },
-      ]).bytes,
-    );
-    expect(
-      issues(
-        await client.callTool({
-          name: "inspect_go_binary",
-          arguments: { path: duplicate, architecture: "arm64" },
-        }),
-      ).details.issues[0]?.message,
-    ).toBe(
-      "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x2)); no slice was selected.",
-    );
+    await expectArm64SlicePreference(client, write);
 
     // A slice that runs past the file is damaged, not a selection to correct.
     const truncated = universalMacho([
