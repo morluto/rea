@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { Parser, Schema, z } from "incur";
 import { expect, it } from "vitest";
 import { observationDuration } from "./cliObservationOptions.js";
@@ -34,15 +35,18 @@ it.each(["-1", "0.5", "NaN", "Infinity"])(
 );
 
 it("advertises the decimal token guard and the domain numeric bounds", () => {
-  expect(Schema.toJsonSchema(options)).toMatchObject({
+  const advertised = Schema.toJsonSchema(options);
+  expect(advertised).toMatchObject({
     properties: {
       observationMs: {
         default: 500,
-        anyOf: [
-          { type: "integer", minimum: 0 },
-          { type: "string", pattern: "^[0-9]+$" },
-        ],
+        anyOf: [{ type: "integer", minimum: 0 }, { type: "string" }],
       },
     },
   });
+  const validate = new Ajv2020({ strict: false }).compile(advertised);
+  for (const token of ["0", "0500", "9007199254740991"])
+    expect(validate({ observationMs: token }), token).toBe(true);
+  for (const token of ["9007199254740992", "0x10"])
+    expect(validate({ observationMs: token }), token).toBe(false);
 });
