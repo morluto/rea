@@ -43,19 +43,23 @@ it.each([4, 8])(
       },
       {
         directory: "/unused",
-        task: {
-          name: "t",
-          prompt: "Task",
-          checks: [
-            {
-              kind: "lines_present",
-              file: "f0.bin",
-              lines: ["x"],
-              reader: "r0",
+        tasks: [
+          {
+            task: {
+              name: "t",
+              prompt: "Task",
+              checks: [
+                {
+                  kind: "lines_present",
+                  file: "f0.bin",
+                  lines: ["x"],
+                  reader: "r0",
+                },
+              ],
+              readers,
             },
-          ],
-          readers,
-        },
+          },
+        ],
       },
       new AbortController().signal,
     );
@@ -103,25 +107,29 @@ it.each([
       },
       {
         directory: "/unused",
-        task: {
-          name: "t",
-          prompt: "Task",
-          checks: [
-            {
-              kind: "lines_present",
-              file: "f0.bin",
-              lines: ["x"],
-              reader: "r0",
+        tasks: [
+          {
+            task: {
+              name: "t",
+              prompt: "Task",
+              checks: [
+                {
+                  kind: "lines_present",
+                  file: "f0.bin",
+                  lines: ["x"],
+                  reader: "r0",
+                },
+              ],
+              readers: timeouts.map((timeout_s, index) => ({
+                id: `r${String(index)}`,
+                file: `f${String(index)}.bin`,
+                argv: ["cat", "{file}"],
+                output: "lines" as const,
+                timeout_s,
+              })),
             },
-          ],
-          readers: timeouts.map((timeout_s, index) => ({
-            id: `r${String(index)}`,
-            file: `f${String(index)}.bin`,
-            argv: ["cat", "{file}"],
-            output: "lines" as const,
-            timeout_s,
-          })),
-        },
+          },
+        ],
       },
       new AbortController().signal,
     );

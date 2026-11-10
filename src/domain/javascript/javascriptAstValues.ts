@@ -1,7 +1,6 @@
 import * as t from "@babel/types";
 
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 /** Computed definition keys use the surrounding evaluation environment. */
@@ -304,14 +303,22 @@ export const isObjectPrototypeSetter = (
   !property.shorthand &&
   key === "__proto__";
 
-/** Expand only bounded literal spreads, preserving unknown writes in order. */
+/** Iterate literal syntax once, preserving unknown writes and prototype order. */
 const appendStaticObjectMembers = (
   members: StaticObjectMember[],
   object: t.ObjectExpression,
   depth: number,
   isNullish?: (node: t.Node) => boolean,
 ): void => {
-  for (const property of object.properties) {
+  const pending = [{ object, depth, next: 0 }];
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1]!;
+    const property = frame.object.properties[frame.next++];
+    if (property === undefined) {
+      pending.pop();
+      continue;
+    }
+    const depth = frame.depth;
     if (!t.isSpreadElement(property)) {
       const key = semanticStaticPropertyKey(property.key, property.computed);
       if (
@@ -337,34 +344,36 @@ const appendStaticObjectMembers = (
       members.push({ kind: "property", property, key });
       continue;
     }
-    const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(
+    const nested = appendEnumerableSourceMembers(
+      members,
       property.argument,
+      depth,
+      isNullish,
     );
-    appendEnumerableSourceMembers(members, spread, depth + wrappers, isNullish);
+    if (nested !== undefined) pending.push({ ...nested, next: 0 });
   }
 };
 
-/** Copy own enumerable facts; inherited properties and prototype syntax are not writes. */
+/** Record atomic own-key facts or return literal syntax for iterative copying. */
 const appendEnumerableSourceMembers = (
   members: StaticObjectMember[],
   source: t.Node,
   depth: number,
   isNullish?: (node: t.Node) => boolean,
-): void => {
+):
+  | { readonly object: t.ObjectExpression; readonly depth: number }
+  | undefined => {
   const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(source);
   if (t.isObjectExpression(spread)) {
-    const nextDepth = depth + wrappers + 1;
     if (
-      nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT ||
       spread.properties.some((entry) =>
         t.isObjectMethod(entry, { kind: "get" }),
       )
     ) {
       members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
-      return;
+      return undefined;
     }
-    appendStaticObjectMembers(members, spread, nextDepth, isNullish);
-    return;
+    return { object: spread, depth: depth + wrappers + 1 };
   }
   if (t.isArrayExpression(spread)) {
     let firstSpread = -1;
@@ -384,7 +393,7 @@ const appendEnumerableSourceMembers = (
         elements: spread.elements,
         firstSpread,
       });
-    return;
+    return undefined;
   }
   const primitive = primitiveOwnKeys(spread, isNullish);
   if (primitive === "indices") {
@@ -394,7 +403,7 @@ const appendEnumerableSourceMembers = (
         ? literal.value.length
         : null;
     if (length !== 0) members.push({ kind: "primitive-indices", length });
-    return;
+    return undefined;
   }
   if (
     primitive === "none" ||
@@ -402,8 +411,9 @@ const appendEnumerableSourceMembers = (
     t.isArrowFunctionExpression(spread) ||
     t.isRegExpLiteral(spread)
   )
-    return;
+    return undefined;
   members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+  return undefined;
 };
 
 const staticObjectMembers = (
@@ -485,7 +495,9 @@ export const staticObjectCopyPropertyReader = (
 ): ((name: string) => StaticObjectProperty) => {
   if (source === undefined) return indexStaticObjectProperties("missing");
   const members: StaticObjectMember[] = [];
-  appendEnumerableSourceMembers(members, source, 0, isNullish);
+  const nested = appendEnumerableSourceMembers(members, source, 0, isNullish);
+  if (nested !== undefined)
+    appendStaticObjectMembers(members, nested.object, nested.depth, isNullish);
   return indexStaticObjectProperties(members);
 };
 

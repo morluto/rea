@@ -21,9 +21,13 @@ import {
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   runSourceMapCommand,
-  SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
   type SourceMapCleanupRetention,
 } from "./SourceMapCommand.js";
+
+const expectedProcessMemoryLimitBytes =
+  process.platform === "win32" && process.versions.bun !== undefined
+    ? 704 * 1024 * 1024
+    : null;
 
 const report = traceSourceMap(
   JSON.stringify({ version: 3, sources: [], names: [], mappings: "" }),
@@ -37,7 +41,7 @@ const completedReport: WebSourceMapReport = {
       ? { ...report.runtime, v8_heap_limit_bytes: 200 * 1024 * 1024 }
       : {
           ...report.runtime,
-          process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+          process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
         },
 };
 const completedCodec = `process.stdout.write(${JSON.stringify(JSON.stringify({ state: "success", report: completedReport }))})`;
@@ -361,7 +365,7 @@ it("preserves an observed process-memory limit over the codec exit status", asyn
   expect(result.error).toMatchObject({
     resource: "memory",
     reportedLimits: {
-      codec_process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+      codec_process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
     },
     capturedOutput: { stderr: "memory limit reached" },
   });

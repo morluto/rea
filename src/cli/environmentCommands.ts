@@ -335,7 +335,7 @@ const conflictingRules = (): JsonValue =>
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
-  callerPath: string,
+  callerInputPath: string,
   captureTimeoutMs: number | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
@@ -358,7 +358,7 @@ const inspectBuildHar = async (
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
-        { capture: callerPath },
+        { capture: callerInputPath },
       ),
     service,
     "web-network-capture",

@@ -133,10 +133,13 @@ elif command == "export-desktop-application":
             schema = json.load(handle)
         if os.environ.get("FAKE_REA_OLD_EXPORT"):
             schema["options"]["properties"].pop("syntheticSeed", None)
+        for name in os.environ.get("FAKE_REA_EXPORT_WITHOUT", "").split(","):
+            schema["options"]["properties"].pop(name, None)
         print(json.dumps(schema))
         sys.exit(0)
-    with open(option(args, "--task")) as handle:
-        note("tasks.jsonl", json.load(handle))
+    for path in options(args, "--task"):
+        with open(path) as handle:
+            note("tasks.jsonl", json.load(handle))
     with open(output(args[0], "EXPORT")) as handle:
         printed = handle.read()
     if "code" not in json.loads(printed):

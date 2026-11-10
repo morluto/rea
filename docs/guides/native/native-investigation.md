@@ -1247,7 +1247,7 @@ resource, REA releases that runtime and admits the next observation.
 Cancellation observed while output and Evidence are finalized returns partial
 cancellation Evidence, even if the target has already exited.
 
-- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream
+- the outcome, exit status and captured stdout/stderr (1 MiB by default kept per stream
   while excess bytes are drained and counted without growing capture files).
   Each stream reports `complete`; when draining could not finish, its byte
   count is an observed lower bound and truncation is explicit;
@@ -1260,16 +1260,32 @@ cancellation Evidence, even if the target has already exited.
   code makes coverage partial;
 - limitations.
 
-The bridge limits retained event JSON to 8 MiB and caller frames to 65,536
-across the run. It checks admission before retaining another complete event;
+The bridge defaults to 8 MiB retained event JSON and 65,536 caller frames
+across the run. Select `capture_limits` before launch to adjust `trace_bytes`,
+`trace_frames`, `breakpoint_location_bytes`, `other_stops`, `selector_bytes`,
+and `output_bytes`. Defaults are respectively 8388608, 65536, 8388608, 256,
+1024, and 1048576. Byte budgets accept positive safe integers up to the smaller of the running
+Node Buffer and single-string representation ceilings; counts are positive safe
+integers. These representability ceilings do not establish available memory or
+raise complete Evidence/transport admission. Omitted fields keep their defaults. The journal shares
+`trace_bytes`; completed and partial capture readers use the selected budgets.
+For example, `"capture_limits":{"trace_bytes":16777216,"output_bytes":2097152}`
+selects 16 MiB trace/journal and 2 MiB retained output per stream. These choices
+do not extend `duration_ms`, `max_events`, the outer client deadline or MCP
+receive allowance, and require no REA restart. A larger budget applies to a new
+authorized observation; it cannot recover facts omitted from an earlier run. It checks admission before retaining another complete event;
 `resource-limit` reports which observations could not be completed without
 silently changing the requested event or frame settings.
-Resolved breakpoint locations have a separate aggregate 8 MiB metadata budget.
+Resolved breakpoint locations have a separate aggregate metadata budget,
+default 8 MiB (`capture_limits.breakpoint_location_bytes`).
 If their details exceed it, `location_count` retains the full observed match
 count, coverage is partial, and `breakpoint_locations_truncated` is true. This
 post-run metadata limit does not imply that the target was killed.
 
-Accepted entries and signal stops are also flushed to a bounded 8 MiB journal.
+Accepted entries and signal stops are also flushed to the bounded trace journal.
+When event admission stops, `coverage.capture_limit` identifies `trace_bytes`
+or `trace_frames` when the bridge supplied that fact; historical reports that
+lack it retain the combined limitation without guessing the exhausted resource.
 If cancellation, timeout, capture failure, or a later bridge error prevents a
 full result, the error retains this evidence in `details.partial_observation`
 with partial coverage. Available output prefixes remain inline; their byte

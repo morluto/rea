@@ -1,5 +1,9 @@
 import type { DownloadInstall } from "./appDownloadInstall.js";
 import {
+  desktopViewPolicy,
+  type DesktopViewPolicyInput,
+} from "./desktopViewPolicy.js";
+import {
   INSTALL_SCRIPT,
   type ExportAptSource,
   type ExportPackageFile,
@@ -13,7 +17,7 @@ import {
 } from "./appExportInstallText.js";
 import {
   PYTHON_DATA_HOOKS,
-  PYTHON_HELPERS,
+  renderPythonHelpers,
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
@@ -42,11 +46,12 @@ import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
 export { shellQuote } from "./shellQuote.js";
 
-/** agentenv-framework release the exported class was checked against. */
-export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1464";
+/** agentenv-framework release targeted by the exported class. */
+export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   /** Environment and folder name. */
   readonly name: string;
   readonly className: string;
@@ -94,6 +99,11 @@ export interface DesktopAppExportPlan {
   readonly stateAliases?: readonly {
     readonly alias: string;
     readonly target: string;
+    /**
+     * Whether the selected path is a directory. Captures written before kind
+     * was recorded leave this unknown; the helper must not invent a directory.
+     */
+    readonly kind: "file" | "directory" | "unknown";
   }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
@@ -298,7 +308,13 @@ export const capturedHomePath = (capture: DesktopApplicationCapture) =>
   capturedHomePlan(capture).homePath;
 
 /** Selected links to an app state root must keep both the app's name and the selected name. */
-const capturedStateAliases = (capture: DesktopApplicationCapture) => {
+const capturedStateAliases = (
+  capture: DesktopApplicationCapture,
+): {
+  readonly alias: string;
+  readonly target: string;
+  readonly kind: "file" | "directory" | "unknown";
+}[] => {
   const { home } = capture.host;
   const walked = capture.state.state_directories ?? [];
   const roots = capture.application.state_directories;
@@ -306,17 +322,27 @@ const capturedStateAliases = (capture: DesktopApplicationCapture) => {
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
   const aliases = (capture.state.selected_paths ?? []).flatMap(
-    ({ path, physical }) => {
+    ({ path, physical, kind }) => {
       const index = walked.indexOf(physical);
       const state = index < 0 ? undefined : roots[index]?.path;
       const alias = relative(path);
       const target = state === undefined ? null : relative(state);
+      const recorded: "file" | "directory" | "unknown" =
+        kind === "directory"
+          ? "directory"
+          : kind === "file"
+            ? "file"
+            : "unknown";
       return alias === null || target === null || alias === target
         ? []
-        : [{ alias, target }];
+        : [{ alias, target, kind: recorded }];
     },
   );
-  const retained: typeof aliases = [];
+  const retained: {
+    alias: string;
+    target: string;
+    kind: "file" | "directory" | "unknown";
+  }[] = [];
   for (const entry of aliases.toSorted(
     (left, right) => left.alias.length - right.alias.length,
   )) {
@@ -535,6 +561,7 @@ ${withheld.length === 0 ? PYTHON_DATA_HOOKS : PYTHON_WITHHELD_DATA_HOOKS}${PYTHO
     title,
     plan.dconf.length > 0,
     plan.relaunchOnReset === true,
+    (plan.stateAliases ?? []).length > 0,
   );
 };
 
@@ -616,10 +643,10 @@ TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
 SEED_MODES = {${Object.entries(plan.seedModes)
     .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
     .join(", ")}}
-STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
+STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target, kind }) => `(${py(alias)}, ${py(target)}, ${py(kind)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
 WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
-${PYTHON_HELPERS}
+${renderPythonHelpers(desktopViewPolicy(plan.viewPolicy))}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(
@@ -729,7 +756,7 @@ export const renderReadme = (
   `# ${plan.title} computer app
 
 Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` ${plan.download === undefined ? "package" : downloadKind(plan.download)}
-(capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
+(capture Evidence \`${plan.captureEvidenceId}\`). It targets agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for
