@@ -7,7 +7,7 @@ type SectionName = IL2cppMetadataSectionName;
 type Width = 1 | 2 | 4;
 
 /** Synthetic version 39 metadata small enough to read in a hex dump. */
-export interface Il2cppMetadataFixtureOptions {
+interface Il2cppMetadataFixtureOptions {
   /** Serialized TypeIndex width. */
   readonly typeIndexWidth?: Width;
   /** Omit interfaceOffsets so the TypeIndex width comes from type records. */
@@ -46,7 +46,7 @@ export interface Il2cppMetadataFixtureOptions {
  * System.Größe<T0>, Game.Player.Slot.Add<T0, T1> and System.Größe.ToString<T0>;
  * the fixture names each container's parameters T0, T1 and so on.
  */
-export const FIXTURE_GENERIC_CONTAINERS = [
+const FIXTURE_GENERIC_CONTAINERS = [
   [3, 1, 0, 0],
   [2, 2, 1, 1],
   [4, 1, 1, 3],
@@ -134,7 +134,7 @@ export const FIXTURE_STRING_LITERALS = [
  * Per-image method tokens. Row ids restart in each image and do not follow
  * metadata order, so linking must use the token rather than the position.
  */
-export const FIXTURE_METHOD_TOKENS = [
+const FIXTURE_METHOD_TOKENS = [
   0x06000002, 0x06000001, 0x06000003, 0x06000001, 0x06000002,
 ] as const;
 

@@ -302,6 +302,7 @@ describe("headless IDA partial operation evidence", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
         expect(result.error.partialObservation).toMatchObject({
           analysis_profile: null,
           normalized_result: {

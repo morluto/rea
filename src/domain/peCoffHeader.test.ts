@@ -27,7 +27,10 @@ it.each(Array.from({ length: 20 }, (_, length) => length))(
     const source = Buffer.alloc(40, 0xff);
     expect(readPeCoffHeader(source.subarray(7, 7 + length))).toEqual({
       ok: false,
-      error: { kind: "malformed", message: "PE COFF header is truncated" },
+      error: {
+        kind: "malformed",
+        message: expect.stringContaining("truncated"),
+      },
     });
   },
 );

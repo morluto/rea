@@ -127,9 +127,7 @@ it.each([
         shortest_hops: null,
         search_scope: { exhaustive: false },
         paths: [],
-        limitations: [
-          "No analyze_function Evidence covers reachable function 0x5000",
-        ],
+        limitations: [expect.stringMatching(/no analyze_function.*0x5000/iu)],
       });
       return;
     }

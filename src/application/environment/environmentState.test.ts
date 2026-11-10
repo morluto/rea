@@ -748,11 +748,9 @@ it("retains arbitrary dictionary keys and owned JSON references at state intake"
   const entity = document.rea_state.entities[0]!;
   const fields = entity.fields;
   const owned = parseStateDocument(state, document, true);
-  expect(owned.ok).toBe(true);
   if (!owned.ok) throw owned.error;
   expect(owned.value.entities[0]?.fields).toBe(fields);
   const copied = parseStateDocument(state, document);
-  expect(copied.ok).toBe(true);
   if (!copied.ok) throw copied.error;
   expect(copied.value.entities[0]?.fields).not.toBe(fields);
   expect(copied.value.entities[0]?.fields).toEqual(fields);

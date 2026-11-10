@@ -1,3 +1,4 @@
+import type { Evidence } from "../domain/evidence.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type {
@@ -17,6 +18,7 @@ import type { ValidatedEnhancedCall } from "../application/EnhancedToolTypes.js"
 import {
   composedLimitationBudget,
   executeComposedWorkflow,
+  retainComposedWorkflowSources,
   createWorkflowEvidence,
   retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
@@ -37,6 +39,7 @@ import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysis
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
+import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
@@ -57,6 +60,8 @@ export interface EnhancedToolRegistration {
       ) => AnalysisProfileCommitment | undefined)
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly admitRecovery?: RecoveryAdmission;
+  readonly evidenceForAnalysis?: (id: string) => Evidence | undefined;
   readonly evidenceById?: EvidenceLookup | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
   readonly allowsSnapshotReplay:
@@ -132,10 +137,11 @@ export const registerEnhancedTools = (
   server.registerTool(
     batchDecompile.name,
     toolRegistrationOptions(batchDecompile),
-    (input, context) =>
+    ({ detail, ...input }, context) =>
       executeEnhancedTool(registration, batchDecompile, {
         validatedCall: { name: "batch_decompile", input },
         context,
+        detail,
       }),
   );
   server.registerTool(
@@ -206,8 +212,9 @@ export const registerEnhancedTools = (
   server.registerTool(
     traceFeature.name,
     toolRegistrationOptions(traceFeature),
-    (input, context) =>
+    ({ detail, ...input }, context) =>
       executeEnhancedTool(registration, traceFeature, {
+        detail,
         validatedCall: { name: "trace_feature", input },
         context,
       }),
@@ -286,12 +293,24 @@ const executeEnhancedTool = async (
         parameters,
         upstreamProfile: registration.analysisProfile?.(name),
       });
-      result = retainAnalysisResultSources(
-        name,
+      result = retainComposedWorkflowSources(
         registration.recordEvidence,
         result,
+        {
+          target: registration.activeTarget?.(),
+          operation: name,
+          parameters,
+          upstreamProfile: registration.analysisProfile?.(name),
+        },
+        registration.evidenceForAnalysis,
+        registration.admitRecovery,
       );
-      await reportOperationEnd(progress, name, result.ok);
+      const finish = async (
+        response: CallToolResult,
+      ): Promise<CallToolResult> => {
+        await reportOperationEnd(progress, name, response.isError !== true);
+        return response;
+      };
       if (result.ok) {
         const evidence = createWorkflowEvidence({
           target: registration.activeTarget?.(),
@@ -306,7 +325,9 @@ const executeEnhancedTool = async (
         });
         const recorded = registration.recordEvidence?.(evidence);
         if (recorded !== undefined && !recorded.ok)
-          return registration.delivery.toCallToolResult(recorded, contract);
+          return finish(
+            registration.delivery.toCallToolResult(recorded, contract),
+          );
         if (
           name !== "trace_native_ui_action" &&
           registration.allowsSnapshotReplay?.(name) === true
@@ -321,7 +342,9 @@ const executeEnhancedTool = async (
             const snapshot =
               registration.recordWorkflowSnapshot?.(workflowRecord);
             if (snapshot !== undefined && !snapshot.ok)
-              return registration.delivery.toCallToolResult(snapshot, contract);
+              return finish(
+                registration.delivery.toCallToolResult(snapshot, contract),
+              );
           }
         }
         const unknowns = recordWorkflowUnknowns({
@@ -329,9 +352,12 @@ const executeEnhancedTool = async (
           result: result.value.result,
           evidenceId: evidence.evidence_id,
           recordUnknown: registration.recordUnknown,
+          evidenceRetained: recorded?.ok === true,
         });
         if (!unknowns.ok)
-          return registration.delivery.toCallToolResult(unknowns, contract);
+          return finish(
+            registration.delivery.toCallToolResult(unknowns, contract),
+          );
         const delivered =
           request.detail === "summary"
             ? summarizeRetainedAnalysis(evidence, {
@@ -340,16 +366,22 @@ const executeEnhancedTool = async (
               })
             : ok(evidence);
         if (!delivered.ok)
-          return registration.delivery.toCallToolResult(delivered, contract);
-        return registration.delivery.toEvidenceToolResult(
-          delivered.value,
-          contract,
-          request.detail === "summary"
-            ? registration.recordEvidence?.(delivered.value)
-            : recorded,
+          return finish(
+            registration.delivery.toCallToolResult(delivered, contract),
+          );
+        return finish(
+          registration.delivery.toEvidenceToolResult(
+            delivered.value,
+            contract,
+            request.detail === "summary"
+              ? registration.recordEvidence?.(delivered.value)
+              : recorded,
+          ),
         );
       }
-      return deliverEnhancedFailure(registration, contract, result.error);
+      return finish(
+        deliverEnhancedFailure(registration, contract, result.error),
+      );
     },
   );
   return admitted.ok

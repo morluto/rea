@@ -1,3 +1,6 @@
+import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
+import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
+import { appleIpsBytes } from "../fixtures/binaryDiagnostics/appleIps.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile, type FileHandle } from "node:fs/promises";
@@ -205,3 +208,30 @@ it.each(["idle", "active", "read-failure"])(
     }
   },
 );
+
+it("preserves the completed IPS and exact caller reason when the join read is cancelled", async () => {
+  const root = await createTestTempDirectory("rea-ips-join-cancel-");
+  const path = join(root, "report.ips");
+  const joinPath = join(root, "join.bin");
+  await writeFile(path, appleIpsBytes());
+  await writeFile(joinPath, Buffer.alloc(64));
+  fault.path = joinPath;
+  fault.controller = new AbortController();
+  fault.reason = { selected: "join cancellation" };
+  fault.abortAtFinalIdentity = true;
+  const provider = new AppleIpsProvider();
+  try {
+    const result = await provider.inspect(
+      inspectAppleIpsInputSchema.parse({ path, join_path: joinPath }),
+      { signal: fault.controller.signal },
+    );
+    if (result.ok) throw new Error("Expected join cancellation");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      partialObservation: { artifact: { path } },
+    });
+    expect(result.error.cause).toBe(fault.reason);
+  } finally {
+    await provider.close();
+  }
+});

@@ -182,3 +182,37 @@ it("preserves the original failed export when staging cleanup also fails", async
     await cache.close();
   }
 });
+
+it("retains failed export cleanup ownership while reporting fallback record availability", async () => {
+  const { cacheRoot, open } = await session("rea-kuna-failed-export-cleanup-", {
+    project: "exit-failure",
+  });
+  const client = open();
+  fault.root = cacheRoot;
+  fault.blocked = true;
+  try {
+    const first = await client.execute("procedure_assembly", {
+      procedure: "main",
+    });
+    expect(first).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    if (first.ok) throw new Error("Expected retained cleanup failure");
+    expect(first.error.cleanupResources.length).toBeGreaterThan(0);
+    const pseudo = await run(client, "procedure_pseudo_code", {
+      procedure: "main",
+    });
+    expect(pseudo.rawResult).toMatchObject({
+      source: { kind: "single-function" },
+      project_export: { state: "failed", failure_records: "not_exposed" },
+    });
+    expect((await client.close()).ok).toBe(false);
+    fault.blocked = false;
+    expect(await client.close()).toEqual({ ok: true, value: null });
+    expect(first.error.cleanupIncomplete).toBe(false);
+  } finally {
+    fault.blocked = false;
+    await client.close();
+  }
+});

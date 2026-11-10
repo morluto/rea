@@ -1,5 +1,6 @@
 import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
@@ -218,6 +219,7 @@ export const evmInterfaceFailure = (
         {
           cause,
           ...cleanupOptions,
+          ...stableArtifactInputRecovery(cause),
         },
         [
           {

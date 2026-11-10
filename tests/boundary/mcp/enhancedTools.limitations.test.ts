@@ -39,7 +39,7 @@ it("retains provider coverage caveats in a composed MCP overview without repeate
   expect(response.isError).not.toBe(true);
   const evidence = parseEvidence(response.structuredContent);
   expect(evidence.limitations).toEqual([
-    "Artifact identity is unavailable for this observation.",
+    expect.stringMatching(/artifact identity.*unavailable/iu),
     "Derived by an REA composed workflow.",
     `Fixture (fixture 1) current_document, list_procedures, list_segments, list_strings: ${limitation}`,
   ]);

@@ -1,6 +1,10 @@
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
+import type {
+  BatchDecompileItem,
+  BatchProcedureIdentity,
+} from "../domain/native/batchDecompile.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import {
   cleanupStoppedTraversal,
@@ -21,7 +25,6 @@ import {
 } from "../contracts/enhancedInputs.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -76,18 +79,6 @@ import {
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
-type BatchProcedureIdentity =
-  | {
-      readonly status: "resolved";
-      readonly address: string;
-      readonly name: string | null;
-      readonly name_error?: ReturnType<typeof projectAnalysisError>;
-    }
-  | {
-      readonly status: "unknown";
-      readonly error: ReturnType<typeof projectAnalysisError>;
-    };
-
 type BatchResolution = {
   readonly address: string;
   readonly result: Result<string, AnalysisError>;
@@ -99,58 +90,14 @@ type BatchReadyItem = {
   readonly providerProcedure: string;
 };
 
-type BatchDecompileItem = {
-  readonly address: string;
-  readonly procedure: BatchProcedureIdentity;
-  readonly status: "ok" | "error";
-  readonly pseudocode?: string;
-  readonly error?: ReturnType<typeof projectAnalysisError>;
-  /** Caveats of this item's own observation when it supplied no pseudocode. */
-  readonly limitations?: string[];
-};
-
-/**
- * Guidance for a batch item whose provider returned null pseudocode, by
- * whether that observation reported caveats for the item to carry.
- */
-export const NULL_PSEUDOCODE_GUIDANCE = {
-  reported: {
-    userMessage:
-      "The provider returned no pseudocode for this function; this item's limitations hold that observation's caveats, including any reason the provider reported.",
-    remediationAction:
-      "Read this item's limitations for the provider's reason before retrying; another provider may decompile this entry.",
-  },
-  none: {
-    userMessage:
-      "The provider returned no pseudocode for this function and reported no caveat or reason for it.",
-    remediationAction:
-      "The provider gave no further explanation; another provider may decompile this entry.",
-  },
-} as const;
-
-/**
- * The item error for a provider answer without usable text. Null is the
- * provider's observation that it has no pseudocode for this function; empty
- * or non-text pseudocode is unreadable output.
- */
-const missingPseudocodeError = (
-  providerId: string,
-  pseudocode: JsonValue,
-  caveats: keyof typeof NULL_PSEUDOCODE_GUIDANCE,
-): AnalysisError =>
-  pseudocode === null
-    ? new AnalysisCapabilityUnavailableError(
-        providerId,
-        "procedure_pseudo_code",
-        "provider returned null pseudocode",
-        NULL_PSEUDOCODE_GUIDANCE[caveats],
-      )
-    : new AnalysisOutputError(
-        "procedure_pseudo_code",
-        typeof pseudocode === "string"
-          ? "provider returned empty pseudocode"
-          : "provider returned non-text pseudocode",
-      );
+/** Empty and non-text answers are malformed; null is a separate observation. */
+const missingPseudocodeError = (pseudocode: JsonValue): AnalysisError =>
+  new AnalysisOutputError(
+    "procedure_pseudo_code",
+    typeof pseudocode === "string"
+      ? "provider returned empty pseudocode"
+      : "provider returned non-text pseudocode",
+  );
 
 const isAnalysisCancellation = (
   error: AnalysisError,
@@ -557,7 +504,7 @@ export class EnhancedTools {
         });
         continue;
       }
-      const { result: pseudocode, provider } = observed.value;
+      const { result: pseudocode } = observed.value;
       if (typeof pseudocode === "string" && pseudocode.length > 0) {
         items.push({ address, procedure, status: "ok", pseudocode });
         continue;
@@ -565,17 +512,21 @@ export class EnhancedTools {
       // Only this observation can explain its missing text, so its caveats
       // stay with the item; the batch Evidence still aggregates them.
       const limitations = [...new Set(observed.value.limitations)];
+      if (pseudocode === null) {
+        items.push({
+          address,
+          procedure,
+          status: "unavailable",
+          reason: "no_pseudocode",
+          ...(limitations.length === 0 ? {} : { limitations }),
+        });
+        continue;
+      }
       items.push({
         address,
         procedure,
         status: "error",
-        error: projectAnalysisError(
-          missingPseudocodeError(
-            provider.id,
-            pseudocode,
-            limitations.length === 0 ? "none" : "reported",
-          ),
-        ),
+        error: projectAnalysisError(missingPseudocodeError(pseudocode)),
         ...(limitations.length === 0 ? {} : { limitations }),
       });
     }

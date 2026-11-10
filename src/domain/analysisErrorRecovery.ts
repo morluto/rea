@@ -31,6 +31,11 @@ export interface AnalysisCleanupRetry {
   readonly operation: "close_binary";
 }
 
+/** The retained owner's same-connection retry, also exposed in session status. */
+export const analysisCleanupRetrySchema = z
+  .object({ operation: z.literal("close_binary") })
+  .strict();
+
 export const cleanupRetryRecovery = (
   retry: AnalysisCleanupRetry,
 ): AnalysisErrorRecovery => ({

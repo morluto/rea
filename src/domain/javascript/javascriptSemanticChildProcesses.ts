@@ -33,7 +33,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectLiteralString,
   dataEffectMemberCallee,
   assignedSemanticResultBindings,
@@ -52,6 +52,7 @@ interface ChildProcessAnalysis {
 type ChildSpawnContext = JavaScriptExpressionShapeResolver;
 
 interface SpawnCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticChildProcessSpawn["method"];
   readonly ownerCallableId: string | null;
@@ -73,7 +74,11 @@ export const collectJavaScriptSemanticChildProcesses = (
 ): ChildProcessAnalysis => {
   const context = createSemanticExpressionShapeResolver(state);
   const candidates = collectSpawns(program, state, callables).filter(
-    (candidate) => !forkRejectsStdioArray(candidate, context),
+    (candidate) =>
+      !forkRejectsStdioArray(candidate, context) &&
+      !rejectsStdioLiteral(candidate, context) &&
+      !rejectsProcessOptionLiteral(candidate, context) &&
+      !rejectsOptionsShape(candidate, context, state),
   );
   const childProcessSpawns = candidates.map((candidate) =>
     immutableSpawn(candidate, context),
@@ -104,8 +109,9 @@ const collectSpawns = (
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-        const method = childProcessMethod(node.callee, state);
-        if (method !== null) {
+        const identity = childProcessMethod(node.callee, state);
+        if (identity !== null) {
+          const { method, builtinAuthority } = identity;
           const projectedResultBindings = assignedSemanticResultBindings(
             node,
             ancestors,
@@ -114,6 +120,7 @@ const collectSpawns = (
           output.push({
             node,
             method,
+            ...(builtinAuthority === undefined ? {} : { builtinAuthority }),
             ownerCallableId: callableStack.callables.at(-1) ?? null,
             resultBindingId: scalarAssignedResultBinding(
               projectedResultBindings,
@@ -143,6 +150,9 @@ const immutableSpawn = (
   const { options, argvCount } = spawnArguments(candidate, context);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
   return {
+    ...(candidate.builtinAuthority === undefined
+      ? {}
+      : { builtinAuthority: candidate.builtinAuthority }),
     processId: spawnId(candidate),
     method: candidate.method,
     location: range(candidate.node),
@@ -223,6 +233,9 @@ const childInteraction = (
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
   return {
+    ...(linked.some((candidate) => candidate.builtinAuthority === "candidate")
+      ? { builtinAuthority: "candidate" as const }
+      : {}),
     interactionId: `child:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     kind,
     method: interactionMethod,
@@ -237,7 +250,11 @@ const childInteraction = (
       kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution: complete ? "complete" : "partial",
+    resolution:
+      complete &&
+      linked.every((candidate) => candidate.builtinAuthority !== "candidate")
+        ? "complete"
+        : "partial",
   };
 };
 
@@ -286,14 +303,28 @@ const classifyInteraction = (
 const childProcessMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticChildProcessSpawn["method"] | null => {
-  const method = builtinDataEffectMethod(callee, state, [
+): {
+  readonly method: JavaScriptSemanticChildProcessSpawn["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
+  const identity = builtinDataEffectIdentity(callee, state, [
     "child_process",
     "node:child_process",
   ]);
-  return (
-    CHILD_PROCESS_METHODS.find((candidate) => candidate === method) ?? null
-  );
+  const method =
+    identity?.path.length === 1
+      ? CHILD_PROCESS_METHODS.find(
+          (candidate) => candidate === identity.path[0],
+        )
+      : undefined;
+  return method === undefined
+    ? null
+    : {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      };
 };
 
 const resolveChildCandidates = (
@@ -338,11 +369,7 @@ const resolveChildCandidates = (
     // An alias captures its source at its initializer read, not at the later
     // interaction. The shared selector retains all sources across uncertain
     // control flow, loops and writes in other activations.
-    const snapshot = semanticBindingAtRead(
-      binding,
-      current,
-      state.parentsByNode,
-    );
+    const snapshot = semanticBindingAtRead(binding, current, state);
     const selected = snapshot.binding;
     const initializers = [
       ...selected.initializers,
@@ -424,6 +451,42 @@ const environmentSupplied = (
   return staticJavaScriptTruthiness(value) !== false;
 };
 
+/**
+ * The `stdio` string values Node accepts for `spawn`, `execFile` and `fork`.
+ *
+ * Measured on Node 24.22.1: `"pipe"`, `"overlapped"`, `"inherit"` and `"ignore"` start a
+ * child; `"ipc"`, `"PIPE"`, `"pipe "`, `"pipeline"`, `"stream"` and `"stdio"` all throw
+ * `ERR_INVALID_ARG_VALUE` before anything is created. The set is exact and case-sensitive.
+ */
+const STREAM_STDIO_MODES = new Set([
+  "pipe",
+  "overlapped",
+  "inherit",
+  "ignore",
+] as const);
+
+/**
+ * Whether an exact string `stdio` makes the call throw before a child exists.
+ *
+ * `spawn` passes the string to `getValidStdio`, so every value outside
+ * `STREAM_STDIO_MODES` throws. `fork` sends the string through `stdioStringToArray`, which
+ * refuses `""` on its own — it does not split the string and it never appends `"ipc"`, so
+ * the rejection is that one explicit check rather than an IPC-count rule. Measured on Node
+ * 24.22.1: `spawn(..., {stdio: ""})` starts a child while `fork(..., {stdio: ""})` throws
+ * `ERR_INVALID_ARG_VALUE`.
+ *
+ * `exec` and `execFile` are excluded by the caller: async `execFile` does not forward
+ * `stdio` to its underlying `spawn` at all, so `execFile(..., {stdio: "bad"})` returns a
+ * real child, which `stdioMode` already records as `"default"`.
+ */
+const rejectsStdioString = (
+  value: string,
+  method: JavaScriptSemanticChildProcessSpawn["method"],
+): boolean =>
+  (STREAM_STDIO_MODES as ReadonlySet<string>).has(value)
+    ? false
+    : method === "fork" || value !== "";
+
 const stdioMode = (
   options: t.Node | undefined,
   method: JavaScriptSemanticChildProcessSpawn["method"],
@@ -450,12 +513,40 @@ const stdioMode = (
 };
 
 /**
- * Node's `fork` requires an explicit `stdio` array to carry the IPC channel. An
- * array that provably omits `"ipc"` throws ERR_CHILD_PROCESS_IPC_REQUIRED
- * synchronously, before any child process exists, so it is not a spawn at all.
- * A string `stdio` is normalised with `"ipc"` appended, so only the array form
- * can omit it; a spread or unreadable element may still supply the channel and
- * is therefore left alone.
+ * Whether a `stdio` member is a string Node refuses at the call site.
+ *
+ * The value is read through the shared literal owner rather than the AST kind, because a
+ * no-substitution template literal is the same string to Node: measured on Node 24.22.1,
+ * `{stdio: \`ipc\`}` throws `ERR_INVALID_ARG_VALUE` while `{stdio: \`pipe\`}` starts a
+ * child. A non-string value is left to `stdioMode`, which already reports it as
+ * `"dynamic"`, so this filter only speaks about strings.
+ */
+const rejectsStdioLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (candidate.method === "exec" || candidate.method === "execFile")
+    return false;
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return rejectsStdioString(literal.value, candidate.method);
+};
+
+/**
+ * Node's `fork` requires an explicit `stdio` array to carry exactly one IPC
+ * channel. An array that provably omits `"ipc"` throws
+ * ERR_CHILD_PROCESS_IPC_REQUIRED, and one that names `"ipc"` twice throws
+ * ERR_IPC_ONE_PIPE; both throws are synchronous, before any child process
+ * exists, so such a call is not a spawn at all. A string `stdio` is normalised
+ * with a single `"ipc"` appended, so only the array form can be wrong; a spread
+ * or unreadable element may still change the count and is therefore left alone.
  */
 const forkRejectsStdioArray = (
   candidate: SpawnCandidate,
@@ -477,10 +568,105 @@ const forkRejectsStdioArray = (
   );
   if (literals.some((literal) => literal === undefined || !literal.found))
     return false;
-  return !literals.some(
+  const ipcCount = literals.filter(
     (literal) =>
       literal !== undefined && literal.found && literal.value === "ipc",
-  );
+  ).length;
+  return ipcCount !== 1;
+};
+
+/** Only proven invalid cwd paths or argv0 strings establish call-site rejection. */
+const rejectsProcessOptionLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  for (const member of ["cwd", "argv0"] as const) {
+    const lookup = staticObjectProperty(expression, member, context.isNullish);
+    if (lookup.status !== "explicit") continue;
+    const value = unwrapJavaScriptExpression(lookup.value).node;
+    if (context.isNullish(value)) continue;
+    // The value is read through the shared literal owner, so a no-substitution template
+    // literal counts as the string Node receives: measured on Node 24.22.1,
+    // `{cwd: \`/tmp\`}` and `{argv0: \`x\`}` both start a child.
+    const literal = readExactJavaScriptLiteral(value);
+    if (literal.found) {
+      if (typeof literal.value === "string") continue;
+      return true;
+    }
+    if (t.isStringLiteral(value)) continue;
+    // A constructor can return a URL or another accepted path value. Its name
+    // cannot prove that cwd is invalid, including qualified and custom constructors.
+    if (member === "cwd" && t.isNewExpression(value)) continue;
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isBooleanLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      t.isNewExpression(value)
+    )
+      return true;
+  }
+  return false;
+};
+
+/**
+ * Node validates the options object before creating anything, so a literal
+ * primitive or literal array in that slot throws ERR_INVALID_ARG_TYPE
+ * synchronously and no child process exists. `spawn` also rejects `null`
+ * (`undefined` is its only exemption), while `fork` and `execFile` skip any
+ * nullish options, and `exec` spreads its options and validates none of them.
+ */
+const rejectsOptionsShape = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (candidate.method === "exec") return false;
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const value = unwrapJavaScriptExpression(options).node;
+  if (context.isArray(value)) return true;
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found)
+    return !(candidate.method !== "spawn" && literal.value === null);
+  // An unshadowed `NaN` or `Infinity` is a number, and Node's options check
+  // rejects a number the same way it rejects any other primitive. `undefined`
+  // stays the one accepted global.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnshadowedGlobal(value, state, value.name)
+  )
+    return true;
+  return isUnpricedPrimitiveLiteral(value);
+};
+
+/**
+ * The exact-value reader deliberately refuses to price a BigInt, a non-finite
+ * numeric literal such as `1e400`, and a negated numeric literal such as `-0`.
+ * All are primitive literals, so Node's options check rejects them the same way;
+ * read the shape directly here rather than widening the shared reader.
+ *
+ * `void <expr>` is the exception: it evaluates to `undefined`, which is the one
+ * options value Node accepts in place of an object, so it must not be dropped.
+ */
+const isUnpricedPrimitiveLiteral = (value: t.Node): boolean => {
+  if (t.isNumericLiteral(value) || t.isBigIntLiteral(value)) return true;
+  if (!t.isUnaryExpression(value)) return false;
+  if (value.operator === "void") return false;
+  // `!` and `~` always yield a primitive, whatever their operand.
+  if (value.operator === "!" || value.operator === "~") return true;
+  if (value.operator !== "+" && value.operator !== "-") return false;
+  const argument = unwrapJavaScriptExpression(value.argument).node;
+  return t.isNumericLiteral(argument) || t.isBigIntLiteral(argument);
 };
 
 /**

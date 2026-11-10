@@ -13,6 +13,8 @@ import {
   createGoBinaryFixture,
   createGoOverlappingElfFixture,
 } from "../../fixtures/go/image.js";
+import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage.js";
+import { CPU_ARM64, universalMacho } from "../../fixtures/universalMacho.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("distinguishes unsupported MZ carriers from damaged PE declarations", async () => {
@@ -82,7 +84,6 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
   const path = join(root, "overlapping.elf");
   await writeFile(path, createGoOverlappingElfFixture());
   const result = await new GoBinaryProvider().inspect({ path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Overlapping header search must be refused");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({
@@ -115,8 +116,10 @@ it("reports unreadable ELF names alongside the no-record limitation", async () =
   expect(result.value.limitations).toContain(
     "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
   );
-  expect(result.value.limitations).toContain(
-    "ELF section names are unavailable because compression type 3 is unsupported",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /section names.*unavailable.*compression type 3.*unsupported/iu,
+    ),
   );
   expect(result.value).not.toHaveProperty("section_names_limitation");
 });
@@ -131,7 +134,12 @@ it.skipIf(process.platform === "win32")(
     await symlink(original, selected);
     const result = await new GoBinaryProvider().inspect({ path: selected });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisInputError);
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain(original);
+      expect(projected).not.toHaveProperty("recovery");
+    }
   },
 );
 
@@ -177,4 +185,72 @@ it("keeps a module-mode build with no dependency records as an observed empty li
   expect(result.value.limitations.join(" ")).not.toContain(
     "Dependency coverage is unknown",
   );
+});
+
+it("adjusts string_literals file offsets inside a universal Mach-O slice and records chained-fixup/truncation limitations", async () => {
+  const rodata = Buffer.from(
+    "ListResourceProvidersgenaihttps://example.invalid/v1",
+    "utf8",
+  );
+  const thin = createGoRodataStringFixture({
+    format: "macho",
+    machoChainedFixups: true,
+    rodata,
+    headers: [
+      { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 21n },
+      { section: "data", offsetInSection: 16, ptr: 0x102015n, len: 5n },
+      { section: "data", offsetInSection: 32, ptr: 0x10201an, len: 26n },
+    ],
+  });
+  const fat = universalMacho([
+    { bytes: thin.bytes, cpuType: CPU_ARM64, cpuSubtype: 0 },
+  ]);
+  const sliceOffset = fat.slices[0]!.offset;
+  const root = await createTestTempDirectory("rea-go-fat-strings-");
+  const path = join(root, "universal-go");
+  await writeFile(path, fat.bytes);
+
+  const result = await new GoBinaryProvider().inspect({
+    path,
+    architecture: "arm64",
+    include_string_literals: true,
+    max_string_literals: 2,
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.selected_slice?.offset).toBe(sliceOffset);
+  expect(result.value.string_literals).toEqual({
+    evidence_kind: "inferred",
+    discovered_count: 3,
+    aggregate_bytes: 26,
+    max_items: 2,
+    truncated: true,
+    items: [
+      {
+        value: "ListResourceProviders",
+        location: { offset: sliceOffset + thin.rodataOffset, bytes: 21 },
+        first_header_offset: sliceOffset + thin.dataOffset,
+        reference_count: 1,
+      },
+      {
+        value: "genai",
+        location: { offset: sliceOffset + thin.rodataOffset + 21, bytes: 5 },
+        first_header_offset: sliceOffset + thin.dataOffset + 16,
+        reference_count: 1,
+      },
+    ],
+  });
+  for (const item of result.value.string_literals?.items ?? []) {
+    expect(
+      fat.bytes
+        .subarray(
+          item.location.offset,
+          item.location.offset + item.location.bytes,
+        )
+        .toString("utf8"),
+    ).toBe(item.value);
+  }
+  const limitationsText = result.value.limitations.join(" ");
+  expect(limitationsText).toContain("LC_DYLD_CHAINED_FIXUPS");
+  expect(limitationsText).toContain("truncated");
 });

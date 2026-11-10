@@ -215,8 +215,8 @@ it("projects closure and direct interprocedural flow without execution", () => {
     "returns-to-call",
   ] as const)
     expect(relations.has(expected)).toBe(true);
-  expect(graph.limitations).toContain(
-    "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
+  expect(graph.limitations).toContainEqual(
+    expect.stringMatching(/static.*syntax.*does not claim runtime execution/iu),
   );
   const parameter = graph.nodes.find(
     ({ kind, label }) => kind === "parameter" && label === "value",

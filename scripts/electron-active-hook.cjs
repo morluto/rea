@@ -78,7 +78,6 @@ let correlationSequence = 0;
 
 const shape = (value, depth = 0) => {
   if (depth > 2 || value === null) return value === null ? "null" : "nested";
-  if (arrayIsArray(value)) return "array";
   switch (typeof value) {
     case "string":
       return "string";
@@ -91,7 +90,12 @@ const shape = (value, depth = 0) => {
     case "function":
       return "function";
     case "object":
-      return "object";
+      try {
+        return arrayIsArray(value) ? "array" : "object";
+      } catch {
+        // Revoked proxies retain their typeof identity but reject IsArray.
+        return "object";
+      }
     default:
       return "unknown";
   }
@@ -483,10 +487,8 @@ const listenerDataDescriptor = (listener) => {
   return descriptor.get === undefined ? undefined : null;
 };
 
-// A decorator that wraps once's hook wrapper and names it through `.listener`
-// already records through that wrapper. Registering the decorator as is keeps
-// native self-removal working: the once wrapper removes itself by identity, and
-// removeListener matches the decorator through its `.listener`.
+// Only a directly owned wrapper proves dispatch through the hook. A decorator's
+// .listener metadata can name one without calling it; preserve that uncertainty.
 const classifyHookListenerWrapper = (listener) => {
   const visited = new SetConstructor();
   let candidate = listener;
@@ -495,7 +497,8 @@ const classifyHookListenerWrapper = (listener) => {
     hops <= MAX_LISTENER_CHAIN_HOPS && typeof candidate === "function";
     hops += 1
   ) {
-    if (weakMapHas(hookListenerRemovalTargets, candidate)) return "owned";
+    if (weakMapHas(hookListenerRemovalTargets, candidate))
+      return candidate === listener ? "owned" : "unknown";
     if (setHas(visited, candidate)) return "unowned";
     setAdd(visited, candidate);
     const descriptor = listenerDataDescriptor(candidate);
@@ -1321,20 +1324,25 @@ try {
   boundaries.patchApplicationEffects(electron.app);
   boundaries.patchNativeAddonLoading();
   boundaries.patchChildProcess();
-  process.once("uncaughtException", (cause, origin) => {
-    recordRuntime("process-lifecycle", "uncaught-exception", "observed", {
-      argument_shape_values: [cause, origin],
-      error: true,
-    });
-    throw cause;
-  });
-  process.once("unhandledRejection", (reason, promise) => {
-    recordRuntime("process-lifecycle", "unhandled-rejection", "observed", {
-      argument_shape_values: [reason, promise],
-      error: true,
-    });
-    throw reason;
-  });
+  // Observe dispatch without adding listeners: their presence changes Node's
+  // rejection fallback and Electron's uncaught-exception listener-count policy.
+  const processEmit = process.emit;
+  process.emit = function observedProcessEmit(event, ...args) {
+    if (this === process) {
+      const kind =
+        event === "unhandledRejection"
+          ? "unhandled-rejection"
+          : event === "uncaughtExceptionMonitor"
+            ? "uncaught-exception"
+            : null;
+      if (kind !== null)
+        recordRuntime("process-lifecycle", kind, "observed", {
+          argument_shape_values: args,
+          error: true,
+        });
+    }
+    return applyFunction(processEmit, this, arguments);
+  };
 } catch (cause) {
   globalThis.__reaElectronActiveHookError = true;
   recordRuntime(

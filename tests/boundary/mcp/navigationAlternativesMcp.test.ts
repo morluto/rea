@@ -14,6 +14,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { undeclaredOperationGuidance } from "../../../src/application/binary/BinarySessionExecution.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 
 type Client = Awaited<ReturnType<typeof connectGhidraMcp>>["mcp"];
@@ -24,9 +25,6 @@ const GHIDRA_ALTERNATIVES = [
   "read_function_instructions",
   "procedure_assembly",
 ];
-const GENERIC =
-  "This analysis is unavailable for the current target. Choose another analysis or target.";
-
 /** The owning formatter's remediation for exactly these offered tools. */
 const remediationFor = (operation: string, offered: readonly string[]) =>
   offeredOperationAlternatives(operation, (alternative) =>
@@ -85,7 +83,7 @@ describe("address navigation refusals", () => {
           expect(await navigationRefusal(harness.mcp, name)).toEqual({
             code: "capability_unavailable",
             category: "unsupported_provider",
-            message: GENERIC,
+            message: `The selected provider does not declare ${name}.`,
             retryable: false,
             remediation: {
               action: remediationFor(name, GHIDRA_ALTERNATIVES),
@@ -170,7 +168,9 @@ describe("address navigation refusal alternatives", () => {
       // The failure marks Ghidra's operations unavailable (assembly observed,
       // the others inferred), so neither discovery nor the refusal offers one.
       const generic = await navigationRefusal(harness.mcp, "next_address");
-      expect(generic.remediation.action).toBe(GENERIC);
+      expect(generic.remediation.action).toBe(
+        undeclaredOperationGuidance("next_address"),
+      );
       expect(generic.details).not.toHaveProperty("alternatives");
       expect(await offeredInDiscovery()).toEqual([undefined]);
 
@@ -226,9 +226,9 @@ describe("address navigation refusal alternatives", () => {
       expect(error).toEqual({
         code: "capability_unavailable",
         category: "unsupported_provider",
-        message: GENERIC,
+        message: `The selected provider does not declare ${name}.`,
         retryable: false,
-        remediation: { action: GENERIC },
+        remediation: { action: undeclaredOperationGuidance(name) },
         details: {
           provider_id: "fixture",
           operation: name,

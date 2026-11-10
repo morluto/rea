@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, type FileHandle } from "node:fs/promises";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
+import {
+  resolvedRegularFile,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
@@ -38,11 +41,13 @@ export const completedStableArtifact = (
 export interface StableArtifactFileSystem {
   lstat(path: string): Promise<BigIntStats>;
   open(path: string, flags: number): Promise<FileHandle>;
+  realpath?(path: string): Promise<string>;
 }
 
 const FILE_SYSTEM: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
   open,
+  realpath,
 };
 
 const afterValidation = async <T>(
@@ -77,6 +82,9 @@ export const readStableArtifact = async (
     throw new ArtifactReaderFailure(
       "path",
       `Expected a regular file without a symlink: ${path}`,
+      before.isSymbolicLink()
+        ? { resolvedPath: await resolvedRegularFile(path, fileSystem) }
+        : {},
     );
   const maximumSize = BigInt(maximumBytes);
   if (before.size > maximumSize)

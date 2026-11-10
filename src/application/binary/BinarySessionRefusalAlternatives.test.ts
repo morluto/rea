@@ -14,6 +14,7 @@ import type {
   CapabilityDescriptor,
   ExecutionOptions,
 } from "../AnalysisProvider.js";
+import { undeclaredOperationGuidance } from "./BinarySessionExecution.js";
 import { buildCapabilityInventory } from "../CapabilityInventory.js";
 import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 
@@ -171,7 +172,9 @@ describe("undeclared navigation refusals", () => {
     const generic = await refusal(session, "prev_address", {
       isOperationAdvertised: hidden,
     });
-    expect(generic.remediation.action).toBe(GENERIC);
+    expect(generic.remediation.action).toBe(
+      undeclaredOperationGuidance("prev_address"),
+    );
     expect(generic.details).not.toHaveProperty("alternatives");
     expect(await offeredInDiscovery(session, hidden)).toEqual([
       undefined,

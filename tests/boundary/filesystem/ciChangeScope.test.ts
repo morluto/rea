@@ -200,6 +200,16 @@ it("keeps every translated README and authored guide on the documentation lane",
   });
 });
 
+it("runs documentation verification when only its published-route verifier changes", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [
+    "scripts/verify-documentation-routes.mjs",
+  ]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    docs: true,
+  });
+});
+
 it.each(["cjs", "cts", "js", "jsx", "mjs", "mts", "ts", "tsx"])(
   "selects static checks for authored documentation code (%s) without provider lanes",
   async (extension) => {
@@ -331,8 +341,6 @@ it.each([
   "tests/boundary/providers/GdbSessionManagerCoverage.test.ts",
   "tests/boundary/providers/GdbCommandQueue.test.ts",
   "tests/boundary/providers/RizinDebugSessionCoverage.part3.test.ts",
-  "tests/boundary/providers/RizinCommandTimeout.test.ts",
-  "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
   "tests/boundary/providers/GdbSessionReviewRegressions.test.ts",
   "tests/boundary/providers/gdbTestHelpers.ts",
   "tests/boundary/providers/RizinDebugSessionReviewRegressions.test.ts",
@@ -346,6 +354,7 @@ it.each([
   "tests/support/reverseEngineeringService.ts",
   "tests/support/ownedRizinCommandEvidenceTests.ts",
   "tests/support/reverseDebuggerMcpTestHelpers.ts",
+  "tests/boundary/cli/debuggerOneShotExit.test.ts",
   "tests/boundary/cli/gdbStartupCleanupCli.test.ts",
   "vitest.reverse-tools.config.ts",
   "vitest.reverse-tools-semantics.config.ts",
@@ -777,6 +786,10 @@ it.each([
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -823,6 +836,14 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/application/binaryDiagnostics/ByteEntropyService.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "src/apktool/ApktoolConfiguration.ts",
     { code: true, runtime: true, package: true },
@@ -878,7 +899,14 @@ it.each([
   ["install.sh", { code: true, runtime: true, package: true, evm: false }],
   [
     ".agents/skills/reverse-engineer-anything/SKILL.md",
-    { code: true, runtime: true, docs: true, package: false, evm: false },
+    {
+      code: true,
+      runtime: true,
+      docs: true,
+      website: true,
+      package: false,
+      evm: false,
+    },
   ],
   [
     "scripts/verify-real-ghidra.mjs",
@@ -894,6 +922,18 @@ it.each([
   ],
   [
     "tests/boundary/cli/nativePlistCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/process/nativeUiVerifierLane.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/conformance/native/ui-offscreen.swift",
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
