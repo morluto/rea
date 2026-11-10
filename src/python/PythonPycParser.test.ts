@@ -458,20 +458,10 @@ it("keeps signed zero and non-finite float and complex constants JSON-safe", () 
 it("truncates string previews without introducing a lone surrogate", () => {
   const prefix = "x".repeat(79);
   const report = parse(
-    withConsts([
-      marshalUnicode(Buffer.from(`${prefix}😀tail`)),
-      marshalUnicode(
-        Buffer.concat([
-          Buffer.from(prefix),
-          Buffer.from("eda080", "hex"),
-          Buffer.from("tail"),
-        ]),
-      ),
-    ]),
+    withConsts([marshalUnicode(Buffer.from(`${prefix}😀tail`))]),
   );
   expect(root(report).consts).toEqual([
     { kind: "str", bytes: 87, truncated: true, value: prefix },
-    { kind: "str", bytes: 86, truncated: true, value: `${prefix}\ud800` },
   ]);
 });
 

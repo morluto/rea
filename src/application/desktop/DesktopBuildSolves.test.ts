@@ -321,6 +321,7 @@ it.each([
       expect(result.error.cleanupResources).toContain(join(bundle, suffix));
       if (cancel) {
         expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(reason);
         expect(result.error.partialObservation).toMatchObject({
           kind: "partial-task-measurement",
           solves: [{}, {}, {}],

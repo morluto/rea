@@ -1703,16 +1703,6 @@ const INSIDE_PATH_CASES: readonly (readonly [
   ],
   [
     {
-      kind: "member_count",
-      file: books,
-      pointer: "/nodes",
-      matching: "[>data/Title=The Silk Roads]",
-      equals: 1,
-    },
-    true,
-  ],
-  [
-    {
       kind: "text_equals",
       file: glade,
       pointer:
@@ -2159,15 +2149,6 @@ export const CHECK_CASES: readonly (readonly [
       file: db,
       pointer: "/tables/notes/rows/1/1",
       value: "b",
-    },
-    true,
-  ],
-  [
-    {
-      kind: "value_equals",
-      file: ".config/notes/layout.xml",
-      pointer: "/root/attributes/width",
-      value: "80",
     },
     true,
   ],

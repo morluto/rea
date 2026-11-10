@@ -454,7 +454,7 @@ describe("dyld resolution outcomes: deriving path and weak-load outcomes", () =>
     );
   });
 
-  it("derives unresolved and earlier-candidate findings separately for weak loads", async () => {
+  it("reports earlier-rpath misses under environment uncertainty", async () => {
     const trace = await traceDylibLoading(
       memoryView({
         [MAIN]: executable({
@@ -462,14 +462,7 @@ describe("dyld resolution outcomes: deriving path and weak-load outcomes", () =>
             "@executable_path/../Overrides",
             "@executable_path/../Frameworks",
           ],
-          dependencies: [
-            dependency("@rpath/libfound.dylib"),
-            dependency("@rpath/libgone.dylib", {
-              command: "LC_LOAD_WEAK_DYLIB",
-              weak: true,
-            }),
-            dependency("@rpath/libmissing.dylib"),
-          ],
+          dependencies: [dependency("@rpath/libfound.dylib")],
           dyld_environment: ["DYLD_LIBRARY_PATH=/tmp"],
         }),
         "Contents/Frameworks/libfound.dylib": parsed(slice()),

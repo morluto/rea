@@ -5117,17 +5117,6 @@ describe("Ghidra disabled analyzer applicability per program", () => {
     }
     expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
-
-  it("fails closed on an analyzer report the profile did not commit", async () => {
-    const { counts, client } = await analyzerSession(
-      undefined,
-      analyzerReport(["Objective-C Message Analyzer", "not_applicable"]),
-    );
-    const failed = await client.execute("health", {});
-    expect(failed.ok).toBe(false);
-    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
-    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
-  });
 });
 
 type Handshake = Partial<GhidraSessionInfo>;

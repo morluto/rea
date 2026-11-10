@@ -10,12 +10,85 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+// These policy expressions use only JS-compatible boolean operators, property
+// access, literals and format; exercise the parsed workflow rather than copies.
+const evaluatePolicy = (
+  expression: string,
+  context: Record<string, unknown>,
+): unknown =>
+  runInNewContext(
+    expression.replace(/^\$\{\{\s*|\s*\}\}$/gu, ""),
+    {
+      ...context,
+      format: (template: string, value: string) =>
+        template.replace("{0}", value),
+    },
+    { timeout: 100 },
+  );
+
+const assertRetentionPolicy = (expression: string): void => {
+  for (const [currentRepository, defaultBranch] of [
+    ["owner/repo", "main"],
+    ["another/project", "stable"],
+  ]) {
+    for (const conclusion of [
+      "success",
+      "failure",
+      "timed_out",
+      "cancelled",
+      "skipped",
+      "action_required",
+    ]) {
+      for (const event of [
+        "push",
+        "schedule",
+        "workflow_dispatch",
+        "pull_request",
+        "workflow_call",
+        "deployment",
+      ]) {
+        for (const [repositoryName, branch] of [
+          [currentRepository, defaultBranch],
+          ["untrusted/fork", defaultBranch],
+          [currentRepository, "feature"],
+        ]) {
+          const permitted =
+            repositoryName === currentRepository &&
+            branch === defaultBranch &&
+            ["push", "schedule", "workflow_dispatch"].includes(event) &&
+            ["success", "failure", "timed_out", "cancelled"].includes(
+              conclusion,
+            );
+          expect(
+            evaluatePolicy(expression, {
+              github: {
+                repository: currentRepository,
+                event: {
+                  repository: { default_branch: defaultBranch },
+                  workflow_run: {
+                    conclusion,
+                    event,
+                    head_repository: { full_name: repositoryName },
+                    head_branch: branch,
+                  },
+                },
+              },
+            }),
+            `${currentRepository}:${defaultBranch}:${repositoryName}:${branch}:${event}:${conclusion}`,
+          ).toBe(permitted);
+        }
+      }
+    }
+  }
+};
 
 const repository = process.cwd();
 const actionPath = join(repository, ".github/actions/npm-cache/action.yml");
@@ -512,30 +585,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     actions: "write",
   });
   const job = workflow.jobs.retain;
-  expect(job?.if).toContain(
-    "github.event.workflow_run.conclusion == 'success'",
-  );
-  expect(job?.if).toContain(
-    "github.event.workflow_run.conclusion == 'failure'",
-  );
-  expect(job?.if).toContain(
-    "github.event.workflow_run.conclusion == 'timed_out'",
-  );
-  expect(job?.if).toContain(
-    "github.event.workflow_run.conclusion == 'cancelled'",
-  );
-  expect(job?.if).toContain(
-    "github.event.workflow_run.head_repository.full_name == github.repository",
-  );
-  expect(job?.if).toContain(
-    "github.event.workflow_run.head_branch == github.event.repository.default_branch",
-  );
-  expect(job?.if).toContain("github.event.workflow_run.event == 'push'");
-  expect(job?.if).toContain("github.event.workflow_run.event == 'schedule'");
-  expect(job?.if).toContain(
-    "github.event.workflow_run.event == 'workflow_dispatch'",
-  );
-  expect(job?.if).not.toContain("pull_request");
+  assertRetentionPolicy(z.string().parse(job?.if));
   const steps = job?.steps ?? [];
   expect(steps.some((step) => step.run === "npm ci")).toBe(false);
   const checkouts = steps.filter(
@@ -714,21 +764,64 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
         expect(token, `${file}:${name}`).not.toContain(
           "github.event_name == 'workflow_call'",
         );
-      for (const event of ["push", "schedule", "workflow_dispatch"])
-        expect(token, `${file}:${name}`).toContain(
-          `github.event_name == '${event}'`,
+      for (const defaultBranch of ["main", "stable"]) {
+        for (const event of ["push", "schedule", "workflow_dispatch"])
+          expect(token, `${file}:${name}`).toContain(
+            `github.event_name == '${event}'`,
+          );
+        expect(token, `${file}:${name}`).not.toContain(
+          "github.event_name == 'pull_request'",
         );
-      expect(token, `${file}:${name}`).not.toContain(
-        "github.event_name == 'pull_request'",
-      );
-      if (grantsReleaseWrite) {
-        expect(cache, `${file}:${name}`).toContain(
-          "inputs.remote_cache_write == true",
-        );
-        expect(cache, `${file}:${name}`).toContain("|| 'local:rw'");
-        expect(cache, `${file}:${name}`).not.toContain("local:rw,remote:r'");
-      } else expect(cache, `${file}:${name}`).toContain("local:rw,remote:r'");
-      expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
+        if (grantsReleaseWrite) {
+          expect(cache, `${file}:${name}`).toContain(
+            "inputs.remote_cache_write == true",
+          );
+          expect(cache, `${file}:${name}`).toContain("|| 'local:rw'");
+          expect(cache, `${file}:${name}`).not.toContain("local:rw,remote:r'");
+        } else expect(cache, `${file}:${name}`).toContain("local:rw,remote:r'");
+        expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
+        for (const event of [
+          "push",
+          "schedule",
+          "workflow_dispatch",
+          "pull_request",
+          "workflow_call",
+          "deployment",
+        ]) {
+          for (const ref of [
+            `refs/heads/${defaultBranch}`,
+            "refs/heads/feature",
+          ]) {
+            for (const grant of [false, true]) {
+              const permitted =
+                (grantsReleaseWrite && grant) ||
+                (ref === `refs/heads/${defaultBranch}` &&
+                  (["push", "schedule", "workflow_dispatch"].includes(event) ||
+                    (grantsCalledEvent && event === "workflow_call")));
+              const context = {
+                github: {
+                  ref,
+                  event_name: event,
+                  event: { repository: { default_branch: defaultBranch } },
+                },
+                inputs: { remote_cache_write: grant },
+                secrets: { TURBO_TOKEN: "recording-token" },
+              };
+              const label = `${file}:${name}:${defaultBranch}:${event}:${ref}:${grant}`;
+              expect(evaluatePolicy(token, context), label).toBe(
+                permitted ? "recording-token" : "",
+              );
+              expect(evaluatePolicy(cache, context), label).toBe(
+                permitted
+                  ? "local:rw,remote:rw"
+                  : grantsReleaseWrite
+                    ? "local:rw"
+                    : "local:rw,remote:r",
+              );
+            }
+          }
+        }
+      }
       expect(env.TURBO_TEAM, `${file}:${name}`).toBe("${{ vars.TURBO_TEAM }}");
     }
   }
