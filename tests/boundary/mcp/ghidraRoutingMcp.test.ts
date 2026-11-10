@@ -124,11 +124,8 @@ describe("Ghidra MCP capability routing", () => {
           expect.objectContaining({ address: "0x401000", status: "ok" }),
           expect.objectContaining({
             address: bodyless,
-            status: "error",
-            error: expect.objectContaining({
-              code: "capability_unavailable",
-              details: expect.objectContaining({ provider_id: "ghidra" }),
-            }),
+            status: "unavailable",
+            reason: "no_pseudocode",
             limitations: [...new Set(observed.limitations)],
           }),
         ],

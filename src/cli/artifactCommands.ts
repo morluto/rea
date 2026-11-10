@@ -13,7 +13,11 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { z } from "incur";
+import { cliDecimalField } from "./options.js";
+
+import { artifactExtractionInputSchema } from "../contracts/artifactToolContracts.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
@@ -43,7 +47,9 @@ export const registerArtifactCommands = (
     description:
       "Inspect a Foundation keyed archive as an object-reference graph",
     args: z.object({
-      path: z.string().describe("Foundation plist archive or Apple app bundle"),
+      path: localPathStringSchema.describe(
+        "Foundation plist archive or Apple app bundle",
+      ),
       archive: keyedArchiveInputSchema.shape.path.describe(
         "Relative archive path when the target is a bundle",
       ),
@@ -52,10 +58,12 @@ export const registerArtifactCommands = (
       root: keyedArchiveInputSchema.shape.root.describe(
         "Named $top archive root",
       ),
-      offset: keyedArchiveInputSchema.shape.offset.describe(
+      // Decimal tokens only: numeric coercion would read "" as 0 and accept
+      // "0x10" or "1e2".
+      offset: cliDecimalField(keyedArchiveInputSchema.shape.offset).describe(
         "First original object-table index",
       ),
-      limit: keyedArchiveInputSchema.shape.limit.describe(
+      limit: cliDecimalField(keyedArchiveInputSchema.shape.limit).describe(
         "Maximum object-table entries to return",
       ),
     }),
@@ -87,7 +95,9 @@ const registerDylibResolutionCommand = (
     description:
       "Trace dyld load-path resolution for a Mach-O or every executable in an app bundle",
     args: z.object({
-      path: z.string().describe("Mach-O file or Apple .app bundle path"),
+      path: localPathStringSchema.describe(
+        "Mach-O file or Apple .app bundle path",
+      ),
     }),
     options: z.object({
       root: z
@@ -125,21 +135,16 @@ const registerAssetCatalogCommand = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectAssetCatalog, {
     description: "Inspect compiled Apple asset catalog metadata",
-    args: z.object({ path: z.string().describe("Apple .app bundle path") }),
+    args: z.object({
+      path: localPathStringSchema.describe("Apple .app bundle path"),
+    }),
     options: z.object({
-      offset: z
-        .number()
-        .int()
-        .min(0)
-        .default(0)
-        .describe("First metadata record"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(10_000)
-        .default(1_000)
-        .describe("Maximum records to return"),
+      offset: cliDecimalField(z.number().int().min(0).default(0)).describe(
+        "First metadata record",
+      ),
+      limit: cliDecimalField(
+        z.number().int().min(1).max(10_000).default(1_000),
+      ).describe("Maximum records to return"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.inspectAssetCatalog, () =>
@@ -162,30 +167,18 @@ const registerInterfaceBuilderCommand = (
     description:
       "Decode compiled storyboard and nib archives from an app bundle",
     args: z.object({
-      path: z.string().describe("Apple .app bundle path"),
+      path: localPathStringSchema.describe("Apple .app bundle path"),
     }),
     options: z.object({
-      maxDocuments: z
-        .number()
-        .int()
-        .min(1)
-        .max(64)
-        .default(64)
-        .describe("Maximum archives to decode"),
-      maxObjects: z
-        .number()
-        .int()
-        .min(1)
-        .max(20_000)
-        .default(20_000)
-        .describe("Maximum graph objects"),
-      maxConnections: z
-        .number()
-        .int()
-        .min(1)
-        .max(40_000)
-        .default(40_000)
-        .describe("Maximum decoded connections"),
+      maxDocuments: cliDecimalField(
+        z.number().int().min(1).max(64).default(64),
+      ).describe("Maximum archives to decode"),
+      maxObjects: cliDecimalField(
+        z.number().int().min(1).max(20_000).default(20_000),
+      ).describe("Maximum graph objects"),
+      maxConnections: cliDecimalField(
+        z.number().int().min(1).max(40_000).default(40_000),
+      ).describe("Maximum decoded connections"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "decode-interface-builder", () =>
@@ -255,11 +248,22 @@ const registerExtractionCommand = (
 ): void => {
   cli.command(CLI_COMMANDS.extractArtifact, {
     description:
-      "Extract regular contents of supported artifacts; DMG extraction is unavailable",
+      "Extract all or selected regular artifact contents safely; DMG extraction is unavailable",
     args: z.object({
-      path: z.string().describe("Application or package path"),
+      path: localPathStringSchema.describe("Application or package path"),
     }),
     options: z.object({
+      // Incur needs an ordinary optional; keep the owning contract's metadata.
+      outputRoot: artifactExtractionInputSchema.shape.output_root
+        .unwrap()
+        .optional()
+        .meta(artifactExtractionInputSchema.shape.output_root.meta() ?? {}),
+      occurrenceId: artifactExtractionInputSchema.shape.occurrence_ids
+        .unwrap()
+        .optional()
+        .describe(
+          "Inventory occurrence ID to extract (repeatable); omit to extract all regular entries",
+        ),
       integrityPolicy: z
         .enum(["fail", "record-and-continue"])
         .default("fail")
@@ -273,7 +277,12 @@ const registerExtractionCommand = (
           "extract_artifact",
           {
             integrity_policy: options.integrityPolicy,
-            output_root: createArtifactExtractionDestination(),
+            output_root: createArtifactExtractionDestination(
+              options.outputRoot,
+            ),
+            ...(options.occurrenceId === undefined
+              ? {}
+              : { occurrence_ids: options.occurrenceId }),
           },
           logger,
           undefined,
@@ -293,7 +302,7 @@ const registerInspectionCommand = (
     description:
       "Inspect one artifact and return all available observations and next probes",
     args: z.object({
-      path: z.string().min(1).describe("Application or package path"),
+      path: localPathStringSchema.describe("Application or package path"),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,

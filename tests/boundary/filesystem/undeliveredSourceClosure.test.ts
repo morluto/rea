@@ -435,6 +435,26 @@ it("reports the closure when an existing output refuses publication", async () =
   expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
 });
 
+it("reports result sources when an existing output refuses publication", async () => {
+  const root = await createTestTempDirectory("rea-closure-result-sources-");
+  const held = source("held");
+  const requested = delivery(root);
+  await writeFile(requested.evidenceOutput, "original");
+  const output = await publishCliAnalysisEvidence(
+    { ...ok(observed([held.evidence_id])), sourceEvidence: [held] },
+    requested,
+  );
+  expect(output).toMatchObject({ details: { reason: "exists" } });
+  expect(closureOf(output)).toMatchObject({
+    publication: "not_published",
+    complete: true,
+    omitted_count: 0,
+    omitted: [],
+  });
+  expect(closureOf(output).records).toEqual([held]);
+  expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
+});
+
 it("defers to the committed bundle receipt after cancellation wins late", async () => {
   const root = await createTestTempDirectory("rea-closure-committed-");
   const held = source("held");
@@ -572,6 +592,63 @@ it.each(["interrupt", "cleanup-failure", "interrupt-cleanup-failure"] as const)(
   },
 );
 
+it.each(["interrupt", "cleanup-failure"] as const)(
+  "retains captured source closure when direct finalization fails: %s",
+  async (scenario) => {
+    const workflow = await composedWorkflowFixture();
+    const controller = new AbortController();
+    const close = workflow.session.close.bind(workflow.session);
+    workflow.session.close = async () => {
+      workflow.session.close = close;
+      if (scenario === "interrupt") controller.abort();
+      const closed = await close();
+      if (scenario === "interrupt" || !closed.ok) return closed;
+      return err(
+        new ProviderCleanupError(
+          "fixture",
+          ["owned-root"],
+          { reason: "controlled session close failure" },
+          { operation: "close_binary" },
+        ),
+      );
+    };
+    const root = await createTestTempDirectory("rea-closure-direct-captured-");
+    const complete = await runDirectAnalysis(
+      workflow.dependencies,
+      workflow.path,
+      "binary_overview",
+      {},
+      { signal: controller.signal, includeEvidenceSources: true },
+    );
+    const output = await publishCliAnalysisEvidence(complete, {
+      ...delivery(root),
+      signal: controller.signal,
+    });
+    const failure = output as {
+      code: string;
+      details: { partial_observation: unknown };
+    };
+    expect(failure.code).toBe(
+      scenario === "interrupt" ? "cancelled" : "cleanup_incomplete",
+    );
+    const links = parseEvidence(
+      failure.details.partial_observation,
+    ).evidence_links;
+    expect(links.length).toBeGreaterThan(0);
+    expect(closureOf(output)).toMatchObject({
+      publication: "not_published",
+      complete: true,
+      omitted_count: 0,
+    });
+    expect(
+      closureOf(output)
+        .records.map((record) => record.evidence_id)
+        .sort(),
+    ).toEqual([...links].sort());
+    expect(await readdir(root)).toEqual([]);
+  },
+);
+
 it("reports through the shared one-shot delivery when cancellation arrives during close", async () => {
   const root = await createTestTempDirectory("rea-closure-deliver-");
   const held = source("held");
@@ -624,4 +701,56 @@ it("leaves a primary failure without a completed observation untouched", async (
   expect(
     await publishCliAnalysisEvidence(err(primary), delivery(root, [held])),
   ).toBe(primary);
+});
+
+it.each([false, true])(
+  "keeps source closure unknown when embedded inspection sources cannot be read (captured link: %s)",
+  async (captured) => {
+    const root = await createTestTempDirectory(
+      "rea-closure-invalid-inspection-",
+    );
+    const held = source("held");
+    const observation = createEvidence(undefined, provider, {
+      operation: "inspect_artifact",
+      parameters: {},
+      result: { malformed: true },
+      evidenceLinks: captured ? [held.evidence_id] : [],
+    });
+    const output = await publishCliAnalysisEvidence(
+      err(cancelledWith(observation)),
+      delivery(root, captured ? [held] : []),
+    );
+    expect(output).toMatchObject({
+      details: {
+        source_closure: {
+          publication: "not_published",
+          complete: false,
+          collection_failure: expect.any(String),
+        },
+      },
+    });
+    expect(closureOf(output).records).toEqual(captured ? [held] : []);
+    expect(await readdir(root)).toEqual([]);
+  },
+);
+
+it("reports missing links as unknown when an embedded source list cannot be read", async () => {
+  const root = await createTestTempDirectory("rea-closure-invalid-missing-");
+  const missing = "ev_".padEnd(67, "a");
+  const observation = createEvidence(undefined, provider, {
+    operation: "inspect_artifact",
+    parameters: {},
+    result: { malformed: true },
+    evidenceLinks: [missing],
+  });
+  const output = await publishCliAnalysisEvidence(
+    err(cancelledWith(observation)),
+    delivery(root, []),
+  );
+  expect(closureOf(output)).toMatchObject({
+    complete: false,
+    collection_failure: expect.any(String),
+    omitted_count: 1,
+    omitted: [{ evidence_id: missing, reason: "not_captured" }],
+  });
 });

@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { itWithCaptureCapability as captureTest } from "../../boundary/process/processCaptureCapability.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
@@ -21,6 +23,15 @@ const nul = "/tmp/selected\0filename";
 const electron = {
   executable_path: "/tmp/Electron",
   application_path: "/tmp/main.js",
+};
+
+const captureResult = (value: unknown): ProcessCapture => {
+  const normalized = toolContract(
+    "capture_process_scenario",
+  ).outputSchema.parse(value).normalized_result;
+  if ("status" in normalized && normalized.status === "planned")
+    throw new Error("expected process capture output");
+  return normalized as ProcessCapture;
 };
 
 it("keeps overall replay verification unknown when capture divergence is unknown", async () => {
@@ -236,12 +247,17 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_pe_resources", { path: nul }],
   ["inspect_pe_certificates", { path: nul }],
   ["inspect_pe_imports", { path: nul }],
+  ["inspect_windows_shortcut", { path: nul }],
   ["inspect_native_exports", { path: nul }],
   ["inspect_elf_notes", { path: nul }],
+  ["inspect_native_initializers", { path: nul }],
+  ["inspect_elf_unwind_ranges", { path: nul }],
   ["inspect_apple_ips", { path: nul }],
   ["inspect_devicetree", { path: nul }],
   ["inspect_kernel_module", { path: nul }],
+  ["inspect_kernel_build_config", { path: nul }],
   ["inspect_pe_load_config", { path: nul }],
+  ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
   ["inspect_erlang_beam", { path: nul }],
   ["inspect_binary_layout", { path: nul }],
@@ -318,22 +334,85 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["start_gdb_session", { inferior_tty: nul }],
 ];
 
+const nulIssuePaths = (
+  value: unknown,
+  path: readonly (string | number)[] = [],
+): (string | number)[][] => {
+  if (typeof value === "string") return value.includes("\0") ? [[...path]] : [];
+  if (Array.isArray(value))
+    return value.flatMap((item, index) =>
+      nulIssuePaths(item, [...path, index]),
+    );
+  if (typeof value === "object" && value !== null)
+    return Object.entries(value).flatMap(([key, item]) =>
+      nulIssuePaths(item, [...path, key]),
+    );
+  return [];
+};
+
 it("rejects OS-invalid local inputs through the real advertised MCP contracts", async () => {
   const { call } = await connectLocalToolsMcp();
+  const checked: string[] = [];
   for (const [name, arguments_] of pathRequests) {
-    const response = await call(name, arguments_);
-    expect(response.isError, name).toBe(true);
-    expect(JSON.stringify(response.content), name).toContain("NUL");
+    const paths = nulIssuePaths(arguments_);
+    expect(paths.length, name).toBeGreaterThan(0);
+    const error = parseMcpToolError(await call(name, arguments_)).error;
+    expect(error, name).toMatchObject({
+      code: "invalid_request",
+      details: { operation: name },
+    });
+    const issues = z
+      .object({
+        issues: z.array(
+          z.object({
+            path: z.array(z.union([z.string(), z.number()])),
+            reason: z.string(),
+            message: z.string(),
+            expected: z.unknown().optional(),
+          }),
+        ),
+      })
+      .parse(error.details).issues;
+    expect(issues, name).toEqual(
+      expect.arrayContaining(
+        paths.map((path) =>
+          expect.objectContaining({
+            path,
+            reason: "invalid_format",
+            expected: "regex",
+            message: expect.stringMatching(/\bNUL\b|null byte|zero byte/i),
+          }),
+        ),
+      ),
+    );
+    checked.push(name);
   }
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "extract_firmware",
+      "inspect_wasm_artifact",
+      "demangle_swift",
+      "capture_electron_scenario",
+    ]),
+  );
   const relative = await call("extract_firmware", {
     path: "/tmp/firmware.bin",
     output_directory: "relative-output",
   });
-  expect(relative.isError).toBe(true);
-  expect(JSON.stringify(relative.content)).toContain(
-    "absolute local filesystem path",
-  );
-});
+  expect(parseMcpToolError(relative).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "extract_firmware",
+      issues: [
+        expect.objectContaining({
+          path: ["output_directory"],
+          reason: "invalid_format",
+          expected: "regex",
+        }),
+      ],
+    },
+  });
+}, 60_000);
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },
@@ -530,15 +609,15 @@ captureTest.each(["untruncated", "truncated"] as const)(
       limits: captureState === "truncated" ? { output_bytes: 128 } : {},
     });
     expect(captured.isError, JSON.stringify(captured)).not.toBe(true);
-    const capture = toolContract("capture_process_scenario").outputSchema.parse(
+    const source = toolContract("capture_process_scenario").outputSchema.parse(
       captured.structuredContent,
     );
-    const source = capture;
+    const capture = captureResult(source);
     if (captureState === "untruncated")
-      expect(
-        capture.normalized_result.frames.map((frame) => frame.data).join(""),
-      ).toContain("value ordinary-evidence caller-value");
-    else expect(capture.normalized_result.truncated).toBe(true);
+      expect(capture.frames.map((frame) => frame.data).join("")).toContain(
+        "value ordinary-evidence caller-value",
+      );
+    else expect(capture.truncated).toBe(true);
     const environment = await call("capture_process_scenario", {
       executable: "/usr/bin/printenv",
       arguments: ["1"],
@@ -547,15 +626,15 @@ captureTest.each(["untruncated", "truncated"] as const)(
     const environmentEnvelope = toolContract(
       "capture_process_scenario",
     ).outputSchema.parse(environment.structuredContent);
-    const received = environmentEnvelope.normalized_result.frames
-      .map((frame) => frame.data)
+    const received = captureResult(environmentEnvelope)
+      .frames.map((frame) => frame.data)
       .join("");
     expect(received).toBe("numbered\r\n");
     expect(await readFile(join(root, "state"), "utf8")).toBe("selected");
-    expect(capture.normalized_result.filesystem_effects).toEqual(
+    expect(capture.filesystem_effects).toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "created" })]),
     );
-    expect(capture.normalized_result.cleanup).toMatchObject({
+    expect(capture.cleanup).toMatchObject({
       owned_process_group: "verified",
       temporary_root: "removed",
     });
@@ -661,18 +740,16 @@ captureTest(
       events: [{ type: "input", at_ms: 1000, data: "\0" }],
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    const capture = toolContract("capture_process_scenario").outputSchema.parse(
-      response.structuredContent,
+    const capture = captureResult(response.structuredContent);
+    expect(capture.frames.map((frame) => frame.data).join("")).toContain(
+      "stdin-byte:0",
     );
-    expect(
-      capture.normalized_result.frames.map((frame) => frame.data).join(""),
-    ).toContain("stdin-byte:0");
-    expect(capture.normalized_result.manifest.scenario).toMatchObject({
+    expect(capture.manifest.scenario).toMatchObject({
       environment: {},
       filesystem_observation_paths: [],
       terminal: { columns: 80, rows: 24, scrollback: 1000 },
     });
-    expect(capture.normalized_result.interaction_events).toEqual(
+    expect(capture.interaction_events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "input",

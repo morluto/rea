@@ -60,6 +60,7 @@ const artifactKindSchema = z.enum([
 export const ARTIFACT_FORMAT_IDS = [
   "dotnet-bundle",
   "bun-standalone",
+  "deno-standalone",
   "dmg",
   "zip",
   "pkg",
@@ -67,6 +68,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "ines",
   "godot-pck",
   "unityfs",
+  "wxapkg",
   "uimage",
   "javascript-bundle",
   "source-map",
@@ -113,6 +115,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "zip",
   "godot-pck",
   "unityfs",
+  "wxapkg",
   "uimage",
   "intel-hex",
   "srec",

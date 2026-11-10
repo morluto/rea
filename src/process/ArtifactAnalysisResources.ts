@@ -10,6 +10,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -221,9 +222,16 @@ export class ArtifactAnalysisResources {
       return new AnalysisAccessDeniedError(operation, path, cause.code, {
         cause,
       });
-    return new AnalysisInputError(operation, { cause }, [
-      { path: ["path"], reason: "invalid_value", message: reason },
-    ]);
+    return new AnalysisInputError(
+      operation,
+      {
+        cause,
+        ...(cause instanceof ArtifactReaderFailure
+          ? stableArtifactInputRecovery(cause)
+          : {}),
+      },
+      [{ path: ["path"], reason: "invalid_value", message: reason }],
+    );
   }
 
   readLimits(limits: LinuxResourceLimits): Promise<LinuxResourceLimits> {

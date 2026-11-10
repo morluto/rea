@@ -49,7 +49,8 @@ import {
   isVtoolContainerRefusal,
   nativeCommandOperand,
   nativeMachoCapturedOutput,
-  missingUuidLimitation,
+  dyldRefusalLimitation,
+  dyldSliceRefusal,
   parseDyldFileTypeRefusal,
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
@@ -213,7 +214,7 @@ export const inspectNativeMacho = async (
       context.signal,
       tool === "dyld_info"
         ? (capture) =>
-            isMissingUuidDyldFailure(capture) ||
+            dyldSliceRefusal(capture) !== null ||
             isUnbackedTextDyldFailure(capture) ||
             parseDyldFileTypeRefusal(capture) !== null
         : tool === "vtool" && format === "fat"
@@ -237,7 +238,7 @@ export const inspectNativeMacho = async (
     if (!captured.ok) return err(captured.error);
     if (
       (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
-      !isMissingUuidDyldFailure(captured.value) &&
+      dyldSliceRefusal(captured.value) === null &&
       !isUnbackedTextDyldFailure(captured.value) &&
       parseDyldFileTypeRefusal(captured.value) === null
     )
@@ -349,7 +350,7 @@ export const inspectNativeMacho = async (
   // Only then does llvm-nm's dyld-info pass add names, and its exact names
   // disambiguate dyld_info rows. Refusals above are not export rows.
   if (
-    !isMissingUuidDyldFailure(dyldExports) &&
+    dyldSliceRefusal(dyldExports) === null &&
     !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
   ) {
     const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
@@ -369,10 +370,7 @@ export const inspectNativeMacho = async (
     sliceOutput(dyldImports),
     hasChainedFixups,
   );
-  if (
-    !isMissingUuidDyldFailure(dyldImports) &&
-    parsedImports.needsNameInventory
-  ) {
+  if (parsedImports.needsNameInventory) {
     // Chained rows print entries of the binary's own import table by ordinal.
     // Its exact names settle the ordinal spacing even for imports that the
     // symbol table omits or lists as defined, such as weak-def coalescing.
@@ -512,9 +510,10 @@ const normalizeMacho = (
   const byTool = captureLookup(captures);
   const dyldImportsCapture = byTool("dyld_info", 0);
   const dyldExportsCapture = byTool("dyld_info", 1);
-  const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
-  const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
-  const imports = missingImportsUuid ? [] : parsedImports.map(withRuntimeName);
+  const importsRefusal = dyldSliceRefusal(dyldImportsCapture);
+  const exportsRefusal = dyldSliceRefusal(dyldExportsCapture);
+  const imports =
+    importsRefusal === null ? parsedImports.map(withRuntimeName) : [];
   const imageBase =
     load.segments.find(
       (segment) =>
@@ -524,13 +523,11 @@ const normalizeMacho = (
         segment.file_size <= sliceSize,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(exportNames.stdout);
-  const dyldExports = missingExportsUuid
-    ? []
-    : parseDyldExports(
-        sliceOutput(dyldExportsCapture),
-        imageBase,
-        new Set(nmExports.map(({ name }) => name)),
-      );
+  const dyldExports = parseDyldExports(
+    sliceOutput(dyldExportsCapture),
+    imageBase,
+    new Set(nmExports.map(({ name }) => name)),
+  );
   const exports = uniqueSymbols([...dyldExports, ...nmExports]).map(
     withRuntimeName,
   );
@@ -561,8 +558,12 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
-    ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
-    ...(missingExportsUuid ? [missingUuidLimitation("exports")] : []),
+    ...(importsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("imports", importsRefusal)]),
+    ...(exportsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("exports", exportsRefusal)]),
     ...uuid.limitations,
     ...(imageBase === null &&
     /^\s*offset\s+symbol\s*$/mu.test(sliceOutput(byTool("dyld_info", 1)))
@@ -600,7 +601,9 @@ const normalizeMacho = (
     ),
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
-      ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
+      ...(importsRefusal === null
+        ? []
+        : [dyldRefusalLimitation("imports", importsRefusal)]),
       ...(imports.some(({ name_status }) => name_status === "ambiguous")
         ? [
             "Import text contains name, flags, library, or addend boundaries whose split is ambiguous.",
@@ -608,11 +611,11 @@ const normalizeMacho = (
         : []),
     ]),
     exports: covered(exports, false, [
-      ...(missingExportsUuid
-        ? [missingUuidLimitation("exports")]
-        : [
+      ...(exportsRefusal === null
+        ? [
             "Merged nm/dyld_info results may be incomplete for stripped binaries.",
-          ]),
+          ]
+        : [dyldRefusalLimitation("exports", exportsRefusal)]),
       ...(dyldExports.some(({ sourceSymbol }) => sourceSymbol !== undefined)
         ? [
             "Renamed re-exports are listed under their exported name; the source library's symbol name is not reported.",

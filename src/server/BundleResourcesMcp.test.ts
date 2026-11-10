@@ -437,6 +437,8 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
     const validateAdvertised = new Ajv2020({
       strict: false,
       validateFormats: false,
+      inlineRefs: false,
+      code: { optimize: false },
     }).compile(advertised as AnySchema);
     const resourceResult = structuredClone(validResult) as Record<
       string,

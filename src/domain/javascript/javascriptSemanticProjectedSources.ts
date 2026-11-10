@@ -18,10 +18,10 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
-  semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import { semanticStoredSourceSelection } from "./javascriptSemanticIterationSources.js";
 import {
   semanticEffectPathCandidates,
@@ -227,7 +227,7 @@ const projectedSourceFactsAtRead = (
       readonly retainsOrigin: boolean;
     }
   | undefined => {
-  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, reference, state);
   const captured = [
     ...read.binding.initializers,
     ...read.binding.referenceInitializers,

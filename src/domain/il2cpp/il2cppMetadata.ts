@@ -444,6 +444,14 @@ const validateMetadataFacts = (
               "Type reference is outside the linked type table or names an unavailable type.",
           });
       });
+  report.binary?.code_gen_modules.forEach((row, index) => {
+    if (row.image >= report.images.length)
+      context.addIssue({
+        code: "custom",
+        path: ["binary", "code_gen_modules", index, "image"],
+        message: "Code-generation module image is outside the retained images.",
+      });
+  });
   report.method_addresses?.forEach((row, index) => {
     if (codeRowContradicts(row, report.binary?.image_base))
       context.addIssue({

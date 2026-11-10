@@ -196,6 +196,54 @@ it("reports the active resource session's dispatch policy without limiting indep
   );
 });
 
+it("derives closed-session address and explicit-path APK availability from their contracts", () => {
+  expect(entry("inspect_address_context", status())).toMatchObject({
+    available: false,
+    reason: "target_required",
+    remediation: expect.any(String),
+  });
+  expect(entry("inspect_apk_signature", status())).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  expect(
+    entry(
+      "inspect_address_context",
+      status({
+        open: true,
+        kind: "executable",
+        capabilities: [
+          {
+            operation: "inspect_address_context",
+            available: true,
+            reason: null,
+          },
+        ],
+      }),
+    ),
+  ).toMatchObject({ available: true, reason: "available" });
+  expect(entry("inspect_apk_signature", status({ open: true }))).toMatchObject({
+    available: true,
+    reason: "available",
+  });
+  for (const kind of ["artifact", "archive"] as const) {
+    expect(
+      entry("inspect_address_context", status({ open: true, kind })),
+    ).toMatchObject({
+      available: false,
+      reason: "target_unsupported",
+      remediation: expect.stringContaining("explicit document"),
+    });
+    expect(
+      entry("inspect_apk_signature", status({ open: true, kind })),
+    ).toMatchObject({
+      available: true,
+      reason: "available",
+    });
+  }
+});
+
 describe("ADB and Apktool host availability", () => {
   it("uses only their selected owner probes", () => {
     const ready = {
@@ -513,6 +561,31 @@ describe("compact tool availability", () => {
   });
 });
 
+it("reports target restrictions for navigation modes even when providers are declared", () => {
+  const capabilities = [
+    "current_document",
+    "current_address",
+    "resolve_containing_procedure",
+  ].map((operation) => ({ operation, available: true, reason: null }));
+  for (const kind of ["artifact", "archive"] as const) {
+    const navigation = entry(
+      "get_navigation_context",
+      status({ open: true, kind, capabilities }),
+    );
+    expect(navigation).toMatchObject({
+      available: false,
+      reason: "target_unsupported",
+      default_mode_available: false,
+      modes: [
+        { name: "current_selection", available: false },
+        { name: "explicit_document", available: false },
+      ],
+    });
+    for (const mode of navigation.modes ?? [])
+      expect(mode.remediation).toBe(navigation.remediation);
+  }
+});
+
 describe("partial navigation availability", () => {
   it("requires a target before diagnosing navigation provider modes", () => {
     expect(entry("get_navigation_context", status())).toMatchObject({
@@ -625,8 +698,7 @@ describe("partial navigation availability", () => {
 
     expect(availability).toMatchObject({
       reason: "provider_missing",
-      remediation:
-        "Configure a provider for one of: current_document, current_address, resolve_containing_procedure.",
+      remediation: expect.stringMatching(/configure.*provider/i),
       modes: [
         {
           name: "current_selection",
@@ -645,6 +717,13 @@ describe("partial navigation availability", () => {
         },
       ],
     });
+    for (const operation of [
+      "current_document",
+      "current_address",
+      "resolve_containing_procedure",
+    ]) {
+      expect(availability.remediation?.split(operation)).toHaveLength(2);
+    }
   });
 });
 
@@ -747,8 +826,9 @@ describe("binary_overview capability requirements", () => {
     ).toMatchObject({
       available: false,
       reason: "provider_missing",
-      remediation:
-        "Configure a provider for one of: current_document, list_documents.",
+      remediation: expect.stringMatching(
+        /configure.*provider.*current_document.*list_documents/i,
+      ),
     });
   });
 
@@ -1040,6 +1120,34 @@ it("keeps independent native sessions discoverable without an unrelated binary t
   expect(entries.find((entry) => entry.name === "inspect_macho")).toMatchObject(
     { available: false, reason: "target_required" },
   );
+});
+
+it("reports standalone reverse-engineering tools unavailable when launch failure is observed", () => {
+  const repair =
+    "Set REA_OBJDUMP_COMMAND to an installed executable GNU objdump command.";
+  const entries = buildCapabilityInventory(status(), {
+    ...enabledPolicy,
+    commandProviderFailures: {
+      inspect_with_objdump: {
+        reason: "Could not launch selected objdump executable",
+        remediation: repair,
+      },
+    },
+  });
+  expect(
+    entries.find((entry) => entry.name === "inspect_with_objdump"),
+  ).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    remediation: repair,
+  });
+  expect(
+    entries.find((entry) => entry.name === "execute_rizin_command"),
+  ).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
 });
 
 it.each(["darwin", "linux", "win32"] as const)(

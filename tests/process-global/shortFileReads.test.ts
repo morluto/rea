@@ -184,7 +184,6 @@ it("preserves a native plist probe read denial over a simultaneous abort", async
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected native plist read denial");
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(physical);
@@ -215,7 +214,6 @@ it.each([false, true])(
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected plist probe cancellation");
       const primary = closeFails ? result.error.cleanupPrimary : result.error;
       expect(primary).toBeInstanceOf(AnalysisCancelledError);
@@ -400,7 +398,6 @@ it("preserves cancellation during continued short reads and releases the descrip
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);

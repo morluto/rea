@@ -13,6 +13,56 @@ import { analysisViewResultSchema } from "../../../src/domain/analysisView/analy
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
 it.each(["full", "compact"] as const)(
+  "preserves S28 high address bytes through MCP inventory and extraction (%s)",
+  async (profile) => {
+    const root = await createTestTempDirectory("rea-s28-mcp-");
+    const path = join(root, "firmware.s28");
+    const bytes = Buffer.from("S208FEDCBADEADBEEF2B\nS804FEDCBA67\n");
+    await writeFile(path, bytes);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+    });
+    let outputRoot: string | undefined;
+    try {
+      const opened = await call("open_binary", { path });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const inspected = await call("inspect_artifact", { detail: "summary" });
+      expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+      const summary = z
+        .object({
+          summary: z.object({ root_format_metadata: z.unknown() }),
+        })
+        .parse(parseEvidence(inspected.structuredContent).normalized_result);
+      expect(summary.summary.root_format_metadata).toMatchObject({
+        kind: "hex-records",
+        encoding: "srec",
+        variant: "S28",
+        lowest_address: 0xfe_dcba,
+        highest_address: 0xfe_dcbd,
+        start_address: 0xfe_dcba,
+        start_address_record: "S8",
+      });
+      const extracted = await call("extract_artifact", {});
+      expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
+      const result = artifactExtractionResultSchema.parse(
+        parseEvidence(extracted.structuredContent).normalized_result,
+      );
+      outputRoot = result.output_root;
+      expect(result.containment_verified).toBe(true);
+      expect(
+        (await readFile(join(outputRoot, "0x00fedcba-0x00fedcbd.bin"))).equals(
+          Buffer.from("deadbeef", "hex"),
+        ),
+      ).toBe(true);
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+    } finally {
+      if (outputRoot !== undefined)
+        await rm(outputRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["full", "compact"] as const)(
   "exposes S-record facts and region extraction through MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-hex-mcp-");

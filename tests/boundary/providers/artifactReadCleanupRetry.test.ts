@@ -79,7 +79,6 @@ it.each(["go", "pe"] as const)(
       const first = await provider.inspect(input, {
         signal: controller.signal,
       });
-      expect(first.ok).toBe(false);
       if (first.ok) throw new Error("Injected close failure was not returned");
       expect(projectAnalysisError(first.error)).toMatchObject({
         code: "cleanup_incomplete",

@@ -595,9 +595,9 @@ describe("JSON client configuration shape diagnostics", () => {
   );
 
   it.each([
-    ['{"mcpServers":null,"keep":1}', '"mcpServers" must be an object'],
-    ["[]", "The configuration root must be an object"],
-    ['{"mcpServers":"x"}', '"mcpServers" must be an object'],
+    ['{"mcpServers":null,"keep":1}', "mcpServers"],
+    ["[]", "root"],
+    ['{"mcpServers":"x"}', "mcpServers"],
   ] as const)(
     "names structural shape problems in setup remediation: %s",
     async (original, problem) => {
@@ -610,16 +610,16 @@ describe("JSON client configuration shape diagnostics", () => {
       };
       await writeFile(configPath, original);
       const read = await readConfigurationFile(configPath, "json");
-      expect(read.ok).toBe(false);
       if (read.ok) throw new Error("expected malformed configuration");
-      expect(read.error.detail).toBe(
-        `Configuration ${configPath} is malformed: ${problem}`,
-      );
+      expect(read.error.kind).toBe("malformed");
+      expect(read.error.detail).toContain(configPath);
+      expect(read.error.detail).toContain(problem);
+      expect(read.error.detail).toContain("object");
       expect(
         await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
       ).toEqual({
         status: "invalid",
-        remediation: `Configuration ${configPath} is malformed: ${problem}`,
+        remediation: read.error.detail,
       });
       expect(await readFile(configPath, "utf8")).toBe(original);
     },

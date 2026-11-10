@@ -10,6 +10,7 @@ import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
+import { waitForTestPidFile } from "../../support/process/pidFile.js";
 
 // These tests launch controlled fake providers; Linux admission is injected so
 // lifecycle semantics remain testable on hosts that correctly reject GDB.
@@ -21,9 +22,9 @@ const createGdbManagerForInjectedPlatform = (
 let directory: string | undefined;
 const managers: Array<{ closeAll(): Promise<void> }> = [];
 
-const expectOwnedProcessExited = async (pidText: string): Promise<void> => {
-  const pid = Number(pidText);
-  expect(Number.isInteger(pid)).toBe(true);
+const expectOwnedProcessExited = async (pid: number): Promise<void> => {
+  expect(Number.isSafeInteger(pid)).toBe(true);
+  expect(pid).toBeGreaterThan(0);
   await expect
     .poll(() => {
       try {
@@ -43,6 +44,10 @@ const expectOwnedProcessExited = async (pidText: string): Promise<void> => {
     })
     .toBe(false);
 };
+
+it("rejects an empty PID before observing process exit", async () => {
+  await expect(expectOwnedProcessExited(Number(""))).rejects.toThrow();
+});
 
 it("keeps persistent GDB sessions unavailable on Windows", async () => {
   const gdb = await createGdbManagerForInjectedPlatform({
@@ -303,8 +308,10 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 1,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "1",
+      },
     });
     managers.push(manager);
 
@@ -364,8 +371,10 @@ process.stdin.on("data", (chunk) => {
       releaseSecondSpawn = resolve;
     });
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 2,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "2",
+      },
       spawnProcess: async (options) => {
         spawnCalls += 1;
         if (spawnCalls === 2) {
@@ -448,19 +457,7 @@ process.stdin.resume();
     managers.push(manager);
 
     const starting = manager.start();
-    let pidText: string | undefined;
-    for (
-      let attempt = 0;
-      attempt < 100 && pidText === undefined;
-      attempt += 1
-    ) {
-      try {
-        pidText = await readFile(pidPath, "utf8");
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-    }
-    if (pidText === undefined) throw new Error("fake GDB did not start");
+    const pid = await waitForTestPidFile(pidPath, 1_000);
 
     let closeSettled = false;
     const closing = manager.closeAll().then(() => {
@@ -477,11 +474,10 @@ process.stdin.resume();
     }
     const started = await starting;
     await closing;
-    expect(started.ok).toBe(false);
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
-    await expectOwnedProcessExited(pidText);
+    await expectOwnedProcessExited(pid);
     expect(manager.status("unknown-session")).toBeUndefined();
     await expect(manager.start()).resolves.toMatchObject({
       ok: false,
@@ -563,8 +559,10 @@ setTimeout(() => process.exit(0), 250).unref();
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
     });
     managers.push(manager);
     const started = await manager.start();
@@ -589,7 +587,7 @@ setTimeout(() => process.exit(0), 250).unref();
       expect(result.error.cleanupIncomplete).toBe(true);
     }
     await expectOwnedProcessExited(
-      await readFile(join(directory, "pid"), "utf8"),
+      await waitForTestPidFile(join(directory, "pid"), 1_000),
     );
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
@@ -620,8 +618,10 @@ setTimeout(() => process.exit(0), 250);
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
       stopProcess: async () => ({
         status: "incomplete",
         reason: "simulated incomplete stop",
@@ -708,9 +708,14 @@ process.stdin.on("data", (chunk) => {
       controller.signal,
     );
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    controller.abort();
+    const reason = { source: "cancelled while queued" };
+    controller.abort(reason);
     const third = manager.execute(started.value.session_id, "third");
-    expect((await second).ok).toBe(false);
+    const cancelled = await second;
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
     expect((await first).ok).toBe(true);
     expect((await third).ok).toBe(true);
     await expect(readFile(overlapPath, "utf8")).rejects.toThrow();
@@ -1033,7 +1038,7 @@ setInterval(() => {}, 1000);
             child.kill("SIGKILL");
         }
         await ownedProcessExit;
-        await expectOwnedProcessExited(String(ownedLaunch.process.pid));
+        await expectOwnedProcessExited(ownedLaunch.process.pid!);
       }
       const retried = await manager.retryCleanupFailures();
       expect(retried.ok).toBe(false);

@@ -110,7 +110,7 @@ it("tells a finished CLI invocation to rerun with the launch setting, not to reu
   );
   // The invocation has already released the Program the guidance describes.
   await expectReleased(launcher);
-  const recovery = ghidraDecompileTimeoutRecovery(1, false);
+  const recovery = ghidraDecompileTimeoutRecovery(1, "fresh-import");
   expect(projected).toMatchObject({
     error: "Analysis failed",
     code: "provider_timeout",
@@ -152,7 +152,7 @@ it("keeps same-session and runtime-update guidance for a continuing MCP connecti
       retryable: true,
       recovery: { kind: "inspect_timeout_state", timeout_ms: 1000 },
       remediation: {
-        action: ghidraDecompileTimeoutRecovery(1, false)
+        action: ghidraDecompileTimeoutRecovery(1, "fresh-import")
           .continuingRemediationAction,
       },
       details: {
