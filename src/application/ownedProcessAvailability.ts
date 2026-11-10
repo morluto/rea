@@ -9,7 +9,7 @@ import {
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProviderAvailability } from "./AnalysisProvider.js";
 
-const DARWIN_REMEDIATION =
+export const DARWIN_REMEDIATION =
   "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.";
 
 // Provider adapters re-attribute capability errors and keep the original as cause.
