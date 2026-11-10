@@ -126,17 +126,17 @@ deadline, it is in `SELECTED_REGISTRATION_SETTINGS`, so setup forwards an
 explicit selection into the client registration.
 
 Acquired NTFS `$MFT` inventory reads one caller-selected file into a single
-buffer. `REA_NTFS_MFT_MAX_FILE_BYTES` is that ceiling: a positive decimal
-integer from 48 bytes (one FILE record header) to 8589934592 bytes (8 GiB).
-Unset uses 536870912 bytes (512 MiB). An invalid value is a configuration
-error and does not fall back to the default. A file above the effective
-ceiling is a limit failure: it names `REA_NTFS_MFT_MAX_FILE_BYTES`, the
-effective byte count, whether that count came from the default or the
-setting, the floor, the maximum, and says to set a decimal integer in that
-range in the environment that starts REA and then restart REA. There is no
-runtime override. Raising it only admits a larger acquired stream. It does
-not decode attributes, filenames, or the USN journal, and it does not mount
-a volume.
+buffer. `ntfs.mft_max_file_bytes` is that ceiling, seeded by
+`REA_NTFS_MFT_MAX_FILE_BYTES`: a positive decimal integer from 48 bytes (one
+FILE record header) to 8589934592 bytes (8 GiB). Unset uses 536870912 bytes
+(512 MiB). An invalid launch value is a configuration error and does not fall
+back to the default. A file above the effective ceiling is a limit failure:
+it names `ntfs.mft_max_file_bytes`, the effective byte count, whether that
+count came from the default, the launch setting, or a runtime override, and
+the allowed range. `update_analysis_settings` changes it for the next
+operation. Raising it only admits a larger acquired stream. It does not
+decode attributes, filenames, or the USN journal, and it does not mount a
+volume.
 
 Windows ChangeTime admission waits out a fresh timestamp before recording a
 baseline. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS` (default 2000 ms, floor 1 ms,
@@ -199,6 +199,7 @@ cannot partially apply. Clients coordinating writes can supply
 | `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
 | `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
 | `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
+| `ntfs.mft_max_file_bytes`                                                                                       | Next `$MFT` inventory or extraction                                             |
 
 ### Precedence and lifetime
 

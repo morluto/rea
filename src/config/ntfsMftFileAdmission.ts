@@ -1,19 +1,21 @@
 import { z } from "zod";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
   MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
   MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
   NTFS_MFT_MAX_FILE_SETTING,
+  NTFS_MFT_MAX_FILE_SETTING_ID,
   type NtfsMftFileAdmission,
 } from "../domain/windows/ntfsMft.js";
 
 const decimalInteger = /^[1-9]\d*$/u;
 
 /** Constraint for a rejected launch value. It names the range, not the rejected token. */
-export const NTFS_MFT_FILE_ADMISSION_CONSTRAINT = `${NTFS_MFT_MAX_FILE_SETTING} must be a positive decimal integer from ${String(MINIMUM_NTFS_MFT_MAX_FILE_BYTES)} to ${String(MAXIMUM_NTFS_MFT_MAX_FILE_BYTES)} bytes; the default is ${String(DEFAULT_NTFS_MFT_MAX_FILE_BYTES)} bytes. Set ${NTFS_MFT_MAX_FILE_SETTING} in the environment that starts REA, then restart REA. There is no runtime override.`;
+export const NTFS_MFT_FILE_ADMISSION_CONSTRAINT = `${NTFS_MFT_MAX_FILE_SETTING} must be a positive decimal integer from ${String(MINIMUM_NTFS_MFT_MAX_FILE_BYTES)} to ${String(MAXIMUM_NTFS_MFT_MAX_FILE_BYTES)} bytes; the default is ${String(DEFAULT_NTFS_MFT_MAX_FILE_BYTES)} bytes.`;
 
 const inRange = (value: string): boolean => {
   if (!decimalInteger.test(value)) return false;
@@ -58,4 +60,35 @@ export const parseNtfsMftFileAdmission = (
           ],
         }),
       );
+};
+
+/**
+ * Resolve the ceiling for one call. A runtime override replaces the launch
+ * seed, including an invalid one, and is read when the file is admitted.
+ */
+export const runtimeNtfsMftFileAdmission = (
+  environment: Readonly<Record<string, string | undefined>>,
+  read?: AnalysisSettingsReader,
+): NtfsMftFileAdmission => {
+  const parsed = parseNtfsMftFileAdmission(
+    environment[NTFS_MFT_MAX_FILE_SETTING],
+  );
+  if (read === undefined) {
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
+  }
+  return {
+    get maximumBytes() {
+      const override = read().overrides[NTFS_MFT_MAX_FILE_SETTING_ID];
+      if (override !== undefined) return override;
+      if (!parsed.ok) throw parsed.error;
+      return parsed.value.maximumBytes;
+    },
+    get source() {
+      const override = read().overrides[NTFS_MFT_MAX_FILE_SETTING_ID];
+      if (override !== undefined) return "runtime" as const;
+      if (!parsed.ok) throw parsed.error;
+      return parsed.value.source;
+    },
+  };
 };

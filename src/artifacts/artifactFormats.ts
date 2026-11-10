@@ -61,6 +61,10 @@ export interface ArtifactReaderConstruction {
   readonly espFlashSelection?: EspFlashSelection | undefined;
   /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
   readonly selectedPath?: string | undefined;
+  /** Accepted operation snapshot. Readers resolve runtime ceilings from it per call. */
+  readonly analysisSettings?:
+    | import("../domain/analysisSettings.js").AnalysisSettingsReader
+    | undefined;
 }
 
 export interface FormatDescriptor {
@@ -470,9 +474,14 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "MFT inventory reports each FILE record's header, flags, record extent and update-sequence fixup result. The whole file is bounded by REA_NTFS_MFT_MAX_FILE_BYTES (default 512 MiB; restart REA after changing it). Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
+      "MFT inventory reports each FILE record's header, flags, record extent and update-sequence fixup result. The whole file is bounded by ntfs.mft_max_file_bytes (launch seed REA_NTFS_MFT_MAX_FILE_BYTES, default 512 MiB). update_analysis_settings changes it for the next operation. Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
     createReader: (path, options) =>
-      new NtfsMftArtifactReader(path, sourceOf(options), options.environment),
+      new NtfsMftArtifactReader(
+        path,
+        sourceOf(options),
+        options.environment,
+        options.analysisSettings,
+      ),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

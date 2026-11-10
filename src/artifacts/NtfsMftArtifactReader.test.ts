@@ -3,16 +3,19 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
   MFT_DEFAULT_RECORD_BYTES,
+  MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
   MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
   NTFS_MFT_FILE_LIMIT_CODE,
   NTFS_MFT_MAX_FILE_SETTING,
+  NTFS_MFT_MAX_FILE_SETTING_ID,
   ntfsMftFileLimit,
-  ntfsMftFileLimitMessage,
 } from "../domain/windows/ntfsMft.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -106,25 +109,114 @@ it("reports the configured file ceiling as a structured limit", async () => {
   });
   expect(
     projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
-  ).toEqual(
-    expect.objectContaining({
-      code: "truncated",
-      message: ntfsMftFileLimitMessage(fileLimit),
-      remediation: { action: ntfsMftFileLimitMessage(fileLimit) },
-      details: expect.objectContaining({
-        reason: "limit",
-        boundary: "file-size",
-        admission: "ntfs-mft-file",
-        file_limit_code: NTFS_MFT_FILE_LIMIT_CODE,
-        setting: NTFS_MFT_MAX_FILE_SETTING,
-        file_bytes: fileBytes,
-        maximum_bytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
-        maximum_bytes_source: "setting",
-        floor_bytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
-        restart_required: true,
+  ).toMatchObject({
+    code: "truncated",
+    details: {
+      reason: "limit",
+      boundary: "file-size",
+      admission: "ntfs-mft-file",
+      file_limit_code: NTFS_MFT_FILE_LIMIT_CODE,
+      setting: NTFS_MFT_MAX_FILE_SETTING_ID,
+      file_bytes: fileBytes,
+      maximum_bytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      maximum_bytes_source: "setting",
+      floor_bytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      maximum_setting_bytes: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      rea_restart_required: false,
+      limit: {
+        setting: NTFS_MFT_MAX_FILE_SETTING_ID,
+        effective_value: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+        required_value: fileBytes,
+        source: "setting",
+        unit: "bytes",
+        minimum: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+        maximum: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
+        applies_at: "next_operation",
+        agent_editable: true,
+        scope: "rea-runtime",
+        rea_restart_required: false,
+      },
+    },
+  });
+});
+
+it("applies a runtime ceiling on the next inventory and keeps the accepted call stable", async () => {
+  const path = await writeMft("$MFT", recordBytes({}));
+  const fileBytes = recordBytes({}).length;
+  const settings = new AnalysisSettings({
+    [NTFS_MFT_MAX_FILE_SETTING]: String(DEFAULT_NTFS_MFT_MAX_FILE_BYTES),
+  });
+  const lowered = settings.update({
+    changes: [
+      {
+        setting: NTFS_MFT_MAX_FILE_SETTING_ID,
+        action: "set",
+        value: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      },
+    ],
+  });
+  expect(lowered.ok).toBe(true);
+  expect(
+    settings.inspect({ settings: [NTFS_MFT_MAX_FILE_SETTING_ID] }).settings[0],
+  ).toMatchObject({
+    setting: NTFS_MFT_MAX_FILE_SETTING_ID,
+    value: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+    launch_value: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
+    source: "runtime",
+    minimum: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+    maximum: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
+    environment: NTFS_MFT_MAX_FILE_SETTING,
+    applies_at: "next_operation",
+    agent_editable: true,
+  });
+  let failure: unknown;
+  try {
+    await settings.run(() =>
+      scanCanonicalArtifactInventory(path, {
+        environment: {
+          [NTFS_MFT_MAX_FILE_SETTING]: String(DEFAULT_NTFS_MFT_MAX_FILE_BYTES),
+        },
+        analysisSettings: settings.read,
       }),
-    }),
-  );
+    );
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("runtime ceiling did not refuse the file");
+  expect(
+    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+  ).toMatchObject({
+    code: "truncated",
+    details: {
+      file_limit_code: NTFS_MFT_FILE_LIMIT_CODE,
+      maximum_bytes_source: "runtime",
+      limit: {
+        setting: NTFS_MFT_MAX_FILE_SETTING_ID,
+        effective_value: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+        source: "runtime",
+        rea_restart_required: false,
+      },
+    },
+  });
+  const raised = settings.update({
+    changes: [
+      {
+        setting: NTFS_MFT_MAX_FILE_SETTING_ID,
+        action: "set",
+        value: fileBytes,
+      },
+    ],
+  });
+  expect(raised.ok).toBe(true);
+  const inventory = await scanCanonicalArtifactInventory(path, {
+    environment: {
+      [NTFS_MFT_MAX_FILE_SETTING]: String(DEFAULT_NTFS_MFT_MAX_FILE_BYTES),
+    },
+    analysisSettings: settings.read,
+  });
+  expect(inventory.manifest.root_format).toBe("ntfs-mft");
 });
 
 it("names a failed fixup in the coverage limitations", async () => {

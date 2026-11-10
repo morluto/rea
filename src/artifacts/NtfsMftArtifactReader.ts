@@ -2,10 +2,10 @@ import type { Readable } from "node:stream";
 
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
-import { parseNtfsMftFileAdmission } from "../config/ntfsMftFileAdmission.js";
+import { runtimeNtfsMftFileAdmission } from "../config/ntfsMftFileAdmission.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import {
   createMftDecoder,
-  NTFS_MFT_MAX_FILE_SETTING,
   type MftImage,
   type NtfsMftFileAdmission,
 } from "../domain/windows/ntfsMft.js";
@@ -41,13 +41,10 @@ export class NtfsMftArtifactReader implements ArtifactReader {
     path: string,
     admitted?: StableRegularFileDescriptor,
     environment: Readonly<Record<string, string | undefined>> = {},
+    settings?: AnalysisSettingsReader,
   ) {
     this.#source = new ArtifactFileSource(path, "$MFT stream", admitted);
-    const parsed = parseNtfsMftFileAdmission(
-      environment[NTFS_MFT_MAX_FILE_SETTING],
-    );
-    if (!parsed.ok) throw parsed.error;
-    this.#admission = parsed.value;
+    this.#admission = runtimeNtfsMftFileAdmission(environment, settings);
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {

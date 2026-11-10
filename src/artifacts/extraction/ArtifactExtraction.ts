@@ -13,6 +13,7 @@ import {
 } from "../inventory/hashStableRootArtifact.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
+import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
@@ -67,6 +68,8 @@ import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrity
 export interface ArtifactExtractionInput {
   readonly readerLimits?: ArtifactReaderLimits;
   readonly asarHeaderAdmission?: AsarHeaderAdmission;
+  /** Accepted operation snapshot. Inventory readers resolve runtime ceilings from it. */
+  readonly analysisSettings?: AnalysisSettingsReader;
   /** Caller inputs when the target was explicitly selected as an ESP flash image. */
   readonly espFlashSelection?: EspFlashSelection | undefined;
   readonly inputPath: string;
@@ -112,6 +115,7 @@ const extractArtifactInScope = async (
         expectedRootSha256: input.expectedRootSha256,
         signal,
         environment: input.environment,
+        analysisSettings: input.analysisSettings,
         asarHeaderAdmission:
           input.asarHeaderAdmission ??
           resolveAsarHeaderAdmission(input.environment),
@@ -727,6 +731,7 @@ const createReader = async (
     | "selectedPath"
     | "environment"
     | "asarHeaderAdmission"
+    | "analysisSettings"
     | "resourceScope"
     | "espFlashSelection"
     | "readerLimits"
@@ -781,6 +786,7 @@ const createReader = async (
       ? undefined
       : createArtifactReader(path, containerFormat, {
           environment: input.environment,
+          analysisSettings: input.analysisSettings,
           // Inventory already records inaccessible descendants as omissions.
           // Keep that traversal policy here; the selected-path check below
           // still refuses any inventoried file that cannot be materialized.

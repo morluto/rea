@@ -144,7 +144,11 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     store
       .inspect({ operation: "inventory_artifact" })
       .settings.map(({ setting }) => setting),
-  ).toEqual(["asar.max_listing_bytes", "asar.max_header_bytes"]);
+  ).toEqual([
+    "asar.max_listing_bytes",
+    "asar.max_header_bytes",
+    "ntfs.mft_max_file_bytes",
+  ]);
   expect(
     store.update({
       changes: [
