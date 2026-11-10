@@ -1,3 +1,8 @@
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewFileLimitMessage,
+  type DesktopViewPolicy,
+} from "../../domain/desktop/desktopViewPolicy.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
@@ -138,6 +143,7 @@ export const shippedSeedViews = async (
   copies: readonly RetainedCopy[],
   identity: HostIdentity,
   signal: AbortSignal | undefined,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): Promise<ReadonlyMap<string, TaskFileView>> => {
   const views = new Map<string, TaskFileView>();
   for (const copy of copies) {
@@ -150,15 +156,23 @@ export const shippedSeedViews = async (
     const bytes = await retainedBytes(content, copy, signal);
     const shipped = shippedSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;
-    const document = openStateDocument(seed.home, shipped);
+    if (shipped.length > policy.file_bytes) {
+      views.set(seed.home, {
+        format: null,
+        view: null,
+        error: desktopViewFileLimitMessage(policy),
+      });
+      continue;
+    }
+    const document = openStateDocument(seed.home, shipped, policy);
     const { format } = document;
     const view =
       "error" in document
         ? err(document.error)
         : format === "zip"
-          ? await readZipView(document.bytes, signal)
+          ? await readZipView(document.bytes, signal, policy)
           : isTextualFormat(format)
-            ? textualView(format, document.bytes)
+            ? textualView(format, document.bytes, policy)
             : undefined;
     views.set(seed.home, {
       format,

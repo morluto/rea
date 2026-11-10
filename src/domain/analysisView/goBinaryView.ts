@@ -4,10 +4,10 @@ import { z } from "zod";
 import {
   goBinarySchema,
   goBuildInfoSchema,
-  goMaxStringLiteralsSchema,
   goModuleMetadataSchema,
   goModuleSchema,
   goStringLiteralSchema,
+  goStringLiteralsSchema,
 } from "../go/goBinary.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -116,15 +116,9 @@ export const goBinarySummarySchema = z.strictObject({
         }),
     })
     .nullable(),
-  string_literals: z
-    .strictObject({
-      evidence_kind: z.literal("inferred"),
-      available_count: count,
-      discovered_count: count,
-      aggregate_bytes: count,
-      max_items: goMaxStringLiteralsSchema,
-      truncated: z.boolean(),
-    })
+  string_literals: goStringLiteralsSchema
+    .omit({ items: true })
+    .extend({ available_count: count })
     .exactOptional(),
 });
 
@@ -227,7 +221,14 @@ export const projectGoBinaryView = (
       runtimeUnknown,
     ]),
   };
-  if (view.kind === "summary")
+  if (view.kind === "summary") {
+    let stringSummary: z.output<
+      typeof goBinarySummarySchema
+    >["string_literals"];
+    if (stringLiterals !== undefined) {
+      const { items, ...facts } = stringLiterals;
+      stringSummary = { ...facts, available_count: items.length };
+    }
     return ok({
       kind: "summary" as const,
       view,
@@ -263,21 +264,15 @@ export const projectGoBinaryView = (
                   },
                 },
               },
-        ...(stringLiterals === undefined
+        ...(stringSummary === undefined
           ? {}
           : {
-              string_literals: {
-                evidence_kind: stringLiterals.evidence_kind,
-                available_count: stringLiterals.items.length,
-                discovered_count: stringLiterals.discovered_count,
-                aggregate_bytes: stringLiterals.aggregate_bytes,
-                max_items: stringLiterals.max_items,
-                truncated: stringLiterals.truncated,
-              },
+              string_literals: stringSummary,
             }),
       },
       coverage: completeWithinViewCoverage(1, 1),
     });
+  }
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
   const fields =

@@ -177,6 +177,64 @@ const apkFixture = async (
   };
 };
 
+it("recovers later string pages and an exhausted XML admission on the same APK", async () => {
+  const stringsXml = `<resources>${Array.from({ length: 2001 }, (_, index) => `<string name="s_${String(index)}">value_${String(index)}</string>`).join("")}</resources>`;
+  const { command, root } = await writeApktoolStub(decodeStub({ stringsXml }));
+  const apk = await apkFixture(root);
+  const provider = providerOver(command);
+  onTestFinished(() => provider.close());
+  const service = new ApktoolResourceAnalysisService(provider);
+  const inspect = async (input: Record<string, unknown>) => {
+    const outcome = await service.execute("decode_android_resources", {
+      path: apk.path,
+      ...input,
+    });
+    if (!outcome.ok) throw outcome.error;
+    expect(outcome.value.subject).toMatchObject({
+      digest: { sha256: apk.sha256 },
+    });
+    return apktoolResultSchemas.decode_android_resources.parse(
+      outcome.value.normalized_result,
+    );
+  };
+
+  const first = await inspect({ string_tables_only: true, string_limit: 2000 });
+  expect(first.strings).toEqual([]);
+  expect(first.string_tables?.[0]).toMatchObject({
+    total_count: 2001,
+    unparsed_count: 0,
+    page: { offset: 0, returned_count: 2000, next_offset: 2000 },
+    coverage: "partial",
+  });
+  const next = await inspect({
+    string_tables_only: true,
+    string_offset: first.string_tables?.[0]?.page?.next_offset,
+    string_limit: 2000,
+  });
+  expect(next.string_tables?.[0]).toMatchObject({
+    strings: [{ name: "s_2000", value: "value_2000" }],
+    total_count: 2001,
+    page: { offset: 2000, returned_count: 1, next_offset: null },
+    coverage: "partial",
+  });
+
+  const refused = await inspect({ max_string_table_bytes: 100 });
+  expect(refused.string_tables?.[0]).toMatchObject({
+    status: "oversized",
+    total_count: null,
+  });
+  const recovered = await inspect({
+    string_limit: 2001,
+    max_string_table_bytes: Buffer.byteLength(stringsXml) + 1,
+  });
+  expect(recovered.strings).toHaveLength(2001);
+  expect(recovered.string_tables?.[0]).toMatchObject({
+    total_count: 2001,
+    page: { next_offset: null },
+    coverage: "complete",
+  });
+});
+
 it("returns table-only facts for a single selected primary table", async () => {
   const { command, root } = await writeApktoolStub(decodeStub());
   const apk = await apkFixture(root);

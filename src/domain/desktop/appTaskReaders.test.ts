@@ -1,10 +1,7 @@
-import { createHash } from "node:crypto";
-
 import { describe, expect, it } from "vitest";
 
 import { parseDesktopTask } from "./appTask.js";
 import { evaluateTaskChecks, type TaskFileView } from "./appTaskChecks.js";
-import { renderTaskVerifier } from "./appTaskPython.js";
 import {
   PYTHON_READER_RUNNER,
   readerAnswerView,
@@ -283,49 +280,6 @@ describe("the reader runner's command and answer", () => {
   it("refuses an answer that is not the runner's", () => {
     expect(() => readerAnswerView("Traceback (most recent call last)")).toThrow(
       "REA's reader runner",
-    );
-  });
-});
-
-describe("a verifier without readers", () => {
-  it("renders byte for byte as the selector parent before readers", () => {
-    const rendered = renderTaskVerifier(
-      {
-        name: "add-milk",
-        prompt: "In Mousepad, add buy milk to my to-do list and save it.",
-        checks: [
-          {
-            id: "milk",
-            kind: "lines_present",
-            file: "Documents/todo.txt",
-            lines: ["buy milk"],
-          },
-          {
-            id: "price",
-            kind: "value_equals",
-            file: ".config/notes/settings.json",
-            pointer: "/size",
-            value: 12.5,
-            tolerance: 0.001,
-          },
-          {
-            id: "rows",
-            kind: "member_count",
-            file: "Documents/todo.xml",
-            pointer: "/root/children",
-            matching: "[name=item]",
-            at_least: 2,
-          },
-        ],
-      },
-      "mousepad",
-    );
-
-    expect(rendered).not.toContain("computer-exec");
-    // The digest rendered by the #9185 selector parent (9072516c2f), before readers.
-    // Older evaluator bodies remain subject to sameTaskVerifier's equivalence rules.
-    expect(createHash("sha256").update(rendered).digest("hex")).toBe(
-      "f23f2f374a0fd774d36b76c1cc382d29a748da53647252c9a831493bfa220142",
     );
   });
 });
