@@ -19,9 +19,11 @@ Setup previews configuration changes and asks for approval before applying them.
 npx rea-agents setup
 ```
 
-Choose the agents to configure, review the proposed paths and changes, and
-approve the plan. npm's package-download approval and REA's setup approval are
-separate. Setup asks before changing agent configuration or installing Hopper.
+Run this from a trusted directory outside any REA source checkout: an unversioned
+request there matches the checkout's own unbuilt package, so the launcher fails
+before setup starts. Choose the agents to configure, review the proposed paths
+and changes, and approve the plan. npm's package-download approval and REA's
+setup approval are separate. Setup asks before changing agent configuration or installing Hopper.
 Restart the agents named in the completion message. Quit Claude Desktop fully
 before approving, because a running app can overwrite the registration; on
 Windows, see [where Claude Desktop reads its configuration](client-configuration.md#claude-desktop).
@@ -1242,7 +1244,7 @@ registrations. See [Windows Ghidra P0](../providers/windows-ghidra-p0.md) for pr
 
 The separate `rea mcp add` builtin delegates most clients to Incur's package-runner
 child launcher. Run that acquisition from a trusted directory outside any REA
-source checkout; prefer managed
+source checkout, for the same unversioned-match reason as `Start setup`; prefer managed
 `rea setup` when supported. That child launcher can fail on Windows with `MCP_ADD_FAILED: spawn npx ENOENT`
 before registering a client. REA's setup path is unaffected. For a client supported
 by setup, review `rea setup --client opencode --skill=false --dry-run --json`
