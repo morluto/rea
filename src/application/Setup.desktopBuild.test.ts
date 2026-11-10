@@ -25,7 +25,7 @@ const desktopHost = (facts: Partial<DesktopBuildSetupFacts> = {}) => {
         selected: [],
         archive: ARCHIVE,
         archivePacked: false,
-        agentEnvVersion: "0.9.1464",
+        agentEnvVersion: "0.9.1485",
         recorded: {},
         ...facts,
       }),
@@ -244,7 +244,7 @@ describe("rea setup --desktop-build", () => {
 
     expect(result.plannedActions[0]).toMatchObject({
       id: "install_agentenv",
-      commands: ["uv tool install agentenv-framework==0.9.1464"],
+      commands: ["uv tool install agentenv-framework==0.9.1485"],
     });
     expect(calls).toEqual(["install /usr/local/bin/uv", `pack ${ARCHIVE}`]);
     expect(host.configuredProviderEnvironments[0]).toMatchObject({
@@ -266,7 +266,7 @@ describe("rea setup --desktop-build", () => {
     expect(calls).toEqual([`pack ${ARCHIVE}`]);
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toContain(
-      "uv tool install agentenv-framework==0.9.1464",
+      "uv tool install agentenv-framework==0.9.1485",
     );
   });
 

@@ -113,7 +113,7 @@ it("finishes a stop whose draft reply was lost when stop is asked again, and rep
   expect(await rea.notes("stopped.jsonl")).toHaveLength(1);
   const exported = await call(client, "export_build_environment", {
     computer_id: id,
-    task: BUILD_TASK,
+    tasks: [{ task: BUILD_TASK }],
     directory: join(await createTestTempDirectory("build-out-"), "bundle"),
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
@@ -249,7 +249,7 @@ it("returns the bundle an export saved when the computer closes while it commits
   });
   const exported = await call(client, "export_build_environment", {
     computer_id: id,
-    task: BUILD_TASK,
+    tasks: [{ task: BUILD_TASK }],
     directory,
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
@@ -285,7 +285,7 @@ const captureRequest = async (
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: BUILD_TASK,
+        tasks: [{ task: BUILD_TASK }],
         directory,
       })
     ).structuredContent,
@@ -481,7 +481,7 @@ it("brings back a bundle whose file list outgrows a command's 1 MiB of output", 
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: BUILD_TASK,
+        tasks: [{ task: BUILD_TASK }],
         directory,
       })
     ).structuredContent,

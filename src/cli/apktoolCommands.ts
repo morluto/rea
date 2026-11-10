@@ -76,6 +76,23 @@ export const registerApktoolCommands = (
       decodeTimeoutMs: cliDecimalField(
         apktoolInputSchemas.decode_android_resources.shape.decode_timeout_ms,
       ),
+      stringOffset: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape.string_offset,
+      ),
+      stringLimit: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape.string_limit,
+      ),
+      maxTotalStrings: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape.max_total_strings,
+      ),
+      maxStringTableBytes: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape
+          .max_string_table_bytes,
+      ),
+      maxTotalStringTableBytes: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape
+          .max_total_string_table_bytes,
+      ),
       strings: z
         .boolean()
         .default(
@@ -104,6 +121,23 @@ export const registerApktoolCommands = (
           ...(options.decodeTimeoutMs === undefined
             ? {}
             : { decode_timeout_ms: options.decodeTimeoutMs }),
+          ...(options.stringOffset === undefined
+            ? {}
+            : { string_offset: options.stringOffset }),
+          ...(options.stringLimit === undefined
+            ? {}
+            : { string_limit: options.stringLimit }),
+          ...(options.maxTotalStrings === undefined
+            ? {}
+            : { max_total_strings: options.maxTotalStrings }),
+          ...(options.maxStringTableBytes === undefined
+            ? {}
+            : { max_string_table_bytes: options.maxStringTableBytes }),
+          ...(options.maxTotalStringTableBytes === undefined
+            ? {}
+            : {
+                max_total_string_table_bytes: options.maxTotalStringTableBytes,
+              }),
         },
         args.path,
       ),

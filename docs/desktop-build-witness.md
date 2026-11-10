@@ -7,13 +7,14 @@ it writes, and then witnesses the task in a fresh computer of that bundle.
 REA runs its own capture, task draft and export inside the build computer and
 grades the witness with the same checks the exported verifier runs.
 
-| Tool                       | What it does                                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------- |
-| `start_build_capture`      | Downloads the package lists as the computer's user and launches the app under REA's capture |
-| `mark_build_checkpoint`    | Takes a named checkpoint and returns the capture's counts and the files that changed        |
-| `stop_build_capture`       | Stops the capture and returns its checkpoints and the task draft between `seed` and `end`   |
-| `export_build_environment` | Exports the bundle with the agent's task inside the computer and copies it to a folder here |
-| `check_build_task`         | Grades a task against the app's live state; with a `stage`, files the check in the witness  |
+| Tool                       | What it does                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `start_build_capture`      | Downloads the package lists as the computer's user and launches the app under REA's capture                              |
+| `mark_build_checkpoint`    | Takes a named checkpoint and returns the capture's counts and the files that changed                                     |
+| `stop_build_capture`       | Stops the capture and returns its checkpoints and the task drafts, from `seed` to `end` and on to each `end-<task name>` |
+| `export_build_environment` | Exports the bundle with the agent's tasks inside the computer and copies it to a folder here                             |
+| `check_build_task`         | Grades a task against the app's live state; with a `stage`, files the check in the witness                               |
+| `measure_build_task`       | Runs a bundle's task in fresh computers for a model and records how hard it is in the bundle                             |
 
 Like the computer tools, these are MCP-only and act on a `computer_id` from
 `start_build_computer`.
@@ -108,9 +109,16 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    environment nor package), and checks
    that hold after the change and not on the seed, from the suggestions,
    `values` and any `guards` worth keeping.
-7. `export_build_environment` with the task and a new or empty `directory`.
+7. `export_build_environment` with the tasks and a new or empty `directory`.
+   Each task is `{"task", "end_checkpoint"}`, its end `end` by default; a
+   later task's change made on top of the last, and marked `end-<task name>`,
+   is checked there, and `stop_build_capture`'s `later_drafts` drafts it from
+   the end before it. A checkpoint `near-<task name>` taken after a near miss
+   of that task's change must fail one of its checks. An end the capture did
+   not take is refused before anything runs.
    The export runs inside the computer with `--seed-checkpoint seed
-   --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
+   --end-checkpoint end` and each task's `--task-end`, so it seeds what was
+   saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
    all pass on the seed. It also passes `--synthetic-seed`, since the agent
    made the seed for the task, so the README does not call it the user's real
@@ -223,9 +231,9 @@ Then, with the task exactly as exported:
 beside the files and evaluates each check with REA's evaluator, the one the
 export validates tasks with and the exported verifier mirrors, one result per
 check. Once the files settle it runs the task's
-[readers](desktop-application-tasks.md#readers) in the computer through
+[readers](specs/desktop-app-environments/file-readers/spec.md) in the computer through
 `computer-exec/v1`, as the verifier does, and a check through a reader reads
-that reader's view. A task of [screen judges](desktop-application-tasks.md#screen-judges)
+that reader's view. A task of [screen judges](specs/desktop-app-environments/screen-judge/spec.md)
 reads no files: REA takes a screenshot and runs the bundle's own judge on it
 with the agentenv runner's Python and model endpoint. Like the verifier, it grades only once the app's files settle, since an
 app such as Gnote saves a few seconds after the last key. It reads `data/get`
@@ -296,7 +304,62 @@ folder something else wrote into, the witness keeps its stages: check the
 stage that ended it again, with the same task, and REA writes the record
 without checking again. Once it is saved, the same check returns the saved
 record again, so a record saved as its call was cancelled is not lost. A
-computer is witnessed once; witness again from a fresh computer.
+computer is witnessed once; witness again from a fresh computer. A bundle of
+several tasks is witnessed one task per fresh computer: the seed stage
+refuses a task whose steps and verifier differ from the bundle's for that
+task's name, so each task's record shows that task alone from the seed.
+
+## Measure
+
+`measure_build_task` takes a bundle folder, a task's name, a `model`, an
+`agent` (`claude-code` by default) and `budget_usd`. It runs the task through
+REA's helper, `bridge/agentenv/solve.py`, with the agentenv runner's Python on
+this host, one solve at a time, each in a fresh computer the run tears down:
+the bundle's own steps, with the agent deployed as the solver on the model.
+The model endpoint is the one agentenv reads where REA starts,
+`LITELLM_BASE_URL` and `LITELLM_API_KEY` or `[model]` in
+`.agentenv/config.toml`; REA holds no model client and never reads the key.
+
+Each solve uses a private agentenv sandbox root. If the helper stops before
+reporting cleanup, REA terminates each sandbox agentenv lists under that root
+(`local_sandbox_ids`), including one killed while it recorded its ports, and
+keeps the root when cleanup fails. agentenv keeps a sandbox's folder until its
+teardown is confirmed, so once that root is empty the solve's cleanup is
+verified, report or not. On macOS, REA cannot verify host processes left by a
+recovered sandbox.
+
+| Solves finished | Passes    | Band       | Next          |
+| --------------- | --------- | ---------- | ------------- |
+| 3               | 0         | `too_hard` | stop          |
+| 3               | 3         | `too_easy` | stop          |
+| 3               | 1 or 2    |            | 2 more solves |
+| 5               | 1, 2 or 3 | `in_band`  | stop          |
+| 5               | 4         | `too_easy` | stop          |
+
+A solve agentenv reports `failed`, `unscored` or `cancelled` did not finish:
+it is run again, at most twice, and not counted, though its cost is. Before
+each solve the measure stops, `stopped: "budget"`, when the largest cost so
+far would take the total past `budget_usd`; a solve's cost is known only when
+it ends, from Claude Code's last trajectory record, so the first solve always
+runs and a solve that reports no cost stops the measure. A solve whose helper
+is stopped before it reports, by the solve's deadline or killed from outside,
+counts as `failed` with no known cost, so the measure records it and stops. A
+solve that could not run at all, such as for want of a model endpoint, ends the measure with
+its error and records nothing.
+
+The result and `difficulty.json`, at the bundle's root, keep per task: the
+model, agent and time; the band and why it stopped; `k`, the finished solves,
+the passes and unfinished solves; the cost in all and the budget; each
+finished solve's turns; `failures_per_check`, how many finished solves failed
+each check; each solve's outcome, turns, cost, seconds, failed checks,
+instance id and the error agentenv reported for it; `task_sha256`, the
+SHA-256 of the task's steps file followed by its verifier, so a record whose
+task changed since shows it is stale; and
+REA's and agentenv's versions. Measuring a task again replaces its record and
+keeps the others. A `difficulty.json` or README REA cannot read or parse is refused
+before any solve and left as it is, and measures of one bundle write one at a
+time, so neither loses the other's record. The README gets a Measured difficulty section with one
+line per task, which agentenv ignores like the file.
 
 See the [specification](specs/desktop-app-environments/build-witness/spec.md)
 for scope and verification.
