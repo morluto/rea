@@ -8,9 +8,18 @@ import { expect, it } from "vitest";
 
 const execute = promisify(execFile);
 
-it.each([true, false])(
-  "requires overflow Evidence to be retained before another analysis (retained=%s)",
-  async (retained) => {
+it.each([
+  ["methods", true],
+  ["methods", false],
+  ["types", true],
+  ["types", false],
+  ["sections", true],
+  ["sections", false],
+  ["empty", true],
+  ["empty", false],
+] as const)(
+  "requires overflow Evidence before reanalysis (%s, retained=%s)",
+  async (collection, retained) => {
     const directory = await mkdtemp(
       join(tmpdir(), "rea-il2cpp-retention-oracle-"),
     );
@@ -24,7 +33,10 @@ import {promisify} from 'node:util';
 const path=process.env.INPUT;
 const identity={sha256:'a'.repeat(64),bytes:1};
 const report={artifact:{path,...identity},magic:0xfab11baf,sections:[],images:[{type_count:1}],types:[{declaring_type:-1,method_start:0,method_count:1}],methods:[{declaring_type:0,name:'AuthoredMethod'}],fields:[],properties:[],events:[],parameters:[],string_literals:[]};
-const counts={sections:0,images:1,types:1,methods:1,nested_types:0,fields:0,properties:0,events:0,parameters:0,string_literals:0,...Object.fromEntries(['code_gen_modules','method_addresses','method_address_states','return_types','field_types','parameter_types','generic_method_instances','generic_method_instance_states','generic_method_issues'].map(k=>[k,null]))};
+if(process.env.COLLECTION!=='methods'){report.methods=[];report.types[0].method_count=0;}
+if(['sections','empty'].includes(process.env.COLLECTION)){report.images=[];report.types=[];}
+if(process.env.COLLECTION==='sections')report.sections=[{name:'authored-nonmethod-table',offset:64,size:4096}];
+const counts={sections:report.sections.length,images:report.images.length,types:report.types.length,methods:report.methods.length,nested_types:0,fields:0,properties:0,events:0,parameters:0,string_literals:0,...Object.fromEntries(['code_gen_modules','method_addresses','method_address_states','return_types','field_types','parameter_types','generic_method_instances','generic_method_instance_states','generic_method_issues'].map(k=>[k,null]))};
 let reanalyzed=false;
 export class Client {
  async connect(){} async close(){} async listTools(){return {tools:[{name:'inspect_il2cpp_metadata'}]};}
@@ -76,13 +88,20 @@ registerHooks({resolve(specifier,context,next){
             RECORDING: join(directory, "recording.mjs"),
             INPUT: join(directory, "metadata.dat"),
             RETAINED: String(retained),
+            COLLECTION: collection,
           },
         },
       );
       if (retained) {
-        expect((await result).stdout).toContain(
+        const { stdout } = await result;
+        expect(stdout).toContain(
           "All asserted IL2CPP metadata CLI/MCP checks passed",
         );
+        expect(
+          stdout.includes(
+            "empty queryable tables provide no nonempty row-content witness",
+          ),
+        ).toBe(collection === "empty");
       } else {
         await expect(result).rejects.toMatchObject({
           stderr: expect.stringContaining(
