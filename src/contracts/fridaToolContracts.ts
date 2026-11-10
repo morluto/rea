@@ -247,7 +247,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     ...toolContractMetadata("instrument_with_frida"),
     kind: "native-provider",
     description:
-      "Run one caller-authored Frida script against an explicitly selected process and detach when the observation window ends. The CLI and MCP share this ephemeral workflow; use MCP session operations for persistent sessions. Remote authentication is used only for this call and excluded from Evidence.",
+      "Run caller-authored Frida JavaScript against a selected process for one observation window, then detach. Scripts can read/change target memory and behavior and use the process's capabilities. CLI and MCP share this ephemeral workflow; use start_frida_session/load_frida_script for a persistent session. Remote authentication is call-local and excluded from Evidence. Detachment does not establish target termination.",
     inputSchema: z
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
