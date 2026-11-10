@@ -156,35 +156,15 @@ def _ensure_state_aliases(home: Path) -> None:
     for alias, target in aliases:
         link = home / alias
         destination = home / target
-        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        # A selected directory must exist so the app can create a file through
+        # the alias. An existing file alias, such as a settings file, stays a file.
+        if not destination.is_file():
+            destination.mkdir(parents=True, exist_ok=True)
         if link.is_symlink() and link.resolve() == destination.resolve():
-            if has_children:
-                destination.mkdir(parents=True, exist_ok=True)
             continue
         if os.path.lexists(link):
             raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
         link.parent.mkdir(parents=True, exist_ok=True)
-        if has_children:
-            destination.mkdir(parents=True, exist_ok=True)
-        link.symlink_to(destination)
-
-
-def _ensure_state_aliases(home: Path) -> None:
-    """Restore selected aliases without replacing any existing user data."""
-    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
-    for alias, target in aliases:
-        link = home / alias
-        destination = home / target
-        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
-        if link.is_symlink() and link.resolve() == destination.resolve():
-            if has_children:
-                destination.mkdir(parents=True, exist_ok=True)
-            continue
-        if os.path.lexists(link):
-            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if has_children:
-            destination.mkdir(parents=True, exist_ok=True)
         link.symlink_to(destination)
 
 
