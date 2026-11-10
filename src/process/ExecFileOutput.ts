@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import {
   execFile,
@@ -238,10 +239,14 @@ export const execFileBytes = (
     ): void => {
       if (error !== null) {
         admitSpawnFailure(error);
+        // Decoding replaces invalid UTF-8, so the failure marks those streams
+        // before the text is projected.
         Reflect.set(error, "stdout", stdout.toString("utf8"));
         Reflect.set(error, "stderr", stderr.toString("utf8"));
         Reflect.set(error, "stdoutBytes", stdout.byteLength);
         Reflect.set(error, "stderrBytes", stderr.byteLength);
+        if (!isUtf8(stdout)) Reflect.set(error, "stdoutInvalidUtf8", true);
+        if (!isUtf8(stderr)) Reflect.set(error, "stderrInvalidUtf8", true);
         reject(error);
         return;
       }
@@ -419,10 +424,15 @@ export const execFileOutput = (
   readonly stderr: string;
   readonly stdoutBytes: number;
   readonly stderrBytes: number;
+  /** The decoded stream holds replacement characters for invalid UTF-8. */
+  readonly stdoutInvalidUtf8?: true;
+  readonly stderrInvalidUtf8?: true;
 }> =>
   execFileBytes(command, arguments_, options).then(({ stdout, stderr }) => ({
     stdout: stdout.toString("utf8"),
     stderr: stderr.toString("utf8"),
     stdoutBytes: stdout.byteLength,
     stderrBytes: stderr.byteLength,
+    ...(isUtf8(stdout) ? {} : { stdoutInvalidUtf8: true as const }),
+    ...(isUtf8(stderr) ? {} : { stderrInvalidUtf8: true as const }),
   }));
