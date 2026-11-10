@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
 import { MCP_BOOTSTRAP_FILES } from "./lib/cli-runtime-files.mjs";
+import { unsupportedRuntimeMessage } from "./lib/runtime-admission.mjs";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the tool catalog over stdio
@@ -14,6 +15,19 @@ const args = process.argv.slice(2);
 const { default: packageJson } = await import("../package.json", {
   with: { type: "json" },
 });
+// Admit the runtime before the first compiled import. Compiled modules import
+// Node APIs that absent releases only reject while linking, so an unsupported
+// release previously surfaced as a module error from every command, including
+// `--version` and `doctor`. `process.exit` is required here: setting exitCode
+// would still reach the imports below.
+const unsupportedRuntime = unsupportedRuntimeMessage(
+  packageJson.engines?.node,
+  process.versions.node,
+);
+if (unsupportedRuntime !== undefined) {
+  process.stderr.write(`${unsupportedRuntime}\n`);
+  process.exit(1);
+}
 prepareCliProcessEnvironment(
   process.env,
   process.platform,

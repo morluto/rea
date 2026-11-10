@@ -317,6 +317,9 @@ MCP returns a `partial_observation` retained reference after recording succeeds;
 open it with `inspect_analysis_view` on the same connection. If the SDK stopped
 waiting before receiving the reply, follow [MCP cancellation recovery](../../reference/mcp-contracts.md#progress-and-cancellation)
 to find the record. CLI failure output contains the complete partial Evidence.
+With `--evidence_output`, the CLI also publishes it to that file and, with
+`--detail summary`, prints only its summary view; see
+[evidence publication](../../getting-started/cli.md#output-and-exit-status).
 Owned analyzer cleanup is verified before private files are released; uncertain
 cleanup retains ownership for retry and is reported separately.
 Typed cancellation or another primary interruption remains attached while
@@ -763,7 +766,7 @@ These safeguards are not caller-selectable output budgets. Source-map parsing
 reports truncation when its format or parser safety boundary is reached. The
 application graph has no aggregate node, edge, root, or observation prefix cap.
 
-Semantic evaluation retains at most 256 distinct primitive candidates per
+By default, semantic evaluation retains at most 256 distinct primitive candidates per
 expression and at most 1 MiB of worst-case JSON string bytes across a normalized
 primitive value's string candidates. The byte budget estimates six JSON bytes
 per UTF-16 code unit, the expansion bound for escaped strings, and bounds both
@@ -783,12 +786,47 @@ available for endpoint queries, tracing and comparison. Each analysis records en
 later projections: a selected healthy sibling can remain exact while whole-file
 coverage reports the encountered bound. Projection preserves limiting values
 from the shared property-slot owner. Expression
-evaluation and provenance walks stop after 256 nested levels. Union products
+evaluation and provenance walks default to 256 nested levels. Union products
 and string lengths are checked before allocating combinations or concatenated
 strings. When a boundary is reached, the value stays unknown, semantic coverage
 becomes partial, and graph evidence retains the expression location and typed
 limiting reason. The number of unresolved alternatives is unknown; it is not
 reported as an exact omission count.
+
+`semantic_precision` selects per-source evaluator budgets independently of
+retained graph capacity, worker memory and deadlines. Both
+`analyze_javascript_application` and `analyze_web_bundle` accept a partial object:
+
+| Field                  | Default | Unit                                        |
+| ---------------------- | ------: | ------------------------------------------- |
+| `primitive_candidates` |     256 | alternatives per normalized primitive value |
+| `primitive_bytes`      | 1048576 | estimated JSON bytes per primitive value    |
+| `expression_depth`     |     256 | nested expression/provenance levels         |
+| `getter_expansions`    |     512 | scheduled states per precise getter query   |
+| `alias_selections`     |     512 | additional precise selector states          |
+| `wrapper_visits`       | 1000000 | wrapper visits/substitutions per source     |
+| `wrapper_depth`        |     128 | active symbolic wrapper levels              |
+
+`primitive_bytes` charges six estimated JSON bytes per UTF-16 code unit plus
+quotes before creating concatenated strings. Ordinary ASCII can exhaust that
+conservative estimate before its actual JSON encoding reaches the selected
+byte count. The [calibration record](../../verification/javascript-precision-calibration.md)
+keeps existing defaults for its measured literal-value tasks; it does not
+establish optimal candidate, getter or alias budgets for larger applications.
+
+All fields accept positive safe integers; worker memory, execution and JSON
+representation bounds remain independently enforced. Omission keeps the defaults;
+invalid values fail validation. For example, retry a finite candidate-limit
+observation with `semantic_precision: {"primitive_candidates": 512}`. The CLI
+accepts `--semantic-precision '{"primitive_candidates":512}'` or a JSON file.
+An override applies to that next analysis without restarting REA, remains in
+Evidence parameters and effective coverage, and cannot change already retained
+facts. Increasing these budgets does not raise graph retention, worker heap,
+transfer admission, or parent result memory. Cyclic or unsupported evaluations
+remain unknown. Wrapper limitations name visits and depth separately so a
+caller can change the resource actually exhausted. Finite inline literal object
+spreads use iterative syntax traversal and no longer inherit a duplicate
+semantic-depth cut.
 
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous
