@@ -112,10 +112,7 @@ describe("parseMftImage", () => {
 
   it("keeps a record whose sector trailer is not the sequence number, and reports it", () => {
     const parsed = parseMftImage(
-      streamOf(
-        recordOf(),
-        recordOf({ sequenceNumber: 9, corruptSector: 1 }),
-      ),
+      streamOf(recordOf(), recordOf({ sequenceNumber: 9, corruptSector: 1 })),
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -234,7 +231,6 @@ describe("parseMftImage", () => {
     expect(parsed.value.recordBytes).toBe(4096);
     expect(parsed.value.metadata.record_count).toBe(1);
   });
-
 });
 
 describe("parseMftImage refusals and limits", () => {
@@ -242,21 +238,28 @@ describe("parseMftImage refusals and limits", () => {
     const parsed = parseMftImage(new Uint8Array(32));
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
-    expect(parsed.error.message).toMatch(/shorter than one 48-byte record header/u);
+    expect(parsed.error.message).toMatch(
+      /shorter than one 48-byte record header/u,
+    );
   });
 
   it("refuses bytes that do not start with the FILE signature", () => {
     const parsed = parseMftImage(Buffer.alloc(2048, 0x41));
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
-    expect(parsed.error.message).toMatch(/does not begin with the FILE signature/u);
+    expect(parsed.error.message).toMatch(
+      /does not begin with the FILE signature/u,
+    );
   });
 
   it("refuses a file above the fixed ceiling", () => {
     const decoder = createMftDecoder(MFT_MAX_FILE_BYTES + 1);
     expect(decoder.ok).toBe(false);
     if (decoder.ok) return;
-    expect(decoder.error).toMatchObject({ kind: "limit", boundary: "file-size" });
+    expect(decoder.error).toMatchObject({
+      kind: "limit",
+      boundary: "file-size",
+    });
   });
 
   it("decodes the same stream through the chunked decoder", () => {

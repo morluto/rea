@@ -40,7 +40,10 @@ const writeMft = async (name: string, bytes: Buffer): Promise<string> => {
 
 it("reports a $MFT stream's record headers as the root occurrence", async () => {
   const inventory = await scanCanonicalArtifactInventory(
-    await writeMft("$MFT", Buffer.concat([recordBytes({}), recordBytes({ flags: 0x0003 })])),
+    await writeMft(
+      "$MFT",
+      Buffer.concat([recordBytes({}), recordBytes({ flags: 0x0003 })]),
+    ),
   );
   expect(inventory.manifest.root_format).toBe("ntfs-mft");
   expect(inventory.coverage.status).toBe("complete");
