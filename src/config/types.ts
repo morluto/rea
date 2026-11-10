@@ -27,6 +27,10 @@ export interface AppConfig {
   readonly ghidraStartupTimeoutMs: number;
   /** Per-function native decompiler limit; absent leaves decompiles unbounded. */
   readonly ghidraDecompileTimeoutSeconds?: number | undefined;
+  readonly ghidraDecompileMaxPayloadMiB?: number | undefined;
+  readonly ghidraValueFlowMaxOperations?: number;
+  readonly ghidraValueFlowMaxInputsPerOperation?: number;
+  readonly ghidraValueFlowMaxEdges?: number;
   readonly ghidraLanguageOverride?: GhidraLanguageOverride;
   readonly ghidraDisabledAnalyzers?: readonly string[];
   readonly ghidraSeedFile?: string;

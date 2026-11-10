@@ -1,5 +1,9 @@
 import type { DownloadInstall } from "./appDownloadInstall.js";
 import {
+  desktopViewPolicy,
+  type DesktopViewPolicyInput,
+} from "./desktopViewPolicy.js";
+import {
   INSTALL_SCRIPT,
   type ExportAptSource,
   type ExportPackageFile,
@@ -13,7 +17,7 @@ import {
 } from "./appExportInstallText.js";
 import {
   PYTHON_DATA_HOOKS,
-  PYTHON_HELPERS,
+  renderPythonHelpers,
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
@@ -47,6 +51,7 @@ export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1464";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   /** Environment and folder name. */
   readonly name: string;
   readonly className: string;
@@ -641,7 +646,7 @@ SEED_MODES = {${Object.entries(plan.seedModes)
 STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target, kind }) => `(${py(alias)}, ${py(target)}, ${py(kind)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
 WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
-${PYTHON_HELPERS}
+${renderPythonHelpers(desktopViewPolicy(plan.viewPolicy))}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(

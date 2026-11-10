@@ -165,10 +165,13 @@ describe("CLI advertised input schemas", () => {
               : "./selected",
           ),
         };
-        expect(validate(input)).toBe(count === 16);
+        // WASM path count is admitted by the workflow's selected
+        // max_artifact_paths budget; JavaScript recovery retains its own cap.
+        const accepted = command === "inspect-wasm-artifact" || count === 16;
+        expect(validate(input)).toBe(accepted);
         expect(
           parserSchema(cli, command, "options")?.safeParse(input).success,
-        ).toBe(count === 16);
+        ).toBe(accepted);
       }
     }
     const scenario = await advertisedSchema(cli, "capture-native-ui-scenario");
