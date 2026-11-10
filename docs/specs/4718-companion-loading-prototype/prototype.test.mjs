@@ -1,15 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, realpath, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { CONTRACT, LIMITS, digest, strictJson, resolveManual, resolveForHost, planRegistration, approvePlan, planDisable, health } from "./resolver.mjs";
 import { planLegacyRemoval } from "./migration.mjs";
 
 const json = (value) => Buffer.from(JSON.stringify(value, null, 2) + "\n");
-async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "rea-companion-prototype-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+async function temporaryRoot(t, base = tmpdir()) {
+  const canonicalBase = await realpath(base);
+  const root = await mkdtemp(join(canonicalBase, "rea-companion-prototype-"));
+  assert.notEqual(root, canonicalBase);
+  assert.equal(dirname(root), canonicalBase);
+  t.after(async () => {
+    assert.equal(await realpath(root), root);
+    const state = await lstat(root);
+    assert.ok(state.isDirectory() && !state.isSymbolicLink());
+    await rm(root, { recursive: true });
+  });
+  return root;
+}
+async function fixture(t, base = tmpdir()) {
+  const root = await temporaryRoot(t, base);
   const packageRoot = join(root, "selected-package");
   await mkdir(packageRoot);
   const skill = Buffer.from("For the requested reconstruction, record the evidence.\n");
@@ -33,6 +45,36 @@ async function fixture(t) {
   return { root, packageRoot, skill, reference, manifest, manifestPath, scope, entry, registry, registryPath, input, save };
 }
 const refusal = (result, tag) => { assert.equal(result.ok, false, JSON.stringify(result)); if (tag) assert.equal(result.error.tag, tag); };
+
+test("symlinked host temp base is canonicalized only for owned fixtures", async (t) => {
+  const owner = await temporaryRoot(t);
+  const target = join(owner, "temporary-base");
+  const alias = join(owner, "temporary-base-alias");
+  await mkdir(target);
+  await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
+  assert.ok((await lstat(alias)).isSymbolicLink(), "Exercise a real linked temporary base");
+
+  await t.test("fixture resolves checked text through its canonical owned root", async (child) => {
+    const f = await fixture(child, alias);
+    assert.equal(dirname(f.root), await realpath(target));
+    assert.equal(await realpath(f.root), f.root);
+    const result = await resolveManual(f.input);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.value.text, f.skill.toString());
+    assert.equal(result.value.baseDirectory, f.packageRoot);
+  });
+
+  await t.test("resolver still refuses raw linked registry and package paths", async (child) => {
+    const f = await fixture(child, target);
+    const aliasRoot = join(alias, basename(f.root));
+    refusal(await resolveManual({ ...f.input, registryPath: join(aliasRoot, "registry.json") }), "unsafe-path");
+    f.entry.root = join(aliasRoot, "selected-package");
+    await writeFile(f.registryPath, json(f.registry));
+    refusal(await resolveManual(f.input), "unsafe-path");
+  });
+  // Awaited child tests retire their own roots before the parent's cleanup.
+  assert.deepEqual(await realpath(alias), target);
+});
 
 test("manual checked text returns exact selected entry/reference and provenance; host stays inactive", async (t) => {
   const f = await fixture(t);
