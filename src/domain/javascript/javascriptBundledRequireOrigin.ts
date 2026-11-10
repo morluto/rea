@@ -340,7 +340,7 @@ const canonicalWebpackInteropBindings = (
       const node = pending.pop();
       if (node === undefined || seen.has(node)) continue;
       seen.add(node);
-      if (seen.size > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      if (seen.size > state.precision.alias_selections) {
         state.valueResourceLimits.add("alias-selections");
         return true;
       }

@@ -501,6 +501,7 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
+  const foreignBase = await change(directory, ["README.md"]);
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
   await mkdir(bin);
@@ -517,7 +518,7 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           conclusion: "success",
           head_branch: "main",
           head_repository: { full_name: "untrusted/fork" },
-          head_sha: base,
+          head_sha: foreignBase,
         },
         {
           event: "push",
@@ -782,7 +783,11 @@ it.each([
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
-    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaInstructionContextProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -832,6 +837,14 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/application/binaryDiagnostics/ByteEntropyService.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "src/apktool/ApktoolConfiguration.ts",
     { code: true, runtime: true, package: true },
@@ -1472,6 +1485,26 @@ it.each([
   ],
   [
     "scripts/lib/cli-process-environment.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "scripts/lib/runtime-admission.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "scripts/lib/runtime-admission.d.mts",
     {
       code: true,
       package: true,

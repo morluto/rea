@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
 const provenance = { path: "/fixture/app", sha256: "a".repeat(64) };
 const BASE = 0x100000000n;

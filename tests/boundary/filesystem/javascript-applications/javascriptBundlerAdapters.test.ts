@@ -125,7 +125,9 @@ describe("Webpack and Rspack runtime adapters", () => {
       ),
     ).toBe(false);
   });
+});
 
+describe("esbuild and Vite runtime adapters", () => {
   it("recovers esbuild wrapper modules and Vite preload dependencies", async () => {
     const root = await esmRuntimeFixture();
     const { graph } = await reconstructJavaScriptFixture(root);
@@ -142,14 +144,31 @@ describe("Webpack and Rspack runtime adapters", () => {
       runtime: "esbuild-esm",
       module_key: "src/core.js",
     });
+    const dependencies = graph.edges.filter(
+      ({ relation, properties }) =>
+        relation === "imports" &&
+        properties.kind === "dynamic-import" &&
+        ["./feature.js", "./main.css"].includes(String(properties.specifier)),
+    );
     expect(
-      graph.edges.filter(
-        ({ relation, properties }) =>
-          relation === "imports" &&
-          properties.kind === "dynamic-import" &&
-          ["./feature.js", "./main.css"].includes(String(properties.specifier)),
-      ),
-    ).toHaveLength(2);
+      dependencies.map(({ properties }) => properties.specifier).sort(),
+    ).toEqual(["./feature.js", "./main.css"]);
+    expect(
+      dependencies.find(
+        ({ properties }) => properties.specifier === "./feature.js",
+      )?.properties,
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "feature.js",
+    });
+    expect(
+      dependencies.find(
+        ({ properties }) => properties.specifier === "./main.css",
+      )?.properties,
+    ).toMatchObject({
+      resolution_status: "unavailable",
+      candidate_path: "main.css",
+    });
   });
 });
 

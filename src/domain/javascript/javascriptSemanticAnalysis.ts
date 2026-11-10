@@ -1,3 +1,7 @@
+import {
+  resolveJavaScriptSemanticPrecision,
+  type JavaScriptSemanticPrecisionInput,
+} from "./javascriptSemanticPrecision.js";
 import { semanticPatternPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 import {
   createSemanticOpaqueGlobalObserver,
@@ -236,11 +240,12 @@ interface AddBindingInput {
 /** Recover lexical bindings, aliases, constants, and module links. */
 export const analyzeJavaScriptSemantics = (
   source: string,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptSemanticIr => {
   const file = parseJavaScriptSource(source);
   return file === null
     ? failedJavaScriptSemanticIr()
-    : analyzeParsedJavaScriptSemantics(file);
+    : analyzeParsedJavaScriptSemantics(file, "import", precision);
 };
 
 /** Recover lexical references, optionally for one name, without evaluating values or provenance. */
@@ -460,8 +465,9 @@ const semanticPathsOverlap = (
 /** Share the lexical index with bounded, demand-driven boundary analyses. */
 export function* indexJavaScriptBindingsSteps(
   program: t.Program,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptSemanticAnalysisState> {
-  const state = createState(program);
+  const state = createState(program, "import", precision);
   yield* collectDefinitionsSteps(program, state);
   yield* indexSemanticAmbientWritesSteps(state);
   return state;
@@ -471,9 +477,15 @@ export function* indexJavaScriptBindingsSteps(
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptSemanticIr =>
   completeSemanticSteps(
-    analyzeParsedJavaScriptSemanticsSteps(file, staticImportResolutionMode),
+    analyzeParsedJavaScriptSemanticsSteps(
+      file,
+      staticImportResolutionMode,
+      undefined,
+      precision,
+    ),
   );
 
 /**
@@ -486,8 +498,13 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
   expressionNodeBudget?: number,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptSemanticIr> {
-  const state = createState(file.program, staticImportResolutionMode);
+  const state = createState(
+    file.program,
+    staticImportResolutionMode,
+    precision,
+  );
   yield* collectDefinitionsSteps(file.program, state);
   yield* indexSemanticAmbientWritesSteps(state);
   yield* indexSemanticMemberMutationFactsSteps(state);
@@ -521,6 +538,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
       ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
     ].sort(),
     [...state.returnedReferenceWidenings].map(range),
+    state.precision,
   );
   return {
     schema: "JavaScriptSemanticIR",
@@ -540,14 +558,14 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
           ]
         : []),
       ...(state.valueResourceLimits.has("alias-selections")
-        ? [semanticResourceLimitReason("alias-selections")]
+        ? [semanticResourceLimitReason("alias-selections", state.precision)]
         : []),
       ...(state.returnedReferenceWidenings.size > 0
         ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
         : []),
       ...[...state.getterResourceLimits]
         .sort()
-        .map(semanticResourceLimitReason),
+        .map((limit) => semanticResourceLimitReason(limit, state.precision)),
       ...(parserPartial
         ? [
             "The parser recovered from syntax errors; affected bindings are partial.",
@@ -591,8 +609,9 @@ export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
 export function* indexJavaScriptBindingsWithReceiversSteps(
   program: t.Program,
   hostContext?: "commonjs-wrapper",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptReceiverIndex> {
-  const state = createState(program);
+  const state = createState(program, "import", precision);
   if (hostContext === "commonjs-wrapper") {
     const scope = currentSemanticScope(state.scopes);
     const binding: JavaScriptSemanticBindingState = {
@@ -6716,6 +6735,7 @@ const bindingOrigin = (
 const createState = (
   program: t.Program,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptSemanticAnalysisState => {
   const root: JavaScriptSemanticScopeState = {
     scopeId: semanticScopeId("program", program),
@@ -6726,6 +6746,7 @@ const createState = (
     bindings: new Map(),
   };
   return {
+    precision: resolveJavaScriptSemanticPrecision(precision),
     arrayIterationUnknown: false,
     memberMutationFactsComplete: false,
     program,

@@ -2,11 +2,10 @@ import { z } from "zod";
 import {
   browserDeadlineIncrease,
   browserDeadlineRetry,
-  noRuntimeOverrideSentence,
   optionalBrowserDeadlineMs,
   selectedBrowserDeadlineMs,
 } from "./browserDeadline.js";
-import { jsonValueSchema } from "./jsonValue.js";
+import { jsonValueSchema, MAX_JSON_DEPTH } from "./jsonValue.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
 import {
   protobufDecodingSchema,
@@ -15,13 +14,87 @@ import {
 import { qlogCaptureFactsSchema } from "./qlogCapture.js";
 import { canBorrowParsedJsonSnapshot } from "./immutableJson.js";
 
-/** Complete historical evidence budgets; exceeding a budget returns no partial capture. */
+/** Default historical evidence budgets; exceeding a budget returns no partial capture. */
 export const WEB_NETWORK_CAPTURE_LIMITS = {
   inputBytes: 32 * 1024 * 1024,
   outputBytes: 96 * 1024 * 1024,
   timeoutMs: 30_000,
   depth: 64,
 } as const;
+
+// Native/SAZ projections start at the reported record root. The complete
+// reply (value.records[0].reported) and Evidence envelope have four enclosing
+// edges; count them before admitting parser/projection nesting.
+const CAPTURE_REPORTED_RECORD_DEPTH = [
+  "normalized_result",
+  "records",
+  0,
+  "reported",
+].length;
+export const MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH =
+  MAX_JSON_DEPTH - CAPTURE_REPORTED_RECORD_DEPTH;
+
+/** One admitted capture's complete-input, complete-reply and parser policy. */
+export const webNetworkCaptureBudgetsSchema = z.strictObject({
+  inputBytes: z.int().min(1),
+  outputBytes: z.int().min(1),
+  depth: z.int().min(1).max(MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH),
+});
+export type WebNetworkCaptureBudgets = z.infer<
+  typeof webNetworkCaptureBudgetsSchema
+>;
+
+export const selectedWebNetworkCaptureBudgets = (input: {
+  readonly max_input_bytes?: number | undefined;
+  readonly max_reply_bytes?: number | undefined;
+  readonly max_nesting_depth?: number | undefined;
+}): WebNetworkCaptureBudgets => ({
+  inputBytes: input.max_input_bytes ?? WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+  outputBytes: input.max_reply_bytes ?? WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+  depth: input.max_nesting_depth ?? WEB_NETWORK_CAPTURE_LIMITS.depth,
+});
+
+/** Explicit per-call budget facts; these controls do not mutate runtime defaults. */
+export const webNetworkCaptureBudgetFacts = (
+  input: Parameters<typeof selectedWebNetworkCaptureBudgets>[0],
+  parameter: "max_input_bytes" | "max_reply_bytes" | "max_nesting_depth",
+) => {
+  const budgets = selectedWebNetworkCaptureBudgets(input);
+  const field =
+    parameter === "max_input_bytes"
+      ? "inputBytes"
+      : parameter === "max_reply_bytes"
+        ? "outputBytes"
+        : "depth";
+  const effective = budgets[field];
+  return {
+    parameter,
+    effective_value: effective,
+    default_value: WEB_NETWORK_CAPTURE_LIMITS[field],
+    source: input[parameter] === undefined ? "default" : "request",
+    unit: parameter === "max_nesting_depth" ? "levels" : "bytes",
+    minimum: 1,
+    maximum:
+      parameter === "max_nesting_depth"
+        ? MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH
+        : Number.MAX_SAFE_INTEGER,
+    applies_at: "next_operation",
+    rea_restart_required: false,
+  };
+};
+
+/** Recovery follows the owning budget, rather than a different deadline or heap. */
+export const webNetworkCaptureBudgetRecovery = (
+  input: Parameters<typeof selectedWebNetworkCaptureBudgets>[0],
+  parameter: Parameters<typeof webNetworkCaptureBudgetFacts>[1],
+): string => {
+  const facts = webNetworkCaptureBudgetFacts(input, parameter);
+  const next =
+    facts.effective_value < facts.maximum
+      ? `Increase ${parameter} above ${String(facts.effective_value)} on the next inspect_web_network_capture call`
+      : `${parameter} is at its maximum; select a smaller complete producer export when that preserves the required observation`;
+  return `${next}. Effective ${parameter}: ${String(facts.effective_value)} ${facts.unit} (source ${facts.source}, default ${String(facts.default_value)}, floor ${String(facts.minimum)}, maximum ${String(facts.maximum)}). No REA restart is required. Other capture budgets, worker limits and client limits remain separate. Selection and delivery do not recreate a completed report from a refused decode.`;
+};
 
 /** Capture deadline used when capture_timeout_ms is omitted. */
 export const DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS =
@@ -32,12 +105,12 @@ export const selectedWebNetworkCaptureTimeoutMs = (
 ): number =>
   selectedBrowserDeadlineMs(selected, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS);
 
-/** Caller-visible capture deadline. Byte and depth caps stay fixed. */
+/** Caller-visible capture deadline; byte/depth budgets have separate per-call controls. */
 export const webNetworkCaptureTimeoutRecovery = (
   timeoutMs: number,
 ): { readonly userMessage: string; readonly remediationAction: string } => ({
   userMessage: `inspect_web_network_capture reached its ${String(timeoutMs)} ms capture deadline (deadlineExpired) for capture_timeout_ms. No partial capture is returned. This is not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS, "--capture-timeout-ms")} ${browserDeadlineRetry} ${noRuntimeOverrideSentence(`The ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, and ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap stay fixed.`, "capture_timeout_ms")}`,
+  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS, "--capture-timeout-ms")} ${browserDeadlineRetry} The separate max_input_bytes, max_reply_bytes and max_nesting_depth controls apply to the next call without restarting REA; capture_timeout_ms does not raise them.`,
 });
 
 export const WEB_NETWORK_CAPTURE_FORMATS = [
@@ -60,6 +133,21 @@ export const inspectWebNetworkCaptureInputSchema = z.strictObject({
     .describe(
       "Zero-based producer record ordinals, in caller-selected order. Omit to inspect every record.",
     ),
+  max_input_bytes: webNetworkCaptureBudgetsSchema.shape.inputBytes
+    .optional()
+    .describe(
+      "Complete capture, expanded SAZ member and protobuf descriptor admission in bytes (default 33554432); applies to the next call without restart. Does not raise worker heap, reply or client limits.",
+    ),
+  max_reply_bytes: webNetworkCaptureBudgetsSchema.shape.outputBytes
+    .optional()
+    .describe(
+      "Complete decoder reply and protobuf working representation allowance in bytes (default 100663296); applies to the next call without restart. Record selection occurs after complete decoding. Does not raise worker heap or client receive limits.",
+    ),
+  max_nesting_depth: webNetworkCaptureBudgetsSchema.shape.depth
+    .optional()
+    .describe(
+      `Capture/parser nesting allowance (default 64, maximum ${String(MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH)}, reserving the enclosing reply/Evidence levels within REA JSON representation); applies on the next call without restart. Does not make malformed or unsupported structures valid.`,
+    ),
   protobuf: protobufOptionsSchema.optional(),
   sensitive_values: z
     .array(z.string().min(1))
@@ -68,7 +156,7 @@ export const inspectWebNetworkCaptureInputSchema = z.strictObject({
       "Literal text excluded from capture payloads, byte/numeric projections, producer coordinates, artifact paths/digests and diagnostic text. Declaration strings are never persisted in Evidence parameters. Canonical contract keys, enums and provider identities remain intact.",
     ),
   capture_timeout_ms: optionalBrowserDeadlineMs(
-    `Capture wall-clock deadline in milliseconds (default ${String(DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS)}), from decoder start through process exit. Omitted means ${String(DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS)} and applies on the next capture. deadlineExpired returns no partial capture. Does not raise the fixed ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, or ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap. Those have no runtime override.`,
+    `Capture wall-clock deadline in milliseconds (default ${String(DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS)}), from decoder start through process exit. Omitted means ${String(DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS)} and applies on the next capture. deadlineExpired returns no partial capture. Does not raise the separately selected max_input_bytes, max_reply_bytes or max_nesting_depth budgets.`,
   ),
 });
 
