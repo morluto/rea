@@ -94,8 +94,11 @@ export interface DesktopAppExportPlan {
   readonly stateAliases?: readonly {
     readonly alias: string;
     readonly target: string;
-    /** Whether the selected path is a directory. Older captures omit kind; those aliases are state directories. */
-    readonly kind: "file" | "directory";
+    /**
+     * Whether the selected path is a directory. Captures written before kind
+     * was recorded leave this unknown; the helper must not invent a directory.
+     */
+    readonly kind: "file" | "directory" | "unknown";
   }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
@@ -315,7 +318,7 @@ const capturedStateAliases = (capture: DesktopApplicationCapture) => {
       const target = state === undefined ? null : relative(state);
       return alias === null || target === null || alias === target
         ? []
-        : [{ alias, target, kind: kind ?? "directory" }];
+        : [{ alias, target, kind: kind ?? "unknown" }];
     },
   );
   const retained: typeof aliases = [];

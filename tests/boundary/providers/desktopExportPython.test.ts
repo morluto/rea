@@ -287,6 +287,23 @@ _ensure_state_aliases(home)
   expect((await stat(join(absent, ".config", "tellicorc"))).isFile()).toBe(
     true,
   );
+
+  const legacy = join(root, "legacy");
+  await mkdir(join(legacy, ".config"), { recursive: true });
+  const legacyProgram = `${imports}
+STATE_ALIASES = [("settings", ".config/tellicorc", "unknown")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", legacyProgram, legacy], { encoding: "utf8" });
+  await writeFile(join(legacy, "settings"), "legacy");
+  expect(await readFile(join(legacy, ".config", "tellicorc"), "utf8")).toBe(
+    "legacy",
+  );
+  expect((await stat(join(legacy, ".config", "tellicorc"))).isFile()).toBe(
+    true,
+  );
 });
 
 it("restores a selected settings alias without replacing an existing path", async () => {
