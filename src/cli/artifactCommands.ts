@@ -21,7 +21,11 @@ export const registerArtifactCommands = (
     description:
       "Inspect a Foundation keyed archive as an object-reference graph",
     args: z.object({
-      path: z.string().describe("Foundation plist archive or Apple app bundle"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Foundation plist archive or Apple app bundle"),
       archive: z
         .string()
         .default(".")
