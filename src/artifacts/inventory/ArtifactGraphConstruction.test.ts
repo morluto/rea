@@ -576,6 +576,21 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   ).toMatchObject({ format: "file" });
 });
 
+it("classifies a compound file by its signature, under any name", () => {
+  const container = Buffer.alloc(2_048);
+  Buffer.from("d0cf11e0a1b11ae1", "hex").copy(container, 0);
+  for (const path of [
+    "evidence/sample.automaticDestinations-ms",
+    "evidence/custom.customDestinations-ms",
+    "evidence/Thumbs.db",
+    "evidence/blob.bin",
+  ])
+    expect(classifyArtifactBytesAtPath(path, container)).toEqual({
+      kind: "container",
+      format: "compound-file",
+    });
+});
+
 it("classifies a FIT by a /images node within the first 4 KiB", () => {
   const images = [{ name: "kernel", data: Buffer.from("kernel") }];
   const late = devicetreeFixture({

@@ -215,6 +215,7 @@ export interface ArtifactReader {
     | "dfuse"
     | "esp-flash-image"
     | "fit"
+    | "compound-file"
     | "file";
   entries(
     signal?: AbortSignal,
