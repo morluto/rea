@@ -272,7 +272,6 @@ export const readAndroidBinaryManifestSplitFacts = (
           chunk.start,
           chunk.chunkSize,
         );
-        console.log("DBG", JSON.stringify(el?.name), el?.attributes.length);
         return el;
       })
       .find((element) => element?.name === "manifest");
