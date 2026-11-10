@@ -41,6 +41,7 @@ const registerOverviewCommands = (
     snapshot: z
       .string()
       .min(1)
+      .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
       .optional()
       .describe("Load and update a local analysis snapshot"),
     ...nativeOpenOptionFields,
