@@ -763,11 +763,17 @@ describe.skipIf(process.platform === "win32")(
         recursive: true,
       });
       await writeFile(
-        join(home, ".local/share/applications/org.example.env-relative.desktop"),
+        join(
+          home,
+          ".local/share/applications/org.example.env-relative.desktop",
+        ),
         `[Desktop Entry]\nType=Application\nName=Env\nExec=env XDG_CONFIG_HOME=relative-config notes-app\n`,
       );
 
-      const inventory = await inventoryOf("org.example.env-relative", installed);
+      const inventory = await inventoryOf(
+        "org.example.env-relative",
+        installed,
+      );
 
       expect(inventory.executable.path).toBe(join(bin, "notes-app"));
       expect(inventory.state_directories.map((entry) => entry.path)).toContain(
