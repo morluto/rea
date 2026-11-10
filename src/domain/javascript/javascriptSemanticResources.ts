@@ -21,7 +21,10 @@ import {
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -83,7 +86,8 @@ export const collectJavaScriptSemanticResources = (
           candidate.node,
           candidate.specifier,
           context.state,
-        )),
+        ) &&
+        !rejectsSocketHostMember(candidate.node, candidate.specifier, context)),
   );
   return [
     ...acquisitions.map(immutableAcquisition),
@@ -813,7 +817,284 @@ const rejectsTlsProtocolVersionLiteral = (
   return false;
 };
 
+/**
+ * A statically known primitive, folded the way the runtime folds it.
+ *
+ * Only shapes whose value is fixed by the syntax are read: literals, an exactly
+ * readable template, a unary operator over another foldable operand, the unmodified
+ * numeric globals, and the unmodified `Number`/`Boolean`/`String` constructors over a
+ * foldable argument. A `Symbol(...)` call, a member read or an identifier binding stays
+ * unknown, because its value is not settled by this expression.
+ */
+const staticConstantValue = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | { readonly found: true; readonly value: unknown }
+  | { readonly found: false } => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (t.isStringLiteral(value)) return { found: true, value: value.value };
+  if (t.isNumericLiteral(value)) return { found: true, value: value.value };
+  if (t.isBooleanLiteral(value)) return { found: true, value: value.value };
+  if (t.isNullLiteral(value)) return { found: true, value: null };
+  if (t.isBigIntLiteral(value)) return { found: true, value: value.value };
+  if (t.isTemplateLiteral(value)) {
+    if (value.expressions.length !== 0) return { found: false };
+    const cooked = value.quasis[0]?.value.cooked;
+    return cooked === null || cooked === undefined
+      ? { found: false }
+      : { found: true, value: cooked };
+  }
+  if (t.isIdentifier(value)) {
+    // A binding named `undefined` can hold anything, so the global is confirmed the
+    // same way `NaN` and `Infinity` are.
+    if (
+      (value.name === "undefined" ||
+        value.name === "NaN" ||
+        value.name === "Infinity") &&
+      isUnmodifiedGlobalReference(value, state, value.name)
+    )
+      return {
+        found: true,
+        value:
+          value.name === "undefined"
+            ? undefined
+            : value.name === "NaN"
+              ? Number.NaN
+              : Number.POSITIVE_INFINITY,
+      };
+    return { found: false };
+  }
+  if (
+    t.isCallExpression(value) &&
+    t.isIdentifier(value.callee) &&
+    isUnmodifiedGlobalReference(value.callee, state, value.callee.name)
+  ) {
+    // `Number()`/`Boolean()`/`String()` are value-preserving folds over their
+    // argument, so a falsy result is readable even though the call is not a literal.
+    const name = value.callee.name;
+    const argument = value.arguments[0];
+    if (name !== "Number" && name !== "Boolean" && name !== "String")
+      return { found: false };
+    if (argument === undefined) {
+      if (name === "Number") return { found: true, value: 0 };
+      if (name === "Boolean") return { found: true, value: false };
+      return { found: true, value: "" };
+    }
+    if (value.arguments.length !== 1 || t.isSpreadElement(argument))
+      return { found: false };
+    const inner = staticConstantValue(argument, state);
+    if (!inner.found) return { found: false };
+    if (name === "Number") return { found: true, value: Number(inner.value) };
+    if (name === "Boolean") return { found: true, value: Boolean(inner.value) };
+    return { found: true, value: String(inner.value) };
+  }
+  if (t.isUnaryExpression(value)) {
+    if (value.operator === "void") return { found: true, value: undefined };
+    const operand = staticConstantValue(value.argument, state);
+    if (!operand.found) return { found: false };
+    switch (value.operator) {
+      case "!":
+        return { found: true, value: !operand.value };
+      case "-":
+        return typeof operand.value === "number" ||
+          typeof operand.value === "bigint"
+          ? { found: true, value: -(operand.value as number) }
+          : { found: false };
+      case "+":
+        return typeof operand.value === "number"
+          ? { found: true, value: operand.value }
+          : { found: false };
+      case "~":
+        return typeof operand.value === "number" ||
+          typeof operand.value === "bigint"
+          ? { found: true, value: ~(operand.value as number) }
+          : { found: false };
+      case "typeof":
+        return { found: true, value: typeof operand.value };
+      default:
+        return { found: false };
+    }
+  }
+  return { found: false };
+};
+
+/** One member's value once the whole literal has been built. */
+type MemberRead =
+  | { readonly status: "missing" }
+  | { readonly status: "unknown" }
+  | { readonly status: "explicit"; readonly node: t.Node };
+
+/**
+ * Whether the literal is plain enough for its own keys to be the whole story.
+ *
+ * A spread may carry any key, a computed key may be any name, and an accessor runs a
+ * body. Any of the three means a member's value is not settled by reading this literal:
+ * measured on Node 24.22.1, `{port: 0, ...{get x() { this.host = "localhost"; return 0 },
+ * host: 1}}` reaches `host === "localhost"`, because the getter ran while the spread was
+ * copied.
+ */
+const isPlainOptionsLiteral = (options: t.ObjectExpression): boolean =>
+  options.properties.every(
+    (property) =>
+      !t.isSpreadElement(property) &&
+      !property.computed &&
+      !t.isObjectMethod(property) &&
+      !isObjectPrototypeSetter(property),
+  );
+
+/**
+ * Whether the object being built may inherit a key from a replaced default prototype.
+ *
+ * `net.connect({port: 0, host: 1})` after `Object.prototype.path = "/tmp/a.sock"` returns
+ * a Unix socket on Node 24.22.1: the inherited `path` wins because `Object.prototype` is
+ * in the literal's chain. An own key still beats the inherited one, so this only matters
+ * for a member the literal does not write itself.
+ */
+const defaultPrototypeMaySupply = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  state.prototypeMutationSites.some(
+    (effect) =>
+      effect.owner === "Object" &&
+      semanticEffectTiming(node, effect.node, state) !== "after",
+  );
+
+/**
+ * The value a member holds after the whole literal is built, in write order.
+ *
+ * A later key wins over an earlier one of the same name, which is why the read walks the
+ * properties rather than taking the first match. A literal that is not plain leaves every
+ * member unknown, so no caller decides from it, and so does a member the literal does not
+ * write while `Object.prototype` may supply it.
+ */
+const finalMemberNode = (
+  options: t.ObjectExpression,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+  invocation?: t.Node,
+): MemberRead => {
+  if (!isPlainOptionsLiteral(options)) return { status: "unknown" };
+  let read: MemberRead = { status: "missing" };
+  for (const property of options.properties) {
+    if (t.isSpreadElement(property) || t.isObjectMethod(property)) continue;
+    if (semanticStaticPropertyName(property.key, property.computed) !== name)
+      continue;
+    read = { status: "explicit", node: property.value };
+  }
+  if (
+    read.status === "missing" &&
+    defaultPrototypeMaySupply(invocation ?? options, state)
+  )
+    return { status: "unknown" };
+  return read;
+};
+
 /** Only `net`/`tls` sockets take a port in argument 0. */
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
+
+/**
+ * Whether the literal selects a non-TCP socket overload before Node reads `host`.
+ *
+ * `{path: "<non-empty>"}` is a Unix socket and `tls`'s `{socket}` wraps an existing
+ * stream; both make the host check unreachable. Measured on Node 24.22.1, a **falsy**
+ * `path` does not select the Unix overload — `{path: undefined, host: 1}`,
+ * `{path: "", host: 1}` and `{path: 0, host: "localhost"}` all reach the host read —
+ * so the value is folded rather than its presence trusted. A value this file cannot
+ * read leaves the overload open, so the answer is `undefined`, not `false`.
+ */
+const socketSelectsUnixOverload = (
+  options: t.ObjectExpression,
+  invocation: t.Node,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean | undefined => {
+  const path = finalMemberNode(options, "path", context.state, invocation);
+  if (path.status === "unknown") return undefined;
+  if (path.status === "explicit") {
+    const value = staticConstantValue(path.node, context.state);
+    if (!value.found) return undefined;
+    // A non-empty path selects the Unix socket and the host is never read.
+    if (typeof value.value === "string" && value.value.length > 0) return true;
+    // A truthy non-string `path` is refused by Node's own path check, which is a
+    // different rejection than the one this function decides.
+    if (Boolean(value.value) && typeof value.value !== "string")
+      return undefined;
+  }
+  if (specifier !== "tls") return false;
+  const socket = finalMemberNode(options, "socket", context.state, invocation);
+  if (socket.status === "unknown") return undefined;
+  if (socket.status === "missing") return false;
+  const value = staticConstantValue(socket.node, context.state);
+  if (!value.found) return undefined;
+  // A falsy `socket` is not a stream, so the connect path runs and the host is read.
+  if (!Boolean(value.value)) return false;
+  // A truthy non-stream literal throws `TypeError` inside the wrap, so it is not a
+  // bypass either, but the reject reason is not the host.
+  return undefined;
+};
+
+/**
+ * `options.host` must be a string when it is truthy.
+ *
+ * Node reads the member only when it is truthy, so every falsy value falls through to
+ * the default and is accepted; a truthy non-string throws `ERR_INVALID_ARG_TYPE` from
+ * the call itself. Measured on Node 24.22.1, accepted: `undefined`, `null`, `""`, `0`,
+ * `-0`, `false`, `0n`, `NaN`, `void 0`, `!1`, `"localhost"`, `String("127.0.0.1")`,
+ * `Number(0)`, `Number("x")`, `Boolean(0)`, and every value when `path` selects the
+ * Unix overload. Threw: `1`, `1.5`, `true`, `1n`, `{}`, `[]`, `/x/`, `new String("x")`,
+ * `new Number(1)`, `!0`, `-1`, `+1`, `!!1`, `Infinity`, `Symbol("x")`, `Number(1)` and
+ * `Boolean(1)`.
+ *
+ * The positional second argument is a different slot Node does not validate —
+ * `net.connect(0, 5)` connects — so only the member is decided.
+ */
+const rejectsSocketHostMember = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return false;
+  const options = unwrapJavaScriptExpression(first).node;
+  if (!t.isObjectExpression(options)) return false;
+  // `{path}` selects a Unix socket, and `tls`'s `{socket}` wraps an existing one. In
+  // both cases Node never reaches the host check; while the overload is unreadable the
+  // host is not decided either.
+  const overload = socketSelectsUnixOverload(options, node, specifier, context);
+  if (overload !== false) return false;
+  const host = finalMemberNode(options, "host", context.state, node);
+  if (host.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(host.node).node;
+  const constant = staticConstantValue(value, context.state);
+  if (constant.found) {
+    // Falsy falls through to the default; a string is the ordinary case; anything
+    // else truthy is a type error.
+    return (
+      constant.value !== "" &&
+      Boolean(constant.value) &&
+      typeof constant.value !== "string"
+    );
+  }
+  // `Symbol(...)` returns a fresh symbol, which is truthy and not a string. Every
+  // other call, member read or binding could still be a string or a falsy value, so
+  // it stays undecided.
+  if (
+    t.isCallExpression(value) &&
+    t.isIdentifier(value.callee) &&
+    isUnmodifiedGlobalReference(value.callee, context.state, value.callee.name)
+  )
+    return value.callee.name === "Symbol";
+  return (
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isNewExpression(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isClassExpression(value)
+  );
+};

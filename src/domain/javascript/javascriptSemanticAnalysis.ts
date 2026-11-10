@@ -1291,7 +1291,14 @@ function* collectDefinitionsSteps(
         t.isForInStatement(node) ||
         t.isForOfStatement(node) ||
         t.isArrayExpression(node) ||
-        t.isFunction(node)
+        t.isFunction(node) ||
+        // A direct member write on a built-in prototype is the one shape that changes a
+        // prototype without any of the constructs above. Measured on Node 24.22.1, a
+        // top-level \`Object.prototype.path = "/tmp/a.sock"; net.connect({port: 0,
+        // host: 1})\` connects over the inherited \`path\` while the same statements inside
+        // a function do, so gating on \`Function\` alone made the answer depend on where
+        // the write was written.
+        writesIntrinsicPrototype(node)
       )
         needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
@@ -1605,6 +1612,42 @@ function* collectDefinitionsSteps(
   if (state.opaqueEffects.byScope.size > 0) clearSemanticValueCaches(state);
 }
 
+/**
+ * Whether a node writes a member on a built-in prototype without any construct that
+ * already requests prototype facts.
+ *
+ * `Object.prototype.path = "..."` is an `AssignmentExpression` whose target is a member of
+ * a built-in prototype, and it needs no `with`, loop, array or function to run. Any member
+ * or call on the prototype object counts, because `Object.prototype.x = 1`,
+ * `delete Object.prototype.x` and `Object.defineProperty(Object.prototype, ...)` all reach
+ * the same owner.
+ */
+const writesIntrinsicPrototype = (node: t.Node): boolean => {
+  // Only a write can change a prototype, so this never runs for a read and never walks a
+  // member chain that is not the target of one. Looking exactly two levels in rather than
+  // walking to the root keeps it O(1) on the deep member chains a minified bundle produces.
+  const target = t.isAssignmentExpression(node)
+    ? node.left
+    : t.isUpdateExpression(node)
+      ? node.argument
+      : t.isUnaryExpression(node) && node.operator === "delete"
+        ? node.argument
+        : undefined;
+  if (target === undefined) return false;
+  const value = unwrapJavaScriptExpression(target).node;
+  if (!t.isMemberExpression(value) && !t.isOptionalMemberExpression(value))
+    return false;
+  const owner = unwrapJavaScriptExpression(value.object).node;
+  if (!t.isMemberExpression(owner) && !t.isOptionalMemberExpression(owner))
+    return false;
+  if (semanticStaticPropertyKey(owner.property, owner.computed) !== "prototype")
+    return false;
+  const root = unwrapJavaScriptExpression(owner.object).node;
+  return (
+    t.isIdentifier(root) &&
+    semanticPrototypeOwners.some((candidate) => candidate === root.name)
+  );
+};
 /** Preserve uncertainty when source can change or expose a built-in prototype. */
 function* indexPrototypeUncertaintySteps(
   program: t.Program,
