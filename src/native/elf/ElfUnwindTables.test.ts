@@ -462,6 +462,33 @@ const findSection = (bytes: Buffer, name: string) => {
   throw new Error(`fixture has no ${name}`);
 };
 
+it.each(["compressed-symbols", "compressed-names", "non-string-names"])(
+  "retains unwind ranges without interpreting %s as ordinary symbol storage",
+  (storage) => {
+    const bytes = elfUnwindFixture({ header: "match" });
+    expect(parse(bytes).ranges[0]?.symbol?.text).toBe("alpha");
+    const section = findSection(
+      bytes,
+      storage === "compressed-symbols" ? ".symtab" : ".strtab",
+    );
+    if (storage === "non-string-names")
+      bytes.writeUInt32LE(1, section.headerOffset + 4);
+    else bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+
+    const report = parse(bytes);
+    expect(report.ranges.map(({ start }) => start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.ranges.map(({ symbol }) => symbol)).toEqual([null, null]);
+    expect(report.coverage).toMatchObject({
+      status: "incomplete",
+      ranges_with_symbols: 0,
+      eh_frame_hdr_agreement: "agree",
+    });
+  },
+);
+
 it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
   const report = parse(
     elfUnwindFixture({
@@ -591,6 +618,18 @@ it("caps symbol lookup across .symtab and .dynsym together", () => {
   );
 });
 
+it("keeps the symbol scan allowance for later tables when an earlier table has no string table", () => {
+  const bytes = elfUnwindFixture({ header: "match", symbolCap: true });
+  const section = findSection(bytes, ".symtab");
+  bytes.writeUInt32LE(0, section.headerOffset + 40);
+  const report = parse(bytes);
+  expect(report.ranges[0]?.symbol?.text).toBe("alpha");
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).not.toContain(
+    "Symbol tables were capped at 65536 combined entries.",
+  );
+});
+
 it.each([".eh_frame", ".eh_frame_hdr"] as const)(
   "reports coverage incomplete when a duplicate %s is ignored",
   (duplicate) => {
@@ -664,6 +703,22 @@ it.each([
     );
   },
 );
+
+it("keeps the GOT unknown when compressed dynamic storage resembles decoded entries", () => {
+  const bytes = elfUnwindFixture({ header: "match", datarel: "dynamic" });
+  const section = findSection(bytes, ".dynamic");
+  // The payload still resembles ordinary DT_PLTGOT/DT_NULL entries, but the
+  // declaration makes it opaque compressed storage, not a decoded table.
+  bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+  const report = parse(bytes);
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toContain(
+    "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.",
+  );
+});
 
 it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison incomplete", () => {
   const report = parse(elfUnwindFixture({ header: "duplicate-row" }), {

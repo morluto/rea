@@ -135,13 +135,25 @@ def inspect_elf(path, cache):
     from pwnlib.context import context
     with context.local(cache_dir=str(cache), log_level="warning"):
         from elftools.common.exceptions import ELFError
+        from elftools.common.utils import struct_parse
         from elftools.elf.elffile import ELFFile
         from pwnlib.elf import ELF
         try:
             headers = ELFFile(io.BytesIO(content))
             section_count = headers.num_sections()
             if section_count:
+                if headers.header.e_shentsize < headers.structs.Elf_Shdr.sizeof():
+                    raise LayoutFailure("format", "ELF section-header entry is shorter than the required structure.")
                 location(headers.header.e_shoff, section_count * headers.header.e_shentsize, len(content))
+            # Upstream string/symbol/relocation access reads stored stream bytes,
+            # while this profile reports logical names and file coordinates.
+            # Admit those encodings before LayoutELF populates convenience maps.
+            for index in range(section_count):
+                raw_header = struct_parse(headers.structs.Elf_Shdr, headers.stream,
+                                          stream_pos=headers.header.e_shoff + index * headers.header.e_shentsize)
+                if raw_header.sh_flags & 0x800 and raw_header.sh_type in (
+                        "SHT_STRTAB", "SHT_SYMTAB", "SHT_DYNSYM", "SHT_REL", "SHT_RELA", "SHT_RELR", "SHT_DYNAMIC"):
+                    raise LayoutFailure("unsupported-target", f"ELF section {index} ({raw_header.sh_type}) is SHF_COMPRESSED; logical metadata and its source coordinates are not decoded by this profile.")
             segment_count = headers.num_segments()
             if segment_count:
                 location(headers.header.e_phoff, segment_count * headers.header.e_phentsize, len(content))

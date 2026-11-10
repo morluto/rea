@@ -269,7 +269,7 @@ const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
           : left.index - right.index,
   );
   const backed = buildAddressRangeIndex(
-    ranges((section) => section.file_backed),
+    ranges((section) => section.file_backed && !section.compressed),
     (left, right) => left.index - right.index,
   );
   return {
@@ -354,7 +354,8 @@ const findSections = (
 const withinSection =
   (section: NativeSection, width: number) =>
   (address: bigint): number | null => {
-    if (!section.file_backed || address < section.address) return null;
+    if (!section.file_backed || section.compressed || address < section.address)
+      return null;
     const delta = address - section.address;
     if (delta + BigInt(width) > section.size) return null;
     return Number(section.offset + delta);
@@ -374,6 +375,13 @@ const sectionSource = (
     section.name.length <= MAX_NATIVE_INITIALIZER_NAME_BYTES
       ? section.name
       : fallbackName;
+  if (section.compressed) {
+    note(
+      scan,
+      `${label} is compressed. Its initializer slots were not decoded.`,
+    );
+    return { kind, sentinel, detail: label, slots: [] };
+  }
   if (!section.file_backed) {
     note(scan, `${label} is not file-backed. Its slots were omitted.`);
     return { kind, sentinel, detail: label, slots: [] };
@@ -671,6 +679,7 @@ const loadWrites = async (
 };
 
 const dynamicSymbols = (
+  scan: ElfScan,
   sections: readonly NativeSection[],
   tags: ReadonlyMap<bigint, DynTag>,
   tables: ReadonlyMap<number, readonly ElfInitializerSymbol[]>,
@@ -683,6 +692,11 @@ const dynamicSymbols = (
         (section.type === 11 || section.type === 2),
     );
     if (match >= 0) return tables.get(match);
+    note(
+      scan,
+      "DT_SYMTAB does not identify a decoded symbol table; dynamic relocation symbols are unresolved.",
+    );
+    return undefined;
   }
   const dynsym = sections.findIndex((section) => section.type === 11);
   return dynsym < 0 ? undefined : tables.get(dynsym);
@@ -1042,7 +1056,7 @@ export const readElfInitializers = async (
     loaded,
     sectionRels.found,
     sectionRels.clobbered,
-    dynamicSymbols(directory.sections, tags, symbols.tables),
+    dynamicSymbols(scan, directory.sections, tags, symbols.tables),
     symbols,
     loaded.trustRaw && sectionRels.complete,
     directory.sections,

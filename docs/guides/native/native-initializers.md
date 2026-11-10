@@ -150,6 +150,11 @@ A symbol name that cannot be read, because its string table is missing or its
 offset lies outside the table, is reported as no name and makes the report
 `incomplete` with a counted limitation. Name offset 0 is the empty name.
 
+ELF sections marked `SHF_COMPRESSED` are not decoded as initializer slots,
+symbols, names or relocation records. Affected facts remain unresolved and
+coverage is incomplete; other readable tables remain available. An explicit
+`DT_SYMTAB` must identify the decoded symbol table used for dynamic relocations.
+
 The dynamic relocation tables are read in steps that yield to other work and
 observe cancellation, so a large `DT_RELR` table does not block the server.
 

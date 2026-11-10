@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { deflateSync } from "node:zlib";
 import { readNativeInitializers } from "./NativeInitializersProvider.js";
 
 /** Pass-through spies on the shared mapping module, so tests can count lookups made from other modules. */
@@ -318,6 +319,106 @@ describe("ELF slot semantics", () => {
       ]),
     );
   });
+});
+
+describe("ELF section content admission", () => {
+  it("keeps symbol relocations unresolved for a conflicting symbol entry width", async () => {
+    const bytes = elfRelocatableCtors();
+    bytes.writeBigUInt64LE(16n, 0x500 + 4 * 64 + 56);
+    const report = await read(bytes);
+    expect(
+      report.entries.find((entry) => entry.kind === "init_array"),
+    ).toMatchObject({
+      resolution: "unresolved",
+      value_va: null,
+      symbol: null,
+    });
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations.join("\n")).toContain("entry size");
+  });
+
+  it.each([
+    { section: 7, label: "initializer array" },
+    { section: 4, label: "symbol table" },
+    { section: 5, label: "symbol string table" },
+    { section: 8, label: "relocation table" },
+  ])("preserves uncertainty for a compressed $label", async ({ section }) => {
+    const base = elfRelocatableCtors();
+    const at = 0x500 + section * 64;
+    const offset = Number(base.readBigUInt64LE(at + 24));
+    const size = Number(base.readBigUInt64LE(at + 32));
+    const header = Buffer.alloc(24);
+    header.writeUInt32LE(1, 0);
+    header.writeBigUInt64LE(BigInt(size), 8);
+    header.writeBigUInt64LE(1n, 16);
+    const compressed = Buffer.concat([
+      header,
+      deflateSync(base.subarray(offset, offset + size)),
+    ]);
+    const bytes = Buffer.concat([base, compressed]);
+    bytes.writeBigUInt64LE(base.readBigUInt64LE(at + 8) | 0x800n, at + 8);
+    bytes.writeBigUInt64LE(BigInt(base.length), at + 24);
+    bytes.writeBigUInt64LE(BigInt(compressed.length), at + 32);
+    const report = await read(bytes);
+    expect(report.status).toBe("incomplete");
+    expect(report.coverage.total_entries).toBeNull();
+    expect(report.limitations.join("\n")).toContain("compressed");
+    if (section === 7)
+      expect(report.entries.some((entry) => entry.kind === "init_array")).toBe(
+        false,
+      );
+    else {
+      const init = report.entries.find((entry) => entry.kind === "init_array");
+      expect(init).toBeDefined();
+      if (section === 5) expect(init?.symbol).toBeNull();
+      else
+        expect(init).toMatchObject({
+          resolution: "unresolved",
+          value_va: null,
+        });
+    }
+    // The uncompressed fixture remains the working comparison.
+    expect((await read(base)).status).toBe("parsed");
+  });
+
+  it("does not substitute an unrelated dynamic symbol table for DT_SYMTAB", async () => {
+    const bytes = elf64PieInitializers();
+    bytes.writeBigUInt64LE(0x777n, 0x300 + 14 * 16 + 8);
+    const report = await read(bytes);
+    expect(
+      report.entries.find((entry) => entry.slot_va === "0x210"),
+    ).toMatchObject({
+      resolution: "unresolved",
+      symbol: null,
+      value_va: null,
+    });
+    expect(report.status).toBe("incomplete");
+  });
+
+  it.each(["compressed", "not a string table"])(
+    "retains later symbol tables when an earlier name source is %s",
+    async (source) => {
+      const bytes = elf64PieInitializers();
+      // The first (dynamic) symbol table links section 8; its bytes still contain imp_init.
+      if (source === "compressed")
+        bytes.writeBigUInt64LE(0x802n, 0x800 + 8 * 64 + 8);
+      else bytes.writeUInt32LE(1, 0x800 + 8 * 64 + 4);
+      const report = await read(bytes);
+      expect(report.status).toBe("incomplete");
+      expect(
+        report.entries.find((entry) => entry.kind === "init"),
+      ).toMatchObject({
+        symbol: { name: "ctor_a" },
+        value_va: "0x100",
+      });
+      expect(
+        report.entries.find((entry) => entry.slot_va === "0x210"),
+      ).toMatchObject({
+        resolution: "unresolved_import",
+        symbol: null,
+      });
+    },
+  );
 });
 
 describe("ELF incomplete inputs", () => {
