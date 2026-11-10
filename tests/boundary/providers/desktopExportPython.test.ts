@@ -330,6 +330,12 @@ _ensure_state_aliases(home)
   execPython(["-I", "-B", "-c", program, emptySeed, empty], {
     encoding: "utf8",
   });
+  // An absent target may be a file: restoring its alias must not invent a
+  // directory. The app creates its settings folder before writing through it.
+  await expect(stat(join(empty, ".config", "notes"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await mkdir(join(empty, ".config", "notes"), { recursive: true });
   await writeFile(join(empty, "settings", "new.ini"), "new settings");
   expect(
     await readFile(join(empty, ".config", "notes", "new.ini"), "utf8"),
