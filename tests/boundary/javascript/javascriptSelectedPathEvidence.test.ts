@@ -179,7 +179,7 @@ cliTest(
 
 // Anchoring must not turn an empty selection into the working directory.
 cliTest.for(["analyze-javascript-application", "analyze"])(
-  "$command rejects an empty path instead of analyzing the working directory",
+  "%s rejects an empty path instead of analyzing the working directory",
   async (command, { cli }) => {
     const root = await createTestTempDirectory("rea-js-empty-path-");
     await writeFile(join(root, "main.js"), "export const value = 7;\n");

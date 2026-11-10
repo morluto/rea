@@ -95,8 +95,6 @@ export const observeGhidraEndpoint = async (
         return { path: endpoint.path };
       }
       if (process.platform === "win32") {
-        // A reader limit stays an ArtifactReaderFailure so observationFailure
-        // can map it to an invalid endpoint and keep a failed close.
         const encoded = readWindowsPrivateRuntimeFile(
           endpoint.path,
           MAX_TCP_ENDPOINT_BYTES,

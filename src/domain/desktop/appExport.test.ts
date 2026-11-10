@@ -457,7 +457,7 @@ it.each(["directory", "file", undefined] as const)(
       {
         alias: "settings",
         target: ".config/notes",
-        ...(kind === undefined ? { kind: "unknown" } : { kind }),
+        kind: kind ?? "unknown",
       },
     ]);
   },
