@@ -1525,6 +1525,7 @@
 * simplify Ghidra coverage propagation fixture ([ad59738](https://github.com/morluto/rea/commit/ad597388a4177f91f7c0ca6c6cb3fb8b1fe1f43f))
 * **sqlite:** gate projection checks on native limits ([b8cdbdf](https://github.com/morluto/rea/commit/b8cdbdf0ef2c479919cfed2c217b5710c2c294db))
 * strengthen and prune audited test coverage ([#8573](https://github.com/morluto/rea/issues/8573)) ([7bcefea](https://github.com/morluto/rea/commit/7bcefead69bf97b45225f8cfc1ce57ce9e6903ec))
+* strengthen boundary assertions and consolidate duplicate coverage ([5b34c4d](https://github.com/morluto/rea/commit/5b34c4d3f5fc1be1ca692ee12d921d8b8d0f4a18))
 * strengthen integration oracles and verification ([#8295](https://github.com/morluto/rea/issues/8295)) ([6014928](https://github.com/morluto/rea/commit/60149282fcfc05ac32fbc94434c107710120da6f))
 * strengthen regression oracles and cleanup ownership ([#8152](https://github.com/morluto/rea/issues/8152)) ([675d407](https://github.com/morluto/rea/commit/675d4076de1af5052f01709a9cf4cdf0cc3e2c67))
 
