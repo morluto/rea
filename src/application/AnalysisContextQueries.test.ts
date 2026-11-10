@@ -207,24 +207,25 @@ describe("navigation procedure admission", () => {
     },
   );
 
-  it.each(["no procedure exists", "not in a procedure"])(
-    "preserves a provider failure containing %s",
-    async (message) => {
-      const failure = new AnalysisProtocolError(`Provider failed: ${message}`);
-      const result = await getNavigationContext(
-        {
-          execute: async (operation) =>
-            operation === "current_address"
-              ? ok(createAnalysisExecution("0x401000", provider))
-              : err(failure),
-        },
-        { document: "fixture" },
-      );
-      expect(result).toEqual(err(failure));
-      if (result.ok) throw new Error("expected original provider failure");
-      expect(result.error).toBe(failure);
-    },
-  );
+  it.each([
+    "Provider failed: no procedure exists",
+    "Provider failed: not in a procedure",
+    "not in a procedure: malformed reply",
+  ])("preserves the original provider failure: %s", async (message) => {
+    const failure = new AnalysisProtocolError(message);
+    const result = await getNavigationContext(
+      {
+        execute: async (operation) =>
+          operation === "current_address"
+            ? ok(createAnalysisExecution("0x401000", provider))
+            : err(failure),
+      },
+      { document: "fixture" },
+    );
+    expect(result).toEqual(err(failure));
+    if (result.ok) throw new Error("expected original provider failure");
+    expect(result.error).toBe(failure);
+  });
 
   it("returns a validated containing procedure name", async () => {
     const result = await getNavigationContext(

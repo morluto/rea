@@ -47,10 +47,10 @@ it("retains both child close failures when a resource owner rejects", async () =
   if (closed.ok) throw new Error("Expected both child close failures");
   expect(closed.error.cleanupIncomplete).toBe(true);
   expect(closed.error.cause).toBeInstanceOf(AggregateError);
-  expect((closed.error.cause as AggregateError).errors).toEqual([
-    expect.objectContaining({ cause: artifactCause }),
-    expect.objectContaining({ cause: nativeCause }),
-  ]);
+  const failures = (closed.error.cause as AggregateError).errors;
+  expect(failures).toHaveLength(2);
+  expect((failures[0] as Error).cause).toBe(artifactCause);
+  expect((failures[1] as Error).cause).toBe(nativeCause);
 });
 
 it("reports the first mixed child failure before awaiting the other owner and retries both", async () => {
