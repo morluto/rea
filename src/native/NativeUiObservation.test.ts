@@ -374,6 +374,7 @@ describe("native UI deadline execution", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
@@ -396,6 +397,7 @@ describe("native UI deadline execution", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
@@ -423,6 +425,7 @@ describe("native UI deadline execution", () => {
         environment: {},
         runtime: {
           signal: deadline.signal,
+          deadlineMs: 180_000,
           invoke: async () => ({ ok: true, result: snapshot }),
           cleanupLease: new AnalysisCleanupLease(async () => undefined),
           close: async () => undefined,
@@ -493,6 +496,7 @@ describe("native UI interruption provenance", () => {
         environment: {},
         runtime: {
           signal: deadline.signal,
+          deadlineMs: 180_000,
           invoke: async () => ({ ok: true, result: snapshot }),
           cleanupLease: new AnalysisCleanupLease(async () => undefined),
           close: async () => undefined,
@@ -531,6 +535,7 @@ describe("native UI interruption provenance", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
@@ -552,6 +557,7 @@ describe("native UI interruption provenance", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
