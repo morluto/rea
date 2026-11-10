@@ -49,7 +49,8 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       reported_limits: {
         matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs,

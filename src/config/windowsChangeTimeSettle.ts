@@ -55,9 +55,9 @@ export interface WindowsChangeTimeSettingFailure {
   readonly floor: number;
   readonly maximum: number;
   readonly unit: "ms" | "polls";
-  readonly effect: "next_process";
-  /** Compatibility alias of `effect: "next_process"`. */
-  readonly restartRequired: true;
+  readonly update_mode: "restart";
+  /** The rejected environment value is not the value this process is using. */
+  readonly pending_restart: true;
 }
 
 /** Effective settle budget and whether each part came from the default or a setting. */
@@ -81,8 +81,8 @@ const windowsChangeTimeSettingFailure = (
   floor: bound.floor,
   maximum: bound.maximum,
   unit: bound.unit,
-  effect: "next_process",
-  restartRequired: true,
+  update_mode: "restart",
+  pending_restart: true,
 });
 
 /** Name the rejected value, its source, the allowed range, and the required restart. */

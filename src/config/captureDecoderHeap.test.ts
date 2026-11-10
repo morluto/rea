@@ -125,7 +125,8 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
         unit: "MiB",
         applies_at: "next_worker",
         agent_editable: true,
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       reported_limits: {
         old_generation_heap_mib: 256,

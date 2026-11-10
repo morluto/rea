@@ -44,18 +44,25 @@ const failures = [];
 const definitions = await readFile(definitionsPath, "utf8");
 const registry = await readFile(registryPath, "utf8");
 const runtime = namesIn(definitions, /environment:\s*"(REA_[A-Z0-9_]+)"/gu);
+const declaredNames = [
+  ...registry.matchAll(/name:\s*"(REA_[A-Z0-9_]+)"/gu),
+].map((match) => match[1]);
 const entries = [
   ...registry.matchAll(
-    /name:\s*"(REA_[A-Z0-9_]+)"\s*,\s*policy:\s*"(restart-only|per-call)"\s*,\s*read:\s*"(startup|per-call)"\s*,\s*reason:\s*"((?:\\.|[^"\\])*)"/gu,
+    /name:\s*"(REA_[A-Z0-9_]+)"\s*,\s*update_mode:\s*"(runtime|restart)"\s*,\s*policy:\s*"(restart-only|per-call)"\s*,\s*read:\s*"(startup|per-call)"\s*,\s*reason:\s*"((?:\\.|[^"\\])*)"/gu,
   ),
 ];
 const listed = new Map();
 for (const match of entries) {
-  const [, name, policy, read, reason] = match;
+  const [, name, updateMode, policy, read, reason] = match;
   if (listed.has(name)) failures.push(`${name} is listed twice`);
-  listed.set(name, { policy, read, reason });
+  listed.set(name, { updateMode, policy, read, reason });
   if (reason.trim().length < 40)
     failures.push(`${name} needs a reason that states why`);
+  if (updateMode !== "restart")
+    failures.push(
+      `${name} is outside ANALYSIS_SETTINGS, so its update_mode must be restart`,
+    );
   if (runtime.has(name))
     failures.push(
       `${name} is both a runtime setting and on the exception list`,
@@ -64,6 +71,19 @@ for (const match of entries) {
     failures.push(`${name} is per-call policy but is not read per call`);
   if (policy === "restart-only" && read !== "startup")
     failures.push(`${name} is restart-only but is not read at startup`);
+}
+for (const name of declaredNames) {
+  if (!listed.has(name))
+    failures.push(`${name} is registered without update_mode`);
+}
+const settingBodies = [
+  ...definitions.matchAll(/\n {2}"[^"]+": \{([\s\S]*?)\n {2}\},/gu),
+];
+if (settingBodies.length === 0)
+  failures.push("ANALYSIS_SETTINGS did not parse into setting bodies");
+for (const [, body] of settingBodies) {
+  if (!/updateMode:\s*"(?:runtime|restart)"/u.test(body))
+    failures.push("an analysis setting is missing updateMode");
 }
 
 const discovered = new Map();
@@ -88,6 +108,47 @@ for (const [name, file] of [...discovered].sort(([left], [right]) =>
 for (const name of listed.keys()) {
   if (!discovered.has(name))
     failures.push(`${name} is registered but no longer appears in src`);
+}
+
+const forbidden =
+  /(?<![A-Za-z0-9_])(?:rea_restart_required|restartRequired|restart_required)(?![A-Za-z0-9_])|effect:\s*"(?:immediate|next_process)"|SettingChangeEffect/gu;
+const scanRoots = ["src", "tests", "docs", ".agents", "scripts"].map((dir) =>
+  join(root, dir),
+);
+const skipDir = new Set([
+  "node_modules",
+  "dist",
+  ".turbo",
+  ".cache",
+  "rea-numeric-limits.mjs",
+]);
+const listText = async (dir) => {
+  const output = [];
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return output;
+  }
+  for (const entry of entries) {
+    if (skipDir.has(entry.name)) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) output.push(...(await listText(path)));
+    else if (/\.(?:ts|tsx|mjs|js|md|json|py|yml|yaml)$/u.test(entry.name))
+      output.push(path);
+  }
+  return output;
+};
+for (const dir of scanRoots) {
+  for (const path of await listText(dir)) {
+    if (path.endsWith(`${sep}rea-numeric-limits.mjs`)) continue;
+    const source = await readFile(path, "utf8");
+    const hit = source.match(forbidden);
+    if (hit)
+      failures.push(
+        `${relative(root, path).split(sep).join("/")} still uses ${[...new Set(hit)].join(", ")}`,
+      );
+  }
 }
 
 if (failures.length > 0) {
