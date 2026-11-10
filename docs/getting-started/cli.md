@@ -58,10 +58,13 @@ is supported by the command.
 For a numeric option whose `--schema` also accepts decimal strings, the string
 branch carries the same numeric range as the integer branch, so a client that
 validates raw argv text rejects out-of-range tokens. Leading zeros remain
-decimal: `--row-limit=0001` means one row, while `--row-limit=0` is invalid. An
-option with no upper bound keeps only the decimal token guard, and refinements
-that are not a range, such as requiring a power-of-two entropy block size, stay
-parser-only.
+decimal: `--row-limit=0001` means one row, while `--row-limit=0` is invalid.
+An option with no upper bound still publishes a safe-integer lower bound. A
+token below that floor fails schema validation, including a zero-padded spelling
+such as `000255` when the minimum is 256, while longer decimal tokens at or
+above the floor stay accepted. A floor of zero, or a bound that is not a safe
+integer, keeps only the decimal token guard. Refinements that are not a range,
+such as requiring a power-of-two entropy block size, stay parser-only.
 
 For example, a 334 MB Obsidian application Evidence file yields a summary view
 of about 10 KB. Replace the view with
