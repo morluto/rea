@@ -1,3 +1,8 @@
+import { parseCliJsonInput } from "../cliJsonInput.js";
+import {
+  fetchedSourceMapLimitCliOptions,
+  sourceMapLimitsFromCli,
+} from "./sourceMapLimits.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
 import {
@@ -178,6 +183,12 @@ const registerBundleAnalysis = (
       ...passiveBrowserScopeOptions,
       ...webBundleDeliveryOptions,
       observationMs: observationDuration(500),
+      semanticPrecision: z
+        .string()
+        .optional()
+        .describe(
+          "Inline JSON or JSON file of semantic_precision evaluator budgets for each inert script.",
+        ),
       fetchSourceMaps: z
         .boolean()
         .default(false)
@@ -189,6 +200,7 @@ const registerBundleAnalysis = (
       totalAnalysisTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
       ),
+      ...fetchedSourceMapLimitCliOptions,
       sourceMapFetchTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.source_map_fetch_timeout_ms,
       ),
@@ -202,6 +214,15 @@ const registerBundleAnalysis = (
             webRoutesDeliverySchema,
           );
           if (!delivery.ok) return projectAnalysisError(delivery.error);
+          const precision =
+            options.semanticPrecision === undefined
+              ? undefined
+              : await parseCliJsonInput(
+                  options.semanticPrecision,
+                  "analyze_web_bundle",
+                  signal,
+                );
+          if (precision !== undefined && !precision.ok) return precision.error;
           const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
@@ -210,6 +231,10 @@ const registerBundleAnalysis = (
             observation_ms: options.observationMs,
             include_script_sources: true,
             fetch_source_maps: options.fetchSourceMaps,
+            ...(precision === undefined
+              ? {}
+              : { semantic_precision: precision.value }),
+            ...sourceMapLimitsFromCli(options),
             ...(options.maxHeapMb === undefined
               ? {}
               : { max_heap_mb: options.maxHeapMb }),

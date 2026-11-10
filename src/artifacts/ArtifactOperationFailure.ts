@@ -34,12 +34,17 @@ export const translateArtifactFailure = (
           ? {}
           : { admission: cause.admission }),
         ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
+        ...(cause.readerLimit === undefined
+          ? {}
+          : { readerLimit: cause.readerLimit }),
       },
     );
     if (cause.admission !== undefined)
       error.bindLimit({
         ...analysisSettingLimit(
-          "asar.max_header_bytes",
+          cause.admission.kind === "asar-header"
+            ? "asar.max_header_bytes"
+            : "asar.max_listing_bytes",
           cause.admission.maximumBytes,
           cause.admission.source,
         ),

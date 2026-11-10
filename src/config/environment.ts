@@ -29,6 +29,11 @@ import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
 import { mcpToolCatalogProfileSchema } from "./mcpToolCatalogProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
+import { asarMaxListingBytesSchema } from "./asarListingAdmission.js";
+import {
+  ghidraValueFlowCountSchema,
+  ghidraDecompilePayloadMiBSchema,
+} from "./ghidraValueFlowLimits.js";
 import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
 import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { debuggerSessionLimitEnvironmentShape } from "./debuggerSessionLimits.js";
@@ -57,6 +62,13 @@ const environmentSchema = z.object({
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
   REA_MCP_MAX_INPUT_ELEMENTS: mcpInputBudgetSchema.optional(),
   REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema.optional(),
+  REA_ASAR_MAX_LISTING_BYTES: asarMaxListingBytesSchema.optional(),
+  REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: ghidraValueFlowCountSchema.optional(),
+  REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION:
+    ghidraValueFlowCountSchema.optional(),
+  REA_GHIDRA_VALUE_FLOW_MAX_EDGES: ghidraValueFlowCountSchema.optional(),
+  REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB:
+    ghidraDecompilePayloadMiBSchema.optional(),
   REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
     captureDecoderOldGenerationMiBSchema.optional(),
   REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema.optional(),
