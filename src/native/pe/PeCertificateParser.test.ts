@@ -778,10 +778,9 @@ it("distinguishes an empty RDNSequence from an empty RDN", () => {
   const certificate = readAsn1(
     namedCertificate(directoryName(der(0x0c, Buffer.from("Issuer"))), derSeq()),
   );
-  expect(parseCertificate(certificate).subject).toEqual({
-    text: "",
-    attributes: [],
-  });
+  const { subject } = parseCertificate(certificate);
+  expect(subject.text).toBe("");
+  expect(subject.attributes).toEqual([]);
 });
 
 it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
