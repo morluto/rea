@@ -357,6 +357,9 @@ const inspectBuildHar = async (
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
+        // The standalone inspect command records this caller path. The
+        // one-shot build must ship the same Evidence bytes.
+        { capture: capturePath },
       ),
     service,
     "web-network-capture",
