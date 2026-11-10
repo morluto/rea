@@ -20,13 +20,13 @@ const spanLength = (range: { start: number; end: number }) =>
 type SyntaxRange = { start: number; end: number };
 const overlaps = (left: SyntaxRange, right: SyntaxRange) =>
   left.start < right.end && right.start < left.end;
-/** Source rows may be reordered, but distinct JSON values cannot intersect. */
-const disjoint = (ranges: readonly SyntaxRange[]) => {
-  const ordered = ranges.toSorted((left, right) => left.start - right.start);
-  return ordered.every(
-    (range, index) => index === 0 || !overlaps(ordered[index - 1]!, range),
+const orderedDisjoint = (ranges: readonly SyntaxRange[]) =>
+  ranges.every(
+    (range, index) => index === 0 || ranges[index - 1]!.end <= range.start,
   );
-};
+/** Source rows may be reordered, but distinct JSON values cannot intersect. */
+const disjoint = (ranges: readonly SyntaxRange[]) =>
+  orderedDisjoint(ranges.toSorted((left, right) => left.start - right.start));
 /** JSON syntax coordinates in the strictly decoded original carrier. */
 export const solcSourceRangeSchema = z
   .strictObject({
@@ -103,9 +103,12 @@ export const solcCompilerDiagnosticsSchema = z
         });
     }
   })
-  .refine((values) => disjoint(values.map((value) => value.source_range)), {
-    message: "Diagnostic source ranges overlap",
-  })
+  .refine(
+    (values) => orderedDisjoint(values.map((value) => value.source_range)),
+    {
+      message: "Diagnostic source ranges overlap or contradict pointer order",
+    },
+  )
   .nullable();
 
 /** Recorded compiler output facts, independently of interface inference. */
@@ -165,7 +168,7 @@ export const solcArtifactSchema = z
     const contains = (
       parent: { start: number; end: number },
       nested: { start: number; end: number },
-    ) => nested.start >= parent.start && nested.end <= parent.end;
+    ) => nested.start > parent.start && nested.end < parent.end;
     if (
       value.bytecode_range !== null &&
       !contains(value.contract_range, value.bytecode_range)

@@ -558,3 +558,17 @@ it.each([
   }
   expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
 });
+
+it("rejects diagnostics whose pointer indexes contradict source order", () => {
+  const parent = compilerParent(undefined, {
+    errors: [{ severity: "warning" }, { severity: "error" }],
+  });
+  expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(true);
+  const diagnostics = (parent.normalizedResult as EvmInterface)
+    .compiler_artifact!.diagnostics!;
+  diagnostics.reverse();
+  diagnostics.forEach((diagnostic, index) => {
+    diagnostic.json_pointer = `/errors/${index}`;
+  });
+  expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
+});

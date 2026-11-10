@@ -384,3 +384,44 @@ it("rejects placeholder spans without a source compiler object", () => {
     }).success,
   ).toBe(false);
 });
+
+describe("nested compiler syntax containment", () => {
+  it.each(
+    ["bytecode", "object", "reference", "metadata"].flatMap((facet) =>
+      ["start", "end"].map((boundary) => ({ facet, boundary })),
+    ),
+  )("rejects $facet sharing its parent's $boundary", ({ facet, boundary }) => {
+    const bytecode =
+      facet === "object"
+        ? { object: "" }
+        : facet === "reference"
+          ? { linkReferences: { "lib.sol": { L: [{ start: 0, length: 1 }] } } }
+          : {};
+    const artifact = successful(
+      JSON.stringify({
+        contracts: {
+          [selection.source_unit]: {
+            C:
+              facet === "metadata" ? { metadata: "{}" } : { evm: { bytecode } },
+          },
+        },
+      }),
+    ).artifact;
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+    const parent =
+      facet === "metadata" || facet === "bytecode"
+        ? artifact.contract_range
+        : artifact.bytecode_range!;
+    const child =
+      facet === "metadata"
+        ? artifact.metadata.source_range!
+        : facet === "bytecode"
+          ? artifact.bytecode_range!
+          : facet === "object"
+            ? artifact.object_range!
+            : artifact.link_references![0]!.source_range;
+    if (boundary === "start") child.start = parent.start;
+    else child.end = parent.end;
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
+  });
+});
