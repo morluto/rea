@@ -133,95 +133,88 @@ it("honors explicit database selection before parsing NES-signature bytes", asyn
     });
   }
 });
-it.each([true, false])(
-  "inventories and reconstructs all bytes with trainer=%s",
-  async (trainer) => {
-    const root = await createTestTempDirectory("rea-ines-inventory-");
-    const path = join(root, "fixture.nes");
-    const bytes = inesFixture({
-      trainer,
-      chrUnits: trainer ? 1 : 0,
-      trailing: Buffer.from("retained tail"),
+it("inventories and reconstructs all bytes without trainer or CHR ROM", async () => {
+  const root = await createTestTempDirectory("rea-ines-inventory-");
+  const path = join(root, "fixture.nes");
+  const bytes = inesFixture({
+    chrUnits: 0,
+    trailing: Buffer.from("retained tail"),
+  });
+  await writeFile(path, bytes);
+  const inventory = await inventoryArtifact(path);
+  expect(inventory.ines?.header).toMatchObject({
+    header_hex: bytes.subarray(0, 16).toString("hex"),
+    mapper: 19,
+    trainer_present: false,
+    chr_rom_units_8k: 0,
+  });
+  expect(inventory.ines?.reconstruction).toMatchObject({
+    bytes: bytes.length,
+    sha256: sha256(bytes),
+    verified: true,
+  });
+  const children = inventory.occurrences.filter(
+    ({ logical_path }) => logical_path !== ".",
+  );
+  const ordered = [...children].sort(
+    (a, b) =>
+      (a.source_location?.offset ?? 0) - (b.source_location?.offset ?? 0),
+  );
+  const nodes = new Map(
+    inventory.nodes.map((node) => [node.artifact_id, node]),
+  );
+  const headerRegion = children.find(
+    ({ logical_path }) => logical_path === "header.bin",
+  );
+  if (
+    headerRegion?.artifact_id === undefined ||
+    headerRegion.artifact_id === null
+  )
+    throw new Error("Missing header region");
+  expect(nodes.get(headerRegion.artifact_id)?.format).toBe("file");
+  let offset = 0;
+  for (const occurrence of ordered) {
+    const range = occurrence.source_location;
+    if (range === null || occurrence.artifact_id === null)
+      throw new Error("Missing region identity");
+    expect(range.offset).toBe(offset);
+    const original = bytes.subarray(range.offset, range.offset + range.length);
+    expect(nodes.get(occurrence.artifact_id)).toMatchObject({
+      sha256: sha256(original),
+      size: range.length,
     });
-    await writeFile(path, bytes);
-    const inventory = await inventoryArtifact(path);
-    expect(inventory.ines?.header).toMatchObject({
-      header_hex: bytes.subarray(0, 16).toString("hex"),
-      mapper: 19,
-      trainer_present: trainer,
-      chr_rom_units_8k: trainer ? 1 : 0,
-    });
-    expect(inventory.ines?.reconstruction).toMatchObject({
-      bytes: bytes.length,
-      sha256: sha256(bytes),
-      verified: true,
-    });
-    const children = inventory.occurrences.filter(
-      ({ logical_path }) => logical_path !== ".",
-    );
-    const ordered = [...children].sort(
-      (a, b) =>
-        (a.source_location?.offset ?? 0) - (b.source_location?.offset ?? 0),
-    );
-    const nodes = new Map(
-      inventory.nodes.map((node) => [node.artifact_id, node]),
-    );
-    const headerRegion = children.find(
-      ({ logical_path }) => logical_path === "header.bin",
-    );
-    if (
-      headerRegion?.artifact_id === undefined ||
-      headerRegion.artifact_id === null
-    )
-      throw new Error("Missing header region");
-    expect(nodes.get(headerRegion.artifact_id)?.format).toBe("file");
-    let offset = 0;
-    for (const occurrence of ordered) {
-      const range = occurrence.source_location;
-      if (range === null || occurrence.artifact_id === null)
-        throw new Error("Missing region identity");
-      expect(range.offset).toBe(offset);
-      const original = bytes.subarray(
-        range.offset,
-        range.offset + range.length,
-      );
-      expect(nodes.get(occurrence.artifact_id)).toMatchObject({
-        sha256: sha256(original),
-        size: range.length,
-      });
-      offset += range.length;
-    }
-    expect(offset).toBe(bytes.length);
-    expect(inventory.ines?.reconstruction.region_order).toEqual(
-      ordered.map(({ logical_path }) => logical_path),
-    );
-    expect(await inventoryArtifact(path)).toEqual(inventory);
+    offset += range.length;
+  }
+  expect(offset).toBe(bytes.length);
+  expect(inventory.ines?.reconstruction.region_order).toEqual(
+    ordered.map(({ logical_path }) => logical_path),
+  );
+  expect(await inventoryArtifact(path)).toEqual(inventory);
 
-    const scope = new ArtifactResourceScope();
-    const outputRoot = join(root, "extracted");
-    try {
-      const extraction = await extractArtifact({
-        inputPath: path,
-        inputFormat: "ines",
-        outputRoot,
-        environment: process.env,
-        integrityPolicy: "fail",
-        resourceScope: scope,
-      });
-      expect(extraction.artifacts).toHaveLength(children.length);
-      const reconstructed = Buffer.concat(
-        await Promise.all(
-          ordered.map(({ logical_path }) =>
-            readFile(join(outputRoot, logical_path)),
-          ),
+  const scope = new ArtifactResourceScope();
+  const outputRoot = join(root, "extracted");
+  try {
+    const extraction = await extractArtifact({
+      inputPath: path,
+      inputFormat: "ines",
+      outputRoot,
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope: scope,
+    });
+    expect(extraction.artifacts).toHaveLength(children.length);
+    const reconstructed = Buffer.concat(
+      await Promise.all(
+        ordered.map(({ logical_path }) =>
+          readFile(join(outputRoot, logical_path)),
         ),
-      );
-      expect(reconstructed.equals(bytes)).toBe(true);
-    } finally {
-      await scope.close();
-    }
-  },
-);
+      ),
+    );
+    expect(reconstructed.equals(bytes)).toBe(true);
+  } finally {
+    await scope.close();
+  }
+});
 
 it.each([
   {

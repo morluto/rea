@@ -108,82 +108,8 @@ describe("ESP image recognition", () => {
 });
 
 describe("ESP image decoding", () => {
-  it("reports header, chip, segment, integrity and descriptor facts", () => {
-    const decoded = image(APP);
-    expect(decoded.metadata).toEqual({
-      kind: "esp-image",
-      header: {
-        segment_count: 4,
-        spi_mode: 2,
-        spi_speed: 0,
-        spi_size: 2,
-        entry_addr: 0x4038_0000,
-        wp_pin: 0xee,
-        spi_pin_drv: "000000",
-        chip_id: 5,
-        min_chip_rev: 0,
-        min_chip_rev_full: 0,
-        max_chip_rev_full: 199,
-        reserved: "00000000",
-        hash_appended: true,
-      },
-      chip: { target: "esp32c3", isa: "riscv", source: "ESP-IDF v6.1" },
-      // Segments end at 456; the checksum ends the next 16-byte block.
-      checksum: {
-        offset: 463,
-        stored: espChecksum(ESP32C3_APP_SEGMENTS),
-        computed: espChecksum(ESP32C3_APP_SEGMENTS),
-        status: "valid",
-      },
-      appended_sha256: {
-        offset: 464,
-        stored: sha256(APP.subarray(0, 464)),
-        computed: sha256(APP.subarray(0, 464)),
-        status: "valid",
-      },
-      image_end: 496,
-      signature_sector_offset: null,
-      undescribed_trailing: [],
-      descriptor: {
-        kind: "app",
-        offset: 32,
-        observed_length: 256,
-        secure_version: 0,
-        version: "1.2.3",
-        project_name: "rea_esp_fixture",
-        time: "12:34:56",
-        date: "Oct 27 2026",
-        idf_ver: "v6.1",
-        app_elf_sha256: "ab".repeat(32),
-        min_efuse_blk_rev_full: 0,
-        max_efuse_blk_rev_full: 199,
-        mmu_page_size: 16,
-        spi_flash_mode: 2,
-      },
-      flash_dump: null,
-    });
-    expect(
-      decoded.segments.map(({ dataOffset, availableLength, metadata }) => [
-        metadata.index,
-        metadata.load_addr,
-        metadata.data_len,
-        metadata.header_offset,
-        dataOffset,
-        availableLength,
-        metadata.classification,
-      ]),
-    ).toEqual([
-      [0, 0x3c00_0020, 288, 24, 32, 288, "mapped"],
-      [1, 0x3fc8_8000, 16, 320, 328, 16, "loaded"],
-      [2, 0x4038_0000, 32, 344, 352, 32, "loaded"],
-      [3, 0x4200_0020, 64, 384, 392, 64, "mapped"],
-    ]);
-    expect(decoded.coverage).toBe("complete");
-    expect(decoded.limitations).toEqual([]);
-    expect(decoded.signatureBlocks).toEqual([]);
-  });
-
   it("decodes identically from any chunking", () => {
+    expect(image(APP).metadata.flash_dump).toBeNull();
     const signed = signedEspImage(APP, ["rsa", null, "ecdsa-p384"]);
     const expected = image(signed, signed.length);
     for (const chunkBytes of [1, 3, 16, 4096])

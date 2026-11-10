@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseEvidence, createEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -140,6 +141,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
   const closeReached = createDeferred<void>();
   const releasePreparation = createDeferred<void>();
   const send = serverTransport.send.bind(serverTransport);
+  let preparationToken: string | number | undefined;
   serverTransport.send = async (message, options) => {
     await send(message, options);
     if (
@@ -148,12 +150,16 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
       "params" in message &&
       typeof message.params === "object" &&
       message.params !== null &&
-      "message" in message.params
+      "progressToken" in message.params &&
+      (typeof message.params.progressToken === "string" ||
+        typeof message.params.progressToken === "number")
     ) {
-      if (message.params.message === "prepare: Preparing build_call_path") {
+      if (preparationToken === undefined) {
+        // The first request cannot advance until this notification is released.
+        preparationToken = message.params.progressToken;
         preparationReached.resolve();
         await releasePreparation.promise;
-      } else if (message.params.message === "close_binary: started") {
+      } else if (message.params.progressToken !== preparationToken) {
         closeReached.resolve();
       }
     }
@@ -161,6 +167,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   const settlementOrder: string[] = [];
+  const pending: Promise<unknown>[] = [];
   try {
     const input = INVESTIGATION_EXAMPLES.build_call_path;
     for (const evidence of input.functions)
@@ -175,7 +182,12 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
         settlementOrder.push("build_call_path");
         return response;
       });
-    await preparationReached.promise;
+    pending.push(request);
+    await awaitAcknowledgement(
+      preparationReached.promise,
+      request,
+      "call-path preparation",
+    );
 
     let closeSettled = false;
     const closing = client
@@ -188,7 +200,12 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
         settlementOrder.push("close_binary");
         return response;
       });
-    await closeReached.promise;
+    pending.push(closing);
+    await awaitAcknowledgement(
+      closeReached.promise,
+      closing,
+      "call-path queued close",
+    );
     expect(closeSettled).toBe(false);
 
     releasePreparation.resolve();
@@ -201,9 +218,12 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
       provider: { id: "rea-call-path" },
       evidence_links: input.functions.map(({ evidence_id }) => evidence_id),
     });
-    expect(session.exportEvidenceBundle().records).toHaveLength(0);
+    expect(session.evidenceForAnalysis(evidence.evidence_id)).toEqual(evidence);
+    for (const source of input.functions)
+      expect(session.hasEvidence(source.evidence_id)).toBe(true);
   } finally {
     releasePreparation.resolve();
+    await Promise.allSettled(pending);
     await close(session, server, client);
   }
 }, 10_000);
@@ -253,7 +273,34 @@ it.each([
     coverage: { status: "complete" } as RelationshipCoverage,
     providerLimitations: ["The provider version identity is unavailable."],
     dossierLimitations: ["The dossier has no native value-flow observation."],
+    status: "unknown",
+    exhaustive: true,
+  },
+  {
+    label: "complete discovery",
+    coverage: {
+      status: "complete",
+      discovery: { callees: { status: "complete" } },
+    } as RelationshipCoverage,
+    providerLimitations: [],
+    dossierLimitations: [],
     status: "not_found",
+    exhaustive: true,
+  },
+  {
+    label: "partially discovered code",
+    coverage: {
+      status: "complete",
+      discovery: {
+        callees: {
+          status: "partial",
+          reason: "This node was classified as data.",
+        },
+      },
+    } as RelationshipCoverage,
+    providerLimitations: [],
+    dossierLimitations: [],
+    status: "unknown",
     exhaustive: true,
   },
   {
@@ -293,7 +340,7 @@ it.each([
     coverage: undefined,
     providerLimitations: [],
     dossierLimitations: [],
-    status: "not_found",
+    status: "unknown",
     exhaustive: true,
   },
 ])(
@@ -388,6 +435,11 @@ it.each([
           ...scenario.providerLimitations,
           ...scenario.dossierLimitations,
           ...reasons,
+          ...(coverage?.discovery?.callees?.reason === undefined
+            ? []
+            : [
+                `Call discovery for 0x1000 is ${coverage.discovery.callees.status}: ${coverage.discovery.callees.reason}`,
+              ]),
         ]),
       });
       expect(evidence.evidence_links).toEqual([dossier.evidence_id]);
@@ -408,7 +460,7 @@ it.each([
         });
         expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
       }
-      if (scenario.exhaustive)
+      if (scenario.status !== "unknown")
         expect(session.listUnknowns({ domain: "call-path" })).toEqual([]);
       else
         expect(session.listUnknowns({ domain: "call-path" })).toMatchObject([
@@ -604,7 +656,27 @@ const close = async (
 it("keeps an aggregate function reconstruction unknown while a constituent dimension is unresolved", async () => {
   const { session, server, client } = await connected();
   try {
-    const left = FUNCTION_COMPARISON_EXAMPLE.left;
+    const fixture = FUNCTION_COMPARISON_EXAMPLE.left;
+    const discovery = {
+      callers: { status: "complete" },
+      callees: { status: "complete" },
+    } as const;
+    const left = createEvidence(
+      {
+        path: fixture.subject!.local_path,
+        sha256: fixture.subject!.digest.sha256,
+        format: fixture.subject!.format,
+      },
+      fixture.provider,
+      {
+        operation: fixture.operation,
+        parameters: fixture.parameters,
+        result: fixture.normalized_result,
+        confidence: fixture.confidence,
+        authority: fixture.authority,
+        relationshipCoverage: { status: "complete", discovery },
+      },
+    );
     const right = createEvidence(
       {
         path: "/tmp/rebuilt-function",
@@ -618,7 +690,7 @@ it("keeps an aggregate function reconstruction unknown while a constituent dimen
         result: left.normalized_result,
         confidence: left.confidence,
         authority: left.authority,
-        relationshipCoverage: { status: "complete" },
+        relationshipCoverage: { status: "complete", discovery },
       },
     );
     const compared = await client.callTool({

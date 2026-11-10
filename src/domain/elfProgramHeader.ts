@@ -33,3 +33,20 @@ export const readElfProgramHeader = (
     alignment: word(wide ? 48 : 28),
   });
 };
+
+/** Admit PT_LOAD sizes once for consumers that read through load mappings. */
+export const admitElfLoadSegment = (
+  segment: {
+    readonly virtualAddress: bigint;
+    readonly memorySize: bigint;
+    readonly fileSize: bigint;
+  },
+  bits: 32 | 64,
+) =>
+  segment.fileSize > segment.memorySize ||
+  segment.virtualAddress + segment.memorySize > 1n << BigInt(bits)
+    ? err({
+        kind: "malformed" as const,
+        message: "ELF load segment sizes or addresses are invalid",
+      })
+    : ok(null);

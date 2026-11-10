@@ -202,7 +202,10 @@ cliTest.for([true, false])(
       (row) => row.logical_path === "images/linked.bin",
     );
     expect(linked?.format_metadata).toMatchObject({ image_data: "target" });
+    expect(target?.artifact_id).toEqual(expect.any(String));
     expect(linked?.artifact_id).toBe(target?.artifact_id);
+    expect(linked?.source_location?.offset).toEqual(expect.any(Number));
+    expect(target?.source_location?.offset).toEqual(expect.any(Number));
     expect(linked?.source_location?.offset).not.toBe(
       target?.source_location?.offset,
     );

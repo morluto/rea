@@ -230,6 +230,7 @@ describe("Hopper relationship coverage", () => {
           : operation === "procedure_callees"
             ? ["0x2000"]
             : [];
+      const originalSource = structuredClone(source);
       const callTool = vi
         .spyOn(HopperClient.prototype, "callTool")
         .mockImplementation((method) =>
@@ -277,7 +278,8 @@ describe("Hopper relationship coverage", () => {
           procedure: "0x1000",
         });
         if (!observed.ok) throw observed.error;
-        expect(observed.value.result).toEqual(source);
+        expect(observed.value.result).toEqual(originalSource);
+        expect(source).toEqual(originalSource);
         if (operation === "procedure_callers") {
           expect(observed.value.rawResult).toMatchObject({
             native_result: {

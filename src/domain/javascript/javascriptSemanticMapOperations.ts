@@ -54,8 +54,7 @@ export const isIntrinsicMapLookup = (
     if (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
-      !semanticBindingAtRead(binding, receiver, bindings.parentsByNode)
-        .hasDefiniteInitializer
+      !semanticBindingAtRead(binding, receiver, bindings).hasDefiniteInitializer
     )
       return false;
     receiver = unwrapJavaScriptExpression(initializer.node).node;

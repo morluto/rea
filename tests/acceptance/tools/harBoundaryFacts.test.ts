@@ -87,10 +87,16 @@ cliTest(
           ],
         });
       } else {
-        expect(JSON.stringify(result)).toContain(marker);
         expect(result).toMatchObject({
           items: [
-            {},
+            {
+              reported: {
+                name: { payload: marker },
+                type: { body: marker },
+                request: { reason: { payload: marker } },
+                response: { method: { payload: marker } },
+              },
+            },
             {
               reported: {
                 name: scalarMarker,

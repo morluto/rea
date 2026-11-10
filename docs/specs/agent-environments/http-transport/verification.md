@@ -136,7 +136,7 @@ the HTTP entry; it now does so only when the first token after `mcp` or
 the dispatcher test covers that case. The formatter hunk in
 `src/domain/propertyListXml.test.ts` noted in the earlier record is gone after
 the rebase, as `git diff --stat` confirms. The replacement rule stays as
-documented, and `docs/mcp-contracts.md` now states it in one sentence with its
+documented, and `docs/reference/mcp-contracts.md` now states it in one sentence with its
 rationale so maintainers can decide on it.
 
 ## Scope and measurement limits

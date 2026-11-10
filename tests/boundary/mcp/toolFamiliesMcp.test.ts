@@ -1,6 +1,6 @@
 import type { Client } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   TOOL_CONTRACTS,
@@ -8,13 +8,17 @@ import {
 } from "../../../src/contracts/toolContracts.js";
 import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { registerSessionStatusTool } from "../../../src/server/registerSessionStatusTool.js";
-import type { BinarySessionPort } from "../../../src/application/binary/BinarySessionPort.js";
 import { binaryTargetSummary } from "../../../src/application/binary/BinaryTargetSummary.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { AnalysisProtocolError } from "../../../src/domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const scopedServer = (
   advertisedToolFamilies: ReadonlySet<string> | undefined,
@@ -60,47 +64,56 @@ const familyTools = (...ids: readonly string[]): readonly string[] =>
     ({ contracts }) => contracts.map(({ name }) => name),
   );
 
-/** Route facts with one direct operation the status report must hide. */
-const sessionStatusWithDirectOperations = () => ({
-  open: true,
-  ...binaryTargetSummary({
-    path: "/fixture/tool-family-target",
-    kind: "executable",
-    format: "mach-o",
-    architecture: "x86_64",
-    availableArchitectures: ["x86_64"],
-    sha256: "a".repeat(64),
-  }),
-  cleanup_pending: false,
-  analysis_run: null,
-  analysis_activity: { status: "not_observed", providers: [] },
-  provider_operation_health: null,
-  analysis_provider_binding: null,
-  capabilities: [
-    {
-      provider: { id: "probe", name: "Probe", version: "1" },
-      shared_limitations: [],
-      groups: [
+/** Preserve owner-produced lifecycle facts while varying the route under test. */
+const sessionWithDirectOperations = () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Status projection must not acquire a provider");
+  });
+  const status = session.status.bind(session);
+  const projected = vi
+    .spyOn(session, "status")
+    .mockImplementation(async (options) => ({
+      ...jsonObjectSchema.parse(await status(options)),
+      open: true,
+      ...binaryTargetSummary({
+        path: "/fixture/tool-family-target",
+        kind: "executable",
+        format: "mach-o",
+        architecture: "x86_64",
+        availableArchitectures: ["x86_64"],
+        sha256: "a".repeat(64),
+      }),
+      capabilities: [
         {
-          operations: [
-            "open_binary",
-            "get_navigation_context",
-            "current_document",
-            "current_address",
-            "resolve_containing_procedure",
-            "inspect_macho",
+          provider: { id: "probe", name: "Probe", version: "1" },
+          shared_limitations: [],
+          groups: [
+            {
+              operations: [
+                "open_binary",
+                "get_navigation_context",
+                "current_document",
+                "current_address",
+                "resolve_containing_procedure",
+                "inspect_macho",
+              ],
+              effects: ["mutates_artifact"],
+              limitations: [],
+              available: true,
+              reason: null,
+              availability_code: null,
+            },
           ],
-          effects: ["mutates_artifact"],
-          limitations: [],
-          available: true,
-          reason: null,
-          availability_code: null,
         },
       ],
-    },
-  ],
-  analysis_provider_candidates: [],
-});
+    }));
+  onTestFinished(async () => {
+    projected.mockRestore();
+    const disposed = await session.dispose();
+    if (!disposed.ok) throw disposed.error;
+  });
+  return session;
+};
 
 interface SessionReport {
   readonly capabilities?: readonly {
@@ -166,59 +179,159 @@ describe("MCP tool family advertising", () => {
     for (const { name } of TOOL_CONTRACTS)
       expect(server.advertisesTool(name)).toBe(true);
   });
+});
 
-  it.each([
-    { scope: ["session"], probed: [] },
-    { scope: ["session", "android", "adb"], probed: ["android", "adb"] },
-    { scope: ["session", "artifact"], probed: ["evm"] },
-  ])(
-    "probes only advertised families for binary_session status ($scope)",
-    async ({ scope, probed }) => {
-      const server = scopedServer(new Set(scope));
-      const calls: string[] = [];
-      const probe = (name: string) => async () => {
-        calls.push(name);
+it.each([
+  { scope: ["session"], probed: [] },
+  { scope: ["session", "android", "adb"], probed: ["android", "adb"] },
+  { scope: ["session", "artifact"], probed: ["evm"] },
+])(
+  "probes only advertised families for binary_session status ($scope)",
+  async ({ scope, probed }) => {
+    const server = scopedServer(new Set(scope));
+    const calls: string[] = [];
+    const probe = (name: string) => async () => {
+      calls.push(name);
+      return {
+        status: "unavailable",
+        code: "runtime_missing",
+        reason: `${name} runtime is unavailable`,
+        remediation: "Repair the fixture provider.",
+        diagnostics: {},
+      } as const;
+    };
+    registerSessionStatusTool({
+      server,
+      session: sessionWithDirectOperations(),
+      contract: toolContract("binary_session"),
+      startedAt: new Date().toISOString(),
+      availabilityPolicy: () => ({ processCaptureEnabled: false }),
+      androidAnalysisAvailability: probe("android"),
+      adbAnalysisAvailability: probe("adb"),
+      apktoolAnalysisAvailability: probe("apktool"),
+      jebAnalysisAvailability: probe("jeb"),
+      evmLimiterAvailability: probe("evm"),
+    });
+    await withClient(server, async (client) => {
+      const result = await client.callTool({
+        name: "binary_session",
+        arguments: {},
+      });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    });
+    expect(calls.sort()).toEqual([...probed].sort());
+  },
+);
+
+it.each([
+  { cleanup: false, unknown: false, sync: false },
+  { cleanup: true, unknown: false, sync: false },
+  { cleanup: true, unknown: true, sync: false },
+  { cleanup: false, unknown: false, sync: true },
+])(
+  "joins sibling availability probes before returning a probe failure ($cleanup, $unknown, $sync)",
+  async ({ cleanup, unknown, sync }) => {
+    const server = scopedServer(
+      new Set(["session", "android", "adb", "apktool"]),
+    );
+    let started!: () => void;
+    let release!: () => void;
+    const adbStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const adbRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    registerSessionStatusTool({
+      server,
+      session: sessionWithDirectOperations(),
+      contract: toolContract("binary_session"),
+      startedAt: new Date().toISOString(),
+      availabilityPolicy: () => ({ processCaptureEnabled: false }),
+      androidAnalysisAvailability: async () => {
+        if (sync)
+          return {
+            status: "available",
+            code: null,
+            reason: null,
+            diagnostics: {},
+          };
+        await adbStarted;
+        throw unknown
+          ? new Error("controlled Android probe failure")
+          : new AnalysisProtocolError("controlled Android probe failure");
+      },
+      ...(sync
+        ? {
+            apktoolAnalysisAvailability: () => {
+              throw new AnalysisProtocolError(
+                "controlled synchronous probe failure",
+              );
+            },
+          }
+        : {}),
+      adbAnalysisAvailability: async () => {
+        started();
+        await adbRelease;
+        if (cleanup)
+          throw new ProviderCleanupError("adb", ["controlled ADB descriptor"], {
+            reason: "controlled close failure",
+          });
         return {
-          status: "unavailable",
-          code: "runtime_missing",
-          reason: `${name} runtime is unavailable`,
+          status: "available",
+          code: null,
+          reason: null,
           diagnostics: {},
-        } as const;
-      };
-      registerSessionStatusTool({
-        server,
-        session: {
-          status: sessionStatusWithDirectOperations,
-        } as unknown as BinarySessionPort,
-        contract: toolContract("binary_session"),
-        startedAt: new Date().toISOString(),
-        availabilityPolicy: () => ({ processCaptureEnabled: false }),
-        androidAnalysisAvailability: probe("android"),
-        adbAnalysisAvailability: probe("adb"),
-        apktoolAnalysisAvailability: probe("apktool"),
-        jebAnalysisAvailability: probe("jeb"),
-        evmLimiterAvailability: probe("evm"),
-      });
-      await withClient(server, async (client) => {
-        const result = await client.callTool({
-          name: "binary_session",
-          arguments: {},
+        };
+      },
+    });
+    await withClient(server, async (client) => {
+      let settled = false;
+      const call = client
+        .callTool({ name: "binary_session", arguments: {} })
+        .then((result) => {
+          settled = true;
+          return result;
         });
-        expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      });
-      expect(calls.sort()).toEqual([...probed].sort());
-    },
-  );
+      try {
+        await awaitAcknowledgement(adbStarted, call, "ADB availability probe");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        release();
+        const result = await call;
+        expect(parseMcpToolError(result).error).toMatchObject({
+          code: cleanup ? "cleanup_incomplete" : "unreadable_output",
+          category: "execution_failure",
+          ...(cleanup
+            ? {
+                details: {
+                  resources: ["controlled ADB descriptor"],
+                  diagnostics: {
+                    primary_error: {
+                      code: unknown ? "execution_failure" : "unreadable_output",
+                    },
+                  },
+                },
+              }
+            : {}),
+        });
+      } finally {
+        started();
+        release();
+        await call;
+      }
+    });
+  },
+);
 
+describe("MCP tool family availability", () => {
   it("reports only advertised operations without erasing composed availability", async () => {
     // `session` advertises `get_navigation_context`, while `direct` owns the
     // operations its default mode composes.
     const server = scopedServer(new Set(["session"]));
     registerSessionStatusTool({
       server,
-      session: {
-        status: sessionStatusWithDirectOperations,
-      } as unknown as BinarySessionPort,
+      session: sessionWithDirectOperations(),
       contract: toolContract("binary_session"),
       startedAt: new Date().toISOString(),
       availabilityPolicy: () => ({ processCaptureEnabled: false }),
@@ -226,6 +339,7 @@ describe("MCP tool family advertising", () => {
         status: "unavailable",
         code: "runtime_missing",
         reason: "android runtime is unavailable",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       }),
     });

@@ -378,10 +378,15 @@ describe("buildEnvironment cancellation and input checks", () => {
     const built = await buildEnvironment(input);
     if (built.ok) throw new Error("Expected a cancellation");
     const projected = projectAnalysisError(built.error);
-    expect(projected.code).toBe("cancelled");
-    expect(JSON.stringify(projected)).toContain(
-      `"output_directory":${JSON.stringify(input.directory)}`,
-    );
+    expect(projected).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: {
+          output_directory: input.directory,
+          bundle_written: true,
+        },
+      },
+    });
     expect(await listFiles(input.directory!)).toHaveLength(7);
   });
 

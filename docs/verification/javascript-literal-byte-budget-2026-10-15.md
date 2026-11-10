@@ -78,7 +78,7 @@ an equivalence bound. Static BPE excludes annotations/output schemas, client
 rendering/replay, reasoning and final answers; no hosted agent was run. Linux
 static ASAR analysis was exercised, not live Electron or other platforms.
 
-[Compact records, samples, source hashes and prior attempts](javascript-literal-byte-budget-2026-10-15.json)
+[Compact records, samples, source hashes and prior attempts](https://github.com/morluto/rea/blob/main/docs/verification/javascript-literal-byte-budget-2026-10-15.json)
 preserve the initial incomplete correction separately from the final measurements.
 No downloadable application or complete bundle is archived. Reproduce boundary
 outcomes through the listed public tests and reuse the existing real verifier

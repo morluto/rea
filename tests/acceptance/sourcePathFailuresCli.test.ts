@@ -6,7 +6,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest.skipIf(process.platform === "win32")(
-  "reports unresolvable source and scenario selections without permission advice",
+  "reports unresolvable source and scenario selections with path-specific guidance",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-source-path-failures-");
     await symlink("loop-b", join(root, "loop-a"));
@@ -57,6 +57,17 @@ cliTest.skipIf(process.platform === "win32")(
       expect(result.json).toMatchObject({
         code: "invalid_request",
         category: "invalid_input",
+        details: {
+          operation: "import_reference_source",
+          diagnostics: { reference_source_code: "invalid-root" },
+          issues: [
+            expect.objectContaining({
+              path: ["root"],
+              reason: "invalid_value",
+              message: expect.stringContaining(path),
+            }),
+          ],
+        },
       });
     }
     const valid = await cli.run({

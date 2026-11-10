@@ -3,6 +3,8 @@ import { watch } from "node:fs";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
 import {
@@ -209,7 +211,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -241,7 +242,6 @@ posixIt.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_client",
       input: {},
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed version output");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -263,7 +263,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -466,6 +465,17 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
     },
   });
   onTestFinished(() => provider.close());
+  // Readiness keeps the limiter owner's repair instead of Wireshark advice.
+  const availability = await provider.inspectAvailability();
+  expect(availability).toMatchObject({
+    status: "unavailable",
+    reason: expect.stringContaining("Cannot establish the selected Linux"),
+    remediation: expect.stringMatching(
+      /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
+    ),
+  });
+  if (availability.status !== "unavailable")
+    throw new Error("Expected an unavailable limiter");
   const result = await provider.execute({
     operation: "inspect_pcap_capture",
     input: { path: "/not-opened/capture.pcap" },
@@ -478,6 +488,7 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
   });
   expect(projected.message).toContain("must be absolute");
   expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
+  expect(projected.remediation.action).toBe(availability.remediation);
 });
 
 it("rejects directory and non-prlimit selections before opening the capture", async () => {
@@ -784,31 +795,34 @@ fs.writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000
     onTestFinished(() => provider.close());
     const controller = new AbortController();
     let watcher: ReturnType<typeof watch> | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const ready = new Promise<void>((resolve, reject) => {
+    const ready = new Promise<void>((resolve) => {
       watcher = watch(root, (_event, name) => {
         if (name === "ready") resolve();
       });
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new Error("tool did not start"));
-      }, 5000);
     });
-    try {
-      const pending = provider.execute(
-        { operation: "inspect_pcap_capture", input: { path } },
-        { signal: controller.signal },
+    const pending = provider.execute(
+      { operation: "inspect_pcap_capture", input: { path } },
+      { signal: controller.signal },
+    );
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        ready,
+        pending,
+        `${phase} tool startup`,
+        5_000,
       );
-      await ready;
       controller.abort(new Error("caller cancellation"));
       const result = await pending;
       if (result.ok) throw new Error("expected cancellation");
       expect(projectAnalysisError(result.error).code).toBe("cancelled");
       await provider.close();
-    } finally {
-      watcher?.close();
-      clearTimeout(timer);
-    }
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+      () => watcher?.close(),
+    ]);
   },
 );
 
@@ -826,20 +840,24 @@ it.each(["change", "cancel"] as const)(
       { operation: "inspect_pcap_capture", input: { path } },
       { signal: controller.signal },
     );
-    try {
-      await held.firstRead;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(held.firstRead, pending, "snapshot read");
       if (action === "cancel") controller.abort();
       else await writeFile(path, "changed source bytes");
-    } finally {
       held.release();
-    }
-    const result = await pending;
-    if (result.ok) throw new Error("expected interrupted acquisition");
-    expect(result.error._tag).toBe(
-      action === "cancel"
-        ? "AnalysisCancelledError"
-        : "AnalysisArtifactChangedError",
-    );
+      const result = await pending;
+      if (result.ok) throw new Error("expected interrupted acquisition");
+      expect(result.error._tag).toBe(
+        action === "cancel"
+          ? "AnalysisCancelledError"
+          : "AnalysisArtifactChangedError",
+      );
+    }, [
+      held.release,
+      async () => {
+        await pending;
+      },
+    ]);
   },
 );
 
@@ -855,8 +873,8 @@ it("admits one capture and drains it before close releases resources", async () 
     input: { path },
   });
   let closing: Promise<void> | undefined;
-  try {
-    await held.firstRead;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(held.firstRead, pending, "snapshot read");
     const concurrent = await provider.execute({
       operation: "inspect_pcap_capture",
       input: { path },
@@ -873,16 +891,23 @@ it("admits one capture and drains it before close releases resources", async () 
     });
     await Promise.resolve();
     expect(closed).toBe(false);
-  } finally {
     held.release();
-  }
-  expect((await pending).ok).toBe(true);
-  await closing;
-  const afterClose = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path },
-  });
-  expect(afterClose.ok).toBe(false);
+    expect((await pending).ok).toBe(true);
+    await closing;
+    const afterClose = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path },
+    });
+    expect(afterClose.ok).toBe(false);
+  }, [
+    held.release,
+    async () => {
+      await pending;
+    },
+    async () => {
+      await closing;
+    },
+  ]);
 });
 
 it.each([false, true])(
@@ -902,7 +927,6 @@ it.each([false, true])(
       input: { path },
     });
     try {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Cleanup failure cannot return success");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "cleanup_incomplete",

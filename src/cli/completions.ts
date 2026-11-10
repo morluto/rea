@@ -11,6 +11,7 @@ import {
 } from "../cliBuiltinArguments.js";
 import { CLI_OUTPUT_FORMATS, parseCliOutputArguments } from "../cliOutput.js";
 import { bashCompletionScript } from "./bashCompletionRegistration.js";
+import { MCP_BUILTIN_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
 
 type Commands = Parameters<typeof Completions.complete>[0];
@@ -85,24 +86,7 @@ const completionCommands = (cli: CompletionCli): Commands => {
   commands.set("mcp", {
     _group: true,
     description: "Register as MCP server",
-    commands: new Map([
-      [
-        "add",
-        {
-          description: "Register as MCP server",
-          alias: { command: "c" },
-          options: z.object({
-            agent: z.string().optional(),
-            command: z.string().optional(),
-            noGlobal: z.boolean().optional(),
-          }),
-        },
-      ],
-      [
-        "doctor",
-        { description: "Validate MCP server startup and tool listing" },
-      ],
-    ]),
+    commands: MCP_BUILTIN_SUBCOMMANDS,
   });
   commands.set("completions", {
     _group: true,
@@ -142,6 +126,7 @@ export const createCliCompletions = (
       const before = splitIncurBuiltinArguments(
         normalizeCliArguments(words.slice(1, index)),
       ).command;
+      if (before.includes("--")) return true;
       const input = [cli.name, ...before, words[index] ?? ""];
       const doctor = before[0] === "mcp" && before[1] === "doctor";
       const candidates = Completions.complete(

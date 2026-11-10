@@ -32,13 +32,13 @@ ran.
   actionable message naming the npm script and that nothing is installed, and
   checks both paths exist; the workflow exports `REA_DOCKER_COMMAND` from
   `command -v docker` beside the virtual environment's `agent-env`;
-  `docs/testing.md` names both variables and drops the `PATH` default. No
+  `docs/development/testing.md` names both variables and drops the `PATH` default. No
   Linux preflight was added, so the lane stays runnable on a macOS host.
 - The brittle `assert.doesNotMatch(stdout, /failed/)` is gone; exit code `0`
   and the `tasks/smoke.json v<n>: passed` summary already decide the case.
 - The inner `agent-env run` timeout is 15 minutes inside the 30-minute job,
   so a hung run ends with the verifier's failed receipt rather than the
-  runner's kill; `docs/testing.md` says so.
+  runner's kill; `docs/development/testing.md` says so.
 - The pair was read twice: parsed once for authentication and re-read from
   disk for the byte-exact copies, so a file replaced between the reads was
   copied unchecked. `readEnvironmentExportInputs` now reads each file once
@@ -56,7 +56,7 @@ ran.
 - The verifier's import of the HAR builder from `tests/fixtures/` through
   Node's type stripping is kept and recorded in the spec's limits with the
   reason (no second copy under `scripts/`; the scope lists the fixture).
-- Writes are not transactional; `docs/cli.md` now states that a host failure
+- Writes are not transactional; `docs/getting-started/cli.md` now states that a host failure
   after the first file leaves the partial folder for inspection and that the
   next attempt refuses the non-empty directory, and the spec's limits say so.
 

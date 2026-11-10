@@ -135,6 +135,9 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
   );
   const closed = await call("close_binary", {});
   expect(closed.isError).not.toBe(true);
+  expect(await getBundle(call)).toEqual(retained);
+  const reset = await call("reset_investigation", {});
+  expect(reset.isError).not.toBe(true);
   expect((await getBundle(call)).records).toEqual([]);
   const imported = await call("import_evidence_bundle", { path });
   expect(imported.isError, JSON.stringify(imported.content)).not.toBe(true);
@@ -254,6 +257,41 @@ cliTest(
     await client.ping();
   },
   60_000,
+);
+
+cliTest(
+  "keeps partial Evidence when a module package source times out",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-limit-module-timeout-");
+    await Promise.all([
+      writeFile(join(root, "package.json"), '{"type":"module"}'),
+      writeFile(join(root, "a.js"), "export const observed = 7;\n"),
+    ]);
+    // A module package with .js sources runs preload discovery first, which
+    // must leave the timeout to the source pass that retains partial facts.
+    const result = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--analysis-timeout-ms",
+        "1",
+        "--format",
+        "json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    const failure = z
+      .object({
+        code: z.literal("provider_timeout"),
+        details: z.object({ partial_observation: z.unknown() }),
+      })
+      .parse(result.json);
+    const partial = parseEvidence(failure.details.partial_observation);
+    expect(partial.operation).toBe("analyze_javascript_application");
+    expect(partial.limitations).toContainEqual(
+      expect.stringMatching(/^Preload discovery could not read a\.js \(/u),
+    );
+  },
 );
 
 async function getBundle(call: SharedMcpCall) {

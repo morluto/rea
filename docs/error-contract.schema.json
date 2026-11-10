@@ -52,6 +52,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -114,6 +123,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -178,6 +196,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -240,6 +267,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -304,6 +340,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -366,6 +411,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -430,6 +484,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -492,6 +555,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -556,6 +628,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -619,6 +700,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -681,6 +771,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -819,6 +918,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -881,6 +989,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -945,6 +1062,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -1007,6 +1133,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -1071,6 +1206,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -1133,6 +1277,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]
@@ -1197,6 +1350,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -1260,6 +1422,15 @@
               },
               "required": ["kind", "operation", "timeout_ms"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
+              "additionalProperties": false
             }
           ]
         },
@@ -1322,6 +1493,15 @@
                 }
               },
               "required": ["kind", "operation", "timeout_ms"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "const": "retry_cleanup" },
+                "operation": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "operation"],
               "additionalProperties": false
             }
           ]

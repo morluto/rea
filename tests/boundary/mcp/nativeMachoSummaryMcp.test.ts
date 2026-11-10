@@ -161,7 +161,8 @@ mcpTest(
       throw new Error("No provider expected");
     });
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const client = await mcp.connect(
       createServer(
@@ -327,7 +328,8 @@ mcpTest(
       throw new Error("Imported views must not start a provider");
     });
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const client = await mcp.connect(
       createServer(
@@ -486,8 +488,8 @@ describe.skipIf(process.platform !== "darwin")(
           },
         });
         expect(wrongKind.isError).toBe(true);
-        expect(JSON.stringify(wrongKind.content)).toContain(
-          "Mach-O inspection supports summary and macho views.",
+        expect(JSON.stringify(wrongKind.content)).toMatch(
+          /summary and macho views/iu,
         );
       },
     );
@@ -511,7 +513,8 @@ mcpTest(
       close: () => Promise.resolve(ok(null)),
     }));
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const opened = await session.open(target);
     if (!opened.ok) throw opened.error;

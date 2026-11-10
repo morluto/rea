@@ -10,12 +10,16 @@ import {
   type ZeroFillMapping,
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
-import type { GoModuleMetadata } from "../domain/go/goBinary.js";
+import type {
+  GoModuleMetadata,
+  GoStringLiterals,
+} from "../domain/go/goBinary.js";
 import { parseGoModuleBytes } from "./GoModuleText.js";
 import {
   goBuildInfoSearch,
   type GoBuildInfoSearchRange,
 } from "./GoBuildInfoSearch.js";
+import { recoverGoStringLiterals } from "./GoStringLiterals.js";
 
 const MAGIC = Buffer.from("ff20476f206275696c64696e663a", "hex");
 const MODULE_START = Buffer.from("3077af0c9274080241e1c107e6d618e6", "hex");
@@ -49,14 +53,43 @@ export interface GoBinaryImage {
   readonly bits: 32 | 64;
   readonly byte_order: "little" | "big";
   readonly build_info: GoBuildInfo | null;
+  readonly string_literals?: GoStringLiterals;
+  readonly macho_chained_fixups?: boolean;
   /** Native section-name coverage, retained for discovery limitations. */
   readonly section_names_limitation?: string;
 }
 
+export interface ReadGoBinaryImageOptions {
+  readonly includeStringLiterals?: boolean;
+  readonly maxStringLiterals?: number | undefined;
+  readonly checkActive?: (() => void) | undefined;
+}
+
 /** Inspect bounded executable bytes using native mappings, without loading or executing code. */
-export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
+export const readGoBinaryImage = (
+  bytes: Buffer,
+  options?: ReadGoBinaryImageOptions,
+): GoBinaryImage => {
   const container = readBinaryContainer(bytes);
   const { format, architecture, bits, byte_order } = container;
+  const stringLiterals =
+    options?.includeStringLiterals === true
+      ? recoverGoStringLiterals(
+          bytes,
+          container,
+          options.maxStringLiterals,
+          options.checkActive,
+        )
+      : undefined;
+  const stringMetadata =
+    stringLiterals === undefined
+      ? {}
+      : {
+          string_literals: stringLiterals,
+          ...(container.macho_chained_fixups === true
+            ? { macho_chained_fixups: true }
+            : {}),
+        };
   let selected: { search: GoBuildInfoSearchRange; header: number } | null =
     null;
   const searched = new Set<string>();
@@ -88,6 +121,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       bits,
       byte_order,
       build_info: null,
+      ...stringMetadata,
       ...(sectionNamesLimitation === undefined
         ? {}
         : { section_names_limitation: sectionNamesLimitation }),
@@ -214,6 +248,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       module_location: module.location,
       module: parseGoModuleBytes(moduleBody),
     },
+    ...stringMetadata,
     ...(sectionNamesLimitation === undefined
       ? {}
       : { section_names_limitation: sectionNamesLimitation }),

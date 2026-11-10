@@ -17,6 +17,8 @@ import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
+import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
+import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
@@ -40,6 +42,7 @@ import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
+import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
@@ -94,6 +97,10 @@ function admittedAs(
   kind: "bun-standalone",
   options: ArtifactReaderConstruction,
 ): BunStandaloneAdmission | ReturnType<typeof sourceOf>;
+function admittedAs(
+  kind: "deno-standalone",
+  options: ArtifactReaderConstruction,
+): DenoStandaloneAdmission | ReturnType<typeof sourceOf>;
 function admittedAs(
   kind: "godot-pck",
   options: ArtifactReaderConstruction,
@@ -230,6 +237,17 @@ const NON_ZIP_FORMATS = {
         admittedAs("bun-standalone", options),
       ),
   }),
+  "deno-standalone": container("deno-standalone", {
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Deno compile inventory reports the embedded virtual filesystem, remote modules, and recorded options. Environment-file values and CA certificate bytes are retained in local Evidence with their counts and byte lengths. The npm snapshot is not decoded, and the executable is not run.",
+    createReader: (path, options) =>
+      new DenoStandaloneArtifactReader(
+        path,
+        admittedAs("deno-standalone", options),
+      ),
+  }),
   dmg: container("dmg", {
     requiresDarwin: true,
     absentInventory: "platform",
@@ -285,6 +303,16 @@ const NON_ZIP_FORMATS = {
       "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed members are unsupported.",
     createReader: (path, options) =>
       new UnityFsArtifactReader(path, sourceOf(options)),
+  }),
+  wxapkg: container("wxapkg", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "wxapkg inventory establishes packaged member names and stored bytes; wxml/wxss sources, compiled bundles and runtime behavior are not reconstructed. V1MMWX-encrypted packages are unsupported.",
+    createReader: (path, options) =>
+      new WxapkgArtifactReader(path, sourceOf(options)),
   }),
   uimage: container("uimage", {
     roleContainer: true,

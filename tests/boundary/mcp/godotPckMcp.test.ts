@@ -1,7 +1,10 @@
 import { writeFile, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterAll, expect, it } from "vitest";
+import type { Client } from "@modelcontextprotocol/client";
+import { afterAll, expect, onTestFinished } from "vitest";
+import { mcpTest as it } from "../../support/mcp/mcpFixture.js";
+import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -11,6 +14,8 @@ import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
+import { artifactIdForContent } from "../../../src/domain/artifactIdentity.js";
+import type { ArtifactOccurrence } from "../../../src/domain/artifactGraph.js";
 import {
   artifactInventorySummaryViewResultSchema,
   analysisViewResultSchema,
@@ -91,39 +96,63 @@ const assertInvalidNodeField = async (
   });
 };
 
+const expectedPckMembers = (
+  members: readonly { path: string; data: string }[],
+  occurrences: readonly ArtifactOccurrence[],
+) => {
+  const expected = members.map((member) => {
+    const sha256 = createHash("sha256").update(member.data).digest("hex");
+    return {
+      logical_path: member.path.slice("res://".length),
+      source_path: member.path,
+      artifact_id: artifactIdForContent(sha256),
+      sha256,
+      size: Buffer.byteLength(member.data),
+    };
+  });
+  expect(occurrences).toHaveLength(expected.length);
+  expect(occurrences).toEqual(
+    expect.arrayContaining(
+      expected.map(({ logical_path, source_path, artifact_id }) =>
+        expect.objectContaining({ logical_path, source_path, artifact_id }),
+      ),
+    ),
+  );
+  return expected;
+};
+
 const profiles = ["full", "compact"] as const;
+const members = [
+  { path: "res://a.txt", data: "a" },
+  { path: "res://b.txt", data: "b" },
+];
 const inventoryCases = profiles.flatMap((profile) => [
   { profile, version: 1 as const },
   { profile, version: 4 as const },
 ]);
-it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
-  const { profile, version } = input;
-  const root = await createTestTempDirectory("rea-pck-mcp-");
-  const path = join(root, "game.pck");
-  const members = [
-    { path: "res://a.txt", data: "a" },
-    { path: "res://b.txt", data: "b" },
-  ];
-  await writeFile(
-    path,
-    version === 1 ? buildGodotPck1(members) : buildGodotPck(4, members),
-  );
-  const session = createTestBinarySession(new ArtifactProvider({}));
-  const server = createServer(
-    { kind: "session", session },
-    {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
-    },
-  );
-  const client = new Client(
-    { name: "pck-contract-test", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+it.for(inventoryCases)(
+  "retains PCK ($profile/v$version)",
+  async (input, { mcp }) => {
+    const { profile, version } = input;
+    const root = await createTestTempDirectory("rea-pck-mcp-");
+    const path = join(root, "game.pck");
+    await writeFile(
+      path,
+      version === 1 ? buildGodotPck1(members) : buildGodotPck(4, members),
+    );
+    const session = createTestBinarySession(new ArtifactProvider({}));
+    ownArtifactSession(session, onTestFinished);
+    const server = createServer(
+      { kind: "session", session },
+      {
+        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const client = await mcp.connect(
+      server,
+      { name: "pck-contract-test", version: "1" },
+      schemaValidation,
+    );
     const validators = await viewValidators(client);
     expect(
       (await client.callTool({ name: "open_binary", arguments: { path } }))
@@ -165,9 +194,10 @@ it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
       profile === "full" ? validators : undefined,
     );
     const wanted = graph.occurrences.filter((row) => row.logical_path !== ".");
+    const expectedMembers = expectedPckMembers(members, wanted);
     const occurrences = await view({
       collection: "occurrences",
-      logical_paths: wanted.map((row) => row.logical_path),
+      logical_paths: expectedMembers.map((member) => member.logical_path),
       fields: [
         "logical_path",
         "source_path",
@@ -189,9 +219,14 @@ it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
         format_metadata: row.format_metadata,
       })),
     );
-    const ids = wanted.flatMap((row) =>
-      row.artifact_id === null ? [] : [row.artifact_id],
+    expect(occurrences.items).toEqual(
+      expect.arrayContaining(
+        expectedMembers.map(({ logical_path, source_path, artifact_id }) =>
+          expect.objectContaining({ logical_path, source_path, artifact_id }),
+        ),
+      ),
     );
+    const ids = expectedMembers.map((member) => member.artifact_id);
     const nodes = await view({
       collection: "nodes",
       artifact_ids: ids,
@@ -206,6 +241,16 @@ it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
           sha256: row.sha256,
           size: row.size,
         })),
+    );
+    expect(nodes.items).toHaveLength(expectedMembers.length);
+    expect(nodes.items).toEqual(
+      expect.arrayContaining(
+        expectedMembers.map(({ artifact_id, sha256, size }) => ({
+          artifact_id,
+          sha256,
+          size,
+        })),
+      ),
     );
     await unlink(path);
     const historical = await view({
@@ -226,14 +271,12 @@ it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
         parent_occurrence_id: row.parent_occurrence_id,
       })),
     );
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);
 
-it("carries unknown encrypted-directory coverage through compact MCP delivery", async () => {
+it("carries unknown encrypted-directory coverage through compact MCP delivery", async ({
+  mcp,
+}) => {
   const root = await createTestTempDirectory("rea-pck-encrypted-mcp-");
   const path = join(root, "game.pck");
   await writeFile(
@@ -243,39 +286,40 @@ it("carries unknown encrypted-directory coverage through compact MCP delivery", 
     }),
   );
   const session = createTestBinarySession(new ArtifactProvider({}));
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "pck-unknown-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    await client.callTool({ name: "open_binary", arguments: { path } });
-    const reply = await client.callTool({
-      name: "inspect_artifact",
-      arguments: { detail: "summary" },
-    });
-    expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
-      true,
-    );
-    const summary = artifactInventorySummaryViewResultSchema.parse(
-      parseEvidence(reply.structuredContent).normalized_result,
-    );
-    expect(summary.summary.source_coverage).toEqual({
-      scope: "container-entries",
-      status: "unknown",
-    });
-    expect(summary.summary.root_format_metadata).toMatchObject({
-      directory_status: "encrypted",
-      declared_file_count: 1,
-    });
-    expect(summary.summary.available_counts.occurrences).toBe(1);
-    expect(summary.unknowns.join(" ")).toContain(
-      "missing matches do not prove source absence",
-    );
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
+  ownArtifactSession(session, onTestFinished);
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
+    },
+  );
+  const client = await mcp.connect(server, {
+    name: "pck-unknown-test",
+    version: "1",
+  });
+  const opened = await client.callTool({
+    name: "open_binary",
+    arguments: { path },
+  });
+  expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+  const reply = await client.callTool({
+    name: "inspect_artifact",
+    arguments: { detail: "summary" },
+  });
+  expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(true);
+  const summary = artifactInventorySummaryViewResultSchema.parse(
+    parseEvidence(reply.structuredContent).normalized_result,
+  );
+  expect(summary.summary.source_coverage).toEqual({
+    scope: "container-entries",
+    status: "unknown",
+  });
+  expect(summary.summary.root_format_metadata).toMatchObject({
+    directory_status: "encrypted",
+    declared_file_count: 1,
+  });
+  expect(summary.summary.available_counts.occurrences).toBe(1);
+  expect(summary.unknowns.join(" ")).toContain(
+    "missing matches do not prove source absence",
+  );
 });

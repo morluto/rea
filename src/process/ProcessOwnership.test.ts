@@ -361,7 +361,7 @@ describe("related sweep candidates during cleanup", () => {
     );
     expect(result).toMatchObject({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 200",
+      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
       failures: [{ pid: 200, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).not.toHaveBeenCalledWith(200, "SIGKILL");
@@ -560,7 +560,7 @@ describe("sampled detached process groups during cleanup", () => {
 
     expect(result).toMatchObject({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 200",
+      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
       failures: [{ pid: 200, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).toHaveBeenCalledTimes(1);
@@ -598,7 +598,7 @@ describe("sampled detached process groups during cleanup", () => {
 
     expect(result).toMatchObject({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 200",
+      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
       failures: [{ pid: 200, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).not.toHaveBeenCalled();

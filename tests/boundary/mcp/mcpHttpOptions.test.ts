@@ -205,9 +205,20 @@ describe("MCP_HOST and MCP_PORT", () => {
       "MCP_HOST",
       "MCP_PORT",
     ]);
-    const projected = JSON.stringify(projectAnalysisError(result.error));
-    expect(projected).toContain("MCP_PORT must be a decimal integer");
-    expect(projected).not.toContain("65536");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      details: {
+        settings: expect.arrayContaining([
+          expect.objectContaining({
+            setting: "MCP_PORT",
+            constraint: expect.stringContaining(
+              "MCP_PORT must be a decimal integer",
+            ),
+          }),
+        ]),
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("65536");
   });
 });
 
@@ -230,7 +241,6 @@ describe("MCP_ALLOWED_HOSTS", () => {
         MCP_HOST: "0.0.0.0",
         MCP_ALLOWED_HOSTS: invalidHost,
       });
-      expect(endpoint.ok).toBe(false);
       if (endpoint.ok) throw new Error("Expected a configuration refusal");
       expect(endpoint.error.settings.map(({ setting }) => setting)).toEqual([
         "MCP_ALLOWED_HOSTS",

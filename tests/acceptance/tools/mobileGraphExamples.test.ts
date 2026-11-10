@@ -20,30 +20,42 @@ const graphExamples = [
     command: "project-android-application-graph",
     operation: "project_android_application_graph",
     example: ANDROID_APPLICATION_GRAPH_EXAMPLE,
+    rootFormat: "apk",
+    digestDigit: "a",
   },
   {
     name: "IPA",
     command: "project-apple-application-graph",
     operation: "project_apple_application_graph",
     example: APPLE_APPLICATION_GRAPH_EXAMPLE,
+    rootFormat: "ipa",
+    digestDigit: "b",
   },
   {
     name: "macOS",
     command: "project-apple-application-graph",
     operation: "project_apple_application_graph",
     example: MACOS_APPLICATION_GRAPH_EXAMPLE,
+    rootFormat: "directory",
+    digestDigit: "c",
+    applicationRoots: ["."],
   },
   {
     name: "Harmony",
     command: "project-harmony-application-graph",
     operation: "project_harmony_application_graph",
     example: HARMONY_APPLICATION_GRAPH_EXAMPLE,
+    rootFormat: "hap",
+    digestDigit: "d",
   },
 ] as const;
 
 cliTest.for(graphExamples)(
   "CLI executes the canonical $name graph example without target files",
-  async ({ command, operation, example }, { cli }) => {
+  async (
+    { command, operation, example, rootFormat, digestDigit, ...facts },
+    { cli },
+  ) => {
     const root = await createTestTempDirectory("rea-mobile-graph-example-");
     const input = JSON.stringify(example);
     const path = join(root, "example.json");
@@ -56,9 +68,26 @@ cliTest.for(graphExamples)(
       expect(result.exitCode, result.stdout).toBe(0);
       const evidence = parseEvidence(result.json);
       expect(evidence.operation).toBe(operation);
+      const sourceId = example.inventory_evidence[0]!.evidence_id;
+      expect(evidence.evidence_links).toEqual([sourceId]);
       expect(evidence.normalized_result).toMatchObject({
+        root_sha256: digestDigit.repeat(64),
+        root_format: rootFormat,
+        source_evidence_ids: [sourceId],
         coverage: { status: "partial", inventory_complete: true },
       });
+      if ("applicationRoots" in facts) {
+        expect(evidence.normalized_result).toMatchObject({
+          application_roots: facts.applicationRoots,
+          bundles: [
+            expect.objectContaining({
+              path: ".",
+              role: "application",
+              role_basis: "path-convention",
+            }),
+          ],
+        });
+      }
     }
   },
 );

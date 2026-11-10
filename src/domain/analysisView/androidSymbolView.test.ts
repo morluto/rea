@@ -166,6 +166,7 @@ const fixture = (operation: Operation, report: unknown, rawMetadata = "") => {
     { immutable: true },
   );
   const parent: AnalysisViewParent = {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation,
     normalizedResult:

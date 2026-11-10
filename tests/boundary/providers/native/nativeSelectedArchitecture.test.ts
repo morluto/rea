@@ -244,8 +244,10 @@ it.each([
       selected_architecture: { name: "arm64e.v1", container_file_offset: 4096 },
     });
     if (architecture === "arm64e.v2")
-      expect(result.value.limitations).toContain(
-        "dwarfdump --uuid returned no row for selected architecture arm64e.v1; using the unambiguous binary load commands LC_UUID.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /dwarfdump --uuid.*no row.*arm64e\.v1.*unambiguous.*LC_UUID/iu,
+        ),
       );
   },
 );
