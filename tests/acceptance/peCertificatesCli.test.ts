@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { UNSIGNED_ATTRIBUTES_LIMITATION } from "../../src/native/pe/PeCertificateParser.js";
@@ -13,6 +13,47 @@ import {
 import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowance.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+
+cliTest.for(["extra-field", "empty-rdn"] as const)(
+  "rejects a malformed certificate name %s through CLI and MCP",
+  async (kind, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-name-structure-");
+    const path = join(root, "malformed.exe");
+    const subject =
+      kind === "empty-rdn"
+        ? Buffer.from([0x30, 0x02, 0x31, 0])
+        : Buffer.from([
+            0x30, 14, 0x31, 12, 0x30, 10, 0x06, 3, 0x55, 0x04, 3, 0x0c, 1, 0x41,
+            0x05, 0,
+          ]);
+    const payload = pkcs7SignedDataFixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { subject },
+    );
+    const bytes = peCertificateFixture(false, payload);
+    await writeFile(path, bytes);
+    const result = await runFileCli(cli, {
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect.soft(result.exitCode, result.stdout).toBe(1);
+    expect.soft(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+        ],
+      },
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    expect.soft(response.isError, JSON.stringify(response)).toBe(true);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest.for(["pubkey", "signature"])(
   "rejects nonzero BIT STRING padding in %s through the public CLI",

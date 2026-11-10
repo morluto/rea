@@ -35,11 +35,13 @@ different recovery: reinstall REA for the active platform, architecture, and
 Node.js version with optional dependencies enabled. Capability diagnostics
 distinguish this from the Windows capture-adapter limitation.
 
-macOS also requires Apple's Swift compiler through `xcrun` for process
-ownership inspection. REA compiles its packaged, narrow process-inspection
-helper into a private temporary directory before a capture or owned provider
-process starts; the same prerequisite applies to owned provider-process
-supervision on macOS. REA removes that directory when it exits. REA does not
+macOS also requires REA's process-inspection helper for ownership inspection.
+REA reuses a verified cached helper or compiles one with the selected Swift
+toolchain before a capture or owned provider process starts; the same
+prerequisite applies to owned provider-process supervision on macOS.
+Per-process temporary helper directories are removed on exit; the verified
+cache persists. See [helper and toolchain configuration](#scenario-and-result-details)
+for cache validation and compiler overrides. REA does not
 install Xcode, Command Line Tools, or other software. Capability checks prepare
 this helper before reporting macOS capture as available.
 

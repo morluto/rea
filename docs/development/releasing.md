@@ -181,7 +181,8 @@ When choosing the manual path, leave the automatic main release PR unmerged.
 Select the application commit from main, create the frozen branch, and prepare
 its own release PR using the steps below. Merging the main release PR starts
 automatic publication instead. Close the superseded main PR after the manual
-release has published and its metadata has been synchronized back to main.
+release has published, before merging the metadata synchronization PR back
+to main.
 
 `release/VERSION` also sets the expected version for the workflow. Use an exact
 SemVer such as `release/6.1.0` or `release/6.1.0-rc.1`, without build metadata.

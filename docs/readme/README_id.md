@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · **Bahasa Indonesia** · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Rekayasa Balik Apa Pun
 
@@ -83,6 +83,10 @@ Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui p
 Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [agen lainnya](../getting-started/installation.md#supported-agents). Lihat [instalasi dan penyiapan](../getting-started/installation.md) untuk konfigurasi penyedia dan pendaftaran MCP secara manual.
 
 MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat panduan kontrak MCP.
+
+Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
+
+Skema keluaran lengkap diumumkan secara default. Jika klien membatasi `tools/list`, atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` atau `off` dalam registrasi MCP. Validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
 
 ### Minta agen Anda
 
@@ -176,6 +180,7 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | Capturan paket             | Endpoint, DNS, TLS SNI, distribusi protokol, dan permintaan HTTP                                      | tshark dan capinfos buatan pemanggil; [panduan pcap](../guides/data/pcap-analysis.md)                                                                         |
 | Assembly .NET              | Metadata, instruksi CIL, dependensi native yang dideklarasikan, dan perbandingan build                | Tidak ada (hanya analisis statis); [panduan kode terkelola](../guides/managed/managed-code-analysis.md)                                                       |
 | PyInstaller                | CArchive, PYZ, Python bytecode                                                                        | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
+| Deno compile binaries      | Virtual files, entry point, recorded options, npm snapshot length                                     | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |
 | APK Android                | Deklarasi manifest, kelas, metode hasil dekompilasi, dan referensi                                    | JADX mode headless dan JDK lengkap di Linux/macOS/Windows x64; [panduan Android](../guides/android/android-analysis.md)                                       |
 | Perangkat Android          | Perangkat, paket, proses, log, dump, tangkapan layar, serta transfer APK/berkas                       | adb buatan pemanggil (emulator atau perangkat); [panduan ADB](../guides/android/adb-device-analysis.md)                                                       |
 | Proyek JEB                 | Unit proyek bertenaga mesin, hash artefak, dan pseudokode tipe/metode                                 | Klien JEB yang dijalankan pemanggil dan menyajikan MCP, dipilih dengan REA_JEB_MCP_URL; [panduan JEB](../providers/jeb-analysis.md)                           |
@@ -281,6 +286,12 @@ REA mengekspor lingkungan yang dapat dijalankan dengan uji dasar untuk memeriksa
 [Panduan membangun lingkungan](https://rea.tools/guides/rl-environments/) ·
 [Referensi lingkungan](../agent-environments.md) ·
 [Tonton demo di X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Lingkungan aplikasi desktop
+
+REA juga dapat membuat lingkungan untuk aplikasi desktop Linux yang digunakan agen melalui tangkapan layar, mouse, dan keyboard. Dari permintaan satu baris, seperti "Buatkan lingkungan Gnote tempat agen menambahkan minyak zaitun ke catatan daftar belanja", agen Anda memasang aplikasi di komputer build lokal, menulis tugas, mengekspor lingkungan, dan memeriksa tugas di komputer baru. Mesin yang membuatnya memerlukan Linux di amd64 atau arm64, Docker, dan versi framework agentenv yang ditetapkan panduan.
+
+[Siapkan lingkungan aplikasi desktop](../desktop-build-computer.md)
 
 ## FAQ
 

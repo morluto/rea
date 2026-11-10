@@ -391,3 +391,22 @@ describe("draftDesktopApplicationTask notes on a dconf database the capture kept
     ]);
   });
 });
+
+describe("draftDesktopApplicationTask notes for an incomplete checkpoint", () => {
+  it("does not call an empty change list unchanged when a checkpoint omits how many paths it left unchecked", async () => {
+    const base = withEnd(seedEndCapture(), { changes: [], kept: [] });
+    const omitted: DesktopApplicationCapture = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: base.state.checkpoints.map((point) => {
+          const { unchecked_paths: _dropped, ...rest } = point;
+          return rest;
+        }),
+      },
+    };
+    const draft = await notesOf(omitted);
+    expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
+    expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
+  });
+});
