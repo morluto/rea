@@ -40,6 +40,68 @@ const DOCUMENTED_COUNT_LIMITS = new Set([
 /** Registry text is a declaration, not a producer that uses the limit. */
 export const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
 
+/**
+ * These limits are moving onto runtime analysis settings on their own PRs.
+ * A producer or a registry entry cannot satisfy that requirement.
+ */
+export const REQUIRED_RUNTIME_LIMITS = [
+  "REA_NTFS_MFT_MAX_FILE_BYTES",
+  "REA_REGF_HIVE_MAX_FILE_BYTES",
+  "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
+];
+
+/** Drop comments without treating `//` inside a string as a comment. */
+export const sourceForLimitDiscovery = (source) => {
+  let out = "";
+  let quote = "";
+  for (let index = 0; index < source.length; index += 1) {
+    const current = source[index];
+    const next = source[index + 1];
+    if (quote !== "") {
+      out += current;
+      if (current === "\\" && quote !== "`") {
+        out += next ?? "";
+        index += 1;
+        continue;
+      }
+      if (current === quote) quote = "";
+      continue;
+    }
+    if (current === '"' || current === "'" || current === "`") {
+      quote = current;
+      out += current;
+      continue;
+    }
+    if (current === "/" && next === "/") {
+      while (index < source.length && source[index] !== "\n") index += 1;
+      out += "\n";
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      index += 2;
+      while (
+        index < source.length &&
+        !(source[index] === "*" && source[index + 1] === "/")
+      )
+        index += 1;
+      index += 1;
+      out += " ";
+      continue;
+    }
+    out += current;
+  }
+  return out;
+};
+
+/** A quoted name in an array is an allowlist entry, not a limit producer. */
+const isArrayElementLiteral = (source, index) => {
+  if (source[index - 1] !== '"') return false;
+  let cursor = index - 2;
+  while (cursor >= 0 && /\s/u.test(source[cursor] ?? "")) cursor -= 1;
+  const previous = source[cursor];
+  return previous === "[" || previous === ",";
+};
+
 export const isNumericLimit = (name) =>
   DOCUMENTED_COUNT_LIMITS.has(name) ||
   /(?:_BYTES|_MS|_MIB|_SECONDS|_POLLS|_JOBS|_ELEMENTS|_COUNT|_SESSIONS|_COMMANDS)$/u.test(
@@ -49,21 +111,31 @@ export const isNumericLimit = (name) =>
   /_(?:TIMEOUT|DEADLINE|BUDGET)(?:_|$)/u.test(name) ||
   /_HEAP(?:_|$)/u.test(name);
 
-/** Names used by producers. Registry declarations are not usage. */
+/** Names used by producers. Registry declarations, comments, and allowlists are not usage. */
 export const discoverNumericLimitUses = (files) => {
   const discovered = new Map();
   for (const file of files) {
     const relativePath = file.path.split(sep).join("/");
     if (relativePath === NUMERIC_LIMIT_DECLARATION) continue;
-    for (const match of file.source.matchAll(
-      /(?<![A-Z0-9_])REA_[A-Z0-9_]+/gu,
-    )) {
+    const source = sourceForLimitDiscovery(file.source);
+    for (const match of source.matchAll(/(?<![A-Z0-9_])REA_[A-Z0-9_]+/gu)) {
       const name = match[0];
       if (!isNumericLimit(name) || discovered.has(name)) continue;
+      if (isArrayElementLiteral(source, match.index ?? 0)) continue;
       discovered.set(name, relativePath);
     }
   }
   return discovered;
+};
+
+/** Tracked limits join ANALYSIS_SETTINGS. The exception registry cannot classify them. */
+export const requiredRuntimeLimitFailure = (
+  name,
+  { inRuntime, inRegistry },
+) => {
+  if (!REQUIRED_RUNTIME_LIMITS.includes(name)) return undefined;
+  if (inRuntime && !inRegistry) return undefined;
+  return `${name} must join ANALYSIS_SETTINGS; numericLimitRegistry cannot classify it`;
 };
 
 const namesIn = (source, pattern) =>
@@ -119,6 +191,15 @@ if (direct) {
   for (const name of listed.keys()) {
     if (!discovered.has(name))
       failures.push(`${name} is registered but no longer appears in src`);
+  }
+  const present = new Set([...discovered.keys(), ...listed.keys(), ...runtime]);
+  for (const name of REQUIRED_RUNTIME_LIMITS) {
+    if (!present.has(name)) continue;
+    const failure = requiredRuntimeLimitFailure(name, {
+      inRuntime: runtime.has(name),
+      inRegistry: listed.has(name),
+    });
+    if (failure !== undefined) failures.push(failure);
   }
 
   if (failures.length > 0) {
