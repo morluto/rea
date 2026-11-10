@@ -348,6 +348,9 @@ export class JavaScriptAnalysisWorker {
         id,
         node_budget: capacity.nodes,
         unknown_budget: capacity.unknowns,
+        ...(this.limits.semanticPrecision === undefined
+          ? {}
+          : { semantic_precision: this.limits.semanticPrecision }),
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
         package_type: packageType,

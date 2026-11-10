@@ -72,6 +72,8 @@
     "bridge/mitmproxy/capture.py",
     "bridge/agentenv/capture.py",
     "bridge/agentenv/computer.py",
+    "bridge/agentenv/solve.py",
+    "bridge/agentenv/solve_cleanup.py",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
     "scripts/rea-android-workspace-guardian.mjs",

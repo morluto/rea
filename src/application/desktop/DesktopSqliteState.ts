@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
 import {
   sqliteDatabaseSchema,
   sqliteValueSchema,
@@ -10,8 +11,11 @@ import {
 import { plainRecord } from "../../domain/desktop/stateFormats.js";
 import type { SqliteDatabaseService } from "../sqlite/SqliteDatabaseService.js";
 
-const ROW_LIMIT = 500;
-const MAX_TABLES = 64;
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopSqliteViewLimitMessage,
+  type DesktopViewPolicy,
+} from "../../domain/desktop/desktopViewPolicy.js";
 
 /** A database's ordinary tables as JSON rows, or why it could not be read. */
 export type SqliteStateView =
@@ -79,6 +83,7 @@ export const readSqliteStateView = async (
   service: SqliteReader,
   database: string,
   signal?: AbortSignal,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): Promise<SqliteStateView> => {
   const inventory = await report(
     service,
@@ -90,10 +95,10 @@ export const readSqliteStateView = async (
   const ordinary = inventory.schema.tables.filter(
     (table) => table.kind === "table",
   );
-  for (const table of ordinary.slice(0, MAX_TABLES)) {
+  for (const table of ordinary.slice(0, policy.sqlite_tables)) {
     const selected = await report(
       service,
-      { path: database, table: table.name, row_limit: ROW_LIMIT },
+      { path: database, table: table.name, row_limit: policy.sqlite_rows },
       signal,
     );
     if (typeof selected === "string") {
@@ -101,7 +106,7 @@ export const readSqliteStateView = async (
       continue;
     }
     const rows = selected.rows;
-    tables[table.name] = {
+    const view = {
       columns: rows?.columns ?? [],
       primary_key: table.columns
         .filter((column) => column.primary_key_position > 0)
@@ -110,12 +115,25 @@ export const readSqliteStateView = async (
             left.primary_key_position - right.primary_key_position,
         )
         .map((column) => column.name),
-      rows: (rows?.values ?? []).map((row) => row.map(cellValue)),
+      rows: [] as JsonValue[][],
       truncated: rows?.truncated ?? false,
     };
+    let bytes = jsonValueByteLength(view, policy.sqlite_view_bytes);
+    for (const row of rows?.values ?? []) {
+      if (bytes > policy.sqlite_view_bytes) break;
+      const projected = row.map(cellValue);
+      bytes +=
+        (view.rows.length === 0 ? 0 : 1) +
+        jsonValueByteLength(projected, policy.sqlite_view_bytes - bytes);
+      if (bytes <= policy.sqlite_view_bytes) view.rows.push(projected);
+    }
+    tables[table.name] =
+      bytes > policy.sqlite_view_bytes
+        ? { error: desktopSqliteViewLimitMessage(policy) }
+        : view;
   }
   return {
     ok: true,
-    view: { tables, tables_truncated: ordinary.length > MAX_TABLES },
+    view: { tables, tables_truncated: ordinary.length > policy.sqlite_tables },
   };
 };
