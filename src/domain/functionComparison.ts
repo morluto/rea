@@ -1,6 +1,9 @@
 import { canonicalJson } from "./comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import type { FunctionSnapshot } from "./functionDossierEvidence.js";
+import {
+  functionSnapshotCoordinateContext,
+  type FunctionSnapshot,
+} from "./functionDossierEvidence.js";
 import { functionMatch } from "./functionComparisonNormalization.js";
 import {
   functionComparisonResultSchema,
@@ -18,8 +21,15 @@ export const compareFunctions = (
   const providersDiffer =
     canonicalJson(left.evidence.provider, "Function comparison") !==
     canonicalJson(right.evidence.provider, "Function comparison");
-  const dimensions = compareDimensions(left, right, { links, providersDiffer });
-  const match = functionMatch(left, right);
+  const coordinateContext = functionSnapshotCoordinateContext(left, right);
+  const match = functionMatch(left, right, coordinateContext);
+  const dimensions = compareDimensions(left, right, {
+    links,
+    providersDiffer,
+    sameIdentity:
+      match.method === "same-entry" || match.method === "same-evidence",
+    coordinateContext,
+  });
   const changes = dimensions.filter(({ status }) => status !== "unchanged");
   return functionComparisonResultSchema.parse({
     status: overallStatus(dimensions, match.status),

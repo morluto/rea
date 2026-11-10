@@ -23,7 +23,7 @@ import {
 } from "../javascript/javascriptApplicationGraph.js";
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
+  sealTransferredJavaScriptSemanticGraphSteps,
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
@@ -38,6 +38,7 @@ import {
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
@@ -48,6 +49,7 @@ const layoutParent = (): AnalysisViewParent => {
 const javascriptParent = (
   analysis = analysisViewJavaScriptAnalysis(),
 ): AnalysisViewParent => ({
+  predicateType: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.predicate_type,
   evidenceId: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.evidence_id,
   operation: "analyze_javascript_application",
   normalizedResult: analysis,
@@ -57,6 +59,7 @@ const javascriptParent = (
 const nativeParent = (
   result: unknown = ghidraFunctionDossier(),
 ): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: "ev_" + "b".repeat(64),
   operation: "analyze_function",
   normalizedResult: result,
@@ -363,6 +366,7 @@ it("rejects artifact summary views when inspection substep coverage count disagr
   const source = ARTIFACT_COMPARISON_EXAMPLE.left;
   const inspection = createArtifactInspection(source);
   const parent: AnalysisViewParent = {
+    predicateType: "rea.analysis",
     evidenceId: `ev_${"a".repeat(64)}`,
     operation: "inspect_artifact",
     normalizedResult: {
@@ -782,9 +786,15 @@ it("projects JavaScript summary and preserves selected module observations", () 
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
     kind: "javascript-asset",
+    observations: expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          source: "export const secret = 1;\n",
+          text: "should not leak",
+        }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(item.value.item)).toContain("export const secret = 1;");
-  expect(JSON.stringify(item.value.item)).toContain("should not leak");
   const page = projectAnalysisView(parent, {
     kind: "page",
     collection: "modules",
@@ -873,7 +883,9 @@ it("projects typed module facts without source bodies and keeps source coverage 
 
 it("counts retained range observations including repeats and skips unavailable locations", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const range = {
@@ -919,6 +931,7 @@ it("counts retained range observations including repeats and skips unavailable l
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const parent = javascriptParent(
     analysisViewBindJavaScriptGraphs(analysis, graph),
@@ -987,7 +1000,9 @@ it("validates typed module selectors without coercing null or empty paths", () =
 
 it("keeps mixed observation support distinct instead of promoting a module to observed", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const inferred = {
@@ -1015,6 +1030,7 @@ it("keeps mixed observation support distinct instead of promoting a module to ob
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const result = projectAnalysisView(
     javascriptParent(analysisViewBindJavaScriptGraphs(analysis, graph)),
@@ -1083,7 +1099,6 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     collection: "modules",
     selector: { path: "renderer.js" },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected ambiguous path");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",
@@ -1119,6 +1134,84 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     });
   }
   expect(ids).toEqual(graph.nodes.map(({ node_id }) => node_id));
+});
+
+it("keeps export bindings out of module pages and path selection", () => {
+  const analysis = analysisViewJavaScriptAnalysis();
+  const original = analysis.graph.nodes[0];
+  const observation = original?.observations[0];
+  if (original === undefined || observation === undefined)
+    throw new Error("missing module observation");
+  const exportBinding = createJavaScriptApplicationNode({
+    kind: "javascript-module",
+    identity: {
+      strategy: "artifact-local-key",
+      stability: "artifact-version",
+      artifact_sha256: "c".repeat(64),
+      namespace: "module-export",
+      key: "renderer.js:alpha",
+    },
+    observations: [
+      {
+        label: "renderer.js:alpha",
+        properties: {
+          semantic_role: "export-binding",
+          module_path: "renderer.js",
+          exported_name: "alpha",
+        },
+        evidence: {
+          ...observation.evidence,
+          artifact: {
+            ...observation.evidence.artifact,
+            sha256: "c".repeat(64),
+            artifact_id: `art_${"c".repeat(64)}`,
+          },
+        },
+      },
+    ],
+  });
+  const graph = createJavaScriptApplicationGraph({
+    schema: "JavaScriptApplicationGraph",
+    root_node_ids: [original.node_id, exportBinding.node_id],
+    nodes: [original, exportBinding],
+    edges: [],
+    coverage: analysis.graph.coverage,
+    limitations: analysis.graph.limitations,
+  });
+  const parent = javascriptParent(
+    analysisViewBindJavaScriptGraphs(analysis, graph),
+  );
+  const page = projectAnalysisView(parent, {
+    kind: "page",
+    collection: "modules",
+    offset: 0,
+    limit: 10,
+  });
+  if (!page.ok) throw page.error;
+  if (page.value.kind !== "page") throw new Error("expected page");
+  expect(page.value.items).toEqual([
+    {
+      node_id: original.node_id,
+      kind: original.kind,
+      path: "renderer.js",
+    },
+  ]);
+  expect(page.value.coverage).toMatchObject({
+    total: 1,
+    examined: 1,
+    exhausted: true,
+  });
+  const item = projectAnalysisView(parent, {
+    kind: "item",
+    collection: "modules",
+    selector: { path: "renderer.js" },
+  });
+  if (!item.ok) throw item.error;
+  if (item.value.kind !== "item") throw new Error("expected item view");
+  expect(item.value.item).toMatchObject({ node_id: original.node_id });
+  const summary = projectAnalysisView(parent, { kind: "summary" });
+  if (!summary.ok) throw summary.error;
+  expect(summary.value.coverage).toMatchObject({ total: 1, examined: 1 });
 });
 
 it("pages actual modules, including unknown and empty paths, without unrelated roles", () => {
@@ -1272,7 +1365,7 @@ it("reuses authenticated graphs while rejecting malformed metadata and imported 
   );
   const { graph_id: _semanticId, ...semantic } = analysis.semantic_graph;
   const semanticGraph = complete(
-    createImmutableJavaScriptSemanticGraphSteps({
+    sealTransferredJavaScriptSemanticGraphSteps({
       ...semantic,
       application_graph_id: graph.graph_id,
     }),
@@ -1509,6 +1602,8 @@ it.each(["partial", "unknown"] as const)(
     ] as const) {
       const result = projectAnalysisView(parent, view);
       if (!result.ok) throw result.error;
+      if (result.value.coverage === null)
+        throw new Error("Expected known coverage");
       expect(result.value.coverage.exhausted).toBe(true);
       if (result.value.kind === "javascript")
         expect(result.value.source_coverage).toMatchObject({
@@ -1571,6 +1666,7 @@ it("rejects unsupported parent operations and incompatible collections", () => {
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const unsupported = projectAnalysisView(
     {
+      predicateType: "rea.analysis",
       evidenceId: `ev_${"d".repeat(64)}`,
       operation: "inspect_recorded_crash",
       normalizedResult: { path: "/artifacts/crash.core" },

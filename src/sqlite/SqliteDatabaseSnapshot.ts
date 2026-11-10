@@ -1,4 +1,4 @@
-import { lstat, open, writeFile } from "node:fs/promises";
+import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -8,7 +8,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/sqliteDatabase.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import {
   withArtifactFileHandle,
   assertArtifactReadActive,
@@ -24,6 +24,7 @@ import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 const fileSystem: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
   open,
+  realpath,
 };
 
 type SnapshotMemberRole = "database" | "wal";
@@ -165,14 +166,17 @@ const duringAcquisition = async <T>(
 };
 
 const readObservedArtifact = (
+  role: SnapshotMemberRole,
   path: string,
   observed: BigIntStats,
   maximumBytes: number,
   selectedFileSystem: StableArtifactFileSystem,
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
-) =>
-  duringAcquisition(path, () =>
+) => {
+  const resolveSelectedPath =
+    role === "database" ? selectedFileSystem.realpath : undefined;
+  return duringAcquisition(path, () =>
     readStableArtifact(
       path,
       maximumBytes,
@@ -180,9 +184,15 @@ const readObservedArtifact = (
       {
         open: (selectedPath, flags) =>
           selectedFileSystem.open(selectedPath, flags),
+        ...(resolveSelectedPath === undefined
+          ? {}
+          : {
+              realpath: (selectedPath: string) =>
+                resolveSelectedPath.call(selectedFileSystem, selectedPath),
+            }),
         lstat: async (selectedPath) => {
           const current = await selectedFileSystem.lstat(selectedPath);
-          if (!sameState(observed, current))
+          if (selectedPath === path && !sameState(observed, current))
             throw new ArtifactReaderFailure(
               "integrity",
               `SQLite snapshot file set changed during acquisition: ${selectedPath}`,
@@ -193,6 +203,7 @@ const readObservedArtifact = (
       resourceScope,
     ),
   );
+};
 
 const verifyInactiveJournal = async (
   path: string,
@@ -301,6 +312,7 @@ export const captureSqliteDatabaseSnapshot = async (
       return recordMember(
         role,
         await readObservedArtifact(
+          role,
           role === "database" ? path : walPath,
           observed,
           maximumBytes,

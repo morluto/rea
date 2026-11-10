@@ -24,6 +24,8 @@ const manifestView = {
   template_rules: ["opaque-token", "sibling-pair-variance"],
 } as const;
 
+const authenticationEntries = ["parseEvidence", "immutableEvidence"] as const;
+
 const createOwnedHarness = async () => {
   const harness = await createApplicationMcpHarness({
     session: createTestBinarySession(() => {
@@ -65,9 +67,11 @@ it.each(
 
     const evidenceModule = await import("../../src/domain/evidence.js");
     const failure = unexpectedFailure(failureKind, sourceKind);
-    vi.spyOn(evidenceModule, "parseEvidence").mockImplementation(() => {
-      throw failure;
-    });
+    const authenticators = authenticationEntries.map((name) =>
+      vi.spyOn(evidenceModule, name).mockImplementation(() => {
+        throw failure;
+      }),
+    );
 
     const response = await harness.client.callTool({
       name: "inspect_analysis_view",
@@ -79,6 +83,11 @@ it.each(
       content: [{ type: "text", text: failure.message }],
     });
     expect(response.structuredContent).toBeUndefined();
+    expect(
+      authenticators.flatMap((authenticate) => authenticate.mock.calls),
+    ).toContainEqual([
+      expect.objectContaining({ evidence_id: parent.evidence_id }),
+    ]);
     expect(harness.session.exportEvidenceBundle()).toEqual(before);
   },
 );
@@ -91,17 +100,19 @@ it("uses retained Evidence without reparsing its parent", async () => {
   expect(harness.session.recordEvidence(parent).ok).toBe(true);
 
   const evidenceModule = await import("../../src/domain/evidence.js");
-  const originalParse = evidenceModule.parseEvidence;
-  vi.spyOn(evidenceModule, "parseEvidence").mockImplementation((input) => {
-    if (
-      typeof input === "object" &&
-      input !== null &&
-      "evidence_id" in input &&
-      input.evidence_id === parent.evidence_id
-    )
-      throw new TypeError("retained source parent was reparsed");
-    return originalParse(input);
-  });
+  for (const name of authenticationEntries) {
+    const originalParse = evidenceModule[name];
+    vi.spyOn(evidenceModule, name).mockImplementation((input) => {
+      if (
+        typeof input === "object" &&
+        input !== null &&
+        "evidence_id" in input &&
+        input.evidence_id === parent.evidence_id
+      )
+        throw new TypeError("retained source parent was reparsed");
+      return originalParse(input);
+    });
+  }
 
   const response = await harness.client.callTool({
     name: "inspect_analysis_view",

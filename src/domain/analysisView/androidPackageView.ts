@@ -11,17 +11,22 @@ import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { androidViewRequestSchema } from "../android/androidPackageQuery.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import {
   analysisTextPage,
   analysisTextPageItemSchema,
@@ -103,8 +108,8 @@ const choose = <T extends object>(
 /** Project authenticated retained facts without reopening the APK or engine. */
 export const projectAndroidPackageView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "android")
     return err(
       analysisViewInputError([
@@ -116,6 +121,9 @@ export const projectAndroidPackageView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof androidViewRequestSchema>
+  >(view, "summary", "android");
   if (parent.operation !== "inspect_android_package")
     return err(
       analysisViewInputError([
@@ -163,7 +171,7 @@ export const projectAndroidPackageView = (
   if (view.kind === "summary") {
     const { text, ...manifest } = report.manifest;
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -171,7 +179,7 @@ export const projectAndroidPackageView = (
         manifest: {
           ...manifest,
           text_code_units: text.length,
-          text_included: false,
+          text_included: false as const,
         },
       },
       coverage: completeWithinViewCoverage(1, 1),
@@ -186,7 +194,7 @@ export const projectAndroidPackageView = (
     );
     if (!page.ok) return page;
     return ok({
-      kind: "android",
+      kind: "android" as const,
       view,
       ...shared,
       item: {
@@ -233,6 +241,7 @@ export const projectAndroidPackageView = (
           limit_bytes: PAGE_BYTES,
           facet: view.facet,
         },
+        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
       ),
     );
   // Admit caller selections and provenance before building filter indexes or output rows.
@@ -291,10 +300,10 @@ export const projectAndroidPackageView = (
       ]++;
       summary.declaration_coverage[row.declaration_coverage]++;
     }
-    const result: UnsignedAnalysisView = {
+    const result = {
       ...context,
-      kind: "android",
-      facet: "component-summary",
+      kind: "android" as const,
+      facet: "component-summary" as const,
       view,
       summary,
       coverage: completeWithinViewCoverage(rows.length, rows.length),
@@ -361,10 +370,10 @@ export const projectAndroidPackageView = (
     bytes += added;
     items.push(item);
   }
-  const result: UnsignedAnalysisView = {
+  const result = {
     ...context,
-    kind: "android",
-    facet: "components",
+    kind: "android" as const,
+    facet: "components" as const,
     view,
     items,
     byte_limited,

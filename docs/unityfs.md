@@ -10,7 +10,9 @@ strings, declared size, dataflags, blocks-and-directory table bounds, the
 producer's 16-byte data hash as declared, and the resolved data-area offset.
 Members (`CAB-*` SerializedFiles, `.resS` resource streams, shared assets)
 retain declared source paths, virtual stream offsets, sizes and raw node flags.
-The directory flag identifies directories. Virtual offsets are not physical
+The directory flag identifies directories. `compare_artifacts` compares each
+member's declared `source_path` and raw `flags`; its index and offset are
+layout. Virtual offsets are not physical
 carrier locations: member `source_location` is null. Member reads only examine
 their covering blocks. Uncompressed ranges stream directly; compressed ranges
 reuse at most one completed decoded block. Independent 64 KiB output chunks
@@ -80,7 +82,6 @@ also match the independent oracle. `xinzexi_2_n_tex` (2017.4.37f1) uses LZMA
 data: its member names and sizes are retained with unavailable hashes and
 unknown coverage. UnityPy-produced repacks additionally verify format 7/8,
 padded and unpadded front tables, end tables, and unsupported LZMA directories.
-These repacks are library-produced tests, not Unity engine executions. The PR
-records producer parameters, source digests and measured task costs; synthetic
+These repacks are library-produced tests, not Unity engine executions. Synthetic
 fixtures alone do not establish real Unity version coverage. SerializedFile objects, textures and runtime
 behavior are outside this container reader's verification scope.

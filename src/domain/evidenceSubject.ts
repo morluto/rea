@@ -24,8 +24,10 @@ export const evidenceSubjectFormatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "ines",
   "godot-pck",
   "unityfs",
+  "wxapkg",
   "uimage",
   "dmg",
   "pkg",
@@ -40,8 +42,16 @@ export const evidenceSubjectFormatSchema = z.enum([
   "entitlements",
   "pyinstaller",
   "node-sea",
+  "dotnet-bundle",
+  "bun-standalone",
+  "deno-standalone",
   "intel-hex",
   "srec",
+  "esp-image",
+  "uf2",
+  "dfuse",
+  "esp-flash-image",
+  "fit",
 ]);
 
 /** Format-owned architecture declarations shared by Evidence and persisted executions. */

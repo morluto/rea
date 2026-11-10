@@ -228,6 +228,9 @@ describe("historical source graph", () => {
   it("omits absent local diagnostics and rejects explicitly undefined non-JSON metadata", () => {
     const input = graphInput();
     const graph = createHistoricalSourceGraph(input);
+    expect(graph.entries.map((entry) => entry.path)).toEqual(
+      input.entries.map((entry) => entry.path),
+    );
     expect(
       graph.entries.every(
         (entry) => !Object.hasOwn(entry, "local_diagnostics"),

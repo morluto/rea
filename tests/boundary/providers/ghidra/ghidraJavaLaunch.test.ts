@@ -411,7 +411,6 @@ describe.skipIf(process.platform === "win32")(
       async (mode) => {
         const { session, launcher, analysisArguments } = await fixture(mode);
         const launched = await launcher.launch(session);
-        expect(launched.ok).toBe(false);
         if (launched.ok) throw new Error("Expected a helper failure");
         expect(analysisArguments).toEqual([]);
         const failure = bindGhidraSessionFailure(() => ({}))(
@@ -452,6 +451,13 @@ describe.skipIf(process.platform === "win32")(
               cause: { code: 3 },
             },
           });
+        if (mode === "env-malformed")
+          expect(cause).toMatchObject({
+            cause: {
+              code: "invalid_environment_entry",
+              detail: { check: "separator", line: "invalid environment" },
+            },
+          });
         if (mode === "vm-malformed")
           expect(cause).toMatchObject({
             launch_support: expect.arrayContaining([
@@ -474,9 +480,8 @@ describe.skipIf(process.platform === "win32")(
         if (launched.ok)
           throw new Error("Expected a JVM platform override failure");
         expect(launched.error.cause).toMatchObject({
-          message: expect.stringContaining(
-            "may not override os.arch or os.name",
-          ),
+          _tag: "GhidraAdmissionError",
+          code: "platform_override",
         });
       },
     );
@@ -499,9 +504,8 @@ describe.skipIf(process.platform === "win32")(
         if (launched.ok)
           throw new Error("Expected a JVM platform override failure");
         expect(launched.error.cause).toMatchObject({
-          message: expect.stringContaining(
-            "may not override os.arch or os.name",
-          ),
+          _tag: "GhidraAdmissionError",
+          code: "platform_override",
         });
       },
     );
@@ -578,9 +582,8 @@ describe.skipIf(process.platform === "win32")(
         if (launched.ok)
           throw new Error("Expected an effective platform override refusal");
         expect(launched.error.cause).toMatchObject({
-          message: expect.stringContaining(
-            "may not override os.arch or os.name",
-          ),
+          _tag: "GhidraAdmissionError",
+          code: "platform_override",
         });
       },
     );
@@ -600,7 +603,8 @@ describe.skipIf(process.platform === "win32")(
       if (launched.ok)
         throw new Error("Expected a JVM platform override failure");
       expect(launched.error.cause).toMatchObject({
-        message: expect.stringContaining("may not override os.arch or os.name"),
+        _tag: "GhidraAdmissionError",
+        code: "platform_override",
       });
     });
 
@@ -634,7 +638,9 @@ describe.skipIf(process.platform === "win32")(
       if (launched.ok)
         throw new Error("Expected an unreadable argument-file failure");
       expect(launched.error.cause).toMatchObject({
-        message: expect.stringContaining("argument file is unreadable"),
+        _tag: "GhidraAdmissionError",
+        code: "argument_file_unreadable",
+        detail: { path: optionsFile },
       });
     });
 
@@ -657,7 +663,8 @@ describe.skipIf(process.platform === "win32")(
       if (launched.ok)
         throw new Error("Expected a nested argument-file failure");
       expect(launched.error.cause).toMatchObject({
-        message: expect.stringContaining("may not nest @ references"),
+        _tag: "GhidraAdmissionError",
+        code: "nested_argument_file",
       });
     });
   },
@@ -823,9 +830,8 @@ describe.skipIf(process.platform === "win32")(
           );
           if (cleanup.fileCleanupFailure.outcome.kind === "failed")
             expect(cleanup.fileCleanupFailure.outcome.cause).toMatchObject({
-              message: expect.stringContaining(
-                "may not override os.arch or os.name",
-              ),
+              _tag: "GhidraAdmissionError",
+              code: "platform_override",
             });
           await resources.retryCleanup();
           expect(resources.hasPending).toBe(false);
@@ -940,7 +946,6 @@ describe.skipIf(process.platform === "win32")(
           {},
           { signal: controller.signal },
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected interrupted startup");
         const projected = analysisErrorProjectionSchema.parse(
           JSON.parse(JSON.stringify(projectAnalysisError(result.error))),

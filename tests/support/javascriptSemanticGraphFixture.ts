@@ -5,6 +5,7 @@ import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   type JavaScriptSemanticGraphInput,
   type JavaScriptSemanticGraphNode,
+  type JavaScriptSemanticEvidenceReference,
 } from "../../src/domain/javascript/javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticFingerprint,
@@ -250,3 +251,17 @@ export const semanticFixtureGraph = (
   withUnknown = false,
 ): JavaScriptSemanticGraph =>
   createJavaScriptSemanticGraph(semanticFixtureInput(withUnknown));
+
+/** Resolve one fact's compact provenance without changing its stored shape. */
+export const resolveJavaScriptSemanticEvidence = (
+  graph: Pick<JavaScriptSemanticGraph, "evidence_contexts">,
+  reference: JavaScriptSemanticEvidenceReference,
+): ApplicationGraphEvidence => {
+  const context = graph.evidence_contexts.find(
+    ({ context_id }) => context_id === reference.context_id,
+  );
+  if (context === undefined)
+    throw new TypeError("Semantic evidence reference names an absent context");
+  const { context_id: _contextId, ...evidenceContext } = context;
+  return { ...evidenceContext, location: reference.location };
+};

@@ -45,6 +45,7 @@ interface PerformActionInput {
   readonly startOrigin: string;
   /** Cancellation of the step; a request step that sees it before sending sends nothing. */
   readonly signal?: AbortSignal | undefined;
+  readonly onOpaqueRedirect?: () => void;
 }
 
 /** Watch the response selector before the UI action; matching does not prove action causality. */
@@ -144,6 +145,7 @@ export const performPlaywrightScenarioAction = async (
         secrets,
         startOrigin,
         signal,
+        onOpaqueRedirect: input.onOpaqueRedirect,
       });
       return;
     default: {

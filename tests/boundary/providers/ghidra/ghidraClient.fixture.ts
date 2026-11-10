@@ -15,6 +15,10 @@ export const ghidraFixturePath = fileURLToPath(
 );
 
 type FixtureMode =
+  | "checkpoint"
+  | "checkpoint_fail_close"
+  | "checkpoint_hold_startup"
+  | "checkpoint_hold_close"
   | "unicode_search"
   | "reject_first_connection"
   | "reject_all_connections"
@@ -27,7 +31,11 @@ type FixtureMode =
   | "future_id"
   | "analysis_timeout"
   | "remote_error"
+  | "decompile_timed_out"
   | "remote_startup_error"
+  | "import_identity_unavailable"
+  | "import_identity_mismatch"
+  | "late_identity_failure"
   | "shutdown_error"
   | "invalid_shutdown_ack"
   | "hang_after_start"
@@ -56,10 +64,16 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
   readonly tokens: string[] = [];
   readonly processes: ChildProcess[] = [];
   readonly requests: string[] = [];
+  readonly packedPrograms: GhidraLaunchSession["packedProgram"][] = [];
+  #notifyCheckpointHeld: (() => void) | undefined;
+  readonly checkpointHeld = new Promise<void>((resolve) => {
+    this.#notifyCheckpointHeld = resolve;
+  });
 
   constructor(readonly mode: FixtureMode = "success") {}
 
   async launch(session: GhidraLaunchSession) {
+    this.packedPrograms.push(session.packedProgram);
     this.runtimeRoots.push(session.runtimeRoot);
     this.endpointPaths.push(session.endpointPath);
     this.tokens.push(session.token);
@@ -82,6 +96,13 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
       },
     });
     process_.on("message", (value: unknown) => {
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "event" in value &&
+        value.event === "checkpoint-held"
+      )
+        this.#notifyCheckpointHeld?.();
       if (
         typeof value === "object" &&
         value !== null &&

@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { WebNetworkCaptureService } from "../../src/application/WebNetworkCaptureService.js";
 import { decodeHarCapture } from "../../src/browser/history/HarCapture.js";
-import { deliverCliAnalysisEvidence } from "../../src/cli/analysisEvidenceDelivery.js";
+import {
+  deliverCliAnalysisEvidence,
+  publishCliAnalysisEvidence,
+} from "../../src/cli/analysisEvidenceDelivery.js";
+import { createEvidence } from "../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { AnalysisTimeoutError } from "../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../src/domain/result.js";
@@ -173,5 +179,63 @@ it.each([true, false])(
       "records.0.evidence_id",
       completed.value.evidence_id,
     );
+  },
+);
+
+it.each([true, false])(
+  "preserves separately captured sources during partial publication (refused: %s)",
+  async (refused) => {
+    const root = await createTestTempDirectory("rea-partial-captured-sources-");
+    const outputPath = join(root, "partial.json");
+    if (refused) await writeFile(outputPath, "existing caller file");
+    const provider = { id: "fixture", name: "Fixture", version: "1" };
+    const source = createEvidence(undefined, provider, {
+      operation: "source_fixture",
+      parameters: {},
+      result: { observed: 7 },
+    });
+    const partial = createEvidence(undefined, provider, {
+      operation: "derived_fixture",
+      parameters: {},
+      result: { completed_sources: 1 },
+      evidenceLinks: [source.evidence_id],
+    });
+    const failure = projectAnalysisError(
+      new AnalysisTimeoutError("derived_fixture", 1, {
+        partialObservation: partial,
+      }),
+    );
+    const output = analysisErrorProjectionSchema.parse(
+      await publishCliAnalysisEvidence(
+        { ok: false, error: failure, sourceEvidence: [source] },
+        {
+          providerId: "fixture",
+          operation: "derived_fixture",
+          signal: new AbortController().signal,
+          detail: "complete",
+          evidenceOutput: outputPath,
+        },
+      ),
+    );
+    expect(output.code).toBe("provider_timeout");
+    if (refused) {
+      expect(await readFile(outputPath, "utf8")).toBe("existing caller file");
+      expect(output.details).toMatchObject({
+        source_closure: {
+          publication: "not_published",
+          complete: true,
+          records: [source],
+          omitted_count: 0,
+        },
+      });
+    } else {
+      const bundle = parseEvidenceBundle(
+        JSON.parse(await readFile(outputPath, "utf8")),
+      );
+      expect(
+        new Set(bundle.records.map((record) => record.evidence_id)),
+      ).toEqual(new Set([source.evidence_id, partial.evidence_id]));
+      expect(output.details).not.toHaveProperty("source_closure");
+    }
   },
 );

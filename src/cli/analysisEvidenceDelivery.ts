@@ -1,10 +1,16 @@
-import { analysisEvidenceSources } from "../application/AnalysisEvidenceSources.js";
+import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
+import {
+  analysisEvidenceSources,
+  undeliveredSourceClosure,
+} from "../application/AnalysisEvidenceSources.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
 import { z } from "incur";
 import {
+  isImmutableEvidence,
   parseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
+  type CallerInputPaths,
 } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -12,15 +18,26 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { publishEvidenceDelivery } from "../application/EvidenceBundleCommands.js";
+import {
+  createEvidenceBundle,
+  createImmutableEvidenceBundle,
+} from "../domain/evidenceBundle.js";
+import {
+  evidenceDeliveryCommitted,
+  publishEvidenceDelivery,
+} from "../application/EvidenceBundleCommands.js";
 import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import {
+  isObject,
+  projectCliAnalysisResult,
+} from "./projectCliAnalysisResult.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { ZodSafeParseResult } from "zod";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
+import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
 
 export const analysisEvidenceDeliveryOptions = {
   detail: z
@@ -41,6 +58,10 @@ interface CliEvidenceDelivery {
   readonly signal: AbortSignal;
   readonly detail: "complete" | "summary";
   readonly evidenceOutput: string | undefined;
+  /** Exact one-shot CLI target spelling, when this invocation selects a file. */
+  readonly callerInputPath?: string;
+  /** Verbatim named auxiliary path choices for the same direct invocation. */
+  readonly callerInputPaths?: CallerInputPaths;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
@@ -139,7 +160,13 @@ export const deliverCliAnalysisEvidence = async (
       { redactFailure },
     ).then(projectCliAnalysisResult);
   const complete = await finishAnalysisCommand(
-    run,
+    input.callerInputPath === undefined
+      ? run
+      : bindCliEvidenceCallerPath(
+          input.callerInputPath,
+          run,
+          input.callerInputPaths,
+        ),
     service,
     providerId,
     operation,
@@ -163,12 +190,45 @@ export const deliverCliAnalysisEvidence = async (
   });
 };
 
+/**
+ * A requested bundle that never committed cannot silently drop what a completed
+ * observation cites. Absent delivery or observation leaves the failure untouched.
+ */
+const withUndeliveredSourceClosure = (
+  failure: JsonValue,
+  input: CliEvidenceDelivery,
+): JsonValue => {
+  if (input.evidenceOutput === undefined || !isObject(failure)) return failure;
+  const { details } = failure;
+  if (!isObject(details)) return failure;
+  const closure = undeliveredSourceClosure(
+    details.partial_observation,
+    input.sourceEvidence ?? [],
+    // Error output is not the caller's selected Evidence sink. Keep records
+    // out of it when this invocation carries explicit exclusions.
+    { inlineRecords: (input.sensitiveValues?.length ?? 0) === 0 },
+  );
+  return closure === undefined
+    ? failure
+    : { ...failure, details: { ...details, source_closure: closure } };
+};
+
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
-  result: Result<Evidence, JsonValue>,
+  result: AnalysisResultWithSources<Evidence, JsonValue>,
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
   const { detail, evidenceOutput } = input;
+  // A composed result can retain source records separately from its parent.
+  // Both successful and partial publication use that same captured closure.
+  const capturedSources = [
+    ...(input.sourceEvidence ?? []),
+    ...(result.sourceEvidence ?? []),
+  ];
+  const closureInput =
+    capturedSources.length === 0
+      ? input
+      : { ...input, sourceEvidence: capturedSources };
   const projectFailure = (error: AnalysisError) =>
     projectAnalysisError(
       redactExplicitFailure(error, input.sensitiveValues ?? []),
@@ -176,7 +236,11 @@ export const publishCliAnalysisEvidence = async (
   if (!result.ok)
     return evidenceOutput === undefined
       ? result.error
-      : publishFailurePartialEvidence(result.error, evidenceOutput, input);
+      : publishFailurePartialEvidence(
+          result.error,
+          evidenceOutput,
+          closureInput,
+        );
   const complete = parseEvidence(result.value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
@@ -187,9 +251,14 @@ export const publishCliAnalysisEvidence = async (
   const published = await publishDeliveredEvidence(
     complete,
     evidenceOutput,
-    input,
+    closureInput,
   );
-  if (!published.ok) return projectFailure(published.error.error);
+  if (!published.ok) {
+    const failure = projectFailure(published.error.error);
+    return evidenceDeliveryCommitted(published.error.error)
+      ? failure
+      : withUndeliveredSourceClosure(failure, closureInput);
+  }
   return detail === "summary"
     ? {
         summary: published.value.delivered,
@@ -229,20 +298,32 @@ const publishDeliveredEvidence = async (
   // This projection answers the same direct invocation as its parent. Later
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
-    input.detail === "summary" && complete.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, complete.caller_input_path)
+    input.detail === "summary" &&
+    (complete.caller_input_path !== undefined ||
+      complete.caller_input_paths !== undefined)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          complete.caller_input_path,
+          complete.caller_input_paths,
+        )
       : delivered.value;
   const inspectionSources = analysisEvidenceSources(complete);
   if (!inspectionSources.ok)
     return err({ error: inspectionSources.error, delivered: selected });
+  const records = [
+    ...new Map(
+      [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
+        (record) => [record.evidence_id, record],
+      ),
+    ).values(),
+  ];
+  // Sealed records already carry authentication; mutable producers still need
+  // the writer's allocation admission before publication.
+  const bundle = records.every(isImmutableEvidence)
+    ? createImmutableEvidenceBundle(records)
+    : createEvidenceBundle(records);
   const published = await publishEvidenceDelivery({
-    bundle: createEvidenceBundle([
-      ...new Map(
-        [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
-          (record) => [record.evidence_id, record],
-        ),
-      ).values(),
-    ]),
+    bundle,
     complete,
     delivered: selected,
     outputPath: absoluteCallerPath(evidenceOutput),
@@ -252,18 +333,17 @@ const publishDeliveredEvidence = async (
   if (!published.ok)
     return err({ error: published.error, delivered: selected });
   const { path, bytes } = published.value.evidenceBundle;
-  return ok({
-    delivered: published.value.delivered,
-    receipt: bundleReceipt(path, bytes, input),
-  });
+  const receipt = bundleReceipt(path, bytes, input);
+  recordCliEvidencePublication(receipt);
+  return ok({ delivered: published.value.delivered, receipt });
 };
 
 /** A receipt omits a path that contains an excluded sensitive literal. */
-const bundleReceipt = (
+const bundleReceipt = <Bytes extends JsonValue>(
   path: string | undefined,
-  bytes: JsonValue,
+  bytes: Bytes,
   input: Pick<CliEvidenceDelivery, "sensitiveValues">,
-): JsonValue => ({
+): { readonly path?: string; readonly bytes: Bytes } => ({
   ...(path === undefined ||
   input.sensitiveValues?.some(
     (literal) => literal !== "" && path.includes(literal),
@@ -272,11 +352,6 @@ const bundleReceipt = (
     : { path }),
   bytes,
 });
-
-const isJsonObject = (
-  value: JsonValue | undefined,
-): value is { readonly [key: string]: JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * A failure that carries partial Evidence publishes it to --evidence_output
@@ -295,29 +370,36 @@ const publishFailurePartialEvidence = async (
 ): Promise<JsonValue> => {
   if (
     input.signal.aborted ||
-    !isJsonObject(failure) ||
+    !isObject(failure) ||
     failure.code === "cancelled" ||
-    !isJsonObject(failure.details) ||
+    !isObject(failure.details) ||
     failure.details.partial_observation === undefined
   )
-    return failure;
+    return withUndeliveredSourceClosure(failure, input);
   const details = failure.details;
-  const diagnostics = isJsonObject(details.diagnostics)
-    ? details.diagnostics
-    : {};
+  const diagnostics = isObject(details.diagnostics) ? details.diagnostics : {};
   let partial: Evidence;
   try {
     partial = parseEvidence(details.partial_observation);
   } catch {
-    return failure;
+    return withUndeliveredSourceClosure(failure, input);
   }
   const published = await publishDeliveredEvidence(
     partial,
     evidenceOutput,
     input,
   );
-  if (!published.ok)
-    return refusedPartialPublication(failure, details, published.error, input);
+  if (!published.ok) {
+    const refusal = refusedPartialPublication(
+      failure,
+      details,
+      published.error,
+      input,
+    );
+    return evidenceDeliveryCommitted(published.error.error)
+      ? refusal
+      : withUndeliveredSourceClosure(refusal, input);
+  }
   return {
     ...failure,
     details: {
@@ -346,13 +428,11 @@ const refusedPartialPublication = (
   refused: { readonly error: AnalysisError; readonly delivered?: Evidence },
   input: CliEvidenceDelivery,
 ): JsonValue => {
-  const diagnostics = isJsonObject(details.diagnostics)
-    ? details.diagnostics
-    : {};
+  const diagnostics = isObject(details.diagnostics) ? details.diagnostics : {};
   const refusal = projectAnalysisError(
     redactExplicitFailure(refused.error, input.sensitiveValues ?? []),
   );
-  const refusalDetails: JsonObject = isJsonObject(refusal.details)
+  const refusalDetails: JsonObject = isObject(refusal.details)
     ? refusal.details
     : {};
   const receipt = committedReceipt(refusalDetails, input);
@@ -408,10 +488,10 @@ const committedReceipt = (
       refusalDetails.bytes,
       input,
     );
-  const later = isJsonObject(refusalDetails.diagnostics)
+  const later = isObject(refusalDetails.diagnostics)
     ? refusalDetails.diagnostics.evidence_bundle
     : undefined;
-  return isJsonObject(later)
+  return isObject(later)
     ? bundleReceipt(
         typeof later.path === "string" ? later.path : undefined,
         later.bytes ?? null,

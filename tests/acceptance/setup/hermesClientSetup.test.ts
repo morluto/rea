@@ -120,8 +120,8 @@ cliTest(
     const original = [
       "# Caller configuration",
       "mcp_servers:",
-      "  rea:",
-      "    command: rea",
+      "  rea: # Registration explanation",
+      "    command: rea # Launcher explanation",
       "    args: [mcp]",
       "    env:",
       "      CALLER_SETTING: keep exactly",
@@ -183,6 +183,8 @@ cliTest(
       mcp_servers: { rea: { command: "rea" } },
     });
     expect(configured).toContain("# Curated for this client.");
+    expect(configured).toContain("# Registration explanation");
+    expect(configured).toContain("# Launcher explanation");
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
     expect(
       (await run(["doctor", "--client", "hermes", "--skill=false", "--json"]))

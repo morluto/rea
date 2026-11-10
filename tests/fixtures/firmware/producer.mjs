@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
 import {
   chmod,
   mkdir,
+  open,
   readFile,
   truncate,
   writeFile,
@@ -146,8 +146,24 @@ if (args.includes("--version")) {
       const oversized = 128 * 1024 * 1024 + 1;
       await truncate(child, oversized);
       const oversizedDigest = createHash("sha256");
-      for await (const chunk of createReadStream(child))
-        oversizedDigest.update(chunk);
+      // Reuse one buffer under the real engine's address-space ceiling instead
+      // of depending on when Node collects the stream's retired chunk buffers.
+      const source = await open(child, "r");
+      try {
+        const buffer = Buffer.alloc(64 * 1024);
+        for (;;) {
+          const { bytesRead } = await source.read(
+            buffer,
+            0,
+            buffer.length,
+            null,
+          );
+          if (bytesRead === 0) break;
+          oversizedDigest.update(buffer.subarray(0, bytesRead));
+        }
+      } finally {
+        await source.close();
+      }
       const oversizedHash = oversizedDigest.digest("hex");
       const nestedUnknownRecords = [
         {

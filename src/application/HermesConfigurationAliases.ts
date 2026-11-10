@@ -13,6 +13,7 @@ interface AliasCopies {
   readonly targets: ReadonlyMap<Alias, Node | undefined>;
   readonly removed: ReadonlySet<Node>;
   readonly retained: Map<Node, Node>;
+  readonly copied: Set<Node>;
   readonly survivingNames: Map<Node, string>;
   readonly visiting: Set<Node>;
   readonly validated: Set<Node>;
@@ -98,6 +99,7 @@ const copyAliasValue = (
   const copy = cloned ?? source.clone();
   if (!isNode(copy) || isAlias(copy))
     throw new TypeError("Invalid Hermes YAML value copy");
+  context.copied.add(source);
   if (source.anchor !== undefined) {
     copy.anchor = newAnchorName(source.anchor, context);
     context.retained.set(source, copy);
@@ -127,7 +129,7 @@ const copyAliasValue = (
 export const preserveHermesAliasValues = (
   document: Document,
   previous: readonly unknown[],
-): void => {
+): ReadonlySet<Node> => {
   const roots = previous.filter(isNode);
   const removed = new Set<Node>();
   for (const root of roots)
@@ -136,7 +138,7 @@ export const preserveHermesAliasValues = (
         if (node.anchor !== undefined) removed.add(node);
       },
     });
-  if (removed.size === 0) return;
+  if (removed.size === 0) return new Set();
   const targets = new Map<Alias, Node | undefined>();
   const names = new Set<string>();
   const reusedNames = new Set<string>();
@@ -154,6 +156,7 @@ export const preserveHermesAliasValues = (
     targets,
     removed,
     retained: new Map(),
+    copied: new Set(),
     survivingNames: new Map(),
     visiting: new Set(),
     validated: new Set(),
@@ -189,4 +192,5 @@ export const preserveHermesAliasValues = (
         : copyAliasComments(node, new Alias(name));
     },
   });
+  return context.copied;
 };

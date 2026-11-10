@@ -8,8 +8,7 @@ import {
   applicationGraphEvidenceSchema,
 } from "./javascriptApplicationEvidenceSchemas.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const boundedTextSchema = z.string().min(1);
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
@@ -101,6 +100,7 @@ export const JAVASCRIPT_SEMANTIC_RELATIONS = [
   "detaches-task",
   "dispatches-candidate",
   "forwards-signal",
+  "influences",
   "listens-error",
   "listens-exit",
   "owns",
@@ -149,6 +149,7 @@ export const JAVASCRIPT_SEMANTIC_RELATION_FAMILY = {
   "detaches-task": "promise-ownership",
   "dispatches-candidate": "event",
   "forwards-signal": "child-process",
+  influences: "data-flow",
   "listens-error": "child-process",
   "listens-exit": "child-process",
   owns: "promise-ownership",

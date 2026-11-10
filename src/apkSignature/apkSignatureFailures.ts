@@ -1,5 +1,6 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -230,9 +231,11 @@ const artifactReaderFailure = (
         },
       );
     case "path":
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
     default:
       return adapterFailure(cause, path);
   }

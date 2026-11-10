@@ -14,7 +14,7 @@ const readJson = async (path: string): Promise<unknown> =>
 // current, so a lost marker is caught as well as a stale version.
 const versionedDocumentation = [
   {
-    path: "docs/installation.md",
+    path: "docs/getting-started/installation.md",
     examples: ["doctor --provider ghidra --json"],
   },
 ] as const;

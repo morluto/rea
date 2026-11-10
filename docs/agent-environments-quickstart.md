@@ -11,15 +11,15 @@ with your RL framework to set task goals, check rewards, and run training.
 
 ## Before you start
 
-Install [REA and its agent integration](installation.md). To record an app,
+Install [REA and its agent integration](getting-started/installation.md). To record an app,
 you also need a running test instance and a Chrome-family browser. Choose an
 instance where the agent is allowed to create, edit, and delete data. REA
 records the app you provide; you start it and prepare its test data.
 
 To run the exported environment, install the
 [AgentEnv framework](https://github.com/scaleapi/agentenv-framework#install)
-and start Docker. REA's [compatibility check](testing.md#exported-environment-bundles)
-uses AgentEnv version `0.9.1334` with Python 3.12.
+and start Docker. REA's [compatibility check](development/testing.md#exported-environment-bundles)
+uses AgentEnv version `0.9.1431` with Python 3.12.
 
 There are two ways to build an environment: ask your agent to record the app,
 or start from a recording you already have.
@@ -52,7 +52,7 @@ work and which need more evidence. The app is used during recording; the
 exported environment runs from the saved data.
 
 After your agent exports the folder, skip to
-[run the environment](#3-run-the-environment). The next section is an
+[run the environment](#run-the-environment). The next section is an
 alternative for an existing recording.
 
 ## 2. Or build from a saved recording
@@ -90,6 +90,8 @@ The build report tells you what the environment supports:
 A successful build means the folder was created. Check the report to confirm
 it supports the operations your tasks need. `coverage: null` means the build
 could not prepare state for this environment and it will use replay.
+
+<a id="run-the-environment"></a>
 
 ## 3. Run the environment
 
@@ -158,12 +160,12 @@ assigned by the app.
 
 Use the report's hints to decide what to record next:
 
-| Reason                          | Next step                                                                                |
-| ------------------------------- | ---------------------------------------------------------------------------------------- |
-| `unconfirmed`                   | Read the item and its list after the change.                                             |
-| `no-state-target`               | Record reads of the collection or item the operation changes.                            |
-| `no-observation`                | Read back a created item. For an edit or delete, also read it before changing it.        |
-| `contradicted` or `side-effect` | Inspect the reported disagreement. The operation may need behavior REA cannot model yet. |
+| Reason                          | Next step                                                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `unconfirmed`                   | Read the item and its list after the change.                                                                                |
+| `no-state-target`               | Check the path template and recorded views; record missing reads. The route form may not be supported as a mutation target. |
+| `no-observation`                | Read back a created item. For an edit or delete, also read it before changing it.                                           |
+| `contradicted` or `side-effect` | Inspect the reported disagreement. The operation may need behavior REA cannot model yet.                                    |
 
 See the [full reason table](agent-environments.md#build-a-bundle-in-one-step)
 for the other cases. Rebuild from the new recording and check the report

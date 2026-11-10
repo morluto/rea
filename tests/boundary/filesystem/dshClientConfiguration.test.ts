@@ -2231,7 +2231,7 @@ describe("DeepSeek Harness ordered selector applicability", () => {
 });
 
 describe("DeepSeek Harness caller node metadata", () => {
-  it.each(["environment", "launcher"])(
+  it.each(["environment", "launcher", "arguments"])(
     "preserves scalar and argument comments during %s repairs",
     async (repair) => {
       const { home, client } = await harnessClient();
@@ -2245,6 +2245,9 @@ describe("DeepSeek Harness caller node metadata", () => {
                 config: {
                   ...entry.config,
                   ...(repair === "launcher" ? { command: "stale" } : {}),
+                  ...(repair === "arguments"
+                    ? { command: "stale", args: ["mcp", "--legacy"] }
+                    : {}),
                   env: { TOKEN: "original" },
                 },
               },
@@ -2273,6 +2276,10 @@ describe("DeepSeek Harness caller node metadata", () => {
       if (!isSeq(args) || !isNode(args.items[0]))
         throw new Error("missing launcher arguments");
       args.items[0].comment = " caller argument";
+      if (repair === "arguments") {
+        if (!isNode(args.items[1])) throw new Error("missing old argument");
+        args.items[1].comment = " removed argument explanation";
+      }
       const initial = yaml.toString();
       await writeFile(client.configPath, initial);
       expect(
@@ -2298,6 +2305,23 @@ describe("DeepSeek Harness caller node metadata", () => {
         expect(text).toContain(`# before ${key}`);
       }
       expect(text).toContain("# caller argument");
+      if (repair === "arguments") {
+        expect(text).toContain("# removed argument explanation");
+        const updatedArgs = parseDocument(text).getIn(
+          [0, "insert", 0, "config", "args"],
+          true,
+        );
+        if (!isSeq(updatedArgs)) throw new Error("missing updated arguments");
+        expect(updatedArgs.commentBefore).toContain(
+          "removed argument explanation",
+        );
+        const mcp = updatedArgs.items.find(
+          (item) => isNode(item) && "value" in item && item.value === "mcp",
+        );
+        expect(isNode(mcp) ? mcp.comment : undefined).toContain(
+          "caller argument",
+        );
+      }
       expect(loadedInserts(text)).toEqual([
         {
           ...entry,

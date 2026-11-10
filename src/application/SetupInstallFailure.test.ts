@@ -5,31 +5,52 @@ import { setupInstallFailure } from "./SetupInstallFailure.js";
 
 describe("macOS Hopper setup failure projection", () => {
   it("projects a publisher mismatch onto its own code and recovery", () => {
-    expect(setupInstallFailure("publisher_verification_failed")).toEqual({
+    const result = setupInstallFailure("publisher_verification_failed");
+    expect(result).toMatchObject({
       status: "failed",
       code: "publisher_verification_failed",
-      remediation: `The mounted Hopper application is not signed by the publisher REA pins (${HOPPER_PUBLISHER.bundleIdentifier}, Apple team ${HOPPER_PUBLISHER.teamIdentifier}); nothing was copied or launched. Install Hopper yourself and set HOPPER_LAUNCHER_PATH to its launcher, then rerun rea setup.`,
     });
+    for (const fact of [
+      HOPPER_PUBLISHER.bundleIdentifier,
+      HOPPER_PUBLISHER.teamIdentifier,
+      "HOPPER_LAUNCHER_PATH",
+      "rea setup",
+    ])
+      expect(result.remediation).toContain(fact);
+    expect(result.remediation).toMatch(/nothing was copied or launched/i);
   });
 
   it("keeps a broken bundle distinct from a publisher mismatch", () => {
-    expect(setupInstallFailure("bundle")).toEqual({
+    const result = setupInstallFailure("bundle");
+    expect(result).toMatchObject({ status: "failed", code: "bundle_invalid" });
+    expect(result.remediation).toMatch(/bundle/i);
+    expect(result.remediation).toMatch(/retry setup/i);
+    expect(result.remediation).toMatch(/update REA/i);
+  });
+
+  it("keeps a host below the release minimum distinct from an unsupported host", () => {
+    const incompatible = setupInstallFailure("incompatible_host_version");
+    expect(incompatible).toMatchObject({
       status: "failed",
-      code: "bundle_invalid",
-      remediation:
-        "The mounted package did not contain the expected Hopper application bundle. Retry setup; if it repeats, update REA before installing.",
+      code: "incompatible_host_version",
     });
+    expect(incompatible.remediation).toContain("HOPPER_LAUNCHER_PATH");
+    const unsupported = setupInstallFailure("unsupported_host");
+    expect(unsupported.code).toBe("unsupported_host");
+    expect(incompatible.remediation).not.toBe(unsupported.remediation);
   });
 });
 
 describe("Linux package-manager setup failure projection", () => {
   it("quotes the failing command and a sanitized bounded diagnostic", () => {
     const result = setupInstallFailure("authorization_or_package_manager", {
-      command: 'pkexec pacman -U "/tmp/hopper package.pkg.tar.xz"',
-      exitCode: 1,
-      stdout: "",
-      stderr: "\u001b[31merror:\u001b[0m package conflict\nrefused",
-      outputTruncated: false,
+      packageFailure: {
+        command: 'pkexec pacman -U "/tmp/hopper package.pkg.tar.xz"',
+        exitCode: 1,
+        stdout: "",
+        stderr: "\u001b[31merror:\u001b[0m package conflict\nrefused",
+        outputTruncated: false,
+      },
     });
     expect(result).toMatchObject({
       status: "failed",
@@ -45,21 +66,25 @@ describe("Linux package-manager setup failure projection", () => {
   });
 
   it("preserves the established remediation if no package output exists", () => {
-    expect(setupInstallFailure("authorization_or_package_manager")).toEqual({
+    const result = setupInstallFailure("authorization_or_package_manager");
+    expect(result).toMatchObject({
       status: "failed",
       code: "authorization_or_package_manager_failed",
-      remediation:
-        "Allow the system package-manager operation or install the planned Hopper package and Linux runtime dependencies, then rerun rea setup.",
     });
+    expect(result.remediation).toMatch(/package.manager/i);
+    expect(result.remediation).toMatch(/Linux runtime dependencies/i);
+    expect(result.remediation).toContain("rea setup");
   });
 
   it("keeps truncated package output within its excerpt budget", () => {
     const result = setupInstallFailure("authorization_or_package_manager", {
-      command: "pacman -U hopper.pkg.tar.xz",
-      exitCode: 1,
-      stdout: "",
-      stderr: `${"warning ".repeat(100)}final package conflict`,
-      outputTruncated: true,
+      packageFailure: {
+        command: "pacman -U hopper.pkg.tar.xz",
+        exitCode: 1,
+        stdout: "",
+        stderr: `${"warning ".repeat(100)}final package conflict`,
+        outputTruncated: true,
+      },
     });
     if (result.status !== "failed") throw new Error("expected failure");
     const excerpt = result.remediation

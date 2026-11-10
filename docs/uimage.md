@@ -9,14 +9,18 @@ The same domain header/table facts and artifact reader serve CLI and MCP.
 The root is an archive with unknown executable architecture. The header's CPU,
 OS, type, compression, load address and entry address are declarations, not proof of
 compatible or executable payloads. Raw numeric identifiers remain available
-alongside names; unrecognized identifiers have the name `unknown`.
+alongside names. Type names cover every image type in the pinned
+`include/image.h`, using U-Boot's `mkimage -T` names; `IH_TYPE_LOADABLE` (22)
+has none and is named `loadable`. Unrecognized identifiers have the name
+`unknown`.
 
 The header's CRC32 and the declared payload's CRC32 must verify before a
 successful inventory. `payload.bin` contains the complete stored payload.
 Multi-file images also expose `image-0.bin`, `image-1.bin`, and so on. These
 component names are generated from table order. Components follow the zero-terminated big-endian size table, with four-byte
-padding after every nonfinal component. Their physical source ranges and
-content hashes retain precise provenance. Extraction writes the complete
+padding after every nonfinal component. Script images (`boot.scr`) carry the
+same table, so their script text is `image-0.bin`. Component physical source
+ranges and content hashes retain precise provenance. Extraction writes the complete
 payload and every component, so multi-file output can approach twice the input
 size. Compressed payloads remain compressed.
 
@@ -28,8 +32,10 @@ exactly. For example, a producer can truncate a multibyte character at the
 ## Bounded work and retained facts
 
 The reader admits at most 4,096 components, a resource policy rather than a
-format maximum. It reads at most 16,388 bytes for the size table and refuses an
-excess count as a capacity limit before its remaining payload CRC scan.
+format maximum. It reads at most 16,388 bytes for the size table and refuses a
+structurally possible excess count as a capacity limit before its remaining
+payload CRC scan. If the observed size entries, minimum terminator and component
+bytes cannot fit in the declared payload, it instead refuses the input as malformed.
 Shared artifact identity hashing has separate cost. The
 same prefix participates in the native incremental CRC32 calculation; no
 custom bytewise CRC table or full-payload buffer is retained. Remaining CRC
@@ -68,5 +74,4 @@ pinned to commit `ece349ade2973e220f524ce59e59711cc919263f`.
 Source and compiled CLI/full/compact MCP tests cover aligned component ranges,
 unknown identifiers/text, malformed/truncated inputs, CRC failures, capacity,
 source changes, cancellation, pending reads, final validation and cleanup
-retry. Real producer results, complete-task cost measurements and limitations
-are reported in the PR. No target runtime or decompressor behavior is verified.
+retry. No target runtime or decompressor behavior is verified.

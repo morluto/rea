@@ -78,13 +78,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "node_modules/mapped/x%2Ey.js": 'throw new Error("must never load");',
       "oracle.mjs": `
 import { fileURLToPath } from "node:url";
-import { relative } from "node:path";
+import { relative, sep } from "node:path";
 import { existsSync } from "node:fs";
 const valid = ${JSON.stringify(Object.keys(valid))};
 const rejected = ${JSON.stringify(Object.keys(rejected))};
 const resolveFile = request => {
   const path = fileURLToPath(import.meta.resolve(request));
-  return { path: relative(process.cwd(), path), exists: existsSync(path) };
+  return { path: relative(process.cwd(), path).split(sep).join("/"), exists: existsSync(path) };
 };
 console.log(JSON.stringify({
   valid: valid.map(resolveFile),
@@ -148,5 +148,43 @@ console.log(JSON.stringify({
           resolved_path: null,
         });
     }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "selects import exports for uppercase loader suffixes through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-uppercase-import-");
+    await writeFixtureFiles(root, {
+      "uppercase.CJS": 'import "dual-condition";',
+      "uppercase.CTS": 'import "dual-condition";',
+      "node_modules/dual-condition/package.json": JSON.stringify({
+        exports: { import: "./import.mjs", require: "./require.cjs" },
+      }),
+      "node_modules/dual-condition/import.mjs": "export default 1;",
+      "node_modules/dual-condition/require.cjs": "module.exports = 2;",
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const imports = result.graph.edges.filter(
+      (edge) =>
+        edge.relation === "imports" &&
+        edge.properties.specifier === "dual-condition",
+    );
+    for (const source of ["uppercase.CJS", "uppercase.CTS"])
+      expect(
+        imports.some(
+          ({ evidence }) =>
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range" &&
+            evidence.location.value.source === source,
+        ),
+        source,
+      ).toBe(true);
+    for (const edge of imports)
+      expect(edge.properties).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "node_modules/dual-condition/import.mjs",
+      });
   },
 );

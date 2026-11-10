@@ -116,16 +116,15 @@ it("retains malformed successful hdiutil inventory output as a typed producer pa
   expect(calls).toEqual(["verify", "info"]);
   expect(failure).toMatchObject({
     reason: "format",
-    message: "hdiutil info -plist returned malformed image inventory",
+    message: expect.stringMatching(/hdiutil.*info.*inventory/iu),
     cause: { name: "ZodError" },
   });
+  if (!(failure instanceof Error))
+    throw new Error("Expected inventory failure");
   expect(
     projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
   ).toMatchObject({
-    details: {
-      reason: "format",
-      detail: "hdiutil info -plist returned malformed image inventory",
-    },
+    details: { reason: "format", detail: failure.message },
   });
 });
 

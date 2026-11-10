@@ -1,11 +1,14 @@
 import {
+  artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
+import { artifactReaderLimitsSchema } from "./artifactReaderLimits.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import { inesInventorySchema } from "./inesContainer.js";
 
 /** Entry kinds or subtrees deliberately excluded by an artifact traversal. */
 export const artifactTraversalOmissionKindSchema = z.enum([
@@ -55,13 +58,18 @@ const artifactKindSchema = z.enum([
 ]);
 
 /** Recognized storage or application formats; unknown bytes remain explicit. */
-const artifactFormatSchema = z.enum([
+export const ARTIFACT_FORMAT_IDS = [
+  "dotnet-bundle",
+  "bun-standalone",
+  "deno-standalone",
   "dmg",
   "zip",
   "pkg",
   "asar",
+  "ines",
   "godot-pck",
   "unityfs",
+  "wxapkg",
   "uimage",
   "javascript-bundle",
   "source-map",
@@ -90,17 +98,32 @@ const artifactFormatSchema = z.enum([
   "node-sea",
   "intel-hex",
   "srec",
+  "esp-image",
+  "uf2",
+  "dfuse",
+  "esp-flash-image",
+  "fit",
   "unknown",
-]);
+] as const;
+
+export type ArtifactFormatId = (typeof ARTIFACT_FORMAT_IDS)[number];
+
+const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
+  "ines",
   "zip",
   "godot-pck",
   "unityfs",
+  "wxapkg",
   "uimage",
   "intel-hex",
   "srec",
+  "esp-image",
+  "uf2",
+  "dfuse",
+  "fit",
   "mach-o-universal",
   "mach-o",
   "elf",
@@ -184,6 +207,7 @@ const integrityContradictionBaseSchema = z.object({
 export const integrityContradictionSchema = z.union([
   integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
+  integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
 ]);
 
 /**
@@ -230,11 +254,17 @@ export type ArtifactInventoryCoverage = z.infer<
 
 /** Current inventory observation containing the stable artifact graph. */
 export const artifactInventoryResultSchema = z.strictObject({
+  effective_limits: artifactReaderLimitsSchema
+    .exactOptional()
+    .describe(
+      "Accepted resource policy when selected; each format group applies only if that format is encountered. Not measured process memory or confirmation every reader ran.",
+    ),
   manifest: artifactGraphManifestSchema,
   nodes: z.array(artifactNodeSchema),
   occurrences: z.array(artifactOccurrenceSchema),
   edges: z.array(artifactEdgeSchema),
   provenance: z.array(artifactCommandSchema),
+  ines: inesInventorySchema.exactOptional(),
   integrity_contradictions: z.array(integrityContradictionSchema),
   coverage: artifactInventoryCoverageSchema,
   limitations: z.array(z.string()),
@@ -260,6 +290,7 @@ const artifactExtractionManifestSchema = z.object({
 
 /** Safe extraction observation with containment and cleanup verification. */
 export const artifactExtractionResultSchema = z.object({
+  effective_limits: artifactReaderLimitsSchema.exactOptional(),
   manifest: artifactGraphManifestSchema,
   extraction_manifest: artifactExtractionManifestSchema,
   output_root: z.string().min(1),

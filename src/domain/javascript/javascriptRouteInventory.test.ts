@@ -39,6 +39,29 @@ const build = (inputs: JavaScriptRouteInventoryInput[], bytes?: number) =>
     completeSemanticSteps(buildJavaScriptRouteInventorySteps(inputs, bytes)),
   );
 
+it("keeps rejected program-var paths out of independent route inventory", () => {
+  const result = build([
+    source(
+      "routes.js",
+      "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);const independent='/reports/help';",
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual([
+    "/reports",
+    "/reports/help",
+  ]);
+  expect(result.unknowns).toEqual([
+    expect.objectContaining({
+      kind: "interpretation",
+      reason: expect.stringContaining("parent segment is unknown"),
+    }),
+  ]);
+  expect(result.coverage).toMatchObject({
+    source_parsing: "complete",
+    candidate_enumeration: "partial",
+  });
+});
+
 it.each([
   ["hello world", "hello%20world"],
   ["team?admin", "team%3Fadmin"],
@@ -183,6 +206,61 @@ it("coalesces exact patterns while retaining independent occurrences and stable 
   expect(result.inventory_id).toBe(repeated.inventory_id);
   expect(result.coverage.application_routes).toBe("unknown");
 });
+it("retains resolved index routes with source provenance and complete enumeration", () => {
+  const result = build([
+    source(
+      "routes.ts",
+      `const INDEX=true; createBrowserRouter([{index:(INDEX as boolean),Component:Home},{path:'/parent',children:[{index:INDEX,Component:Home}]}]);`,
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual(["/", "/parent"]);
+  expect(result.occurrences).toHaveLength(3);
+  expect(result.occurrences).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        route_id: result.routes[0]!.id,
+        unprefixed_path: "/",
+        origin: "source-syntax",
+        mechanism: "nested-route-object",
+        source_range: expect.objectContaining({ start: expect.any(Object) }),
+      }),
+    ]),
+  );
+  expect(result.unknowns).toEqual([]);
+  expect(result.coverage).toMatchObject({
+    source_parsing: "complete",
+    candidate_enumeration: "complete",
+    application_routes: "unknown",
+  });
+});
+it.each([
+  "const INDEX=choose();",
+  "var INDEX=true;globalThis.INDEX=false;",
+  "var INDEX=true;const host=globalThis;host.INDEX=false;",
+])(
+  "marks unproven index interpretation as partial with child paths: %s",
+  (prefix) => {
+    const result = build([
+      source(
+        "routes.js",
+        `${prefix}createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);`,
+      ),
+    ]);
+    expect(result.routes.map(({ path }) => path)).toEqual(["/child"]);
+    expect(result.unknowns).toEqual([
+      expect.objectContaining({
+        kind: "interpretation",
+        reason: expect.stringContaining("index-route flag"),
+        source_range: expect.objectContaining({ start: expect.any(Object) }),
+      }),
+    ]);
+    expect(result.coverage).toMatchObject({
+      source_parsing: "complete",
+      candidate_enumeration: "partial",
+      application_routes: "unknown",
+    });
+  },
+);
 it("chooses deterministic primary provenance when sources have equal confidence", () => {
   const inputs = [
     source("one.js", `router.push('/reports');`),
@@ -204,6 +282,33 @@ it("binds ordinary constants to application segments across sources and excludes
   ]);
   expect(result.statistics.unanchored_literals_excluded).toBe(2);
 });
+it.each(["api", "assets", "static", "_next"])(
+  "retains constants under an anchored %s segment without promoting unanchored paths",
+  (prefix) => {
+    const result = build([
+      source("route.js", `router.push('/${prefix}/status');`),
+      source(
+        "runtime.js",
+        `globalThis.TURBOPACK=[];const same='/${prefix}/status';const help='/${prefix}/help';const other='/unanchored/noise';`,
+      ),
+    ]);
+    const anchored = result.routes.find(
+      ({ path }) => path === `/${prefix}/status`,
+    );
+    const descendant = result.routes.find(
+      ({ path }) => path === `/${prefix}/help`,
+    );
+    expect(anchored).toMatchObject({ occurrence_count: 2, source_count: 2 });
+    expect(descendant).toMatchObject({
+      confidence: "low",
+      classification: "unknown",
+    });
+    expect(result.routes.some(({ path }) => path === "/unanchored/noise")).toBe(
+      false,
+    );
+    expect(result.coverage.application_routes).toBe("unknown");
+  },
+);
 it("retains inferred Next script bases and the unprefixed path", () => {
   const result = build([
     source(
