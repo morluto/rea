@@ -1,9 +1,10 @@
-import { copyFile, cp } from "node:fs/promises";
+import { access, copyFile, cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect } from "vitest";
 
+import { unsupportedRuntimeMessage } from "../../../scripts/lib/runtime-admission.mjs";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
@@ -196,18 +197,16 @@ describe("runtime admission dispatch", () => {
   workspaceCliTest(
     "refuses an unsupported runtime before loading the compiled runtime",
     async ({ processes, workspace }) => {
-      // A compiled import that a rejected runtime must never reach.
-      await installCliRuntime(
-        workspace,
-        'throw new Error("compiled runtime was loaded");\n',
-        'throw new Error("compiled runtime was loaded");\n',
-      );
+      const marker = workspace.path("compiled-runtime-loaded");
+      const loaded = `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "loaded");\n`;
+      const range = ">=999.0.0";
+      await installCliRuntime(workspace, loaded, loaded);
       await workspace.write(
         "package.json",
         JSON.stringify({
           type: "module",
           version: "1.0.0",
-          engines: { node: ">=999.0.0" },
+          engines: { node: range },
         }),
       );
       const result = await processes.run(
@@ -217,9 +216,10 @@ describe("runtime admission dispatch", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("REA requires Node.js 999.0.0+");
-      expect(result.stderr).toContain(`runs Node.js ${process.versions.node}`);
-      expect(result.stderr).not.toContain("compiled runtime was loaded");
+      expect(result.stderr).toBe(
+        `${unsupportedRuntimeMessage(range, process.versions.node)}\n`,
+      );
+      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
 

@@ -13,7 +13,7 @@
  */
 export const unsupportedRuntimeMessage = (range, version) => {
   if (typeof range !== "string" || range.length === 0) return undefined;
-  if (satisfiesRange(range, version)) return undefined;
+  if (satisfiesNodeRange(range, version)) return undefined;
   return (
     `REA requires ${supportedReleaseProse(range)}; this process runs Node.js ${version}. ` +
     "Install a supported release, then retry."
@@ -37,7 +37,7 @@ const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 const FLOOR = /^(>=|\^)\s*(\d+)\.(\d+)\.(\d+)$/;
 
 /** Every clause of the published range is `^major.minor.patch` or `>=`. */
-const satisfiesRange = (range, version) => {
+export const satisfiesNodeRange = (range, version) => {
   const found = VERSION.exec(version);
   // A prerelease or a non-release spelling is never an admitted release.
   if (found === null) return false;
