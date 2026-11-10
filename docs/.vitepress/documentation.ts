@@ -14,6 +14,11 @@ export const documentationSections = [
         route: "/client-configuration",
       },
       {
+        text: "Docker",
+        source: "getting-started/docker.md",
+        route: "/docker",
+      },
+      {
         text: "CLI and Evidence",
         source: "getting-started/cli.md",
         route: "/cli",
