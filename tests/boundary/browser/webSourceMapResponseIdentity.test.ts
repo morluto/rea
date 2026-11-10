@@ -149,7 +149,7 @@ it("retains completed body identity when map interpretation reaches its deadline
 });
 
 it("refuses oversized text before JSON interpretation while retaining body identity and later maps", async () => {
-  // JSON escaping expands these decoded control characters beyond the fixed
+  // JSON escaping expands these decoded control characters beyond the default
   // 32 MiB source-map output allowance while the response stays below 64 MiB.
   const oversized = Buffer.alloc(6 * 1024 * 1024, 1);
   const oversizedText = oversized.toString("utf8");
@@ -196,8 +196,10 @@ it("refuses oversized text before JSON interpretation while retaining body ident
   const limitation = result.value.items[0]?.limitation;
   expect(limitation).toMatch(/JSON[- ]escap/i);
   expect(limitation).toMatch(/metadata/i);
-  expect(limitation).toMatch(/shared/i);
-  expect(limitation).toMatch(/32\s*MiB/i);
+  expect(limitation).toContain(
+    "source_map_limits.output_bytes is 33554432 bytes",
+  );
+  expect(limitation).toContain("Increase that per-call field");
   expect(Buffer.byteLength(JSON.stringify(result.value))).toBeLessThanOrEqual(
     32 * 1024 * 1024,
   );

@@ -93,13 +93,22 @@ export const normalizeArtifactPath = (input: string): string => {
 
 /** Reject prefix collisions and optionally bound the allocated path tree. */
 export class ArtifactPathRegistry {
-  readonly #root: PathTrieNode = { kind: undefined, children: new Map() };
+  readonly #root: PathTrieNode = {
+    kind: undefined,
+    occupied: false,
+    children: new Map(),
+  };
   #nodeCount = 0;
 
   constructor(
     private readonly budget?: {
       readonly maxParts: number;
       readonly maxNodes: number;
+      readonly limitFailure?: (
+        resource: "path_parts" | "path_nodes",
+        effectiveValue: number,
+        requiredValue: number,
+      ) => ArtifactReaderFailure;
     },
   ) {}
 
@@ -113,13 +122,36 @@ export class ArtifactPathRegistry {
     this.#visit(path);
   }
 
+  /**
+   * Whether `path` equals an occupied file, sits under one, or is a prefix of
+   * one. This does not insert nodes or consume the path budget.
+   */
+  conflicts(path: string): boolean {
+    const parts = path.split("/");
+    let node = this.#root;
+    for (const part of parts) {
+      if (node.occupied && node.kind !== "directory") return true;
+      const child = node.children.get(part);
+      if (child === undefined) return false;
+      node = child;
+    }
+    return node.occupied || node.kind !== undefined || node.children.size > 0;
+  }
+
   #visit(path: string, kind?: DestinationEntryKind): void {
     const parts = path.split("/");
     if (this.budget !== undefined && parts.length > this.budget.maxParts)
-      throw artifactFixedLimitFailure(
-        "Artifact path depth",
-        this.budget.maxParts,
-        "path parts",
+      throw (
+        this.budget.limitFailure?.(
+          "path_parts",
+          this.budget.maxParts,
+          parts.length,
+        ) ??
+        artifactFixedLimitFailure(
+          "Artifact path depth",
+          this.budget.maxParts,
+          "path parts",
+        )
       );
     if (this.budget !== undefined) {
       let observed = this.#root;
@@ -127,10 +159,17 @@ export class ArtifactPathRegistry {
         const existing = observed.children.get(part);
         if (existing === undefined) {
           if (parts.length - index > this.budget.maxNodes - this.#nodeCount)
-            throw artifactFixedLimitFailure(
-              "Artifact path tree",
-              this.budget.maxNodes,
-              "path nodes",
+            throw (
+              this.budget.limitFailure?.(
+                "path_nodes",
+                this.budget.maxNodes,
+                this.#nodeCount + parts.length - index,
+              ) ??
+              artifactFixedLimitFailure(
+                "Artifact path tree",
+                this.budget.maxNodes,
+                "path nodes",
+              )
             );
           break;
         }
@@ -150,7 +189,7 @@ export class ArtifactPathRegistry {
         );
       let child = node.children.get(part);
       if (child === undefined) {
-        child = { kind: undefined, children: new Map() };
+        child = { kind: undefined, occupied: false, children: new Map() };
         node.children.set(part, child);
         if (this.budget !== undefined) this.#nodeCount++;
       }
@@ -168,12 +207,15 @@ export class ArtifactPathRegistry {
           );
       }
     }
+    if (kind === "directory") node.occupied = false;
+    else node.occupied = true;
     if (kind !== undefined) node.kind = kind;
   }
 }
 
 interface PathTrieNode {
   kind: DestinationEntryKind | undefined;
+  occupied: boolean;
   readonly children: Map<string, PathTrieNode>;
 }
 

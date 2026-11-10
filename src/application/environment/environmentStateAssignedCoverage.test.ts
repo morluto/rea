@@ -140,17 +140,21 @@ describe("assigned values preserve every recorded relation", () => {
     expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
       served: true,
     });
-    const answer = books.answer("patch_books_by_id", {
-      id: "1",
-      body: { name: "Changed" },
-    }).body;
-    expect(answer).toMatchObject({
-      name: "Changed",
-      rows: [{ id: expect.any(String) }, { id: expect.any(String) }],
+    const renewed = ["Changed", "Changed again"].map((name) => {
+      const answer = books.answer("patch_books_by_id", {
+        id: "1",
+        body: { name },
+      }).body;
+      expect(answer).toMatchObject({
+        name,
+        rows: [{ id: expect.any(String) }, { id: expect.any(String) }],
+      });
+      const rows = (answer as { rows: { id: string }[] }).rows;
+      expect(rows[0]!.id).not.toBe(lettered("a"));
+      expect(rows[0]!.id).toBe(rows[0]!.id.toLowerCase());
+      expect(rows[1]!.id).toBe(rows[0]!.id.toUpperCase());
+      return rows[0]!.id;
     });
-    const rows = (answer as { rows: { id: string }[] }).rows;
-    expect(rows[0]!.id).not.toBe(lettered("a"));
-    expect(rows[0]!.id).toBe(rows[0]!.id.toLowerCase());
-    expect(rows[1]!.id).toBe(rows[0]!.id.toUpperCase());
+    expect(renewed[0]).not.toBe(renewed[1]);
   });
 });

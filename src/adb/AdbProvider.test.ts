@@ -48,6 +48,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -128,6 +129,46 @@ it("inspects the adb client without contacting the server", async () => {
   });
   expect(result.contacted_adb_server).toBe(false);
 });
+
+it("joins an admitted availability probe before close and refuses later probes", async () => {
+  const { binary, root } = await writeAdbStub(
+    (directory) => `if [ "$1" = "version" ]; then
+  : > '${directory}/started'
+  while [ ! -f '${directory}/release' ]; do /bin/sleep 0.05; done
+  ${VERSION_BLOCK}
+fi`,
+  );
+  const provider = providerOver(binary);
+  const inspection = provider.inspectAvailability();
+  let closing: Promise<void> | undefined;
+  try {
+    await awaitAcknowledgement(
+      vi.waitFor(
+        async () => expect(await lstat(join(root, "started"))).toBeDefined(),
+        { timeout: 10_000 },
+      ),
+      inspection,
+      "ADB version probe",
+      10_000,
+    );
+    let closed = false;
+    closing = provider.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    await writeFile(join(root, "release"), "");
+    expect((await inspection).status).toBe("available");
+    await closing;
+    await expect(provider.inspectAvailability()).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+  } finally {
+    await writeFile(join(root, "release"), "");
+    await Promise.allSettled([inspection, closing]);
+    await provider.close();
+  }
+}, 15_000);
 
 it("fails closed when adb exits successfully without a recognized version", async () => {
   const stdout = `unexpected adb output ${"x".repeat(700)}\n`;
@@ -738,20 +779,40 @@ if [ "$1" = "version" ]; then ${VERSION_BLOCK}; fi`,
 });
 
 it("reads a bounded logcat dump with the caller count and buffer", async () => {
-  const { binary } = await writeAdbStub(
-    shellStub({
-      logcat:
-        "08-10 13:00:00.000 I/Tag( 123): first\n08-10 13:00:01.000 I/Tag( 123): second\n",
-    }),
+  const { binary, root } = await writeAdbStub(
+    (root) => `printf '%s\\n' "$@" >> '${join(root, "argv.log")}'
+${shellStub({
+  logcat:
+    "08-10 13:00:00.000 I/Tag( 123): first\n08-10 13:00:01.000 I/Tag( 123): second\n",
+})(root)}`,
   );
   const result = await evidenceResult(providerOver(binary), {
     operation: "read_adb_logcat",
-    input: { serial: "emulator-5554", count: 500, buffer: "main" },
+    input: { serial: "emulator-5554", count: 1, buffer: "system", pid: 123 },
   });
-  expect(result.lines).toEqual([
-    "08-10 13:00:00.000 I/Tag( 123): first",
-    "08-10 13:00:01.000 I/Tag( 123): second",
+  expect(
+    (await readFile(join(root, "argv.log"), "utf8")).trim().split("\n"),
+  ).toEqual([
+    "version",
+    "-s",
+    "emulator-5554",
+    "shell",
+    "logcat",
+    "-d",
+    "-b",
+    "system",
+    "-t",
+    "1",
+    "--pid",
+    "123",
   ]);
+  expect(result).toMatchObject({
+    count: 1,
+    buffer: "system",
+    pid: 123,
+    coverage: "partial",
+    lines: ["08-10 13:00:01.000 I/Tag( 123): second"],
+  });
 });
 
 it("reports UTF-8 byte counts in total_bytes for non-ASCII logcat output", async () => {
@@ -1626,13 +1687,15 @@ exit 1`,
     operation: "capture_adb_screen",
     input: { serial: "emulator-5554", output_directory: output },
   });
-  expect(result).toMatchObject({ width: 1, height: 1 });
-  expect(
-    await readFile(join(output, "screen.png")).then(
-      (bytes) => bytes.subarray(1, 4).toString("latin1") === "PNG",
-      () => false,
-    ),
-  ).toBe(true);
+  expect(result).toMatchObject({
+    width: 1,
+    height: 1,
+    bytes: SCREEN_PNG.byteLength,
+    sha256: createHash("sha256").update(SCREEN_PNG).digest("hex"),
+  });
+  expect((await readFile(join(output, "screen.png"))).equals(SCREEN_PNG)).toBe(
+    true,
+  );
 });
 
 it("stops a screen capture aborted after adb returns but before publication", async () => {
@@ -1848,11 +1911,12 @@ it("reads Android 16 focus declarations from displays when windows omits them", 
         "mCurrentFocus=Window{abc u0 com.example/.Main}\nmFocusedApp=ActivityRecord{def u0 com.example/.Main t1}\n",
     }),
   );
-  const result = await evidenceResult(providerOver(binary), {
+  const execution = await providerOver(binary).execute({
     operation: "inspect_adb_window",
     input: { serial: "emulator-5554" },
   });
-  expect(result).toMatchObject({
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
     focused_window: "Window{abc u0 com.example/.Main}",
     focused_app: "ActivityRecord{def u0 com.example/.Main t1}",
     observed_lines: [
@@ -1860,11 +1924,6 @@ it("reads Android 16 focus declarations from displays when windows omits them", 
       "mFocusedApp=ActivityRecord{def u0 com.example/.Main t1}",
     ],
   });
-  const execution = await providerOver(binary).execute({
-    operation: "inspect_adb_window",
-    input: { serial: "emulator-5554" },
-  });
-  if (!execution.ok) throw execution.error;
   expect(execution.value.limitations).toContainEqual(
     expect.stringContaining("dumpsys window displays"),
   );
@@ -1877,16 +1936,15 @@ it("describes missing window focus as unknown after both sections omit declarati
       "dumpsys:window:displays": "no focus\\n",
     }),
   );
-  const result = await evidenceResult(providerOver(binary), {
-    operation: "inspect_adb_window",
-    input: { serial: "emulator-5554" },
-  });
-  expect(result).toMatchObject({ focused_window: null, focused_app: null });
   const execution = await providerOver(binary).execute({
     operation: "inspect_adb_window",
     input: { serial: "emulator-5554" },
   });
   if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    focused_window: null,
+    focused_app: null,
+  });
   expect(execution.value.limitations).toContainEqual(
     expect.stringContaining("focus is unknown"),
   );

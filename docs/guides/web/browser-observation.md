@@ -120,7 +120,7 @@ correspondence merely from their different retained registrations.
 - `compare_web_screenshots` / `rea compare-web-screenshots` performs bounded local PNG pixel comparison without OCR or external services.
 - The CLI comparison commands accept each capture, screenshot artifact or normalization policy as inline JSON or a JSON file path. Use files for screenshot artifacts and scenario captures, whose embedded PNG bytes can exceed the host's command-line length limit.
 - Every surface has equivalent CLI and MCP contracts and returns Evidence provenance.
-- MCP tools return complete results inline and include the Evidence ID. Session evidence can be exported with `export_evidence_bundle`.
+- By default, MCP tools return complete results inline and include the Evidence ID. Selected summary views retain the complete parent Evidence and return a projection. Session evidence can be exported with `export_evidence_bundle`.
 
 Target discovery returns the complete in-scope target array in one result.
 
@@ -228,7 +228,7 @@ in an existing profile.
 For such a browser, pass the browser socket instead of the HTTP endpoint:
 
 ```bash
-rea list-browser-targets ws://127.0.0.1:9222/devtools/browser/<id>
+rea list-browser-targets "ws://127.0.0.1:9222/devtools/browser/<id>"
 ```
 
 Chrome writes the port and the `/devtools/browser/<id>` path to the
@@ -239,10 +239,21 @@ file for you.
   `observe_web_session`, `discover_webmcp_tools`, and `capture_web_screenshot`
   accept a browser socket. Website runtime attribution, Electron inspection,
   and scenario attach mode still require HTTP discovery.
-- Each call opens one WebSocket and uses it for discovery
-  (`Browser.getVersion`, `Target.getTargets`) and for the selected page.
-  Discovery must finish within the same 10-second deadline as HTTP discovery.
-  Chrome may ask you to approve each connection.
+- An admitted browser socket is retained by the active browser provider across
+  calls to the same normalized browser WebSocket URL, and concurrent cold-start
+  calls share one handshake so MCP sessions do not re-open the browser socket on
+  every step. Scheme case, uncompressed IPv6 loopback spellings, and leading
+  port zeros normalize to one reuse key, while `127.0.0.1`, `[::1]`, and
+  distinct `/devtools/browser/<id>` paths remain separate sockets. Each target
+  operation detaches its flattened target session when finished: unconfirmed
+  target attach or detach cleanup closes the shared browser socket for session
+  containment, whereas a caller's own discovery deadline or cancellation
+  releases only its lease when transport state remains clean. Provider shutdown
+  closes the retained browser socket. One-shot CLI invocations close their
+  provider on exit, so Chrome may still ask you to approve each separate CLI
+  connection. Discovery (`Browser.getVersion`, `Target.getTargets`) defaults to
+  a 10-second deadline and can be adjusted per call with `discovery_timeout_ms`
+  (`--discovery-timeout-ms` on the CLI).
 - The browser identifier controls access to the socket. Evidence records the
   endpoint as `ws://127.0.0.1:9222/devtools/browser/[REDACTED]`.
 - `browser.revision` is the socket's `Browser.getVersion` value, such as
@@ -598,13 +609,13 @@ an unknown size, comparison reports unknown rather than treating the observation
 as a resource addition or removal; complete inventory coverage still establishes
 when an entire group is absent.
 
-CDP discovery has a 10-second response deadline. HTTP discovery documents
-use an 8 MiB budget. Browser-socket discovery (`Browser.getVersion`,
-`Target.getTargets`) uses the 64 MiB protocol message budget. Neither budget
-nor the discovery deadline has a runtime override. `list_browser_targets` accepts no
-`command_timeout_ms`: HTTP discovery and browser-socket discovery
-(`Browser.getVersion`, `Target.getTargets`) stay on that fixed deadline, and
-the socket closes without a later command. Other CDP tools use
+CDP discovery defaults to a 10-second response deadline, configurable per call
+on passive browser tools with `discovery_timeout_ms` (default 10000). HTTP
+discovery documents use an 8 MiB budget. Browser-socket discovery
+(`Browser.getVersion`, `Target.getTargets`) uses the 64 MiB protocol message
+budget. Neither byte budget has a runtime override. `list_browser_targets`
+accepts `discovery_timeout_ms` and no `command_timeout_ms`, because it performs
+only discovery without a post-discovery target command. Other CDP tools use
 `command_timeout_ms` (default 20000) for each WebSocket handshake and command
 response, separate from the caller-selected observation window, discovery, and
 the 5000 ms cleanup grace. A browser-level socket's handshake and the following
@@ -624,7 +635,7 @@ rejects it as unknown; other command rejections retain their reported failure.
 
 Network and console coverage starts only after REA attaches and enables the relevant CDP domains. `prior_activity_available` is always `false`; absence from these arrays is not evidence that an event never occurred. Scripts are different: scripts the page parsed before REA attached are still reported under `scripts`. A page that loaded before attach can therefore list its scripts while `network.requests` lacks the requests that fetched them. If CDP reuses a request ID without supplying redirect metadata, REA retains the predecessor observation and marks network coverage incomplete.
 
-Source maps are not fetched by inspection. Bundle analysis fetches them only when `fetch_source_maps` is selected, with exact-origin redirect checks and no credentials, cookies, or referrer. Each fetch operation uses `source_map_fetch_timeout_ms` (default 30000) and a 64 MiB aggregate streamed-response budget across redirects. The byte budget has no runtime override. A fetch overrun is an item limitation, not a thrown analysis timeout. A deadline or byte-limit failure remains explicitly unavailable and makes bundle completeness partial. Source-map decoding also bounds raw resolved identities to 64 MiB and aggregate inline evidence to 32 MiB. Failed maps preserve their failure context when it fits; if another context cannot fit, collection stops with the full requested count, the returned processed count, and an explicit unknown-results limitation. Retained mappings and original sources are returned inline. See [source-location limits](web-source-location.md) for the structural decoder bounds. Original source artifacts with `.ts`, `.tsx`, `.mts`, or `.cts` suffixes carry `text/typescript`; other source names retain `text/javascript`.
+Source maps are not fetched by inspection. Bundle analysis fetches them only when `fetch_source_maps` is selected, with exact-origin redirect checks and no credentials, cookies, or referrer. Each fetch operation uses `source_map_fetch_timeout_ms` (default 30000) and a default 64 MiB aggregate streamed-response budget across redirects. Select `source_map_limits.fetch_bytes` to change byte admission for the next call. A fetch overrun is an item limitation, not a thrown analysis timeout. A deadline or byte-limit failure remains explicitly unavailable and makes bundle completeness partial. Source-map decoding defaults to 64 MiB for raw resolved identities and 32 MiB for aggregate inline evidence; `source_map_limits.fetch_bytes` and `source_map_limits.output_bytes` own those independent admissions. Failed maps preserve their failure context when it fits; if another context cannot fit, collection stops with the full requested count, the returned processed count, and an explicit unknown-results limitation. Retained mappings and original sources are returned inline. See [source-location limits](web-source-location.md) for the structural decoder bounds. Original source artifacts with `.ts`, `.tsx`, `.mts`, or `.cts` suffixes carry `text/typescript`; other source names retain `text/javascript`.
 
 A fully read response that fails UTF-8, JSON, mapping, or structural validation
 retains `artifact: null`, empty original-source, module-edge, and mapping

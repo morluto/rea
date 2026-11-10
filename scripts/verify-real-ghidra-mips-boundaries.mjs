@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { assertMipsLoadedImage } from "../tests/conformance/ghidra/mips-checks.mjs";
 import { buildMips1Fixture } from "../tests/conformance/ghidra/mips1-fixture.mjs";
 import {
   requireMcpOperationResult,
@@ -182,10 +183,13 @@ try {
           status.analysis_run.run_id,
           providerScope,
         );
+        const image = await call("inspect_native_load_image");
+        assertMipsLoadedImage(image.observations, byteOrder, digest(expected));
         providerRuns.push({
           control:
             path === legacyPath ? "recordless_mips32" : "recordless_mips1",
           run_id: status.analysis_run.run_id,
+          language_id: image.observations.language_id,
           ...(providerScope === undefined
             ? { public_lineage: "not_observed" }
             : providerScope),
@@ -209,10 +213,11 @@ try {
         provider_runs: providerRuns,
         declared_o32_mips1: "refused by CLI and MCP",
         recordless_mips1:
-          "real Ghidra dossier and exact loaded bytes; instruction subset/load-delay semantics unverified",
+          "real Ghidra dossier, pinned 32-bit import language and exact loaded bytes; instruction subset/load-delay semantics unverified",
         gnu_fp_attributes:
           "independently decoded soft-float declaration; refused by CLI and MCP",
-        existing_mips32_control: "real Ghidra dossier and exact loaded bytes",
+        existing_mips32_control:
+          "real Ghidra dossier, pinned 32-bit import language and exact loaded bytes",
         hashes: {
           mips1: digest(initial),
           gnu: digest(gnu),

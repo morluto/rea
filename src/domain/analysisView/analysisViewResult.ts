@@ -1,3 +1,10 @@
+import {
+  webSourceLocationViewRequestSchema,
+  webSourceLocationContextSchema,
+  webSourceLocationSummarySchema,
+  webSourceLocationMatchViewSchema,
+} from "./webSourceLocationView.js";
+import { analysisTextPageItemSchema } from "./analysisViewText.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import {
   graphqlContractViewContextSchema,
@@ -14,6 +21,11 @@ import {
   apiContractViewContextSchema,
   apiContractViewItemsSchema,
 } from "./apiContractView.js";
+import {
+  procedureReferenceViewRequests,
+  procedureReferenceViewItems,
+  procedureReferenceSummarySchema,
+} from "./nativeProcedureReferencesView.js";
 import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
@@ -352,6 +364,7 @@ const javascriptSummarySchema = z.strictObject({
 const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
+    "trace_web_source_location",
     "inspect_python_pyc",
     "inspect_erlang_beam",
     "inspect_devicetree",
@@ -389,6 +402,7 @@ const viewResultBase = {
     ...NATIVE_OBSERVATION_OPERATIONS,
     "trace_native_values",
     "match_native_functions",
+    "procedure_references",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -403,6 +417,30 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+export const webSourceLocationSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("trace_web_source_location"),
+  summary: webSourceLocationSummarySchema,
+});
+export const webSourceLocationMatchesViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("source-location"),
+  parent_operation: z.literal("trace_web_source_location"),
+  view: webSourceLocationViewRequestSchema.options[0],
+  source_location: webSourceLocationContextSchema,
+  items: z.array(webSourceLocationMatchViewSchema),
+});
+export const webSourceLocationTextViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("source-location-text"),
+  coverage: nullableCollectionViewCoverageSchema,
+  parent_operation: z.literal("trace_web_source_location"),
+  view: webSourceLocationViewRequestSchema.options[1],
+  source_location: webSourceLocationContextSchema,
+  match: webSourceLocationMatchViewSchema,
+  item: analysisTextPageItemSchema.nullable(),
+});
 
 /** Original selector and text availability without the complete decompiled text. */
 export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
@@ -923,6 +961,39 @@ const nativeFeatureTracePageViewResultSchema = z
       nativeFeatureTracePage("unknowns"),
     ]),
   );
+export const nativeProcedureReferencesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...nativeViewSourceContext,
+  parent_operation: z.literal("procedure_references"),
+  artifact: artifactSchema.nullable(),
+  summary: procedureReferenceSummarySchema,
+});
+
+const procedureReferencePage = <
+  Collection extends keyof typeof procedureReferenceViewRequests,
+>(
+  collection: Collection,
+) =>
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
+    kind: z.literal("native-procedure-references"),
+    parent_operation: z.literal("procedure_references"),
+    artifact: artifactSchema.nullable(),
+    view: procedureReferenceViewRequests[collection],
+    summary: procedureReferenceSummarySchema,
+    items: procedureReferenceViewItems[collection],
+    byte_limited: z.boolean(),
+  });
+const procedureReferencePageViewResultSchema = z
+  .object({ kind: z.literal("native-procedure-references") })
+  .passthrough()
+  .pipe(
+    z.union([
+      procedureReferencePage("references"),
+      procedureReferencePage("unresolved_calls"),
+    ]),
+  );
 
 /** Compact provider load observations retain the independent verification state. */
 export const nativeLoadImageSummaryViewResultSchema = z.strictObject({
@@ -1105,7 +1176,7 @@ export const sourceToBundlePageViewResultSchema = z.strictObject({
 /** Compact retained feature-trace summary; pages carry the same trace context. */
 export const featureTraceSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
-  artifact: z.null(),
+  artifact: artifactSchema.nullable(),
   parent_operation: z.literal("trace_application_feature"),
   summary: featureTraceSummarySchema,
 });
@@ -1118,7 +1189,7 @@ const featureTracePage = <
     ...viewResultBase,
     ...featureTraceViewContextSchema.shape,
     kind: z.literal("feature-trace"),
-    artifact: z.null(),
+    artifact: artifactSchema.nullable(),
     parent_operation: z.literal("trace_application_feature"),
     view: featureTraceViewCollections[collection].request,
     items: featureTraceViewCollections[collection].rows,
@@ -1293,6 +1364,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentCoverageViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    webSourceLocationSummaryViewResultSchema,
     procedurePseudocodeSummaryViewResultSchema,
     nativeObservationSummaryViewResultSchema,
     nativeValueTraceSummaryViewResultSchema,
@@ -1330,6 +1402,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     gpuCodeObjectsSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
     nativeFeatureTraceSummaryViewResultSchema,
+    nativeProcedureReferencesSummaryViewResultSchema,
     nativeLoadImageSummaryViewResultSchema,
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
@@ -1349,6 +1422,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
   }),
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
   z.strictObject({
@@ -1369,6 +1444,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     rows: z.array(nativeInventoryViewRowSchema),
   }),
   nativeFeatureTracePageViewResultSchema,
+  procedureReferencePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     kind: z.literal("native-load-image"),

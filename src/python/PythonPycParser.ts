@@ -8,7 +8,7 @@ import {
   PYTHON_PYC_HEADER_BYTES,
   PYTHON_PYC_INT_PREVIEW_BITS,
   pythonPycMarshalProfile,
-  type InspectPythonPycInput,
+  type PythonPycLimits,
   type PythonPyc,
   type PythonPycCodeLayout,
   type PythonPycCodeObject,
@@ -202,7 +202,7 @@ const sha256 = (bytes: Buffer): string => {
 export const parsePythonPyc = (
   bytes: Buffer,
   artifact: { path: string; sha256: string; bytes: number },
-  input: InspectPythonPycInput,
+  input: PythonPycLimits,
 ): PythonPyc => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
@@ -351,7 +351,7 @@ class MarshalReader {
     readonly bytes: Buffer,
     readonly layout: PythonPycCodeLayout,
     readonly magic: number,
-    readonly input: InspectPythonPycInput,
+    readonly input: PythonPycLimits,
     readonly rejectNegativeCodeFields: boolean,
   ) {}
 

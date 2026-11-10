@@ -134,6 +134,21 @@ it("keeps incomplete fields unknown and FIN without bytes as metadata", () => {
   expect(traces[0]?.loss_declarations[0]?.packet_number.state).toBe("unknown");
 });
 
+it("marks non-string frame types incomplete without hiding their recorded values", () => {
+  const { decoded, traces } = facts(
+    capture([
+      event([{ frame_type: 0 }, frame(0, 5)]),
+      event([{ frame_type: false }], "transport:packet_received"),
+      event([{ frame_type: "extension:custom" }]),
+    ]),
+  );
+  expect(traces[0]?.incomplete_fact_records).toEqual([0, 1]);
+  expect(traces[0]?.streams[0]?.unique_bytes).toBe("5");
+  expect(decoded.records[0]?.reported).toMatchObject({
+    data: { frames: [{ frame_type: 0 }, frame(0, 5)] },
+  });
+});
+
 it.each([
   { fin: undefined, incomplete: [0] },
   { fin: null, incomplete: [0] },
@@ -426,7 +441,10 @@ it.each([
     const enclosing = depth - 4;
     const text = `{"qlog_format":"JSON","qlog_version":"0.3","traces":[{"events":[],"ext":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}]}`;
     if (accepted) expect(facts(text).decoded.total_records).toBe(0);
-    else expect(() => facts(text)).toThrow("nesting budget");
+    else
+      expect(() => facts(text)).toThrow(
+        expect.objectContaining({ reason: "input-limit" }),
+      );
   },
 );
 
@@ -439,7 +457,7 @@ it("rejects other qlog containers/versions and excessive nesting, accepts empty 
         extension: JSON.parse("[".repeat(65) + "0" + "]".repeat(65)),
       }),
     ),
-  ).toThrow("nesting budget");
+  ).toThrow(expect.objectContaining({ reason: "input-limit" }));
   expect(
     facts('{"qlog_format":"JSON","qlog_version":"0.3","traces":[]}').traces,
   ).toEqual([]);

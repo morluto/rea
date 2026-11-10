@@ -1,6 +1,10 @@
 import { err, ok, type Result } from "../result.js";
+import type { DownloadInstall } from "./appDownloadInstall.js";
 import { withoutCredentials, withoutCredentialsIn } from "./aptRepositories.js";
-import { dependencyPackages } from "./debianPackageFile.js";
+import {
+  DEBIAN_PACKAGE_NAME,
+  dependencyPackages,
+} from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
 import {
   formatDesktopExec,
@@ -20,6 +24,11 @@ const COMPUTER_ARCHITECTURES: ReadonlyMap<string, string> = new Map([
   ["x64", "amd64"],
   ["arm64", "arm64"],
 ]);
+
+/** The Debian architecture of a capture host's Node.js architecture, when an agentenv computer runs it. */
+export const computerArchitecture = (
+  hostArchitecture: string,
+): string | undefined => COMPUTER_ARCHITECTURES.get(hostArchitecture);
 
 /**
  * Whether apt installed the package from the Ubuntu 24.04 archive, which the
@@ -79,11 +88,19 @@ export interface ExportInstall {
   readonly executablePackage?: string;
   /** Packages the capture found only in repositories the export leaves out, which the computer cannot install. */
   readonly strandedPackages?: readonly string[];
+  /** Packages installed beside the app because the export was asked for them, other than the app's and its package file's dependencies; absent when none. */
+  readonly extraPackages?: readonly string[];
+  /** The AppImage or tarball the computer downloads and unpacks in place of a package; absent for a package. */
+  readonly download?: DownloadInstall;
 }
 
 /** Why the computer cannot install the captured package: the input to change, and how. */
 export interface InstallRefusal {
-  readonly field: "capture" | "package_url";
+  readonly field:
+    | "capture"
+    | "package_url"
+    | "extra_package"
+    | "download_install";
   readonly reason: string;
   readonly remediation: string;
 }
@@ -500,6 +517,38 @@ export const exportInstall = (
           `The desktop entry belongs to ${install.value.aptPackage}, but the program it runs belongs to ${program}, which the computer cannot install: ${reason}.`,
         ),
       );
+};
+
+/**
+ * The install with the extra packages the export was asked for beside the
+ * app, once each, without those the bundle installs anyway: the app's own
+ * package and the packages its package file is installed after; or why one
+ * is not a package name.
+ */
+export const withExtraPackages = (
+  install: ExportInstall,
+  extraPackages: readonly string[],
+): Result<ExportInstall, InstallRefusal> => {
+  const unnamed = extraPackages.find((name) => !DEBIAN_PACKAGE_NAME.test(name));
+  if (unnamed !== undefined)
+    return err(
+      refusal(
+        `--extra-package ${JSON.stringify(unnamed)} is not a Debian package name.`,
+        "extra_package",
+        "Pass --extra-package with a package name of the Ubuntu 24.04 archive: lowercase letters, digits, +, - and ., at least two long.",
+      ),
+    );
+  // Only what the bundle names: apt may satisfy an alternative the captured .deb lists with another package.
+  const declared = new Set([
+    install.aptPackage,
+    ...(install.packageFile?.dependencies ?? []),
+  ]);
+  const extra = [...new Set(extraPackages)].filter(
+    (name) => !declared.has(name),
+  );
+  return ok(
+    extra.length === 0 ? install : { ...install, extraPackages: extra },
+  );
 };
 
 /** Chromium's sandbox needs user namespaces a container does not grant, so an Electron launch runs with `--no-sandbox` right after the program. */

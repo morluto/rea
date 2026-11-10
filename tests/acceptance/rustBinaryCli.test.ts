@@ -17,7 +17,7 @@ import {
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
@@ -189,7 +189,7 @@ cliTest(
           }),
         );
         if (surface === "cli") {
-          const response = await cli.run({
+          const response = await runFileCli(cli, {
             arguments: ["inspect-rust-binary", path, "--json"],
           });
           expect(response.exitCode, response.stderr).toBe(0);
@@ -214,7 +214,7 @@ cliTest(
       }
 
       if (surface === "cli") {
-        const response = await cli.run({
+        const response = await runFileCli(cli, {
           arguments: ["inspect-rust-binary", malformedPath, "--json"],
         });
         expect(response.exitCode).toBe(1);
@@ -248,7 +248,7 @@ cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-missing-");
   const path = join(root, "plain");
   await writeFile(path, createRustImage({ format: "elf", omitSection: true }));
-  const result = await cli.run({
+  const result = await runFileCli(cli, {
     arguments: ["inspect-rust-binary", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
@@ -281,7 +281,7 @@ cliTest(
           fixture.type,
         ),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -327,7 +327,7 @@ cliTest(
     bytes.writeUInt32LE(0x0200000c, 4);
     await writeFile(path, bytes);
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
 
@@ -359,7 +359,7 @@ cliTest(
       ],
     });
     await writeFile(path, createRustImage({ format: "elf", payload }));
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -377,7 +377,7 @@ cliTest(
   },
 );
 
-cliTest("reports malformed zlib as invalid input", async ({ cli }) => {
+cliTest("rejects malformed dependency JSON", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-zlib-");
   const path = join(root, "broken.elf");
   await writeFile(
@@ -388,7 +388,7 @@ cliTest("reports malformed zlib as invalid input", async ({ cli }) => {
       includeRustc: false,
     }),
   );
-  const result = await cli.run({
+  const result = await runFileCli(cli, {
     arguments: ["inspect-rust-binary", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -413,7 +413,7 @@ cliTest(
       }),
     );
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -446,7 +446,7 @@ cliTest(
     bytes.writeUInt32LE(alignedSize, 264 + 16); // .dep-v0 SizeOfRawData
     await writeFile(path, bytes);
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -518,7 +518,7 @@ cliTest(
         reported_limits: { maximum_bytes: compressed.length * 64 },
       },
     };
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -625,7 +625,7 @@ cliTest(
       }
       const path = join(root, `mixed.${format}`);
       await writeFile(path, bytes);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -656,7 +656,7 @@ cliTest(
       const response = await call("inspect_rust_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
-      const go = await cli.run({
+      const go = await runFileCli(cli, {
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(go.exitCode).toBe(1);
@@ -688,29 +688,33 @@ cliTest(
 );
 
 cliTest(
-  "refuses distinct rustc paths above capacity with non-retryable guidance",
+  "retrieves a larger compiler-path prefix through the CLI without losing dependencies",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-cli-overflow-");
     const path = join(root, "overflow.elf");
     await writeFile(path, createRustHashOverflowImage());
     const result = await cli.run({
-      arguments: ["inspect-rust-binary", path, "--json"],
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-rustc-hashes",
+        "65",
+        "--producer-limits",
+        '{"input_bytes":8192,"output_bytes":16384}',
+        "--json",
+      ],
     });
-    expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "resource_constraint",
-      category: "resource_constraint",
-      retryable: false,
-      remediation: {
-        action: expect.stringMatching(
-          /rustc commit.path inventory.*fixed count/iu,
-        ),
-      },
-      details: {
-        operation: "inspect_rust_binary",
-        resource: "capacity",
-        reported_limits: { maximum_rustc_hashes: 64 },
-      },
+    expect(result.exitCode).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(evidence.parameters).toMatchObject({
+      max_rustc_hashes: 65,
+      producer_limits: { input_bytes: 8192, output_bytes: 16384 },
     });
+    expect(report.rustc_commit?.hashes).toHaveLength(65);
+    expect(report.rustc_commit).not.toHaveProperty("coverage");
+    expect(report.auditable_metadata?.packages).toHaveLength(2);
   },
 );

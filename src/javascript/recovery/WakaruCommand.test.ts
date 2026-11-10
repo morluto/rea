@@ -29,26 +29,6 @@ it("names the Wakaru configuration requirement when it is not configured", async
   });
 });
 
-it("rejects an exhausted shared execution budget before launching the next command", async () => {
-  await expect(
-    runWakaruCommand({
-      command: "/selected/wakaru",
-      limiter: "/usr/bin/prlimit",
-      arguments: ["--version"],
-      cwd: "/tmp/unused",
-      environment: {},
-      deadline: performance.now() - 1,
-      launcher: async () => {
-        throw new Error("An expired budget must not launch");
-      },
-    }),
-  ).rejects.toMatchObject({
-    _tag: "AnalysisTimeoutError",
-    operation: "recover_javascript_sources",
-    timeoutMs: RECOVERY_LIMITS.timeoutMs,
-  });
-});
-
 it("projects the fixed Wakaru deadline without an editable setting", async () => {
   const refusal: unknown = await runWakaruCommand({
     command: "/selected/wakaru",
@@ -63,6 +43,10 @@ it("projects the fixed Wakaru deadline without an editable setting", async () =>
   }).catch((cause: unknown) => cause);
   if (!(refusal instanceof AnalysisTimeoutError))
     throw new Error("Expected the Wakaru deadline");
+  expect(refusal).toMatchObject({
+    operation: "recover_javascript_sources",
+    timeoutMs: RECOVERY_LIMITS.timeoutMs,
+  });
   const projected = projectAnalysisError(refusal);
   expect(projected).toMatchObject({
     code: "provider_timeout",

@@ -11,6 +11,7 @@ import { inspectElfNotesInputSchema } from "../../../src/domain/native/elfNotes.
 import { inspectKernelModuleInputSchema } from "../../../src/domain/native/kernelModule.js";
 import { inspectNativeExportsInputSchema } from "../../../src/domain/native/nativeExports.js";
 import { inspectAppleIpsInputSchema } from "../../../src/domain/native/appleIps.js";
+import { inspectWindowsShortcutInputSchema } from "../../../src/domain/native/windowsShortcut.js";
 import { inspectApkSignatureInputSchema } from "../../../src/domain/apkSignature/apkSignatureQuery.js";
 import { PeResourcesProvider } from "../../../src/native/pe/PeResourcesProvider.js";
 import { PeCertificatesProvider } from "../../../src/native/pe/PeCertificatesProvider.js";
@@ -19,6 +20,7 @@ import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
 import { NativeExportsProvider } from "../../../src/native/exports/NativeExportsProvider.js";
 import { AppleIpsProvider } from "../../../src/native/apple/AppleIpsProvider.js";
+import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import { ApkSignatureProvider } from "../../../src/apkSignature/ApkSignatureProvider.js";
 import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -109,6 +111,19 @@ const cases = [
       return {
         inspect: (path: string, signal: AbortSignal) =>
           provider.inspect(inspectAppleIpsInputSchema.parse({ path }), {
+            signal,
+          }),
+        close: () => provider.close(),
+      };
+    },
+  },
+  {
+    name: "Windows shortcut",
+    make: () => {
+      const provider = new WindowsShortcutProvider();
+      return {
+        inspect: (path: string, signal: AbortSignal) =>
+          provider.inspect(inspectWindowsShortcutInputSchema.parse({ path }), {
             signal,
           }),
         close: () => provider.close(),

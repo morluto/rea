@@ -1,9 +1,14 @@
 /** Runtime policy overrides, separate from target state and launch environment. */
 export interface AnalysisSettingValues {
   readonly "asar.max_header_bytes": number;
+  readonly "asar.max_listing_bytes": number;
+  readonly "ghidra.value_flow_max_operations": number;
+  readonly "ghidra.value_flow_max_inputs_per_operation": number;
+  readonly "ghidra.value_flow_max_edges": number;
   readonly "ghidra.startup_timeout_ms": number;
   readonly "hopper.startup_timeout_ms": number;
   readonly "ghidra.decompile_timeout_seconds": number | null;
+  readonly "ghidra.decompile_max_payload_mib": number | null;
   readonly "jadx.operation_timeout_ms": number;
   readonly "regex.matching_deadline_ms": number;
   readonly "regex.worker_heap_request_mib": number;
@@ -25,7 +30,7 @@ export type AnalysisSettingsReader = () => AnalysisSettingsSnapshot;
 export interface AnalysisSettingLimit {
   readonly setting: AnalysisSettingId;
   readonly effective_value: number | null;
-  readonly unit: "bytes" | "ms" | "seconds" | "MiB";
+  readonly unit: "bytes" | "ms" | "seconds" | "MiB" | "count";
   readonly minimum: number;
   readonly maximum: number;
   readonly source?: "default" | "setting" | "runtime" | "request";
