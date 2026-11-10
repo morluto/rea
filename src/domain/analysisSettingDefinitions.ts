@@ -7,6 +7,13 @@ import type {
 import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_LISTING_BYTES,
+  MAXIMUM_ASAR_MAX_LISTING_BYTES,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+  MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+  MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB,
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   MAX_NODE_TIMER_DELAY_MS,
@@ -37,7 +44,7 @@ interface SettingDefinition {
   readonly defaultValue: number | null;
   readonly minimum: number;
   readonly maximum: number;
-  readonly unit: "bytes" | "ms" | "seconds" | "MiB";
+  readonly unit: "bytes" | "ms" | "seconds" | "MiB" | "count";
   readonly appliesAt: "next_operation" | "next_worker" | "next_startup";
   readonly provider: string;
   readonly relatedProviders?: readonly string[];
@@ -52,6 +59,88 @@ const timer = {
 } as const;
 /** Metadata aggregates existing owner definitions; no environment mutation or engine discovery. */
 export const ANALYSIS_SETTINGS = {
+  "ghidra.decompile_max_payload_mib": {
+    environment: "REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB",
+    defaultValue: null,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB,
+    unit: "MiB",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: [
+      "procedure_pseudo_code",
+      "analyze_function",
+      "inspect_native_api",
+      "decompile_all",
+      "trace_native_values",
+      "trace_native_ui_action",
+    ],
+  },
+  "asar.max_listing_bytes": {
+    environment: "REA_ASAR_MAX_LISTING_BYTES",
+    defaultValue: DEFAULT_ASAR_MAX_LISTING_BYTES,
+    minimum: 1,
+    maximum: MAXIMUM_ASAR_MAX_LISTING_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    relatedProviders: [
+      "rea-javascript-application",
+      "rea-cdp-electron",
+      "rea-v8-inspector",
+    ],
+    operations: [
+      "open_binary",
+      "inspect_artifact",
+      "inventory_artifact",
+      "extract_artifact",
+      "analyze_javascript_application",
+      "inspect_electron_page",
+      "observe_javascript_runtime",
+    ],
+  },
+  "ghidra.value_flow_max_operations": {
+    environment: "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
+    defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: [
+      "analyze_function",
+      "inspect_native_api",
+      "trace_native_values",
+    ],
+  },
+  "ghidra.value_flow_max_inputs_per_operation": {
+    environment: "REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION",
+    defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: [
+      "analyze_function",
+      "inspect_native_api",
+      "trace_native_values",
+    ],
+  },
+  "ghidra.value_flow_max_edges": {
+    environment: "REA_GHIDRA_VALUE_FLOW_MAX_EDGES",
+    defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: [
+      "analyze_function",
+      "inspect_native_api",
+      "trace_native_values",
+    ],
+  },
   "asar.max_header_bytes": {
     environment: "REA_ASAR_MAX_HEADER_BYTES",
     defaultValue: DEFAULT_ASAR_MAX_HEADER_BYTES,
@@ -223,7 +312,10 @@ export const analysisSettingValueSchema = (id: AnalysisSettingId) => {
     .int()
     .min(definition.minimum)
     .max(definition.maximum);
-  return id === "ghidra.decompile_timeout_seconds" ? number.nullable() : number;
+  return id === "ghidra.decompile_timeout_seconds" ||
+    id === "ghidra.decompile_max_payload_mib"
+    ? number.nullable()
+    : number;
 };
 /** Project one owner's accepted budget, including the explicit per-call precedence. */
 export const analysisSettingLimit = (

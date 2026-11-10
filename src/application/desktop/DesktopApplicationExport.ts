@@ -1,3 +1,4 @@
+import type { DesktopViewPolicyInput } from "../../domain/desktop/desktopViewPolicy.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import {
@@ -14,13 +15,11 @@ import {
   type HomePathCollision,
   type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
-import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import type { WithheldFile } from "../../domain/desktop/appWithheld.js";
 import {
   trashedFiles,
   runtimeSeeds,
   unownedChangedFolders,
-  unownedFoldersLimitation,
   unreadDconfLimitation,
 } from "../../domain/desktop/appExportUnowned.js";
 import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
@@ -32,7 +31,6 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
-import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -80,6 +78,7 @@ const SEED_MAX_BYTES = 1024 * 1024 * 1024;
 
 /** What the caller asked to export, after CLI parsing. */
 export interface DesktopExportRequest extends WithheldRequest {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   readonly capture: string;
   readonly directory: string;
   readonly name: string | undefined;
@@ -235,6 +234,7 @@ const planExport = async (
   });
   const launch = planLaunch(capture, electron, seeds, files);
   const plan: DesktopAppExportPlan = {
+    viewPolicy: request.viewPolicy,
     name: source,
     className: className(source),
     title: application.desktop_entry?.name ?? source,
@@ -349,6 +349,7 @@ const runExport = async (
     request.capture,
     readers,
     signal,
+    { viewPolicy: request.viewPolicy },
   );
   if (stateEvidence instanceof AnalysisError) throw stateEvidence;
   const state = desktopApplicationStateSchema.parse(
@@ -477,6 +478,9 @@ export const exportDesktopApplication = async (
         withhold_to: request.withhold?.to ?? null,
         withhold_paths: [...(request.withhold?.paths ?? [])],
         seed_withheld: request.seedWithheld === true,
+        ...(request.viewPolicy === undefined
+          ? {}
+          : { view_policy: { ...request.viewPolicy } }),
       },
       result: {
         ...result,

@@ -14,6 +14,19 @@ export const DEFAULT_ASAR_MAX_HEADER_BYTES = 16 * 1024 * 1024;
  */
 export const MAXIMUM_ASAR_MAX_HEADER_BYTES = 256 * 1024 * 1024;
 
+/** Expanded ASAR path/entry retention is independent of packed header bytes. */
+export const DEFAULT_ASAR_MAX_LISTING_BYTES = 64 * 1024 * 1024;
+/** Accounting must remain exactly representable; actual heap admission is separate. */
+export const MAXIMUM_ASAR_MAX_LISTING_BYTES = Number.MAX_SAFE_INTEGER;
+
+export const DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS = 3_000;
+export const DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION = 64;
+export const DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES = 12_000;
+/** Bridge counters and p-code input indices are Java signed integers. */
+export const MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS = 2_147_483_647;
+/** Ghidra 12.1.4 shifts MiB by 20 into a signed Java int response capacity. */
+export const MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB = 2_047;
+
 /** Native function-matching representation admitted when the setting is unset. */
 export const DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 

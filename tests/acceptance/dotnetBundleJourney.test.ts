@@ -6,7 +6,6 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
 
-import { artifactFixedLimitFailure } from "../../src/artifacts/ArtifactReader.js";
 import { dotnetBundleFixture } from "../../src/artifacts/dotnet/DotnetBundle.fixture.js";
 import { cArchiveExecutable } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
@@ -240,18 +239,21 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
     environment: { REA_LOG_LEVEL: "silent" },
   });
   expect(result.exitCode, result.stderr).toBe(1);
-  const failure = artifactFixedLimitFailure(
-    "Artifact path depth",
-    256,
-    "path parts",
-  );
-  expect(result.json).toMatchObject({
-    message: failure.message,
-    details: { boundary: "capacity", detail: failure.message },
-  });
   expect(result.json).toMatchObject({
     code: "truncated",
     category: "truncated",
-    details: { reason: "limit", truncated: true },
+    retryable: true,
+    details: {
+      reason: "limit",
+      truncated: true,
+      boundary: "capacity",
+      reader_limit: {
+        parameter: "artifact_limits.dotnet_bundle.path_parts",
+        effective_value: 256,
+        required_value: 257,
+        unit: "count",
+        can_increase: true,
+      },
+    },
   });
 });
