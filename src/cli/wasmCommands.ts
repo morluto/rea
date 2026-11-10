@@ -1,4 +1,9 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { resolve } from "node:path";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -17,15 +22,17 @@ export const registerWasmCommands = (
   cli.command(wasmArtifactModule.cliCommand, {
     description: "Inspect an explicit local WASM artifact with WABT",
     args: z.object({
-      path: z.string().describe("Local WASM artifact"),
+      path: localPath.describe("Local WASM artifact"),
     }),
     options: z.object({
       glue_paths: z
-        .array(z.string())
+        .array(localPath)
+        .max(16)
         .optional()
         .describe("Selected local JavaScript glue paths"),
       candidate_paths: z
-        .array(z.string())
+        .array(localPath)
+        .max(16)
         .optional()
         .describe("Explicit local WASM candidates"),
     }),
