@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · **한국어** · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: 무엇이든 리버스 엔지니어링
 
@@ -278,6 +278,12 @@ REA는 실행 가능한 환경과 시작 및 응답 여부를 확인하는 기�
 [환경 만들기 가이드](https://rea.tools/guides/rl-environments/) ·
 [환경 참조 문서](../agent-environments.md) ·
 [X에서 데모 보기](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### 데스크톱 앱 환경
+
+REA는 에이전트가 스크린샷, 마우스, 키보드로 사용하는 Linux 데스크톱 앱의 환경도 만들 수 있습니다. "에이전트가 장보기 목록 메모에 올리브유를 추가하는 Gnote 환경을 만들어 줘" 같은 한 줄 요청에서 에이전트가 로컬 빌드 컴퓨터에 앱을 설치하고, 작업을 작성하고, 환경을 내보낸 뒤 새 컴퓨터에서 작업을 확인합니다. 환경을 만드는 머신에는 amd64 또는 arm64의 Linux, Docker, 가이드가 지정한 버전의 agentenv 프레임워크가 필요합니다.
+
+[데스크톱 앱 환경 설정하기](../desktop-build-computer.md)
 
 ## 자주 묻는 질문
 

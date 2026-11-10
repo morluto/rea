@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · **മലയാളം** · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · **മലയാളം** · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: എന്തും Reverse Engineer ചെയ്യുക
 
@@ -282,6 +282,12 @@ agent-env run ./my-env
 [പരിതസ്ഥിതി നിർമ്മാണ മാർഗ്ഗദർശി](https://rea.tools/guides/rl-environments/) ·
 [പരിതസ്ഥിതി റഫറൻസ്](../agent-environments.md) ·
 [X-ൽ ഡെമോ കാണുക](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ
+
+സ്ക്രീൻഷോട്ടുകൾ, മൗസ്, കീബോർഡ് എന്നിവ വഴി ഏജന്റ് ഉപയോഗിക്കുന്ന Linux ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിന്റെ പരിതസ്ഥിതിയും REA-യ്ക്ക് നിർമ്മിക്കാം. "ഷോപ്പിംഗ് ലിസ്റ്റ് നോട്ടിൽ ഏജന്റ് ഒലിവ് ഓയിൽ ചേർക്കുന്ന ഒരു Gnote പരിതസ്ഥിതി നിർമ്മിക്കുക" പോലുള്ള ഒറ്റവരി അഭ്യർത്ഥനയിൽ നിന്ന്, നിങ്ങളുടെ ഏജന്റ് ഒരു പ്രാദേശിക ബിൽഡ് കമ്പ്യൂട്ടറിൽ ആപ്പ് ഇൻസ്റ്റാൾ ചെയ്യുന്നു, ടാസ്‌ക് എഴുതുന്നു, പരിതസ്ഥിതി എക്‌സ്‌പോർട്ട് ചെയ്യുന്നു, ഒരു പുതിയ കമ്പ്യൂട്ടറിൽ ടാസ്‌ക് പരിശോധിക്കുന്നു. ഇത് നിർമ്മിക്കുന്ന മെഷീന് amd64 അല്ലെങ്കിൽ arm64-ലെ Linux, Docker, ഗൈഡ് നിശ്ചയിക്കുന്ന agentenv ഫ്രെയിംവർക്ക് പതിപ്പ് എന്നിവ വേണം.
+
+[ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ സജ്ജീകരിക്കുക](../desktop-build-computer.md)
 
 ## പതിവുചോദ്യങ്ങൾ
 

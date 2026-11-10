@@ -10,13 +10,12 @@ import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberIn
 import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../dist/domain/investigationProviders.js";
-import { createManagedManifestVerifier } from "./manifest.mjs";
+import { verifyManagedAppManifest } from "./manifest.mjs";
 
 const execFileAsync = promisify(execFile);
 
 export const createManagedConformanceOracleSupport = (context) => {
-  const verifier = createManagedManifestVerifier(context);
-  const support = { ...context, ...verifier };
+  const support = { ...context, verifyManagedAppManifest };
   return {
     runManagedAppManifestSelfTest: () => runManagedAppManifestSelfTest(support),
     runOptionalManagedAppManifest: () => runOptionalManagedAppManifest(support),
@@ -29,16 +28,8 @@ async function runManagedAppManifestSelfTest(context) {
     methodName: "PinnedSemanticSlice",
     ilBody: context.defaultIlBody,
   });
-  const artifact = inspectManagedArtifactBytes(
-    sample.bytes,
-    sample.target,
-    context.inspectionLimits,
-  );
-  const members = inspectManagedMembersBytes(
-    sample.bytes,
-    sample.target,
-    context.memberLimits,
-  );
+  const artifact = inspectManagedArtifactBytes(sample.bytes, sample.target);
+  const members = inspectManagedMembersBytes(sample.bytes, sample.target);
   const method = members.methods[0];
   assert.ok(method);
   const summary = await context.verifyManagedAppManifest(
@@ -132,16 +123,8 @@ async function runOptionalIlspyOracle(context) {
   const sample = await context.fixture("ilspy-oracle.exe", {
     methodName: "PinnedSemanticSlice",
   });
-  const artifact = inspectManagedArtifactBytes(
-    sample.bytes,
-    sample.target,
-    context.inspectionLimits,
-  );
-  const members = inspectManagedMembersBytes(
-    sample.bytes,
-    sample.target,
-    context.memberLimits,
-  );
+  const artifact = inspectManagedArtifactBytes(sample.bytes, sample.target);
+  const members = inspectManagedMembersBytes(sample.bytes, sample.target);
   const method = members.methods[0];
   ensureIlspy(method !== undefined, "source-owned fixture has no method");
   const listOutput = await runIlspy(
@@ -167,7 +150,6 @@ async function runOptionalIlspyOracle(context) {
     "ilspycmd C# output exceeded the managed reconstruction import bound",
   );
   const reconstructionImport = importIlspyReconstruction({
-    context,
     sample,
     method,
     members,
@@ -210,7 +192,6 @@ async function runOptionalIlspyOracle(context) {
 }
 
 function importIlspyReconstruction({
-  context,
   sample,
   method,
   members,
@@ -223,7 +204,7 @@ function importIlspyReconstruction({
     MANAGED_STATIC_PROVIDER,
     {
       operation: "inspect_managed_members",
-      parameters: context.memberLimits,
+      parameters: {},
       result: members,
       rawResult: null,
       limitations: members.limitations,

@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · **繁體中文** · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA：逆向一切
 
@@ -278,6 +278,12 @@ REA 匯出可直接執行的環境，並附帶基本測試，檢查環境能否�
 [建立環境指南](https://rea.tools/guides/rl-environments/) ·
 [環境參考文件](../agent-environments.md) ·
 [在 X 上觀看示範](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### 桌面應用程式環境
+
+REA 也能為 Linux 桌面應用程式建立環境，代理透過螢幕截圖、滑鼠和鍵盤使用它。只要一行請求，例如「幫我建立一個 Gnote 環境，讓代理在購物清單筆記中加入橄欖油」，你的代理就會在本機建置電腦上安裝應用程式、撰寫任務、匯出環境，並在全新的電腦上檢查任務。建立環境的機器需要 amd64 或 arm64 上的 Linux、Docker，以及指南固定的 agentenv 框架版本。
+
+[設定桌面應用程式環境](../desktop-build-computer.md)
 
 ## 常見問題
 
