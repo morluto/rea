@@ -67,6 +67,27 @@ it("does not treat prose that mentions a limit name as a producer", () => {
   expect(discovered.has(name)).toBe(false);
 });
 
+it("keeps a destructured environment key, including a rename and a default", () => {
+  const name = "REA_NEW_MAX_BYTES";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/newLimit.ts",
+      source: `const { ${name}: renamed = 1 } = process.env;\nconst present = "${name}" in environment;\nconst owned = Object.hasOwn(environment, "${name}");\nconst source = { ${name}: renamed };\nconst copy = { ...source };`,
+    },
+  ]);
+  expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+});
+
+it("does not invent a limit from a spread of the environment object", () => {
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/newLimit.ts",
+      source: "const copy = { ...process.env, ...environment };",
+    },
+  ]);
+  expect(discovered.size).toBe(0);
+});
+
 it("keeps a bracket-access read as a producer", () => {
   const name = "REA_NEW_MAX_BYTES";
   const discovered = discoverNumericLimitUses([
