@@ -5,9 +5,10 @@ task: a prompt for a computer-use agent and checks that grade what the agent
 left in the application's files. An agent, not REA, writes the prompt and the
 checks from the change the capture recorded. REA validates the task against
 the capture and keeps it only when its checks fail on the seed and all pass on
-the captured end state. REA runs no model and no code the agent wrote: the
-checks are declarative, and the exported verifier evaluates them the same way
-REA does.
+the captured end state. Ordinary file checks are declarative, and the exported
+verifier evaluates them the same way REA does. Tasks can also use an application's
+headless command through a [reader](#readers), or a configured model for a
+[screen judge](#screen-judges).
 
 ```sh
 rea describe-desktop-application-task ./mousepad-capture --format json > draft.json
@@ -15,6 +16,53 @@ rea describe-desktop-application-task ./mousepad-capture --format json > draft.j
 rea export-desktop-application ./mousepad-capture ./mousepad-bundle --task task.json
 agent-env run ./mousepad-bundle --task add-milk --agent claude-code
 ```
+
+## Readers
+
+When REA cannot read a document's format, a task can declare a `readers` array
+and obtain a view through an installed application's headless interface.
+Each reader has an `id`, a home-relative `file`, an `argv` array and an
+`output` of `lines` or `json`. Optional `stdin` supplies the command's input;
+`timeout_s` bounds the command and `display: true` keeps the display connection
+when that interface needs one. The command must be available in the exported
+computer. Its argv or stdin must contain `{file}`, which REA replaces with
+the path of a private copy of the selected file.
+
+The command prints its data on lines beginning with `REA `; other output is
+ignored. For example, `REA {"status":"done"}` supplies a JSON object. A
+`json` reader joins marked lines into one JSON value; a `lines` reader keeps
+their text as a text view. JSON numbers must be readable without precision
+loss. Output, view size and runtime limits still apply. A reported reader
+error makes the affected check undecided, rather than establishing that its
+value or line is absent.
+
+Each check that uses a reader names its id in `reader` and names the same
+`file`. `lines_present`, `lines_absent` and `line_count` use `lines` readers;
+`value_equals`, `value_absent` and `member_count` use `json` readers. Every
+declared reader must be used by a check. Export refuses readers outside the
+application's owned paths or naming the capture host's identity.
+
+Readers run on a private file copy with a fresh home and XDG settings, without
+the desktop display unless requested, the session bus or `AGENTENV_` control
+variables. REA owns the reader's copy and folder until the command and cleanup
+settle. Failed cleanup retains the folder for retry. The
+[build witness](desktop-build-witness.md) and exported verifier use the same
+runner and grading rules.
+
+## Screen judges
+
+A task whose outcome cannot be checked through readable file changes can use
+`screen_judge` checks. Each has an `id` and a yes-or-no `question` about the
+application's screen. Such a task contains only screen-judge checks and no
+readers; it cannot mix them with file checks.
+
+The exported verifier holds labelled screenshots of the seed, where the
+answer is no, and the completed state, where it is yes. At verification it
+takes a fresh screenshot and asks the configured judge model the question.
+A majority of three votes determines each check's result. The judge needs a
+configured model endpoint; a missing screenshot, endpoint or valid answer
+fails the verification call instead of producing a passing grade. Ordinary
+file checks do not make model calls.
 
 ## Describe the change
 
