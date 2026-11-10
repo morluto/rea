@@ -272,15 +272,17 @@ const regionEntry = (
   declaredIntegrity: null,
   unpacked: false,
   limitations:
-    region.available === 0
-      ? [
-          `${region.path} lies outside the dump: the file holds none of its ${String(region.length)} bytes.`,
-        ]
-      : region.available < region.length
+    region.availability === "empty"
+      ? [`${region.path} declares zero bytes.`]
+      : region.availability === "missing"
         ? [
-            `${region.path} is truncated: the dump holds ${String(region.available)} of its ${String(region.length)} bytes.`,
+            `${region.path} lies outside the dump: the file holds none of its ${String(region.length)} bytes.`,
           ]
-        : [],
+        : region.availability === "truncated"
+          ? [
+              `${region.path} is truncated: the dump holds ${String(region.available)} of its ${String(region.length)} bytes.`,
+            ]
+          : [],
   adapterKey: `esp-flash-image:${region.path}`,
   ...(region.partition === undefined
     ? {}
