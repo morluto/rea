@@ -43,6 +43,7 @@ import type {
 import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
+  semanticBindingLookupAt,
   semanticStableInitializer,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticAnalysisState,
@@ -411,7 +412,7 @@ const chunkLoadSpecifier = (
 const vitePreloadDependencySpecifiers = (
   node: JavaScriptCallLike,
   name: string,
-  table: readonly (string | undefined)[] | null,
+  table: FindingContext["vitePreloadDependencyTable"],
   bindings: JavaScriptSemanticAnalysisState,
 ): readonly (string | undefined)[] => {
   if (
@@ -420,10 +421,18 @@ const vitePreloadDependencySpecifiers = (
     !t.isArrayExpression(node.arguments[0])
   )
     return [];
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const lookup = semanticBindingLookupAt(bindings, callee, name);
+  if (
+    (lookup.kind !== "binding" && lookup.kind !== "uncertain-binding") ||
+    semanticStableInitializer(lookup.binding, bindings)?.node !== table.helper
+  )
+    return [];
   const indexes = node.arguments[0].elements;
   // Explicit cache overrides change which table the helper reads. Retain the
   // call slots as unknown unless every override is statically undefined.
   if (
+    lookup.kind !== "binding" ||
     !node.arguments
       .slice(1)
       .every((argument) => isExplicitDefaultArgument(argument, bindings))
@@ -433,7 +442,7 @@ const vitePreloadDependencySpecifiers = (
     if (element === null || !t.isNumericLiteral(element)) return undefined;
     const index = element.value;
     return Number.isSafeInteger(index) && index >= 0
-      ? viteDependencySpecifier(table[index])
+      ? viteDependencySpecifier(table.dependencies[index])
       : undefined;
   });
 };
@@ -473,8 +482,9 @@ type ViteMapDepsFunction =
 /** Index the canonical Vite helper's cache initializer from parsed syntax. */
 export const indexVitePreloadDependencyTable = (
   program: t.Program,
-  erasedSyntaxNodes: WeakSet<t.Node>,
-): readonly (string | undefined)[] | null => {
+  bindings: JavaScriptSemanticAnalysisState,
+): FindingContext["vitePreloadDependencyTable"] => {
+  const { erasedSyntaxNodes } = bindings;
   const helpers: ViteMapDepsFunction[] = [];
   traverseJavaScriptValueAst(program, erasedSyntaxNodes, {
     enter: (node) => {
@@ -497,7 +507,7 @@ export const indexVitePreloadDependencyTable = (
   const mapIdentifier = t.isAssignmentPattern(mapParameter)
     ? mapParameter.left
     : mapParameter;
-  if (!t.isIdentifier(mapIdentifier)) return [];
+  if (!t.isIdentifier(mapIdentifier)) return { helper, dependencies: [] };
   const tables: t.ArrayExpression[] = [];
   traverseJavaScriptValueAst(helper, erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
@@ -515,9 +525,9 @@ export const indexVitePreloadDependencyTable = (
         tables.push(node.right);
     },
   });
-  if (tables.length !== 1) return [];
+  if (tables.length !== 1) return { helper, dependencies: [] };
   const table = tables[0];
-  if (table === undefined) return [];
+  if (table === undefined) return { helper, dependencies: [] };
   // A spread contributes an unknown number of entries, so every later slot
   // has an unknown index; leave those out instead of shifting them.
   const spread = table.elements.findIndex((element) =>
@@ -540,6 +550,14 @@ export const indexVitePreloadDependencyTable = (
         semanticIdentifierRole(node, parent, readAncestors) === null
       )
         return;
+      const lookup = semanticBindingLookupAt(bindings, node, node.name);
+      if (
+        lookup.kind === "ambient" ||
+        lookup.kind === "captured" ||
+        (lookup.kind === "binding" &&
+          semanticStableInitializer(lookup.binding, bindings)?.node !== helper)
+      )
+        return;
       if (
         (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
         parent.callee === node
@@ -548,7 +566,12 @@ export const indexVitePreloadDependencyTable = (
       escapedOrMutated = true;
     },
   });
-  return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
+  return {
+    helper,
+    dependencies: escapedOrMutated
+      ? dependencies.map(() => undefined)
+      : dependencies,
+  };
 };
 
 const requestConstructorUrl = (
