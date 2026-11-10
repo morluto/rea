@@ -68,6 +68,7 @@
 
 ### Features
 
+* **analysis:** make resource budgets recoverable across CLI and MCP ([#9706](https://github.com/morluto/rea/issues/9706)) ([cb4e5cf](https://github.com/morluto/rea/commit/cb4e5cfbff25c2dda8683ef8598c17cec8a73473))
 * **android:** apply caller-selected R8 mapping evidence ([#7456](https://github.com/morluto/rea/issues/7456)) ([03f17cf](https://github.com/morluto/rea/commit/03f17cf41d3c844f9383d7792d9b1a14330d0bb2))
 * **android:** expose selected manifest component declarations ([#7379](https://github.com/morluto/rea/issues/7379)) ([7e8f7f6](https://github.com/morluto/rea/commit/7e8f7f6101593cc88cfc63795b47f21c742bee87))
 * **android:** link native declarations to static JNI candidates ([#7472](https://github.com/morluto/rea/issues/7472)) ([570abe9](https://github.com/morluto/rea/commit/570abe95f2a35b5c580a5ec2fca90c33d4114bdc))
