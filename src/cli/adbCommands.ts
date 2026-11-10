@@ -39,6 +39,8 @@ export const registerAdbCommands = (
   const serial = z
     .string()
     .min(1)
+    .max(256)
+    .regex(/^[^\x00\s"']+$/u, "Device serial cannot contain whitespace or quotes")
     .describe("Device serial exactly as `adb devices` reports it");
 
   cli.command(CLI_COMMANDS.inspectAdbClient, {
