@@ -175,7 +175,11 @@ registerHooks({ load(url, context, nextLoad) {
         ),
       ],
       {
-        env: { ...process.env, REA_AGENT_EVAL_ROOT: parent },
+        env: {
+          ...process.env,
+          REA_AGENT_EVAL_ROOT: parent,
+          REA_AGENT_EVAL_KEEP_FIXTURES: "false",
+        },
         timeoutMs: 10_000,
       },
     );
@@ -199,6 +203,9 @@ registerHooks({ load(url, context, nextLoad) {
     } else {
       await expect(stat(run)).rejects.toMatchObject({ code: "ENOENT" });
     }
+    await expect(readFile(join(run, "codex/auth.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
 
@@ -275,7 +282,11 @@ registerHooks({ load(url, context, nextLoad) {
         ),
       ],
       {
-        env: { ...process.env, REA_AGENT_EVAL_ROOT: parent },
+        env: {
+          ...process.env,
+          REA_AGENT_EVAL_ROOT: parent,
+          REA_AGENT_EVAL_KEEP_FIXTURES: "false",
+        },
         timeoutMs: 10_000,
       },
     );
@@ -310,5 +321,8 @@ registerHooks({ load(url, context, nextLoad) {
         code: "ENOENT",
       });
     }
+    await expect(
+      readFile(join(observed.run, "codex/auth.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
