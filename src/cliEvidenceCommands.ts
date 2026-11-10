@@ -1,5 +1,10 @@
 import { Cli, z } from "incur";
 
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
+
 import {
   compareEvidenceBundlesCommand,
   exportEvidenceBundleCommand,
@@ -20,7 +25,7 @@ export const registerEvidenceCommands = (
   cli.command(CLI_COMMANDS.evidenceImport, {
     description: "Validate and import a bounded local Evidence bundle",
     args: z.object({
-      path: z.string().describe("Evidence bundle JSON path"),
+      path: localPath.describe("Evidence bundle JSON path"),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "evidence-import", async () => {
@@ -31,8 +36,8 @@ export const registerEvidenceCommands = (
   cli.command(CLI_COMMANDS.evidenceExport, {
     description: "Validate and atomically export canonical Evidence JSON",
     args: z.object({
-      source: z.string().describe("Existing evidence bundle JSON path"),
-      output: z.string().describe("Canonical output JSON path"),
+      source: localPath.describe("Existing evidence bundle JSON path"),
+      output: localPath.describe("Canonical output JSON path"),
     }),
     options: z.object({
       overwrite: z.boolean().default(false).describe("Replace output file"),
@@ -51,8 +56,8 @@ export const registerEvidenceCommands = (
     aliases: ["compare-bundles"],
     description: "Compare two canonical Evidence bundles",
     args: z.object({
-      left: z.string().describe("Left Evidence bundle JSON path"),
-      right: z.string().describe("Right Evidence bundle JSON path"),
+      left: localPath.describe("Left Evidence bundle JSON path"),
+      right: localPath.describe("Right Evidence bundle JSON path"),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "compare", async () => {
