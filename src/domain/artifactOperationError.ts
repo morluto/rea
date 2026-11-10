@@ -39,6 +39,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_elf_unwind_ranges"
       | "inspect_devicetree"
       | "inspect_api_contract"
+      | "inspect_maven_pom"
       | "inspect_playwright_trace"
       | "inspect_kernel_module"
       | "inspect_kernel_build_config"
