@@ -1,3 +1,4 @@
+import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
@@ -14,6 +15,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+import binascii
 import contextlib
 import copy
 import hashlib
@@ -35,17 +37,47 @@ from xml.parsers import expat
 from agentenv_protocol import add_data, get_data, reset_data
 from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Download, Launch, Packages, Ready, RunScript, computer_app, linux, ready_check
 from agentenv_protocol.computer.app_data import INITIAL, add, get, in_thread, keep_initial, reset
+from agentenv_protocol.computer.dataplane import file_parts
 from agentenv_protocol.types import DataPart
 `;
+
+/** Translate the shared XML grammar's code point escapes into Python regex escapes. */
+const PYTHON_XML_ELEMENT_OPENING = XML_ELEMENT_OPENING.replaceAll(
+  /\\u\{([0-9a-f]+)\}/giu,
+  (_, code: string) => `\\U${code.padStart(8, "0")}`,
+);
 
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
 export const PYTHON_HELPERS = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
+XML_ELEMENT_OPENING = re.compile(r"${PYTHON_XML_ELEMENT_OPENING}")
+def _opens_element(text: str) -> bool:
+    """Whether text opens with an element, after a DOCTYPE with no internal subset or none. A '[' inside a quoted id is not a subset."""
+    if XML_ELEMENT_OPENING.match(text):
+        return True
+    declared = re.match(r"(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b", text)
+    if declared is None:
+        return False
+    quote = ""
+    for index in range(declared.end(), len(text)):
+        character = text[index]
+        if quote:
+            if character == quote:
+                quote = ""
+            continue
+        if character in ('"', "'"):
+            quote = character
+        elif character == "[":
+            return False
+        elif character == ">":
+            return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
+    return False
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
+GZIP_HEADER = b"\x1f\x8b\x08"
 XML_SPACE = "xml:space"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -113,6 +145,47 @@ def _seed_home(home: Path) -> None:
         else:
             data = _respelled_utf16(data, home)
         target.write_bytes(data)
+        mode = SEED_MODES.get(relative)
+        if mode is not None:
+            target.chmod(mode)
+
+
+def _ensure_state_aliases(home: Path) -> None:
+    """Restore selected aliases without replacing any existing user data."""
+    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
+    for alias, target in aliases:
+        link = home / alias
+        destination = home / target
+        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        if link.is_symlink() and link.resolve() == destination.resolve():
+            if has_children:
+                destination.mkdir(parents=True, exist_ok=True)
+            continue
+        if os.path.lexists(link):
+            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if has_children:
+            destination.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(destination)
+
+
+def _ensure_state_aliases(home: Path) -> None:
+    """Restore selected aliases without replacing any existing user data."""
+    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
+    for alias, target in aliases:
+        link = home / alias
+        destination = home / target
+        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        if link.is_symlink() and link.resolve() == destination.resolve():
+            if has_children:
+                destination.mkdir(parents=True, exist_ok=True)
+            continue
+        if os.path.lexists(link):
+            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if has_children:
+            destination.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(destination)
 
 
 def _dconf(arguments: list, environment: dict) -> str:
@@ -262,7 +335,9 @@ def _text_view(name: str, text: str, size: int) -> dict:
         if view is not None:
             return view
     lowered = name.lower()
-    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
+    # Text that opens with an element, after a DOCTYPE with no internal subset or none, is XML if it parses, whatever
+    # the file is called, as a Freeplane map or KmPlot's <!DOCTYPE kmpdoc> plot.
+    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml") or _opens_element(trimmed):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
     if _is_keyfile(text):
@@ -272,6 +347,17 @@ def _text_view(name: str, text: str, size: int) -> dict:
     return _text(text)
 
 
+def _bytes_view(name: str, data: bytes) -> dict:
+    """The view of a document that is no database or archive: its text's, or none when it is binary."""
+    try:
+        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
+    except UnicodeDecodeError:
+        text = None
+    if text is None:
+        return {"format": "binary", "view": None, "truncated": False}
+    return _text_view(name, text, len(data))
+
+
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
@@ -279,25 +365,31 @@ def _view(path: Path) -> dict:
         return too_large
     with path.open("rb") as file:
         data = file.read(8192)
-        whole = not data.startswith(SQLITE_HEADER) and b"\x00" not in data
+        whole = data.startswith(GZIP_HEADER) or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data)
         data += file.read(MAX_VIEW_BYTES + 1 - len(data)) if whole else b""
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
     if data.startswith(ZIP_HEADER):
-        return _zip(path)
+        with path.open("rb") as file:
+            return _zip(file, os.fstat(file.fileno()).st_size)
     if len(data) > MAX_VIEW_BYTES:
         return too_large
-    try:
-        text = data.decode("utf-8-sig") if whole else None
-    except UnicodeDecodeError:
-        text = None
-    if text is None:
-        return {"format": "binary", "view": None, "truncated": False}
-    return _text_view(path.name, text, len(data))
+    if data.startswith(GZIP_HEADER):
+        return _gzip(path.name, data)
+    return _bytes_view(path.name, data)
 
 
-def _views(home: Path, paths: list) -> dict:
-    """A view of every file under the app's paths, keyed by its home-relative path."""
+def _write_withheld(home: Path, settings, withheld: dict) -> None:
+    """Write each withheld file from its secret setting, its bytes in base64, readable by its owner alone."""
+    for name, relative in withheld.items():
+        target = home / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(binascii.a2b_base64(getattr(settings, name).get_secret_value(), strict_mode=True))
+        target.chmod(0o600)
+
+
+def _views(home: Path, paths: list, leaving_out=()) -> dict:
+    """A view of every file under the app's paths but those it leaves out, keyed by its home-relative path."""
     files = {}
     for owned in paths:
         root = home / owned
@@ -305,6 +397,8 @@ def _views(home: Path, paths: list) -> dict:
         for path in candidates:
             if path.is_file() and not path.is_symlink():
                 key = path.relative_to(home).as_posix()
+                if key in leaving_out:
+                    continue
                 try:
                     files[key] = _view(path)
                 except (OSError, ValueError, sqlite3.Error, RecursionError) as error:
@@ -319,7 +413,10 @@ const PYTHON_CONSTANTS = [
   "PATHS",
   "DCONF",
   "TEXT_SEEDS",
+  "SEED_MODES",
+  "STATE_ALIASES",
   "WINDOW_CLASS",
+  "WITHHELD",
 ] as const;
 
 /** Names a Python source binds at its top level: imports, assignments, functions and classes. */
@@ -348,6 +445,53 @@ export const PYTHON_MODULE_NAMES: ReadonlySet<string> = new Set([
   ...boundNames(PYTHON_HELPERS),
   ...PYTHON_CONSTANTS,
 ]);
+
+/**
+ * The class body of an app that owns no files: launched at boot, its captured
+ * dconf settings loaded if any, serving no data operations, or, when its task
+ * judges its screen, a reset that only relaunches it.
+ */
+export const ownlessBody = (
+  title: string,
+  dconf: boolean,
+  relaunch: boolean,
+): string => {
+  const reset = relaunch
+    ? `
+    @reset_data
+    async def relaunch(self) -> None:
+        """Nothing to restore: the app is stopped before this and relaunched after it, back to its first screen."""
+`
+    : "";
+  const serves = relaunch
+    ? "and keeps its task's state on screen, so its reset only relaunches it"
+    : "so it serves no data operations";
+  if (dconf)
+    return `    """${title}, launched at boot with its captured settings. It owns no files, ${serves}."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        _load_dconf(Path.home())
+${reset}${PYTHON_READY_CHECK}`;
+  return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+};
+
+/** The data hooks of an app whose withheld files no get serves: neither as parts nor in the views. */
+export const PYTHON_WITHHELD_DATA_HOOKS = `
+    @add_data
+    async def add_files(self, parts: list) -> None:
+        await add(parts, self.paths)
+
+    @get_data
+    async def get_files(self, write_namespace=None) -> list:
+        files = await file_parts(Path.home(), self.paths, write_namespace, list(WITHHELD.values()))
+        views = await in_thread(_views, Path.home(), self.paths, list(WITHHELD.values()))
+        return [*files, DataPart(data={"state": views})]
+
+    @reset_data
+    async def reset_files(self) -> None:
+        await reset(self.paths)
+`;
 
 /** The data hooks of an app that owns paths; `_views` reads files, so it runs in a thread. */
 export const PYTHON_DATA_HOOKS = `

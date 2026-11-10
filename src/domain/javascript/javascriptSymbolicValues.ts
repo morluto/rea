@@ -47,7 +47,11 @@ export type SymbolicValue = (
       readonly kind: "literal";
       readonly value: string | number | boolean | null | undefined;
     }
-  | { readonly kind: "external"; readonly path: readonly string[] }
+  | {
+      readonly kind: "external";
+      readonly path: readonly string[];
+      readonly loaderAuthority?: "candidate";
+    }
   | {
       readonly kind: "object";
       readonly node: t.ObjectExpression;

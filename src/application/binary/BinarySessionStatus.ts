@@ -27,6 +27,7 @@ import type {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
+import type { ProviderSelectionRejection } from "../../domain/providerSelectionError.js";
 
 interface BinarySessionStatusInput {
   readonly investigation: InvestigationStatistics;
@@ -47,6 +48,7 @@ interface BinarySessionStatusInput {
   readonly cleanupRetry?: AnalysisCleanupRetry;
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
+  readonly refreshCandidates?: boolean;
 }
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -66,6 +68,7 @@ export const binarySessionStatus = async ({
   cleanupRetry,
   detail = "complete",
   signal,
+  refreshCandidates = false,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
   const routeCapabilities = (
     bundleResourceRoot === undefined
@@ -119,19 +122,29 @@ export const binarySessionStatus = async ({
   const analysisProviderCandidates =
     bundleResourceRoot !== undefined
       ? []
-      : (await router.candidateStatuses(route, signal)).map((candidate) =>
+      : (
+          await router.candidateStatuses(route, {
+            ...(signal === undefined ? {} : { signal }),
+            ...(target === undefined ? {} : { target }),
+            refresh: refreshCandidates,
+          })
+        ).map((candidate) =>
           detail === "summary"
             ? {
                 provider: providerSummary(candidate.provider),
                 availability: providerStateSummary(candidate.availability),
                 target_support: providerStateSummary(candidate.targetSupport),
                 selected: candidate.selected,
+                selection_source: candidate.selectionSource,
+                rejections: candidate.rejections.map(rejectionSummary),
               }
             : {
                 provider: providerSummary(candidate.provider),
                 availability: structuredClone(candidate.availability),
                 target_support: structuredClone(candidate.targetSupport),
                 selected: candidate.selected,
+                selection_source: candidate.selectionSource,
+                rejections: candidate.rejections.map(selectionRejection),
                 capabilities: providerCapabilitySets(
                   candidate.capabilities
                     .slice()
@@ -153,6 +166,12 @@ export const binarySessionStatus = async ({
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
+    analysis_provider_candidates_observed:
+      bundleResourceRoot !== undefined
+        ? "not_applicable"
+        : route.selection === undefined || refreshCandidates
+          ? "status_request"
+          : "target_selection",
     analysis_run:
       runId === undefined
         ? null
@@ -308,6 +327,36 @@ const providerSummary = ({
   readonly name: string;
   readonly version: string | null;
 }) => ({ id, name, version });
+
+/** Carry every rejection fact at complete detail; clones keep the caller's copy immutable. */
+const selectionRejection = ({
+  providerId,
+  origin,
+  code,
+  reason,
+  remediation,
+  diagnostics,
+}: ProviderSelectionRejection) => ({
+  provider_id: providerId,
+  origin,
+  code,
+  reason,
+  ...(remediation === undefined ? {} : { remediation }),
+  diagnostics: structuredClone(diagnostics),
+});
+
+/** Rejection codes and reasons stay at summary detail; repair and diagnostics do not. */
+const rejectionSummary = ({
+  providerId,
+  origin,
+  code,
+  reason,
+}: ProviderSelectionRejection) => ({
+  provider_id: providerId,
+  origin,
+  code,
+  reason,
+});
 
 const processLineageStatus = (
   snapshots: readonly ProviderRuntimeLineageSnapshot[],

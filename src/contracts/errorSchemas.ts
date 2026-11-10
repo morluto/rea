@@ -40,6 +40,10 @@ export const analysisInputErrorProjectionSchema = generic("invalid_request");
 export const analysisResourceErrorProjectionSchema = generic(
   "resource_constraint",
 );
+/** Authentication or integrity refusal for a supplied Evidence record. */
+export const evidenceIntegrityErrorProjectionSchema = generic(
+  "evidence_integrity_mismatch",
+);
 
 /** Stable discriminated schema shared by every CLI and MCP error surface. */
 export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
@@ -94,7 +98,7 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
     })
     .strict(),
   generic("artifact_operation_failed"),
-  generic("evidence_integrity_mismatch"),
+  evidenceIntegrityErrorProjectionSchema,
   generic("truncated"),
   generic("process_capture_failed"),
   generic("cleanup_incomplete"),

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 describe("Electron applicability", () => {
   it("does not treat Vite table candidates or worker paths as module references", () => {
@@ -22,15 +26,35 @@ describe("Electron applicability", () => {
     expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
   });
 
-  it.each([
-    `import "electron";`,
-    `import("electron");`,
-    `require("electron");`,
-  ])("recognizes Electron module loads: %s", (source) => {
+  it.each([`import "electron";`, `import("electron");`])(
+    "recognizes Electron module loads: %s",
+    (source) => {
+      expect(
+        analyzeJavaScriptStaticSource(source).analysis_coverage?.applicability
+          .electron,
+      ).toBe("observed");
+    },
+  );
+
+  it("observes a require load with proven CommonJS authority", () => {
+    const source = 'require("electron");';
+    const file = parseJavaScriptSource(source, "main.cjs");
+    if (file === null) throw new Error("expected a parsed CommonJS fixture");
     expect(
-      analyzeJavaScriptStaticSource(source).analysis_coverage?.applicability
-        .electron,
+      analyzeParsedJavaScriptStaticSource(source, file).analysis_coverage
+        ?.applicability.electron,
     ).toBe("observed");
+  });
+
+  it("keeps an unproved require loader conditional", () => {
+    const analysis = analyzeJavaScriptStaticSource('require("electron");');
+    expect(analysis.references).toContainEqual(
+      expect.objectContaining({
+        specifier: "electron",
+        loader_authority: "candidate",
+      }),
+    );
+    expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
   });
 
   it("retains a resolution reference without observing an Electron load", () => {

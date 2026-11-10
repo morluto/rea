@@ -861,6 +861,12 @@ export class ViteCacheProperties {
     if (previous !== undefined) return previous;
     const slot = this.graph.vertex();
     slots.set(key, slot);
+    if (key === "constructor" && allocation.kind === "helper") {
+      // the inherited Function constructor can reach every helper's prototype.
+      slot.seed = { allocation: null, owner: null };
+      this.graph.enqueue(slot);
+      return slot;
+    }
     if (
       key === "constructor" &&
       (allocation.kind === "cache" ||

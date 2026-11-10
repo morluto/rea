@@ -5,7 +5,10 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -57,9 +60,10 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -79,7 +83,7 @@ export class KernelModuleProvider implements KernelModulePort {
         );
       });
     } catch (cause) {
-      return err(kernelModuleFailure(cause, input));
+      return err(kernelModuleFailure(cause, input, snapshot));
     }
   }
 }
@@ -228,6 +232,7 @@ const kernelModuleFailurePrimary = (
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
+  snapshot?: StableArtifactSnapshot,
 ) => {
   const primary = kernelModuleFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -239,5 +244,6 @@ const kernelModuleFailure = (
     input.path,
     KERNEL_MODULE_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

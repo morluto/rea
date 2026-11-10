@@ -872,6 +872,11 @@ export class AdbProvider {
   async inspectAvailability(
     signal?: AbortSignal,
   ): Promise<ProviderAvailability> {
+    if (this.#closing)
+      throw new AnalysisCancelledError("inspect_adb_client", {
+        cause: signal?.reason,
+      });
+    const release = this.#beginOperation();
     try {
       const selection = await this.selection(signal);
       await inspectAdbClient(selection, signal);
@@ -888,7 +893,22 @@ export class AdbProvider {
       if (cause instanceof AdbConfigurationFailure)
         return adbConfigurationAvailability(cause);
       throw cause;
+    } finally {
+      release();
     }
+  }
+
+  /** Keep admitted probes and requests owned until their final cleanup settles. */
+  #beginOperation(): () => void {
+    let release!: () => void;
+    const active = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#activeOperations.add(active);
+    return () => {
+      this.#activeOperations.delete(active);
+      release();
+    };
   }
 
   /** Retry removal of owned output directories retained after failed cleanup. */
@@ -1244,11 +1264,7 @@ export class AdbProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return err(new AnalysisCancelledError(request.operation));
-    let release!: () => void;
-    const active = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.#activeOperations.add(active);
+    const release = this.#beginOperation();
     try {
       try {
         await this.#resources.retryCleanup();
@@ -1289,7 +1305,6 @@ export class AdbProvider {
       }
       return await this.#executeOperation(request, options);
     } finally {
-      this.#activeOperations.delete(active);
       release();
     }
   }
@@ -2318,7 +2333,26 @@ export class AdbProvider {
       { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
       signal,
     );
-    if (!pulled.ok) return pulled;
+    if (!pulled.ok) {
+      // A failed adb process can leave caller-visible bytes at the selected
+      // destination. Report only an observed regular file; its transfer and
+      // digest are unconfirmed, and the caller owns the output.
+      const output = await lstat(localPath).catch(() => undefined);
+      if (output?.isFile() === true && !output.isSymbolicLink())
+        pulled.error.retainPartialObservation({
+          provider_id: "adb",
+          operation,
+          result: {
+            client,
+            serial: input.serial,
+            local_path: localPath,
+            device_path: input.device_path,
+            digest_status: "unknown",
+            transfer_status: "unconfirmed",
+          },
+        });
+      return pulled;
+    }
     try {
       const digest = await hashAdbFile(
         localPath,

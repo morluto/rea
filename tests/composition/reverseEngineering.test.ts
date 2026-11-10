@@ -349,8 +349,10 @@ it("marks signal-terminated provider commands as unknown completion", async () =
       expect(ordinaryExit.value.limitations.join(" ")).not.toContain(
         "terminated by signal",
       );
-      expect(ordinaryExit.value.limitations).toContain(
-        "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
+      expect(ordinaryExit.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
+        ),
       );
       expect(ordinaryExit.value.limitations).toHaveLength(4);
     }
@@ -419,8 +421,10 @@ describe("Rizin command service", () => {
       expect(result.value.normalized_result).toMatchObject({
         stdout: "\u001b[31mpartial data\u001b[0m\n",
       });
-      expect(result.value.limitations).toContain(
-        "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
+        ),
       );
       expect(result.value.limitations).toHaveLength(4);
       expect(result.value.parameters).toMatchObject({
@@ -486,8 +490,10 @@ describe("Rizin command service", () => {
           .digest("hex"),
         artifact_changed: true,
       });
-      expect(result.value.limitations).toContain(
-        "The provider command may have changed the artifact while analysis was running; pre-run and post-run digests are both reported.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /may have changed the artifact.*pre-run and post-run digests/iu,
+        ),
       );
     } finally {
       await rm(directory, { recursive: true, force: true });

@@ -12,7 +12,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
@@ -455,7 +455,7 @@ const collectRequireLink = (
   node: t.VariableDeclarator,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  const required = semanticRequireOrigin(node.init, state);
+  const required = semanticRequireOriginCandidate(node.init, state);
   if (required === undefined) return;
   const { origin, call } = required;
   const bindings = requirePatternBindings(node.id, origin.importedPath);
@@ -464,6 +464,9 @@ const collectRequireLink = (
       state,
       {
         kind: "require",
+        ...(origin.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
         specifier: origin.specifier,
         importedName: binding.importedName,
         localName: binding.localName,
@@ -480,12 +483,15 @@ const collectUnboundRequireLink = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   if (state.linkedRequireCalls.has(node)) return;
-  const required = semanticRequireOrigin(node, state);
+  const required = semanticRequireOriginCandidate(node, state);
   if (required === undefined) return;
   addModuleLink(
     state,
     {
       kind: "require",
+      ...(required.origin.loaderAuthority === "candidate"
+        ? { loaderAuthority: "candidate" as const }
+        : {}),
       specifier: required.origin.specifier,
       importedName: null,
       localName: null,
@@ -542,6 +548,7 @@ const collectCommonJsExport = (
       exported.exportedName,
       applicability === "uncertain" ? null : exported.value,
       exported.projection,
+      exported.loaderAuthority,
     );
   }
 };
@@ -552,13 +559,14 @@ const addCommonJsExport = (
   exportedName: string,
   exported: t.Node | null,
   projection?: JavaScriptSemanticPropertyPath,
+  loaderAuthority?: "candidate",
 ): void => {
   // Simple assignment chains yield their rightmost assigned value.
   let value = exported;
   while (t.isAssignmentExpression(value, { operator: "=" }))
     value = value.right;
   const required =
-    value === null ? undefined : semanticRequireOrigin(value, state);
+    value === null ? undefined : semanticRequireOriginCandidate(value, state);
   // Copies retain their module provenance, but do not export the source object
   // itself. A wildcard with exclusions cannot express one module link.
   const origin = projection?.some(
@@ -572,6 +580,10 @@ const addCommonJsExport = (
     state,
     {
       kind: "commonjs-export",
+      ...(origin?.loaderAuthority === "candidate" ||
+      loaderAuthority === "candidate"
+        ? { loaderAuthority: "candidate" as const }
+        : {}),
       specifier: origin?.specifier ?? null,
       importedName:
         origin === undefined

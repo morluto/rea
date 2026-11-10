@@ -3220,6 +3220,34 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: kept ? ["first.js"] : [],
     unknown: !kept,
   })),
+  ...[
+    [
+      "helper-constructor",
+      'const F = __vite__mapDeps.constructor; F.prototype.f = ["./last.js"];',
+      false,
+    ],
+    [
+      "own-helper-constructor",
+      'const F = {prototype: {}}; __vite__mapDeps.constructor = F; const own = __vite__mapDeps.constructor; own.prototype.f = ["./last.js"];',
+      true,
+    ],
+  ].map(([name, effect, kept]) => ({
+    file: `${String(name)}.js`,
+    source: mapDependenciesWithEffects(
+      `${String(effect)} __vite__mapDeps([0]);`,
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: !kept,
+  })),
+  ...["freeze", "seal", "preventExtensions"].map((method) => ({
+    file: `cross-scope-replaced-${method}.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        `function patch() { Object.${method} = (m) => { m.f[0] = "./last.js"; }; } patch(); Object.${method}(__vite__mapDeps); __vite__mapDeps([0]);`,
+    ),
+    resolved: [],
+    unknown: true,
+  })),
 ];
 
 const batches = Array.from(

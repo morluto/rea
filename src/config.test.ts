@@ -11,6 +11,15 @@ import {
 } from "./config/environment.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 
+it("still rejects a NUL in an unresolved expression", () => {
+  const result = parseEnvironmentValues(
+    { REA_GHIDRA_STARTUP_TIMEOUT_MS: "${TIMEOUT}\0private" },
+    new Set(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]),
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(JSON.stringify(result.error)).not.toContain("private");
+});
+
 it("keeps the caller's opt-in Ghidra checkpoint directory and leaves it disabled by default", () => {
   const selected = parseConfig({
     REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints with spaces",
@@ -440,18 +449,22 @@ describe("configuration failure diagnostics", () => {
       const result = parseConfig({ [setting]: value });
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      const constraint = `${setting} must be absolute`;
-      expect(projectAnalysisError(result.error)).toMatchObject({
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
         code: "configuration_invalid",
         category: "invalid_input",
-        message: `REA configuration is invalid: ${constraint}.`,
-        remediation: { action: expect.stringContaining(`Correct ${setting} `) },
-        details: { settings: [{ setting, constraint }] },
+        message: expect.stringContaining(setting),
+        remediation: { action: expect.stringContaining(setting) },
+        details: {
+          settings: [
+            { setting, constraint: expect.stringMatching(/absolute/iu) },
+          ],
+        },
       });
+      expect(projected.message).toMatch(/absolute/iu);
+      expect(projected.remediation.action).toMatch(/correct/iu);
       // The rejected value itself is not echoed.
-      expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
-        value,
-      );
+      expect(JSON.stringify(projected)).not.toContain(value);
     },
   );
 

@@ -257,6 +257,14 @@ cliTest(
     expect(wholeReport.limitations).toEqual(
       comparisonLimitations(leftSource.report, rightSource.report),
     );
+    expect(wholeReport.limitations).toContainEqual(
+      expect.stringMatching(
+        /right.*metadata\.representation.*do not establish absence/i,
+      ),
+    );
+    expect(wholeReport.limitations).toContainEqual(
+      expect.stringMatching(/smaller selection.*type_names.*--type/i),
+    );
     const mcpCompared = await call("compare_managed_members", {
       left: leftSource.evidence,
       right: rightSource.evidence,

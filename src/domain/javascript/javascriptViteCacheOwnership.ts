@@ -94,7 +94,9 @@ export function* invalidateJavaScriptViteCachesSteps(
   admittedNodes: WeakSet<t.Node>,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void> {
-  const interop = createSemanticModuleInterop(state);
+  const interop = createSemanticModuleInterop(state, {
+    includeCrossScopeWrites: true,
+  });
   const identities = new ViteCacheIdentities(
     state,
     interop.intrinsicInvocation,

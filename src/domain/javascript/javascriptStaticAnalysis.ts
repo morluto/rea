@@ -17,10 +17,11 @@ import {
 } from "./javascriptSemanticTraversal.js";
 
 import {
-  isElectronRendererLoad,
+  electronRendererLoadAuthority,
   resolveElectronBrowserWindowReceiver,
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
+import { finishElectronDynamicCodeSteps } from "./electronStaticAnalysisDynamicCode.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   hasPossibleCommonJsDelegateWrite,
@@ -129,14 +130,17 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     browserWindowReceiver: (node, site, suffix) =>
       resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
     rendererLoad: (callee, site) =>
-      isElectronRendererLoad(callee, site, findings, index),
+      electronRendererLoadAuthority(callee, site, findings, index),
     source,
     accumulator,
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
+    electronCandidateBindings: electronIdentity.candidateBindings,
     electronExportIntact: electronIdentity.intactExport,
     electronInvocationPath: electronIdentity.invocationPath,
     electronAppPathChangePossible: electronIdentity.mayChangeAppPath,
+    electronCandidateAppPathChangePossible:
+      electronIdentity.candidateMayChangeAppPath,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
     expressionShapes: createSemanticExpressionShapeResolver(bindings),
   };
@@ -163,6 +167,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   finishBundlerExports(accumulator, index);
   yield* finishElectronNativeBindingsSteps(findings, index);
   yield* finishElectronBrowserWindowsSteps(findings, index);
+  yield* finishElectronDynamicCodeSteps(findings, index);
   if (accumulator.pendingModuleRequireCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();
     finishModuleRequireCalls(findings, index);
@@ -190,12 +195,13 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   let hasElectronReference = false;
   for (const [
     index,
-    { kind, loader, operation, specifier },
+    { kind, loader, loader_authority, operation, specifier },
   ] of references.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
     if (
       ELECTRON_REFERENCE_KINDS.has(kind) &&
       operation === "load" &&
+      loader_authority !== "candidate" &&
       // a factory-loader reference names a module inside the artifact.
       loader !== "factory-loader" &&
       specifier !== null &&
@@ -315,6 +321,14 @@ const finalizeStaticAnalysis = (
   const parserErrors = file.errors.length;
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
   const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const candidateElectron = [
+    ...accumulator.browserWindows,
+    ...accumulator.contextBridgeApis,
+    ...accumulator.ipc,
+    ...accumulator.utilityProcesses,
+    ...accumulator.protocols,
+    ...accumulator.appPathChanges,
+  ].some(({ value }) => value.loader_authority === "candidate");
   const coverage: JavaScriptStaticCoverage = {
     syntax:
       parserErrors === 0
@@ -379,6 +393,11 @@ const finalizeStaticAnalysis = (
         ]
       : []),
     ...(hasElectronReference ? [ELECTRON_IDENTITY_LIMITATION] : []),
+    ...(candidateElectron
+      ? [
+          "Some Electron syntax depends on an unproved CommonJS loader; its Electron identity remains conditional.",
+        ]
+      : []),
     "JavaScript syntax was parsed as data and was never evaluated.",
   ];
   return {
@@ -442,6 +461,14 @@ const finalizeStaticAnalysis = (
         accumulator.nativeAddonBindings,
         accumulator.moduleRangeIndex,
       ),
+      ...(accumulator.dynamicCode.length > 0
+        ? {
+            dynamic_code: finalizeLocatedFindings(
+              accumulator.dynamicCode,
+              accumulator.moduleRangeIndex,
+            ),
+          }
+        : {}),
       protocols: finalizeLocatedFindings(
         accumulator.protocols,
         accumulator.moduleRangeIndex,

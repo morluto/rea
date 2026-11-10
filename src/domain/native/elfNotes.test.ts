@@ -1,12 +1,14 @@
 import { expect, it } from "vitest";
 import {
+  androidNoteTypeName,
+  coreNoteTypeName,
   elfObjectTypeName,
   gnuNoteTypeName,
   inspectElfNotesInputSchema,
   elfNotesSchema,
 } from "./elfNotes.js";
 
-it("maps ELF object and GNU note types without inventing unknown names", () => {
+it("maps ELF object, GNU, CORE, and Android note types without inventing unknown names", () => {
   expect(elfObjectTypeName(1)).toBe("relocatable");
   expect(elfObjectTypeName(2)).toBe("executable");
   expect(elfObjectTypeName(3)).toBe("shared");
@@ -15,6 +17,10 @@ it("maps ELF object and GNU note types without inventing unknown names", () => {
   expect(gnuNoteTypeName(1)).toBe("gnu_abi_tag");
   expect(gnuNoteTypeName(3)).toBe("gnu_build_id");
   expect(gnuNoteTypeName(99)).toBe("unknown");
+  expect(coreNoteTypeName(3)).toBe("core_prpsinfo");
+  expect(coreNoteTypeName(1)).toBe("unknown");
+  expect(androidNoteTypeName(1)).toBe("android_ident");
+  expect(androidNoteTypeName(2)).toBe("unknown");
 });
 
 it("rejects extra caller arguments and admits an empty note inventory", () => {

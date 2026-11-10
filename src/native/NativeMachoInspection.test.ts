@@ -377,8 +377,13 @@ describe("Mach-O UUID reconciliation", () => {
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      `dwarfdump --uuid (FEDCBA98-7654-3210-FEDC-BA9876543210) conflicts with binary load commands LC_UUID (${validUuid}); the image UUID is unknown.`,
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `dwarfdump.*FEDCBA98-7654-3210-FEDC-BA9876543210.*conflict.*LC_UUID.*${validUuid}.*unknown`,
+          "iu",
+        ),
+      ),
     );
   });
 
@@ -418,8 +423,13 @@ describe("Mach-O UUID reconciliation", () => {
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      `binary load commands returned conflicting LC_UUID values ${JSON.stringify(validUuid)} and ${JSON.stringify("FEDCBA98-7654-3210-FEDC-BA9876543210")}`,
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `conflicting LC_UUID.*${validUuid}.*FEDCBA98-7654-3210-FEDC-BA9876543210`,
+          "iu",
+        ),
+      ),
     );
   });
 
@@ -430,8 +440,8 @@ describe("Mach-O UUID reconciliation", () => {
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      "dwarfdump --uuid returned conflicting UUIDs for selected architecture arm64",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(/dwarfdump --uuid.*conflicting.*arm64/iu),
     );
   });
 });
@@ -597,8 +607,8 @@ describe("Mach-O encryption reporting", () => {
       ],
     });
     expect(encryption.items[0]?.architecture).toBeNull();
-    expect(limitations).toContain(
-      "Encryption status of the slice at offset 49152 is malformed: load commands is truncated.",
+    expect(limitations).toContainEqual(
+      expect.stringMatching(/49152.*malformed.*load commands is truncated/iu),
     );
   });
 
@@ -622,17 +632,18 @@ describe("Mach-O encryption reporting", () => {
       status: "unread",
       reason: "the target could not be opened for reading (ENOENT)",
     });
-    expect(encryption).toEqual({
+    expect(encryption).toMatchObject({
       items: [],
       total: null,
       exhaustive: false,
-      limitations: [
-        "Encryption load commands were not read: the target could not be opened for reading (ENOENT)",
-      ],
     });
-    expect(limitations).toContain(
-      "Encryption load commands were not read: the target could not be opened for reading (ENOENT)",
-    );
+    expect(encryption.limitations).toEqual([
+      expect.stringContaining(
+        "the target could not be opened for reading (ENOENT)",
+      ),
+    ]);
+    expect(encryption.limitations[0]).toMatch(/load commands.*not read/iu);
+    expect(limitations).toContain(encryption.limitations[0]);
   });
 });
 

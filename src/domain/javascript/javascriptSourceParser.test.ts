@@ -120,9 +120,17 @@ ipcMain.handle("layout:ready",()=>pick);`;
   for (const path of ["main.js", "main.cjs", "main.mjs", "main.jsx"]) {
     const result = analyze(source, path);
     expect(result?.errors).toBe(0);
-    expect(result?.facts.electron.ipc).toContainEqual(
-      expect.objectContaining({ channel: "layout:ready", operation: "handle" }),
-    );
+    if (path === "main.mjs") {
+      expect(result?.facts.electron.ipc).toEqual([]);
+    } else {
+      expect(result?.facts.electron.ipc).toContainEqual(
+        expect.objectContaining({
+          channel: "layout:ready",
+          operation: "handle",
+          ...(path === "main.cjs" ? {} : { loader_authority: "candidate" }),
+        }),
+      );
+    }
   }
 });
 
