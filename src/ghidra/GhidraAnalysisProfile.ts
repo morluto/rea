@@ -61,6 +61,7 @@ const sharedAnalysisSemantics = {
   function_references: "complete-body-and-entry-reference-manager-v3",
   call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+  native_value_flow_projection: "accepted-runtime-budgets-v1",
   value_flow_effect_scope: "pcode-load-store-explicit-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
   inventory_search_projection: "provider-inventory-facts-v1",

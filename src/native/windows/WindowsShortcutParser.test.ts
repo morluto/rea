@@ -644,6 +644,96 @@ it("compares an icon with a full target path, ignoring case and separators", asy
   expect(iconDifference(different)).toBe(true);
 });
 
+it("compares an icon with a target only in a shared or ASCII encoding", async () => {
+  // Windows stores the LinkInfo path only as ANSI when the system code page can
+  // represent it. 0xB9 0xA4 0xBE 0xDF is "工具" in code page 936; Latin1 differs.
+  const gbk = "D:\\\u00b9\u00a4\u00be\u00df\\app.exe";
+  const iconFor = async (
+    options: Parameters<typeof windowsShortcutBytes>[0],
+  ): Promise<boolean | null | undefined> =>
+    iconDifference(await parse(windowsShortcutBytes(options)));
+  const ansiLinkInfo = (localBasePath: string) => ({
+    localBasePath,
+    unicode: false,
+  });
+  expect(
+    await iconFor({
+      linkInfo: ansiLinkInfo(gbk),
+      iconLocation: "D:\\工具\\app.exe",
+    }),
+  ).toBeNull();
+  // A different comparable target does not outweigh the one that cannot be read.
+  expect(
+    await iconFor({
+      linkInfo: ansiLinkInfo(gbk),
+      extraData: [{ kind: "environment", unicode: "C:\\Other\\x.exe" }],
+      iconLocation: "D:\\工具\\app.exe",
+    }),
+  ).toBeNull();
+  // An ANSI icon cannot be compared with a Unicode target either.
+  expect(
+    await iconFor({
+      unicode: false,
+      linkInfo: { localBasePath: "D:\\工具\\app.exe", unicode: true },
+      iconLocation: gbk,
+    }),
+  ).toBeNull();
+  // Both ANSI: the same code page, so the bytes compare.
+  for (const [iconLocation, differs] of [
+    [gbk, false],
+    ["D:\\\u00b9\u00a4\u00be\u00df\\other.exe", true],
+  ] as const)
+    expect(
+      await iconFor({
+        unicode: false,
+        linkInfo: { localBasePath: gbk },
+        iconLocation,
+      }),
+    ).toBe(differs);
+  // ASCII is the same text in every ANSI code page, so it still compares.
+  for (const [iconLocation, differs] of [
+    ["C:\\Tools\\app.exe", false],
+    ["C:\\Tools\\other.exe", true],
+  ] as const)
+    expect(
+      await iconFor({
+        linkInfo: ansiLinkInfo("C:\\Tools\\app.exe"),
+        iconLocation,
+      }),
+    ).toBe(differs);
+  // A joined path keeps each part's encoding: an ASCII ANSI share with a
+  // Unicode suffix, or a Unicode share with an ASCII ANSI suffix, compares.
+  for (const [linkInfo, iconLocation, differs] of [
+    [
+      { netName: "\\\\server\\share", commonPathSuffix: "工具\\app.exe" },
+      "\\\\server\\share\\工具\\app.exe",
+      false,
+    ],
+    [
+      { netName: "\\\\server\\share", commonPathSuffix: "工具\\app.exe" },
+      "\\\\server\\share\\工具\\other.exe",
+      true,
+    ],
+  ] as const)
+    expect(
+      await iconFor({
+        linkInfo: { ...linkInfo, unicode: true, networkUnicode: false },
+        iconLocation,
+      }),
+    ).toBe(differs);
+  expect(
+    await iconFor({
+      linkInfo: {
+        netName: "\\\\server\\共享",
+        commonPathSuffix: "app.exe",
+        unicode: false,
+        networkUnicode: true,
+      },
+      iconLocation: "\\\\server\\共享\\app.exe",
+    }),
+  ).toBe(false);
+});
+
 it("compares an icon with a target after collapsing dot segments as text", async () => {
   const iconFor = async (localBasePath: string, iconLocation: string) =>
     iconDifference(

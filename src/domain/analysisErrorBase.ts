@@ -1,3 +1,4 @@
+import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
@@ -488,6 +489,7 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | PartialTaskMeasurement
   | {
       readonly kind: "omitted-observation";
       readonly reason:
