@@ -341,16 +341,23 @@ it("reads a rustc path from a read-only ELF section whose name exceeds 64 bytes"
   });
 });
 
-it("refuses read-only data with more distinct rustc paths than it retains", () => {
+it("retains dependency facts when compiler paths exceed the selected prefix", () => {
   const bytes = createRustHashOverflowImage();
-  expect(() => readRustBinaryImage(bytes)).toThrow(
-    expect.objectContaining({
-      constraint: {
-        resource: "capacity",
-        reported_limits: { maximum_rustc_hashes: 64 },
-      },
-    }),
-  );
+  const partial = readRustBinaryImage(bytes);
+  expect(partial.auditable_metadata?.packages.map(({ name }) => name)).toEqual([
+    "itoa",
+    "sample",
+  ]);
+  expect(partial.rustc_commit?.hashes).toHaveLength(64);
+  expect(partial.rustc_commit?.coverage).toEqual({
+    status: "partial",
+    reason: "max_rustc_hashes",
+    effective_limit: 64,
+  });
+  const recovered = readRustBinaryImage(bytes, 65);
+  expect(recovered.rustc_commit?.hashes).toHaveLength(65);
+  expect(recovered.rustc_commit).not.toHaveProperty("coverage");
+  expect(recovered.auditable_metadata).toEqual(partial.auditable_metadata);
 });
 
 it.each([

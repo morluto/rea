@@ -20,10 +20,15 @@ part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
 trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
-the capture, once REA has validated it against the capture; see
-[desktop application tasks](desktop-application-tasks.md). `--package-url`
+the capture, once REA has validated it against the capture; repeat it for
+several tasks, each checked at its own end checkpoint, which
+`--task-end NAME=CHECKPOINT` names; see
+[desktop application tasks](desktop-application-tasks.md#several-tasks). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
+`--download-install FILE` says which AppImage or tarball a build computer
+unpacked the application from; see
+[Applications from an AppImage or tarball](#applications-from-an-appimage-or-tarball).
 `--extra-package NAME`, repeatable, installs another Ubuntu 24.04 archive
 package beside the application, such as a runtime piece its package does not
 install; a [build computer](desktop-build-witness.md) passes its request's
@@ -56,17 +61,19 @@ Evidence; the bundle itself is complete.
 
 ## The bundle
 
-| Path                             | Contents                                                                                           |
-| -------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `envs/<name>/env.toml`           | `type = "computer_app"`, the module and class, `computer = "ubuntu-24.04"`, `driver = "reference"` |
-| `envs/<name>/<file>.py`          | The `ComputerAppEnvironment` class                                                                 |
-| `envs/<name>/SKILL.md`           | What the app is, its window class and where its files live                                         |
-| `envs/<name>/seed/`              | The application's files at the seed checkpoint, by home-relative path                              |
-| `envs/<name>/apt-keys/`          | The signing key of each vendor apt repository the app installs from                                |
-| `envs/<name>/install-package.sh` | With `--package-url`: the run script that installs the downloaded package with dpkg                |
-| `tasks/smoke.json`               | A task that deploys the app                                                                        |
-| `tasks/<task>.json`              | With `--task`: the agent's task, its verifier in `artifacts/` and the eval in `evals/`             |
-| `README.md`                      | What was exported, from which capture, and what to keep in mind                                    |
+| Path                              | Contents                                                                                           |
+| --------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `envs/<name>/env.toml`            | `type = "computer_app"`, the module and class, `computer = "ubuntu-24.04"`, `driver = "reference"` |
+| `envs/<name>/<file>.py`           | The `ComputerAppEnvironment` class                                                                 |
+| `envs/<name>/SKILL.md`            | What the app is, its window class and where its files live                                         |
+| `envs/<name>/seed/`               | The application's files at the seed checkpoint, by home-relative path                              |
+| `envs/<name>/apt-keys/`           | The signing key of each vendor apt repository the app installs from                                |
+| `envs/<name>/install-package.sh`  | With `--package-url`: the run script that installs the downloaded package with dpkg                |
+| `envs/<name>/install-download.sh` | With `--download-install`: the run script that unpacks the downloaded AppImage or tarball          |
+| `envs/<name>/applications/`       | With a tarball's `--download-install`: the desktop entry REA wrote for its program                 |
+| `tasks/smoke.json`                | A task that deploys the app                                                                        |
+| `tasks/<task>.json`               | With `--task`: each of the agent's tasks, its verifier in `artifacts/` and the eval in `evals/`    |
+| `README.md`                       | What was exported, from which capture, and what to keep in mind                                    |
 
 The class file is `<name>_app.py` with hyphens as underscores, for example
 `mousepad_app.py`: agentenv imports it under its stem, so a plain `<name>.py`
@@ -119,7 +126,8 @@ The class declares:
   reason (a capture
   written before restrictions were recorded counts as unrestricted); when
   another usable repository lists the same version it is left out instead,
-  with a limitation. The export also refuses snaps, flatpaks, AppImages, and a
+  with a limitation. The export also refuses snaps, flatpaks, an AppImage or
+  tarball not named with `--download-install`, and a
   package no recorded repository lists unless it was installed from a `.deb`
   file the capture recorded and `--package-url` is given, since the computer
   could not install them by name, and a capture written before credentials
@@ -172,7 +180,9 @@ The class declares:
   unless that spelling is outside the captured home, as when the home itself is
   a symbolic link. When a selected link names an application state directory,
   the bundle seeds the application's state path and restores the selected
-  alias at boot. Selections nested under that alias are seeded under the same
+  alias at boot. Targets recorded as directories are created even when the seed
+  has no files there; file targets and targets of unknown kind are not turned
+  into directories. Selections nested under that alias are seeded under the same
   state path. An existing incompatible alias stops setup without replacing it. When two files map to one home path, the export uses the one present
   before the capture, else the first by path, and a limitation names the other.
 - Data hooks, because declaring any hook switches off agentenv's default data
@@ -299,6 +309,39 @@ to read `envs/<name>/seed/` before publishing the bundle; the export cannot
 tell the two apart, so the flag is the caller's word. `export_build_environment`
 passes it, since the building agent makes the seed in the build computer. The
 Evidence records it as `synthetic_seed`.
+
+## Withheld sign-in state
+
+`--withhold-from <checkpoint> --withhold-to <checkpoint>` withholds every file
+under the owned paths that changed after the first checkpoint up to the
+second, as the capture recorded its changes; `--withhold-path <file>` adds a
+home-relative file, such as one written at first launch. The draft
+(`describe-desktop-application-task`) takes the same options, leaves those
+files out and lists them as `withheld_files`; the export refuses a check that
+names one. Each withheld file present at the seed is left out of
+`envs/<name>/seed/` and becomes a secret setting:
+
+- the class declares `Settings` with a `SecretStr` field per file, and
+  `WITHHELD`, each field's home path;
+- `env.toml` sets each field to `env:REA_<APP>_<FILE>`, so agentenv refuses
+  the deploy, naming the variable, until it is set;
+- at first boot, before keeping the initial state, the class writes each file
+  from its setting, the file's bytes in base64, mode `0600`, so `data/reset`
+  restores it, and `data/get` serves it neither as a part nor in the views;
+- the README names each variable, with
+  `export REA_<APP>_<FILE>="$(base64 -w0 < ~/<file>)"` from the receiver's
+  own signed-in copy of the app.
+
+A withheld file larger than 48 KiB is refused, since its base64 must fit one
+environment variable. `--withheld-copy <folder>` copies the withheld files,
+as captured, into a new or empty folder outside the bundle. The result lists
+them as `withheld_files`, each with its `setting`, `variable` and `handle`.
+
+`--consent <file>` ships the person's consents, a `consent.json` that
+`record_build_consent` records, as the bundle's own `consent.json`.
+`--seed-withheld` seeds the withheld files after all, refused unless that
+file holds a `seed_sign_in` consent; the result lists them as
+`consented_files`, and the README says they are there with consent.
 
 ## Host name and user
 
@@ -431,6 +474,40 @@ declared vendor repository installs the package already; when the URL is not
 written as `http://` or `https://` or holds a user name or password; and when
 the file is built for an architecture other than `amd64`, `arm64` or `all`.
 
+## Applications from an AppImage or tarball
+
+A [build computer](desktop-build-computer.md) can install an application from
+its project's AppImage or tarball, pinned by URL and SHA-256, under
+`/opt/rea-apps/<desktop entry>`. Neither holds a Debian package, so the
+capture records the package as `unknown`, and the export takes the install
+from `--download-install`, a JSON file the build computer writes from its
+request:
+
+```json
+{
+  "kind": "appimage",
+  "desktop_entry": "org.freecad.FreeCAD",
+  "url": "https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4/FreeCAD_1.1.4-Linux-aarch64-py311.AppImage",
+  "sha256": "675d1a4295b2183e0e1d816a4b5557dcb63aeced4e60aaa28d6c3686f4c71dc9",
+  "architecture": "arm64"
+}
+```
+
+A tarball's adds `program`, its path inside the archive, and optionally
+`name`. The class then declares
+`downloads=[Download(url=..., sha256=..., to="vendor/app.AppImage", arch=...)]`
+(`vendor/app.tar` for a tarball) and `run=[RunScript(script="install-download.sh")]`,
+the same script the build computer ran, with no apt package for the app. The
+bundle does not contain the application and supports only the download's
+architecture; the URL must keep serving those bytes, and the application's
+licence is the operator's to check.
+
+The export refuses the file (`download_install`) unless it names an
+`appimage` or `tarball` with an `http://` or `https://` URL and a SHA-256,
+the capture launched its `desktop_entry`, the captured program lies under its
+folder in `/opt/rea-apps`, and the capture ran on its architecture; it
+refuses `--package-url` beside it.
+
 ## Grading once the app has saved
 
 A task's verifier, `artifacts/<task>-check/verify.py`, grades the app's files
@@ -487,7 +564,21 @@ or whose retained value nests more than 500 levels deep, gets an `error` instead
 REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
-and are not read. XML is read with Python's `expat` twice: with namespace
+and are not read. The selected `file_bytes` also applies to scrubbed seed task
+views before admission, independently of how much seed data the export can
+copy. SQLite table views have a shared `sqlite_view_bytes` allowance, default
+16 MiB of compact UTF-8 JSON per table, checked before retaining each row.
+An oversized table keeps its error while other tables remain readable. Raising
+this view allowance does not raise the independent 16 MiB native SQLite
+value/record limit or REA worker reply limit; worker facts include additional
+schema and typed-cell metadata and may be refused earlier. The TypeScript
+and exported Python readers count their respective native compact JSON encodings;
+float and exponent spelling can make their exact byte thresholds differ even
+when they report equal numeric facts. The Python byte counter quotes large
+strings in bounded chunks before retention.
+Exported SQLite readers require Python 3.11 or later for the native connection limits; the
+AgentEnv compatibility workflow uses Python 3.12.
+XML is read with Python's `expat` twice: with namespace
 processing, which refuses what REA's parser refuses, such as an undeclared
 prefix, then without it, so element and attribute names keep the prefixes the
 document spells and namespace declarations stay attributes, as in REA's view;
@@ -512,5 +603,4 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
 user's real data. Keep the bundle local and do not publish it.
-The class was checked against agentenv-framework 0.9.1431 with
-`python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.
+The class targets agentenv-framework 0.9.1485.

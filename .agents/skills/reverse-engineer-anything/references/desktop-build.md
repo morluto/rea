@@ -14,7 +14,9 @@ stop.
 For the whole build:
 
 - Drive the app only with `act_on_build_computer`. Never script it, run
-  commands in the computer or write its files another way.
+  commands in the computer or write its files another way. The one command
+  you write for the computer is a task's reader, which REA runs to check a
+  file; it never makes the seed or the edit.
 - Ask the upfront questions once, then work on your own. Pause only when
   blocked.
 - The seed's content is synthetic. Never put real personal data in it.
@@ -30,42 +32,69 @@ start without asking:
 1. The app and the task, if either is unclear: what changes, in which
    document.
 2. Whether they have a starting file of their own; otherwise you make one.
-3. Whether they want solver runs after the witness: how many (the budget)
-   and with which model.
-4. If so, whether they want to review the task before those runs.
+3. Whether they want the tasks measured after the witness: with which
+   model, within which budget, and whether to harden a task until it lands
+   in the band.
+4. If so, whether they want to review the tasks before those solves.
 
 When you cannot ask, as in a headless `claude -p` run, do not stop: take
 these defaults for whatever the request leaves open, say which you took in
 your first message and in the report, and go on. Install from the Ubuntu
-archive, make a synthetic seed, skip the review, and make 3 solver runs
-within $4 in all, with the model the request names or else the runner's
-default.
+archive, make a synthetic seed, skip the review, and measure each task
+within $4 in all, with the model the request names, without hardening.
 
 ## When you are blocked
 
 Stop, say what you need and wait only for:
 
 - a licence the app or its installer asks someone to accept: never accept it
-  yourself; name it and where to read it, and go on only once the person
-  says they accept it;
-- credentials: they may only be typed as handles you never see, and the
-  build tools have none yet, so say the app needs a sign-in and stop. Never
-  ask for a password in chat;
-- a signed-in state in the seed: ask before seeding one;
+  on your own; name it and where to read it, and go on only once the person
+  says they accept it. Then record their words with `record_build_consent`,
+  kind `licence`, and accept it on their behalf;
+- credentials: ask the person to write each secret, and nothing else, in a
+  file named after a handle you choose, such as `keepassxc-master`, in
+  `~/.config/rea/build-secrets/` on this host (under `$XDG_CONFIG_HOME` when
+  it is set), readable only by them (`chmod 600`), and wait until they say it
+  is there; then type it with `type_secret` (see Drive the app). Never ask
+  for a password or key in chat, and never read, list or print that folder;
+- a signed-in state in the seed: by default the export withholds it (see
+  Sign-in and licence state). Seed it only when the person says the bundle
+  may hold it: record their words with `record_build_consent`, kind
+  `seed_sign_in`, and export with `seed_sign_in: true`;
 - an install this flow cannot do, below.
 
 Decide everything else yourself and note it in the report.
+
+## Sign-in and licence state
+
+What an app writes when someone signs in or activates a licence is withheld
+from the seed: the bundle's receiver supplies their own. Mark
+`pre-sign-in` with `mark_build_checkpoint` just before the sign-in or
+activation and `post-sign-in` just after, both before `seed`: every file
+under the owned paths that changed between them is withheld, and the draft
+leaves it out. A file the app writes at first launch, such as a trial's
+licence file, changes before you can mark anything: name it in
+`export_build_environment`'s `withhold`. The export lists each withheld file
+in `withheld_files` with the environment variable a deploy reads it from and
+the handle of the secret REA keeps its bytes in; a check may not name one.
+The export refuses a seed file holding a withheld file's exact bytes, such as
+a `.bak` copy, but a backup that differs from it is not caught: trash backups
+before `seed`.
+Explicitly withhold any other files the person identifies as sensitive;
+REA does not infer secrecy from a value's shape or a file name.
 
 ## Choose the install
 
 The computer is Ubuntu 24.04 (noble) on this host's architecture only. Use
 the first source that has the app:
 
-| Source                       | `install`                                                                         |
-| ---------------------------- | --------------------------------------------------------------------------------- |
-| Ubuntu archive               | `{"kind": "archive", "package": "inkscape"}`                                      |
-| PPA or vendor apt repository | `{"kind": "apt_repository", "package", "uri", "suite", "components", "key_file"}` |
-| `.deb` by URL                | `{"kind": "package_file", "url", "sha256", "architecture", "dependencies"}`       |
+| Source                       | `install`                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| Ubuntu archive               | `{"kind": "archive", "package": "inkscape"}`                                                |
+| PPA or vendor apt repository | `{"kind": "apt_repository", "package", "uri", "suite", "components", "key_file"}`           |
+| `.deb` by URL                | `{"kind": "package_file", "url", "sha256", "architecture", "dependencies"}`                 |
+| AppImage by URL              | `{"kind": "appimage", "url", "sha256", "architecture", "extra_packages"}`                   |
+| Tarball by URL               | `{"kind": "tarball", "url", "sha256", "architecture", "program", "name", "extra_packages"}` |
 
 - A PPA's `uri` is `https://ppa.launchpadcontent.net/OWNER/NAME/ubuntu`,
   `suite` `noble`, `components` `["main"]`. `key_file` is the repository's
@@ -84,10 +113,31 @@ the first source that has the app:
   to add a package. Ask the requester for its URL and SHA-256; do not fetch
   a vendor's download page yourself. List its `Depends` as `dependencies`,
   with any runtime piece it lacks: it installs with the network off.
-- Flatpak, AppImage and snaps are not supported yet: say so and stop. An
-  archive package that only installs a snap, such as noble's `firefox`,
-  counts as a snap. A package with no build for this host's architecture
-  (some PPAs are amd64 only) cannot be installed either.
+- Take an AppImage or a tarball only when no package has the app. Pin it by
+  the release file's URL for this host's architecture and the SHA-256 its
+  project publishes, such as a GitHub release asset's digest or the
+  release's `SHA256SUMS`; ask the requester when the project publishes none.
+  The computer downloads it when the bundle is put, refuses other bytes, and
+  unpacks it under `/opt/rea-apps/<desktop_entry>` with the network off; the
+  export downloads the same file.
+- An AppImage installs its own desktop entry, so `desktop_entry` is the
+  `.desktop` file at the top of the image, such as FreeCAD's
+  `org.freecad.FreeCAD`. A wrong name fails the start with the entries the
+  image has: start again with one of them. The image brings its libraries,
+  so `extra_packages` is rarely needed; FreeCAD 1.1.4's needs none.
+- A tarball has no entry of its own. `program` is the program's path inside
+  the archive, such as `firefox/firefox`; REA writes an entry named
+  `desktop_entry` that runs it with the files it opens, and `name` is what
+  the Applications menu shows. A tarball uses the computer's libraries: name
+  what its program lacks in `extra_packages`. gzip, bzip2 and xz archives
+  are read, zstd ones are not.
+- Flatpak and snaps are not supported: say so and stop. Flatpak's sandbox
+  needs user namespaces the computer's container does not grant, so a
+  Flathub app installs but never opens; ask for the project's AppImage,
+  tarball or `.deb` when it ships one. An archive package that only installs
+  a snap, such as noble's `firefox`, counts as a snap. A package with no
+  build for this host's architecture (some PPAs are amd64 only) cannot be
+  installed either.
 - `desktop_entry` is the package's `.desktop` file name under
   `/usr/share/applications` without `.desktop`, such as
   `org.inkscape.Inkscape`. Add `window_class` when you know it; Inkscape's
@@ -124,6 +174,14 @@ the first source that has the app:
   close it while capturing; the capture ends when the app exits. When the
   app is closed at any other time, open it from Applications → Other → the
   environment's name.
+- Type a secret with `{"action": "type_secret", "secret": "<handle>"}`,
+  only into a field that masks what is typed: check in a screenshot that it
+  is a password field, which shows dots. A screenshot shows any field that
+  shows its text, such as many licence-key boxes, so never type a secret into
+  one: say the app needs a secret the build cannot type unseen, and stop.
+  `type_secret` takes no `screenshot`; look with a `wait` after it. A refusal
+  names the secret's file and what is wrong with it: tell the person, never
+  the value.
 - Prefer shortcuts and typing to long pointer paths: `key` takes `keys`, an
   array holding one chord's keys, such as
   `{"action": "key", "keys": ["Control", "s"]}`, and `type` turns `\n` into
@@ -186,6 +244,10 @@ the first source that has the app:
   the language box's autocomplete popup takes the first OK click.
 - CherryTree: its first-run autosave "Choose Storage Type" dialog swallows
   keys, so save once early as `.ctd` and untick autosave.
+- VSCodium (its tarball, with `extra_packages: ["libnss3",
+  "libasound2t64"]`) runs on outside REA's reach, so `stop_build_capture`
+  fails to clean it up: after `end`, quit it with Ctrl+Q, then stop. Enter
+  accepts its word suggestions, so press Escape after typing a line.
 - Glade: a new widget's id is empty until you set it, and a second save
   writes a `.glade~` backup, which shows in the draft as an unrelated
   change. A backup present at `seed` is seeded with the document, so trash
@@ -326,19 +388,37 @@ the first source that has the app:
      "Compress diagram files" is unticked, which REA reads as plain XML. A format REA reads as binary, such as one
      compressed with xz, has no view: save in a format the app offers that
      REA reads, then reopen the file once and check that a plain Ctrl+S
-     keeps that format.
+     keeps that format. When the task is about the app's own binary
+     format, such as GIMP's `.xcf` or Blender's `.blend`, keep it and check
+     it through a reader (see Read a binary file with a reader).
 4. Only once the seed is saved, `mark_build_checkpoint` with name `seed`.
 5. Make the change the task asks for, as a user would, and save it.
 6. Only once the change is saved, `mark_build_checkpoint` with name `end`.
+   For more tasks in this environment, make each next task's change on top
+   of the last as a user would, save it, and mark `end-<task name>`, such as
+   `end-add-bread`. Each task is checked at its own end, so its checks must
+   not read what a later task changes, and a solving agent starts each from
+   the seed, so a task must not need an earlier one done first.
+   Then, for each task you can, make a near miss of its change on top, a
+   plausible wrong edit such as a typo or a wrong number, save it and mark
+   `near-<task name>`: the export refuses a task whose near miss passes every
+   check. Take the near misses after the last end, since each later draft
+   starts from the end before it.
 7. `stop_build_capture`. Read `draft.files` (each file that changed, with
    its net change and its `values`), `draft.task.checks` (suggested
-   checks), `draft.guards`, `draft.notes` and `limitations`. When `draft`
-   is null, read `draft_refusal` first: a missing `seed` or `end`
+   checks), `draft.guards`, `draft.notes` and `limitations`; each
+   `later_drafts` entry is the same for one later task, from the end
+   checkpoint before its own, so it shows only that task's change. When
+   `draft` is null, read `draft_refusal` first: a missing `seed` or `end`
    checkpoint means capturing again on a new build computer, while a failed
-   draft command names its own cause to fix. When `draft.files` is empty,
+   draft command names its own cause to fix. If a declared secret was used,
+   automatic drafting is withheld: write the task manually and export it.
+   When `draft.files` is empty,
    `draft.notes` says why:
    - `no_change`: nothing was saved between `seed` and `end`. Capture again
-     on a new build computer, and save before marking `end`.
+     on a new build computer, and save before marking `end`. When the app
+     keeps the task's state only on screen, such as a calculator's result,
+     judge the screen instead (see Judge the screen).
    - `unowned_changes` with `no_document`: the app saved your document
      where REA did not count it as the app's. Its `files` list what changed,
      with their roles; the document is among them. Close the computer and
@@ -347,7 +427,7 @@ the first source that has the app:
    - `uncheckable_changes`: the app saved the change in dconf, as gedit does
      its preferences, and no check reads dconf. Saving again does not help:
      choose a change the app saves in a file, and capture again on a new
-     build computer.
+     build computer, or judge the screen (see Judge the screen).
    - `unreadable_changes`: a dconf database changed but REA could not read
      it; `error` says why. This is not evidence the app saved there: report
      the error rather than changing the task.
@@ -367,11 +447,14 @@ the first source that has the app:
    - `long_text`: the element's text is too long to check whole; check a
      phrase in it with `text_contains`.
    - `cut_view` or `unreadable_view`: REA's view holds only part of the
-     file, or none a check can read, such as a binary format (step 3).
+     file, or none a check can read, such as a binary format (step 3). For
+     a binary file, read it with a reader (see Read a binary file with a
+     reader).
 
 ## Write the task
 
-Write `{"name", "prompt", "checks"}` from the draft and what you did.
+Write `{"name", "prompt", "checks"}` from the draft and what you did, one
+per task, each with its own name.
 
 - `name`: lowercase letters, digits and hyphens, not `smoke`.
 - `prompt`: what the requester wants, in their words and the app's terms,
@@ -481,18 +564,144 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 The kinds and pointer rules are in
 [the desktop tasks section](environments.md#pick-the-checks).
 
+### Read a binary file with a reader
+
+When the draft notes `unreadable_view` on a binary document, add a reader to
+the task: the app's own headless command, which REA runs in the computer on a
+private copy of the file, and whose output a check reads instead of the file.
+Write it in the app's scripting mode, print each fact on a line starting
+with `REA ` (with the space), and name the copy `{file}`:
+
+- GIMP `.xcf`, layer names, as `lines`:
+
+  ```json
+  {
+    "id": "layers",
+    "file": "Documents/poster.xcf",
+    "argv": ["gimp-console-2.10", "-i", "-d", "-f", "-b", "-"],
+    "stdin": "(let ((image (car (gimp-file-load RUN-NONINTERACTIVE \"{file}\" \"{file}\")))) (for-each (lambda (layer) (display \"\\nREA layer \") (display (car (gimp-item-get-name layer)))) (vector->list (cadr (gimp-image-get-layers image)))) (newline))\n(gimp-quit 0)\n",
+    "output": "lines"
+  }
+  ```
+
+  checked with `{"kind": "lines_present", "file": "Documents/poster.xcf", "reader": "layers", "lines": ["layer Summer Sale"]}`.
+  Script-Fu's prompt `ts> ` starts a line, so print a newline before each
+  marked line, as `\nREA` does. A text layer's text is
+  `(car (gimp-text-layer-get-text layer))`.
+
+- Blender `.blend`, objects with their type and location, as `json`:
+
+  ```json
+  {
+    "id": "objects",
+    "file": "Documents/scene.blend",
+    "argv": [
+      "blender",
+      "-b",
+      "--factory-startup",
+      "{file}",
+      "--python-expr",
+      "import bpy, json; print('REA ' + json.dumps({o.name: {'type': o.type, 'location': [round(v, 4) for v in o.location]} for o in bpy.data.objects}, sort_keys=True))"
+    ],
+    "output": "json"
+  }
+  ```
+
+  checked with `{"kind": "value_equals", "file": "Documents/scene.blend", "reader": "objects", "pointer": "/Crate/location/0", "value": 2, "tolerance": 0.001}`.
+  Print every value a check compares as a number or string a check can
+  name, rounded where the app stores floats.
+  Blender 4 shows its Quick Setup splash at every launch until its
+  preferences are saved: with `.config/blender` in `state_paths`, confirm
+  Quick Setup with Continue, save the preferences (Edit → Preferences, then
+  Save Preferences in the menu at its bottom left), and read a probe
+  checkpoint's `changed_files` for `.config/blender/4.0/config/userpref.blend`
+  before `seed`, so solves start on the scene. Blender often takes the first click on a
+  menu or a dialog's button only to focus it: click again.
+
+- A format LibreOffice opens but REA cannot read, such as a legacy `.xls`,
+  converted with `--convert-to`:
+
+  ```json
+  {
+    "id": "cells",
+    "file": "Documents/budget.xls",
+    "argv": [
+      "sh",
+      "-c",
+      "soffice --headless --convert-to csv --outdir out \"$1\" >/dev/null && sed 's/^/REA /' out/*.csv",
+      "sh",
+      "{file}"
+    ],
+    "output": "lines",
+    "timeout_s": 120
+  }
+  ```
+
+  Pass `{file}` to `sh -c` as an argument, as here, rather than inside the
+  script.
+
+The reader runs without the display, in a fresh home with the app's default
+settings, so use the app's headless or batch mode; set `display: true` only
+for an app that has none. It must exit 0 within `timeout_s` (60 s by
+default, at most 300) and print at most 1 MiB. Pick facts the change sets and
+the near miss gets wrong, such as a name or a number, not the app's whole
+output.
+
+Give the task the reader in `readers`, and each check through it `reader`
+and the reader's `file`. `json` readers serve `value_equals`, `value_absent`
+and `member_count`; `lines` readers `lines_present`, `lines_absent` and
+`line_count`. The export runs the reader in the build computer on the seed
+and the end: when a check through it fails on the end, the refusal shows
+what the reader printed, and a reader that fails shows its error and the end
+of its stderr. Fix the reader or the check from that and export again.
+
+### Judge the screen
+
+Only when no file shows the change, as when the draft notes `no_change`
+because the app keeps its state on screen, write the task's checks as
+screen judges: `{"id": "shown", "kind": "screen_judge", "question": "Does the
+calculator's display show 8.568?"}`. A model, the judge, answers the question
+on a screenshot three times, and the check passes when most answers are yes.
+
+- REA keeps a screenshot at each checkpoint. Mark `seed` with the screen
+  showing the state before the task, where the answer is no, and `end` with
+  the change showing, where it is yes: the bundle ships both as the judge's
+  examples.
+- Ask about what the change makes visible, with exact values, so the near
+  miss is a no: a result, a label, a selected item. Avoid what a window
+  moved or a cursor blinking can change.
+- The prompt asks to leave the result showing, since the judge sees only
+  the screen when the agent stops.
+- A task with screen judges holds only screen judges and no readers. The
+  export refuses one when a file shows the change, and checks none of its
+  questions: the witness does, running the bundle's own judge with the
+  runner's model endpoint (`LITELLM_BASE_URL` and `LITELLM_API_KEY`, or
+  `[model]` in `.agentenv/config.toml`) on a fresh screenshot at each stage.
+  Without an endpoint the witness's check fails: say what to set and stop.
+- The judge's model is `[model.roles] judge`, else `[model] default`, else
+  `anthropic/claude-sonnet-5-5`. `agent-env run --judge-model` does not
+  reach it. Each grade costs about $0.02.
+
 ## Export
 
-`export_build_environment` with `task` and `directory`, the absolute path of
-a new or empty folder here, such as `<home>/rea-builds/poster/bundle`. The
+`export_build_environment` with `tasks` and `directory`, the absolute path of
+a new or empty folder here, such as `<home>/rea-builds/poster/bundle`. Each
+entry of `tasks` is `{"task": ..., "end_checkpoint": ...}`: leave
+`end_checkpoint` out for the task checked at `end`, and give
+`end-<task name>` for each later one. The
 export seeds what was saved at `seed`, replaces the computer's host name,
 `user@host` and home path (a bare user name, such as AbiWord's author
-`user`, stays), and checks the task against `seed` and `end`. It refuses a task
-unless at least one check fails on the seed and every check passes at the
-end, and says why, such as a pointer that names nothing at the end. A
+`user`, stays), and checks each task against `seed`, its own end and its
+`near-<task name>` when you took one. It refuses a task
+unless at least one check fails on the seed, every check passes at its
+end and one fails at its near miss, and says which task and why, such as a
+pointer that names nothing at the end. A
 check that the rest is untouched passes on the seed too, which is fine. On
 a refusal, fix the task and export again, into another folder if that one
-is no longer empty. Keep
+is no longer empty. The bundle's eval lists every task, so a run of the
+bundle runs them all. A refusal naming a secret's handle means a file of the
+bundle holds that secret, most often an app's sign-in or licence state in
+the seed: do not work around it, but report it and stop. Keep
 `seed_files`, `scrubbed_files`, `unscrubbed_files` and `limitations` for the
 report.
 
@@ -525,13 +734,17 @@ again from it.
 
 ## Witness
 
-Witness in a fresh computer of the bundle, from the prompt, as a solving
-agent would. Do not replay the build's actions or coordinates, and do not
+Witness each task in its own fresh computer of the bundle, from the prompt,
+as a solving agent would; a computer is witnessed once, so the steps below
+repeat for each task, each with its own record folder. Do not replay the build's actions or coordinates, and do not
 check between stages to steer the edit: a solving agent never sees the
 checks. Give every `check_build_task` the task exactly as exported.
 
 1. `start_build_computer` with
-   `{"source": {"kind": "bundle", "path": "<bundle>"}}`. The app starts
+   `{"source": {"kind": "bundle", "path": "<bundle>"}}`, adding
+   `"settings": {"<variable>": "<handle>"}` for each of the export's
+   `withheld_files`, or the deploy is refused for want of them, and agentenv
+   keeps that bundle's build failed, so start from a fresh copy of it. The app starts
    with the seed's files in place and opens the seed's document when the
    seed holds exactly one and the app takes a file. When the export's
    `limitations` say it opens no document, open it from the prompt's path,
@@ -570,21 +783,55 @@ result and decide:
 - `after_reset` passed: the reset did not restore the seed. Report it as a
   limitation.
 
-Stop after three witnesses and report what still fails.
+Stop after three witnesses of a task and report what still fails.
 
-## Solver runs
+## Measure
 
-Only if the requester asked for them, or by the headless default above. If
-they wanted to review the task first, show them its prompt and checks and
-wait for their approval. Then run the bundle within the budget, one run at a
-time, with `REA_AGENT_ENV_COMMAND`'s runner, or else `agent-env` on PATH:
-`agent-env run <bundle> --task <name> --agent claude-code --model <model>`.
-The runner needs a model endpoint in your shell: `LITELLM_BASE_URL` and
-`LITELLM_API_KEY`, or `base_url` and `api_key` under `[model]` in
-`.agentenv/config.toml`. When a run says no model endpoint is set, tell the
-person what to set and stop. Count runs reported `passed`. A run
-`scored below 1` is a miss; one reported `failed` did not finish, so run it
-again if the budget allows instead of counting it. Never run past the budget.
+Only if the requester asked for it, or by the headless default above. If
+they wanted to review the tasks first, show them each prompt and checks and
+wait for their approval. Then `measure_build_task` each task with `bundle`,
+`task`, `model` and `budget_usd`, its share of the budget. It runs the task
+in fresh computers, 3 times, then 2 more unless they passed none or all, and
+keeps a task that passes 1 to 3 of 5 (`band: "in_band"`). It stops before a
+solve the largest cost so far would take past the budget, and writes the
+record into the bundle's `difficulty.json` and README. The solver needs a
+model endpoint where REA starts: `LITELLM_BASE_URL` and `LITELLM_API_KEY`, or
+`base_url` and `api_key` under `[model]` in `.agentenv/config.toml`; when the
+measure says a solve did not run for want of one, tell the person what to
+set and stop. Read the result's `failures_per_check` and each solve's
+`failed_checks` before calling a task hard: a check that fails in most failed
+solves while the app shows the right change is brittle, so fix the check,
+export and witness again, rather than count it as difficulty.
+
+## Harder tasks
+
+When the requester wants tasks worth evaluating or training on, harden a
+task that came out `too_easy` and measure it again, within the budget. The
+solver sees and fixes its slips on screen, so one edit with the value in the
+prompt is solved almost every time; so far, on TreeLine with Sonnet 5.5, so
+were one more dialog, a conditional move of seven records, and ten
+corrections read from a second document and applied across the list. Try,
+one at a time, measuring each:
+
+- A longer chain of exact edits than that, each a value the checks compare
+  whole, so one slip in the chain fails the task.
+- Facts read in one view and used in another: values the solver must read
+  from a second document the app opens, or from another record, rather than
+  from the prompt, such as "the same year as The Quiet Glacier's".
+- Distractors beside each target: records with near-identical names or
+  values, and a guard check on each that it stays as it was.
+- Mistakes that do not show once saved: a value the app displays rounded or
+  formatted unlike what it stores, or an edit the app keeps only when its
+  field loses focus.
+
+Stop when the budget left cannot cover 3 solves of the hardened task, and
+report the bands measured.
+
+Each hardened task stays sound: its checks still fail on the seed and pass on
+its end, its near miss fails, and another valid way of doing it passes, so
+check values, never the order or method the solver used. Put the second
+document in the seed. Count records with `member_count` and check each
+value by a selector that names its record, since no check joins two records.
 
 ## Close and report
 
@@ -595,9 +842,10 @@ is left.
 Report:
 
 - the bundle path and the environment name;
-- the task's name and prompt;
-- each check, and why it proves the edit and fails the near miss;
-- each witness stage with its result, the verdict, and the paths of
+- each task's name, prompt and end checkpoint;
+- each check, and why it proves the edit and fails the near miss, and each
+  reader's command;
+- each task's witness stages with their results, the verdict, and the paths of
   `witness.json` and the recording;
 - the seed's contents: `seed_files` and what each holds;
 - `scrubbed_files` and `unscrubbed_files`; an unscrubbed file still names
@@ -605,7 +853,8 @@ Report:
   are gzip seeds whose headers were cleared, their content unchanged: give
   their count;
 - limitations: the capture's, the export's and anything you could not do;
-- solver runs, if any: the model, the runs and the passes;
+- each measured task's band, passes of finished solves, turns, cost and
+  failures per check, from `difficulty.json`;
 - the build time and the questions you asked.
 
 Never publish or share the bundle yourself.

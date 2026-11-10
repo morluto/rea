@@ -20,7 +20,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -400,7 +400,7 @@ const execRoute = async (
   const [command, operation] = requested?.split(":") ?? [];
   if (
     command !== argv[4] ||
-    (operation !== undefined && !argv[5]?.includes(`\"${operation}\"`))
+    (operation !== undefined && !argv[5]?.includes(`"${operation}"`))
   )
     return answer;
   if (dropReplies === undefined) return answer;
@@ -421,7 +421,13 @@ const buildRoute = async (
     id?: number;
     method?: string;
     argv?: string[];
-    params?: { paths?: string[] };
+    params?: {
+      paths?: string[];
+      parts?: {
+        file: { bytes: string };
+        metadata: Record<string, { path: string }>;
+      }[];
+    };
   };
   if (path === "/.well-known/agent-env.json")
     return {
@@ -437,6 +443,19 @@ const buildRoute = async (
   if (exec === undefined) return undefined;
   if (path === "/agentenv/ext/computer-exec/run")
     return execRoute(exec, token, request.argv ?? [], sessions);
+  // data/add writes each file part under the home, at the path its marker names.
+  if (path === "/agentenv" && request.method === "data/add") {
+    for (const part of request.params?.parts ?? []) {
+      const [marker] = Object.values(part.metadata);
+      if (marker === undefined) continue;
+      await mkdir(dirname(join(exec.home, marker.path)), { recursive: true });
+      await writeFile(
+        join(exec.home, marker.path),
+        Buffer.from(part.file.bytes, "base64"),
+      );
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  }
   const paths = request.params?.paths ?? [];
   // Recordings keep the canned segment; other paths are the home's files.
   if (
@@ -632,6 +651,7 @@ export const startFakeComputer = async (
  */
 const FAKE_BUNDLE_MODULE = String.raw`
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -676,6 +696,9 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     previous = signal.signal(signal.SIGTERM, _interrupted)
     _note("runs.jsonl", {"root": str(root), "tasks": list(tasks), "keep": keep, "emulate": emulate,
                          "sandbox": sandbox})
+    _note("settings.jsonl", {name: hashlib.sha256(value.encode()).hexdigest() for name, value in os.environ.items()
+                             if name.startswith("REA_") and not name.startswith(("REA_AGENT_ENV", "REA_DOCKER",
+                                                                                 "REA_BUILD_COMPUTER"))})
     for path in glob.glob(os.path.join(root, "envs", "*", "*.py")):
         subprocess.run([sys.executable, "-c", DECLARE, os.path.dirname(path), os.path.basename(path)], check=True)
     shutil.copytree(root, os.path.join(STATE, "bundle"), dirs_exist_ok=True)

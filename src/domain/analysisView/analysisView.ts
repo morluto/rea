@@ -1,3 +1,4 @@
+import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
@@ -106,6 +107,9 @@ import {
   type InspectAnalysisViewInput,
 } from "./analysisViewRequest.js";
 import {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
@@ -183,6 +187,9 @@ export {
   type AnalysisViewParent,
 };
 export {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   nativeFeatureTraceSummaryViewResultSchema,
@@ -384,6 +391,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
 /** Budgets retained across source admission and the selected grouping projection. */

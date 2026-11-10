@@ -1,3 +1,5 @@
+import { cut } from "./compactValue.js";
+import { CHECK_VALUE_CHARS } from "./valueCuts.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   collapseWhitespace,
@@ -57,6 +59,8 @@ export type TaskCheckOutcome = {
 };
 
 type Verdict = Omit<TaskCheckOutcome, "id">;
+/** A check that reads a file's view, every kind but the screen judge. */
+type FileCheck = Exclude<DesktopTaskCheck, { kind: "screen_judge" }>;
 type Check<Kind extends DesktopTaskCheck["kind"]> = Extract<
   DesktopTaskCheck,
   { kind: Kind }
@@ -67,10 +71,7 @@ const fail = (description: string): Verdict => ({
   passed: false,
   description,
 });
-const shown = (value: JsonValue): string => {
-  const text = JSON.stringify(value);
-  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
-};
+type ShowValue = (value: JsonValue) => string;
 /** A failure for want of a readable or whole view, not for what the view holds. */
 const unread = (description: string): Verdict => ({
   ...fail(description),
@@ -151,7 +152,7 @@ const truncatedView = (format: string | null, view: JsonValue | null) => {
 
 /** A file's view of one format, or why the check cannot read it; an absent file reads as empty. */
 const viewOf = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
   format: string | undefined,
 ): { view: JsonValue | null; truncated: boolean } | Verdict => {
@@ -186,6 +187,7 @@ const compared = (check: CountCheck, n: number, what: string): Verdict => {
 const lineVerdict = (
   check: Check<"lines_present" | "lines_absent" | "line_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, "text");
   if ("passed" in read) return read;
@@ -245,6 +247,7 @@ const nearVerdict = (
   expected: number,
   tolerance: number,
   join: boolean,
+  shown: ShowValue,
 ): Verdict => {
   const read = join ? elementText(found) : found;
   const number = numberOf(read);
@@ -297,6 +300,7 @@ const noValue = (
 const valueVerdict = (
   check: Check<"value_equals" | "value_absent">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
@@ -330,7 +334,14 @@ const valueVerdict = (
         located.value,
       );
       if (join && truncated) return undecided(check.file);
-      return nearVerdict(at, located.value, check.value, check.tolerance, join);
+      return nearVerdict(
+        at,
+        located.value,
+        check.value,
+        check.tolerance,
+        join,
+        shown,
+      );
     }
     return sameJson(located.value, check.value)
       ? pass(`${at} is ${shown(check.value)}`)
@@ -379,6 +390,7 @@ const comparedText = (
   check: Check<"text_equals" | "text_contains">,
   at: string,
   found: string,
+  shown: ShowValue,
 ): Verdict => {
   const collapse = check.normalize_whitespace === true;
   const text = collapse ? collapseWhitespace(found) : found;
@@ -401,6 +413,7 @@ const comparedText = (
 const textVerdict = (
   check: Check<"text_equals" | "text_contains">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
@@ -442,13 +455,14 @@ const textVerdict = (
   // A text node is whole. An element's text in a cut view may lack what the cut
   // dropped from its middle, so its kept runs can read as text it never had.
   if (typeof found !== "string" && truncated) return undecided(check.file);
-  return comparedText(check, at, elementText(found, attribute));
+  return comparedText(check, at, elementText(found, attribute), shown);
 };
 
 /** How many members of the array at a pointer, or of those a selector matches, compared with the expected number. */
 const memberVerdict = (
   check: Check<"member_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const { matching, pointer } = check;
   const read = viewOf(check, entry, undefined);
@@ -534,6 +548,7 @@ export const countTaskRows = (
 const rowVerdict = (
   check: Check<"row_present" | "row_absent" | "row_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, "sqlite");
   if ("passed" in read) return read;
@@ -566,8 +581,9 @@ const rowVerdict = (
 };
 
 const verdict = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   switch (check.kind) {
     case "file_present":
@@ -581,28 +597,43 @@ const verdict = (
     case "lines_present":
     case "lines_absent":
     case "line_count":
-      return lineVerdict(check, entry);
+      return lineVerdict(check, entry, shown);
     case "value_equals":
     case "value_absent":
-      return valueVerdict(check, entry);
+      return valueVerdict(check, entry, shown);
     case "text_equals":
     case "text_contains":
-      return textVerdict(check, entry);
+      return textVerdict(check, entry, shown);
     case "row_present":
     case "row_absent":
     case "row_count":
-      return rowVerdict(check, entry);
+      return rowVerdict(check, entry, shown);
     case "member_count":
-      return memberVerdict(check, entry);
+      return memberVerdict(check, entry, shown);
   }
 };
 
-/** Evaluate each check against views by home path, as the exported verifier does. */
+/** Evaluate each check against views by home path, or its reader's view of its file by reader id, as the exported verifier does. */
 export const evaluateTaskChecks = (
   checks: readonly DesktopTaskCheck[],
   views: ReadonlyMap<string, TaskFileView>,
-): readonly TaskCheckOutcome[] =>
-  checks.map((check) => ({
+  readers: ReadonlyMap<string, TaskFileView> = new Map(),
+  redact: (value: JsonValue) => JsonValue = (value) => value,
+): readonly TaskCheckOutcome[] => {
+  const shown: ShowValue = (value) =>
+    cut(JSON.stringify(redact(value)), CHECK_VALUE_CHARS);
+  return checks.map((check) => ({
     id: check.id,
-    ...verdict(check, views.get(check.file)),
+    ...(check.kind === "screen_judge"
+      ? unread(
+          "a screen judge's question is answered from the computer's screen by the bundle's judge, which REA's evaluator does not run",
+        )
+      : verdict(
+          check,
+          "reader" in check && check.reader !== undefined
+            ? readers.get(check.reader)
+            : views.get(check.file),
+          shown,
+        )),
   }));
+};

@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticPrecisionInput } from "./javascriptSemanticPrecision.js";
 import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
@@ -38,6 +39,7 @@ export interface JavaScriptSourceAnalysisFailure {
 
 /** Operational choices for source analysis, independent of transport framing. */
 export interface JavaScriptSourceAnalysisLimits {
+  readonly semanticPrecision?: JavaScriptSemanticPrecisionInput;
   readonly heapMb: number;
   readonly timeoutMs: number;
 }

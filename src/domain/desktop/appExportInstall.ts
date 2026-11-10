@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../result.js";
+import type { DownloadInstall } from "./appDownloadInstall.js";
 import { withoutCredentials, withoutCredentialsIn } from "./aptRepositories.js";
 import {
   DEBIAN_PACKAGE_NAME,
@@ -23,6 +24,11 @@ const COMPUTER_ARCHITECTURES: ReadonlyMap<string, string> = new Map([
   ["x64", "amd64"],
   ["arm64", "arm64"],
 ]);
+
+/** The Debian architecture of a capture host's Node.js architecture, when an agentenv computer runs it. */
+export const computerArchitecture = (
+  hostArchitecture: string,
+): string | undefined => COMPUTER_ARCHITECTURES.get(hostArchitecture);
 
 /**
  * Whether apt installed the package from the Ubuntu 24.04 archive, which the
@@ -84,11 +90,17 @@ export interface ExportInstall {
   readonly strandedPackages?: readonly string[];
   /** Packages installed beside the app because the export was asked for them, other than the app's and its package file's dependencies; absent when none. */
   readonly extraPackages?: readonly string[];
+  /** The AppImage or tarball the computer downloads and unpacks in place of a package; absent for a package. */
+  readonly download?: DownloadInstall;
 }
 
 /** Why the computer cannot install the captured package: the input to change, and how. */
 export interface InstallRefusal {
-  readonly field: "capture" | "package_url" | "extra_package";
+  readonly field:
+    | "capture"
+    | "package_url"
+    | "extra_package"
+    | "download_install";
   readonly reason: string;
   readonly remediation: string;
 }

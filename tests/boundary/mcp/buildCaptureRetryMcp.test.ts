@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it, vi } from "vitest";
 
+import { seedEndCapture } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 import {
   VARICAD_URL,
   varicadPackage,
@@ -111,7 +113,7 @@ it("finishes a stop whose draft reply was lost when stop is asked again, and rep
   expect(await rea.notes("stopped.jsonl")).toHaveLength(1);
   const exported = await call(client, "export_build_environment", {
     computer_id: id,
-    task: BUILD_TASK,
+    tasks: [{ task: BUILD_TASK }],
     directory: join(await createTestTempDirectory("build-out-"), "bundle"),
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
@@ -247,7 +249,7 @@ it("returns the bundle an export saved when the computer closes while it commits
   });
   const exported = await call(client, "export_build_environment", {
     computer_id: id,
-    task: BUILD_TASK,
+    tasks: [{ task: BUILD_TASK }],
     directory,
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
@@ -283,7 +285,7 @@ const captureRequest = async (
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: BUILD_TASK,
+        tasks: [{ task: BUILD_TASK }],
         directory,
       })
     ).structuredContent,
@@ -380,6 +382,88 @@ it("passes an archive request's extra packages to the export, whose bundle insta
   ).toHaveLength(1);
 });
 
+it("passes an AppImage request's download to the export in a file, whose bundle downloads and extracts the app", async () => {
+  const appRun = "/opt/rea-apps/org.example.notes/squashfs-root/AppRun";
+  const base = seedEndCapture();
+  const recorded: DesktopApplicationCapture = {
+    ...base,
+    application: {
+      ...base.application,
+      desktop_entry: {
+        id: "org.example.notes",
+        path: "/usr/local/share/applications/org.example.notes.desktop",
+        name: "Notes",
+        exec: `${appRun} %F`,
+        icon: null,
+        startup_wm_class: null,
+        categories: [],
+        mime_types: [],
+        terminal: false,
+      },
+      argv: [appRun],
+      executable: { path: appRun, resolved_path: appRun, electron_markers: [] },
+      package: {
+        kind: "unknown",
+        name: null,
+        version: null,
+        architecture: null,
+        sources: [],
+        package_lists_present: null,
+      },
+    },
+  };
+  const download = {
+    url: "https://downloads.example.com/notes-2.0-x86_64.AppImage",
+    sha256: "f".repeat(64),
+    architecture: "amd64",
+  };
+  const fakeSet = await fakes({
+    recorded,
+    install: {
+      downloadInstall: {
+        kind: "appimage",
+        desktop_entry: "org.example.notes",
+        ...download,
+      },
+    },
+  });
+  const { directory, argv } = await captureRequest(fakeSet, {
+    kind: "appimage",
+    ...download,
+  });
+
+  const exportCall = (
+    (await fakeSet.rea.notes("calls.jsonl")) as {
+      argv: string[];
+      cwd: string;
+    }[]
+  ).find(
+    ({ argv: called }) =>
+      called[0] === "export-desktop-application" &&
+      !called.includes("--schema"),
+  );
+  const flag = exportCall?.argv.indexOf("--download-install") ?? -1;
+  expect(flag).toBeGreaterThan(0);
+  expect(
+    JSON.parse(
+      await readFile(
+        resolve(exportCall?.cwd ?? "", exportCall?.argv[flag + 1] ?? ""),
+        "utf8",
+      ),
+    ),
+  ).toEqual({
+    kind: "appimage",
+    desktop_entry: "org.example.notes",
+    ...download,
+  });
+  expect(argv("capture-desktop-application")).not.toContain("--package-file");
+  expect(
+    await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+  ).toContain(
+    `sha256="${"f".repeat(64)}", to="vendor/app.AppImage", arch="amd64")`,
+  );
+});
+
 it("brings back a bundle whose file list outgrows a command's 1 MiB of output", async () => {
   const fakeSet = await fakes();
   const { outputs, client } = fakeSet;
@@ -397,7 +481,7 @@ it("brings back a bundle whose file list outgrows a command's 1 MiB of output", 
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: BUILD_TASK,
+        tasks: [{ task: BUILD_TASK }],
         directory,
       })
     ).structuredContent,
