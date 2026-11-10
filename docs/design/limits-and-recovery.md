@@ -513,7 +513,10 @@ own `expanded_bytes` controls its independently enforced bundle expansion.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and
-`can_increase`. When `can_increase` is true, raise that field and retry the same
+`can_increase`. `update_mode` is `parameter`: the caller selects the value on
+the next call, and `update_analysis_settings` does not accept it.
+`pending_restart` is false. Web-network capture budgets use the same mode.
+When `can_increase` is true, raise that field and retry the same
 complete artifact. At the supported maximum, or when the required representation
 exceeds it, the failure is not retryable by increasing that budget; inspect the
 declared dimensions and input validity, or explicitly choose a suitable reader.

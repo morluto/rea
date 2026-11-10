@@ -224,9 +224,26 @@ if (direct) {
     if (failure !== undefined) failures.push(failure);
   }
 
+  const parameterOwners = [
+    "src/artifacts/ArtifactReaderLimits.ts",
+    "src/domain/artifactReaderLimits.ts",
+    "src/domain/webNetworkCapture.ts",
+  ];
+  for (const relativePath of parameterOwners) {
+    const source = await readFile(join(root, relativePath), "utf8");
+    if (/update_mode:\s*"runtime"/u.test(source))
+      failures.push(
+        `${relativePath} is a per-call parameter, so update_mode cannot be runtime`,
+      );
+    if (!/update_mode:\s*"parameter"/u.test(source))
+      failures.push(`${relativePath} must report update_mode parameter`);
+  }
+
   const forbidden =
     /(?<![A-Za-z0-9_])(?:rea_restart_required|restartRequired|restart_required)(?![A-Za-z0-9_])|effect:\s*"(?:immediate|next_process)"|SettingChangeEffect/gu;
-  const scanRoots = ["src", "tests", "docs", ".agents", "scripts"].map((dir) =>
+  // Docs and verification receipts keep the field names they recorded.
+  // Source, tests, skills, and scripts cannot reintroduce those names.
+  const scanRoots = ["src", "tests", ".agents", "scripts"].map((dir) =>
     join(root, dir),
   );
   const skipDir = new Set([
