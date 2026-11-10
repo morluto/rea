@@ -1,8 +1,5 @@
 import { expect, it } from "vitest";
-import {
-  MAX_GO_STRING_AGGREGATE_BYTES,
-  MAX_GO_STRING_LITERAL_BYTES,
-} from "../domain/go/goBinary.js";
+import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../domain/go/goBinary.js";
 import type {
   BinaryContainer,
   FileMapping,
@@ -12,6 +9,9 @@ import type {
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readGoBinaryImage } from "./GoBinaryImage.js";
 import { recoverGoStringLiterals } from "./GoStringLiterals.js";
+
+const DEFAULT_AGGREGATE_BYTES = 512 * 1024;
+const DEFAULT_LITERAL_BYTES = 4096;
 
 const LITERALS = [
   "ListResourceProviders",
@@ -151,14 +151,14 @@ it.each([
   ]);
 });
 
-it("rejects unaligned, code-section, cross-section, out-of-bounds and non-printable UTF-8 candidates", () => {
+it("rejects invalid candidates and reports valid ranges omitted by the string-length budget", () => {
   const validUnicode = Buffer.from("café\t日本語\n", "utf8");
   const invalidUtf8 = Buffer.from([0xff, 0xfe, 0x41]);
   const embeddedNul = Buffer.from("bad\0str", "utf8");
   const c1Control = Buffer.from([0xc2, 0x85]);
   const noncharacter = Buffer.from([0xef, 0xbf, 0xbf]);
-  const maxAllowed = Buffer.alloc(MAX_GO_STRING_LITERAL_BYTES, 0x61);
-  const overMax = Buffer.alloc(MAX_GO_STRING_LITERAL_BYTES + 1, 0x62);
+  const maxAllowed = Buffer.alloc(DEFAULT_LITERAL_BYTES, 0x61);
+  const overMax = Buffer.alloc(DEFAULT_LITERAL_BYTES + 1, 0x62);
   const rodata = Buffer.concat([
     validUnicode,
     invalidUtf8,
@@ -194,13 +194,13 @@ it("rejects unaligned, code-section, cross-section, out-of-bounds and non-printa
         section: "data",
         offsetInSection: 16,
         ptr: baseRo + BigInt(badPrefixLen),
-        len: BigInt(MAX_GO_STRING_LITERAL_BYTES),
+        len: BigInt(DEFAULT_LITERAL_BYTES),
       },
       {
         section: "data",
         offsetInSection: 32,
         ptr: baseRo + BigInt(badPrefixLen + maxAllowed.length),
-        len: BigInt(MAX_GO_STRING_LITERAL_BYTES + 1),
+        len: BigInt(DEFAULT_LITERAL_BYTES + 1),
       },
       { section: "data", offsetInSection: 48, ptr: baseRo, len: 0n },
       {
@@ -263,15 +263,16 @@ it("rejects unaligned, code-section, cross-section, out-of-bounds and non-printa
   }).string_literals;
   expect(recovered?.items.map((item) => item.value)).toEqual([
     "café\t日本語\n",
-    "a".repeat(MAX_GO_STRING_LITERAL_BYTES),
+    "a".repeat(DEFAULT_LITERAL_BYTES),
   ]);
-  expect(recovered?.truncated).toBe(false);
+  expect(recovered?.truncated).toBe(true);
+  expect(recovered?.limits_reached).toEqual(["max_string_literal_bytes"]);
 });
 
 it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministically", () => {
   const chunks = Array.from({ length: 130 }, (_, index) =>
     Buffer.from(
-      `${String(index).padStart(4, "0")}:${"x".repeat(MAX_GO_STRING_LITERAL_BYTES - 5)}`,
+      `${String(index).padStart(4, "0")}:${"x".repeat(DEFAULT_LITERAL_BYTES - 5)}`,
       "utf8",
     ),
   );
@@ -291,14 +292,14 @@ it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministica
 
   const cappedByCount = readGoBinaryImage(fixture.bytes, {
     includeStringLiterals: true,
-    maxStringLiterals: 2,
+    budgets: { max_string_literals: 2 },
   });
   expect(cappedByCount.macho_chained_fixups).toBe(true);
   expect(cappedByCount.string_literals).toMatchObject({
     discovered_count: 130,
     max_items: 2,
     truncated: true,
-    aggregate_bytes: MAX_GO_STRING_LITERAL_BYTES * 2,
+    aggregate_bytes: DEFAULT_LITERAL_BYTES * 2,
   });
   expect(cappedByCount.string_literals?.items).toHaveLength(2);
   expect(
@@ -310,16 +311,16 @@ it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministica
 
   const cappedByBytes = readGoBinaryImage(fixture.bytes, {
     includeStringLiterals: true,
-    maxStringLiterals: 500,
+    budgets: { max_string_literals: 500 },
   });
   expect(cappedByBytes.string_literals).toMatchObject({
     discovered_count: 130,
     max_items: 500,
-    aggregate_bytes: MAX_GO_STRING_AGGREGATE_BYTES,
+    aggregate_bytes: DEFAULT_AGGREGATE_BYTES,
     truncated: true,
   });
   expect(cappedByBytes.string_literals?.items).toHaveLength(
-    MAX_GO_STRING_AGGREGATE_BYTES / MAX_GO_STRING_LITERAL_BYTES,
+    DEFAULT_AGGREGATE_BYTES / DEFAULT_LITERAL_BYTES,
   );
 });
 
@@ -593,7 +594,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
         load_regions: trackedLoadRegions,
         sections: trackedSections,
       },
-      2000,
+      GO_ANALYSIS_BUDGET_DEFAULTS,
       () => {
         if (inRegionLoop && !inSectionLoop) {
           regionCancelChecks += 1;
@@ -613,7 +614,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
     recoverGoStringLiterals(
       bytes,
       { ...container, sections: trackedSections },
-      2000,
+      GO_ANALYSIS_BUDGET_DEFAULTS,
       () => {
         if (inSectionLoop) throw new Error("cancelled during section indexing");
       },
@@ -742,3 +743,38 @@ it.each([
     expect(recovered.items.map((item) => item.value)).toEqual(expected);
   },
 );
+
+it("recovers longer literals with a selected budget without conflating offset/length identities", () => {
+  const fixture = createGoRodataStringFixture({
+    format: "elf",
+    rodata: Buffer.alloc(9000, 0x61),
+    headers: [
+      { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 9000n },
+      { section: "data", offsetInSection: 16, ptr: 0x102001n, len: 808n },
+    ],
+  });
+  const limited = readGoBinaryImage(fixture.bytes, {
+    includeStringLiterals: true,
+  });
+  expect(limited.string_literals).toMatchObject({
+    truncated: true,
+    limits_reached: ["max_string_literal_bytes"],
+  });
+  const recovered = readGoBinaryImage(fixture.bytes, {
+    includeStringLiterals: true,
+    budgets: { max_string_literal_bytes: 9000 },
+  });
+  expect(recovered.string_literals).toMatchObject({
+    truncated: false,
+    discovered_count: 2,
+  });
+  expect(
+    recovered.string_literals?.items.map((item) => [
+      item.location.bytes,
+      item.reference_count,
+    ]),
+  ).toEqual([
+    [9000, 1],
+    [808, 1],
+  ]);
+});
