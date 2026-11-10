@@ -27,6 +27,7 @@ export const registerWebNetworkCaptureCommands = (
     options: z.object({
       record: z
         .array(z.coerce.number().int().nonnegative())
+        .min(1)
         .optional()
         .describe("Zero-based producer ordinals; repeat to select several"),
       sensitiveValue: z
