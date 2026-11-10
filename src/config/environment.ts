@@ -38,6 +38,7 @@ import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
 import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { debuggerSessionLimitEnvironmentShape } from "./debuggerSessionLimits.js";
 import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
+import { webBundleEndpointLiteralCandidatesSchema } from "./webBundleEndpointLiteralCandidates.js";
 import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
 import {
   windowsChangeTimeDriftMsSchema,
@@ -71,6 +72,8 @@ const environmentSchema = z.object({
     ghidraDecompilePayloadMiBSchema.optional(),
   REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
     captureDecoderOldGenerationMiBSchema.optional(),
+  REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES:
+    webBundleEndpointLiteralCandidatesSchema.optional(),
   REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema.optional(),
   REA_REGEX_WORKER_HEAP_REQUEST_MIB: regexWorkerHeapRequestMiBSchema.optional(),
   REA_WINDOWS_CHANGE_TIME_DRIFT_MS: windowsChangeTimeDriftMsSchema.optional(),

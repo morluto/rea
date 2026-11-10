@@ -14,6 +14,10 @@ import {
   type IncludedScript,
 } from "./webBundleAnalyzerState.js";
 import {
+  webBundleEndpointLiteralLimitMessage,
+  type WebBundleEndpointLiteralLimit,
+} from "./webBundleEndpointLiteralBudget.js";
+import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "./webBundleScriptAnalysis.js";
@@ -93,6 +97,19 @@ export const buildCapturedWebBundleAnalysis = (
       : captureBudgetOmission(inspection, "source_maps");
   const sourceMapIncomplete =
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
+  const endpointLiteralCandidates = aggregateEndpointLiteralLimits(
+    orderedResults.flatMap((result) =>
+      result.status === "analyzed" &&
+      result.endpoint_literal_candidates !== undefined
+        ? [
+            {
+              scriptKey: result.script_key,
+              limit: result.endpoint_literal_candidates,
+            },
+          ]
+        : [],
+    ),
+  );
   const partial =
     accumulator.failedScripts.length > 0 ||
     accumulator.recoveredScripts.length > 0 ||
@@ -102,7 +119,8 @@ export const buildCapturedWebBundleAnalysis = (
     sourceMapIncomplete ||
     omittedScripts !== undefined ||
     omittedSourceScripts !== undefined ||
-    omittedSourceMaps !== undefined;
+    omittedSourceMaps !== undefined ||
+    endpointLiteralCandidates !== undefined;
   return webBundleAnalysisSchema.parse({
     route_inventory: completeSemanticSteps(
       buildJavaScriptRouteInventorySteps(
@@ -190,6 +208,7 @@ export const buildCapturedWebBundleAnalysis = (
       omittedScripts,
       omittedSourceScripts,
       omittedSourceMaps,
+      endpointLiteralCandidates,
     }),
     completeness: buildCompleteness({
       partial,
@@ -198,6 +217,9 @@ export const buildCapturedWebBundleAnalysis = (
       visitedNodes: accumulator.visitedNodes,
     }),
     limitations: bundleLimitations(),
+    ...(endpointLiteralCandidates === undefined
+      ? {}
+      : { endpoint_literal_candidates: endpointLiteralCandidates.limit }),
   });
 };
 
@@ -276,6 +298,12 @@ interface UnknownsInput {
   readonly omittedScripts: number | null | undefined;
   readonly omittedSourceScripts: number | null | undefined;
   readonly omittedSourceMaps: number | null | undefined;
+  readonly endpointLiteralCandidates:
+    | {
+        readonly limit: WebBundleEndpointLiteralLimit;
+        readonly scriptKeys: readonly string[];
+      }
+    | undefined;
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
@@ -359,6 +387,17 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
             input.omittedSourceMaps,
           ),
           affected_script_keys: [],
+        },
+      ]),
+  ...(input.endpointLiteralCandidates === undefined
+    ? []
+    : [
+        {
+          dimension: "endpoint_literal_candidates",
+          reason: webBundleEndpointLiteralLimitMessage(
+            input.endpointLiteralCandidates.limit,
+          ),
+          affected_script_keys: [...input.endpointLiteralCandidates.scriptKeys],
         },
       ]),
   ...(input.sourceMaps.status === "not_requested" ||
@@ -448,6 +487,35 @@ const buildCompleteness = (
   parse_failures: input.parseFailures,
   visited_ast_nodes: input.visitedNodes,
 });
+
+const aggregateEndpointLiteralLimits = (
+  partials: readonly {
+    readonly scriptKey: string;
+    readonly limit: WebBundleEndpointLiteralLimit;
+  }[],
+):
+  | {
+      readonly limit: WebBundleEndpointLiteralLimit;
+      readonly scriptKeys: readonly string[];
+    }
+  | undefined => {
+  const first = partials[0];
+  if (first === undefined) return undefined;
+  return {
+    scriptKeys: partials.map(({ scriptKey }) => scriptKey),
+    limit: {
+      ...first.limit,
+      admitted_count: partials.reduce(
+        (total, entry) => total + entry.limit.admitted_count,
+        0,
+      ),
+      omitted_count: partials.reduce(
+        (total, entry) => total + entry.limit.omitted_count,
+        0,
+      ),
+    },
+  };
+};
 
 const bundleLimitations = (): WebBundleAnalysis["limitations"] => [
   "Static bundle findings are observations or bounded inferences; REA does not execute captured JavaScript.",

@@ -518,5 +518,20 @@ export const webBundleAnalysisSchema = z.object({
     visited_ast_nodes: z.int().min(0),
   }),
   limitations: z.array(z.string()),
+  endpoint_literal_candidates: z
+    .strictObject({
+      coverage: z.literal("partial"),
+      code: z.literal("web_bundle_endpoint_literal_candidates"),
+      setting: z.literal("REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES"),
+      admitted_count: z.number().int().nonnegative(),
+      omitted_count: z.number().int().positive(),
+      maximum_count: z.number().int().positive(),
+      source: z.enum(["default", "setting"]),
+      default_count: z.number().int().positive(),
+      floor_count: z.number().int().positive(),
+      maximum_setting_count: z.number().int().positive(),
+      restart_required: z.literal(true),
+    })
+    .optional(),
 });
 export type WebBundleAnalysis = z.infer<typeof webBundleAnalysisSchema>;

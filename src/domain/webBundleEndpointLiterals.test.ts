@@ -1,6 +1,14 @@
 import { expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
+import {
+  DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
+  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+  webBundleEndpointLiteralLimitMessage,
+} from "./webBundleEndpointLiteralBudget.js";
 
 const analyze = (source: string) =>
   analyzeWebBundleFixture(
@@ -86,6 +94,81 @@ const SOCKET = "WSS://socket.example.test/events";`);
       detector: "literal:path-shaped",
     }),
   ]);
+});
+
+it("keeps the earlier nested literal coordinate", () => {
+  const source = `const routes = [["/api/nested"], "/api/nested"];`;
+  const result = analyze(source);
+  const candidates = result.inferences.filter(
+    ({ kind }) => kind === "endpoint_candidate",
+  );
+  const first = source.indexOf('"/api/nested"');
+  const second = source.indexOf('"/api/nested"', first + 1);
+  expect(candidates).toEqual([
+    {
+      kind: "endpoint_candidate",
+      value: "/api/nested",
+      confidence: "low",
+      basis: [
+        expect.objectContaining({
+          detector: "literal:path-shaped",
+          line: 1,
+          column: first,
+        }),
+      ],
+    },
+  ]);
+  expect(first).toBeLessThan(second);
+  expect(result.completeness.status).toBe("complete");
+  expect(result.endpoint_literal_candidates).toBeUndefined();
+});
+
+it("omits literal candidates past the effective ceiling and keeps observations", () => {
+  const source = `const routes = ["/api/one", "/api/two", "/api/three"];
+fetch("/api/kept");`;
+  const result = analyzeWebBundleFixture(
+    createWebPageInspection([
+      {
+        source,
+        scriptKey: `scr_${"1".repeat(64)}`,
+        url: "https://app.example.test/app.js",
+        origin: "https://app.example.test",
+        cdpHash: "hash",
+      },
+    ]),
+    undefined,
+    { maximumCount: 2, source: "setting" },
+  );
+  const candidates = result.inferences.filter(
+    ({ kind }) => kind === "endpoint_candidate",
+  );
+  expect(candidates.map(({ value }) => value)).toEqual([
+    "/api/one",
+    "/api/two",
+  ]);
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/api/kept",
+  ]);
+  const limit = {
+    coverage: "partial" as const,
+    code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
+    setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+    admitted_count: 2,
+    omitted_count: 1,
+    maximum_count: 2,
+    source: "setting" as const,
+    default_count: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    floor_count: MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    maximum_setting_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    restart_required: true as const,
+  };
+  expect(result.endpoint_literal_candidates).toEqual(limit);
+  expect(result.completeness.status).toBe("partial");
+  expect(result.unknowns).toContainEqual({
+    dimension: "endpoint_literal_candidates",
+    affected_script_keys: [`scr_${"1".repeat(64)}`],
+    reason: webBundleEndpointLiteralLimitMessage(limit),
+  });
 });
 
 it("does not turn arbitrary literals, computed strings or proven collection lookups into candidates", () => {

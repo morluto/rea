@@ -1,0 +1,74 @@
+/** Literal path/URL candidates retained per script when the setting is unset. */
+export const WEB_BUNDLE_ENDPOINT_LITERAL_SETTING =
+  "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES" as const;
+export const DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES = 1024;
+/** Zero retains nothing, so it is not a candidate budget. */
+export const MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES = 1;
+/**
+ * Largest configurable inventory. 4096 is an REA policy ceiling so this
+ * optional list cannot by itself fill the worker result budget. It does not
+ * raise that budget.
+ */
+export const MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES = 4096;
+
+export const WEB_BUNDLE_ENDPOINT_LITERAL_CODE =
+  "web_bundle_endpoint_literal_candidates" as const;
+
+/** Effective per-script ceiling and whether it came from the default or the setting. */
+export interface WebBundleEndpointLiteralAdmission {
+  readonly maximumCount: number;
+  readonly source: "default" | "setting";
+}
+
+export const DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION: WebBundleEndpointLiteralAdmission =
+  {
+    maximumCount: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    source: "default",
+  };
+
+/** Structured omission when unique literal candidates exceed the effective ceiling. */
+export interface WebBundleEndpointLiteralLimit {
+  readonly coverage: "partial";
+  readonly code: typeof WEB_BUNDLE_ENDPOINT_LITERAL_CODE;
+  readonly setting: typeof WEB_BUNDLE_ENDPOINT_LITERAL_SETTING;
+  readonly admitted_count: number;
+  readonly omitted_count: number;
+  readonly maximum_count: number;
+  readonly source: "default" | "setting";
+  readonly default_count: number;
+  readonly floor_count: number;
+  readonly maximum_setting_count: number;
+  readonly restart_required: true;
+}
+
+export const webBundleEndpointLiteralLimit = (
+  admission: WebBundleEndpointLiteralAdmission,
+  admittedCount: number,
+  omittedCount: number,
+): WebBundleEndpointLiteralLimit | undefined =>
+  omittedCount === 0
+    ? undefined
+    : {
+        coverage: "partial",
+        code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
+        setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING,
+        admitted_count: admittedCount,
+        omitted_count: omittedCount,
+        maximum_count: admission.maximumCount,
+        source: admission.source,
+        default_count: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+        floor_count: MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+        maximum_setting_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+        restart_required: true,
+      };
+
+/** Name the effective ceiling, its source, the allowed range, and the required restart. */
+export const webBundleEndpointLiteralLimitMessage = (
+  limit: WebBundleEndpointLiteralLimit,
+): string =>
+  [
+    `The effective ${limit.setting} value is ${String(limit.maximum_count)} candidates (source ${limit.source}; default ${String(limit.default_count)}, floor ${String(limit.floor_count)}, maximum ${String(limit.maximum_setting_count)}).`,
+    `Retained ${String(limit.admitted_count)} literal endpoint candidates and omitted ${String(limit.omitted_count)} further unique literals.`,
+    `Set ${limit.setting} in the environment that starts REA to a positive decimal integer from ${String(limit.floor_count)} to ${String(limit.maximum_setting_count)}, then restart REA.`,
+    "There is no runtime override. This setting does not raise the worker result budget.",
+  ].join(" ");

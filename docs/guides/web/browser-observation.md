@@ -49,8 +49,16 @@ behavior, runtime reachability or that an array contains only routes: a local
 file path can also be a candidate. They do not change
 `analyze_javascript_application`'s request classification. Existing URL userinfo
 redaction and script/artifact provenance apply. Each script/value/detector keeps
-its first matching literal coordinate, not every occurrence. Correlate candidates
-with captured requests before treating them as an application's API surface.
+its first matching literal coordinate, in source-tree order, not every occurrence.
+A literal nested in an earlier array element keeps that earlier coordinate when
+the same value is repeated in a later element. Retention stops at
+`REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` (default 1024, floor 1, maximum
+4096). Further unique literals are omitted, `completeness.status` is `partial`,
+and `endpoint_literal_candidates` names the setting, the effective count, its
+source, and the allowed range. Set it in the environment that starts REA, then
+restart REA. There is no runtime override, and the setting does not raise the
+worker result budget. Correlate candidates with captured requests before
+treating them as an application's API surface.
 
 For `analyze_web_bundle`, each `webmcp_declarations` entry's
 `schema_property_names` is a source-derived projection of statically known own

@@ -108,10 +108,10 @@ export const analyzeScript = (
     index,
   );
   traverseJavaScriptAst(file, {
-    enter: (node, parent) => {
+    enter: (node, parent, readAncestors) => {
       accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
-      inspectEndpointLiterals(script, node, parent, accumulator);
+      inspectEndpointLiterals(script, node, readAncestors, accumulator);
       inspectNode(
         script,
         node,
@@ -293,32 +293,30 @@ const inspectCall = (
 const inspectEndpointLiterals = (
   script: IncludedScript,
   node: t.Node,
-  parent: t.Node | null,
+  readAncestors: () => readonly t.Node[],
   accumulator: AnalysisAccumulator,
 ): void => {
-  const values = t.isArrayExpression(node)
-    ? node.elements
-    : t.isVariableDeclarator(node) &&
-        t.isVariableDeclaration(parent, { kind: "const" })
-      ? [node.init]
-      : [];
-  for (const value of values) {
-    const literal = webBundleEndpointLiteral(value);
-    if (
-      value === null ||
-      value === undefined ||
-      literal === undefined ||
-      (!t.isArrayExpression(node) && literal.detector !== "literal:url-shaped")
-    )
-      continue;
-    addEndpointCandidate(
-      script,
-      value,
-      literal.detector,
-      literal.value,
-      accumulator,
-    );
-  }
+  const ancestors = readAncestors();
+  const parent = ancestors.at(-1) ?? null;
+  const grandparent = ancestors.at(-2) ?? null;
+  // Record the node being entered, not its later siblings. Source-tree order
+  // then keeps a nested literal ahead of the same value in a following element.
+  const inArray = t.isArrayExpression(parent);
+  const inConstInitializer =
+    t.isVariableDeclarator(parent) &&
+    node === parent.init &&
+    t.isVariableDeclaration(grandparent, { kind: "const" });
+  if (!inArray && !inConstInitializer) return;
+  const literal = webBundleEndpointLiteral(node);
+  if (literal === undefined) return;
+  if (!inArray && literal.detector !== "literal:url-shaped") return;
+  addEndpointCandidate(
+    script,
+    node,
+    literal.detector,
+    literal.value,
+    accumulator,
+  );
 };
 
 /** Match exact WebMCP receiver and method properties without flattening keys. */
@@ -390,6 +388,18 @@ const addEndpointCandidate = (
     value,
     detector,
   ]);
+  if (accumulator.seen.has(key)) return;
+  const literalCandidate =
+    detector === "literal:path-shaped" || detector === "literal:url-shaped";
+  if (
+    literalCandidate &&
+    accumulator.endpointLiteralAdmitted >=
+      accumulator.endpointLiterals.maximumCount
+  ) {
+    accumulator.seen.add(key);
+    accumulator.endpointLiteralOmitted += 1;
+    return;
+  }
   // This is a per-script candidate inventory, not a callsite list. Keep the
   // first representative source position without multiplying inline records.
   addUnique(accumulator, key, () =>
@@ -400,6 +410,7 @@ const addEndpointCandidate = (
       basis: [{ ...basis(script, detector), ...locationFields(node) }],
     }),
   );
+  if (literalCandidate) accumulator.endpointLiteralAdmitted += 1;
 };
 
 const addFinding = (context: AddFindingContext): void => {

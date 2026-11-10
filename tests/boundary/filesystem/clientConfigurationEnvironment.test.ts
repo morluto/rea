@@ -872,6 +872,11 @@ it.each([
     "REA_GHIDRA_COMPILER_SPEC_ID",
   ],
   [
+    "web bundle literal candidate ceiling of zero",
+    { REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES: "0" },
+    "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
+  ],
+  [
     "Windows ChangeTime drift window of zero",
     { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "0" },
     "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",

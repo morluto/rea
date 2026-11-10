@@ -1,6 +1,10 @@
 import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import { analyzeScript } from "./webBundleAnalyzerInspection.js";
 import {
+  webBundleEndpointLiteralLimit,
+  type WebBundleEndpointLiteralAdmission,
+} from "./webBundleEndpointLiteralBudget.js";
+import {
   createWebBundleAnalysisAccumulator,
   type IncludedScript,
 } from "./webBundleAnalyzerState.js";
@@ -13,9 +17,15 @@ import {
 export const analyzeCapturedWebScript = (
   script: IncludedScript,
   precision?: JavaScriptSemanticPrecisionInput,
+  endpointLiterals?: WebBundleEndpointLiteralAdmission,
 ): WebBundleScriptAnalysis => {
-  const accumulator = createWebBundleAnalysisAccumulator();
+  const accumulator = createWebBundleAnalysisAccumulator(endpointLiterals);
   const routeFacts = analyzeScript(script, accumulator, precision);
+  const endpointLiteralCandidates = webBundleEndpointLiteralLimit(
+    accumulator.endpointLiterals,
+    accumulator.endpointLiteralAdmitted,
+    accumulator.endpointLiteralOmitted,
+  );
   const failed = accumulator.failedScripts.length > 0;
   const recovered = accumulator.recoveredScripts.length > 0;
   return webBundleScriptAnalysisSchema.parse({
@@ -32,5 +42,8 @@ export const analyzeCapturedWebScript = (
       webmcp_declarations: accumulator.webMcp,
     },
     inferences: accumulator.inferences,
+    ...(endpointLiteralCandidates === undefined
+      ? {}
+      : { endpoint_literal_candidates: endpointLiteralCandidates }),
   });
 };
