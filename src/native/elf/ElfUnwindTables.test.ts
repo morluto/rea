@@ -53,6 +53,108 @@ vi.mock("../../domain/elfStringTable.js", async (importOriginal) => {
 
 const address = (value: number): string => `0x${value.toString(16)}`;
 
+it.each([true, false])(
+  "retains valid ten-byte sign padding in CIE alignment (little %s)",
+  (little) => {
+    const report = parse(
+      elfUnwindFixture({
+        little,
+        header: "match",
+        leb128: { dataAlignment: [0xfc, ...Array<number>(8).fill(0xff), 0x7f] },
+      }),
+    );
+    expect(report.cies[0]?.data_alignment).toBe(-4);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_ranges: 2,
+    });
+  },
+);
+
+it("rejects an overflowing ULEB pointer instead of wrapping it to a fabricated function address", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: false,
+          start: [0x81, ...Array<number>(8).fill(0x80), 0x02],
+          size: [0x20],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.coverage.status).toBe("incomplete");
+});
+
+it("rejects a padded negative SLEB range instead of publishing a huge positive size", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: true,
+          start: [0x80, 0x82, 0x80, 0x02],
+          size: [...Array<number>(9).fill(0xff), 0x7f],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.limitations).toContain("An FDE address range is negative.");
+});
+
+it.each([
+  {
+    signed: false,
+    start: [...Array<number>(9).fill(0xff), 0x01],
+    expected: "0xffffffffffffffff",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0x80), 0x7f],
+    expected: "0x8000000000000000",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0xff), 0x00],
+    expected: "0x7fffffffffffffff",
+  },
+])(
+  "retains the representable LEB128 boundary $expected",
+  ({ signed, start, expected }) => {
+    const report = parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toContain(expected);
+    expect(report.coverage.status).toBe("complete");
+  },
+);
+
+it.each(
+  [
+    [...Array<number>(9).fill(0x80), 0x01],
+    [...Array<number>(9).fill(0xff), 0x7e],
+    Array<number>(10).fill(0x80),
+  ].map((start) => ({ start })),
+)(
+  "omits an overflowing or unterminated signed operand and retains its sibling FDE (%j)",
+  ({ start }) => {
+    const report = parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed: true, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+    expect(report.coverage.status).toBe("incomplete");
+  },
+);
+
 const parse = (bytes: Buffer, raw: Readonly<Record<string, unknown>> = {}) => {
   const input = inspectElfUnwindRangesInputSchema.parse({
     path: "/artifacts/unwind.elf",

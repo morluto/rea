@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
@@ -10,8 +11,78 @@ import {
 } from "../../src/native/elf/ElfUnwindTables.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 
 const address = (value: number): string => `0x${value.toString(16)}`;
+
+cliTest(
+  "preserves signed LEB operands and refuses overflow through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-unwind-leb128-");
+    const { call } = await connectLocalToolsMcp();
+    for (const variant of [
+      {
+        name: "padded-cie",
+        leb128: { dataAlignment: [0xfc, ...Array<number>(8).fill(0xff), 0x7f] },
+        starts: [address(UNWIND_FN_A), address(UNWIND_FN_B)],
+        status: "complete",
+      },
+      {
+        name: "overflow",
+        leb128: {
+          pointers: {
+            signed: false,
+            start: [0x81, ...Array<number>(8).fill(0x80), 0x02],
+            size: [0x20],
+          },
+        },
+        starts: [address(UNWIND_FN_B)],
+        status: "incomplete",
+      },
+      {
+        name: "negative-range",
+        leb128: {
+          pointers: {
+            signed: true,
+            start: [0x80, 0x82, 0x80, 0x02],
+            size: [...Array<number>(9).fill(0xff), 0x7f],
+          },
+        },
+        starts: [address(UNWIND_FN_B)],
+        status: "incomplete",
+      },
+    ]) {
+      const path = join(root, `${variant.name}.elf`);
+      const bytes = elfUnwindFixture({
+        header: "absent",
+        leb128: variant.leb128,
+      });
+      await writeFile(path, bytes);
+      const cliResult = await cli.run({
+        arguments: ["inspect-elf-unwind-ranges", path, "--json"],
+      });
+      expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+      const mcp = await call("inspect_elf_unwind_ranges", { path });
+      expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+      for (const evidence of [cliResult.json, mcp.structuredContent]) {
+        const report = toolContract(
+          "inspect_elf_unwind_ranges",
+        ).outputSchema.parse(evidence).normalized_result;
+        expect(
+          report.ranges.map((r) => r.start),
+          variant.name,
+        ).toEqual(variant.starts);
+        expect(report.coverage.status).toBe(variant.status);
+        expect(report.artifact.sha256).toBe(
+          createHash("sha256").update(bytes).digest("hex"),
+        );
+        if (variant.name === "padded-cie")
+          expect(report.cies[0]?.data_alignment).toBe(-4);
+      }
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    }
+  },
+);
 
 cliTest(
   "reports two unwind ranges, a symbol, an LSDA, and a header mismatch",
