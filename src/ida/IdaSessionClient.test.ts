@@ -187,6 +187,7 @@ it.each(["initialize", "transport"])(
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
+        effect: "immediate",
         rea_restart_required: false,
       },
       diagnostics: { producer_fact: "retained" },

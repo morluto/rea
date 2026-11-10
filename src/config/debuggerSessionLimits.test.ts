@@ -171,6 +171,7 @@ it("names the session setting on a Rizin capacity refusal", async () => {
         minimum: MINIMUM_DEBUGGER_MAX_SESSIONS,
         maximum: MAXIMUM_DEBUGGER_MAX_SESSIONS,
         unit: "sessions",
+        effect: "next_process",
         restart_required: true,
         max_sessions: 1,
         active_or_reserved_sessions: 1,

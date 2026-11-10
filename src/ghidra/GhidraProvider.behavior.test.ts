@@ -1983,6 +1983,7 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
         minimum: 1,
         maximum: 2_147_483,
         agent_editable: true,
+        effect: "immediate",
         rea_restart_required: false,
       };
       expect(invocation.details?.limit).toEqual({
@@ -4365,6 +4366,7 @@ describe("Ghidra startup deadline for a finished invocation", () => {
     setting: "ghidra.startup_timeout_ms",
     effective_value: 250,
     agent_editable: true,
+    effect: "immediate",
     rea_restart_required: false,
   };
   const invocationLimit = {

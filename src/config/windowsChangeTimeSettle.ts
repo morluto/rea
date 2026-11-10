@@ -55,6 +55,8 @@ export interface WindowsChangeTimeSettingFailure {
   readonly floor: number;
   readonly maximum: number;
   readonly unit: "ms" | "polls";
+  readonly effect: "next_process";
+  /** Compatibility alias of `effect: "next_process"`. */
   readonly restartRequired: true;
 }
 
@@ -79,6 +81,7 @@ const windowsChangeTimeSettingFailure = (
   floor: bound.floor,
   maximum: bound.maximum,
   unit: bound.unit,
+  effect: "next_process",
   restartRequired: true,
 });
 
