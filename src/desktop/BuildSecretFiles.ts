@@ -45,8 +45,10 @@ export const buildSecretsDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
 ): string => {
-  const root = xdgBase(
-    environment.XDG_CONFIG_HOME,
+  const root = xdgBase(environment.XDG_CONFIG_HOME, () =>
+    // Resolve the home fallback only when it is the one that applies: on a host
+    // without a passwd entry for the caller it can throw, and an absolute
+    // XDG_CONFIG_HOME leaves it unused.
     join(homeDirectoryFromEnvironment(environment, platform), ".config"),
   );
   return join(root, "rea", "build-secrets");
