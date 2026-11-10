@@ -325,19 +325,22 @@ sliceTest(
       },
     });
     expect(mixed.isError, JSON.stringify(mixed.content)).not.toBe(true);
-    expect(
-      goBinarySchema.parse(
-        toolContract("inspect_go_binary").outputSchema.parse(
-          mixed.structuredContent,
-        ).normalized_result,
-      ),
-    ).toMatchObject({
+    const report = goBinarySchema.parse(
+      toolContract("inspect_go_binary").outputSchema.parse(
+        mixed.structuredContent,
+      ).normalized_result,
+    );
+    expect(report).toMatchObject({
       selected_slice: {
         offset: preferred.slices[1]?.offset,
         cpu_subtype: 0,
       },
       build_info: { go_version: "go1.26.1" },
     });
+    // The arm64e slice is not read, and the result says so.
+    expect(report.limitations).toContain(
+      `Only the preferred arm64 slice (arm64 (subtype 0x0) at file offset ${String(preferred.slices[1]?.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(preferred.slices[0]?.offset)}, which no architecture value selects.`,
+    );
 
     // Slices that share a base subtype leave no single slice to choose.
     const duplicate = await write(

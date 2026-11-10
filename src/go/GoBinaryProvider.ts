@@ -331,12 +331,15 @@ export class GoBinaryProvider implements GoBinaryPort {
           ...(stringLiterals === undefined
             ? {}
             : { string_literals: stringLiterals }),
-          limitations: limitationsFor(
-            info,
-            sectionNamesLimitation,
-            stringLiterals,
-            machoChainedFixups,
-          ),
+          limitations: [
+            ...limitationsFor(
+              info,
+              sectionNamesLimitation,
+              stringLiterals,
+              machoChainedFixups,
+            ),
+            ...selected.limitations,
+          ],
         };
         if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
           throw outputLimit(input.path);

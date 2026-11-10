@@ -23,8 +23,10 @@ requires an absolute filesystem path:
 A universal Mach-O requires `architecture` to select one slice. When several
 slices share the CPU family, such as the `arm64` and `arm64e` slices of stock
 macOS tools, REA reads the one `inspect_macho` would select (`arm64` before
-`arm64e` before `arm64v8`, otherwise FAT table order) and reports it in
-`slice`. Slices that share a base subtype fail on `architecture`. ELF files and
+`arm64e` before `arm64v8`, `x86_64` before `x86_64h`, and FAT table order among
+subtypes with no listed preference) and reports it in `slice`. `limitations`
+names the same-family slices it did not read. Slices that share a base subtype
+fail on `architecture`. ELF files and
 thin Mach-O files do not take it.
 
 ## Sources

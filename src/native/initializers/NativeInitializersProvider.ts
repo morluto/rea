@@ -129,7 +129,11 @@ export const readNativeInitializers = async (
   );
   const page = { offset: input.offset, limit: input.limit };
   const inspection = await inspectSelected(bytes, selected, page, signal);
-  return { artifact, ...inspection };
+  return {
+    artifact,
+    ...inspection,
+    limitations: [...inspection.limitations, ...selected.limitations],
+  };
 };
 
 const inspectSelected = async (

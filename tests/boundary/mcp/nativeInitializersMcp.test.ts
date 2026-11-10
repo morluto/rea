@@ -127,6 +127,10 @@ mcpTest(
         },
       });
       expect(evidence.normalized_result.entries.length).toBeGreaterThan(0);
+      // The arm64e slice is not read, and the result says so.
+      expect(evidence.normalized_result.limitations).toContain(
+        `Only the preferred arm64 slice (arm64 (subtype 0x0) at file offset ${String(universal.slices[1]?.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(universal.slices[2]?.offset)}, which no architecture value selects.`,
+      );
     } finally {
       await session.close();
     }

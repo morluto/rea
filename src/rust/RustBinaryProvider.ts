@@ -110,7 +110,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           ...(selected.selection === null
             ? {}
             : { selected_slice: selected.selection }),
-          limitations: limitationsFor(image),
+          limitations: [...limitationsFor(image), ...selected.limitations],
         };
         if (
           Buffer.byteLength(JSON.stringify(report), "utf8") > RUST_OUTPUT_BYTES

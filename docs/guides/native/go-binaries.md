@@ -168,8 +168,10 @@ type/subtype and the FAT table digest, and reports every source range as a
 file offset inside that slice. Without `architecture`, or when the file has no
 such slice, the request fails on `architecture` and lists the slices present.
 When several slices share the CPU family, REA reads the one `inspect_macho`
-would select: `arm64` before `arm64e` before `arm64v8`, otherwise the first in
-FAT table order. Slices that share a base subtype still fail on `architecture`.
+would select: `arm64` before `arm64e` before `arm64v8`, `x86_64` before other
+x86_64 subtypes such as `x86_64h`, and FAT table order among subtypes with no
+listed preference. `limitations` names the same-family slices it did not read.
+Slices that share a base subtype still fail on `architecture`.
 `architecture` on any other image is rejected rather than ignored.
 
 For ELF images without a named build-info section, discovery checks each
