@@ -75,6 +75,10 @@ it("keeps accepted operations and their typed provider views stable across concu
   const pending = store.run(async () => {
     await barrier;
     expect(asar.maximumBytes).toBe(16777216);
+    expect(asar.listing?.maximumBytes).toBe(67108864);
+    expect(live.ghidraValueFlowMaxOperations).toBe(3000);
+    expect(live.ghidraValueFlowMaxInputsPerOperation).toBe(64);
+    expect(live.ghidraValueFlowMaxEdges).toBe(12000);
     expect(live.ghidraStartupTimeoutMs).toBe(330000);
     expect(live.regexMatchingDeadline.deadlineMs).toBe(5000);
     expect(store.read().revision).toBe(0);
@@ -83,6 +87,18 @@ it("keeps accepted operations and their typed provider views stable across concu
     const changed = store.update({
       changes: [
         { setting: "asar.max_header_bytes", action: "set", value: 33554432 },
+        { setting: "asar.max_listing_bytes", action: "set", value: 134217728 },
+        {
+          setting: "ghidra.value_flow_max_operations",
+          action: "set",
+          value: 6000,
+        },
+        {
+          setting: "ghidra.value_flow_max_inputs_per_operation",
+          action: "set",
+          value: 128,
+        },
+        { setting: "ghidra.value_flow_max_edges", action: "set", value: 24000 },
         { setting: "ghidra.startup_timeout_ms", action: "set", value: 999999 },
         { setting: "regex.matching_deadline_ms", action: "set", value: 10000 },
       ],
@@ -95,17 +111,25 @@ it("keeps accepted operations and their typed provider views stable across concu
   await pending;
   store.run(() => {
     expect(asar.maximumBytes).toBe(33554432);
+    expect(asar.listing?.maximumBytes).toBe(134217728);
+    expect(live.ghidraValueFlowMaxOperations).toBe(6000);
+    expect(live.ghidraValueFlowMaxInputsPerOperation).toBe(128);
+    expect(live.ghidraValueFlowMaxEdges).toBe(24000);
     expect(live.ghidraStartupTimeoutMs).toBe(999999);
     expect(live.regexMatchingDeadline.deadlineMs).toBe(10000);
   });
 });
 
 it("exposes shared provider controls and preserves the explicit unbounded decompile value", () => {
-  const environment = { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "7" };
+  const environment = {
+    REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "7",
+    REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: "64",
+  };
   const store = new AnalysisSettings(environment);
   const parsed = parseConfig(environment);
   if (!parsed.ok) throw parsed.error;
   const config = runtimeAnalysisConfig(parsed.value, store.read);
+  expect(config.ghidraDecompileMaxPayloadMiB).toBe(64);
   expect(
     store
       .inspect({ provider: "ghidra", operation: "search_strings" })
@@ -120,7 +144,7 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     store
       .inspect({ operation: "inventory_artifact" })
       .settings.map(({ setting }) => setting),
-  ).toEqual(["asar.max_header_bytes"]);
+  ).toEqual(["asar.max_listing_bytes", "asar.max_header_bytes"]);
   expect(
     store.update({
       changes: [
@@ -129,16 +153,27 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
           action: "set",
           value: null,
         },
+        {
+          setting: "ghidra.decompile_max_payload_mib",
+          action: "set",
+          value: null,
+        },
       ],
     }).ok,
   ).toBe(true);
   expect(config.ghidraDecompileTimeoutSeconds).toBeUndefined();
+  expect(config.ghidraDecompileMaxPayloadMiB).toBeUndefined();
   expect(
     store.inspect({ settings: ["ghidra.decompile_timeout_seconds"] })
       .settings[0],
   ).toMatchObject({ value: null, launch_value: 7, source: "runtime" });
   for (const [setting, value] of [
     ["asar.max_header_bytes", null],
+    ["asar.max_listing_bytes", 0],
+    ["asar.max_listing_bytes", Number.MAX_SAFE_INTEGER + 1],
+    ["ghidra.value_flow_max_operations", 0],
+    ["ghidra.value_flow_max_inputs_per_operation", 2147483648],
+    ["ghidra.decompile_max_payload_mib", 2048],
     ["asar.max_header_bytes", 268435457],
     ["javascript.max_heap_mb", 127],
     ["regex.matching_deadline_ms", 1.5],

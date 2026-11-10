@@ -130,6 +130,19 @@ status checks alongside its existing checks. Deploy the workflow to each
 protected target branch before requiring it there. The workflow reads PR
 metadata using trusted default-branch code and writes only a commit status.
 
+When an open PR may overlap another open change or a recently landed fix, note
+the related PR, issue, or commit in the description or a comment as soon as the
+overlap is known. Prefer one clear pointer over repeated status updates.
+
+If an overlapping change merges while a PR awaits review, link that commit on
+the open PR and state what remains useful. Rebase or otherwise align with the
+current base when the remaining work is still wanted, narrow the PR to the
+uncovered portion, or close it when the change is fully superseded. Keep the
+description and validation current after that update. Maintainers may also note
+the expected disposition (rebase, narrow, or close) when they land or recognize
+an overlapping fix. Readiness still does not grant merge permission or a review
+date.
+
 Maintainers may return a PR to the author or close it when the problem is
 unsupported, validation is missing, or the owner cannot explain the change.
 Contributors are responsible for completing this work before requesting review.
