@@ -27,12 +27,14 @@ import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.j
 import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
+  elfInitializerSlotKey,
   readPointerWord,
   relocationFromEntry,
   sectionRelocations,
   sectionSymbolKey,
   type ElfInitializerSymbol,
   type SlotRelocation,
+  type ElfInitializerSlot,
 } from "./ElfInitializerSymbols.js";
 import {
   finishInitializerReport,
@@ -77,7 +79,7 @@ interface DynTag {
   readonly valueOffset: number;
 }
 
-interface ArraySlot {
+interface ArraySlot extends ElfInitializerSlot {
   readonly mappingMismatch?: boolean;
   readonly va: bigint;
   readonly fileOffset: number | null;
@@ -296,7 +298,8 @@ const slotsFromSpan = (
   label: string,
   locate: (address: bigint) => number | null,
   sectionName: string | null,
-): Slot[] => {
+  sectionIndex: number | null = null,
+): ArraySlot[] => {
   const stride = BigInt(wordOf(scan.bits));
   if (byteSize < 0n || byteSize % stride !== 0n)
     note(
@@ -315,7 +318,7 @@ const slotsFromSpan = (
       scan,
       `${label} declares ${declared.toString()} slots. Scanning stopped at the ${String(MAX_NATIVE_INITIALIZER_ENTRIES)}-slot budget, so later slots were not read.`,
     );
-  const slots: Slot[] = [];
+  const slots: ArraySlot[] = [];
   let missed = false;
   for (let index = 0; index < count; index += 1) {
     const va = base + BigInt(index) * stride;
@@ -324,7 +327,7 @@ const slotsFromSpan = (
       missed = true;
       continue;
     }
-    slots.push({ va, fileOffset, sectionName });
+    slots.push({ va, fileOffset, sectionName, sectionIndex });
   }
   if (missed)
     note(
@@ -389,6 +392,7 @@ const sectionSource = (
       label,
       withinSection(section, wordOf(scan.bits)),
       section.name,
+      section.index,
     ),
   };
 };
@@ -831,8 +835,8 @@ const collectEntries = (
   scan: ElfScan,
   sources: readonly Source[],
   loaded: WriteLoad,
-  sectionRels: ReadonlyMap<number, SlotRelocation>,
-  sectionClobbered: ReadonlySet<number>,
+  sectionRels: ReadonlyMap<string, SlotRelocation>,
+  sectionClobbered: ReadonlySet<string>,
   symbols: readonly ElfInitializerSymbol[] | undefined,
   names: SymbolNames,
   trustRaw: boolean,
@@ -868,11 +872,10 @@ const collectEntries = (
                 slot,
                 scan.relocatable ? undefined : loaded.writes.get(slot.va),
                 (!scan.relocatable && loaded.clobbered.has(slot.va)) ||
-                  (slot.fileOffset !== null &&
-                    sectionClobbered.has(slot.fileOffset)),
-                slot.fileOffset === null
-                  ? undefined
-                  : sectionRels.get(slot.fileOffset),
+                  sectionClobbered.has(
+                    elfInitializerSlotKey(slot, scan.relocatable),
+                  ),
+                sectionRels.get(elfInitializerSlotKey(slot, scan.relocatable)),
                 symbols,
                 trustRaw,
               )
@@ -1011,16 +1014,14 @@ export const readElfInitializers = async (
   assertArtifactReadActive(signal);
   const symbols = loadElfSymbolIndex(scan, directory.sections, scan.notes);
   if (symbols.incomplete) scan.incomplete = true;
-  const uncovered = new Set(
-    sources.flatMap((source) =>
-      source.slots.flatMap((slot) =>
-        slot.direct === undefined &&
-        slot.fileOffset !== null &&
-        (scan.relocatable ||
-          (!loaded.writes.has(slot.va) && !loaded.clobbered.has(slot.va)))
-          ? [slot.fileOffset]
-          : [],
-      ),
+  const uncovered = sources.flatMap((source) =>
+    source.slots.flatMap((slot) =>
+      slot.direct === undefined &&
+      slot.fileOffset !== null &&
+      (scan.relocatable ||
+        (!loaded.writes.has(slot.va) && !loaded.clobbered.has(slot.va)))
+        ? [slot]
+        : [],
     ),
   );
   const notesBeforeRelocs = scan.notes.recorded;

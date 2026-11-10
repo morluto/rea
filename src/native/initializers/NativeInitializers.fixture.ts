@@ -194,6 +194,21 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
   return file;
 };
 
+/** Two initializer addresses share source bytes; only the original has a section RELA write. */
+export const elf64AliasedInitializers = (): Buffer => {
+  const file = elf64PieInitializers();
+  file.writeUInt16LE(3, 56);
+  phdr64(file, 176, 1, 6, 0x200, 0x1200, 24);
+  // Observe both mappings through independent dynamic array declarations.
+  dyn64(file, 2, 25, 0x1200);
+  dyn64(file, 3, 27, 8);
+  dyn64(file, 6, 32, 0x200);
+  // Exercise the allocated section-relocation fallback rather than DT_RELA.
+  for (let index = 8; index <= 10; index++)
+    dyn64(file, index, 0x70000000 + index, 0);
+  return file;
+};
+
 const phdr32 = (
   file: Buffer,
   at: number,

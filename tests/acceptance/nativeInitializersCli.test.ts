@@ -1,15 +1,56 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   elfRelocatableCtors,
+  elf64AliasedInitializers,
   machoArm64Initializers,
 } from "../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const contract = toolContract("inspect_native_initializers");
+
+cliTest(
+  "keeps an unrelocated ELF alias's value and source identity through the CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-native-init-alias-cli-");
+    const path = join(root, "program");
+    const bytes = elf64AliasedInitializers();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.status).toBe("parsed");
+    expect(report.artifact).toMatchObject({
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+    expect(
+      report.entries.find((entry) => entry.kind === "preinit_array"),
+    ).toMatchObject({
+      slot_va: "0x200",
+      slot_file_offset: 0x200,
+      value_va: "0x100",
+      resolution: "relative_addend",
+    });
+    expect(
+      report.entries.find((entry) => entry.kind === "init_array"),
+    ).toMatchObject({
+      slot_va: "0x1200",
+      slot_file_offset: 0x200,
+      value_va: "0x0",
+      symbol: null,
+      resolution: "raw",
+    });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "lists Mach-O initializers and finalizers through the public CLI",

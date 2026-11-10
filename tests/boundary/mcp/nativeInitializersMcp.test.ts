@@ -8,6 +8,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   machoArm64FatInitializers,
   elf64PieInitializers,
+  elf64AliasedInitializers,
 } from "../../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -19,6 +20,41 @@ const connect = async (mcp: TestMcp) => {
   const client = await mcp.connect(createServer({ kind: "session", session }));
   return { client, session };
 };
+
+mcpTest(
+  "resolves two independently relocated ELF aliases through MCP",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-native-init-alias-mcp-");
+      const path = join(root, "program");
+      const bytes = elf64AliasedInitializers();
+      bytes.writeBigUInt64LE(0x1200n, 0x4b0);
+      await writeFile(path, bytes);
+      const response = await client.callTool({
+        name: "inspect_native_initializers",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const report = toolContract(
+        "inspect_native_initializers",
+      ).outputSchema.parse(response.structuredContent).normalized_result;
+      expect(report.status).toBe("parsed");
+      expect(
+        report.entries
+          .filter((entry) =>
+            ["preinit_array", "init_array"].includes(entry.kind),
+          )
+          .map((entry) => [entry.slot_va, entry.value_va, entry.resolution]),
+      ).toEqual([
+        ["0x200", "0x100", "relative_addend"],
+        ["0x1200", "0x110", "relative_addend"],
+      ]);
+    } finally {
+      await session.close();
+    }
+  },
+);
 
 mcpTest(
   "advertises inspect_native_initializers and pages ELF initializers",
