@@ -166,8 +166,11 @@ against the table. The result keeps the universal file as `artifact` (its
 SHA-256 and size), adds `selected_slice` with the slice offset, length, raw CPU
 type/subtype and the FAT table digest, and reports every source range as a
 file offset inside that slice. Without `architecture`, or when the file has no
-such slice or several, the request fails on `architecture` and lists the slices
-present. `architecture` on any other image is rejected rather than ignored.
+such slice, the request fails on `architecture` and lists the slices present.
+When several slices share the CPU family, REA reads the one `inspect_macho`
+would select: `arm64` before `arm64e` before `arm64v8`, otherwise the first in
+FAT table order. Slices that share a base subtype still fail on `architecture`.
+`architecture` on any other image is rejected rather than ignored.
 
 For ELF images without a named build-info section, discovery checks each
 nonempty writable, non-executable load segment in program-header order. This
