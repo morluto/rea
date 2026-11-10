@@ -5,7 +5,10 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -66,9 +69,10 @@ export class PeImportsProvider implements PeImportsPort {
   }
 
   async inspect(input: InspectPeImportsInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -90,7 +94,7 @@ export class PeImportsProvider implements PeImportsPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(peImportsFailure(cause, input));
+      return err(peImportsFailure(cause, input, snapshot));
     }
   }
 }
@@ -236,6 +240,7 @@ const peImportsFailurePrimary = (
 const peImportsFailure = (
   cause: unknown,
   input: InspectPeImportsInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
   const primary = peImportsFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -247,5 +252,6 @@ const peImportsFailure = (
     input.path,
     PE_IMPORTS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

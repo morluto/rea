@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά** · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά** · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -86,6 +86,10 @@ npx rea-agents setup
 
 Το MCP χρησιμοποιεί συμπαγή σχήματα εισόδου από προεπιλογή. Για πλήρεις οδηγίες πεδίων και ένθετης επικύρωσης, όρισε `REA_MCP_INPUT_SCHEMA_PROFILE=full` στην καταχώριση MCP. Και τα δύο προφίλ διατηρούν όλα τα εργαλεία και την ίδια κανονική επικύρωση διακομιστή· δες τον οδηγό συμβολαίων MCP.
 
+Η εγκατάσταση καταχωρίζει απευθείας τον επιλεγμένο runtime και το αρχικό script του REA. Αν χρησιμοποιείς package runner, διατήρησε την καταχώριση cache και τον runtime· απόκτησε το πακέτο από έμπιστο κατάλογο έξω από το έργο-στόχο. Δες τον οδηγό εγκατάστασης.
+
+Τα πλήρη σχήματα εξόδου ανακοινώνονται από προεπιλογή. Αν ο client περιορίζει το `tools/list`, όρισε `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ή `off` στην καταχώριση MCP. Η επικύρωση του διακομιστή και τα δομημένα αποτελέσματα παραμένουν πλήρη. Δες το «Output schemas» στον οδηγό συμβάσεων MCP.
+
 ### Ζήτησε από τον agent σου
 
 ```text
@@ -159,6 +163,7 @@ npx rea-agents@latest setup
 | Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· [δυαδικά αρχεία Rust](../rust-binaries.md)                                                                   |
 | PE certificates                        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
 | PE imports                             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
+| Windows shortcuts                      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
 | ELF notes                              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
 | Binary hardening                       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
 | Apple IPS crashes                      | .ips metadata, threads, images, registers and crash classes                                                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
@@ -174,6 +179,7 @@ npx rea-agents@latest setup
 | Αποθηκευμένες καταγραφές δικτύου       | Αιτήματα, αποκρίσεις, διαθέσιμα δεδομένα φορτίου και θέσεις στην πηγή                                                       | HAR ή SAZ του Fiddler Everywhere· mitmdump σε Linux για την εγγενή μορφή mitmproxy· [οδηγός καταγραφών](../guides/web/web-network-captures.md)                |
 | Assemblies .NET                        | Μεταδεδομένα, εντολές CIL, δηλωμένες εξαρτήσεις από κώδικα μηχανής και συγκρίσεις builds                                    | Καμία πρόσθετη απαίτηση (μόνο στατική ανάλυση)· [οδηγός διαχειριζόμενου κώδικα](../guides/managed/managed-code-analysis.md)                                   |
 | PyInstaller                            | CArchive, PYZ, Python bytecode                                                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
+| Deno compile binaries                  | Virtual files, entry point, recorded options, npm snapshot length                                                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |
 | APK Android                            | Δηλώσεις manifest, κλάσεις, απομεταγλωττισμένες μέθοδοι και αναφορές                                                        | JADX χωρίς γραφικό περιβάλλον και πλήρες JDK σε Linux/macOS/Windows x64· [οδηγός Android](../guides/android/android-analysis.md)                              |
 | Συσκευές Android                       | Συσκευές, πακέτα, διεργασίες, logs, dumps, στιγμιότυπα οθόνης και μεταφορές APK/αρχείων                                     | adb που παρέχει ο χρήστης (εξομοιωτής ή φυσική συσκευή)· [οδηγός ADB](../guides/android/adb-device-analysis.md)                                               |
 | Έργα JEB                               | Μονάδες έργου από τη μηχανή ανάλυσης, ψηφιακά αποτυπώματα αρχείων και ψευδοκώδικα τύπων/μεθόδων                             | Client JEB που έχει ξεκινήσει ο χρήστης και παρέχει MCP, επιλεγμένος μέσω REA_JEB_MCP_URL· [οδηγός JEB](../providers/jeb-analysis.md)                         |
@@ -274,6 +280,12 @@ agent-env run ./my-env
 [Οδηγός δημιουργίας περιβάλλοντος](https://rea.tools/guides/rl-environments/) ·
 [Αναφορά περιβαλλόντων](../agent-environments.md) ·
 [Δείτε το demo στο X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Περιβάλλοντα εφαρμογών επιφάνειας εργασίας
+
+Το REA μπορεί επίσης να δημιουργήσει περιβάλλον για μια εφαρμογή επιφάνειας εργασίας Linux, την οποία ο πράκτορας χρησιμοποιεί μέσω στιγμιότυπων οθόνης, ποντικιού και πληκτρολογίου. Από ένα αίτημα μίας γραμμής, όπως «Φτιάξε μου ένα περιβάλλον Gnote όπου ο πράκτορας προσθέτει ελαιόλαδο στη σημείωση με τη λίστα αγορών», ο πράκτοράς σας εγκαθιστά την εφαρμογή σε έναν τοπικό υπολογιστή κατασκευής, γράφει την εργασία, εξάγει το περιβάλλον και ελέγχει την εργασία σε έναν νέο υπολογιστή. Ο υπολογιστής που το κατασκευάζει χρειάζεται Linux σε amd64 ή arm64, Docker και την έκδοση του πλαισίου agentenv που ορίζει ο οδηγός.
+
+[Ρύθμιση περιβαλλόντων εφαρμογών επιφάνειας εργασίας](../desktop-build-computer.md)
 
 ## Συχνές ερωτήσεις
 

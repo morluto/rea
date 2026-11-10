@@ -11,6 +11,32 @@ import {
 } from "./config/environment.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 
+it("still rejects a NUL in an unresolved expression", () => {
+  const result = parseEnvironmentValues(
+    { REA_GHIDRA_STARTUP_TIMEOUT_MS: "${TIMEOUT}\0private" },
+    new Set(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]),
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(JSON.stringify(result.error)).not.toContain("private");
+});
+
+it.each([
+  ["REA_ASAR_MAX_LISTING_BYTES", "9007199254740992"],
+  ["REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS", "0"],
+  ["REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION", "2147483648"],
+  ["REA_GHIDRA_VALUE_FLOW_MAX_EDGES", "1.5"],
+  ["REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB", "2048"],
+])(
+  "rejects invalid %s at launch with its exact setting identity",
+  (setting, value) => {
+    const parsed = parseConfig({ [setting]: value });
+    if (parsed.ok) throw new Error("Invalid resource policy accepted");
+    expect(parsed.error.settings).toContainEqual(
+      expect.objectContaining({ setting }),
+    );
+  },
+);
+
 it("keeps the caller's opt-in Ghidra checkpoint directory and leaves it disabled by default", () => {
   const selected = parseConfig({
     REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints with spaces",
