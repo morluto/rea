@@ -25,6 +25,10 @@ import {
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
+import {
+  ANDROID_NS,
+  binaryManifestFixture,
+} from "../../fixtures/android/binaryManifest.js";
 
 const OPERATION = "inspect_android_jni_bindings";
 const LIBRARY = "lib/arm64-v8a/libfixture.so";
@@ -523,4 +527,60 @@ it("keeps completed facts and the interrupted carrier when a later library is ca
   } finally {
     open.mockRestore();
   }
+});
+
+it("reports required split types as an inventory unknown instead of a bare complete", async () => {
+  const source = await fixture([
+    [
+      "AndroidManifest.xml",
+      binaryManifestFixture({
+        attributes: [
+          {
+            namespace: ANDROID_NS,
+            name: "requiredSplitTypes",
+            stringValue: "base__abi,base__density",
+          },
+        ],
+      }),
+    ],
+  ]);
+  const result = await read(source);
+  expect(result.inventory.status).toBe("complete");
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "requires split APKs (base__abi, base__density)",
+  );
+});
+
+it("reports an isSplitRequired manifest as an inventory unknown", async () => {
+  const source = await fixture([
+    [
+      "AndroidManifest.xml",
+      binaryManifestFixture({
+        attributes: [
+          {
+            namespace: ANDROID_NS,
+            name: "isSplitRequired",
+            booleanValue: true,
+          },
+        ],
+      }),
+    ],
+  ]);
+  const result = await read(source);
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "marks split installs as required",
+  );
+});
+
+it("leaves a manifest without split declarations unqualified", async () => {
+  const source = await fixture([
+    ["AndroidManifest.xml", binaryManifestFixture({ attributes: [] })],
+  ]);
+  const result = await read(source);
+  expect(result.inventory).toMatchObject({ status: "complete", unknowns: [] });
+});
+
+it("keeps APKs without AndroidManifest.xml unchanged", async () => {
+  const result = await read(await fixture());
+  expect(result.inventory).toMatchObject({ status: "complete", unknowns: [] });
 });
