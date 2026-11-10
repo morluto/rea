@@ -53,9 +53,9 @@ export type PreferredMachoSlice<Slice> =
   | { readonly status: "ambiguous" };
 
 /**
- * Choose the one FAT slice an architecture selects. Lower subtype ranks win;
- * equal ranks keep FAT table order unless the slices share a base subtype,
- * which leaves no single slice to choose.
+ * Choose the one FAT slice an architecture selects. Lower subtype ranks win and
+ * equal ranks keep FAT table order. The choice is ambiguous only when the
+ * winning base subtype (capability bits cleared) appears more than once.
  */
 export const selectPreferredMachoSlice = <
   Slice extends { readonly cpuType: number; readonly cpuSubtype: number },

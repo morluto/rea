@@ -22,13 +22,13 @@ requires an absolute filesystem path:
 
 A universal Mach-O requires `architecture` to select one slice. When several
 slices share the CPU family, such as the `arm64` and `arm64e` slices of stock
-macOS tools, REA reads the one `inspect_macho` would select (`arm64` before
-`arm64e` before `arm64v8`, the canonical `i386` and `x86_64` subtypes before
-variants such as `x86_64h`, and FAT table order among subtypes with no listed
-preference) and reports it in `slice`. `limitations`
-names the same-family slices it did not read. Slices that share a base subtype
-fail on `architecture`. ELF files and
-thin Mach-O files do not take it.
+macOS tools, REA reads the preferred subtype and reports it in `slice`: `arm64`
+before `arm64e` before `arm64v8`, and the canonical `i386` and `x86_64` subtypes
+before variants such as `x86_64h`. Subtypes with no listed preference come after
+the listed ones, in FAT table order. `limitations` names the same-family slices
+it did not read. The request fails on `architecture` when the preferred subtype
+itself appears more than once (capability bits aside), such as two `arm64`
+subtype 0 slices. ELF files and thin Mach-O files do not take it.
 
 ## Sources
 

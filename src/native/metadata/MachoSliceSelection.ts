@@ -105,7 +105,7 @@ export const selectNativeImage = (
       unread.length === 0
         ? []
         : [
-            `Only the preferred ${architecture} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}, which no architecture value selects.`,
+            `Only the selected ${architecture} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}, which no architecture value selects.`,
           ],
   });
 };

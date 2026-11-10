@@ -13,11 +13,14 @@ const slice = (index: number, cpuType: number, cpuSubtype: number) => ({
 
 describe("selectPreferredMachoSlice", () => {
   it("prefers listed subtypes over FAT table order", () => {
-    const x86 = [slice(0, CPU_X86_64, 8), slice(1, CPU_X86_64, 3)];
-    expect(selectPreferredMachoSlice(x86, "x86_64")).toEqual({
-      status: "selected",
-      slice: x86[1],
-    });
+    for (const x86 of [
+      [slice(0, CPU_X86_64, 8), slice(1, CPU_X86_64, 3)],
+      [slice(0, CPU_X86_64, 3), slice(1, CPU_X86_64, 8)],
+    ])
+      expect(selectPreferredMachoSlice(x86, "x86_64")).toEqual({
+        status: "selected",
+        slice: x86.find(({ cpuSubtype }) => cpuSubtype === 3),
+      });
     const arm64 = [slice(0, CPU_ARM64, 0x80000002), slice(1, CPU_ARM64, 0)];
     expect(selectPreferredMachoSlice(arm64, "arm64")).toEqual({
       status: "selected",
@@ -34,7 +37,24 @@ describe("selectPreferredMachoSlice", () => {
     });
   });
 
-  it("refuses slices that share a base subtype and reports absent families", () => {
+  it("refuses only a duplicated winning subtype and reports absent families", () => {
+    // Duplicate arm64e slices do not matter once the arm64 slice wins.
+    const layered = [
+      slice(0, CPU_ARM64, 0x80000002),
+      slice(1, CPU_ARM64, 0),
+      slice(2, CPU_ARM64, 0x80000002),
+    ];
+    expect(selectPreferredMachoSlice(layered, "arm64")).toEqual({
+      status: "selected",
+      slice: layered[1],
+    });
+    // Capability bits do not distinguish a duplicate winner.
+    expect(
+      selectPreferredMachoSlice(
+        [slice(0, CPU_ARM64, 0x80000002), slice(1, CPU_ARM64, 0x81000002)],
+        "arm64",
+      ),
+    ).toEqual({ status: "ambiguous" });
     const duplicate = [slice(0, CPU_ARM64, 0), slice(1, CPU_ARM64, 0)];
     expect(selectPreferredMachoSlice(duplicate, "arm64")).toEqual({
       status: "ambiguous",

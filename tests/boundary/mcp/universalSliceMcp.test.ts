@@ -339,10 +339,10 @@ sliceTest(
     });
     // The arm64e slice is not read, and the result says so.
     expect(report.limitations).toContain(
-      `Only the preferred arm64 slice (arm64 (subtype 0x0) at file offset ${String(preferred.slices[1]?.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(preferred.slices[0]?.offset)}, which no architecture value selects.`,
+      `Only the selected arm64 slice (arm64 (subtype 0x0) at file offset ${String(preferred.slices[1]?.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(preferred.slices[0]?.offset)}, which no architecture value selects.`,
     );
 
-    // Slices that share a base subtype leave no single slice to choose.
+    // A winning subtype that appears twice leaves no single slice to choose.
     const duplicate = await write(
       "duplicate-arm64",
       universalMacho([
