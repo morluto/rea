@@ -1,12 +1,10 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../../artifacts/ArtifactReader.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type WebNetworkCaptureRecord,
-} from "../../domain/webNetworkCapture.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeSazHttp } from "./SazHttp.js";
@@ -35,7 +33,7 @@ export const decodeSazCapture = async (
   const reader = new ZipArtifactReader(
     snapshotPath,
     "zip",
-    WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+    captureBudgets().inputBytes,
   );
   try {
     const groups = new Map<string, SessionMember[]>();
@@ -64,10 +62,10 @@ export const decodeSazCapture = async (
           throw new CaptureFormatError("format", "SAZ member size is invalid.");
         declaredBytes += entry.declaredSize;
       }
-      if (declaredBytes > WEB_NETWORK_CAPTURE_LIMITS.inputBytes)
+      if (declaredBytes > captureBudgets().inputBytes)
         throw new CaptureFormatError(
           "expanded-limit",
-          "SAZ expanded members exceed the 32 MiB complete-evidence budget. This release has no runtime override.",
+          `SAZ expanded members exceed max_input_bytes (${String(captureBudgets().inputBytes)} bytes); raise that per-call allowance and retry.`,
         );
       inventory.push({
         path: entry.path,

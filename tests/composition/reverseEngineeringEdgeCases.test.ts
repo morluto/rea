@@ -14,10 +14,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../../src/domain/analysisErrorCore.js";
-import {
-  ReverseEngineeringService as CoreReverseEngineeringService,
-  REVERSE_COMMAND_OUTPUT_LIMITATION,
-} from "../../src/application/reverse/ReverseEngineeringService.js";
+import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
@@ -78,7 +75,7 @@ it.each(["objdump", "rizin"] as const)(
               artifact_changed: null,
             },
             limitations: expect.arrayContaining([
-              REVERSE_COMMAND_OUTPUT_LIMITATION,
+              expect.stringContaining("max_output_bytes=16777216"),
             ]),
           },
         },

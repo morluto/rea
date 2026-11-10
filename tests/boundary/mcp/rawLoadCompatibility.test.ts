@@ -124,6 +124,7 @@ describe("raw-binary snapshots saved before base_address", () => {
       data_type_observations: dataTypes,
       inventory_search_projection: inventorySearch,
       value_flow_effect_scope: valueFlow,
+      native_value_flow_projection: valueFlowProjection,
       call_relationship_coverage: callCoverage,
       ...parameters
     } = profile.parameters;
@@ -137,6 +138,7 @@ describe("raw-binary snapshots saved before base_address", () => {
     expect(inventorySearch).toBe("provider-inventory-facts-v1");
     expect(byteSearchCoverage).toBe("separate-loaded-overlays-v1");
     expect(valueFlow).toBe("pcode-load-store-explicit-v1");
+    expect(valueFlowProjection).toBe("accepted-runtime-budgets-v1");
     const {
       call_relationship_coverage: savedCallCoverage,
       load_image_observations: savedObservations,
