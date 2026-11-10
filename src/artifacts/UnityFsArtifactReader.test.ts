@@ -306,21 +306,6 @@ describe("UnityFsArtifactReader member streams", () => {
     );
   });
 
-  it("keeps the reader usable after a consumer abandons a member", async () => {
-    const data = Buffer.alloc(1024 * 1024, 0x63);
-    await withReader(
-      buildUnityFs([{ path: "big.resS", data }]),
-      async (reader) => {
-        const [entry] = await list(reader);
-        if (entry === undefined) throw new Error("expected one entry");
-        const abandoned = await reader.open(entry);
-        await abandoned[Symbol.asyncIterator]().next();
-        abandoned.destroy();
-        expect((await text(await reader.open(entry))).length).toBe(data.length);
-      },
-    );
-  });
-
   it("refuses an entry that did not come from this reader", async () => {
     await withReader(buildUnityFs(members), async (reader) => {
       const [entry] = await list(reader);

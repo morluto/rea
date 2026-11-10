@@ -985,7 +985,7 @@ it("enforces the caller-resolved representation allowance and names its setting"
   ).toBe(15_000);
 });
 
-it("keeps duplicate candidate storage linear and emits every input occurrence exactly once", async () => {
+it("emits every occurrence of duplicate candidates exactly once on both sides", async () => {
   const entries = Array.from({ length: 1000 }, (_, i) => ({
     address: `0x${i.toString(16)}`,
     value: "same",
@@ -995,11 +995,13 @@ it("keeps duplicate candidate storage linear and emits every input occurrence ex
     right: nativeMatchingInventory("2", entries),
   });
   expect(report.matches).toHaveLength(1);
-  expect(report.matches[0]?.left).toHaveLength(1000);
-  expect(report.matches[0]?.right).toHaveLength(1000);
-  expect(new Set(report.matches[0]?.left.map((x) => x.function_id)).size).toBe(
-    1000,
-  );
+  for (const side of ["left", "right"] as const) {
+    const members = report.matches[0]?.[side];
+    expect(members).toHaveLength(1000);
+    expect(new Set(members?.map((member) => member.function_id)).size).toBe(
+      1000,
+    );
+  }
 });
 
 it("normalizes accepted body range address spaces before matching byte coverage", async () => {

@@ -228,7 +228,7 @@ describe("runtime admission dispatch", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: () => {} });\n",
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: () => { process.stdout.write('runtime-served\\n'); } });\n",
       );
       const previousMajor = Number(process.versions.node.split(".")[0]) - 1;
       for (const range of [
@@ -248,6 +248,8 @@ describe("runtime admission dispatch", () => {
           [workspace.path("scripts/rea.mjs"), "fixture"],
           { cwd: workspace.root },
         );
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toBe("runtime-served\n");
         expect(result.stderr).toBe("");
       }
     },

@@ -36,7 +36,7 @@ import {
   isSourceEvidenceRetainable,
 } from "./AnalysisSnapshotCache.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
-import { enhancedOutputSchemas } from "../../contracts/toolOutputSchemaGroups.js";
+import { nativeCallGraphSchema } from "../../domain/native/nativeCallGraph.js";
 
 it.each(["provider", "workflow"] as const)(
   "owns nested %s execution data before returning control to callers",
@@ -1270,12 +1270,13 @@ it.each([
         evidenceProfile: revisedProfile,
       }),
     ).toBeUndefined();
-    if (operation === "get_call_graph")
+    if (operation === "get_call_graph") {
+      expect(nativeCallGraphSchema.safeParse(oldResult).success).toBe(false);
       expect(
-        enhancedOutputSchemas.get_call_graph.safeParse({
-          normalized_result: oldResult,
-        }).success,
-      ).toBe(false);
+        nativeCallGraphSchema.safeParse({ graph: oldResult, limitations: [] })
+          .success,
+      ).toBe(true);
+    }
   },
 );
 

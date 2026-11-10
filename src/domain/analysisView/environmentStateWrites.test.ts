@@ -2349,6 +2349,7 @@ describe("evidence a learned sort keeps answering to", () => {
     expect(state.writes).toEqual([
       expect.objectContaining({ served: false, reason: "contradicted" }),
     ]);
+    expect(state.views.length).toBeGreaterThan(0);
     for (const view of state.views)
       expect(view).not.toHaveProperty("sorted_arrays");
   });

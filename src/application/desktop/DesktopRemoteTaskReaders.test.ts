@@ -81,9 +81,9 @@ it("waits for an interrupted reader before removing its folder", async () => {
 
 it("preserves a completed view when cancellation arrives during successful cleanup", async () => {
   const controller = new AbortController();
+  const reason = { stage: "reader final cleanup" };
   const owner = new DesktopRemoteTaskReaders(async (argv) => {
-    if (argv[3] === PYTHON_READER_CLEANUP)
-      controller.abort(new Error("cancelled"));
+    if (argv[3] === PYTHON_READER_CLEANUP) controller.abort(reason);
     return success;
   });
   const failure = await owner
@@ -91,6 +91,7 @@ it("preserves a completed view when cancellation arrives during successful clean
     .catch((error: unknown) => error);
   if (!(failure instanceof AnalysisCancelledError))
     throw new Error("expected cancellation");
+  expect(failure.cause).toBe(reason);
   expect(failure.diagnostics).toMatchObject({
     completed_reader_views: { note: { view: { value: 7 } } },
   });
@@ -99,12 +100,13 @@ it("preserves a completed view when cancellation arrives during successful clean
 
 it("keeps cancellation and a completed view when final cleanup also fails", async () => {
   const controller = new AbortController();
+  const reason = { stage: "reader final cleanup" };
   let fail = true;
   const owner = new DesktopRemoteTaskReaders(async (argv) => {
     if (argv[3] !== PYTHON_READER_CLEANUP) return success;
     if (fail) {
       fail = false;
-      controller.abort(new Error("cancelled"));
+      controller.abort(reason);
       return { ...success, exit_code: 1, stderr: "denied" };
     }
     return success;
@@ -115,6 +117,7 @@ it("keeps cancellation and a completed view when final cleanup also fails", asyn
   if (!(failure instanceof ProviderCleanupError))
     throw new Error("expected cleanup failure");
   expect(failure.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
+  expect(failure.cleanupPrimary?.cause).toBe(reason);
   expect(failure.diagnostics).toMatchObject({
     completed_reader_views: { note: { view: { value: 7 } } },
   });

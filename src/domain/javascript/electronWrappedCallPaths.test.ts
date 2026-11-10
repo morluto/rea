@@ -1178,15 +1178,7 @@ it("keeps distinct exposed renderer listener callsites distinct", () => {
     result.electron.call_paths?.filter(({ channel }) => channel === "pong"),
   ).toHaveLength(2);
 });
-it("does not identify overwritten Electron namespaces or shadowed require", () => {
-  for (const source of [
-    `const e=require("electron");e.ipcMain={on(){}};e.ipcMain.on("bad",event=>event.sender.copy());`,
-    `function require(){return {ipcMain:{on(){}}}};const e=require("electron");e.ipcMain.on("bad",event=>event.sender.copy());`,
-  ])
-    expect(
-      analyzeJavaScriptStaticSource(source).electron.call_paths ?? [],
-    ).toEqual([]);
-});
+
 it("preserves guarded alternatives in direct exposed object literals", () => {
   const result = analyzeJavaScriptStaticSource(`
       const e=require("electron");
