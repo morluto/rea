@@ -54,7 +54,7 @@ it.skipIf(process.platform === "win32")(
     const bin = join(root, "bin");
     const lib = join(root, "lib");
     await Promise.all([mkdir(bin), mkdir(lib)]);
-    const paths = Array.from({ length: 102 }, (_, index) =>
+    const paths = Array.from({ length: 201 }, (_, index) =>
       join(lib, `lib${index}.so`),
     );
     const executable = join(bin, "app");
@@ -77,7 +77,7 @@ it.skipIf(process.platform === "win32")(
     expect(batches).toBe(2);
     expect(result.library_packages).toEqual(["owner"]);
     expect(result.unpackaged_libraries).toContain(paths[1]);
-    expect(result.unpackaged_libraries).not.toContain(paths[101]);
+    expect(result.unpackaged_libraries).not.toContain(paths[200]);
     expect(result.library_packages_reason).toContain("dpkg-query");
   },
 );

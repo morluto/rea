@@ -1045,3 +1045,52 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps apt list presence unknown when its directory cannot be read",
+  async () => {
+    const { root, inspect } = await writerFixture();
+    const lists = join(root, "lists");
+    await chmod(lists, 0o000);
+    try {
+      const { installed, limitations } = await inspect({
+        executable: "libreoffice",
+      });
+      expect(installed.package_lists_present).toBeNull();
+      expect(limitations.join("\n")).toContain("could not be read");
+      expect(limitations.join("\n")).toContain("EACCES");
+    } finally {
+      await chmod(lists, 0o755);
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps package ownership unknown for a literal path dpkg would treat as a pattern",
+  async () => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const executable = join(root, "bin/libreoffice[1]");
+    await writeFile(executable, "#!/bin/sh\n");
+    await chmod(executable, 0o755);
+    const result = await inspect(
+      { executable },
+      {
+        run: async (command, argv, signal) => {
+          if (
+            command === "dpkg-query" &&
+            argv[0] === "-S" &&
+            argv.includes(executable)
+          )
+            // A glob search can name another file without establishing who owns the literal brackets.
+            return {
+              stdout: `other-package: ${executable.replace("[1]", "1")}`,
+              exitCode: 0,
+            };
+          return runQuery(command, argv, signal);
+        },
+      },
+    );
+    expect(result.installed).toMatchObject({ kind: "unknown", name: null });
+    expect(result.limitations.join("\n")).toContain("pattern characters");
+  },
+);
