@@ -1,4 +1,9 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { resolve } from "node:path";
 import {
   createRecordedCrashService,
@@ -23,7 +28,7 @@ export const registerBinaryDiagnosticsCommands = (
   cli.command(CLI_COMMANDS.inspectPeResources, {
     description:
       "Inspect PE resource identities, payload ranges, hashes and icon-group relationships",
-    args: z.object({ path: z.string().describe("Local PE32/PE32+ image") }),
+    args: z.object({ path: localPath.describe("Local PE32/PE32+ image") }),
     options: z.object({
       maxFileBytes: inspectPeResourcesInputSchema.shape.max_file_bytes,
       maxEntries: inspectPeResourcesInputSchema.shape.max_entries,
