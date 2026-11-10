@@ -97,8 +97,10 @@ exit 1
       expect(
         adbResultSchemas.capture_adb_screen.parse(output.normalized_result),
       ).toMatchObject({ width: 1, height: 1 });
-      expect(output.limitations).toContain(
-        "PNG signature, IHDR framing, checksum, and dimensions are validated; encoding and image contents are not validated",
+      expect(output.limitations).toContainEqual(
+        expect.stringMatching(
+          /PNG signature.*IHDR.*checksum.*dimensions.*validated.*encoding.*image contents.*not validated/iu,
+        ),
       );
       expect(
         (await readFile(join(outputPath, "screen.png"))).equals(frame),
@@ -408,6 +410,16 @@ it("retains safe structured constraints for ADB selectors", async () => {
       argv: ["start-adb-activity", "S", "x", "--data-uri", "a".repeat(2049)],
       path: "data-uri",
       maximum: 2048,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "k".repeat(257)],
+      path: "key",
+      maximum: 256,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "bad key"],
+      path: "key",
+      expected: "regex",
     },
   ];
   for (const { argv, path, expected, maximum } of cases) {

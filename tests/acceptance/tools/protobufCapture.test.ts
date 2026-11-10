@@ -17,6 +17,7 @@ import {
   protobufFrame,
   protobufCaptureBody,
 } from "../../fixtures/protobufCapture.js";
+import { expectCliMcpEvidenceParity } from "../../fixtures/cliMcpEvidenceParity.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webNetworkCaptureSchema,
@@ -678,7 +679,7 @@ captureTest.for(
       protobuf: { framing: "auto" },
     });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-    expect(reply.structuredContent).toEqual(response.json);
+    expectCliMcpEvidenceParity(response.json, reply.structuredContent, path);
     expect(await readFile(path, "utf8")).toBe(original);
   },
 );

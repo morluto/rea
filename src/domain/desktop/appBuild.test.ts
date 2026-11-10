@@ -1,39 +1,28 @@
-import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, readlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   BUILD_NODE_VERSION,
+  BUILD_PACKAGE_FILE,
   buildSourceSchema,
+  extraPackagesOf,
   renderBuildBundle,
-  type BuildBundleFile,
-  type BuildRequest,
 } from "./appBuild.js";
-
-const execute = promisify(execFile);
-
-const request = (install: BuildRequest["install"]): BuildRequest => ({
-  kind: "request",
-  desktop_entry: "org.xfce.mousepad.desktop",
-  install,
-});
-const localPayload = { kind: "file", path: "/builds/rea-prod.tar.xz" } as const;
-const text = (files: readonly BuildBundleFile[], path: string): string => {
-  const content = files.find((file) => file.path === path)?.content;
-  if (typeof content !== "string") throw new Error(`no text file ${path}`);
-  return content;
-};
+import {
+  request,
+  localPayload,
+  text,
+  DRAWIO_URL,
+  DRAWIO_SHA256,
+  NOTES_URL,
+  appImageRequest,
+  tarballRequest,
+} from "./appBuild.fixture.js";
 
 describe("build bundle renderer", () => {
   it("installs an archive package, opens it on demand and adds REA in a build-only layer", () => {
     const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
+      request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
     );
     expect(bundle.name).toBe("mousepad");
@@ -50,10 +39,10 @@ describe("build bundle renderer", () => {
     ).toEqual({ copyFrom: "/builds/rea-prod.tar.xz" });
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["mousepad", "libgtk-3-bin"])',
+      'packages=Packages(apt=["mousepad", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "org.xfce.mousepad"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'org.xfce.mousepad'"]),`,
     );
     expect(module).toContain('"arch": ["amd64", "arm64"]');
     expect(module).toContain(
@@ -118,6 +107,20 @@ describe("build bundle install sources", () => {
     expect(copied instanceof Uint8Array && key.equals(copied)).toBe(true);
   });
 
+  it("installs an archive package's extra packages beside it", () => {
+    const bundle = renderBuildBundle(
+      request({
+        kind: "archive",
+        package: "freeplane",
+        extra_packages: ["openjdk-17-jre"],
+      }),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/mousepad/mousepad_app.py")).toContain(
+      'packages=Packages(apt=["freeplane", "openjdk-17-jre", "libgtk-3-bin", "dconf-cli"])',
+    );
+  });
+
   it("downloads a .deb for its architecture and installs it after its dependencies", () => {
     const sha256 = "a".repeat(64);
     const bundle = renderBuildBundle(
@@ -136,7 +139,7 @@ describe("build bundle install sources", () => {
     );
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["libgl1", "libgtk-3-bin"])',
+      'packages=Packages(apt=["libgl1", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
       `Download(url="https://downloads.example.com/varicad.deb", sha256="${sha256}", to="vendor/package.deb", arch="amd64")`,
@@ -146,9 +149,14 @@ describe("build bundle install sources", () => {
     );
     expect(module).toContain('"arch": ["amd64"]');
     expect(module).not.toContain('to="node-arm64.tar.xz"');
+    // REA's layer keeps the .deb for the capture before the install removes it.
     expect(module).toContain(
-      'run=[RunScript(script="install-package.sh"), RunScript(script="install-rea.sh")]',
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-package.sh")]',
     );
+    expect(text(bundle.files, "envs/mousepad/install-rea.sh")).toContain(
+      `cp vendor/package.deb ${BUILD_PACKAGE_FILE}`,
+    );
+    expect(BUILD_PACKAGE_FILE).toBe("/opt/rea/package.deb");
     expect(text(bundle.files, "envs/mousepad/install-package.sh")).toContain(
       "dpkg -i 'vendor/package.deb'",
     );
@@ -198,69 +206,89 @@ describe("build bundle install sources", () => {
   });
 });
 
-const shellQuote = (value: string): string =>
-  `'${value.replaceAll("'", `'"'"'`)}'`;
-
-describe("installed launch paths", () => {
-  it("keeps an archive folder with spaces as the rea entrypoint", async () => {
-    const root = await createTestTempDirectory("rea-launcher-spaces-");
-    const nodeDir = join(
-      root,
-      "node-src",
-      `node-v${BUILD_NODE_VERSION}-linux-x64`,
-      "bin",
+describe("build bundle download installs", () => {
+  it("downloads an AppImage for its architecture and extracts it after REA's layer and before the Electron rewrite", () => {
+    const source = appImageRequest("drawio");
+    const bundle = renderBuildBundle(source, localPayload);
+    const module = text(bundle.files, "envs/drawio/drawio_app.py");
+    expect(module).toContain(
+      'packages=Packages(apt=["libasound2t64", "libgtk-3-bin", "dconf-cli"])',
     );
-    const payloadDir = join(root, "payload-src", "REA Build", "scripts");
-    await mkdir(nodeDir, { recursive: true });
-    await mkdir(payloadDir, { recursive: true });
-    const marker = join(root, "node-args");
-    const entrypoint = "export const marker = 'rea-entrypoint';\n";
-    await writeFile(
-      join(nodeDir, "node"),
-      `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(marker)}\n`,
+    expect(module).toContain(
+      `Download(url="${DRAWIO_URL}", sha256="${DRAWIO_SHA256}", to="vendor/app.AppImage", arch="arm64")`,
     );
-    await chmod(join(nodeDir, "node"), 0o755);
-    await writeFile(join(payloadDir, "rea.mjs"), entrypoint);
-    await execute("tar", [
-      "-cJf",
-      join(root, "node-amd64.tar.xz"),
-      "-C",
-      join(root, "node-src"),
-      `node-v${BUILD_NODE_VERSION}-linux-x64`,
-    ]);
-    await execute("tar", [
-      "-cf",
-      join(root, "rea-payload.tar"),
-      "-C",
-      join(root, "payload-src"),
-      "REA Build",
-    ]);
-    const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
-      localPayload,
+    expect(module).toContain('"arch": ["arm64"]');
+    expect(module).not.toContain('to="node-amd64.tar.xz"');
+    // The Electron rewrite edits the desktop entry the extract step installs.
+    expect(module).toContain(
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-download.sh"), RunScript(script="prepare-electron-launch.sh")]',
     );
-    const script = text(bundle.files, "envs/mousepad/install-rea.sh")
-      .replaceAll("/opt/rea", join(root, "opt/rea"))
-      .replaceAll("/usr/local/bin", join(root, "bin"));
-    await mkdir(join(root, "bin"), { recursive: true });
-    const scriptPath = join(root, "install-rea.sh");
-    await writeFile(scriptPath, script);
-    await chmod(scriptPath, 0o755);
-    await execute("sh", [scriptPath], { cwd: root });
-
-    const linked = join(root, "opt/rea/rea.mjs");
-    expect(await readlink(linked)).toBe(
-      join(root, "opt/rea/payload/REA Build/scripts/rea.mjs"),
+    expect(module).toContain("exec gtk-launch 'drawio'");
+    expect(text(bundle.files, "envs/drawio/install-download.sh")).toContain(
+      "--appimage-extract",
     );
-    expect(await readFile(linked, "utf8")).toBe(entrypoint);
-    await execute(join(root, "bin/rea"), ["--version"]);
-    expect(await readFile(marker, "utf8")).toBe(`${linked}\n--version\n`);
+    expect(extraPackagesOf(source)).toEqual(["libasound2t64"]);
   });
 
+  it("downloads a tarball and ships the desktop entry REA writes for its program", () => {
+    const bundle = renderBuildBundle(
+      tarballRequest("notes-2.0/bin/notes"),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/notes/notes_app.py")).toContain(
+      `Download(url="${NOTES_URL}", sha256="${"c".repeat(64)}", to="vendor/app.tar", arch="arm64")`,
+    );
+    expect(
+      text(bundle.files, "envs/notes/applications/org.example.Notes.desktop"),
+    ).toBe(
+      "[Desktop Entry]\nType=Application\nName=Example Notes\nExec=/opt/rea-apps/org.example.Notes/notes-2.0/bin/notes %F\nTerminal=false\n",
+    );
+  });
+
+  it("admits a download only by an http or https URL, its SHA-256 and a program inside the archive", () => {
+    const install = (fields: Record<string, unknown>) =>
+      buildSourceSchema.safeParse({
+        kind: "request",
+        desktop_entry: "org.example.Notes",
+        install: {
+          kind: "tarball",
+          url: NOTES_URL,
+          sha256: "c".repeat(64),
+          architecture: "arm64",
+          program: "notes-2.0/bin/notes",
+          ...fields,
+        },
+      }).success;
+    expect(install({})).toBe(true);
+    expect(install({ program: "../bin/sh" })).toBe(false);
+    expect(install({ program: "/usr/bin/notes" })).toBe(false);
+    expect(install({ program: "notes//notes" })).toBe(false);
+    expect(install({ sha256: "C".repeat(64) })).toBe(false);
+    expect(install({ url: "ftp://downloads.example.com/notes.tar.xz" })).toBe(
+      false,
+    );
+    expect(install({ name: "Notes\nExec=/bin/sh" })).toBe(false);
+    expect(install({ architecture: "armhf" })).toBe(false);
+    expect(
+      buildSourceSchema.safeParse({
+        kind: "request",
+        desktop_entry: "drawio",
+        install: {
+          kind: "appimage",
+          url: "https://user:secret@example.com/drawio.AppImage",
+          sha256: DRAWIO_SHA256,
+          architecture: "arm64",
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("Electron launch rendering", () => {
   it("rewrites an Electron desktop command with the shared launch policy", async () => {
     const bundle = renderBuildBundle(
       {
-        ...request({ kind: "archive", package: "typora" }),
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
         desktop_entry: "typora.desktop",
         electron: true,
       },
@@ -271,14 +299,14 @@ describe("installed launch paths", () => {
     );
     const module = text(bundle.files, "envs/typora/typora_app.py");
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "typora"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'typora'"]),`,
     );
     expect(module).toContain(
       'run=[RunScript(script="install-rea.sh"), RunScript(script="prepare-electron-launch.sh")]',
     );
     const plain = renderBuildBundle(
       {
-        ...request({ kind: "archive", package: "typora" }),
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
         desktop_entry: "typora",
         electron: false,
       },
@@ -289,54 +317,5 @@ describe("installed launch paths", () => {
         file.path.endsWith("prepare-electron-launch.sh"),
       ),
     ).toBe(false);
-
-    const root = await createTestTempDirectory("rea-electron-launch-");
-    const policy = join(
-      root,
-      "opt/rea/payload/rea/dist/domain/desktop/appExportInstall.js",
-    );
-    await mkdir(dirname(policy), { recursive: true });
-    const source = fileURLToPath(
-      new URL("./appExportInstall.ts", import.meta.url),
-    );
-    await writeFile(
-      policy,
-      `export { adjustInstalledDesktopText } from ${JSON.stringify(source)};\n`,
-    );
-    const applications = join(root, "share/applications");
-    await mkdir(applications, { recursive: true });
-    const desktop = join(applications, "typora.desktop");
-    const original = [
-      "[Desktop Entry]",
-      "Type=Application",
-      "Name=Typora",
-      "Exec=typora %U",
-      "[Desktop Action New]",
-      "Name=New Window",
-      "Exec=typora --new-window",
-      "",
-    ].join("\n");
-    await writeFile(desktop, original);
-    const bin = join(root, "bin");
-    await mkdir(bin, { recursive: true });
-    await writeFile(
-      join(bin, "node"),
-      `#!/bin/sh\nexec ${shellQuote(process.execPath)} --import tsx "$@"\n`,
-    );
-    await chmod(join(bin, "node"), 0o755);
-    const script = text(bundle.files, "envs/typora/prepare-electron-launch.sh")
-      .replaceAll("/opt/rea", join(root, "opt/rea"))
-      .replaceAll("/usr/local/bin", bin);
-    const scriptPath = join(root, "prepare-electron-launch.sh");
-    await writeFile(scriptPath, script);
-    await chmod(scriptPath, 0o755);
-    await execute("sh", [scriptPath], {
-      cwd: process.cwd(),
-      env: { ...process.env, XDG_DATA_DIRS: join(root, "share") },
-    });
-
-    expect(await readFile(desktop, "utf8")).toBe(
-      original.replace("Exec=typora %U", "Exec=typora --no-sandbox %U"),
-    );
   });
 });

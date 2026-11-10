@@ -479,7 +479,6 @@ it.each([
         calls++;
         return ok("unexpected");
       }, AbortSignal.abort(reason));
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancelled admission");
       expect(result.error.cause).toBe(reason);
       expect(result.error.cleanupResources).toEqual([]);
@@ -661,8 +660,8 @@ it("says REA retains the tighter inherited limit when a producer signal fires", 
     expect(projected.remediation.action).toContain(
       "an unchanged retry may succeed or may fail the same way",
     );
-    expect(projected.remediation.action).not.toContain(
-      "Repeating the unchanged request fails the same way.",
+    expect(projected.remediation.action).not.toMatch(
+      /unchanged request.*fails/iu,
     );
     expect(projected.retryable).toBe(true);
     expect(projected.details).toMatchObject({
@@ -702,8 +701,8 @@ it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not 
     expect(projected.remediation.action).toContain(
       "an unchanged retry may succeed or may fail the same way",
     );
-    expect(projected.remediation.action).not.toContain(
-      "Repeating the unchanged request fails the same way.",
+    expect(projected.remediation.action).not.toMatch(
+      /unchanged request.*fails/iu,
     );
     expect(projected.retryable).toBe(true);
     expect(projected.details).toMatchObject({

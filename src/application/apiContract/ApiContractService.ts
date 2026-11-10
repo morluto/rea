@@ -1,4 +1,3 @@
-import { isAbsolute } from "node:path";
 import { getHeapStatistics } from "node:v8";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -125,10 +124,6 @@ export const inspectApiContractEvidence = async (
   );
   if (!admitted.ok) return admitted;
   const input = admitted.value;
-  if (!isAbsolute(input.path))
-    return err(
-      inputFailure("Expected an absolute filesystem path on this host."),
-    );
   if (input.format === "graphql-sdl") {
     const { importGraphqlContract } =
       await import("./GraphqlContractImport.js");

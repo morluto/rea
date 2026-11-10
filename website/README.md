@@ -161,7 +161,7 @@ This network audit runs separately so third-party uptime does not block every PR
 Keep its report outside public assets.
 
 Links are only part of a content review. When updating setup or support claims,
-compare them with [installation.md](../docs/installation.md), the relevant
+compare them with [installation.md](../docs/getting-started/installation.md), the relevant
 provider guide and the released package. A case study's pinned version and date
 describe its recorded investigation; update them only when repeating that work.
 

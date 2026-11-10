@@ -1,3 +1,5 @@
+import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
+import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
 
@@ -12,6 +14,8 @@ export const PYTHON_READY_CHECK = `
 
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
+from array import array
+import binascii
 import contextlib
 import copy
 import hashlib
@@ -33,17 +37,47 @@ from xml.parsers import expat
 from agentenv_protocol import add_data, get_data, reset_data
 from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Download, Launch, Packages, Ready, RunScript, computer_app, linux, ready_check
 from agentenv_protocol.computer.app_data import INITIAL, add, get, in_thread, keep_initial, reset
+from agentenv_protocol.computer.dataplane import file_parts
 from agentenv_protocol.types import DataPart
 `;
+
+/** Translate the shared XML grammar's code point escapes into Python regex escapes. */
+const PYTHON_XML_ELEMENT_OPENING = XML_ELEMENT_OPENING.replaceAll(
+  /\\u\{([0-9a-f]+)\}/giu,
+  (_, code: string) => `\\U${code.padStart(8, "0")}`,
+);
 
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
 export const PYTHON_HELPERS = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
+XML_ELEMENT_OPENING = re.compile(r"${PYTHON_XML_ELEMENT_OPENING}")
+def _opens_element(text: str) -> bool:
+    """Whether text opens with an element, after a DOCTYPE with no internal subset or none. A '[' inside a quoted id is not a subset."""
+    if XML_ELEMENT_OPENING.match(text):
+        return True
+    declared = re.match(r"(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b", text)
+    if declared is None:
+        return False
+    quote = ""
+    for index in range(declared.end(), len(text)):
+        character = text[index]
+        if quote:
+            if character == quote:
+                quote = ""
+            continue
+        if character in ('"', "'"):
+            quote = character
+        elif character == "[":
+            return False
+        elif character == ">":
+            return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
+    return False
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
+GZIP_HEADER = b"\x1f\x8b\x08"
 XML_SPACE = "xml:space"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -57,11 +91,6 @@ MAX_PARSED_BYTES = 4 * 1024 * 1024
 PARSED_TOO_LARGE = "larger than the 4 MiB limit for JSON and key file views"
 MAX_JSON_VIEW_DEPTH = 500
 JSON_TOO_DEEP = f"nested deeper than the {MAX_JSON_VIEW_DEPTH} levels a JSON view keeps"
-#: A JSON token after any whitespace, by group: an opening, a closing, a comma, a colon, a string's quote, or a number
-#: or literal. Strings are read by json's scanner, since a pattern repeating per escape holds memory for each.
-JSON_TOKEN = re.compile(r'[ \t\n\r]*(?:([\[{])|([\]}])|(,)|(:)|(")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?'
-                        r"|true|false|null))")
-JSON_SPACE = re.compile(r"[ \t\n\r]*")
 
 
 def _respelled(text: str, home: Path) -> str:
@@ -116,6 +145,47 @@ def _seed_home(home: Path) -> None:
         else:
             data = _respelled_utf16(data, home)
         target.write_bytes(data)
+        mode = SEED_MODES.get(relative)
+        if mode is not None:
+            target.chmod(mode)
+
+
+def _ensure_state_aliases(home: Path) -> None:
+    """Restore selected aliases without replacing any existing user data."""
+    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
+    for alias, target in aliases:
+        link = home / alias
+        destination = home / target
+        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        if link.is_symlink() and link.resolve() == destination.resolve():
+            if has_children:
+                destination.mkdir(parents=True, exist_ok=True)
+            continue
+        if os.path.lexists(link):
+            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if has_children:
+            destination.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(destination)
+
+
+def _ensure_state_aliases(home: Path) -> None:
+    """Restore selected aliases without replacing any existing user data."""
+    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
+    for alias, target in aliases:
+        link = home / alias
+        destination = home / target
+        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        if link.is_symlink() and link.resolve() == destination.resolve():
+            if has_children:
+                destination.mkdir(parents=True, exist_ok=True)
+            continue
+        if os.path.lexists(link):
+            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if has_children:
+            destination.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(destination)
 
 
 def _dconf(arguments: list, environment: dict) -> str:
@@ -254,143 +324,7 @@ def _keyfile(text: str) -> dict:
 
 ${PYTHON_XML_READER}
 
-def _not_json(constant: str):
-    raise ValueError(f"{constant} is not JSON")
-
-
-class _Inexact(Exception):
-    """A JSON number that REA's state view refuses, since reading it would change it."""
-
-
-def _digits(text: str) -> str:
-    return re.split(r"[eE]", text.lstrip("-"))[0].replace(".", "").strip("0") or "0"
-
-
-def _js_string(value: float) -> str:
-    """How JavaScript's String() writes a finite double: an integer below 1e21 in full, any other in shortest form."""
-    return str(int(value)) if value.is_integer() and abs(value) < 1e21 else repr(value)
-
-
-def _safe_number(text: str) -> bool:
-    """lossless-json's isSafeNumber: an integer spelling within 2^53, or a float spelling that keeps its digits."""
-    if re.fullmatch(r"-?[0-9]+", text):
-        return len(text.lstrip("-")) <= 16 and abs(int(text)) <= MAX_SAFE_INTEGER
-    value = float(text)
-    if not math.isfinite(value):
-        return False
-    written = _js_string(value)
-    return written == text or _digits(written) == _digits(text)
-
-
-def _exact_number(text: str):
-    """A JSON number read only when reading it changes nothing, as REA's state view rules: its spelling and its
-    written-back form both safe, and not -0."""
-    value = float(text)
-    if (not _safe_number(text) or not math.isfinite(value) or not _safe_number(_js_string(value))
-            or (value == 0 and math.copysign(1, value) < 0)):
-        raise _Inexact(text)
-    return int(text) if re.fullmatch(r"-?[0-9]+", text) else value
-
-
-_INEXACT = object()
-_LEVEL_END = object()
-
-
-def _number_or_mark(spelling: str):
-    """A JSON number read exactly, or a mark for one REA's state view refuses."""
-    try:
-        return _exact_number(spelling)
-    except _Inexact:
-        return _INEXACT
-
-
-def _holds_inexact(value) -> bool:
-    """Whether a parsed JSON value still holds a marked number once duplicate keys kept their last value; one
-    iterator per nesting level, so no child list is copied."""
-    levels = [iter((value,))]
-    while levels:
-        item = next(levels[-1], _LEVEL_END)
-        if item is _LEVEL_END:
-            levels.pop()
-        elif item is _INEXACT:
-            return True
-        elif isinstance(item, dict):
-            levels.append(iter(item.values()))
-        elif isinstance(item, list):
-            levels.append(iter(item))
-    return False
-
-
-def _deeper_than(root, limit: int) -> bool:
-    """Whether a parsed JSON value nests deeper than a limit, as REA checks it: a value's depth is the number of
-    iterators open above it, one per nesting level, so no child list is copied."""
-    levels = [iter((root,))]
-    while levels:
-        item = next(levels[-1], _LEVEL_END)
-        if item is _LEVEL_END:
-            levels.pop()
-        elif len(levels) - 1 > limit:
-            return True
-        elif isinstance(item, dict):
-            levels.append(iter(item.values()))
-        elif isinstance(item, list):
-            levels.append(iter(item))
-    return False
-
-
-def _is_json(text: str) -> bool:
-    """Whether text is one JSON value as REA's state view reads it, checked a token at a time without building it or
-    recursing: it holds a byte per open container and one string at a time, so text too deep for Python's parser or
-    too large to parse into a view is still told apart from other text."""
-    containers, expect, empty, at = bytearray(), "value", False, 0
-    while True:
-        token = JSON_TOKEN.match(text, at)
-        if token is None:
-            break
-        kind, at = token.lastindex, token.end()
-        if kind == 5:
-            try:
-                at = json.decoder.scanstring(text, at)[1]
-            except ValueError:
-                return False
-        if kind == 1 and expect == "value":
-            containers.append(ord(text[at - 1]))
-            expect, empty = ("value" if text[at - 1] == "[" else "key"), True
-        # A closing bracket's code is its opening's plus two.
-        elif kind == 2 and (expect == "after" or empty) and containers and containers[-1] == ord(text[at - 1]) - 2:
-            containers.pop()
-            expect, empty = "after", False
-        elif kind == 3 and expect == "after" and containers:
-            expect = "value" if containers[-1] == ord("[") else "key"
-        elif kind == 4 and expect == "colon":
-            expect = "value"
-        elif kind >= 5 and (expect == "value" or (kind == 5 and expect == "key")):
-            expect, empty = ("colon" if expect == "key" else "after"), False
-        else:
-            return False
-    return expect == "after" and not containers and JSON_SPACE.fullmatch(text, at) is not None
-
-
-def _json_view(text: str, size: int):
-    """A JSON text's format and view, or why it has none, as REA reads it; None when it is not JSON. Text over the
-    parsed-view limit, or nested past Python's recursion limit, is told apart without building its value."""
-    if size > MAX_PARSED_BYTES:
-        return {"format": "json", "view": None, "error": PARSED_TOO_LARGE} if _is_json(text) else None
-    # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
-    try:
-        view = json.loads(text, parse_constant=_not_json, parse_float=_number_or_mark, parse_int=_number_or_mark)
-    except RecursionError:
-        # Nesting too deep for Python to parse is far deeper than REA's view keeps, once the rest of it is JSON too.
-        return {"format": "json", "view": None, "error": JSON_TOO_DEEP} if _is_json(text) else None
-    except ValueError:
-        return None
-    if _holds_inexact(view):
-        return {"format": "json", "view": None,
-                "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
-    if _deeper_than(view, MAX_JSON_VIEW_DEPTH):
-        return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
-    return {"format": "json", "view": view, "truncated": False}
-
+${PYTHON_JSON_READER}
 
 def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
@@ -401,7 +335,9 @@ def _text_view(name: str, text: str, size: int) -> dict:
         if view is not None:
             return view
     lowered = name.lower()
-    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
+    # Text that opens with an element, after a DOCTYPE with no internal subset or none, is XML if it parses, whatever
+    # the file is called, as a Freeplane map or KmPlot's <!DOCTYPE kmpdoc> plot.
+    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml") or _opens_element(trimmed):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
     if _is_keyfile(text):
@@ -411,6 +347,17 @@ def _text_view(name: str, text: str, size: int) -> dict:
     return _text(text)
 
 
+def _bytes_view(name: str, data: bytes) -> dict:
+    """The view of a document that is no database or archive: its text's, or none when it is binary."""
+    try:
+        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
+    except UnicodeDecodeError:
+        text = None
+    if text is None:
+        return {"format": "binary", "view": None, "truncated": False}
+    return _text_view(name, text, len(data))
+
+
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
@@ -418,25 +365,31 @@ def _view(path: Path) -> dict:
         return too_large
     with path.open("rb") as file:
         data = file.read(8192)
-        whole = not data.startswith(SQLITE_HEADER) and b"\x00" not in data
+        whole = data.startswith(GZIP_HEADER) or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data)
         data += file.read(MAX_VIEW_BYTES + 1 - len(data)) if whole else b""
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
     if data.startswith(ZIP_HEADER):
-        return _zip(path)
+        with path.open("rb") as file:
+            return _zip(file, os.fstat(file.fileno()).st_size)
     if len(data) > MAX_VIEW_BYTES:
         return too_large
-    try:
-        text = data.decode("utf-8-sig") if whole else None
-    except UnicodeDecodeError:
-        text = None
-    if text is None:
-        return {"format": "binary", "view": None, "truncated": False}
-    return _text_view(path.name, text, len(data))
+    if data.startswith(GZIP_HEADER):
+        return _gzip(path.name, data)
+    return _bytes_view(path.name, data)
 
 
-def _views(home: Path, paths: list) -> dict:
-    """A view of every file under the app's paths, keyed by its home-relative path."""
+def _write_withheld(home: Path, settings, withheld: dict) -> None:
+    """Write each withheld file from its secret setting, its bytes in base64, readable by its owner alone."""
+    for name, relative in withheld.items():
+        target = home / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(binascii.a2b_base64(getattr(settings, name).get_secret_value(), strict_mode=True))
+        target.chmod(0o600)
+
+
+def _views(home: Path, paths: list, leaving_out=()) -> dict:
+    """A view of every file under the app's paths but those it leaves out, keyed by its home-relative path."""
     files = {}
     for owned in paths:
         root = home / owned
@@ -444,6 +397,8 @@ def _views(home: Path, paths: list) -> dict:
         for path in candidates:
             if path.is_file() and not path.is_symlink():
                 key = path.relative_to(home).as_posix()
+                if key in leaving_out:
+                    continue
                 try:
                     files[key] = _view(path)
                 except (OSError, ValueError, sqlite3.Error, RecursionError) as error:
@@ -458,7 +413,10 @@ const PYTHON_CONSTANTS = [
   "PATHS",
   "DCONF",
   "TEXT_SEEDS",
+  "SEED_MODES",
+  "STATE_ALIASES",
   "WINDOW_CLASS",
+  "WITHHELD",
 ] as const;
 
 /** Names a Python source binds at its top level: imports, assignments, functions and classes. */
@@ -487,6 +445,53 @@ export const PYTHON_MODULE_NAMES: ReadonlySet<string> = new Set([
   ...boundNames(PYTHON_HELPERS),
   ...PYTHON_CONSTANTS,
 ]);
+
+/**
+ * The class body of an app that owns no files: launched at boot, its captured
+ * dconf settings loaded if any, serving no data operations, or, when its task
+ * judges its screen, a reset that only relaunches it.
+ */
+export const ownlessBody = (
+  title: string,
+  dconf: boolean,
+  relaunch: boolean,
+): string => {
+  const reset = relaunch
+    ? `
+    @reset_data
+    async def relaunch(self) -> None:
+        """Nothing to restore: the app is stopped before this and relaunched after it, back to its first screen."""
+`
+    : "";
+  const serves = relaunch
+    ? "and keeps its task's state on screen, so its reset only relaunches it"
+    : "so it serves no data operations";
+  if (dconf)
+    return `    """${title}, launched at boot with its captured settings. It owns no files, ${serves}."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        _load_dconf(Path.home())
+${reset}${PYTHON_READY_CHECK}`;
+  return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+};
+
+/** The data hooks of an app whose withheld files no get serves: neither as parts nor in the views. */
+export const PYTHON_WITHHELD_DATA_HOOKS = `
+    @add_data
+    async def add_files(self, parts: list) -> None:
+        await add(parts, self.paths)
+
+    @get_data
+    async def get_files(self, write_namespace=None) -> list:
+        files = await file_parts(Path.home(), self.paths, write_namespace, list(WITHHELD.values()))
+        views = await in_thread(_views, Path.home(), self.paths, list(WITHHELD.values()))
+        return [*files, DataPart(data={"state": views})]
+
+    @reset_data
+    async def reset_files(self) -> None:
+        await reset(self.paths)
+`;
 
 /** The data hooks of an app that owns paths; `_views` reads files, so it runs in a thread. */
 export const PYTHON_DATA_HOOKS = `

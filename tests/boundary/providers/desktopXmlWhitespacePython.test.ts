@@ -40,7 +40,7 @@ it("matches the ECMAScript whitespace set for XML-valid characters and preserves
   expect(pythonViews(texts)).toEqual(texts.map(xmlView));
 });
 
-it("keeps leaf text and xml:space-preserved text, with the original parsing refusals", () => {
+it("keeps leaf text and xml:space-preserved text, reads a plain DOCTYPE as REA does, and refuses an unbound prefix", () => {
   const texts = [
     "<prefs><entry>\ufeff</entry></prefs>",
     "<prefs><entry>\u0085</entry></prefs>",
@@ -53,7 +53,7 @@ it("keeps leaf text and xml:space-preserved text, with the original parsing refu
     expected.map((view) => view.root.children),
   );
   expect(pythonViews(["<!DOCTYPE prefs><prefs/>", "<p:prefs/>"])).toEqual([
-    null,
+    xmlView("<!DOCTYPE prefs><prefs/>"),
     null,
   ]);
 });

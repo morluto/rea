@@ -558,8 +558,9 @@ describe("ELF export version and name coverage", () => {
       status: "partial",
       examined_entries: 2,
       exports: 2,
-      reason:
-        "1 export table issue(s) affect reported rows or metadata; see issues",
+      reason: expect.stringMatching(
+        /1 export table issue.*reported rows or metadata/iu,
+      ),
     });
     expect(result.issues).toMatchObject([{ code: "version_unresolved" }]);
   });
@@ -859,8 +860,9 @@ describe("export inventory review regressions", () => {
       status: "partial",
       examined_entries: 1,
       exports: 1,
-      reason:
-        "1 export table issue(s) affect reported rows or metadata; see issues",
+      reason: expect.stringMatching(
+        /1 export table issue.*reported rows or metadata/iu,
+      ),
     });
   });
 

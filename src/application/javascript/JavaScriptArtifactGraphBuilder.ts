@@ -1,5 +1,13 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { electronSemanticsState } from "./ElectronBoundaryAnalysis.js";
+import {
+  electronIncompleteSourceCount,
+  electronSemanticsState,
+  createElectronIpcContext,
+  hasCandidateElectronFindings,
+  summarizeElectronBoundaries,
+  type ElectronIpcContext,
+} from "./ElectronBoundaryAnalysis.js";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import {
@@ -47,11 +55,6 @@ import {
 } from "./JavaScriptArtifactGraphStructure.js";
 import { addJavaScriptBundlerNodes } from "./JavaScriptArtifactGraphBundlers.js";
 import { addElectronBoundaries } from "./ElectronBoundaryGraph.js";
-import {
-  createElectronIpcContext,
-  summarizeElectronBoundaries,
-  type ElectronIpcContext,
-} from "./ElectronBoundaryAnalysis.js";
 
 /**
  * Build a validated application graph with cooperative immutable ownership.
@@ -381,6 +384,11 @@ const graphLimitations = (
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
     "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    ...(hasCandidateElectronFindings(context.analysis)
+      ? [
+          "Conditional Electron findings are retained in the graph but excluded from proven boundary summary counts; their loader identity remains unknown.",
+        ]
+      : []),
     ...(context.analysis.files.some(({ javascript }) =>
       javascript?.limitations.includes(ELECTRON_IDENTITY_LIMITATION),
     )
@@ -390,11 +398,16 @@ const graphLimitations = (
       ? [
           "Electron modules are referenced but no Electron boundary fact was recovered from inert syntax. Zero IPC operations and zero BrowserWindows here mean empty coverage, not evidence that the application has none.",
         ]
-      : electronSemantics === "recovered"
+      : electronSemantics === "partial"
         ? [
+            `Electron boundary facts are partial: ${String(electronIncompleteSourceCount(context.analysis))} Electron-loading source(s) were not fully examined or reported because syntax was recovered, semantics remained unresolved, analysis was interrupted, or a resource limit was reached. BrowserWindows, preloads, bridges, and IPC operations from those sources are unknown, not absent; analyze fewer sources, such as first-party main and preload files selected with source_paths.`,
             "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
           ]
-        : []),
+        : electronSemantics === "recovered"
+          ? [
+              "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
+            ]
+          : []),
     ...(ipc.some(({ finding }) => finding.channel === null)
       ? [
           "Dynamic IPC channel expressions remain unresolved and are never paired by textual similarity.",
@@ -420,6 +433,15 @@ const graphLimitations = (
     )
       ? [
           "Native member names are requested by JavaScript syntax and are not verified binary exports in this workflow.",
+        ]
+      : []),
+    ...(context.analysis.files.some(({ javascript }) =>
+      (javascript?.electron.dynamic_code ?? []).some(
+        isPossibleCachedDataCompilation,
+      ),
+    )
+      ? [
+          "A node:vm compilation may receive cachedData; static syntax does not establish cache acceptance or execution, and possible cached logic remains unknown rather than absent.",
         ]
       : []),
     ...(coverage === "complete"

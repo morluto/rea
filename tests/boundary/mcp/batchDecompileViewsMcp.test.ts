@@ -5,6 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
+import { batchUnknowns } from "../../../src/domain/analysisView/batchDecompileView.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -264,10 +265,9 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(summary.unknowns).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("1 items have unknown procedure identity"),
-        expect.stringContaining("not attributed to one successful item"),
-      ]),
+      batchUnknowns(
+        batchDecompileResultSchema.parse(parent.normalized_result).items,
+      ),
     );
     const callsAfterBatch = harness.calls.count;
 

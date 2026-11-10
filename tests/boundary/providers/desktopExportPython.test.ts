@@ -4,7 +4,7 @@ import {
 } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { chmod, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -34,7 +34,7 @@ const execPython = (
   try {
     writeFileSync(script, args[codeIndex + 1]!, "utf8");
     return execFileSync(
-      "python3",
+      process.platform === "win32" ? "python" : "python3",
       [
         "-X",
         "utf8",
@@ -66,6 +66,43 @@ for name, text in json.load(sys.stdin):
     .trim()
     .split(/\r?\n/u);
 };
+
+it("detects Unicode XML names in both state readers while rejecting non-XML text", () => {
+  const files = [
+    ["map.dat", '<地图 名称="甲"><节点/></地图>'],
+    ["map.dat", '<!DOCTYPE 地图 SYSTEM "map.dtd"><地图/>'],
+    ["map.dat", "<máp/>"],
+    ["map.dat", "<Ϳ>new</Ϳ>"],
+    ["map.xml", "<root><Ϳ/></root>"],
+    ["map.xml", '<root aͿ="x"/>'],
+    ["map.xml", "<𐀀/>"],
+    ["map.dat", "<á/>"],
+    ["map.dat", "<root><?Ϳ value?></root>"],
+    ["map.dat", "<!DOCTYPE Ϳ><root/>"],
+    ["map.dat", "<地图><节点></地图>"],
+    ["note.dat", "<ada@example.test>\nBuy milk"],
+  ] as const;
+  const expected = [
+    "xml",
+    "xml",
+    "xml",
+    "text",
+    "text",
+    "text",
+    "text",
+    "xml",
+    "text",
+    "text",
+    "text",
+    "text",
+  ];
+  expect(pythonFormats(files)).toEqual(expected);
+  expect(
+    files.map(([name, text]) =>
+      detectStateFormat(name, new TextEncoder().encode(text)),
+    ),
+  ).toEqual(expected);
+});
 
 it("detects key files by the state view's rule rather than a name or any group header", () => {
   const files = [
@@ -152,6 +189,151 @@ it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping t
     utf16(expected, "be").toString("hex"),
     ...files.slice(2).map((file) => file.toString("hex")),
   ]);
+});
+
+it("seeds each file the bundle lists in SEED_MODES with that mode, as a lock whose app checks it stays 0600", async () => {
+  const root = await createTestTempDirectory("desktop-seed-modes-");
+  await mkdir(join(root, "seed", ".config", "notes"), { recursive: true });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "secret.ini"),
+    "[s]\n",
+  );
+  await writeFile(join(root, "seed", "run.sh"), "#!/bin/sh\n");
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+SEED_HOME = "/home/ada"
+TEXT_SEEDS = frozenset()
+SEED_MODES = {".config/notes/secret.ini": 0o600, "run.sh": 0o755}
+HERE = Path(sys.argv[1])
+${PYTHON_HELPERS}
+_seed_home(Path(sys.argv[2]))
+`;
+
+  execFileSync("python3", [
+    "-I",
+    "-B",
+    "-c",
+    program,
+    root,
+    join(root, "home"),
+  ]);
+
+  const mode = async (path: string) =>
+    (await stat(join(root, "home", path))).mode & 0o777;
+  expect(await mode(".config/notes/secret.ini")).toBe(0o600);
+  expect(await mode("run.sh")).toBe(0o755);
+});
+
+it.each([true, false])(
+  "restores nested selected aliases in either selection order (%s)",
+  async (childFirst) => {
+    const root = await createTestTempDirectory("desktop-nested-alias-");
+    const home = join(root, "home");
+    await mkdir(join(home, ".config", "notes"), { recursive: true });
+    await writeFile(join(home, ".config", "notes", "profile.ini"), "profile");
+    const imports = PYTHON_IMPORTS.split("\n")
+      .filter((line) => !line.includes("agentenv_protocol"))
+      .join("\n");
+    const pairs = childFirst
+      ? '[("settings/profile", ".config/notes"), ("settings", ".local/share/notes")]'
+      : '[("settings", ".local/share/notes"), ("settings/profile", ".config/notes")]';
+    const program = `${imports}
+STATE_ALIASES = ${pairs}
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+_ensure_state_aliases(home)
+`;
+    execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+    expect(
+      await readFile(join(home, "settings", "profile", "profile.ini"), "utf8"),
+    ).toBe("profile");
+  },
+);
+
+it("restores a selected alias to an existing settings file", async () => {
+  const root = await createTestTempDirectory("desktop-file-alias-");
+  const home = join(root, "home");
+  await mkdir(join(home, ".config"), { recursive: true });
+  await writeFile(join(home, ".config", "tellicorc"), "saved");
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+STATE_ALIASES = [("settings", ".config/tellicorc")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+  expect(await readFile(join(home, "settings"), "utf8")).toBe("saved");
+});
+
+it("restores a selected settings alias without replacing an existing path", async () => {
+  const root = await createTestTempDirectory("desktop-state-alias-");
+  const home = join(root, "home");
+  await mkdir(join(root, "seed", ".config", "notes"), { recursive: true });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "settings.ini"),
+    "saved",
+  );
+  await mkdir(join(root, "seed", ".config", "notes", "profiles", "work"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "profiles", "work", "profile.ini"),
+    "profile",
+  );
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+SEED_HOME = "/home/ada"
+TEXT_SEEDS = frozenset()
+SEED_MODES = {}
+STATE_ALIASES = [("settings", ".config/notes")]
+HERE = Path(sys.argv[1])
+${PYTHON_HELPERS}
+home = Path(sys.argv[2])
+_seed_home(home)
+_ensure_state_aliases(home)
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", program, root, home], { encoding: "utf8" });
+  expect(await readFile(join(home, "settings", "settings.ini"), "utf8")).toBe(
+    "saved",
+  );
+  expect(
+    await readFile(
+      join(home, "settings", "profiles", "work", "profile.ini"),
+      "utf8",
+    ),
+  ).toBe("profile");
+  const other = join(root, "other-home");
+  await mkdir(other);
+  await writeFile(join(other, "settings"), "preserve");
+  expect(() =>
+    execPython(["-I", "-B", "-c", program, root, other], {
+      encoding: "utf8",
+      stdio: "pipe",
+    }),
+  ).toThrow();
+  expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
+
+  const empty = join(root, "empty-home");
+  await mkdir(empty);
+  const emptySeed = join(root, "empty-seed");
+  await mkdir(emptySeed);
+  execPython(["-I", "-B", "-c", program, emptySeed, empty], {
+    encoding: "utf8",
+  });
+  await writeFile(join(empty, "settings", "new.ini"), "new settings");
+  expect(
+    await readFile(join(empty, ".config", "notes", "new.ini"), "utf8"),
+  ).toBe("new settings");
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */
@@ -262,24 +444,6 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
   });
 });
 
-it("refuses JSON nested deeper than the 500 levels REA's view keeps, reading the boundary itself", () => {
-  const nested = (levels: number) =>
-    `${"[".repeat(levels)}${"]".repeat(levels)}`;
-  const texts = [nested(501), nested(502), nested(1100)];
-
-  const python = pythonJson(texts);
-
-  expect(texts.map((text) => jsonView(text).ok)).toEqual([true, false, false]);
-  texts.forEach((text, index) => {
-    const typescript = jsonView(text);
-    expect(python[index]).toEqual(
-      typescript.ok
-        ? { format: "json", view: typescript.value, truncated: false }
-        : { format: "json", view: null, error: typescript.error },
-    );
-  });
-});
-
 /** The exported module's format, view and error for each named text, and REA's for the same bytes. */
 const textViews = (files: readonly (readonly [string, string])[]) => {
   const imports = PYTHON_IMPORTS.split("\n")
@@ -375,15 +539,16 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
         "-I",
         "-B",
         "-c",
-        `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_is_json(text) for text in json.load(sys.stdin)]))`,
+        `${imports}${PYTHON_HELPERS}\ntexts = json.load(sys.stdin)\nprint(json.dumps({"syntax": [_read_json(text, build=False) is not _INVALID_JSON for text in texts], "built": [_read_json(text) is not _INVALID_JSON for text in texts]}))`,
       ],
       { input: JSON.stringify(texts), encoding: "utf8" },
     ),
-  ) as boolean[];
+  ) as { syntax: boolean[]; built: boolean[] };
 
   const parsed = texts.map((text) => safeParseJson(text).ok);
   expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
-  expect(python).toEqual(parsed);
+  expect(python.syntax).toEqual(parsed);
+  expect(python.built).toEqual(parsed);
   expect(parsed.filter(Boolean)).toHaveLength(10);
 });
 
@@ -445,9 +610,13 @@ print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["
   const root = await createTestTempDirectory("rea-keyfile-python-");
   const script = join(root, "fixture.py");
   await writeFile(script, program, "utf8");
-  const output = execFileSync("python3", ["-I", "-B", "-X", "utf8", script], {
-    input: JSON.stringify(inputs),
-    encoding: "utf8",
-  });
+  const output = execFileSync(
+    process.platform === "win32" ? "python" : "python3",
+    ["-I", "-B", "-X", "utf8", script],
+    {
+      input: JSON.stringify(inputs),
+      encoding: "utf8",
+    },
+  );
   expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });

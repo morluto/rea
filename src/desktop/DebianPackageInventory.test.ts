@@ -506,8 +506,9 @@ describe.skipIf(process.platform === "win32")("vendor repositories", () => {
         },
       ],
       library_packages: [],
-      library_packages_reason:
-        "ldconfig -p did not list the dynamic linker cache",
+      library_packages_reason: expect.stringMatching(
+        /ldconfig -p.*did not list.*dynamic linker cache/iu,
+      ),
     });
     expect(result.value.signingKeys.size).toBe(0);
   });
@@ -668,6 +669,29 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
       ],
       library_packages: ["libnspr4", "libnss3"],
       uninstallable_library_packages: [],
+    });
+  });
+
+  // dpkg-query exits 1 when no package owns a path and 2 when it could not tell.
+  it("reports a failed library owner query rather than calling the libraries unpackaged", async () => {
+    const { runQuery, inspect } = await vendorFixture();
+    const failing: QueryRunner = async (command, argv, signal) =>
+      command === "dpkg-query" &&
+      argv[0] === "-S" &&
+      argv[1]?.endsWith("/bin/typora") !== true
+        ? { stdout: "", exitCode: 2 }
+        : runQuery(command, argv, signal);
+
+    const result = await inspect(failing);
+
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      library_packages: [],
+      // The soname the fixture never provides stays missing; the two it locates are not called unpackaged.
+      missing_libraries: ["libsecret-1.so.0"],
+      unpackaged_libraries: [],
+      library_packages_reason:
+        "dpkg-query could not say which packages own the libraries",
     });
   });
 });
@@ -886,13 +910,15 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     expect(fromLocal.installed).toMatchObject({
       name: "libreoffice-writer",
       executable_package: "libreoffice-common",
-      executable_package_reason:
-        "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers libreoffice-common",
+      executable_package_reason: expect.stringMatching(
+        /neither.*Ubuntu 24\.04.*vendor repository.*offers libreoffice-common/iu,
+      ),
     });
     expect(fromUnasked.installed).toMatchObject({
       executable_package: "libreoffice-common",
-      executable_package_reason:
-        "apt-cache policy did not say where libreoffice-common comes from",
+      executable_package_reason: expect.stringMatching(
+        /apt-cache policy.*did not.*libreoffice-common/iu,
+      ),
     });
   });
 
