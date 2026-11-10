@@ -18,11 +18,14 @@ interface TableView {
   readonly rows: readonly (readonly JsonValue[])[];
 }
 
-const tableViews = (version: Version): ReadonlyMap<string, TableView> => {
-  const tables = new Map<string, TableView>();
+/** Keep unread tables distinct from absence in a complete table inventory. */
+const tableViews = (version: Version) => {
+  const tables = new Map<string, TableView | undefined>();
   const view = version.present ? version.view : null;
-  if (!isRecord(view) || !isRecord(view.tables)) return tables;
+  if (!isRecord(view) || !isRecord(view.tables))
+    return { tables, complete: false };
   for (const [name, table] of Object.entries(view.tables)) {
+    tables.set(name, undefined);
     if (!isRecord(table) || table.truncated !== false) continue;
     const strings = (value: JsonValue | undefined) =>
       Array.isArray(value)
@@ -34,7 +37,7 @@ const tableViews = (version: Version): ReadonlyMap<string, TableView> => {
       rows: Array.isArray(table.rows) ? table.rows.filter(Array.isArray) : [],
     });
   }
-  return tables;
+  return { tables, complete: view.tables_truncated === false };
 };
 
 /** Column values of a row, without volatile values or the columns left out. */
@@ -110,16 +113,37 @@ export const rowSuggestions = (
 ): Suggestion[] => {
   const before = tableViews(baseline);
   const suggestions: Suggestion[] = [];
-  const push = (
-    kind: "row_present" | "row_absent",
-    table: string,
-    where: Record<string, JsonValue>,
-  ) => {
-    if (Object.keys(where).length > 0)
-      suggestions.push({ kind, file, table, where });
-  };
-  for (const [name, table] of tableViews(final)) {
-    const old = before.get(name) ?? { ...table, rows: [] };
+  for (const [name, table] of tableViews(final).tables) {
+    if (table === undefined) continue;
+    const previousTable = before.tables.get(name);
+    if (
+      previousTable === undefined &&
+      (before.tables.has(name) || !before.complete)
+    )
+      continue;
+    const old = previousTable ?? { ...table, rows: [] };
+    // Judge the predicate after volatile values are omitted, using the same
+    // matching semantics as the evaluator rather than raw row positions.
+    const push = (
+      kind: "row_present" | "row_absent",
+      where: Record<string, JsonValue>,
+      previousRow?: readonly JsonValue[],
+    ) => {
+      if (Object.keys(where).length === 0) return;
+      // A paired row is sufficient only while the predicate retains its
+      // complete key. Omitted timestamp keys can let siblings match too.
+      const previousRows =
+        previousRow !== undefined &&
+        old.key.every((column) => Object.hasOwn(where, column))
+          ? [previousRow]
+          : old.rows;
+      if (
+        kind === "row_present"
+          ? countTaskRows(old.columns, previousRows, where) === 0
+          : countTaskRows(table.columns, table.rows, where) === 0
+      )
+        suggestions.push({ kind, file, table: name, where });
+    };
     const oldRows = keyedRows(old);
     const newRows = keyedRows(table);
     for (const [id, row] of newRows) {
@@ -127,13 +151,11 @@ export const rowSuggestions = (
       if (previous === undefined)
         push(
           "row_present",
-          name,
           rowWhere(table, row, (column) => !table.key.includes(column)),
         );
-      else if (JSON.stringify(previous) !== JSON.stringify(row))
+      else
         push(
           "row_present",
-          name,
           rowWhere(
             table,
             row,
@@ -142,13 +164,13 @@ export const rowSuggestions = (
               JSON.stringify(row[table.columns.indexOf(column)]) !==
                 JSON.stringify(previous[old.columns.indexOf(column)]),
           ),
+          previous,
         );
     }
     for (const [id, row] of oldRows)
       if (!newRows.has(id))
         push(
           "row_absent",
-          name,
           rowWhere(old, row, (column) => old.key.includes(column)),
         );
     suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
