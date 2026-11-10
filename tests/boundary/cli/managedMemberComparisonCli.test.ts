@@ -35,12 +35,26 @@ cliTest(
     await writeFile(bad, bytes);
 
     const healthy = await cli.run({
-      arguments: ["compare-managed-members", good, good, "--json"],
+      arguments: [
+        "compare-managed-members",
+        good,
+        good,
+        "--max-snapshot-bytes",
+        String(bytes.length),
+        "--max-metadata-representation-bytes",
+        "1048576",
+        "--json",
+      ],
     });
     expect(healthy.exitCode, healthy.stderr).toBe(0);
     expect(healthy.json).toMatchObject({
       operation: "compare_managed_members",
-      parameters: { left_path: good, right_path: good },
+      parameters: {
+        left_path: good,
+        right_path: good,
+        max_snapshot_bytes: bytes.length,
+        max_metadata_representation_bytes: 1048576,
+      },
     });
 
     for (const field of ["leftPath", "rightPath"] as const) {
