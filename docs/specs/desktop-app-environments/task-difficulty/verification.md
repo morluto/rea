@@ -65,7 +65,7 @@ termination raise, so the teardown owner retains the work folder for retry.
 The published wheel was inspected, including folder creation before resource
 startup, provider termination, and task teardown's folder-removal ordering.
 
-The [qualification record](cleanup-qualification-2026-11-10.json) records the
+The [qualification record](https://github.com/morluto/rea/blob/main/docs/specs/desktop-app-environments/task-difficulty/cleanup-qualification-2026-11-10.json) records the
 wheel digest and observations. In an isolated Linux arm64 container with the
 published provider, Python 3.12 and Docker Desktop's Linux daemon:
 
