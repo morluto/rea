@@ -144,3 +144,119 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves child-process rejection and unresolved admission through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-builtin-admission-");
+    const cases = [
+      ["rejected", 'const child=cp.spawn("tool",[],{cwd:5});', false],
+      [
+        "qualified",
+        'const child=cp.spawn("tool",[],{cwd:new globalThis.URL("file:///tmp/")});',
+        true,
+      ],
+      [
+        "unknown",
+        'const child=cp.spawn("tool",[],{cwd:new DirectoryURL()});',
+        true,
+      ],
+    ] as const;
+    for (const [name, body] of cases) {
+      await writeFile(
+        join(root, name + ".mjs"),
+        'import cp from "node:child_process";' +
+          "function entry(){" +
+          body +
+          "}",
+      );
+    }
+    const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    for (const [name, , retained] of cases) {
+      const nodes = graph.nodes.filter(
+        (node) =>
+          node.identity.module_path === name + ".mjs" &&
+          node.kind === "child-process",
+      );
+      expect(nodes, name).toHaveLength(retained ? 1 : 0);
+      const ids = new Set(nodes.map((node) => node.node_id));
+      const links = graph.relations.filter(
+        (relation) =>
+          relation.relation === "spawns" &&
+          (ids.has(relation.source_node_id) ||
+            ids.has(relation.target_node_id)),
+      );
+      expect(links, name).toHaveLength(retained ? 1 : 0);
+    }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves TLS rejection and unresolved admission through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-builtin-admission-");
+    const cases = [
+      [
+        "rejected",
+        'const socket=tls.connect({port:443,minVersion:"nope",secureContext:undefined},()=>{});socket.destroy();',
+        false,
+      ],
+      [
+        "accepted",
+        'const socket=tls.connect({port:443,minVersion:"nope"},()=>{},{minVersion:"TLSv1.2"});socket.destroy();',
+        true,
+      ],
+      [
+        "constructor-target",
+        'class O {port=443;set minVersion(value){}};const socket=tls.connect(new O(),{secureContext:false,minVersion:"nope"});socket.destroy();',
+        true,
+      ],
+      [
+        "class-source",
+        'const socket=tls.connect({port:443,minVersion:"nope"},null,class {static minVersion="TLSv1.2"});socket.destroy();',
+        true,
+      ],
+      [
+        "copied-prototype",
+        'const socket=tls.connect({port:443,secureContext:false},{["__proto__"]:{set minVersion(value){}},minVersion:"nope"});socket.destroy();',
+        true,
+      ],
+      [
+        "unknown",
+        'const socket=tls.connect({port:443,minVersion:"nope",...options});socket.destroy();',
+        true,
+      ],
+    ] as const;
+    for (const [name, body] of cases) {
+      await writeFile(
+        join(root, name + ".mjs"),
+        'import tls from "node:tls";' + "function entry(){" + body + "}",
+      );
+    }
+    const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    for (const [name, , retained] of cases) {
+      const nodes = graph.nodes.filter(
+        (node) =>
+          node.identity.module_path === name + ".mjs" &&
+          node.kind === "resource",
+      );
+      expect(nodes, name).toHaveLength(retained ? 1 : 0);
+      const ids = new Set(nodes.map((node) => node.node_id));
+      const links = graph.relations.filter(
+        (relation) =>
+          relation.relation === "releases" &&
+          (ids.has(relation.source_node_id) ||
+            ids.has(relation.target_node_id)),
+      );
+      expect(links, name).toHaveLength(retained ? 1 : 0);
+    }
+  },
+);

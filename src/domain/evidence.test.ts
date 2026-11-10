@@ -922,3 +922,24 @@ it("borrows variable-size collections for admission", () => {
   expect(envelope.locations).toBe(locations);
   expect(envelope.evidence_links).toBe(evidenceLinks);
 });
+
+it("retains safe auxiliary paths when the direct caller path is unavailable", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: null,
+  });
+  const rebound = withEvidenceCallerInputPath(original, undefined, {
+    descriptor_set_path: "./schema.pb",
+  });
+  expect(rebound.caller_input_path).toBeUndefined();
+  expect(rebound.caller_input_paths).toEqual({
+    descriptor_set_path: "./schema.pb",
+  });
+  expect(rebound.evidence_id).toBe(original.evidence_id);
+  expect(() =>
+    withEvidenceCallerInputPath(original, undefined, {
+      descriptor_set_path: "bad\0path",
+    }),
+  ).toThrow();
+});

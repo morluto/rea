@@ -1,3 +1,9 @@
+import {
+  webSourceLocationViewRequestSchema,
+  webSourceLocationContextSchema,
+  webSourceLocationSummarySchema,
+  webSourceLocationMatchViewSchema,
+} from "./webSourceLocationView.js";
 import { analysisTextPageItemSchema } from "./analysisViewText.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import {
@@ -360,6 +366,7 @@ const javascriptSummarySchema = z.strictObject({
 const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
+    "trace_web_source_location",
     "inspect_python_pyc",
     "inspect_erlang_beam",
     "inspect_devicetree",
@@ -412,6 +419,30 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+export const webSourceLocationSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("trace_web_source_location"),
+  summary: webSourceLocationSummarySchema,
+});
+export const webSourceLocationMatchesViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("source-location"),
+  parent_operation: z.literal("trace_web_source_location"),
+  view: webSourceLocationViewRequestSchema.options[0],
+  source_location: webSourceLocationContextSchema,
+  items: z.array(webSourceLocationMatchViewSchema),
+});
+export const webSourceLocationTextViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("source-location-text"),
+  coverage: nullableCollectionViewCoverageSchema,
+  parent_operation: z.literal("trace_web_source_location"),
+  view: webSourceLocationViewRequestSchema.options[1],
+  source_location: webSourceLocationContextSchema,
+  match: webSourceLocationMatchViewSchema,
+  item: analysisTextPageItemSchema.nullable(),
+});
 
 /** Original selector and text availability without the complete decompiled text. */
 export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
@@ -1345,6 +1376,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentCoverageViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    webSourceLocationSummaryViewResultSchema,
     procedurePseudocodeSummaryViewResultSchema,
     nativeObservationSummaryViewResultSchema,
     nativeValueTraceSummaryViewResultSchema,
@@ -1402,6 +1434,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
   }),
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
   z.strictObject({

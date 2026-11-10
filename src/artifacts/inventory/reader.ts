@@ -1,4 +1,5 @@
 import type { ArtifactReaderAdmission } from "../ArtifactReaderAdmission.js";
+import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import type {
   ArtifactReader,
@@ -21,6 +22,7 @@ export const createReader = (
   readerAdmission?: ArtifactReaderAdmission,
   asarHeaderAdmission?: AsarHeaderAdmission,
   selectedPath?: string,
+  readerLimits?: ArtifactReaderLimits,
 ): ArtifactReader | undefined => {
   if (
     artifactFormatDescriptor(format)?.requiresDarwin === true &&
@@ -33,6 +35,7 @@ export const createReader = (
     admission: readerAdmission,
     asarHeaderAdmission,
     selectedPath,
+    readerLimits,
   });
 };
 
