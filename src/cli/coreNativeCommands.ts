@@ -20,7 +20,13 @@ export const registerCoreNativeCommands = (
   cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
     description:
       "Verify loaded native bytes, source mappings, relocations and entry",
-    args: z.object({ path: z.string().describe("Local executable path") }),
+    args: z.object({
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Local executable path"),
+    }),
     options: z.object({
       ...nativeOpenOptionFields,
     }),
@@ -37,7 +43,11 @@ export const registerCoreNativeCommands = (
   cli.command(CLI_COMMANDS.readBytes, {
     description: "Read exact provider memory bytes at one analysis address",
     args: z.object({
-      path: z.string().describe("Local executable path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),
     }),
     options: z.object({
@@ -62,7 +72,11 @@ export const registerCoreNativeCommands = (
   cli.command(CLI_COMMANDS.addressToFileOffset, {
     description: "Resolve an analysis address to its original file byte offset",
     args: z.object({
-      path: z.string().describe("Local executable path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),
     }),
     options: z.object({
