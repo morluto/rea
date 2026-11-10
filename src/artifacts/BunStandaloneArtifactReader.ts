@@ -1,3 +1,8 @@
+import {
+  DEFAULT_BUN_READER_LIMITS,
+  type BunReaderLimits,
+} from "../domain/artifactReaderLimits.js";
+import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { setImmediate } from "node:timers/promises";
@@ -30,7 +35,6 @@ import {
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
-  MAX_BUN_RETAINED_BYTES,
   bunFormatFailure,
   bunMetadataBytesLimit,
   probeBunStandaloneGraph,
@@ -44,8 +48,6 @@ import {
 
 const REGIONS = ["contents", "sourcemap", "bytecode", "module-info"] as const;
 type BunRegion = (typeof REGIONS)[number];
-const MAX_LOGICAL_PATH_PARTS = 256;
-const MAX_LOGICAL_PATH_NODES = 250_000;
 interface BunModuleDestination {
   readonly path: string;
   readonly sourcePath?: string;
@@ -72,6 +74,8 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
   constructor(
     path: string,
     admitted?: StableRegularFileDescriptor | BunStandaloneAdmission,
+    private readonly limits: BunReaderLimits = DEFAULT_BUN_READER_LIMITS,
+    private readonly expandedBytes?: number,
   ) {
     if (admitted !== undefined && "kind" in admitted) {
       this.#admission = admitted;
@@ -229,6 +233,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
         source.handle,
         source.initial.size,
         signal,
+        this.limits,
       ));
     if (probe.status === "absent")
       throw bunFormatFailure("no Bun section or trailer");
@@ -239,16 +244,19 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
       source.handle,
       probe.claim,
       signal,
+      this.limits,
     );
     if (located.status === "absent")
       throw bunFormatFailure("no Bun section or trailer");
     if (located.failure !== undefined) throw located.failure;
     if (located.graph === undefined)
       throw bunFormatFailure("graph data was not admitted");
-    const decoded = await decodeBunModuleGraph(located.graph);
+    const decoded = await decodeBunModuleGraph(located.graph, this.limits);
     const entryModule = decoded.modules[decoded.entryPointId];
     const entryDestination =
-      entryModule === undefined ? null : logicalModulePath(entryModule);
+      entryModule === undefined
+        ? null
+        : logicalModulePath(entryModule, this.limits.path_parts);
     const header: BunStandaloneMetadata = {
       kind: "bun-standalone",
       layout_revision: decoded.revision,
@@ -263,33 +271,45 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
       compile_exec_argv_hex: decoded.compileExecArgv.hex,
       flags: decoded.flags,
     };
-    let retainedBytes = jsonValueByteLength(header, MAX_BUN_RETAINED_BYTES);
-    if (retainedBytes > MAX_BUN_RETAINED_BYTES)
-      throw bunMetadataBytesLimit(retainedBytes);
+    let retainedBytes = jsonValueByteLength(
+      header,
+      this.limits.representation_bytes,
+    );
+    if (retainedBytes > this.limits.representation_bytes)
+      throw bunMetadataBytesLimit(retainedBytes, this.limits);
     const entries = new Map<string, ArtifactEntry>();
     let declaredPlaintext = 0n;
     const expansionBudget = BigInt(
-      artifactExpansionBudgetBytes(located.graph.payloadLength),
+      this.expandedBytes ??
+        artifactExpansionBudgetBytes(located.graph.payloadLength),
     );
     const paths = new ArtifactPathRegistry({
-      maxParts: MAX_LOGICAL_PATH_PARTS,
-      maxNodes: MAX_LOGICAL_PATH_NODES,
+      maxParts: this.limits.path_parts,
+      maxNodes: this.limits.path_nodes,
+      limitFailure: (field, maximum, required) =>
+        artifactReaderLimitFailure(
+          `artifact_limits.bun.${field}`,
+          maximum,
+          "count",
+          required,
+        ),
     });
     for (const module of decoded.modules) {
       assertArtifactReadActive(signal);
       const destination =
         module.index === decoded.entryPointId && entryDestination !== null
           ? entryDestination
-          : logicalModulePath(module);
+          : logicalModulePath(module, this.limits.path_parts);
       for (const region of REGIONS) {
         const range = regionRange(module, region);
         if (range === null) continue;
         declaredPlaintext += BigInt(range.length);
         if (declaredPlaintext > expansionBudget)
-          throw new ArtifactReaderFailure(
-            "limit",
-            `Bun standalone readable entries declare ${String(declaredPlaintext)} plaintext bytes, exceeding this graph's ${String(expansionBudget)}-byte expansion budget. This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`,
-            { boundary: "capacity" },
+          throw artifactReaderLimitFailure(
+            "artifact_limits.expanded_bytes",
+            Number(expansionBudget),
+            "bytes",
+            declaredPlaintext,
           );
         const entry = moduleEntry(
           located.graph,
@@ -301,10 +321,10 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
         paths.reservePath(entry.path);
         retainedBytes += jsonValueByteLength(
           entryMetadataJson(entry),
-          Math.max(0, MAX_BUN_RETAINED_BYTES - retainedBytes),
+          Math.max(0, this.limits.representation_bytes - retainedBytes),
         );
-        if (retainedBytes > MAX_BUN_RETAINED_BYTES)
-          throw bunMetadataBytesLimit(retainedBytes);
+        if (retainedBytes > this.limits.representation_bytes)
+          throw bunMetadataBytesLimit(retainedBytes, this.limits);
         entries.set(entry.adapterKey, entry);
       }
     }
@@ -387,20 +407,26 @@ const moduleEntry = (
  * `sourcePath`. Unsafe, drive, and invalid UTF-8 names fall back to
  * `bun-modules/<index>` so inventory can still retain the module.
  */
-const logicalModulePath = (module: BunDecodedModule): BunModuleDestination => {
-  const fallback = `bun-modules/${String(module.index)}`;
+const logicalModulePath = (
+  module: BunDecodedModule,
+  maximumParts: number,
+): BunModuleDestination => {
+  const fallback =
+    maximumParts === 1
+      ? `bun-module-${String(module.index)}`
+      : `bun-modules/${String(module.index)}`;
   const text = module.nameText.text;
   if (text === null || text.length === 0) return { path: fallback };
   const candidate = text.startsWith("/") ? text.slice(1) : text;
   // Preserve virtual source facts without admitting an unbounded logical path tree.
   let parts = 1;
   for (let index = 0; index < candidate.length; index++)
-    if (candidate.charCodeAt(index) === 47 && ++parts > MAX_LOGICAL_PATH_PARTS)
+    if (candidate.charCodeAt(index) === 47 && ++parts > maximumParts)
       return {
         path: fallback,
         sourcePath: text,
         limitations: [
-          `The virtual name exceeds the fixed ${String(MAX_LOGICAL_PATH_PARTS)}-part logical path allowance; an indexed path is used and the original name is retained.`,
+          `The virtual name exceeds artifact_limits.bun.path_parts (${String(maximumParts)} parts); an indexed path is used and the original name is retained.`,
         ],
       };
 

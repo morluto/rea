@@ -224,7 +224,11 @@ describe("Ghidra relationship coverage replay", () => {
     expect(
       (await initial.session.execute("analyze_function", parameters)).ok,
     ).toBe(true);
-    expect(initial.calls).toEqual(["analyze_function", "analyze_function"]);
+    expect(initial.calls).toEqual([
+      "analyze_function",
+      "analyze_function",
+      "analyze_function",
+    ]);
     await initial.session.close();
 
     const replay = fixture();
@@ -254,7 +258,7 @@ describe("Ghidra relationship coverage replay", () => {
       limited_directions: ["callers"],
     },
   ] satisfies (RelationshipCoverage | undefined)[])(
-    "preserves relationship coverage %j through live execution, cache and snapshot replay",
+    "preserves relationship coverage %j as historical Evidence while reobserving new calls",
     async (coverage) => {
       const initial = fixture("12.1.4", coverage);
       await open(initial.session);
@@ -267,13 +271,17 @@ describe("Ghidra relationship coverage replay", () => {
         if (!execution.ok) throw execution.error;
         expect(execution.value.relationshipCoverage).toEqual(coverage);
       }
-      expect(initial.calls).toEqual(["analyze_function"]);
+      expect(initial.calls).toEqual(["analyze_function", "analyze_function"]);
       const snapshot = initial.session.exportAnalysisSnapshot();
       if (!snapshot.ok) throw snapshot.error;
+      expect(snapshot.value.entries).toEqual([]);
+      expect(
+        snapshot.value.evidence_bundle.records[0]?.relationship_coverage,
+      ).toEqual(coverage ?? null);
       await initial.session.close();
       const liveCoverage: RelationshipCoverage = {
         status: "unknown",
-        reason: "live fixture must not be replayed",
+        reason: "Current observation after import",
       };
       const replay = fixture("12.1.4", liveCoverage);
       expect(replay.session.importAnalysisSnapshot(snapshot.value).ok).toBe(
@@ -290,16 +298,15 @@ describe("Ghidra relationship coverage replay", () => {
       );
       if (!execution.ok) throw execution.error;
       expect(execution.value.relationshipCoverage ?? undefined).toEqual(
-        coverage,
+        liveCoverage,
       );
-      expect(execution.value.limitations).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("local REA analysis snapshot"),
-        ]),
+      expect(execution.value.limitations.join(" ")).not.toContain(
+        "local REA analysis snapshot",
       );
-      expect(replay.calls).toEqual(
-        admittedOperation === undefined ? [] : [admittedOperation],
-      );
+      expect(replay.calls).toEqual([
+        ...(admittedOperation === undefined ? [] : [admittedOperation]),
+        "analyze_function",
+      ]);
       await replay.session.close();
     },
   );
@@ -366,6 +373,11 @@ describe("Ghidra snapshot profile admission", () => {
       parameter: "function_references",
       current: "complete-body-and-entry-reference-manager-v3",
       legacy: "complete-body-and-entry-reference-manager-v2",
+    },
+    {
+      parameter: "native_value_flow_projection",
+      current: "accepted-runtime-budgets-v1",
+      legacy: undefined,
     },
     {
       parameter: "call_relationship_coverage",
@@ -437,7 +449,6 @@ describe("Ghidra snapshot profile admission", () => {
 describe("Ghidra snapshot cache", () => {
   it.each([
     { operation: "read_binary_inventory_summary", parameters: {} },
-    { operation: "analyze_function", parameters: { procedure: "0x1000" } },
     {
       operation: "procedure_pseudo_code",
       parameters: { procedure: "0x1000", document: "fixture" },

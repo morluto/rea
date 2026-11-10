@@ -688,29 +688,33 @@ cliTest(
 );
 
 cliTest(
-  "refuses distinct rustc paths above capacity with non-retryable guidance",
+  "retrieves a larger compiler-path prefix through the CLI without losing dependencies",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-cli-overflow-");
     const path = join(root, "overflow.elf");
     await writeFile(path, createRustHashOverflowImage());
     const result = await cli.run({
-      arguments: ["inspect-rust-binary", path, "--json"],
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-rustc-hashes",
+        "65",
+        "--producer-limits",
+        '{"input_bytes":8192,"output_bytes":16384}',
+        "--json",
+      ],
     });
-    expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "resource_constraint",
-      category: "resource_constraint",
-      retryable: false,
-      remediation: {
-        action: expect.stringMatching(
-          /rustc commit.path inventory.*fixed count/iu,
-        ),
-      },
-      details: {
-        operation: "inspect_rust_binary",
-        resource: "capacity",
-        reported_limits: { maximum_rustc_hashes: 64 },
-      },
+    expect(result.exitCode).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(evidence.parameters).toMatchObject({
+      max_rustc_hashes: 65,
+      producer_limits: { input_bytes: 8192, output_bytes: 16384 },
     });
+    expect(report.rustc_commit?.hashes).toHaveLength(65);
+    expect(report.rustc_commit).not.toHaveProperty("coverage");
+    expect(report.auditable_metadata?.packages).toHaveLength(2);
   },
 );

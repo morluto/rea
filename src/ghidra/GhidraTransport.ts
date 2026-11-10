@@ -196,6 +196,14 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+  // The native reader rejects expanded TCP records before JSON parsing.
+  // Keep that protocol refusal distinct from an unrelated observation failure.
+  const observationMessage =
+    endpoint.transport === "authenticated-loopback-tcp" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "limit"
+      ? "Ghidra TCP endpoint is invalid"
+      : "Ghidra endpoint observation failed";
   let failure =
     origin === "owned-or-classified" && primary instanceof GhidraSessionError
       ? primary
@@ -206,11 +214,7 @@ const observationFailure = (
           }))("cancelled", "Ghidra endpoint observation was cancelled", cause, {
             cancellation: { reason: artifactFileCancellationCause(cause) },
           })
-        : endpointFailure(
-            endpoint,
-            "Ghidra endpoint observation failed",
-            cause,
-          );
+        : endpointFailure(endpoint, observationMessage, cause);
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const cleanup = new ProviderCleanupError(
       "ghidra",

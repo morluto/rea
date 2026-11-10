@@ -68,7 +68,7 @@ const moduleNames = (
 };
 
 /** Extract exact top-level WABT WAT forms; no raw WASM decoding or import/export name unescaping. */
-export const parseWabtWat = (text: string) => {
+export const parseWabtWat = (text: string, maximumInterfaceBytes?: number) => {
   if (!/^\(module(?:\s|\))/u.test(text))
     throw new WabtAdmissionError("unsupported_module_prefix");
   const forms: string[] = [];
@@ -162,6 +162,6 @@ export const parseWabtWat = (text: string) => {
     customSectionNames,
     debugModuleNames,
     debugNameMetadata,
-    interface: parseWabtInterface(forms),
+    interface: parseWabtInterface(forms, maximumInterfaceBytes),
   };
 };
