@@ -72,7 +72,6 @@ it("retains complete certificate provenance from the production parser", async (
     identity,
     inspect: () => Promise.resolve(ok(parsed)),
   }).inspect({ path: parsed.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(parsed);
 });

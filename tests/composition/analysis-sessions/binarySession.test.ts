@@ -528,7 +528,6 @@ it("keeps an externally mutated session unbound until cleanup is retried", async
   );
 
   expect(closeAttempts).toBe(1);
-  expect(mutation.ok).toBe(false);
   if (mutation.ok) throw new Error("Expected cleanup failure");
   expect(mutation.error).toBeInstanceOf(ProviderCleanupError);
   expect(mutation.error.cleanupIncomplete).toBe(true);

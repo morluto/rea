@@ -194,7 +194,6 @@ it.each(["inventory_artifact", "inspect_artifact"] as const)(
         {},
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected provider cancellation");
       expect(projectAnalysisError(result.error).code).toBe("cancelled");
       expect(result.error.cause).toBe(reason);

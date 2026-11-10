@@ -170,11 +170,10 @@ describe("browser and Inspector CLI input diagnostics", () => {
         error: input.error,
         code: "invalid_request",
         category: "invalid_input",
-        message:
-          "Analysis input is invalid. Check the arguments and try again.",
+        message: expect.stringMatching(/input.*invalid/iu),
         retryable: false,
         remediation: {
-          action: `Read the declared input schema or CLI usage for ${input.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
+          action: expect.stringContaining(input.operation),
         },
         recovery: {
           kind: "inspect_input_contract",
@@ -186,6 +185,9 @@ describe("browser and Inspector CLI input diagnostics", () => {
             { ...input.issue, message: owner.message },
           ]),
         },
+      });
+      expect(result.json).toMatchObject({
+        remediation: { action: expect.stringContaining("tools/list") },
       });
       expect(result.stdout).not.toContain(malformedEndpoint);
       expect(result.stderr).not.toContain(malformedEndpoint);

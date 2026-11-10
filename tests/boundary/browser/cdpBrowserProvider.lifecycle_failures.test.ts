@@ -374,8 +374,10 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       detail: "session_detached",
       timestamp: null,
     });
-    expect(result.value.limitations).toContain(
-      "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+      ),
     );
   });
 

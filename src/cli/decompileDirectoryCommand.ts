@@ -26,7 +26,7 @@ export const registerDecompileDirectoryCommand = (
     description:
       "Write every function's pseudocode into a directory and return a manifest",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: localPathStringSchema.describe("App or program path"),
     }),
     options: z.object({
       output: localPathStringSchema.describe(
@@ -44,6 +44,7 @@ export const registerDecompileDirectoryCommand = (
         .describe(
           "Continue a matching export. Never overwrites a function file.",
         ),
+      retryFailed: decompileDirectoryInputSchema.shape.retry_failed,
       name: z
         .string()
         .min(1)
@@ -96,6 +97,7 @@ const decompileAllArguments = (options: {
   readonly output: string;
   readonly layout: "address" | "dwarf";
   readonly resume: boolean;
+  readonly retryFailed?: "independent_fresh" | undefined;
   readonly name?: string | undefined;
   readonly namespace?: string | undefined;
   readonly addressStart?: string | undefined;
@@ -105,6 +107,9 @@ const decompileAllArguments = (options: {
   output_directory: absoluteCallerPath(options.output),
   layout: options.layout,
   resume: options.resume,
+  ...(options.retryFailed === undefined
+    ? {}
+    : { retry_failed: options.retryFailed }),
   ...(options.name === undefined ? {} : { name: options.name }),
   ...(options.namespace === undefined ? {} : { namespace: options.namespace }),
   ...(options.addressStart === undefined

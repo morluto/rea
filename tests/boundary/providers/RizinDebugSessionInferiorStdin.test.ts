@@ -235,9 +235,10 @@ const createManager = (
   options: NonNullable<
     ConstructorParameters<typeof RizinDebugSessionManager>[1]
   > = {},
+  environment: Readonly<NodeJS.ProcessEnv> = {},
 ): RizinDebugSessionManager => {
   const manager = new RizinDebugSessionManager(
-    { ...process.env, REA_RIZIN_COMMAND: launcher },
+    { PATH: process.env.PATH, ...environment, REA_RIZIN_COMMAND: launcher },
     options,
   );
   onTestFinished(() => manager.closeAll().catch(() => undefined));
@@ -310,11 +311,14 @@ it.skipIf(process.platform === "win32")(
       target: "cat",
       reportsInferior: false,
     });
-    const manager = createManager(current, {
-      // The launcher reports no inferior, so close needs no Linux /proc readback.
-      platform: "linux",
-      frameTimeoutMs: 3_000,
-    });
+    const manager = createManager(
+      current,
+      {
+        // The launcher reports no inferior, so close needs no Linux /proc readback.
+        platform: "linux",
+      },
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "3000" },
+    );
     const sessionId = await startSession(manager, current);
 
     successValue(await manager.execute(sessionId, "resume-target"));

@@ -114,8 +114,8 @@ describe("inspectPackageFile", () => {
     );
 
     expect(snap.calls).toEqual([]);
-    expect(snap.facts.package_file_reason).toContain(
-      "dpkg reports no installed version of the application (snap varicad2026-en)",
+    expect(snap.facts.package_file_reason).toMatch(
+      /dpkg.*no installed version.*snap varicad2026-en/iu,
     );
     expect(directory).toEqual({
       package_file_reason: `${join(folder, "a.deb")} is not a regular file`,

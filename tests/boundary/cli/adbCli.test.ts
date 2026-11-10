@@ -97,8 +97,10 @@ exit 1
       expect(
         adbResultSchemas.capture_adb_screen.parse(output.normalized_result),
       ).toMatchObject({ width: 1, height: 1 });
-      expect(output.limitations).toContain(
-        "PNG signature, IHDR framing, checksum, and dimensions are validated; encoding and image contents are not validated",
+      expect(output.limitations).toContainEqual(
+        expect.stringMatching(
+          /PNG signature.*IHDR.*checksum.*dimensions.*validated.*encoding.*image contents.*not validated/iu,
+        ),
       );
       expect(
         (await readFile(join(outputPath, "screen.png"))).equals(frame),

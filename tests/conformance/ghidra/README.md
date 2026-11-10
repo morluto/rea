@@ -3,6 +3,12 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+For the one-shot function bundle handoff, run `npm run build:cached` and then
+`node scripts/verify-real-ghidra-function-bundle.mjs` with `GHIDRA_INSTALL_DIR`
+and `JAVA_HOME` set. The verifier compiles its own target, creates a project
+with a synthetic history report, and exercises complete, summary, and
+no-overwrite CLI delivery. It checks the target and project files for changes.
+
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
@@ -19,6 +25,15 @@ binaries and Ghidra projects are never committed.
   language's default context and checks each mnemonic, length and optional
   complete operand. The `ghidra-bridge-sources` CI job runs it for `ARM:LE:32:Cortex`,
   `ARM:LE:32:v8-m` and `Xtensa:LE:32:default`; the bytes are never executed.
+- `ReaComputedCallCoverageProbe.java` decodes source-owned x86-64 calls
+  through a writable slot, a register and a direct target, injects only the
+  slot call's recorded `COMPUTED_CALL` target, and reads callees through the
+  production bridge. The recorded target stays an observed callee while callee
+  coverage is `partial` and names the call site; the targetless call stays
+  `partial` without that candidate limitation, and the direct call stays
+  `complete`. The `ghidra-bridge-sources` CI job runs it; the bytes are never
+  executed. It does not establish which references Ghidra's own analysis
+  records for other slot shapes.
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a

@@ -290,7 +290,6 @@ it("refuses two admitted inventories that together exceed the comparison cap", a
     right: evidence(right),
     scope: "both",
   });
-  expect(combined.ok).toBe(false);
   if (combined.ok) throw new Error("Expected comparison allowance refusal");
   const projected = projectAnalysisError(combined.error);
   expect(projected.retryable).toBe(false);

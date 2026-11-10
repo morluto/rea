@@ -25,7 +25,7 @@ import type { ArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 
 const PRLIMIT_COMMAND_ENV = "REA_TSHARK_PRLIMIT_COMMAND";
 /** Repair for an unusable selected capture limiter; readiness and admission share it. */
-export const PCAP_LIMITER_REMEDIATION = `Check that ${PRLIMIT_COMMAND_ENV} (default /usr/bin/prlimit) names an absolute, executable util-linux prlimit.`;
+const PCAP_LIMITER_REMEDIATION = `Check that ${PRLIMIT_COMMAND_ENV} (default /usr/bin/prlimit) names an absolute, executable util-linux prlimit.`;
 /** Capture CPU ceiling, in seconds. */
 const PCAP_CPU_SECONDS = 300;
 

@@ -9,18 +9,23 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
+  omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
 import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
+import { estimateJsonStorage } from "./JsonAuthenticationHeadroom.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type Facet =
@@ -31,6 +36,16 @@ type Facet =
       readonly remediation: string;
       readonly error?: AnalysisErrorProjection;
     };
+
+type AddressContext = {
+  readonly address: string;
+  readonly document: string;
+  readonly name: Facet;
+  readonly procedure: Facet;
+  readonly comment: Facet;
+  readonly inline_comment: Facet;
+  readonly bookmarks: Facet;
+};
 
 /** Facets inspected after an explicit or provider-resolved document is known. */
 export const ADDRESS_CONTEXT_FACET_OPERATIONS = [
@@ -99,12 +114,62 @@ export const getNavigationContext = async (
   });
 };
 
+/** Preserve other facets and smaller partials if unretained Evidence cannot fit. */
+export function* omitContextEvidenceForDelivery(
+  context: AddressContext,
+  limit: {
+    readonly constraint: "receive-buffer" | "string-length";
+    readonly bytesAtLeast: number;
+  },
+  budgetBytes: number,
+): Generator<AddressContext> {
+  const names = [
+    "name",
+    "procedure",
+    "comment",
+    "inline_comment",
+    "bookmarks",
+  ] as const;
+  const candidates = names.flatMap((name) => {
+    const facet = context[name];
+    if (facet.state !== "unavailable" || facet.error === undefined) return [];
+    return [...unretainedEvidenceCandidates(facet.error)].map((candidate) => {
+      const size = estimateJsonStorage(candidate.value, {
+        maximumValueBytes: budgetBytes,
+        includeSerialized: false,
+      }).valueBytes;
+      return { name, candidate, size };
+    });
+  });
+  candidates.sort((left, right) => right.size - left.size);
+  let current = context;
+  for (const { name, candidate } of candidates) {
+    const facet = current[name];
+    if (facet.state !== "unavailable" || facet.error === undefined) continue;
+    const compact = omitUnretainedEvidenceFromError(
+      facet.error,
+      limit,
+      candidate,
+    );
+    if (compact === undefined) continue;
+    current = {
+      ...current,
+      [name]: {
+        ...facet,
+        remediation: compact.remediation.action,
+        error: compact,
+      },
+    };
+    yield current;
+  }
+}
+
 /** Inspect bounded provider-neutral facets at one explicit reproducible address. */
 export const inspectAddressContext = async (
   analysis: AnalysisOperationPort,
   input: { readonly address: string; readonly document?: string | undefined },
   signal?: AbortSignal,
-): Promise<Result<JsonValue, AnalysisError>> => {
+): Promise<Result<AddressContext, AnalysisError>> => {
   const document = await resolveAnalysisDocument(
     analysis,
     input.document,
@@ -220,14 +285,24 @@ const unavailableFacet = (
       remediation:
         error.retryable ||
         error.remediationAction !== undefined ||
+        error.fallbackRemediationAction !== undefined ||
         error.continuingCallerGuidance?.remediationAction !== undefined
           ? projected.remediation.action
           : "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
     };
   }
-  if (error instanceof AnalysisInputError) {
+  if (
+    error instanceof AnalysisInputError ||
+    error instanceof AnalysisResourceConstraintError ||
+    (error instanceof EvidenceIntegrityError &&
+      error.sourcePublicationRecovery !== undefined)
+  ) {
     const projected = projectAnalysisError(error);
-    if (projected.code === "invalid_request")
+    if (
+      projected.code === "invalid_request" ||
+      projected.code === "resource_constraint" ||
+      projected.code === "evidence_integrity_mismatch"
+    )
       return {
         state: "unavailable",
         reason: projected.message,
@@ -245,7 +320,11 @@ const unavailableFacet = (
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
-  error._tag === "NoBinaryOpenError";
+  error._tag === "NoBinaryOpenError" ||
+  (error.sourcePublicationRecovery !== undefined &&
+    !(error instanceof AnalysisInputError) &&
+    !(error instanceof AnalysisResourceConstraintError) &&
+    !(error instanceof EvidenceIntegrityError));
 
 /** Wait for all facets and retain every unresolved cleanup owner. */
 const contextFailure = (
@@ -292,7 +371,8 @@ const contextFailure = (
       ).bindCleanupDependencies([previous, failure]);
     } else if (
       !(failure instanceof AnalysisCancelledError) &&
-      isRequestLevelFailure(failure)
+      (isRequestLevelFailure(failure) ||
+        failure.sourcePublicationRecovery !== undefined)
     ) {
       combined.retainSecondaryFailure(failure);
     }

@@ -7,6 +7,7 @@ import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
 import {
   createInvestigationEvidenceClosureChecker,
+  collectInvestigationEvidenceClosure,
   resolveInvestigationEvidenceClosure,
 } from "./InvestigationEvidence.js";
 
@@ -157,4 +158,26 @@ it("reuses a complete shared source graph without weakening missing-source check
   expect(check([missing])).toBe(false);
   expect(lookups).toBe(3);
   expect(check([source.evidence_id, missing])).toBe(false);
+});
+
+it("collects other reachable sources after a missing ancestor", () => {
+  const missing = `ev_${"0".repeat(64)}`;
+  const first = observation("/reachable");
+  const incomplete = observation("/incomplete", [missing]);
+  const records = new InvestigationRecords();
+  for (const record of [first, incomplete]) {
+    const added = records.recordEvidence(record);
+    if (!added.ok) throw added.error;
+  }
+  const result = collectInvestigationEvidenceClosure(records, [
+    first.evidence_id,
+    incomplete.evidence_id,
+  ]);
+  expect(result.result).toMatchObject({
+    ok: false,
+    error: { reason: "missing" },
+  });
+  expect(result.records.map((record) => record.evidence_id).sort()).toEqual(
+    [first.evidence_id, incomplete.evidence_id].sort(),
+  );
 });

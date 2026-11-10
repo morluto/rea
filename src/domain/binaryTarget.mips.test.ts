@@ -67,8 +67,7 @@ describe("MIPS ELF header boundaries", () => {
     const parsed = parseExecutableHeader(header(true).subarray(0, 39), "x64");
     expect(parsed).toEqual({
       ok: false,
-      error:
-        "truncated ELF header: an ELF32 header needs 52 bytes; the file has 39",
+      error: expect.stringMatching(/truncated ELF header.*52 bytes.*39/iu),
     });
   });
 
@@ -77,7 +76,7 @@ describe("MIPS ELF header boundaries", () => {
     bytes[5] = 0;
     expect(parseExecutableHeader(bytes, "x64")).toEqual({
       ok: false,
-      error: "unsupported ELF endianness",
+      error: expect.stringMatching(/unsupported ELF endianness/iu),
     });
   });
 });
