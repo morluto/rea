@@ -196,6 +196,10 @@ export const parseConfig = (
         homeDirectoryFromEnvironment(environment, process.platform),
       ),
     hopperStartupTimeoutMs: env.REA_HOPPER_STARTUP_TIMEOUT_MS,
+    hopperStartupTimeoutSource:
+      environment.REA_HOPPER_STARTUP_TIMEOUT_MS === undefined
+        ? "default"
+        : "setting",
     hopperCallerScanBudget: hopperCallerScanBudgetFromEnvironment(
       environment.REA_HOPPER_CALLER_SCAN_BUDGET_MS,
       env.REA_HOPPER_CALLER_SCAN_BUDGET_MS,

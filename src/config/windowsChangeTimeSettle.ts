@@ -128,6 +128,14 @@ export const windowsChangeTimeSettlePollMsSchema =
 export const windowsChangeTimeSettleMaxPollsSchema =
   windowsChangeTimeSettingSchema(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS);
 
+const WINDOWS_CHANGE_TIME_OVERRIDES = {
+  [WINDOWS_CHANGE_TIME_DRIFT_MS.setting]: "windows.change_time_drift_ms",
+  [WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.setting]:
+    "windows.change_time_settle_poll_ms",
+  [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.setting]:
+    "windows.change_time_settle_max_polls",
+} as const;
+
 const readBound = (
   bound: WindowsChangeTimeBound,
   environment: Readonly<Record<string, string | undefined>>,
@@ -136,11 +144,15 @@ const readBound = (
   const value = environment[bound.setting];
   if (value === undefined) return undefined;
   const parsed = windowsChangeTimeSettingSchema(bound).safeParse(value);
-  if (!parsed.success) {
-    failures.push(windowsChangeTimeSettingFailure(bound, value));
+  if (parsed.success) return parsed.data;
+  const override =
+    WINDOWS_CHANGE_TIME_OVERRIDES[
+      bound.setting as keyof typeof WINDOWS_CHANGE_TIME_OVERRIDES
+    ];
+  if (currentAnalysisOperationSnapshot()?.overrides[override] !== undefined)
     return undefined;
-  }
-  return parsed.data;
+  failures.push(windowsChangeTimeSettingFailure(bound, value));
+  return undefined;
 };
 
 /** Resolve the settle budget from one environment. Invalid values are refused. */

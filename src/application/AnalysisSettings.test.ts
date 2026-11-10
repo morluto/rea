@@ -309,9 +309,29 @@ it("rejects an out-of-range per-call limit and reads an accepted value from the 
       maximumBytes: 33554432,
       source: "runtime",
     });
+    expect(live.hopperStartupTimeoutSource).toBe("default");
   });
   expect(pwntoolsInputBytes({})).toMatchObject({
     bytes: 32 * 1024 * 1024,
     source: "default",
+  });
+});
+
+it("keeps the Hopper startup deadline source through a runtime override", () => {
+  const parsed = parseConfig({ REA_HOPPER_STARTUP_TIMEOUT_MS: "45000" });
+  if (!parsed.ok) throw parsed.error;
+  const store = new AnalysisSettings({});
+  const live = runtimeAnalysisConfig(parsed.value, store.read);
+  expect(live.hopperStartupTimeoutSource).toBe("setting");
+  expect(
+    store.update({
+      changes: [
+        { setting: "hopper.startup_timeout_ms", action: "set", value: 8000 },
+      ],
+    }).ok,
+  ).toBe(true);
+  store.run(() => {
+    expect(live.hopperStartupTimeoutMs).toBe(8000);
+    expect(live.hopperStartupTimeoutSource).toBe("runtime");
   });
 });

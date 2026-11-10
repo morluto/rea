@@ -47,12 +47,14 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
+  BRIDGE_MAX_REQUEST_BYTES_SETTING,
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
-  resolveBridgeMaxRequestBytes,
+  parseBridgeMaxRequestBytes,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 
@@ -263,7 +265,8 @@ interface CutterBridgeClientOptions {
 
 /** Discovers and communicates with REA Python bridge plugins in live Cutter processes. */
 export class CutterBridgeClient {
-  readonly #launchRequestBytes: BridgeMaxRequestBytes;
+  readonly #launchRequestBytes: BridgeMaxRequestBytes | undefined;
+  readonly #launchRequestError: ConfigurationError | undefined;
   readonly #read: AnalysisSettingsReader | undefined;
   readonly #directory: string;
   readonly #descriptorResources = new ArtifactResourceScope();
@@ -275,7 +278,15 @@ export class CutterBridgeClient {
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
     options: CutterBridgeClientOptions = {},
   ) {
-    this.#launchRequestBytes = resolveBridgeMaxRequestBytes(environment);
+    const launchRequest = parseBridgeMaxRequestBytes(
+      environment[BRIDGE_MAX_REQUEST_BYTES_SETTING],
+    );
+    this.#launchRequestBytes = launchRequest.ok
+      ? launchRequest.value
+      : undefined;
+    this.#launchRequestError = launchRequest.ok
+      ? undefined
+      : launchRequest.error;
     this.#read = options.read;
     const configured = environment.REA_CUTTER_BRIDGE_DIR;
     const localAppData = environment.LOCALAPPDATA;
@@ -319,9 +330,14 @@ export class CutterBridgeClient {
       snapshot === undefined
         ? this.#read?.().overrides["bridge.max_request_bytes"]
         : snapshot.overrides["bridge.max_request_bytes"];
-    return override === undefined
-      ? this.#launchRequestBytes
-      : { maximumBytes: override, source: "runtime" };
+    if (override !== undefined)
+      return { maximumBytes: override, source: "runtime" };
+    if (this.#launchRequestBytes === undefined)
+      throw (
+        this.#launchRequestError ??
+        new ConfigurationError("Invalid REA environment configuration")
+      );
+    return this.#launchRequestBytes;
   }
 
   async retryDescriptorCleanup(): Promise<void> {
@@ -343,6 +359,7 @@ export class CutterBridgeClient {
   async listSessions(
     options: CutterDiscoveryOptions = {},
   ): Promise<CutterBridgeDiscovery> {
+    this.#requestLimit();
     const { signal } = options;
     const mismatches: number[] = [];
     const loaded = await this.#readDescriptors("list_cutter_sessions", signal);
@@ -449,6 +466,7 @@ export class CutterBridgeClient {
     readonly json: boolean;
     readonly signal?: AbortSignal;
   }): Promise<CutterBridgeExecution> {
+    this.#requestLimit();
     try {
       assertBridgeActive(input.signal, "cutter_command");
       const descriptor = await this.#find(input.sessionId, input.signal);

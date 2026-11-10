@@ -15,6 +15,7 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { parseEnvironment } from "./environment.js";
 import {
   DEBUGGER_COMMAND_DEADLINE_SETTING,
@@ -145,6 +146,37 @@ it.each([
     });
   },
 );
+
+it("applies runtime debugger overrides before rejecting invalid launch values", () => {
+  const parsed = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "debugger.command_deadline_ms": 25,
+        "debugger.max_command_output_bytes": 4096,
+      },
+    },
+    () =>
+      parseDebuggerSessionLimits({
+        [DEBUGGER_COMMAND_DEADLINE_SETTING]: "nope",
+        [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]: "0",
+      }),
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.commandDeadline.source).toBe("default");
+  expect(parsed.value.maxCommandOutputBytes.source).toBe("default");
+  const sessions = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: { "debugger.command_deadline_ms": 25 },
+    },
+    () =>
+      parseDebuggerSessionLimits({
+        [DEBUGGER_MAX_SESSIONS_SETTING]: "nope",
+      }),
+  );
+  expect(sessions.ok).toBe(false);
+});
 
 it("names the session setting on a Rizin capacity refusal", async () => {
   const manager = new RizinDebugSessionManager(

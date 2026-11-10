@@ -104,6 +104,12 @@ export interface HopperClientOptions {
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
+  /** Selection owner for the startup deadline. Absent when the caller did not record it. */
+  readonly readStartupTimeoutSource?: () =>
+    | "default"
+    | "setting"
+    | "runtime"
+    | undefined;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
@@ -980,7 +986,7 @@ export class HopperClient {
         limit: analysisSettingLimit(
           "hopper.startup_timeout_ms",
           deadline.timeoutMs,
-          undefined,
+          this.#options.readStartupTimeoutSource?.(),
         ),
       },
     );

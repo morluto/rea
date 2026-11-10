@@ -1,3 +1,5 @@
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import type { AnalysisSettingValues } from "../domain/analysisSettings.js";
 import {
   DEBUGGER_CONTROL_REPLY_BYTES,
   DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
@@ -148,6 +150,12 @@ export interface DebuggerSessionLimits {
   readonly maxCommandOutputBytes: DebuggerAdmissionLimit;
 }
 
+const RUNTIME_DEBUGGER_OVERRIDES = {
+  [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
+  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
+    "debugger.max_command_output_bytes",
+} as const satisfies Partial<Record<string, keyof AnalysisSettingValues>>;
+
 const parseOne = (
   admission: DebuggerAdmissionLimit,
   schema: ReturnType<typeof positiveDecimalIntegerSchema>,
@@ -156,13 +164,22 @@ const parseOne = (
 ): Result<DebuggerAdmissionLimit, ConfigurationError> => {
   if (value === undefined) return ok(admission);
   const parsed = schema.safeParse(value);
-  return parsed.success
-    ? ok({ ...admission, value: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(constraint, {
-          settings: [{ setting: admission.setting, constraint }],
-        }),
-      );
+  if (parsed.success)
+    return ok({ ...admission, value: parsed.data, source: "setting" });
+  const override =
+    RUNTIME_DEBUGGER_OVERRIDES[
+      admission.setting as keyof typeof RUNTIME_DEBUGGER_OVERRIDES
+    ];
+  if (
+    override !== undefined &&
+    currentAnalysisOperationSnapshot()?.overrides[override] !== undefined
+  )
+    return ok(admission);
+  return err(
+    new ConfigurationError(constraint, {
+      settings: [{ setting: admission.setting, constraint }],
+    }),
+  );
 };
 
 /** Resolve every shared debugger cap from one environment. Invalid values are refused. */
