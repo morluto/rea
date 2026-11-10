@@ -138,3 +138,60 @@ it("treats an undersized start-element header as unreadable rather than empty", 
     error: { kind: "malformed" },
   });
 });
+
+it("reports a resource-reference isSplitRequired as unknown rather than absent", () => {
+  // `android:isSplitRequired="@bool/split_required"` is carried as a typed
+  // reference; it has no literal to read and can resolve to true at install.
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          typedValue: { dataType: 0x01, data: 0x7f050001 },
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok && facts.value.is_split_required).toBe("unknown");
+});
+
+it("reports resource-referenced split types as unknown rather than absent", () => {
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          typedValue: { dataType: 0x01, data: 0x7f050002 },
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok && facts.value.required_split_types).toBe("unknown");
+});
+
+it("treats an attribute table that starts inside the node extension as malformed", () => {
+  // attributeStart below ResXMLTree_attrExt points the table into the
+  // extension: the root still decodes as `manifest` and the declaration is
+  // silently skipped.
+  const bytes = Buffer.from(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: "base__abi",
+        }),
+      ],
+    }),
+  );
+  const starts: number[] = [];
+  for (let at = 8; at + 8 <= bytes.length; at++) {
+    if (bytes.readUInt16LE(at) === 0x0102 && bytes.readUInt16LE(at + 2) === 16)
+      starts.push(at);
+  }
+  expect(starts).toHaveLength(1);
+  bytes.writeUInt16LE(0, starts[0]! + 24);
+  expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+});

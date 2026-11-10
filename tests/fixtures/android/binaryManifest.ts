@@ -13,6 +13,8 @@ export interface BinaryManifestAttributeInput {
   readonly resourceId?: number;
   readonly stringValue?: string;
   readonly booleanValue?: boolean;
+  /** Typed value for attributes a literal cannot express, e.g. a `@bool/` resource reference. */
+  readonly typedValue?: { readonly dataType: number; readonly data: number };
 }
 
 const bytes16 = (value: number): readonly number[] => [
@@ -78,15 +80,22 @@ export const binaryManifestFixture = (input: {
       attribute.stringValue === undefined
         ? 0xffffffff
         : intern(attribute.stringValue),
-    dataType: attribute.booleanValue === undefined ? 0x03 : 0x12,
+    dataType:
+      attribute.typedValue !== undefined
+        ? attribute.typedValue.dataType
+        : attribute.booleanValue === undefined
+          ? 0x03
+          : 0x12,
     data:
-      attribute.booleanValue !== undefined
-        ? attribute.booleanValue
-          ? 0xffffffff
-          : 0
-        : attribute.stringValue === undefined
-          ? 0
-          : intern(attribute.stringValue),
+      attribute.typedValue !== undefined
+        ? attribute.typedValue.data
+        : attribute.booleanValue !== undefined
+          ? attribute.booleanValue
+            ? 0xffffffff
+            : 0
+          : attribute.stringValue === undefined
+            ? 0
+            : intern(attribute.stringValue),
     resourceId: attribute.resourceId,
   }));
   // The resource map is indexed by string-pool index, not by attribute order:

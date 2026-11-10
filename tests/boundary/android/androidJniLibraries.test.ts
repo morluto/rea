@@ -652,3 +652,51 @@ it("keeps APKs without AndroidManifest.xml unchanged", async () => {
   const result = await read(await fixture());
   expect(result.inventory).toMatchObject({ status: "complete", unknowns: [] });
 });
+
+it("leaves split declarations unknown when the APK holds two root manifests", async () => {
+  // ZIP allows a repeated member name; the reader keeps both occurrences, and
+  // a later one can require splits the first does not.
+  const split = binaryManifestFixture({
+    attributes: [
+      {
+        namespace: ANDROID_NS,
+        name: "requiredSplitTypes",
+        stringValue: "base__abi",
+      },
+    ],
+  }).toString("base64");
+  const plain = binaryManifestFixture({ attributes: [] }).toString("base64");
+  const source = await fixture(
+    [
+      ["AndroidManifest.xml", Buffer.from(plain, "base64")],
+      ["Manifest1111111.xml", Buffer.from(split, "base64")],
+    ],
+    ["Manifest1111111.xml", "AndroidManifest.xml"],
+  );
+  const result = await read(source);
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "more than one root AndroidManifest.xml",
+  );
+});
+
+it("reports a resource-referenced isSplitRequired as an inventory unknown", async () => {
+  const source = await fixture([
+    [
+      "AndroidManifest.xml",
+      binaryManifestFixture({
+        attributes: [
+          {
+            namespace: ANDROID_NS,
+            name: "isSplitRequired",
+            resourceId: 0x0101064d,
+            typedValue: { dataType: 0x01, data: 0x7f050001 },
+          },
+        ],
+      }),
+    ],
+  ]);
+  const result = await read(source);
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "declares android:isSplitRequired as a resource reference",
+  );
+});

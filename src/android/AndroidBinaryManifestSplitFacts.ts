@@ -6,9 +6,11 @@ import { err, ok, type Result } from "../domain/result.js";
 
 /** Split declarations the binary manifest owns; a base APK's libraries may live in these splits. */
 export interface AndroidBinaryManifestSplitFacts {
-  readonly required_split_types: readonly string[] | null;
+  /** `null` when the declaration is absent; `unknown` when it is present but not a literal. */
+  readonly required_split_types: readonly string[] | "unknown" | null;
   readonly split_name: string | null;
-  readonly is_split_required: boolean | null;
+  /** `null` when the declaration is absent; `unknown` when it is present but not a literal. */
+  readonly is_split_required: boolean | "unknown" | null;
 }
 
 export type AndroidBinaryManifestSplitFailure = {
@@ -26,6 +28,8 @@ const MAXIMUM_STRINGS = 100_000;
 const UTF8_FLAG = 0x100;
 const ATTRIBUTE_ROWS = 20;
 const RES_XML_NODE_HEADER = 16;
+/** ResXMLTree_attrExt, which a start element always carries before its attribute table. */
+const RES_XML_ATTR_EXT = 20;
 /** Framework resource IDs disambiguate the attributes from name spelling and prefix binding. */
 const REQUIRED_SPLIT_TYPES_ID = 0x0101064c;
 const IS_SPLIT_REQUIRED_ID = 0x0101064d;
@@ -140,6 +144,46 @@ const splitTypes = (value: string): readonly string[] =>
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
 
+interface Chunk {
+  readonly type: number;
+  readonly start: number;
+  readonly headerSize: number;
+  readonly chunkSize: number;
+}
+
+/**
+ * Visit each declared chunk in document order without retaining them. The
+ * visitor returns false to stop; the walk still fails closed on a chunk whose
+ * declared extent leaves the document.
+ */
+const walkChunks = (
+  reader: BinaryReader,
+  declared: number,
+  visit: (chunk: Chunk) => boolean,
+): Result<null, AndroidBinaryManifestSplitFailure> => {
+  let start = 8;
+  while (start + 8 <= declared) {
+    const chunk: Chunk = {
+      type: reader.u16(start),
+      headerSize: reader.u16(start + 2),
+      start,
+      chunkSize: reader.u32(start + 4),
+    };
+    if (
+      chunk.chunkSize < 8 ||
+      chunk.headerSize < 8 ||
+      start + chunk.chunkSize > declared
+    )
+      return err({
+        kind: "malformed",
+        message: "A binary XML chunk declares a size outside the document.",
+      });
+    if (!visit(chunk)) return ok(null);
+    start += chunk.chunkSize;
+  }
+  return ok(null);
+};
+
 interface StartElement {
   readonly name: string | null;
   readonly attributes: readonly {
@@ -168,6 +212,10 @@ const readStartElement = (
   const attributeSize = reader.u16(start + 26);
   const attributeCount = reader.u16(start + 28);
   if (attributeSize < ATTRIBUTE_ROWS) return null;
+  // ResXMLTree_attrExt runs 20 bytes from the start of the node; an attribute
+  // table starting inside it reads the extension as attribute rows, which would
+  // turn a declared value into an absent one.
+  if (attributeStart < RES_XML_ATTR_EXT) return null;
   const name = strings[reader.u32(start + 20)] ?? null;
   const table = start + reader.u16(start + 2) + attributeStart;
   const attributes: StartElement["attributes"][number][] = [];
@@ -213,35 +261,21 @@ export const readAndroidBinaryManifestSplitFacts = (
         kind: "malformed",
         message: "The binary XML document declares a size outside the member.",
       });
-    const chunks: {
-      type: number;
-      start: number;
-      headerSize: number;
-      chunkSize: number;
-    }[] = [];
-    let start = 8;
-    while (start + 8 <= declared) {
-      const chunk = {
-        type: reader.u16(start),
-        headerSize: reader.u16(start + 2),
-        start,
-        chunkSize: reader.u32(start + 4),
-      };
-      if (
-        chunk.chunkSize < 8 ||
-        chunk.headerSize < 8 ||
-        start + chunk.chunkSize > declared
+    // Positions only: a 4 MiB manifest of minimum-size chunks would otherwise
+    // retain hundreds of thousands of live objects for a single root lookup.
+    let poolChunk: Chunk | undefined;
+    let resourceMapChunk: Chunk | undefined;
+    const walked = walkChunks(reader, declared, (chunk) => {
+      if (poolChunk === undefined && chunk.type === RES_STRING_POOL_TYPE)
+        poolChunk = chunk;
+      else if (
+        resourceMapChunk === undefined &&
+        chunk.type === RES_XML_RESOURCE_MAP_TYPE
       )
-        return err({
-          kind: "malformed",
-          message: "A binary XML chunk declares a size outside the document.",
-        });
-      chunks.push(chunk);
-      start += chunk.chunkSize;
-    }
-    const poolChunk = chunks.find(
-      (chunk) => chunk.type === RES_STRING_POOL_TYPE,
-    );
+        resourceMapChunk = chunk;
+      return true;
+    });
+    if (!walked.ok) return walked;
     if (poolChunk === undefined)
       return err({
         kind: "malformed",
@@ -256,31 +290,31 @@ export const readAndroidBinaryManifestSplitFacts = (
     if (!pool.ok) return pool;
     const strings = pool.value;
     const resourceIds: number[] = [];
-    for (const chunk of chunks) {
-      if (chunk.type !== RES_XML_RESOURCE_MAP_TYPE) continue;
+    if (resourceMapChunk !== undefined) {
       for (
-        let offset = chunk.start + chunk.headerSize;
-        offset + 4 <= chunk.start + chunk.chunkSize;
+        let offset = resourceMapChunk.start + resourceMapChunk.headerSize;
+        offset + 4 <= resourceMapChunk.start + resourceMapChunk.chunkSize;
         offset += 4
       )
         resourceIds.push(reader.u32(offset));
-      break;
     }
-    const manifest = chunks
-      .filter((chunk) => chunk.type === RES_XML_START_ELEMENT_TYPE)
-      .map((chunk) => {
-        const el = readStartElement(
-          reader,
-          strings,
-          resourceIds,
-          chunk.start,
-          chunk.headerSize,
-          chunk.chunkSize,
-        );
-        return el;
-      })
-      .find((element) => element?.name === "manifest");
-    if (manifest === undefined || manifest === null)
+    let manifest: StartElement | undefined;
+    const scanned = walkChunks(reader, declared, (chunk) => {
+      if (chunk.type !== RES_XML_START_ELEMENT_TYPE) return true;
+      const element = readStartElement(
+        reader,
+        strings,
+        resourceIds,
+        chunk.start,
+        chunk.headerSize,
+        chunk.chunkSize,
+      );
+      if (element?.name !== "manifest") return true;
+      manifest = element;
+      return false;
+    });
+    if (!scanned.ok) return scanned;
+    if (manifest === undefined)
       return err({
         kind: "malformed",
         message: "The binary manifest has no <manifest> start element.",
@@ -303,7 +337,10 @@ export const readAndroidBinaryManifestSplitFacts = (
     );
     const splitName = find(SPLIT_NAME_ID, "splitName");
     const requiredFlag = find(IS_SPLIT_REQUIRED_ID, "isSplitRequired");
-    const isSplitRequired =
+    // A resource reference carries no literal to read, so a declaration that is
+    // present but not literal stays unknown rather than reading as absent: the
+    // reference can resolve to true at install time.
+    const isSplitRequired: boolean | "unknown" | null =
       requiredFlag === undefined
         ? null
         : requiredFlag.dataType === TYPE_INT_BOOLEAN
@@ -313,13 +350,17 @@ export const readAndroidBinaryManifestSplitFacts = (
               ? true
               : (strings[requiredFlag.data] ?? null) === "false"
                 ? false
-                : null
-            : null;
+                : "unknown"
+            : "unknown";
     const requiredValue =
       requiredSplitTypes === undefined ? null : toValue(requiredSplitTypes);
     return ok({
       required_split_types:
-        requiredValue === null ? null : splitTypes(requiredValue),
+        requiredValue === null
+          ? requiredSplitTypes === undefined
+            ? null
+            : "unknown"
+          : splitTypes(requiredValue),
       split_name: splitName === undefined ? null : toValue(splitName),
       is_split_required: isSplitRequired,
     });

@@ -91,9 +91,17 @@ const noteUnbundledSplitLibraries = async (input: {
     return;
   }
   const splitTypes = facts.value.required_split_types;
-  if (splitTypes !== null && splitTypes.length > 0) {
+  if (splitTypes === "unknown") {
+    input.inventory.unknowns.push(
+      "The manifest declares required split types as a resource reference rather than a literal; native libraries may live in splits rather than in this APK.",
+    );
+  } else if (splitTypes !== null && splitTypes.length > 0) {
     input.inventory.unknowns.push(
       `The manifest requires split APKs (${splitTypes.join(", ")}); native libraries may live in those splits rather than in this APK.`,
+    );
+  } else if (facts.value.is_split_required === "unknown") {
+    input.inventory.unknowns.push(
+      "The manifest declares android:isSplitRequired as a resource reference rather than a literal; native libraries may live in splits rather than in this APK.",
     );
   } else if (facts.value.is_split_required === true) {
     input.inventory.unknowns.push(
@@ -137,6 +145,7 @@ export const readAndroidJniLibraries = async (input: {
       let failed = false;
       let inProgress: AndroidJniLibraryObservation | undefined;
       let manifest: ArtifactEntry | undefined;
+      let duplicateManifests = false;
       const selectLibrary = compileAndroidJniLibrarySelection(input.selection);
       try {
         for await (const entry of reader.entries(input.signal)) {
@@ -150,8 +159,13 @@ export const readAndroidJniLibraries = async (input: {
             break;
           }
           const match = /^lib\/([^/]+)\/([^/]+\.so)$/u.exec(entry.path);
-          if (entry.path === "AndroidManifest.xml" && manifest === undefined)
-            manifest = entry;
+          if (
+            entry.path === "AndroidManifest.xml" &&
+            entry.kind !== "directory"
+          ) {
+            if (manifest === undefined) manifest = entry;
+            else duplicateManifests = true;
+          }
           if (match === null || entry.kind === "directory") continue;
           const abi = match[1]!;
           if (!selectLibrary({ abi, path: entry.path })) continue;
@@ -294,7 +308,14 @@ export const readAndroidJniLibraries = async (input: {
           inProgress = undefined;
         }
         inventory.selected_libraries = libraries.length;
-        if (!failed && manifest !== undefined)
+        // The reader keeps every occurrence, so a second root manifest can
+        // declare splits the first does not; which one installs resolves is not
+        // decidable here, so the split facts stay unknown.
+        if (duplicateManifests) {
+          inventory.unknowns.push(
+            "The APK holds more than one root AndroidManifest.xml; which split declarations apply is unknown, so native libraries may live in splits rather than in this APK.",
+          );
+        } else if (!failed && manifest !== undefined)
           await noteUnbundledSplitLibraries({
             reader,
             entry: manifest,
