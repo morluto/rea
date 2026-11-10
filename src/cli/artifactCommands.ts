@@ -229,7 +229,11 @@ const registerInspectionCommand = (
     description:
       "Inspect one artifact and return all available observations and next probes",
     args: z.object({
-      path: z.string().describe("Application or package path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Application or package path"),
     }),
     options: z.object({
       integrityPolicy: z
