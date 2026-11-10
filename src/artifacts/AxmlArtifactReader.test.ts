@@ -433,3 +433,153 @@ describe("axml inventory", () => {
     );
   });
 });
+
+describe("axml scope and malformed regressions", () => {
+  it("resolves an attribute URI past a shadowed prefix", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "p", uri: "urn:a" },
+      { kind: "startNs", prefix: "q", uri: "urn:a" },
+      { kind: "start", name: "root" },
+      { kind: "startNs", prefix: "q", uri: "urn:b" },
+      {
+        kind: "start",
+        name: "inner",
+        attrs: [{ name: "attr", ns: "urn:a", value: "v" }],
+      },
+      { kind: "end", name: "inner" },
+      { kind: "end", name: "root" },
+      { kind: "endNs", prefix: "q", uri: "urn:b" },
+      { kind: "endNs", prefix: "q", uri: "urn:a" },
+      { kind: "endNs", prefix: "p", uri: "urn:a" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      // q now names urn:b; the urn:a attribute must serialize under p.
+      expect(xml).toContain('xmlns:q="urn:b"');
+      expect(xml).toContain('p:attr="v"');
+      expect(xml).not.toContain('q:attr="v"');
+    });
+  });
+
+  it("restores a shadowed outer prefix binding after end-ns", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "p", uri: "urn:a" },
+      { kind: "start", name: "root" },
+      { kind: "startNs", prefix: "p", uri: "urn:b" },
+      {
+        kind: "start",
+        name: "inner",
+        attrs: [{ name: "attr", ns: "urn:b", value: "v" }],
+      },
+      { kind: "end", name: "inner" },
+      { kind: "endNs", prefix: "p", uri: "urn:b" },
+      {
+        kind: "start",
+        name: "outer",
+        attrs: [{ name: "attr", ns: "urn:a", value: "w" }],
+      },
+      { kind: "end", name: "outer" },
+      { kind: "end", name: "root" },
+      { kind: "endNs", prefix: "p", uri: "urn:a" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain('p:attr="v"');
+      expect(xml).toContain('p:attr="w"');
+    });
+  });
+
+  it("rejects an end-ns that does not match the open declaration", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "p", uri: "urn:a" },
+      { kind: "startNs", prefix: "q", uri: "urn:b" },
+      { kind: "endNs", prefix: "p", uri: "urn:a" },
+      { kind: "start", name: "root" },
+      { kind: "end", name: "root" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects duplicate expanded attribute names", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "p", uri: "urn:a" },
+      {
+        kind: "start",
+        name: "root",
+        attrs: [
+          { name: "attr", ns: "urn:a", value: "1" },
+          { name: "attr", ns: "urn:a", value: "2" },
+        ],
+      },
+      { kind: "end", name: "root" },
+      { kind: "endNs", prefix: "p", uri: "urn:a" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects character data outside the root element", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "cdata", text: "loose" },
+      { kind: "start", name: "root" },
+      { kind: "end", name: "root" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("reports unrecognized chunks as a limitation", async () => {
+    const mystery = Buffer.alloc(16);
+    mystery.writeUInt16LE(0x0204, 0);
+    mystery.writeUInt16LE(8, 2);
+    mystery.writeUInt32LE(16, 4);
+    const bytes = buildAxml(AXML_MANIFEST_EVENTS, {
+      tailChunks: [mystery],
+    });
+    await withReader(bytes, async (reader) => {
+      let coverage:
+        | { status: string; limitations: readonly string[] }
+        | undefined;
+      const entries = await list(reader, {
+        onCoverage: (c) => {
+          coverage = c;
+        },
+      });
+      expect(entries[0]!.path).toBe("document.xml");
+      expect(coverage?.limitations.join(" ")).toContain(
+        "unrecognized chunks were skipped",
+      );
+    });
+  });
+
+  it("rejects pool strings carrying XML-forbidden characters", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "root" },
+      { kind: "cdata", text: "ab" },
+      { kind: "end", name: "root" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects a UTF-8 string whose two length fields disagree", async () => {
+    const bytes = buildAxml(
+      [
+        { kind: "start", name: "root" },
+        { kind: "end", name: "root" },
+      ],
+      { utf8: true },
+    );
+    // First string in the pool: bump its declared UTF-16 length by one.
+    const stringsStart = bytes.readUInt32LE(8 + 8 + 12);
+    bytes[8 + stringsStart]! += 1;
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+});

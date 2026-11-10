@@ -24,7 +24,9 @@ const CHUNK_END_ELEMENT = 0x0103;
 const CHUNK_CDATA = 0x0104;
 
 const STRING_POOL_UTF8 = 0x00000100;
-const NO_INDEX = 0xffffffff;
+export const NO_INDEX = 0xffffffff;
+/** XML 1.0 forbids these characters anywhere in the projected text. */
+const FORBIDDEN_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/;
 const ANDROID_NS_URI = "http://schemas.android.com/apk/res/android";
 const ANDROID_ATTR_ID_MIN = 0x01010000;
 const ANDROID_ATTR_ID_MAX = 0x0101ffff;
@@ -124,6 +126,11 @@ class StringPool {
     base: number,
     header: ChunkHeader,
     bufferEnd: number,
+    limits: {
+      maxStrings?: number;
+      maxStringBytes?: number;
+      requireXmlChars?: boolean;
+    } = {},
   ): Result<StringPool, RegionDecodeFailure> {
     if (header.headerSize < 28)
       return formatFailure(
@@ -181,6 +188,8 @@ class StringPool {
         return limitFailure(
           `string data exceeds the ${AXML_MAX_STRING_BYTES}-byte bound`,
         );
+      if (limits.requireXmlChars === true && FORBIDDEN_XML.test(decoded))
+        return formatFailure(`string ${i} carries a character XML 1.0 forbids`);
       strings[i] = decoded;
     }
     return ok(new StringPool(utf8, styleCount, strings));
@@ -237,9 +246,12 @@ const readUtf8String = (
   const bytesEnd = cursor + len8;
   // The required terminator must follow the declared bytes.
   if (bytesEnd >= end || view.getUint8(bytesEnd) !== 0) return undefined;
-  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+  const decoded = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
     new Uint8Array(view.buffer, view.byteOffset + cursor, len8),
   );
+  // The declared UTF-16 length must agree with the decoded text.
+  if (decoded.length !== len16) return undefined;
+  return decoded;
 };
 
 const escapeXml = (text: string): string =>
@@ -396,6 +408,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       AXML_HEADER_BYTES,
       first.value,
       documentEnd,
+      { requireXmlChars: true },
     );
     if (!poolResult.ok) return poolResult;
     const pool = poolResult.value;
@@ -403,8 +416,11 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     let cursor = AXML_HEADER_BYTES + first.value.size;
     let resourceMap: readonly number[] = [];
     let resourceMapCount = 0;
-    /** Active bindings, innermost last; END_NS removes the matching entry. */
-    /** Scoped URI-to-prefix index; each entry's tail is the innermost binding. */
+    /** Global declaration order; END_NS removes the tail per AOSP. */
+    const nsStack: { prefix: string; uri: string }[] = [];
+    /** Active URI bindings per prefix; the tail is the current binding. */
+    const nsByPrefix = new Map<string, string[]>();
+    /** Active prefixes per URI, innermost last. */
     const nsByUri = new Map<string, string[]>();
     const pendingNs: { prefix: string; uri: string }[] = [];
     /** An inferred `android:` prefix needs one synthesized declaration. */
@@ -414,6 +430,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     let attributeCount = 0;
     let synthNsCount = 0;
     let rootSeen = false;
+    let uninterpretedChunks = 0;
     const synthAttrNs = new Map<string, string>();
     const stack: { index: number; name: string; text: boolean }[] = [];
     const out: Uint8Array[] = [];
@@ -596,10 +613,26 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           return limitFailure(
             `namespace count exceeds the ${AXML_MAX_NAMESPACES} bound`,
           );
+        const declaredPrefix = prefix ?? NO_PREFIX;
+        // A rebinding shadows the prefix's older URI; keep both indexes in
+        // sync so URI lookups never return a shadowed prefix.
+        const uris = nsByPrefix.get(declaredPrefix);
+        if (uris === undefined) nsByPrefix.set(declaredPrefix, [uri]);
+        else {
+          const shadowed = uris[uris.length - 1]!;
+          const shadowList = nsByUri.get(shadowed);
+          if (shadowList !== undefined) {
+            const at = shadowList.lastIndexOf(declaredPrefix);
+            if (at >= 0) shadowList.splice(at, 1);
+            if (shadowList.length === 0) nsByUri.delete(shadowed);
+          }
+          uris.push(uri);
+        }
         const bound = nsByUri.get(uri);
-        if (bound === undefined) nsByUri.set(uri, [prefix ?? NO_PREFIX]);
-        else bound.push(prefix ?? NO_PREFIX);
-        pendingNs.push({ prefix: prefix ?? NO_PREFIX, uri });
+        if (bound === undefined) nsByUri.set(uri, [declaredPrefix]);
+        else bound.push(declaredPrefix);
+        nsStack.push({ prefix: declaredPrefix, uri });
+        pendingNs.push({ prefix: declaredPrefix, uri });
       } else if (type === CHUNK_END_NAMESPACE) {
         if (size < NODE_HEADER_BYTES + 8)
           return formatFailure("end-namespace chunk is too small");
@@ -609,12 +642,29 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         const uri = pool.get(uriIndex);
         if (uri === null || uri === undefined)
           return formatFailure("end-namespace has an invalid URI");
-        // Remove the innermost binding for this URI, whatever its prefix.
+        const ended = prefix ?? NO_PREFIX;
+        const top = nsStack.at(-1);
+        if (top === undefined || top.prefix !== ended || top.uri !== uri)
+          return formatFailure(
+            "end-namespace does not match the open declaration",
+          );
+        nsStack.pop();
         const bound = nsByUri.get(uri);
         if (bound !== undefined) {
-          bound.pop();
+          const at = bound.lastIndexOf(ended);
+          if (at >= 0) bound.splice(at, 1);
           if (bound.length === 0) nsByUri.delete(uri);
         }
+        const uris = nsByPrefix.get(ended);
+        uris?.pop();
+        const restored = uris?.at(-1);
+        if (restored !== undefined) {
+          // The shadowed outer binding of this prefix resumes.
+          const list = nsByUri.get(restored);
+          if (list === undefined) nsByUri.set(restored, [ended]);
+          else list.push(ended);
+        }
+        if (uris !== undefined && uris.length === 0) nsByPrefix.delete(ended);
       } else if (type === CHUNK_START_ELEMENT) {
         if (
           headerSize < NODE_HEADER_BYTES ||
@@ -662,6 +712,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         // prefix can still place its declaration inside the same tag.
         synthAttrNs.clear();
         const attrTexts: string[] = [];
+        const seenAttrs = new Set<string>();
         let attrBytes = 0;
         for (let i = 0; i < attrCount; i++) {
           const at = base + NODE_HEADER_BYTES + attrStart + i * attrSize;
@@ -672,6 +723,17 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           const aData = view.getUint32(at + 16, true);
           const aName = requireName(aNameIndex);
           if (!aName.ok) return aName;
+          const aUri = aNs === NO_INDEX ? "" : (pool.get(aNs) ?? undefined);
+          if (aUri === undefined)
+            return formatFailure(
+              `attribute ${aNameIndex} namespace index is invalid`,
+            );
+          const expanded = `${aUri}\x00${aName.value}`;
+          if (seenAttrs.has(expanded))
+            return formatFailure(
+              `attribute ${aNameIndex} expands to a duplicate name`,
+            );
+          seenAttrs.add(expanded);
           const aPrefix = prefixFor(aNs, aNameIndex, true);
           if (!aPrefix.ok) return aPrefix;
           if (rawIndex !== NO_INDEX && pool.get(rawIndex) === null)
@@ -704,8 +766,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           stack.length === 0 ? "" : `\n${"  ".repeat(stack.length)}`;
         const opened = emit(`${indent}<${elemPrefix.value}${nameResult.value}`);
         if (!opened.ok) return opened;
-        while (pendingNs.length > 0) {
-          const ns = pendingNs.shift()!;
+        for (const ns of pendingNs) {
           const attr =
             ns.prefix === NO_PREFIX
               ? ` xmlns="${escapeAttr(ns.uri)}"`
@@ -713,6 +774,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           const wrote = emit(attr);
           if (!wrote.ok) return wrote;
         }
+        pendingNs.length = 0;
         if (pendingAndroidDecl) {
           const wrote = emit(` xmlns:android="${ANDROID_NS_URI}"`);
           if (!wrote.ok) return wrote;
@@ -795,12 +857,19 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           if (!noted.ok) return noted;
         }
         // Text preserves declared characters; no layout whitespace is added.
+        if (stack.length === 0 && /\S/.test(text))
+          return formatFailure(
+            "character data appears outside the root element",
+          );
         const wrote = emit(escapeXml(text));
         if (!wrote.ok) return wrote;
         const top = stack.at(-1);
         if (top !== undefined) top.text = true;
+      } else {
+        // Unknown chunks are skipped inside the declared extent but were
+        // never interpreted, so completeness cannot be claimed.
+        uninterpretedChunks += 1;
       }
-      // Unknown chunks are skipped inside the declared extent.
       cursor = next;
       sawStringPoolEnd = true;
     }
@@ -811,6 +880,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     if (cursor < documentEnd && declaredSize > bytes.length) terminated = false;
     if (!sawStringPoolEnd && first.value.size === 0)
       return formatFailure("string pool chunk is empty");
+    if (uninterpretedChunks !== 0)
+      limitations.push(
+        `${uninterpretedChunks} unrecognized chunks were skipped without interpretation`,
+      );
     if (bytes.length > declaredSize)
       limitations.push(
         `${bytes.length - declaredSize} carrier bytes follow the declared document and were not examined`,
