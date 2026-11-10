@@ -175,7 +175,6 @@ describe("doctor native analysis configuration", () => {
     ["REA_REGEX_WORKER_HEAP_REQUEST_MIB", "6"],
     ["REA_MCP_INITIALIZE_BUDGET_MS", "0"],
     ["REA_MCP_TOOLS_LIST_BUDGET_MS", "0"],
-    ["REA_MCP_TOOLS_LIST_PAGE_BYTES", "0"],
     ["REA_MCP_FIRST_CATALOG_BUDGET_MS", "0"],
     ["REA_MCP_DOCTOR_DEADLINE_MS", "0"],
     ["REA_GHIDRA_STARTUP_TIMEOUT_MS", "abc"],
