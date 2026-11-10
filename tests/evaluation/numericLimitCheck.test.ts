@@ -41,6 +41,17 @@ it("does not treat a registry declaration as a producer", () => {
   ).toBe(false);
 });
 
+it("keeps a bracket-access read as a producer", () => {
+  const name = "REA_NEW_MAX_BYTES";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/newLimit.ts",
+      source: `const selected = environment["${name}"] ?? environment?.[ "${name}" ];`,
+    },
+  ]);
+  expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+});
+
 it("does not treat a registration allowlist or a comment as a producer", () => {
   const discovered = discoverNumericLimitUses([
     {
