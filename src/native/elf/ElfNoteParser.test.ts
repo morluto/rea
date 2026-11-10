@@ -983,6 +983,43 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   expect(report.entries[4]?.type_name).toBe("core_auxv");
 });
 
+it("decodes the 128-byte 32-bit prpsinfo that MIPS and PowerPC cores write", () => {
+  const notes = corePrpsinfoNote({
+    bits: 32,
+    uidBits: 32,
+    little: false,
+    state: 1,
+    pid: 123,
+    ppid: 1,
+    pgrp: 123,
+    sid: 124,
+    uid: 70_000,
+    gid: 500,
+    fname: "proc32",
+    psargs: "proc32 arg",
+  });
+  const bytes = elfNoteFixture({
+    bits: 32,
+    little: false,
+    machine: 8, // EM_MIPS
+    type: 4,
+    ownership: "program",
+    notes,
+  });
+
+  expect(parse(bytes).entries[0]?.core?.prpsinfo).toEqual({
+    state: 1,
+    pid: 123,
+    ppid: 1,
+    pgrp: 123,
+    sid: 124,
+    uid: 70_000,
+    gid: 500,
+    filename: "proc32",
+    psargs: "proc32 arg",
+  });
+});
+
 it("decodes siginfo using target ABI for MIPS machines", () => {
   const desc = Buffer.alloc(128);
   desc.writeInt32LE(11, 0); // signo = SIGSEGV

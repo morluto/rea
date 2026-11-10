@@ -328,14 +328,54 @@ const AUXV_TYPE_NAMES: Readonly<Record<number, string>> = {
 
 const hexWord = (val: bigint | number): string => `0x${val.toString(16)}`;
 
+interface PrpsinfoLayout {
+  readonly size: number;
+  readonly idBytes: 2 | 4;
+  readonly uid: number;
+  readonly pid: number;
+  readonly fname: number;
+}
+
+// Linux `struct elf_prpsinfo`. 32-bit `__kernel_uid_t` is 16 bits on i386,
+// ARM, m68k and SH (124 bytes) and 32 bits on MIPS, PowerPC and RISC-V
+// (128 bytes); binutils' psinfo readers select the layout by descriptor size.
+const PRPSINFO_64: PrpsinfoLayout = {
+  size: 136,
+  idBytes: 4,
+  uid: 16,
+  pid: 24,
+  fname: 40,
+};
+const PRPSINFO_32_UID16: PrpsinfoLayout = {
+  size: 124,
+  idBytes: 2,
+  uid: 8,
+  pid: 12,
+  fname: 28,
+};
+const PRPSINFO_32_UID32: PrpsinfoLayout = {
+  size: 128,
+  idBytes: 4,
+  uid: 8,
+  pid: 16,
+  fname: 32,
+};
+
+const prpsinfoLayout = (descriptor: Buffer, wide: boolean): PrpsinfoLayout => {
+  if (wide) return PRPSINFO_64;
+  return descriptor.length >= PRPSINFO_32_UID32.size
+    ? PRPSINFO_32_UID32
+    : PRPSINFO_32_UID16;
+};
+
 const decodeCorePrpsinfo = (
   descriptor: Buffer,
   little: boolean,
   wide: boolean,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  const minLen = wide ? 136 : 124;
-  if (descriptor.length < minLen) return null;
+  const layout = prpsinfoLayout(descriptor, wide);
+  if (descriptor.length < layout.size) return null;
   const u8 = (off: number) => descriptor.readUInt8(off);
   const u16 = (off: number) =>
     little ? descriptor.readUInt16LE(off) : descriptor.readUInt16BE(off);
@@ -343,16 +383,17 @@ const decodeCorePrpsinfo = (
     little ? descriptor.readUInt32LE(off) : descriptor.readUInt32BE(off);
   const i32 = (off: number) =>
     little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
+  const id = layout.idBytes === 4 ? u32 : u16;
 
   const state = u8(0);
-  const uid = wide ? u32(16) : u16(8);
-  const gid = wide ? u32(20) : u16(10);
-  const pid = wide ? i32(24) : i32(12);
-  const ppid = wide ? i32(28) : i32(16);
-  const pgrp = wide ? i32(32) : i32(20);
-  const sid = wide ? i32(36) : i32(24);
+  const uid = id(layout.uid);
+  const gid = id(layout.uid + layout.idBytes);
+  const pid = i32(layout.pid);
+  const ppid = i32(layout.pid + 4);
+  const pgrp = i32(layout.pid + 8);
+  const sid = i32(layout.pid + 12);
 
-  const fnameOff = wide ? 40 : 28;
+  const fnameOff = layout.fname;
   const fnameBytes = descriptor.subarray(fnameOff, fnameOff + 16);
   const fnameEnd = fnameBytes.indexOf(0);
   const fname = (
@@ -360,7 +401,7 @@ const decodeCorePrpsinfo = (
   ).toString("latin1");
   chargeText(text, fname.length);
 
-  const psargsOff = wide ? 56 : 44;
+  const psargsOff = layout.fname + 16;
   const psargsBytes = descriptor.subarray(psargsOff, psargsOff + 80);
   const psargsEnd = psargsBytes.indexOf(0);
   const psargs = (

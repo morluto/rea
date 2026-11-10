@@ -41,7 +41,9 @@ filled when the descriptor matches that type. Other owners keep `gnu` null.
 For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
 `core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
 file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`), and
-auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
+auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. A 32-bit
+`NT_PRPSINFO` is read with 16-bit IDs when it is 124 bytes (i386, ARM) and
+32-bit IDs when it is 128 bytes (MIPS, PowerPC, RISC-V). Other owners or unparsed
 notes keep `core` null.
 
 Linux `CORE` decoding requires System V/unspecified (0) or GNU/Linux (3)

@@ -405,6 +405,8 @@ export const elfNoteTablePastEnd = (): Buffer => {
 
 export interface CorePrpsinfoOptions {
   readonly bits?: 32 | 64;
+  /** 32-bit `pr_uid`/`pr_gid` width: 16 on i386/ARM, 32 on MIPS/PowerPC. */
+  readonly uidBits?: 16 | 32;
   readonly little?: boolean;
   readonly state?: number;
   readonly sname?: string;
@@ -425,7 +427,9 @@ export interface CorePrpsinfoOptions {
 export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
   const bits = options.bits ?? 64;
   const little = options.little ?? true;
-  const desc = Buffer.alloc(bits === 64 ? 136 : 124);
+  const uid32 = bits === 32 && options.uidBits === 32;
+  const shift = uid32 ? 4 : 0;
+  const desc = Buffer.alloc(bits === 64 ? 136 : 124 + shift);
   desc[0] = options.state ?? 0;
   desc[1] = (options.sname ?? "R").charCodeAt(0);
   desc[2] = options.zomb ?? 0;
@@ -455,26 +459,31 @@ export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
     psargs.copy(desc, 56, 0, Math.min(psargs.length, 80));
   } else {
     write32(desc, 4, options.flag ?? 0, little);
-    write16(desc, 8, options.uid ?? 1000, little);
-    write16(desc, 10, options.gid ?? 1000, little);
-    if (little) {
-      desc.writeInt32LE(options.pid ?? 1234, 12);
-      desc.writeInt32LE(options.ppid ?? 1, 16);
-      desc.writeInt32LE(options.pgrp ?? 1234, 20);
-      desc.writeInt32LE(options.sid ?? 1234, 24);
+    if (uid32) {
+      write32(desc, 8, options.uid ?? 1000, little);
+      write32(desc, 12, options.gid ?? 1000, little);
     } else {
-      desc.writeInt32BE(options.pid ?? 1234, 12);
-      desc.writeInt32BE(options.ppid ?? 1, 16);
-      desc.writeInt32BE(options.pgrp ?? 1234, 20);
-      desc.writeInt32BE(options.sid ?? 1234, 24);
+      write16(desc, 8, options.uid ?? 1000, little);
+      write16(desc, 10, options.gid ?? 1000, little);
+    }
+    if (little) {
+      desc.writeInt32LE(options.pid ?? 1234, 12 + shift);
+      desc.writeInt32LE(options.ppid ?? 1, 16 + shift);
+      desc.writeInt32LE(options.pgrp ?? 1234, 20 + shift);
+      desc.writeInt32LE(options.sid ?? 1234, 24 + shift);
+    } else {
+      desc.writeInt32BE(options.pid ?? 1234, 12 + shift);
+      desc.writeInt32BE(options.ppid ?? 1, 16 + shift);
+      desc.writeInt32BE(options.pgrp ?? 1234, 20 + shift);
+      desc.writeInt32BE(options.sid ?? 1234, 24 + shift);
     }
     const fname = Buffer.from(`${options.fname ?? "app"}\0`, "latin1");
-    fname.copy(desc, 28, 0, Math.min(fname.length, 16));
+    fname.copy(desc, 28 + shift, 0, Math.min(fname.length, 16));
     const psargs = Buffer.from(
       `${options.psargs ?? "./app --flag"}\0`,
       "latin1",
     );
-    psargs.copy(desc, 44, 0, Math.min(psargs.length, 80));
+    psargs.copy(desc, 44 + shift, 0, Math.min(psargs.length, 80));
   }
   return elfNote("CORE", 3, desc, little);
 };
