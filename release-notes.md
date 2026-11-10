@@ -1405,6 +1405,7 @@
 * **mcp:** clarify Ghidra edit lifetime on switches ([#8484](https://github.com/morluto/rea/issues/8484)) ([f3c2166](https://github.com/morluto/rea/commit/f3c21665d8b098933e1e57dbd605ad2aa3f0c1c4))
 * **mcp:** clarify residual unknown target scope ([#8547](https://github.com/morluto/rea/issues/8547)) ([18cc161](https://github.com/morluto/rea/commit/18cc16141c5c56b442bc13580c8c86220c3229dc))
 * **mcp:** clarify retained evidence view support ([#8480](https://github.com/morluto/rea/issues/8480)) ([ce45f92](https://github.com/morluto/rea/commit/ce45f92219e7a3df223f0120613f0c5a662bdc24))
+* **mcp:** clarify tool selection and recovery guidance ([#9817](https://github.com/morluto/rea/issues/9817)) ([a4da4e7](https://github.com/morluto/rea/commit/a4da4e72306a20d4b02aad3411c714031417f35d))
 * **mcp:** document native function analysis scope ([#8389](https://github.com/morluto/rea/issues/8389)) ([0ecf3a4](https://github.com/morluto/rea/commit/0ecf3a4cbfdc71242f6ef4635c91a8ce4e5ca049))
 * **mcp:** document verified FastMCP catalog recovery ([#9113](https://github.com/morluto/rea/issues/9113)) ([39827ec](https://github.com/morluto/rea/commit/39827ec7171a311cd5258ffb1ef953068aa84051))
 * **mcp:** explain PowerShell launch environment scope ([#8961](https://github.com/morluto/rea/issues/8961)) ([347dc9a](https://github.com/morluto/rea/commit/347dc9a32cb038c4a82cfe64d4109ad9d8e27da9))
