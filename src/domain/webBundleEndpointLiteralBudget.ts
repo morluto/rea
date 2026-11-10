@@ -147,9 +147,7 @@ export const retainLiteralCandidatesWithinResultBudget = <
       {
         ...jsonObject(stableFacts),
         inferences: kept,
-        ...(limit === undefined
-          ? {}
-          : { endpoint_literal_candidates: limit }),
+        ...(limit === undefined ? {} : { endpoint_literal_candidates: limit }),
       },
       resultBudgetBytes,
     );
@@ -172,9 +170,7 @@ export const retainLiteralCandidatesWithinResultBudget = <
   }
 };
 
-const jsonObject = (
-  value: JsonValue,
-): { readonly [key: string]: JsonValue } =>
+const jsonObject = (value: JsonValue): { readonly [key: string]: JsonValue } =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? value
     : {};
