@@ -193,7 +193,11 @@ const registerExtractionCommand = (
   cli.command(CLI_COMMANDS.extractArtifact, {
     description: "Extract all regular artifact contents safely",
     args: z.object({
-      path: z.string().describe("Application or package path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Application or package path"),
     }),
     options: z.object({
       integrityPolicy: z
