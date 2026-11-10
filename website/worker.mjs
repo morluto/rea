@@ -85,6 +85,14 @@ export default {
     );
     if (!candidate.ok && ![304, 412, 416].includes(candidate.status)) {
       await candidate.body?.cancel();
+      if (useMarkdown) {
+        // The probe omitted the request's cache/range validators because
+        // they describe HTML, not Markdown. The Markdown sidecar is
+        // missing, so re-evaluate those validators against the HTML
+        // fallback instead of returning the unvalidated probe response.
+        await original.body?.cancel();
+        return env.ASSETS.fetch(new Request(request));
+      }
       return original;
     }
     const response = new Response(

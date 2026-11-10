@@ -104,6 +104,27 @@ await test("HEAD and validators use the selected representation", async () => {
   }
 });
 
+await test("missing Markdown re-evaluates HTML validators on fallback", async () => {
+  const env = assets({ markdownStatus: 404 });
+  const matching = await worker.fetch(
+    new Request("https://rea.tools/guide/", {
+      headers: { Accept: "text/markdown", "If-None-Match": '"html"' },
+    }),
+    env,
+  );
+  assert.equal(matching.status, 304);
+  assert.equal(await matching.text(), "");
+
+  const nonMatching = await worker.fetch(
+    new Request("https://rea.tools/guide/", {
+      headers: { Accept: "text/markdown", "If-None-Match": '"other"' },
+    }),
+    env,
+  );
+  assert.equal(nonMatching.status, 200);
+  assert.equal(await nonMatching.text(), "<h1>Guide</h1>");
+});
+
 await test("missing Markdown keeps HTML, and asset redirects and missing routes survive", async () => {
   const html = await worker.fetch(
     new Request("https://rea.tools/guide/", {
