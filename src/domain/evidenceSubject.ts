@@ -29,6 +29,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "unityfs",
   "wxapkg",
   "axml",
+  "arsc",
   "uimage",
   "dmg",
   "pkg",

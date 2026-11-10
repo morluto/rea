@@ -72,6 +72,7 @@ export const liveBinaryTargetSummaryVariants = [
       "unityfs",
       "wxapkg",
       "axml",
+      "arsc",
       "uimage",
       "dmg",
       "pkg",

@@ -1,5 +1,6 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
+import { hasArscHeader } from "./arscFormat.js";
 import { hasAxmlHeader } from "./axmlFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -23,6 +24,7 @@ export type RecognizedArtifactFormat = Extract<
   | "unityfs"
   | "wxapkg"
   | "axml"
+  | "arsc"
   | "uimage"
   | "intel-hex"
   | "srec"
@@ -104,6 +106,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
     when("axml", hasAxmlHeader),
+    when("arsc", hasArscHeader),
     when("uimage", hasUImageMagic),
     ({ prefix }) => {
       const format = detectHexRecordEncoding(prefix);

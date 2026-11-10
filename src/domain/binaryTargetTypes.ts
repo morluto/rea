@@ -316,6 +316,7 @@ export type BinaryTarget =
           | "unityfs"
           | "wxapkg"
           | "axml"
+          | "arsc"
           | "uimage"
           | "dmg"
           | "pkg"
@@ -372,6 +373,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   unityfs: "archive",
   wxapkg: "archive",
   axml: "archive",
+  arsc: "archive",
   uimage: "archive",
   dmg: "archive",
   pkg: "archive",

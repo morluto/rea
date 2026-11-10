@@ -52,8 +52,8 @@ const TYPE_INT_COLOR_ARGB4 = 0x1e;
 const TYPE_INT_COLOR_RGB4 = 0x1f;
 
 const AXML_MAX_FILE_BYTES = 64 * 1024 * 1024;
-const AXML_MAX_STRINGS = 0x40000;
-const AXML_MAX_STRING_BYTES = 16 * 1024 * 1024;
+export const AXML_MAX_STRINGS = 0x40000;
+export const AXML_MAX_STRING_BYTES = 16 * 1024 * 1024;
 const AXML_MAX_ELEMENTS = 0x40000;
 const AXML_MAX_ATTRIBUTES = 0x100000;
 const AXML_MAX_NAMESPACES = 0x8000;
@@ -70,7 +70,7 @@ const RADIX_MULTS = [1 / (1 << 23), 1 / (1 << 15), 1 / (1 << 7), 1];
 const DIMENSION_UNITS = ["px", "dip", "sp", "pt", "in", "mm"];
 const FRACTION_UNITS = ["%", "%p"];
 
-interface ChunkHeader {
+export interface ChunkHeader {
   readonly type: number;
   readonly headerSize: number;
   readonly size: number;
@@ -102,7 +102,7 @@ const limitFailure = (message: string): Result<never, RegionDecodeFailure> =>
 
 const NO_PREFIX = "";
 
-class StringPool {
+export class StringPool {
   readonly utf8: boolean;
   readonly styleCount: number;
   readonly #strings: string[];
@@ -134,6 +134,8 @@ class StringPool {
       requireXmlChars?: boolean;
     } = {},
   ): Result<StringPool, RegionDecodeFailure> {
+    const maxStrings = limits.maxStrings ?? AXML_MAX_STRINGS;
+    const maxStringBytes = limits.maxStringBytes ?? AXML_MAX_STRING_BYTES;
     if (header.headerSize < 28)
       return formatFailure(
         `string pool header ${header.headerSize} is below the fixed 28 bytes`,
@@ -143,9 +145,9 @@ class StringPool {
     const flags = reader.u32(base + 16);
     const stringsStart = reader.u32(base + 20);
     const stylesStart = reader.u32(base + 24);
-    if (stringCount > AXML_MAX_STRINGS)
+    if (stringCount > maxStrings)
       return limitFailure(
-        `string pool declares ${stringCount} strings above the ${AXML_MAX_STRINGS} bound`,
+        `string pool declares ${stringCount} strings above the ${maxStrings} bound`,
       );
     if (styleCount > stringCount)
       return formatFailure(
@@ -172,7 +174,7 @@ class StringPool {
     const utf8 = (flags & STRING_POOL_UTF8) !== 0;
     const strings: string[] = new Array(stringCount);
     // Retained strings live as UTF-16; the ceiling counts heap bytes.
-    const retained = new Budget(AXML_MAX_STRING_BYTES);
+    const retained = new Budget(maxStringBytes);
     for (let i = 0; i < stringCount; i++) {
       const rel = reader.u32(base + header.headerSize + i * 4);
       const at = dataStart + rel;
@@ -187,7 +189,7 @@ class StringPool {
         return formatFailure(`string ${i} is truncated`);
       if (!retained.tryCharge(decoded.length * 2))
         return limitFailure(
-          `string data exceeds the ${AXML_MAX_STRING_BYTES}-byte bound`,
+          `string data exceeds the ${maxStringBytes}-byte bound`,
         );
       if (limits.requireXmlChars === true && FORBIDDEN_XML.test(decoded))
         return formatFailure(`string ${i} carries a character XML 1.0 forbids`);
@@ -257,14 +259,14 @@ const readUtf8String = (
   return decoded;
 };
 
-const escapeXml = (text: string): string =>
+export const escapeXml = (text: string): string =>
   text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("\r", "&#13;");
 
-const escapeAttr = (text: string): string =>
+export const escapeAttr = (text: string): string =>
   escapeXml(text)
     .replaceAll('"', "&quot;")
     .replaceAll("\t", "&#9;")
@@ -286,7 +288,7 @@ const escapedAttrByteLength = (text: string): number => {
   return bytes;
 };
 
-const hexRef = (data: number): string =>
+export const hexRef = (data: number): string =>
   `0x${(data >>> 0).toString(16).padStart(8, "0")}`;
 
 const complexToFloat = (data: number): number => {
@@ -295,7 +297,7 @@ const complexToFloat = (data: number): number => {
   return signed * (RADIX_MULTS[(data >> 4) & 0x3] ?? 0);
 };
 
-const renderTypedValue = (
+export const renderTypedValue = (
   type: number,
   data: number,
   pool: StringPool,
