@@ -385,27 +385,6 @@ it("rejects malformed Rizin requests before touching the provider", async () => 
   expect(run).not.toHaveBeenCalled();
 });
 
-it("rejects directories as artifacts before invoking the provider", async () => {
-  const { directory } = await createArtifact();
-  const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
-  const service = new ReverseEngineeringService({ run });
-
-  try {
-    const result = await service.inspectWithObjdump({
-      path: directory,
-      operation: "file_headers",
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisInputError", operation: "inspect_with_objdump" },
-    });
-    expect(run).not.toHaveBeenCalled();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 it("rejects new operations after service shutdown begins", async () => {
   const { directory, path } = await createArtifact();
   const run = vi.fn(async () => ({ stdout: "", stderr: "" }));

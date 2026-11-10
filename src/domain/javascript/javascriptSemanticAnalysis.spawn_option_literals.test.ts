@@ -8,9 +8,9 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *
  * Measured on Node 24.22.1: `"pipe"`, `"overlapped"`, `"inherit"` and `"ignore"` start a
  * child, while `"ipc"`, `"PIPE"`, `"pipe "`, `"pipeline"`, `"stream"` and `"stdio"` throw
- * `ERR_INVALID_ARG_VALUE`. The set is exact and case-sensitive. `fork` appends `"ipc"` to a
- * string and splits it, so an empty string becomes the lone element `"ipc"`, which `fork`
- * refuses — `spawn(..., {stdio: ""})` still starts a child.
+ * `ERR_INVALID_ARG_VALUE`. The set is exact and case-sensitive. `fork` refuses an empty string in its
+ * own stdio-string validation; it does not split the string or append `"ipc"`.
+ * `spawn(..., {stdio: ""})` still starts a child.
  */
 const spawnsFor = (body: string) =>
   analyzeJavaScriptSemantics(

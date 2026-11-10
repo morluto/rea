@@ -1,8 +1,11 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import * as hexRecordDecoding from "../domain/firmware/hexRecords.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
@@ -195,23 +198,61 @@ it.each(["cancel", "close"] as const)(
     const controller = new AbortController();
     const reason = { stage: "decoding" };
     let completion: Promise<void> | undefined;
+    let pending: Promise<unknown> | undefined;
+    let decoded = 0;
+    let acknowledge = (): void => undefined;
+    const decoding = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const create = hexRecordDecoding.createHexRecordDecoder;
+    const observer = vi
+      .spyOn(hexRecordDecoding, "createHexRecordDecoder")
+      .mockImplementation((encoding, bytes) => {
+        const result = create(encoding, bytes);
+        if (!result.ok) return result;
+        const decoder = result.value;
+        return {
+          ok: true,
+          value: {
+            write: (chunk) => {
+              const written = decoder.write(chunk);
+              decoded += 1;
+              acknowledge();
+              return written;
+            },
+            finish: () => decoder.finish(),
+          },
+        };
+      });
     try {
-      const pending = reader
+      pending = reader
         .entries(controller.signal)
         [Symbol.asyncIterator]()
         .next();
-      setImmediate(() => {
-        if (action === "cancel") controller.abort(reason);
-        else completion = reader.close();
-      });
-      await expect(pending).rejects.toMatchObject(
+      await awaitAcknowledgement(decoding, pending, "HEX record decoding");
+      const requestedAt = decoded;
+      if (action === "cancel") controller.abort(reason);
+      else completion = reader.close();
+      const failure = await pending.catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      expect(failure).toMatchObject(
         action === "cancel"
           ? { reason: "cancelled", cause: reason }
           : { reason: "unavailable" },
       );
+      if (action === "cancel") {
+        if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+        expect(failure.cause).toBe(reason);
+      }
       await completion;
+      expect(decoded).toBe(requestedAt);
     } finally {
-      await reader.close();
+      try {
+        await reader.close();
+      } finally {
+        await pending?.catch(() => undefined);
+        observer.mockRestore();
+      }
     }
   },
 );
