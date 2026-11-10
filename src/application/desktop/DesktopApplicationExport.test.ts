@@ -162,9 +162,8 @@ describe("exportDesktopApplication state aliases", () => {
       join(directory, "envs/notes/notes_app.py"),
       "utf8",
     );
-    expect(module).toContain('STATE_ALIASES = [("settings", ".config/notes")]');
     expect(module).toContain(
-      'STATE_ALIAS_DIRECTORIES = frozenset(["settings"])',
+      'STATE_ALIASES = [("settings", ".config/notes", "directory")]',
     );
   });
 });

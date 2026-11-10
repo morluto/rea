@@ -241,7 +241,6 @@ it.each([true, false])(
       : '[("settings", ".local/share/notes", "directory"), ("settings/profile", ".config/notes", "directory")]';
     const program = `${imports}
 STATE_ALIASES = ${pairs}
-STATE_ALIAS_DIRECTORIES = frozenset()
 ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
