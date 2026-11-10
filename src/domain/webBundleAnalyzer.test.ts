@@ -599,7 +599,7 @@ describe("web bundle static-analysis parity", () => {
     );
   });
 
-  it("reads open endpoints only from XMLHttpRequest method and URL pairs", () => {
+  it("keeps XHR candidates separate from generic path-shaped literals", () => {
     const result = analyzeWebBundleFixture(
       inspection(`
         xhr.open("GET", "/xhr-get");
@@ -642,6 +642,7 @@ describe("web bundle static-analysis parity", () => {
     ).toEqual([
       "/dav/",
       "/dynamic-method",
+      "/tmp/data.txt",
       "/xhr-get",
       "api/relative",
       "https://xhr.example.test/submit",
@@ -1003,7 +1004,7 @@ describe("web bundle endpoint candidate classification", () => {
 });
 
 describe("web bundle configuration and navigation parity", () => {
-  it("keeps configuration setting reads out of endpoints in both analyzers", () => {
+  it("excludes configuration setting reads while retaining generic path candidates in bundles", () => {
     const source = `
       import vscodeDefault from "vscode";
       vscodeDefault.workspace.getConfiguration("git").get("default-setting");
@@ -1053,7 +1054,7 @@ describe("web bundle configuration and navigation parity", () => {
         .filter(({ kind }) => kind === "endpoint_candidate")
         .map(({ value }) => value)
         .sort(),
-    ).toEqual(expected);
+    ).toEqual(["/api", "/api/v1", ...expected]);
     expect(
       analyzeJavaScriptStaticSource(source)
         .endpoints.map(({ value }) => value)

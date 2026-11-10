@@ -46,6 +46,7 @@ import {
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
 import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
 import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import { webBundleEndpointLiteral } from "./webBundleEndpointLiterals.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type ChunkEdge = BundleObservations["chunks"]["edges"][number];
@@ -110,6 +111,7 @@ export const analyzeScript = (
     enter: (node, parent) => {
       accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
+      inspectEndpointLiterals(script, node, parent, accumulator);
       inspectNode(
         script,
         node,
@@ -206,7 +208,10 @@ const inspectCall = (
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  if ((name === "require" || name.endsWith(".require")) && first !== undefined)
+  const requireCall = name === "require" || name.endsWith(".require");
+  const workerImportCall =
+    name === "importScripts" || name.endsWith(".importScripts");
+  if (requireCall && first !== undefined)
     addEdge({
       script,
       specifier: first,
@@ -214,7 +219,7 @@ const inspectCall = (
       node,
       accumulator,
     });
-  if (name === "importScripts" || name.endsWith(".importScripts"))
+  if (workerImportCall)
     for (const argument of node.arguments) {
       const specifier = stringValue(argument);
       if (specifier === undefined) continue;
@@ -249,7 +254,7 @@ const inspectCall = (
     addEndpointCandidate(
       script,
       node,
-      name,
+      `call:${name}:unverified-network-receiver`,
       networkEndpoint.value,
       accumulator,
     );
@@ -262,8 +267,58 @@ const inspectCall = (
       node,
       accumulator,
     });
+  // Fill the wrapper-call gap only after the existing receiver-aware rules.
+  // Never resurrect proven Map lookups, module edges or browsing-context opens.
+  else if (
+    !mapLookup &&
+    !t.isNewExpression(node) &&
+    !requireCall &&
+    !workerImportCall &&
+    openReceiverFacts.get(node.start ?? -1) !== "window"
+  ) {
+    const literal = webBundleEndpointLiteral(node.arguments[0]);
+    if (literal !== undefined)
+      addEndpointCandidate(
+        script,
+        node.arguments[0] ?? node,
+        literal.detector,
+        literal.value,
+        accumulator,
+      );
+  }
   if (isWebMcpRegistrationCallee(node.callee))
     addWebMcpDeclaration(script, node, accumulator);
+};
+
+const inspectEndpointLiterals = (
+  script: IncludedScript,
+  node: t.Node,
+  parent: t.Node | null,
+  accumulator: AnalysisAccumulator,
+): void => {
+  const values = t.isArrayExpression(node)
+    ? node.elements
+    : t.isVariableDeclarator(node) &&
+        t.isVariableDeclaration(parent, { kind: "const" })
+      ? [node.init]
+      : [];
+  for (const value of values) {
+    const literal = webBundleEndpointLiteral(value);
+    if (
+      value === null ||
+      value === undefined ||
+      literal === undefined ||
+      (!t.isArrayExpression(node) && literal.detector !== "literal:url-shaped")
+    )
+      continue;
+    addEndpointCandidate(
+      script,
+      value,
+      literal.detector,
+      literal.value,
+      accumulator,
+    );
+  }
 };
 
 /** Match exact WebMCP receiver and method properties without flattening keys. */
@@ -324,12 +379,11 @@ interface AddFindingContext {
 const addEndpointCandidate = (
   script: IncludedScript,
   node: t.Node,
-  name: string,
+  detector: string,
   rawValue: string,
   accumulator: AnalysisAccumulator,
 ): void => {
   const value = sanitizeEndpointCandidate(rawValue);
-  const detector = `call:${name}:unverified-network-receiver`;
   const key = compositeKey([
     "endpoint-candidate",
     script.script_key,

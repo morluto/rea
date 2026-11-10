@@ -36,6 +36,22 @@ precise locations, partial coverage, and the complete parent Evidence for
 subsequent filtered pages. Static candidates never establish complete application
 coverage or reachability.
 
+`analyze_web_bundle` also inventories path- and URL-shaped exact string literals
+as low-confidence `endpoint_candidate` inferences, not observed endpoints.
+`literal:path-shaped` covers a leading `/` followed by a nonempty segment;
+`literal:url-shaped` covers absolute HTTP(S) and WS(S) URLs. Sources are the first
+argument of a call not already classified by the request rules, literal array
+elements, and absolute URL initializers in `const` declarations (including base
+URLs). Expression-free templates are included; computed strings are not.
+Module loads, proven Map lookups and known browsing-context opens are excluded
+from the call fallback. These heuristics do not prove network use, wrapper
+behavior, runtime reachability or that an array contains only routes: a local
+file path can also be a candidate. They do not change
+`analyze_javascript_application`'s request classification. Existing URL userinfo
+redaction and script/artifact provenance apply. Each script/value/detector keeps
+its first matching literal coordinate, not every occurrence. Correlate candidates
+with captured requests before treating them as an application's API surface.
+
 For `analyze_web_bundle`, each `webmcp_declarations` entry's
 `schema_property_names` is a source-derived projection of statically known own
 property keys, not schema validation. `schema_property_names_coverage` reports
