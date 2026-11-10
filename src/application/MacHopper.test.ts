@@ -589,3 +589,27 @@ it("stops before mounting when setup is cancelled as the package downloads", asy
   expect(host.mounts).toBe(0);
   expect(host.installs).toBe(0);
 });
+
+it("retains the completed installation but skips opening when cancelled during its copy", async () => {
+  const host = new FakeMacHopperHost();
+  const controller = new AbortController();
+  const install = host.installBundle;
+  host.installBundle = async (...args) => {
+    const result = await install(...args);
+    controller.abort(new Error("stop setup"));
+    return result;
+  };
+
+  await expect(
+    installMacHopper({ signal: controller.signal }, host),
+  ).resolves.toMatchObject({
+    status: "installed",
+    launcherPath:
+      "/home/user/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+    openFailure: "Setup was cancelled before Hopper was opened",
+  });
+  expect(host.installs).toBe(1);
+  expect(host.opens).toBe(0);
+  expect(host.unmounts).toBe(1);
+  expect(host.cleanups).toBe(1);
+});
