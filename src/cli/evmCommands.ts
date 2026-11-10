@@ -1,4 +1,9 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { resolve } from "node:path";
 import { evmInterfaceModule } from "../composition/evm.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -17,7 +22,7 @@ export const registerEvmCommands = (
   cli.command(evmInterfaceModule.cliCommand, {
     description: "Infer interface candidates from explicit local EVM bytecode",
     args: z.object({
-      path: z.string().describe("Local bytecode carrier"),
+      path: localPath.describe("Local bytecode carrier"),
       encoding: z
         .enum(["raw", "hex"])
         .describe("Selected carrier representation"),
