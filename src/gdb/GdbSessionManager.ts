@@ -538,7 +538,6 @@ interface GdbSession {
   readonly verifyInferiorsEndedAfterExit: () => Promise<boolean>;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   readonly inferiorTty: string | undefined;
-  readonly maxCommandOutputBytes: number;
   /** Startup and detach MI. Separate from the caller command-output cap. */
   readonly controlReplyBytes: number;
   readonly stdoutSettled: Promise<void>;
@@ -900,7 +899,6 @@ export class GdbSessionManager {
       },
       knownInferiorIdentities: new Map(),
       inferiorTty,
-      maxCommandOutputBytes: this.#maxCommandOutputBytes,
       controlReplyBytes: this.#controlReplyBytes,
       stdoutSettled,
       settleStdout,
@@ -2266,7 +2264,7 @@ export class GdbSessionManager {
         timer,
         outputBytes: 0,
         outputBudgetBytes: command.startsWith("-interpreter-exec console ")
-          ? session.maxCommandOutputBytes
+          ? this.#maxCommandOutputBytes
           : session.controlReplyBytes,
         outputLimits: new Set(),
         outputInvalidUtf8: false,

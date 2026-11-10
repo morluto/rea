@@ -196,5 +196,7 @@ The lane compiles a small source-owned fixture with the host C compiler and veri
 Failed runs also report process-lineage evidence and exit unsuccessfully. If provider or transport cleanup is unconfirmed, the report says `cleanup: "incomplete"` and records `retained_workspace`; that directory is preserved for investigation and cleanup retries.
 
 Doctor reports an invalid Kuna cache, job count, or timeout setting with that
-setting's correction. Correct or unset the named setting and restart REA; these
-configuration rejections do not require replacing the selected Kuna executable.
+setting's correction. Cache size and job count stay with the process that
+started them. The two timeouts can be changed at runtime with
+`update_analysis_settings`. These configuration rejections do not require
+replacing the selected Kuna executable.

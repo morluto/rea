@@ -414,6 +414,9 @@ export const ANALYSIS_SETTINGS = {
       "xrefs",
       "procedure_callers",
       "procedure_callees",
+      "procedure_pseudo_code",
+      "procedure_assembly",
+      "analyze_function",
     ],
   },
   "kuna.function_timeout_ms": {
