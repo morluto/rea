@@ -40,8 +40,8 @@ export const artifactReaderLimitFailure = (
       applies_at: "next_operation",
       agent_editable: true,
       can_increase: canIncrease,
-      effect: "immediate",
-      rea_restart_required: false,
+      update_mode: "runtime" as const,
+      pending_restart: false as const,
     },
   });
 };

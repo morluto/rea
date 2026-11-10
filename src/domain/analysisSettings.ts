@@ -27,12 +27,11 @@ export interface AnalysisSettingsSnapshot {
 export type AnalysisSettingsReader = () => AnalysisSettingsSnapshot;
 
 /**
- * When a change takes effect for a running REA process.
- * `immediate` needs no new process. `next_process` waits for the next start.
- * Older booleans (`rea_restart_required`, `restart_required`, `restartRequired`)
- * stay as compatibility aliases: true only when the effect is `next_process`.
+ * Whether `update_analysis_settings` can change the active value.
+ * `runtime` applies inside this process. `restart` stays at the value this
+ * process already started with.
  */
-export type SettingChangeEffect = "immediate" | "next_process";
+export type AnalysisSettingUpdateMode = "runtime" | "restart";
 
 /** Limit facts supplied by the failing owner, never inferred from error prose. */
 export interface AnalysisSettingLimit {
@@ -45,9 +44,12 @@ export interface AnalysisSettingLimit {
   readonly applies_at: "next_operation" | "next_worker" | "next_startup";
   readonly agent_editable: true;
   readonly scope: "rea-runtime";
-  readonly effect: "immediate";
-  /** Compatibility alias of `effect: "immediate"`. */
-  readonly rea_restart_required: false;
+  readonly update_mode: AnalysisSettingUpdateMode;
+  /**
+   * True only when a configured value is not the one this process is using.
+   * The reported effective value is active, so limit errors leave this false.
+   */
+  readonly pending_restart: false;
   readonly required_value?: number;
   readonly parameter?: string;
 }
