@@ -1,5 +1,10 @@
 import { z } from "incur";
 
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
+
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
@@ -23,7 +28,7 @@ export const registerNativeCallCommands = (
     description:
       "Launch a Mach-O under LLDB and record entries into selected functions or Objective-C methods",
     args: z.object({
-      path: z.string().describe("Mach-O or app path"),
+      path: localPath.describe("Mach-O or app path"),
       inputJson: z
         .string()
         .describe(
