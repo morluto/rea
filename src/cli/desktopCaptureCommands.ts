@@ -326,7 +326,13 @@ const registerDesktopExportCommand = (
         .array(localPathStringSchema)
         .optional()
         .describe(
-          "Task file to validate against the capture and add with its verifier and eval; a capture yields one",
+          "Task file to validate against the capture and add with its verifier and eval; repeat for several tasks, each checked at its own end",
+        ),
+      taskEnd: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "NAME=CHECKPOINT: the checkpoint task NAME's end state is read at, instead of --end-checkpoint; a checkpoint near-NAME, when taken, must fail one of its checks",
         ),
       packageUrl: z
         .string()
@@ -382,6 +388,7 @@ const registerDesktopExportCommand = (
                     tasks: (options.task ?? []).map((path) =>
                       absoluteCallerPath(path),
                     ),
+                    taskEnds: options.taskEnd,
                     packageUrl: options.packageUrl,
                     downloadInstall:
                       options.downloadInstall === undefined

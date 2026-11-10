@@ -46,8 +46,8 @@ import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
 export { shellQuote } from "./shellQuote.js";
 
-/** agentenv-framework release the exported class was checked against. */
-export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1464";
+/** agentenv-framework release targeted by the exported class. */
+export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {
@@ -756,7 +756,7 @@ export const renderReadme = (
   `# ${plan.title} computer app
 
 Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` ${plan.download === undefined ? "package" : downloadKind(plan.download)}
-(capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
+(capture Evidence \`${plan.captureEvidenceId}\`). It targets agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for

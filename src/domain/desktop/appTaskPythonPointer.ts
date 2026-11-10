@@ -97,7 +97,10 @@ def _holds_inside(member, path: str, value: str, form) -> bool:
     a JSON record the string at those keys."""
     steps = path.split("/")
     if form == "xml":
-        return _is_element(member) and _element_holds(member, steps, value)
+        return _is_element(member) and (
+            _collapse_whitespace(_element_text(member)) == value if steps == ["text()"]
+            else _element_holds(member, steps, value)
+        )
     found = member
     for step in steps:
         if not isinstance(found, dict) or step not in found:

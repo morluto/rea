@@ -13,6 +13,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
+import { END_CHECKPOINT } from "../../domain/desktop/buildCapture.js";
 import {
   SIGN_IN_END,
   SIGN_IN_START,
@@ -58,7 +59,7 @@ const exportResultSchema = z.looseObject({
   recompressed_files: z.array(z.string()).default([]),
   unscrubbed_files: z.array(z.string()),
   limitations: z.array(z.string()),
-  task: jsonValueSchema,
+  tasks: z.array(jsonValueSchema),
   // An export from before withheld files were listed has none.
   withheld_files: z
     .array(
@@ -72,9 +73,15 @@ const exportResultSchema = z.looseObject({
   consented_files: z.array(z.string()).default([]),
 });
 
-/** What the agent asks the export for: its task, the folder here, optionally the environment's name, files to withhold, and whether to seed withheld state with the person's consent. */
-export interface BuildExportRequest {
+/** One task the export takes, with the checkpoint its end state is read at. */
+interface BuildExportTask {
   readonly task: z.output<typeof desktopTaskSchema>;
+  readonly end_checkpoint?: string | undefined;
+}
+
+/** What the agent asks the export for: its tasks, the folder here, optionally the environment's name, files to withhold, and whether to seed withheld state with the person's consent. */
+export interface BuildExportRequest {
+  readonly tasks: readonly BuildExportTask[];
   readonly directory: string;
   readonly name?: string | undefined;
   readonly withhold?: readonly string[] | undefined;
@@ -94,7 +101,7 @@ export type ExportedBuild = {
   readonly environment: string;
   readonly files: number;
   readonly bytes: number;
-  readonly task: JsonValue;
+  readonly tasks: JsonValue[];
   readonly seed_files: string[];
   readonly scrubbed_files: string[];
   readonly recompressed_files: string[];
@@ -219,7 +226,7 @@ const writeBundle = async (
       );
 };
 
-/** The export's arguments past the capture and the bundle: the task, the ends, the install, and withheld state with its consents. */
+/** The export's arguments past the capture and the bundle: the tasks and each one's end, the ends, the install, and withheld state with its consents. */
 const exportArguments = (
   capture: {
     readonly folder: string;
@@ -231,14 +238,17 @@ const exportArguments = (
   },
   request: BuildExportRequest,
   files: {
-    readonly task: string;
+    readonly tasks: readonly string[];
     readonly consent: string;
     readonly withheld: string;
     readonly download: string;
   },
 ): string[] => [
-  "--task",
-  files.task,
+  ...files.tasks.flatMap((path) => ["--task", path]),
+  ...request.tasks.flatMap(({ task, end_checkpoint: end }) => [
+    "--task-end",
+    `${task.name}=${end ?? END_CHECKPOINT}`,
+  ]),
   ...ENDS,
   // The building agent made the seed in this computer for the task.
   "--synthetic-seed",
@@ -324,13 +334,16 @@ interface ExportCapture {
   /** Whether both sign-in checkpoints were marked, and the consents the person gave. */
   readonly signIn: boolean;
   readonly consents: readonly BuildConsent[];
+  /** The checkpoints the capture took, which say whether a task has a near miss its readers also read. */
+  readonly checkpoints?: ReadonlySet<string> | undefined;
 }
 
 /**
- * Export a stopped capture in the computer with the agent's task, seeded at
- * `seed` and checked at `end`, into a new folder of the work folder, then
- * bring the bundle back and write it into the caller's folder. A task the
- * export refuses is refused with the export's own reason.
+ * Export a stopped capture in the computer with the agent's tasks, seeded at
+ * `seed` and each checked at its own end, `end` by default, into a new
+ * folder of the work folder, then bring the bundle back and write it into
+ * the caller's folder. A task the export refuses is refused with the
+ * export's own reason.
  */
 export const exportBuild = async (
   computer: ControlledComputer,
@@ -342,13 +355,17 @@ export const exportBuild = async (
   const { folder } = capture;
   const attempt = String(capture.attempt);
   const bundle = `${folder}/bundle-${attempt}`;
-  const task = `${folder}/task-${attempt}.json`;
+  const taskFiles = Object.fromEntries(
+    request.tasks.map(({ task }, index) => [
+      `${folder}/task-${attempt}-${String(index + 1)}.json`,
+      `${JSON.stringify(task, null, 2)}\n`,
+    ]),
+  );
   const consent = `${folder}/consent-${attempt}.json`;
   const withheld = `${bundle}-withheld`;
   const stdout = `${folder}/export-${attempt}.json`;
   const downloadPath = `${folder}/download-install-${attempt}.json`;
   const download = capture.downloadInstall;
-  const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
   const completed: WithheldReport[] = [];
   let published:
     | {
@@ -364,23 +381,30 @@ export const exportBuild = async (
       `${folder}/capture`,
       bundle,
       ...exportArguments(capture, request, {
-        task,
+        tasks: Object.keys(taskFiles),
         consent,
         withheld,
         download: downloadPath,
       }),
     ];
+    // Each task's readers run at its end and the seed, and at its near miss when the capture took one.
     const timeoutS =
       BUILD_REA_TIMEOUT_S +
-      2 *
-        (request.task.readers ?? []).reduce(
-          (sum, reader) => sum + readerTimeout(reader) + READER_RUNNER_SLACK_S,
-          0,
-        );
+      request.tasks.reduce(
+        (total, { task }) =>
+          total +
+          (capture.checkpoints?.has(`near-${task.name}`) === true ? 3 : 2) *
+            (task.readers ?? []).reduce(
+              (sum, reader) =>
+                sum + readerTimeout(reader) + READER_RUNNER_SLACK_S,
+              0,
+            ),
+        0,
+      );
     const options = {
       stdout,
       files: {
-        [task]: taskFile,
+        ...taskFiles,
         ...(download === undefined
           ? {}
           : { [downloadPath]: `${JSON.stringify(download, null, 2)}\n` }),
@@ -435,7 +459,7 @@ export const exportBuild = async (
       environment: result.environment,
       files: written.value.files,
       bytes: written.value.bytes,
-      task: result.task,
+      tasks: result.tasks,
       seed_files: result.seed_files,
       scrubbed_files: result.scrubbed_files,
       recompressed_files: result.recompressed_files,
