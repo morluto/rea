@@ -271,7 +271,8 @@ export const desktopApplicationInventorySchema = z.strictObject({
   state_directories: z.array(
     z.strictObject({
       path: z.string().min(1),
-      exists_at_start: z.boolean(),
+      /** Null when the check failed, such as a denied parent folder, so existence at start is unknown rather than absent. */
+      exists_at_start: z.boolean().nullable(),
     }),
   ),
 });

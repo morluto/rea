@@ -64,6 +64,19 @@ export const readHostFile = async (
   }
 };
 
-/** Whether a host path names a regular file, following links. */
+/** Whether a host path names a regular file, following links; null when the check could not tell, such as a denied parent folder. */
+export const hostFileKind = async (path: string): Promise<boolean | null> => {
+  try {
+    return (await stat(path)).isFile();
+  } catch (cause: unknown) {
+    // Only a missing name establishes that no file is there.
+    return (cause as NodeJS.ErrnoException).code === "ENOENT" ||
+      (cause as NodeJS.ErrnoException).code === "ENOTDIR"
+      ? false
+      : null;
+  }
+};
+
+/** Whether a host path names a regular file, following links; false when the check could not tell. */
 export const isHostFile = async (path: string): Promise<boolean> =>
-  (await stat(path).catch(() => undefined))?.isFile() === true;
+  (await hostFileKind(path)) === true;

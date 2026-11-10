@@ -19,7 +19,7 @@ import {
   type HeldKey,
   type VerifiedKey,
 } from "./GpgvKeyCheck.js";
-import { isHostFile, readHostFile } from "./HostFileRead.js";
+import { hostFileKind, readHostFile } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** Where apt keeps its trusted keys and downloaded lists. */
@@ -148,19 +148,23 @@ const candidateKeys = async (
   ];
 };
 
-/** The index's signed release beside it in apt's lists folder: InRelease, or Release.gpg with the Release it signs. */
+/** The index's signed release beside it in apt's lists folder: InRelease, or Release.gpg with the Release it signs; null when a check could not tell. */
 const signedRelease = async (
   target: AptIndexTarget,
-): Promise<readonly string[] | undefined> => {
+): Promise<readonly string[] | null | undefined> => {
   const prefix = join(
     dirname(target.filename),
     aptListFileName(target.baseUri),
   );
-  if (await isHostFile(`${prefix}InRelease`)) return [`${prefix}InRelease`];
-  return (await isHostFile(`${prefix}Release.gpg`)) &&
-    (await isHostFile(`${prefix}Release`))
-    ? [`${prefix}Release.gpg`, `${prefix}Release`]
-    : undefined;
+  const inRelease = await hostFileKind(`${prefix}InRelease`);
+  if (inRelease === null) return null;
+  if (inRelease) return [`${prefix}InRelease`];
+  const signed = await hostFileKind(`${prefix}Release.gpg`);
+  if (signed === null) return null;
+  if (!signed) return undefined;
+  const release = await hostFileKind(`${prefix}Release`);
+  if (release === null) return null;
+  return release ? [`${prefix}Release.gpg`, `${prefix}Release`] : undefined;
 };
 
 /** The keys gpgv checks a release with: candidate key files, or the one key the sources entry holds. */
@@ -200,6 +204,10 @@ const keyCheck = async (
       reason: `no sources entry at ${target.sourcesFile}:${String(target.position)} configures it`,
     };
   const release = await signedRelease(target);
+  if (release === null)
+    return {
+      reason: `apt's release files for it in ${dirname(target.filename)} could not be checked`,
+    };
   if (release === undefined)
     return {
       reason: `apt holds no signed release file for it in ${dirname(target.filename)}`,

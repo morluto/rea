@@ -326,7 +326,9 @@ the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
-start. A folder in those places whose name is one of these in another letter
+start, which stays unknown rather than absent when the check could not reach
+it, such as a folder whose permissions deny the user. A folder in those places
+whose name is one of these in another letter
 case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
 the whole name is compared, so `~/.config/GIMPshop` does not. A file under a
 folder the application creates during the capture beside one of them, with
