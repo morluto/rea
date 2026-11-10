@@ -1956,7 +1956,9 @@ before running setup again. A global installation provides a more durable path.
 
 Package runners can select project-local packages and read project configuration,
 even for explicit version requests. Acquire REA from a trusted working directory,
-outside the target project, and pass absolute target paths to analysis commands.
+outside the target project and outside any REA source checkout: an unversioned
+request inside that checkout matches its own unbuilt package. Pass absolute target
+paths to analysis commands.
 REA cannot validate package acquisition that happens before its entrypoint starts.
 To request the latest release explicitly, use:
 

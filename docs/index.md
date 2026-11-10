@@ -28,10 +28,13 @@ features:
 ## Start with one command
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
-Choose your agent, review the planned changes, and approve setup. Native binary
+Choose your agent, review the planned changes, and approve setup. Run it outside
+a REA source checkout: there an unversioned `npx rea-agents` resolves to the
+checkout's own unbuilt package and the launcher fails before REA starts, so this
+command pins `@latest` to reach the published release. Native binary
 analysis can use an existing Hopper, Ghidra, or IDA installation; static
 JavaScript analysis needs no native analysis engine.
 
