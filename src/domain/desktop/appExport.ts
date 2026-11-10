@@ -99,7 +99,11 @@ export interface DesktopAppExportPlan {
   readonly stateAliases?: readonly {
     readonly alias: string;
     readonly target: string;
-    readonly kind?: "file" | "directory";
+    /**
+     * Whether the selected path is a directory. Captures written before kind
+     * was recorded leave this unknown; the helper must not invent a directory.
+     */
+    readonly kind: "file" | "directory" | "unknown";
   }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
@@ -304,7 +308,13 @@ export const capturedHomePath = (capture: DesktopApplicationCapture) =>
   capturedHomePlan(capture).homePath;
 
 /** Selected links to an app state root must keep both the app's name and the selected name. */
-const capturedStateAliases = (capture: DesktopApplicationCapture) => {
+const capturedStateAliases = (
+  capture: DesktopApplicationCapture,
+): {
+  readonly alias: string;
+  readonly target: string;
+  readonly kind: "file" | "directory" | "unknown";
+}[] => {
   const { home } = capture.host;
   const walked = capture.state.state_directories ?? [];
   const roots = capture.application.state_directories;
@@ -317,12 +327,22 @@ const capturedStateAliases = (capture: DesktopApplicationCapture) => {
       const state = index < 0 ? undefined : roots[index]?.path;
       const alias = relative(path);
       const target = state === undefined ? null : relative(state);
+      const recorded: "file" | "directory" | "unknown" =
+        kind === "directory"
+          ? "directory"
+          : kind === "file"
+            ? "file"
+            : "unknown";
       return alias === null || target === null || alias === target
         ? []
-        : [{ alias, target, ...(kind === undefined ? {} : { kind }) }];
+        : [{ alias, target, kind: recorded }];
     },
   );
-  const retained: typeof aliases = [];
+  const retained: {
+    alias: string;
+    target: string;
+    kind: "file" | "directory" | "unknown";
+  }[] = [];
   for (const entry of aliases.toSorted(
     (left, right) => left.alias.length - right.alias.length,
   )) {
@@ -541,6 +561,7 @@ ${withheld.length === 0 ? PYTHON_DATA_HOOKS : PYTHON_WITHHELD_DATA_HOOKS}${PYTHO
     title,
     plan.dconf.length > 0,
     plan.relaunchOnReset === true,
+    (plan.stateAliases ?? []).length > 0,
   );
 };
 
@@ -622,7 +643,7 @@ TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
 SEED_MODES = {${Object.entries(plan.seedModes)
     .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
     .join(", ")}}
-STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target, kind }) => `(${py(alias)}, ${py(target)}, ${kind === undefined ? "None" : py(kind)})`).join(", ")}]
+STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target, kind }) => `(${py(alias)}, ${py(target)}, ${py(kind)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
 WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
 ${renderPythonHelpers(desktopViewPolicy(plan.viewPolicy))}

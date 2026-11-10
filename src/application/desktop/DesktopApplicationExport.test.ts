@@ -345,6 +345,30 @@ it("seeds the app's state at its own path and retains a selected alias", async (
   ]);
 });
 
+it("restores a selected alias when the state directory has no files", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical, `${HOME}/.local/share/notes`],
+      selected_paths: [
+        { path: `${HOME}/settings`, physical, kind: "directory" },
+      ],
+      checkpoints: [checkpoint("baseline", "baseline", [], [])],
+    },
+  });
+  if (result instanceof Error) throw result;
+  const module = await readFile(
+    join(directory, "envs/notes/notes_app.py"),
+    "utf8",
+  );
+  expect(module).toContain("_ensure_state_aliases(Path.home())");
+  expect(module).toContain('("settings", ".config/notes", "directory")');
+});
+
 it.each(["settings/notes", "chosen/notes"])(
   "restores the selected %s spelling alongside the app's walked state path",
   async (selected) => {
