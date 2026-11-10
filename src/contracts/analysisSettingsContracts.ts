@@ -106,7 +106,7 @@ export const ANALYSIS_SETTINGS_TOOL_CONTRACTS = [
     ...toolContractMetadata("update_analysis_settings"),
     kind: "application",
     description:
-      "When REA names an adjustable limit, atomically set or reset its runtime default, then retry once work and cleanup have settled. No inspection call is required when the error supplies the bounds. Changes apply only to new work, survive target close/open, and disappear on REA restart. Reset restores launch configuration. Does not edit files, restart providers, raise host limits, or override explicit per-call arguments.",
+      "Atomically set or reset editable runtime defaults for new work. Changes survive target close/open but disappear on REA restart; reset restores launch configuration. Follow an error's named setting/bounds directly, then retry after work and cleanup settle; no inspection is needed when they are supplied. Does not change active work, edit files, restart providers, raise client limits or override explicit per-call arguments.",
     inputSchema: updateAnalysisSettingsInputSchema,
     outputSchema: updateAnalysisSettingsResultSchema,
     examples: [

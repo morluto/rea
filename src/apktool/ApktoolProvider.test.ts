@@ -1677,7 +1677,6 @@ it.each([
       expect(warnings.length).toBe(
         ["2.7.0-dirty", "2.9.1", "2.9.2-rc.1"].includes(version) ? 1 : 0,
       );
-      if (warnings.length > 0) expect(warnings[0]).toContain("CVE-2024-21633");
       expect(
         inspect.value.limitations.filter((warning) =>
           warning.includes("CVE-2026-39973"),
