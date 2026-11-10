@@ -85,7 +85,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         symbols: [{ name: "kept_export" }],
       });
       // The authored fixture's dynamic symbol table starts at file offset 0x100.
-      bytes[0x100] = 1;
+      // Byte 4 is st_info for ELF64 and part of st_value for ELF32, never st_name.
+      bytes[0x104] = 1;
       await writeFile(path, bytes);
       let error: unknown;
       if (surface === "CLI") {
@@ -112,7 +113,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         },
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-      bytes[0x100] = 0;
+      bytes[0x104] = 0;
       await writeFile(path, bytes);
       const document =
         surface === "CLI"
@@ -131,6 +132,54 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           .parse(evidence.normalized_result)
           .exports.map(({ name }) => name),
       ).toEqual(["kept_export"]);
+    }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps exports when the ELF null symbol's st_name is nonzero through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-elf-null-st-name-");
+    const mcp =
+      surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+    for (const encoding of [
+      { bits: 64, little: true },
+      { bits: 32, little: false },
+    ] as const) {
+      const path = join(root, `exports-${encoding.bits}.so`);
+      const bytes = elfExportImage({
+        ...encoding,
+        symbols: [{ name: "kept_export" }],
+      });
+      // The fixture's dynamic symbol table starts at file offset 0x100.
+      if (encoding.little) bytes.writeUInt32LE(0x956, 0x100);
+      else bytes.writeUInt32BE(0x956, 0x100);
+      await writeFile(path, bytes);
+      let document: unknown;
+      if (surface === "CLI") {
+        const response = await cli.run({
+          arguments: ["inspect-native-exports", path, "--json"],
+        });
+        expect(response.exitCode, response.stderr).toBe(0);
+        document = response.json;
+      } else {
+        const response = await mcp!.call("inspect_native_exports", { path });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        document = response.structuredContent;
+      }
+      const evidence = toolContract(
+        "inspect_native_exports",
+      ).outputSchema.parse(document);
+      const result = nativeExportsSchema.parse(evidence.normalized_result);
+      expect(result.exports.map(({ name }) => name)).toEqual(["kept_export"]);
+      expect(result).toMatchObject({
+        issues: [],
+        coverage: { status: "complete", examined_entries: 1, exports: 1 },
+      });
+      expect(result.limitations).toContain(
+        "ELF dynamic symbol 0 at file offset 0x100 has nonzero st_name 0x956. st_info, st_other, st_shndx, st_value and st_size are zero, so the entry was skipped and was not reported as an export.",
+      );
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
   },
 );

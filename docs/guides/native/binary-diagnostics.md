@@ -474,8 +474,13 @@ unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
 Unresolved symbol versions keep their rows: the version name is null when no
 definition or requirement names the index, and `version` is
 `"unknown"` when the version table cannot be read; coverage is likewise
-`partial`. A dynamic symbol table without its null entry is malformed. An ELF
-without section headers is `unsupported`. With section headers, a missing
+`partial`. A dynamic symbol table without its null entry is malformed.
+Entry 0 is the reserved undefined symbol: `st_info`, `st_other`, `st_shndx`,
+`st_value` and `st_size` must be zero, and any other value rejects the table.
+The gABI also requires `st_name` to be zero. A nonzero `st_name` with those
+fields zero does not define an export: the entry is skipped, coverage stays
+complete, and `limitations` records the name offset. An ELF without section
+headers is `unsupported`. With section headers, a missing
 `SHT_DYNSYM` section is also `unsupported` when a `PT_DYNAMIC` segment is
 observed, including a directory containing only the inactive null section.
 Enumerating dynamic symbols from that segment is not implemented. A present
