@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import {
+  javaScriptExpressionResultIsUsed,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -38,7 +39,7 @@ const isIntrinsicMapOperation = (
           method !== "keys" &&
           method !== "values" &&
           method !== "entries") ||
-          !t.isExpressionStatement(bindings.parentsByNode.get(node)))))
+          javaScriptExpressionResultIsUsed(node, bindings.parentsByNode))))
   )
     return false;
   const prototypeMemberMayHaveChanged = (

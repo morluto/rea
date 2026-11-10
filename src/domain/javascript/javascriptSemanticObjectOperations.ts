@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import {
+  javaScriptExpressionResultIsUsed,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -41,7 +42,7 @@ export const isIntrinsicNonEscapingObjectCall = (
     !PRISTINE_OBJECT_METHODS.has(method ?? "") ||
     // valueOf returns the receiver; no returned-reference proof is added here.
     (method === "valueOf" &&
-      !t.isExpressionStatement(state.parentsByNode.get(node))) ||
+      javaScriptExpressionResultIsUsed(node, state.parentsByNode)) ||
     // Property keys can coerce, and isPrototypeOf can walk a Proxy argument.
     !semanticPrimitiveArguments(node.arguments, state)
   )

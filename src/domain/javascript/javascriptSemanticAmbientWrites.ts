@@ -698,8 +698,15 @@ export function* indexJavaScriptAmbientWritesSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   observeOpaqueInvocation?: (node: t.Node) => void,
-  observeWriteSite?: (node: t.Node) => void,
+  options: {
+    readonly observeWriteSite?: (node: t.Node) => void;
+    readonly nativeInspectionReceiver?: (
+      node: t.CallExpression | t.OptionalCallExpression,
+      effectsCollected?: boolean,
+    ) => boolean | undefined;
+  } = {},
 ): Generator<void> {
+  const { observeWriteSite, nativeInspectionReceiver } = options;
   const ambientReads = createAmbientPathResolver(state, false);
   const browserReceiverMethods = new Set<string>();
   const storedSites = new WeakSet<t.Node>();
@@ -710,6 +717,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     node: t.Node;
     target: t.Node;
     browserReceiver: boolean;
+    nativeInspection?: boolean;
     projection?: AmbientProjection;
   }[] = [];
   const stores = new WeakMap<
@@ -778,8 +786,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     (node, invocation) => {
       observeOpaqueInvocation?.(node);
       // Escaping objects can change contents without replacing their identity.
-      const retainEscape = (target: t.Node, browserReceiver = false) => {
-        escapes.push({ target, node, browserReceiver });
+      const retainEscape = (
+        target: t.Node,
+        browserReceiver = false,
+        nativeInspection = false,
+      ) => {
+        escapes.push({ target, node, browserReceiver, nativeInspection });
       };
       for (const argument of t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
@@ -797,18 +809,27 @@ export function* indexJavaScriptAmbientWritesSteps(
         ["open", "fetch"].includes(invocation.path[1] ?? "")
           ? invocation.path[1]
           : undefined;
+      const inspectionReceiver =
+        nativeInspectionReceiver !== undefined &&
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        nativeInspectionReceiver(node) !== false;
       if (
         !t.isNewExpression(node) &&
         (t.isMemberExpression(callee) ||
           t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        (inspectionReceiver ||
+          !(
+            invocation?.kind === "known" &&
+            ["Object", "Reflect"].includes(invocation.path[1] ?? "")
+          ))
       ) {
         if (browserMethod !== undefined)
           browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        retainEscape(
+          callee.object,
+          browserMethod !== undefined,
+          inspectionReceiver,
+        );
       }
     },
   );
@@ -901,7 +922,12 @@ export function* indexJavaScriptAmbientWritesSteps(
   // if no write or opaque escape can replace its native member before this
   // invocation; ambiguous execution order remains conservative.
   const resolverReceivers: typeof escapes = [];
+  const inspectionReceivers = new Set<(typeof escapes)[number]>();
   for (const effect of escapes) {
+    if (effect.nativeInspection) {
+      inspectionReceivers.add(effect);
+      continue;
+    }
     const { node, target } = effect;
     const callee =
       t.isCallExpression(node) || t.isOptionalCallExpression(node)
@@ -979,6 +1005,25 @@ export function* indexJavaScriptAmbientWritesSteps(
     )
   )
     retainSemanticAmbientEffect(state, "escape", ["global"], undefined);
+  // Do not prove a receiver during traversal: a later-declared activation can
+  // escape its callable first. Settle ordinary effects, then monotonically
+  // replay failed candidates until no remaining native proof can be revoked.
+  while (inspectionReceivers.size > 0) {
+    const effectsBefore = state.ambientEscapeEffects.length;
+    let examined = 0;
+    for (const effect of inspectionReceivers) {
+      if (examined++ % 64 === 0) yield;
+      const { node } = effect;
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        nativeInspectionReceiver?.(node, true) === true
+      )
+        continue;
+      inspectionReceivers.delete(effect);
+      retainEscapeEffect(effect);
+    }
+    if (state.ambientEscapeEffects.length === effectsBefore) break;
+  }
 }
 
 export type GlobalReferenceRead =

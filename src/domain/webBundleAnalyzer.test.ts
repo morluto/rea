@@ -167,6 +167,98 @@ it.each([
     false,
   ],
   [
+    "const records = new Map(); void new Map().set('x', 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const unused = (new Map().set('x', 1), 0); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); (0, new Map().set('x', 1)); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); void (0, new Map().set('x', 1)); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const unused = ((0, new Map().set('x', 1)), 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); (new Map().set('x', 1) as unknown)!; records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); for (new Map().set('x', 1); false;) {} records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); for (; false; (0, new Map().set('x', 1))) {} records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); void new Map().keys(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); flag ? new Map().set('x', 1) : 0; records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); flag ? 0 : new Map().set('x', 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); flag && new Map().set('x', 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); void ((flag ? (0, new Map().set('x', 1)) : 0) as unknown)!; records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const unused = ((flag && new Map().set('x', 1)), 0); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); new Map().set('x', 1) ? 0 : 1; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().set('x', 1) && 0; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const result = flag ? new Map().set('x', 1) : 0; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void consume(flag && new Map().set('x', 1)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void consume(new Map().set('x', 1)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const result = (0, new Map().set('x', 1)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); Map.prototype.set = patch; void new Map().set('x', 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void new Map().set(records, 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void new Map().set(...expose(records)); records.get('/accounts');",
+    true,
+  ],
+  [
     "const records = new Map(); const other = new Map(); other.set('x', 1); records.delete('/accounts');",
     false,
   ],

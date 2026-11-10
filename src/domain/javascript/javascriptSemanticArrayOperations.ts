@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import {
+  javaScriptExpressionResultIsUsed,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -55,7 +56,7 @@ export const isIntrinsicNonEscapingArrayCall = (
     !PRISTINE_ARRAY_PRIMITIVE_RESULTS.has(method) &&
     (!PRISTINE_ARRAY_RETAINED_RESULTS.has(method) ||
       // Receiver-returning methods and iterators retain the array itself.
-      !t.isExpressionStatement(state.parentsByNode.get(node)))
+      javaScriptExpressionResultIsUsed(node, state.parentsByNode))
   )
     return false;
   if (!semanticPrimitiveArguments(node.arguments, state)) return false;

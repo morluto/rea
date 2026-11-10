@@ -7,6 +7,7 @@ import {
 import { isIntrinsicNonEscapingArrayCall } from "./javascriptSemanticArrayOperations.js";
 import { isIntrinsicNonEscapingMapCall } from "./javascriptSemanticMapOperations.js";
 import { isIntrinsicNonEscapingObjectCall } from "./javascriptSemanticObjectOperations.js";
+import { createSemanticArgumentInspectionQuery } from "./javascriptSemanticArgumentInspections.js";
 import { isIntrinsicNonEscapingXhrOpen } from "./javascriptNetworkRequests.js";
 import {
   isIntrinsicTypedArrayConstruction,
@@ -371,10 +372,13 @@ export function* collectSemanticMemberMutationsSteps(
   state: JavaScriptSemanticAnalysisState,
   referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
 ): Generator<void, void> {
+  const inspection = createSemanticArgumentInspectionQuery(state);
   const intrinsicReceiverCall = (
     node: t.CallExpression | t.OptionalCallExpression,
     index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
   ): boolean | undefined => {
+    const inspected = inspection.receiver(node, index !== undefined);
+    if (inspected !== false) return inspected;
     const map = isIntrinsicNonEscapingMapCall(node, state, index);
     if (map !== false) return map;
     const xhr = isIntrinsicNonEscapingXhrOpen(node, state, index);
@@ -386,6 +390,10 @@ export function* collectSemanticMemberMutationsSteps(
   };
   const deferredIntrinsicReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
+  >();
+  const deferredInspectionArguments = new Map<
+    t.CallExpression | t.OptionalCallExpression,
+    t.Node
   >();
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
@@ -1746,7 +1754,14 @@ export function* collectSemanticMemberMutationsSteps(
               mutation: node,
               originAt: node,
             });
-          else markEscaped(argument, node);
+          else {
+            const inspected = t.isNewExpression(node)
+              ? false
+              : inspection.argument(node, argument);
+            if (inspected === false) markEscaped(argument, node);
+            else if (!t.isNewExpression(node))
+              deferredInspectionArguments.set(node, argument);
+          }
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
           const intrinsicCall = intrinsicReceiverCall(node);
@@ -1767,7 +1782,8 @@ export function* collectSemanticMemberMutationsSteps(
   while (
     pendingReferences.length > 0 ||
     iterableReferences.length > 0 ||
-    deferredIntrinsicReceivers.size > 0
+    deferredIntrinsicReceivers.size > 0 ||
+    deferredInspectionArguments.size > 0
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
@@ -1876,6 +1892,17 @@ export function* collectSemanticMemberMutationsSteps(
         reference.definiteReceiver === true,
         reference,
       );
+    }
+    let inspectionIndex = 0;
+    for (const [node, argument] of deferredInspectionArguments) {
+      if (inspectionIndex++ % 64 === 0) yield;
+      if (
+        inspection.argument(node, argument, { referenceMayHaveChangedAt }) ===
+        true
+      )
+        continue;
+      deferredInspectionArguments.delete(node);
+      markEscaped(argument, node);
     }
     // Proven native Map and pristine XHR/Array/Object calls do not expose receivers.
     // Settle genuine effects first, then replay every unproven receiver escape.

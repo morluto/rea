@@ -106,6 +106,34 @@ it.each([
 });
 
 it.each([
+  "void new Object().valueOf();",
+  "const unused = (new Object().valueOf(), 1);",
+  "(0, new Object().valueOf());",
+  "void (0, new Object().valueOf());",
+  "const unused = ((0, new Object().valueOf()), 1);",
+  "(new Object().valueOf() as unknown)!;",
+  "for (new Object().valueOf(); false;) {}",
+  "for (; false; (0, new Object().valueOf())) {}",
+  "flag ? new Object().valueOf() : 0;",
+  "flag ? 0 : new Object().valueOf();",
+  "flag && new Object().valueOf();",
+  "flag || new Object().valueOf();",
+  "flag ?? new Object().valueOf();",
+  "void ((flag ? (0, new Object().valueOf()) : 0) as unknown)!;",
+  "const unused = ((flag && new Object().valueOf()), 0);",
+])(
+  "preserves unrelated destructuring after a discarded Object result: %s",
+  (source) => {
+    expect(proofFor(source, "valueOf")).toEqual([true]);
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${source} const urls = ['/api']; const [url] = urls; fetch(url);`,
+      ).endpoints.map(({ value }) => value),
+    ).toEqual(["/api"]);
+  },
+);
+
+it.each([
   "function run(Object) { new Object().hasOwnProperty('x'); }",
   "Object = Replacement; new Object().hasOwnProperty('x');",
   "globalThis.Object = Replacement; new globalThis.Object().hasOwnProperty('x');",
@@ -175,6 +203,20 @@ it.each([
   ["new Object().isPrototypeOf(new Proxy({}, handler));", "isPrototypeOf"],
   ["const o = new Object(); consume(o.valueOf());", "valueOf"],
   ["const result = new Object().valueOf();", "valueOf"],
+  ["void consume(new Object().valueOf());", "valueOf"],
+  ["void (holder.value = new Object().valueOf());", "valueOf"],
+  ["const result = (0, new Object().valueOf());", "valueOf"],
+  ["Object.prototype.valueOf = patch; void new Object().valueOf();", "valueOf"],
+  [
+    "void new Object().valueOf((Object.prototype.x = replacement, 0));",
+    "valueOf",
+  ],
+  ["void new Object().valueOf(...args);", "valueOf"],
+  ["function run(Object) { void new Object().valueOf(); }", "valueOf"],
+  ["new Object().valueOf() ? 0 : 1;", "valueOf"],
+  ["new Object().valueOf() && 0;", "valueOf"],
+  ["const result = flag ? new Object().valueOf() : 0;", "valueOf"],
+  ["void consume(flag && new Object().valueOf());", "valueOf"],
 ] as const)(
   "excludes coercion, tag, locale and returned-receiver hooks: %s",
   (source, method) => {

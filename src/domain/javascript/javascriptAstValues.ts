@@ -50,6 +50,65 @@ export const javaScriptExpressionWrapperTarget = (
     ? node.expression
     : undefined;
 
+// Parent facts and sequence children belong to one immutable parsed tree. Retain
+// only child membership; result use still follows the current outer parent edges.
+const sequenceMembersByParents = new WeakMap<
+  Pick<WeakMap<t.Node, t.Node>, "get">,
+  WeakMap<t.SequenceExpression, ReadonlySet<t.Node>>
+>();
+
+/** Follow only transparent result edges to an explicit value-discarding context. */
+export const javaScriptExpressionResultIsUsed = (
+  node: t.Node,
+  parents: Pick<WeakMap<t.Node, t.Node>, "get">,
+): boolean => {
+  let child = node;
+  for (
+    let parent = parents.get(child);
+    parent !== undefined;
+    parent = parents.get(child)
+  ) {
+    if (javaScriptExpressionWrapperTarget(parent) === child) {
+      child = parent;
+      continue;
+    }
+    if (
+      (t.isConditionalExpression(parent) &&
+        (parent.consequent === child || parent.alternate === child)) ||
+      (t.isLogicalExpression(parent) && parent.right === child)
+    ) {
+      child = parent;
+      continue;
+    }
+    if (t.isSequenceExpression(parent)) {
+      let sequences = sequenceMembersByParents.get(parents);
+      if (sequences === undefined) {
+        sequences = new WeakMap();
+        sequenceMembersByParents.set(parents, sequences);
+      }
+      let members = sequences.get(parent);
+      if (members === undefined) {
+        members = new Set(parent.expressions);
+        sequences.set(parent, members);
+      }
+      if (!members.has(child)) return true;
+      if (parent.expressions.at(-1) !== child) return false;
+      child = parent;
+      continue;
+    }
+    if (t.isExpressionStatement(parent)) return parent.expression !== child;
+    if (t.isUnaryExpression(parent, { operator: "void" }))
+      return parent.argument !== child;
+    // for/of and for/in heads use their expressions. A C-style for initializer
+    // or update discards the value, but a variable initializer still stores it.
+    return !(
+      t.isForStatement(parent) &&
+      (parent.init === child || parent.update === child)
+    );
+  }
+  return true;
+};
+
 /**
  * Remove wrappers that affect TypeScript or Flow checking but not runtime
  * expression identity. The returned depth lets bounded evaluators account for

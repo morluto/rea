@@ -60,6 +60,34 @@ it.each([
 });
 
 it.each([
+  "void new Array(3).fill(0);",
+  "const unused = (new Array(3).fill(0), 1);",
+  "(0, new Array(3).fill(0));",
+  "void (0, new Array(3).fill(0));",
+  "const unused = ((0, new Array(3).fill(0)), 1);",
+  "(new Array(3).fill(0) as unknown)!;",
+  "for (new Array(3).fill(0); false;) {}",
+  "for (; false; (0, new Array(3).fill(0))) {}",
+  "flag ? new Array(3).fill(0) : 0;",
+  "flag ? 0 : new Array(3).fill(0);",
+  "flag && new Array(3).fill(0);",
+  "flag || new Array(3).fill(0);",
+  "flag ?? new Array(3).fill(0);",
+  "void ((flag ? (0, new Array(3).fill(0)) : 0) as unknown)!;",
+  "const unused = ((flag && new Array(3).fill(0)), 0);",
+])(
+  "preserves unrelated destructuring after a discarded Array result: %s",
+  (source) => {
+    expect(proofFor(source)).toEqual([true]);
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${source} const urls = ['/api']; const [url] = urls; fetch(url);`,
+      ).endpoints.map(({ value }) => value),
+    ).toEqual(["/api"]);
+  },
+);
+
+it.each([
   "new Array(3).fill(0);",
   "const a = new globalThis.Array(3); const b = a; b.fill(0);",
   "const a = new Array('/old', '/other'); a.fill('/new');",
@@ -103,6 +131,17 @@ it.each([
   "function patch() { Array.prototype[0] = replacement; } const a = new Array(3); a.fill(0);",
   "function run(Array) { const a = new Array(3); a.fill(0); }",
   "function run(a) { a.fill(0); }",
+  "void new Array(3).fill(0, (Array.prototype[0] = replacement, 0));",
+  "void new Array(3).fill(0, { valueOf() { return 0; } });",
+  "void new Array(3).fill(...args);",
+  "function run(Array) { void new Array(3).fill(0); }",
+  "void consume(new Array(3).fill(0));",
+  "void (holder.value = new Array(3).fill(0));",
+  "const value = (0, new Array(3).fill(0));",
+  "new Array(3).fill(0) ? 0 : 1;",
+  "new Array(3).fill(0) && 0;",
+  "const value = flag ? new Array(3).fill(0) : 0;",
+  "void consume(flag && new Array(3).fill(0));",
 ])("retains receiver uncertainty outside the pristine proof: %s", (source) => {
   expect(proofFor(source)).toEqual([false]);
 });
