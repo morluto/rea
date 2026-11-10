@@ -989,6 +989,29 @@ describe("binary plist clone rewrite", () => {
     ]);
     expect(Buffer.compare(bytes, original)).toBe(0);
   });
+
+  it("leaves the trailer intact when a reachable date's payload runs into it", () => {
+    // Root array <0x200> at 0x100. The date at trailer - 1 stores its
+    // payload in the trailer, ending with the offset and reference widths.
+    // The 8-byte offset table at trailer + 9 reads the object count and top
+    // object fields, each shifted by one byte: 0x200 and 0x100.
+    const bytes = Buffer.alloc(545);
+    bytes.write("bplist00", 0, "latin1");
+    const trailer = bytes.length - 32;
+    bytes.set([0xa1, 0], 0x100);
+    bytes[trailer - 1] = 0x33;
+    bytes.set([0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 8, 1], trailer);
+    bytes.writeBigUInt64BE(2n, trailer + 8);
+    bytes.writeBigUInt64BE(1n, trailer + 16);
+    bytes.writeBigUInt64BE(BigInt(trailer + 9), trailer + 24);
+    expect(parseBinary(bytes)).toEqual([expect.any(Date)]);
+    const original = Buffer.from(bytes);
+
+    expect(() =>
+      decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
+    ).toThrow("NSKeyedArchiver");
+    expect(Buffer.compare(bytes, original)).toBe(0);
+  });
 });
 
 describe("XML plist nesting preflight", () => {

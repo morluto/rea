@@ -263,10 +263,12 @@ export const scanBinaryPlistScalars = (
   const safeMaximum = BigInt(Number.MAX_SAFE_INTEGER);
   if (countRaw === 0n || countRaw > safeMaximum || tableRaw > safeMaximum)
     return result(true);
-  // Decoder bounds admit an offset table that runs into the trailer. Dates
-  // still end before the table, so observe them whenever the decoder can.
+  // Decoder bounds admit an offset table that runs into the trailer. Observe
+  // dates that end before both the table and the trailer: a payload inside
+  // the trailer would share its width bytes.
   if (tableRaw < 8n || tableRaw >= BigInt(bytes.length)) return result(true);
   const offsetTable = Number(tableRaw);
+  const datesEnd = Math.min(offsetTable, trailer);
   const capacity = Math.floor((bytes.length - offsetTable) / offsetWidth);
   if (countRaw > BigInt(capacity)) return result(true);
   const count = Number(countRaw);
@@ -309,7 +311,7 @@ export const scanBinaryPlistScalars = (
       const marker = bytes[offset] ?? 0;
       if (
         marker === 0x33 &&
-        offset + 9 <= offsetTable &&
+        offset + 9 <= datesEnd &&
         (scalarPlan === undefined ||
           containsSortedOffset(scalarPlan.reachableDateOffsets, offset))
       ) {
