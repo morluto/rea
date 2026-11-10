@@ -139,8 +139,9 @@ const remember = (discovered, path, name) => {
 
 /**
  * Producers are syntax, not text. A read is a property or element access,
- * including a const string used as the element, or a string argument to a call.
- * Comments and array literals are not reads.
+ * including a const string used as the element, a string argument to a call,
+ * an object-binding key (rename and default included), an `in` check, or an
+ * object key that a spread can copy. Comments and array literals are not reads.
  */
 export const discoverNumericLimitUses = (files) => {
   const discovered = new Map();
@@ -175,6 +176,32 @@ export const discoverNumericLimitUses = (files) => {
             boundLimitName(argument, bindings),
           );
       }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.InKeyword
+      )
+        remember(discovered, relativePath, boundLimitName(node.left, bindings));
+      if (
+        ts.isBindingElement(node) &&
+        node.dotDotDotToken === undefined &&
+        ts.isObjectBindingPattern(node.parent)
+      ) {
+        const key = node.propertyName ?? node.name;
+        if (
+          ts.isIdentifier(key) ||
+          ts.isStringLiteral(key) ||
+          ts.isNumericLiteral(key)
+        )
+          remember(discovered, relativePath, key.text);
+      }
+      if (
+        (ts.isPropertyAssignment(node) ||
+          ts.isShorthandPropertyAssignment(node)) &&
+        (ts.isIdentifier(node.name) ||
+          ts.isStringLiteral(node.name) ||
+          ts.isNumericLiteral(node.name))
+      )
+        remember(discovered, relativePath, node.name.text);
       if (ts.isVariableDeclaration(node) && node.initializer !== undefined)
         remember(
           discovered,
