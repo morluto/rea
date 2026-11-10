@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · **한국어** · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: 무엇이든 리버스 엔지니어링
 
@@ -83,6 +83,10 @@ npx rea-agents setup
 설정은 Claude Code, Codex, Cursor, Gemini CLI, Grok Build 및 [다른 에이전트](../getting-started/installation.md#supported-agents)를 지원합니다. 제공자 설정과 수동 MCP 등록은 [설치 및 설정](../getting-started/installation.md)을 참고하세요.
 
 MCP는 기본적으로 간결한 입력 스키마를 사용합니다. 전체 필드 안내와 중첩 검증 정보가 필요하면 MCP 등록에서 `REA_MCP_INPUT_SCHEMA_PROFILE=full`을 설정하세요. 두 프로필 모두 전체 도구와 동일한 정규 서버 검증을 유지합니다. MCP 계약 가이드를 참고하세요.
+
+설정은 선택한 런타임과 REA 진입 스크립트를 직접 등록합니다. 패키지 실행기를 사용한다면 해당 캐시 항목과 런타임을 유지하고, 대상 프로젝트 밖의 신뢰할 수 있는 디렉터리에서 패키지를 받으세요. 설치 가이드를 참고하세요.
+
+기본적으로 완전한 출력 스키마가 제공됩니다. 클라이언트가 `tools/list` 크기를 제한한다면 MCP 등록에서 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 또는 `off`로 설정하세요. 서버 검증과 구조화된 결과는 완전하게 유지됩니다. MCP 계약 가이드의 «Output schemas»를 참고하세요.
 
 ### 에이전트에게 요청
 
@@ -274,6 +278,12 @@ REA는 실행 가능한 환경과 시작 및 응답 여부를 확인하는 기�
 [환경 만들기 가이드](https://rea.tools/guides/rl-environments/) ·
 [환경 참조 문서](../agent-environments.md) ·
 [X에서 데모 보기](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### 데스크톱 앱 환경
+
+REA는 에이전트가 스크린샷, 마우스, 키보드로 사용하는 Linux 데스크톱 앱의 환경도 만들 수 있습니다. "에이전트가 장보기 목록 메모에 올리브유를 추가하는 Gnote 환경을 만들어 줘" 같은 한 줄 요청에서 에이전트가 로컬 빌드 컴퓨터에 앱을 설치하고, 작업을 작성하고, 환경을 내보낸 뒤 새 컴퓨터에서 작업을 확인합니다. 환경을 만드는 머신에는 amd64 또는 arm64의 Linux, Docker, 가이드가 지정한 버전의 agentenv 프레임워크가 필요합니다.
+
+[데스크톱 앱 환경 설정하기](../desktop-build-computer.md)
 
 ## 자주 묻는 질문
 

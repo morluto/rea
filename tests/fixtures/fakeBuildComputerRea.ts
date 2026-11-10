@@ -141,6 +141,9 @@ elif command == "export-desktop-application":
         printed = handle.read()
     if "code" not in json.loads(printed):
         shutil.copytree(output(args[0], "BUNDLE"), args[1])
+        copy = option(args, "--withheld-copy") if "--withheld-copy" in args else None
+        if copy is not None and os.path.isdir(os.environ.get("FAKE_REA_WITHHELD", "")):
+            shutil.copytree(os.environ["FAKE_REA_WITHHELD"], copy)
     sys.stdout.write(printed)
     sys.exit(0 if "code" not in json.loads(printed) else 1)
 else:
@@ -182,6 +185,8 @@ export interface FakeReaOutputs {
   readonly export: string;
   readonly bundle: string;
   readonly schema: string;
+  /** Where the real export copied the files it withheld from the seed. */
+  readonly withheld?: string;
 }
 
 export interface FakeBuildComputerRea {
@@ -222,6 +227,9 @@ export const fakeBuildComputerRea = async (
       FAKE_REA_EXPORT: outputs.export,
       FAKE_REA_BUNDLE: outputs.bundle,
       FAKE_REA_SCHEMA: outputs.schema,
+      ...(outputs.withheld === undefined
+        ? {}
+        : { FAKE_REA_WITHHELD: outputs.withheld }),
     },
     notes: async (name) => {
       const path = join(notes, name);

@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · **Español** · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Ingeniería inversa de cualquier cosa
 
@@ -83,6 +83,10 @@ Elige tus agentes, revisa los cambios propuestos y apruébalos. La configuració
 La configuración admite Claude Code, Codex, Cursor, Gemini CLI, Grok Build y [otros agentes](../getting-started/installation.md#supported-agents). Consulta [instalación y configuración](../getting-started/installation.md) para configurar proveedores y registrar MCP manualmente.
 
 MCP usa esquemas de entrada compactos por defecto. Para ver todas las instrucciones de campos y la validación anidada, establece `REA_MCP_INPUT_SCHEMA_PROFILE=full` en el registro MCP. Ambos perfiles conservan todas las herramientas y la misma validación canónica del servidor; consulta la guía de contratos MCP.
+
+La configuración registra directamente el entorno de ejecución elegido y el script de entrada de REA. Si usas un ejecutor de paquetes, conserva su entrada de caché y el entorno de ejecución; descarga el paquete desde un directorio de confianza fuera del proyecto objetivo. Consulta la guía de instalación.
+
+Los esquemas de salida completos se anuncian por defecto. Si tu cliente limita `tools/list`, establece `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` o `off` en el registro MCP. La validación del servidor y los resultados estructurados siguen siendo completos. Consulta «Output schemas» en la guía de contratos MCP.
 
 ### Pregunta a tu agente
 
@@ -274,6 +278,12 @@ REA exporta un entorno ejecutable con una prueba básica que comprueba que arran
 [Guía para crear un entorno](https://rea.tools/guides/rl-environments/) ·
 [Referencia de entornos](../agent-environments.md) ·
 [Ver la demo en X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Entornos de aplicaciones de escritorio
+
+REA también puede crear un entorno de una aplicación de escritorio de Linux, que un agente usa mediante capturas de pantalla, el ratón y el teclado. A partir de una petición de una línea, como «Créame un entorno de Gnote en el que el agente añada aceite de oliva a la nota de la lista de la compra», tu agente instala la aplicación en un ordenador de compilación local, escribe la tarea, exporta el entorno y comprueba la tarea en un ordenador nuevo. El equipo que lo crea necesita Linux en amd64 o arm64, Docker y la versión del framework agentenv que fija la guía.
+
+[Configurar entornos de aplicaciones de escritorio](../desktop-build-computer.md)
 
 ## Preguntas frecuentes
 

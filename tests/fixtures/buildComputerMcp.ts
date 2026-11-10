@@ -1,3 +1,4 @@
+import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,6 +13,7 @@ import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "./binarySession.js";
 import {
   fakeAgentEnvRunner,
+  isolatedBuildDefaults,
   startFakeComputer,
   type FakeAgentEnvRunner,
   type FakeComputer,
@@ -42,6 +44,7 @@ export const FIRST_READ: SettleTiming = {
 export const connectBuildServer = async (
   environment: Readonly<Record<string, string>>,
   settle: BuildSettle = FIRST_READ,
+  defaults?: BuildComputerDefaults,
 ): Promise<Client> => {
   const session = createTestBinarySession(() => {
     throw new Error("build computers must not start a deep provider");
@@ -55,6 +58,7 @@ export const connectBuildServer = async (
         ...environment,
       },
       desktopBuildSettle: settle,
+      desktopBuildDefaults: defaults ?? (await isolatedBuildDefaults()),
     },
   );
   const client = new Client({ name: "build-computer-mcp", version: "1" });

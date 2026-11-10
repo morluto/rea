@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά** · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά** · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -85,6 +85,10 @@ npx rea-agents setup
 Υποστηρίζονται τα Claude Code, Codex, Cursor, Gemini CLI, Grok Build και [άλλοι agents](../getting-started/installation.md#supported-agents). Για τη ρύθμιση των παρόχων ανάλυσης και τη μη αυτόματη καταχώριση MCP, δες τον οδηγό [εγκατάστασης και ρύθμισης](../getting-started/installation.md).
 
 Το MCP χρησιμοποιεί συμπαγή σχήματα εισόδου από προεπιλογή. Για πλήρεις οδηγίες πεδίων και ένθετης επικύρωσης, όρισε `REA_MCP_INPUT_SCHEMA_PROFILE=full` στην καταχώριση MCP. Και τα δύο προφίλ διατηρούν όλα τα εργαλεία και την ίδια κανονική επικύρωση διακομιστή· δες τον οδηγό συμβολαίων MCP.
+
+Η εγκατάσταση καταχωρίζει απευθείας τον επιλεγμένο runtime και το αρχικό script του REA. Αν χρησιμοποιείς package runner, διατήρησε την καταχώριση cache και τον runtime· απόκτησε το πακέτο από έμπιστο κατάλογο έξω από το έργο-στόχο. Δες τον οδηγό εγκατάστασης.
+
+Τα πλήρη σχήματα εξόδου ανακοινώνονται από προεπιλογή. Αν ο client περιορίζει το `tools/list`, όρισε `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ή `off` στην καταχώριση MCP. Η επικύρωση του διακομιστή και τα δομημένα αποτελέσματα παραμένουν πλήρη. Δες το «Output schemas» στον οδηγό συμβάσεων MCP.
 
 ### Ζήτησε από τον agent σου
 
@@ -276,6 +280,12 @@ agent-env run ./my-env
 [Οδηγός δημιουργίας περιβάλλοντος](https://rea.tools/guides/rl-environments/) ·
 [Αναφορά περιβαλλόντων](../agent-environments.md) ·
 [Δείτε το demo στο X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Περιβάλλοντα εφαρμογών επιφάνειας εργασίας
+
+Το REA μπορεί επίσης να δημιουργήσει περιβάλλον για μια εφαρμογή επιφάνειας εργασίας Linux, την οποία ο πράκτορας χρησιμοποιεί μέσω στιγμιότυπων οθόνης, ποντικιού και πληκτρολογίου. Από ένα αίτημα μίας γραμμής, όπως «Φτιάξε μου ένα περιβάλλον Gnote όπου ο πράκτορας προσθέτει ελαιόλαδο στη σημείωση με τη λίστα αγορών», ο πράκτοράς σας εγκαθιστά την εφαρμογή σε έναν τοπικό υπολογιστή κατασκευής, γράφει την εργασία, εξάγει το περιβάλλον και ελέγχει την εργασία σε έναν νέο υπολογιστή. Ο υπολογιστής που το κατασκευάζει χρειάζεται Linux σε amd64 ή arm64, Docker και την έκδοση του πλαισίου agentenv που ορίζει ο οδηγός.
+
+[Ρύθμιση περιβαλλόντων εφαρμογών επιφάνειας εργασίας](../desktop-build-computer.md)
 
 ## Συχνές ερωτήσεις
 

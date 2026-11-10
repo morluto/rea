@@ -15,13 +15,28 @@ agent-env run ./mousepad-bundle --dry-run
 
 The export reads the capture and its [state view](desktop-application-state.md);
 it does not run the application. `--name` sets the environment name; otherwise
-it comes from the desktop entry id or the program, with an `app-` prefix when
+it comes from the desktop entry id or the program: a reverse-DNS id's last
+part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
+trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
 the capture, once REA has validated it against the capture; see
 [desktop application tasks](desktop-application-tasks.md). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
+`--download-install FILE` says which AppImage or tarball a build computer
+unpacked the application from; see
+[Applications from an AppImage or tarball](#applications-from-an-appimage-or-tarball).
+`--extra-package NAME`, repeatable, installs another Ubuntu 24.04 archive
+package beside the application, such as a runtime piece its package does not
+install; a [build computer](desktop-build-witness.md) passes its request's
+`extra_packages`, or a `.deb` request's `dependencies`, this way. A name that
+is not a Debian package name is refused (`extra_package`). Names the bundle
+installs anyway, the application's own package and the dependencies it names
+for a package installed from its `.deb` file, are not repeated; the rest are
+listed in the limitations and the README. A package the captured `.deb` lists
+as one alternative, such as `openjdk-17-jre | java-runtime`, is kept when apt
+installs the application by name, since apt may satisfy it with another.
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
@@ -44,17 +59,19 @@ Evidence; the bundle itself is complete.
 
 ## The bundle
 
-| Path                             | Contents                                                                                           |
-| -------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `envs/<name>/env.toml`           | `type = "computer_app"`, the module and class, `computer = "ubuntu-24.04"`, `driver = "reference"` |
-| `envs/<name>/<file>.py`          | The `ComputerAppEnvironment` class                                                                 |
-| `envs/<name>/SKILL.md`           | What the app is, its window class and where its files live                                         |
-| `envs/<name>/seed/`              | The application's files at the seed checkpoint, by home-relative path                              |
-| `envs/<name>/apt-keys/`          | The signing key of each vendor apt repository the app installs from                                |
-| `envs/<name>/install-package.sh` | With `--package-url`: the run script that installs the downloaded package with dpkg                |
-| `tasks/smoke.json`               | A task that deploys the app                                                                        |
-| `tasks/<task>.json`              | With `--task`: the agent's task, its verifier in `artifacts/` and the eval in `evals/`             |
-| `README.md`                      | What was exported, from which capture, and what to keep in mind                                    |
+| Path                              | Contents                                                                                           |
+| --------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `envs/<name>/env.toml`            | `type = "computer_app"`, the module and class, `computer = "ubuntu-24.04"`, `driver = "reference"` |
+| `envs/<name>/<file>.py`           | The `ComputerAppEnvironment` class                                                                 |
+| `envs/<name>/SKILL.md`            | What the app is, its window class and where its files live                                         |
+| `envs/<name>/seed/`               | The application's files at the seed checkpoint, by home-relative path                              |
+| `envs/<name>/apt-keys/`           | The signing key of each vendor apt repository the app installs from                                |
+| `envs/<name>/install-package.sh`  | With `--package-url`: the run script that installs the downloaded package with dpkg                |
+| `envs/<name>/install-download.sh` | With `--download-install`: the run script that unpacks the downloaded AppImage or tarball          |
+| `envs/<name>/applications/`       | With a tarball's `--download-install`: the desktop entry REA wrote for its program                 |
+| `tasks/smoke.json`                | A task that deploys the app                                                                        |
+| `tasks/<task>.json`               | With `--task`: the agent's task, its verifier in `artifacts/` and the eval in `evals/`             |
+| `README.md`                       | What was exported, from which capture, and what to keep in mind                                    |
 
 The class file is `<name>_app.py` with hyphens as underscores, for example
 `mousepad_app.py`: agentenv imports it under its stem, so a plain `<name>.py`
@@ -64,9 +81,10 @@ an `App` suffix.
 
 The class declares:
 
-- `Packages(apt=[...])` with the package the capture found. A vendor package
-  is named `<package>/<release>`, its repository's release (the Suite apt
-  reports as `a=`, or else its Codename), so apt takes it from that repository
+- `Packages(apt=[...])` with the package the capture found, then the
+  `--extra-package` names. A vendor package is named `<package>/<release>`,
+  its repository's release (the Suite apt reports as `a=`, or else its
+  Codename), so apt takes it from that repository
   even when the Ubuntu archive offers a higher version or epoch, as noble's
   transitional `firefox` does over packages.mozilla.org's; it is named alone
   when the release names neither, or when the capture was written before
@@ -106,7 +124,8 @@ The class declares:
   reason (a capture
   written before restrictions were recorded counts as unrestricted); when
   another usable repository lists the same version it is left out instead,
-  with a limitation. The export also refuses snaps, flatpaks, AppImages, and a
+  with a limitation. The export also refuses snaps, flatpaks, an AppImage or
+  tarball not named with `--download-install`, and a
   package no recorded repository lists unless it was installed from a `.deb`
   file the capture recorded and `--package-url` is given, since the computer
   could not install them by name, and a capture written before credentials
@@ -147,7 +166,8 @@ The class declares:
   README and the result's limitations say the sandbox is off.
 - `paths`: the state directories holding the application's state files and the
   folders holding its documents, nested folders collapsed. A folder beside a
-  state directory whose name differs from it only in letter case is owned
+  state directory whose name differs from it only in letter case, or that
+  adds a version, as TreeLine's `~/.treeline-3.1` beside `~/.treeline`, is owned
   whole in the files' spelling, so a `~/.config/GIMP` profile GIMP created
   during the capture beside the candidate `~/.config/gimp` is owned as
   `.config/GIMP`, not as the folder of its first file. The home itself and
@@ -194,9 +214,19 @@ a count of the rest. Capture again naming them with `--state-path`, or
 Lock files the app holds while it runs are left out of the seed: a copied one
 makes the app find its profile or document in use, and a LibreOffice Calc
 bundle whose seed held its profile's `.lock` showed no window at boot. They
-are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
-`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, and
-`*.lock` or `*.lck` directly in one of the application's state directories.
+are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock`,
+`SingletonLock` and Lucene's index lock `write.lock` anywhere, as Poedit's
+translation memory holds, LibreOffice's document lock `.~lock.<name>#`, a
+`<file>.lck`, `.<file>.lock`, `.<file>.lck` or `<file>.<ext>.lock` beside a
+file the capture recorded in the same folder, such as GnuCash's
+`household.gnucash.LCK`, Grisbi's empty `.household.gsb.lock`, which made it
+refuse every save, and VYM's `plan.vym.lock` (a project's `Gemfile.lock`
+beside its `Gemfile` has no extension to its file, so it is seeded), and
+`*.lock` or `*.lck` directly in the home, as wxWidgets' single-instance
+`~/poedit.lock`, or directly in one of the application's state directories;
+a lone `notes.lck` or `.notes.lock` elsewhere is seeded. A lock
+never makes a path the application's own, so `~/poedit.lock` is neither owned
+nor named among the folders the bundle does not own.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or
 `yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
 name starts with a dot. A file the state view makes a document, or one named
@@ -204,12 +234,35 @@ itself by `--state-path` or an absolute `--argument`, is never left out,
 whatever its name. A limitation and the README list them, up to
 eight and a count, after "Left out of the seed". They stay under the owned
 paths, so `data/get` returns the lock the running app holds, and `data/reset`
-restores the seed without them. Other seed files the app keeps for its own
+restores the seed without them.
+
+A seed file keeps the permission bits it had at the seed when the capture saw
+it change, such as a `0600` file an app checks: the class module lists those
+other than `0644` in `SEED_MODES`, and the first boot sets them when it copies
+the seed. A file the capture never saw change has no recorded mode and is
+written `0644`.
+
+Files in app state are retained regardless of a `.log` extension or `log.<n>`
+name. They can hold conversation history or database writes as well as
+diagnostics. The normal host-identity scrub applies to retained text; filenames
+alone do not identify disposable diagnostics. Locks beside these files follow
+the lock rules above.
+
+Other seed files the app keeps for its own
 running are seeded as captured and named, collapsed to the folder that holds
 them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
-`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`), which may hold the
-app's own data, and caches (a folder whose name ends in `cache`); a stale one
-can change how the app starts.
+`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`, `Visited Links`,
+`Platform Notifications/`, and a whole `QtWebEngine/`
+profile), which may hold the app's own data, and caches (a folder whose name ends in `cache`); a stale one
+can change how the app starts. A seeded LibreOffice profile's
+`registrymodifications.xcu` ships without its `RecoveryList` items, which
+LibreOffice writes for the documents it has open and which would start the
+bundle into document recovery instead of its window; a limitation and the
+README name the file. REA finds the items with its XML parser, as `item`
+elements whose `oor:path` is `/org.openoffice.Office.Recovery/RecoveryList`
+however the tags are spelled, and cuts exactly those elements, so text in a
+comment or CDATA and every other byte stay as captured. A registry that is
+not well-formed XML ships unchanged.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
@@ -223,7 +276,10 @@ not restore them. No file of the bundle holds them, so `data/get` does not
 return them and no task check reads them; a draft whose only change between
 its checkpoints is to the application's dconf keys says so with
 `uncheckable_changes`, and one whose dconf database changed but could not be
-read says so with `unreadable_changes`.
+read says so with `unreadable_changes`. When a dconf database changed by the
+seed checkpoint but its version there could not be read, as without
+`dconf-cli`, the export seeds no keys from it and a limitation names it with
+the read error.
 
 ## The seed checkpoint
 
@@ -249,6 +305,39 @@ to read `envs/<name>/seed/` before publishing the bundle; the export cannot
 tell the two apart, so the flag is the caller's word. `export_build_environment`
 passes it, since the building agent makes the seed in the build computer. The
 Evidence records it as `synthetic_seed`.
+
+## Withheld sign-in state
+
+`--withhold-from <checkpoint> --withhold-to <checkpoint>` withholds every file
+under the owned paths that changed after the first checkpoint up to the
+second, as the capture recorded its changes; `--withhold-path <file>` adds a
+home-relative file, such as one written at first launch. The draft
+(`describe-desktop-application-task`) takes the same options, leaves those
+files out and lists them as `withheld_files`; the export refuses a check that
+names one. Each withheld file present at the seed is left out of
+`envs/<name>/seed/` and becomes a secret setting:
+
+- the class declares `Settings` with a `SecretStr` field per file, and
+  `WITHHELD`, each field's home path;
+- `env.toml` sets each field to `env:REA_<APP>_<FILE>`, so agentenv refuses
+  the deploy, naming the variable, until it is set;
+- at first boot, before keeping the initial state, the class writes each file
+  from its setting, the file's bytes in base64, mode `0600`, so `data/reset`
+  restores it, and `data/get` serves it neither as a part nor in the views;
+- the README names each variable, with
+  `export REA_<APP>_<FILE>="$(base64 -w0 < ~/<file>)"` from the receiver's
+  own signed-in copy of the app.
+
+A withheld file larger than 48 KiB is refused, since its base64 must fit one
+environment variable. `--withheld-copy <folder>` copies the withheld files,
+as captured, into a new or empty folder outside the bundle. The result lists
+them as `withheld_files`, each with its `setting`, `variable` and `handle`.
+
+`--consent <file>` ships the person's consents, a `consent.json` that
+`record_build_consent` records, as the bundle's own `consent.json`.
+`--seed-withheld` seeds the withheld files after all, refused unless that
+file holds a `seed_sign_in` consent; the result lists them as
+`consented_files`, and the README says they are there with consent.
 
 ## Host name and user
 
@@ -306,8 +395,10 @@ export removes them from what the bundle ships:
   example and template files an app copies on first run do not bury the
   document scrubbed; one already in that form ships as captured. The class copies it at
   boot as it is, so the home it holds stays `/home/user`. One that does not
-  decompress ships as captured, its bytes searched, and one the state view did
-  not read is only searched. One whose document needs no edit but a member of
+  decompress within the scrub limit ships as captured, its bytes searched.
+  A document the state view did not read can still be decompressed and
+  recompressed under the separate 256 MiB scrub limit; its content is searched
+  even when its format cannot be scrubbed. One whose document needs no edit but a member of
   which has an extra field, where BGZF (`.vcf.gz`, `.bam`) and dictzip
   (`.dict.dz`) files index their blocks, also ships as captured, its bytes
   searched, so its blocks stay where its index says; one whose document
@@ -378,6 +469,40 @@ the capture's `package_file_reason` when there is one; when the archive or a
 declared vendor repository installs the package already; when the URL is not
 written as `http://` or `https://` or holds a user name or password; and when
 the file is built for an architecture other than `amd64`, `arm64` or `all`.
+
+## Applications from an AppImage or tarball
+
+A [build computer](desktop-build-computer.md) can install an application from
+its project's AppImage or tarball, pinned by URL and SHA-256, under
+`/opt/rea-apps/<desktop entry>`. Neither holds a Debian package, so the
+capture records the package as `unknown`, and the export takes the install
+from `--download-install`, a JSON file the build computer writes from its
+request:
+
+```json
+{
+  "kind": "appimage",
+  "desktop_entry": "org.freecad.FreeCAD",
+  "url": "https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4/FreeCAD_1.1.4-Linux-aarch64-py311.AppImage",
+  "sha256": "675d1a4295b2183e0e1d816a4b5557dcb63aeced4e60aaa28d6c3686f4c71dc9",
+  "architecture": "arm64"
+}
+```
+
+A tarball's adds `program`, its path inside the archive, and optionally
+`name`. The class then declares
+`downloads=[Download(url=..., sha256=..., to="vendor/app.AppImage", arch=...)]`
+(`vendor/app.tar` for a tarball) and `run=[RunScript(script="install-download.sh")]`,
+the same script the build computer ran, with no apt package for the app. The
+bundle does not contain the application and supports only the download's
+architecture; the URL must keep serving those bytes, and the application's
+licence is the operator's to check.
+
+The export refuses the file (`download_install`) unless it names an
+`appimage` or `tarball` with an `http://` or `https://` URL and a SHA-256,
+the capture launched its `desktop_entry`, the captured program lies under its
+folder in `/opt/rea-apps`, and the capture ran on its architecture; it
+refuses `--package-url` beside it.
 
 ## Grading once the app has saved
 
@@ -460,5 +585,5 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
 user's real data. Keep the bundle local and do not publish it.
-The class was checked against agentenv-framework 0.9.1431 with
+The class was checked against agentenv-framework 0.9.1464 with
 `python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.
