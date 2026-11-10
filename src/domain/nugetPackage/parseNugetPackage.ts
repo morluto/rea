@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Document, Element } from "@xmldom/xmldom";
+import { sanitizeBrowserUrl } from "../browserObservation.js";
 import { parseXmlDocument } from "../xmlDocument.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -229,6 +230,16 @@ class DiagnosticBudget {
   }
 }
 
+/**
+ * A declared URL with its transport credentials removed. A NuSpec is vendor
+ * input, so a URL may carry `user:password@` userinfo; the inventory reports
+ * the locator, never the authentication that reached it. Non-URL text is
+ * returned unchanged because `sanitizeBrowserUrl` only recognises transport
+ * syntax.
+ */
+const declaredUrl = (value: string | null): string | null =>
+  value === null ? null : sanitizeBrowserUrl(value).url;
+
 const licenseOf = (metadata: Element): NugetNuspec["license"] => {
   const licence = childrenNamed(metadata, "license")[0];
   if (licence === undefined) return null;
@@ -248,7 +259,7 @@ const repositoryOf = (metadata: Element): NugetNuspec["repository"] => {
   const repository = childrenNamed(metadata, "repository")[0];
   if (repository === undefined) return null;
   return {
-    url: declaredAttribute(repository, "url"),
+    url: declaredUrl(declaredAttribute(repository, "url")),
     kind: declaredAttribute(repository, "type"),
     branch: declaredAttribute(repository, "branch"),
     commit: declaredAttribute(repository, "commit"),
@@ -370,8 +381,8 @@ const nuspecOf = (
     authors: textOf(metadata, "authors"),
     description: textOf(metadata, "description"),
     license: licenseOf(metadata),
-    license_url: textOf(metadata, "licenseUrl"),
-    project_url: textOf(metadata, "projectUrl"),
+    license_url: declaredUrl(textOf(metadata, "licenseUrl")),
+    project_url: declaredUrl(textOf(metadata, "projectUrl")),
     repository: repositoryOf(metadata),
     dependency_groups: dependencyGroupsOf(metadata),
   });

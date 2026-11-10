@@ -484,6 +484,26 @@ describe("parseNugetPackage: coverage and refusals", () => {
     }
   });
 
+  it("removes transport credentials from declared package URLs", () => {
+    const text = NUSPEC.replace(
+      /<repository[^>]*\/>/u,
+      '<repository type="git" url="https://user:s3cret@example.test/repo.git" />',
+    ).replace(
+      /<projectUrl>[^<]*<\/projectUrl>/u,
+      [
+        "<licenseUrl>https://user:s3cret@example.test/licence</licenseUrl>",
+        "<projectUrl>https://example.test/project</projectUrl>",
+      ].join("\n    "),
+    );
+    const nuspec = parsed(parse([member("Example.nuspec", { text })]))
+      .nuspecs[0];
+    // A nuspec is vendor input: the inventory reports the locator, never the
+    // authentication that reached it.
+    expect(nuspec?.repository?.url).toBe("https://example.test/repo.git");
+    expect(nuspec?.license_url).toBe("https://example.test/licence");
+    expect(nuspec?.project_url).toBe("https://example.test/project");
+  });
+
   it("keeps an explicitly empty repository attribute distinct from an omission", () => {
     const text = NUSPEC.replace(
       /<repository[^>]*\/>/u,
