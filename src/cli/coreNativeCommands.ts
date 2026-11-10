@@ -347,7 +347,11 @@ const registerAnnotationCommand = (
   cli.command(CLI_COMMANDS.annotateNativeFunction, {
     description: "Edit function annotations and return refreshed analysis",
     args: z.object({
-      path: z.string().describe("Local executable path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Local executable path"),
       procedure: z
         .string()
         .describe("Exact function entry address or unique name"),
