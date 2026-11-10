@@ -29,7 +29,8 @@ export type AnalysisSettingsReader = () => AnalysisSettingsSnapshot;
 /**
  * Whether `update_analysis_settings` can change the active value.
  * `runtime` applies inside this process. `restart` stays at the value this
- * process already started with.
+ * process already started with. Caller-selected parameters use `parameter`
+ * on their own facts; they are not analysis settings.
  */
 export type AnalysisSettingUpdateMode = "runtime" | "restart";
 
