@@ -40,6 +40,7 @@ const fixture = async (
     [LIBRARY, jniElfFixture().bytes],
   ],
   rename?: readonly [string, string],
+  encryptedMember?: string,
 ) => {
   const directory = await createTestTempDirectory("rea-android-jni-libraries-");
   const snapshot = join(directory, "selected app.apk");
@@ -54,6 +55,7 @@ const fixture = async (
     await writer.add(path, new Uint8ArrayReader(bytes), {
       level: 0,
       lastModDate: new Date("2020-01-01T00:00:00Z"),
+      ...(path === encryptedMember ? { password: "fixture" } : {}),
     });
   const bytes = Buffer.from(await writer.close());
   if (rename !== undefined) {
@@ -603,6 +605,18 @@ it("cancels a manifest read through the same finalization path as the scan", asy
   } finally {
     open.mockRestore();
   }
+});
+
+it("reports an unreadable manifest member as an inventory unknown", async () => {
+  const source = await fixture(
+    [["AndroidManifest.xml", binaryManifestFixture({ attributes: [] })]],
+    undefined,
+    "AndroidManifest.xml",
+  );
+  const result = await read(source);
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "AndroidManifest.xml is encrypted; required split types and libraries are unknown.",
+  );
 });
 
 it("reports an isSplitRequired manifest as an inventory unknown", async () => {

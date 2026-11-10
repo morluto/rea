@@ -46,7 +46,12 @@ const noteUnbundledSplitLibraries = async (input: {
   readonly interruption: (reason: unknown) => AnalysisError;
   readonly inventory: AndroidJniReport["library_inventory"];
 }): Promise<void> => {
-  if (input.entry.kind !== "file" || input.entry.encrypted) return;
+  if (input.entry.kind !== "file" || input.entry.encrypted) {
+    input.inventory.unknowns.push(
+      `AndroidManifest.xml is ${input.entry.encrypted ? "encrypted" : "not a regular ZIP member"}; required split types and libraries are unknown.`,
+    );
+    return;
+  }
   let bytes: Buffer;
   try {
     const stream = await input.reader.open(input.entry, input.signal);
