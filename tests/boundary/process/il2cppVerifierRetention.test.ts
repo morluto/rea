@@ -11,8 +11,8 @@ const execute = promisify(execFile);
 it.each([
   ["methods", true],
   ["methods", false],
-  ["types", true],
-  ["types", false],
+  ["images", true],
+  ["images", false],
   ["sections", true],
   ["sections", false],
   ["empty", true],
