@@ -1,3 +1,4 @@
+import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { existsSync } from "node:fs";
 import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -137,5 +138,62 @@ it.skipIf(process.platform === "win32")(
     expect(result.library_packages).toEqual(["lib-owner"]);
     expect(result.unpackaged_libraries).toEqual([]);
     expect(result).not.toHaveProperty("library_packages_reason");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "recovers a 513-library closure with the caller-selected capture policy",
+  async () => {
+    const root = await createTestTempDirectory("rea-library-policy-");
+    const bin = join(root, "bin");
+    const lib = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(lib)]);
+    const paths = Array.from({ length: 513 }, (_, index) =>
+      join(lib, `lib${index}.so`),
+    );
+    const executable = join(bin, "app");
+    await Promise.all([
+      writeFile(executable, elfImage({ needed: [paths[0] ?? ""] })),
+      ...paths.map((path, index) =>
+        writeFile(
+          path,
+          elfImage({
+            needed:
+              paths[index + 1] === undefined ? [] : [paths[index + 1] ?? ""],
+          }),
+        ),
+      ),
+    ]);
+    const query = async (command: string, args: readonly string[]) => ({
+      stdout:
+        command === "ldconfig"
+          ? ""
+          : args
+              .slice(1)
+              .map((path) => `owner-${paths.indexOf(path)}: ${path}`)
+              .join("\n"),
+      exitCode: 0,
+    });
+    const limited = await inspectLibraryPackages(
+      executable,
+      "app",
+      query,
+      undefined,
+    );
+    expect(limited.library_packages).toHaveLength(512);
+    expect(limited.library_packages_reason).toContain(
+      "library-policy.libraries=512",
+    );
+    expect(limited.library_packages_reason).toContain("--library-policy");
+    const recovered = await inspectLibraryPackages(
+      executable,
+      "app",
+      query,
+      undefined,
+      desktopLibraryPolicy({ libraries: 513 }),
+    );
+    expect(recovered.library_packages).toHaveLength(513);
+    expect(recovered.library_packages).toContain("owner-512");
+    expect(recovered.library_packages_reason).toBeUndefined();
   },
 );

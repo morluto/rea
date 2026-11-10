@@ -59,7 +59,7 @@ it("decompresses a gzip seed file once to check it for known secrets and its siz
   gunzipped.length = 0;
   const refused = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   const { error } = parseMcpToolError(refused as CallToolResult);
   expect(error.code).toBe("invalid_request");
