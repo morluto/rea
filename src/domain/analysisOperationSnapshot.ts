@@ -1,5 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { AnalysisSettingsSnapshot } from "./analysisSettings.js";
+import type {
+  AnalysisSettingValues,
+  AnalysisSettingsSnapshot,
+} from "./analysisSettings.js";
 
 const snapshots = new AsyncLocalStorage<AnalysisSettingsSnapshot>();
 
@@ -17,3 +20,11 @@ export const runWithAnalysisOperationSnapshot = <Value>(
 export const currentAnalysisOperationSnapshot = ():
   | AnalysisSettingsSnapshot
   | undefined => snapshots.getStore();
+
+/** Accepted override for one setting, when this operation has a snapshot. */
+export const currentAnalysisSettingOverride = <
+  Setting extends keyof AnalysisSettingValues,
+>(
+  setting: Setting,
+): AnalysisSettingValues[Setting] | undefined =>
+  currentAnalysisOperationSnapshot()?.overrides[setting];

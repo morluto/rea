@@ -6,6 +6,11 @@ import {
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
 import { pwntoolsInputBytes } from "../native/pwntools/PwntoolsInputLimit.js";
+import { resolveBridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
+import { resolveCaptureDecoderHeap } from "../config/captureDecoderHeap.js";
+import { resolveRegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import { resolveRegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   runtimeAnalysisConfig,
   runtimeAsarHeaderAdmission,
@@ -314,6 +319,58 @@ it("rejects an out-of-range per-call limit and reads an accepted value from the 
   expect(pwntoolsInputBytes({})).toMatchObject({
     bytes: 32 * 1024 * 1024,
     source: "default",
+  });
+});
+
+it("reads an accepted override before an invalid launch seed", () => {
+  const resolved = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "bridge.max_request_bytes": 8192,
+        "capture.decoder_old_generation_mib": 64,
+        "regex.matching_deadline_ms": 250,
+        "regex.worker_heap_request_mib": 128,
+        "asar.max_header_bytes": 8192,
+        "asar.max_listing_bytes": 4096,
+      },
+    },
+    () => ({
+      bridge: resolveBridgeMaxRequestBytes({
+        REA_BRIDGE_MAX_REQUEST_BYTES: "nope",
+      }),
+      capture: resolveCaptureDecoderHeap({
+        REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "0",
+      }),
+      deadline: resolveRegexMatchingDeadline({
+        REA_REGEX_MATCHING_DEADLINE_MS: "nope",
+      }),
+      heap: resolveRegexWorkerHeapRequest({
+        REA_REGEX_WORKER_HEAP_REQUEST_MIB: "1",
+      }),
+      asar: runtimeAsarHeaderAdmission({
+        REA_ASAR_MAX_HEADER_BYTES: "nope",
+        REA_ASAR_MAX_LISTING_BYTES: "0",
+      }),
+    }),
+  );
+  expect(resolved.bridge).toMatchObject({
+    maximumBytes: 8192,
+    source: "runtime",
+  });
+  expect(resolved.capture).toMatchObject({
+    oldGenerationMiB: 64,
+    source: "runtime",
+  });
+  expect(resolved.deadline).toMatchObject({
+    deadlineMs: 250,
+    source: "runtime",
+  });
+  expect(resolved.heap).toMatchObject({ heapMiB: 128, source: "runtime" });
+  expect(resolved.asar).toMatchObject({
+    maximumBytes: 8192,
+    source: "runtime",
+    listing: { maximumBytes: 4096, source: "runtime" },
   });
 });
 

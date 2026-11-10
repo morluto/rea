@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
+import { analysisSettingDefinition } from "../domain/analysisSettingDefinitions.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { GHIDRA_OPERATIONS } from "../ghidra/GhidraProviderMetadata.js";
+import { HOPPER_OPERATIONS } from "../hopper/HopperProviderMetadata.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
@@ -18,6 +21,21 @@ const configured = (maximumBytes: number) =>
 const symbolName = "\u0001".repeat(1024);
 const session = "00000000-0000-4000-8000-000000000001";
 const token = "a".repeat(64);
+
+it("advertises the bridge ceiling for every bridge-backed operation", () => {
+  const advertised = new Set(
+    analysisSettingDefinition("bridge.max_request_bytes").operations,
+  );
+  const required = [
+    ...HOPPER_OPERATIONS,
+    ...GHIDRA_OPERATIONS,
+    "list_cutter_sessions",
+    "cutter_command",
+  ];
+  expect(required.filter((operation) => !advertised.has(operation))).toEqual(
+    [],
+  );
+});
 
 it("keeps the 16 MiB ceiling when the setting is unset", () => {
   expect(parseBridgeMaxRequestBytes(undefined)).toEqual({
