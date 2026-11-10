@@ -576,6 +576,16 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   ).toMatchObject({ format: "file" });
 });
 
+it("classifies a $MFT stream by its FILE record signature, under any name", () => {
+  const mft = Buffer.alloc(2_048);
+  mft.write("FILE", 0, "latin1");
+  for (const path of ["evidence/$MFT", "evidence/mft.raw", "evidence/records"])
+    expect(classifyArtifactBytesAtPath(path, mft)).toEqual({
+      kind: "executable",
+      format: "ntfs-mft",
+    });
+});
+
 it("classifies a FIT by a /images node within the first 4 KiB", () => {
   const images = [{ name: "kernel", data: Buffer.from("kernel") }];
   const late = devicetreeFixture({
