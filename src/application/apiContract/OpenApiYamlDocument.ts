@@ -187,7 +187,11 @@ export const decodeOpenApiYaml = (
     // derived from `pos` through `lineCounter` instead.
     prettyErrors: false,
     // A repeated key cannot express the JSON profile's last-value-wins member.
-    uniqueKeys: true,
+    // The scan below rejects duplicates in linear time over the projected
+    // member names; the parser's own check compares every pair, so enabling it
+    // would run that quadratic scan first and outside the step/cancellation
+    // accounting.
+    uniqueKeys: false,
     lineCounter,
   });
   const duplicate = document.errors.find(
@@ -273,8 +277,14 @@ export const decodeOpenApiYaml = (
       // read a key as a token (`additionalOperations` methods) validate it.
       // Distinct source keys can share one projected member name: `1` and
       // `"1"` both become the property `"1"`, and an alias key can name one a
-      // literal already names. `uniqueKeys` compares source nodes, so it
-      // accepts both and `toJS` keeps only the later value.
+      // literal already names. The scan below rejects both here, in linear
+      // time, before `toJS` would keep only the later value.
+      //
+      // A boolean key is different: no JSON member name carries the source
+      // spelling `TRUE`, and `additionalOperations` would read the projected
+      // `"true"` as a declared HTTP method, so the member would name a
+      // declaration the source never wrote. Numeric keys earn their coercion
+      // from `responses`; boolean keys have no such caller.
       //
       // The name has to match `toJS`'s own projection (`stringifyKey`): a null
       // key becomes the empty member name, not `"null"`, so an unquoted `null`
@@ -304,6 +314,17 @@ export const decodeOpenApiYaml = (
           ),
         );
       const member = scalar.value === null ? "" : String(scalar.value);
+      if (typeof scalar.value === "boolean")
+        return err(
+          invalidDocument(
+            path,
+            `OpenAPI YAML uses a boolean mapping key at line ${String(
+              key.range?.[0] === undefined
+                ? 1
+                : lineCounter.linePos(key.range[0]).line,
+            )}; the JSON profile cannot name that member without losing its source spelling`,
+          ),
+        );
       if (projected.has(member))
         return err(
           duplicateKeyDiagnostic(

@@ -339,8 +339,8 @@ it("keeps collection-valued sequence items and names the selected format in pars
 });
 
 it("refuses keys that only collide after they are projected to member names", async () => {
-  // `uniqueKeys` compares the source nodes, so both spellings of one member
-  // pass it and `toJS` keeps only the later value.
+  // `1` and `"1"` are distinct source nodes, so only the projected member
+  // scan rejects them; `toJS` would keep just the later value.
   const coerced = await importText(
     "coerced.yaml",
     [
@@ -454,6 +454,24 @@ it("refuses numeric keys whose member name would not match the source", async ()
       "numeric mapping key the parser cannot project exactly",
     );
   }
+});
+
+it("refuses boolean mapping keys instead of naming a member the source never wrote", async () => {
+  const forged = await importText(
+    "boolean-key.yaml",
+    [
+      "openapi: 3.2.0",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  /pets:",
+      "    additionalOperations:",
+      "      TRUE: {get: {operationId: inferred}}",
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  // `toJS` would project the boolean to the member "true", which
+  // `additionalOperations` then reads as a declared HTTP method.
+  expect(contractError(forged)).toContain("boolean mapping key");
 });
 
 it("keeps a numeric key the parser projects back to its own token", async () => {
