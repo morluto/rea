@@ -287,8 +287,16 @@ const registerTraceCommand = (
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "trace", () =>
-        runDirectAnalysis(
+      logCliCommand(logger, "trace", () => {
+        if (args.query === undefined && options.query === undefined)
+          throw new AnalysisInputError("trace_feature", undefined, [
+            {
+              path: ["query"],
+              reason: "missing",
+              message: "Provide a query or --query.",
+            },
+          ]);
+        return runDirectAnalysis(
           args.path,
           "trace_feature",
           {
@@ -301,8 +309,8 @@ const registerTraceCommand = (
             case_sensitive: options.caseSensitive,
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        );
+      }),
   });
 };
 
