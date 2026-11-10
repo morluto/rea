@@ -191,6 +191,8 @@ export interface ArtifactReaderLimitFact {
   readonly applies_at: "next_operation";
   readonly agent_editable: true;
   readonly can_increase: boolean;
+  readonly effect: "immediate";
+  /** Compatibility alias of `effect: "immediate"`. */
   readonly rea_restart_required: false;
 }
 

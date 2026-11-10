@@ -148,6 +148,7 @@ it("advertises exact contracts and recovers a full large-index archive over one 
     expect(updated.structuredContent).toMatchObject({
       revision: 1,
       active_work_changed: false,
+      effect: "immediate",
       rea_restart_required: false,
     });
     const recovered = await invoke("inspect_artifact", {});

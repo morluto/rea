@@ -22,6 +22,8 @@ export const debuggerAdmissionDiagnostics = (
   readonly minimum: number;
   readonly maximum: number;
   readonly unit: DebuggerAdmissionLimit["unit"];
+  readonly effect: "next_process";
+  /** Compatibility alias of `effect: "next_process"`. */
   readonly restart_required: true;
 } => ({
   setting: admission.setting,
@@ -31,6 +33,7 @@ export const debuggerAdmissionDiagnostics = (
   minimum: admission.minimum,
   maximum: admission.maximum,
   unit: admission.unit,
+  effect: "next_process",
   restart_required: true,
 });
 

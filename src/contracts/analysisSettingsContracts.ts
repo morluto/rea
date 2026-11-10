@@ -83,6 +83,7 @@ export const updateAnalysisSettingsResultSchema =
       }),
     ),
     active_work_changed: z.literal(false),
+    effect: z.literal("immediate"),
     rea_restart_required: z.literal(false),
   });
 export const ANALYSIS_SETTINGS_TOOL_CONTRACTS = [
