@@ -7,6 +7,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AdbOperation } from "../domain/adb/adbDeviceAnalysis.js";
+import { IDENTIFIER_PATTERN } from "../domain/stringPatterns.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -332,17 +333,37 @@ export const registerAdbCommands = (
       "Start an intent with am start (action, URI, component, extras)",
     args: z.object({
       serial,
-      action: z.string().min(1).describe("Intent action to start"),
+      action: z
+        .string()
+        .min(1)
+        .max(256)
+        .regex(IDENTIFIER_PATTERN)
+        .describe("Dotted intent action to start"),
     }),
     options: z.object({
-      "data-uri": z.string().min(1).optional().describe("Intent data URI (-d)"),
+      "data-uri": z
+        .string()
+        .min(1)
+        .max(2048)
+        .regex(/^[^\x00\s]+$/u)
+        .optional()
+        .describe("Intent data URI (-d)"),
       component: z
         .string()
         .min(1)
+        .max(512)
+        .regex(/^[A-Za-z0-9._\x2d]+(\/[A-Za-z0-9._\x2d]*)?$/u)
         .optional()
         .describe("Explicit component in package/activity form (-n)"),
       extra: z
-        .array(z.string().min(1))
+        .array(
+          z
+            .string()
+            .min(1)
+            .max(6144)
+            .regex(/^[^\x00]*$/u),
+        )
+        .max(16)
         .default([])
         .describe(
           "Typed extra as type:key:value (string, boolean, int, long, float), repeatable",
@@ -356,11 +377,7 @@ export const registerAdbCommands = (
           throw new Error(`--extra expects type:key:value, received: ${entry}`);
         return {
           type: entry.slice(0, first) as
-            | "string"
-            | "boolean"
-            | "int"
-            | "long"
-            | "float",
+            "string" | "boolean" | "int" | "long" | "float",
           key: entry.slice(first + 1, second),
           value: entry.slice(second + 1),
         };
