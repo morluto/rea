@@ -640,7 +640,16 @@ export const createDarwinProcessRunTokenReader = (
       signal?.throwIfAborted();
       if (executable !== undefined) return executable;
       if (compilation === undefined && root !== undefined) {
-        await cleanupRoot();
+        try {
+          await cleanupRoot();
+        } catch (cause: unknown) {
+          if (!(cause instanceof ProviderCleanupError)) throw cause;
+          throw new DarwinProcessOwnershipInspectionError(
+            "The Darwin ownership helper root remains owned until removal succeeds.",
+          ).withCleanupFailure(cause, {
+            close: () => cleanupRoot(),
+          });
+        }
         continue;
       }
       let operation = compilation;

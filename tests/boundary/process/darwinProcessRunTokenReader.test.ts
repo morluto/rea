@@ -1417,6 +1417,16 @@ it.skipIf(!onDarwin)(
         effectiveUidComesFromNativeIdentity: true,
         nativeRelationIsSeparateFromIdentity: true,
         nativeNameIsSeparateFromIdentity: true,
+        bracketRetryUsesSuccessfulSnapshot: true,
+        bracketRetryReportsTheLatestFailure: true,
+        successfulBracketSnapshotIsNotReread: true,
+        failedOpeningSnapshotIsNotAbsence: true,
+        failedConfirmingSnapshotStaysUnavailable: true,
+        replacementConfirmingSnapshotKeepsToken: true,
+        matchingIdentitiesKeepTheToken: true,
+        changedIdentityWithholdsTheToken: true,
+        successfulSnapshotsMissingPidIsAbsence: true,
+        departedPidIsAbsence: true,
       });
     } finally {
       await rm(root, { recursive: true, force: true });
