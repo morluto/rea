@@ -90,6 +90,9 @@ const parameters = (
   input: AnalyzeJavaScriptApplicationInput,
 ): EvidenceObservation["parameters"] => ({
   input_path: input.input_path,
+  ...(input.semantic_precision === undefined
+    ? {}
+    : { semantic_precision: input.semantic_precision }),
   format: input.format,
   integrity_policy: input.integrity_policy,
   ...(input.max_semantic_nodes === undefined

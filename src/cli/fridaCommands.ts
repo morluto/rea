@@ -1,3 +1,4 @@
+import { fridaCapturePolicyInputSchema } from "../domain/fridaCapturePolicy.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
@@ -176,6 +177,23 @@ export const registerFridaCommands = (
           .array(z.string())
           .optional()
           .describe("Arguments passed to a spawned target"),
+        captureSessionBytes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.session_bytes,
+        ).describe(
+          "Session retention bytes including encoded payloads; select before starting the experiment",
+        ),
+        captureMessageTextBytes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.message_text_bytes,
+        ).describe("Retained bytes per Frida error text field"),
+        captureMessageTypeBytes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.message_type_bytes,
+        ).describe("Retained bytes per Frida message type"),
+        captureJsonNodes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.json_nodes,
+        ).describe("Retained JSON nodes per Frida payload"),
+        captureJsonDepth: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.json_depth,
+        ).describe("Retained JSON nesting depth per Frida payload"),
         durationMs: cliDecimalField(
           z
             .number()
@@ -274,6 +292,39 @@ export const registerFridaCommands = (
               const result = await service.instrument(
                 {
                   ...targetInput,
+                  ...([
+                    options.captureSessionBytes,
+                    options.captureMessageTextBytes,
+                    options.captureMessageTypeBytes,
+                    options.captureJsonNodes,
+                    options.captureJsonDepth,
+                  ].every((value) => value === undefined)
+                    ? {}
+                    : {
+                        captureLimits: {
+                          ...(options.captureSessionBytes === undefined
+                            ? {}
+                            : { session_bytes: options.captureSessionBytes }),
+                          ...(options.captureMessageTextBytes === undefined
+                            ? {}
+                            : {
+                                message_text_bytes:
+                                  options.captureMessageTextBytes,
+                              }),
+                          ...(options.captureMessageTypeBytes === undefined
+                            ? {}
+                            : {
+                                message_type_bytes:
+                                  options.captureMessageTypeBytes,
+                              }),
+                          ...(options.captureJsonNodes === undefined
+                            ? {}
+                            : { json_nodes: options.captureJsonNodes }),
+                          ...(options.captureJsonDepth === undefined
+                            ? {}
+                            : { json_depth: options.captureJsonDepth }),
+                        },
+                      }),
                   source:
                     options.scriptFile === undefined
                       ? { sourceKind: "inline", source: options.script ?? "" }

@@ -1,10 +1,8 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { createHash } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type WebNetworkCaptureRecord,
-} from "../../domain/webNetworkCapture.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 
@@ -27,10 +25,10 @@ export const projectSazRecord = (
     depth: number,
     parent?: Readonly<Record<string, SazValue>>,
   ): JsonValue => {
-    if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
         "input-limit",
-        "SAZ projection exceeds the complete-evidence nesting budget. This release has no runtime override.",
+        `SAZ projection exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
     if (parent !== undefined && redactor.harCredential(pointer, parent))
