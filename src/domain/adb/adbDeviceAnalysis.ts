@@ -54,11 +54,29 @@ const keyPattern = /^[A-Za-z0-9._\x2d]+$/u;
 const activityExtraKeySchema = keyStringSchema
   .regex(keyPattern, "Extra keys are identifiers")
   .describe("Extra key");
+const MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH = 2048;
 const activityExtraStringValueSchema = z
   .string()
-  .max(2048)
+  .max(MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH)
   .regex(/^[^\x00]*$/u, "Extra values cannot contain NUL");
 const activityExtraNonEmptyValueSchema = activityExtraStringValueSchema.min(1);
+/** Check Java int/long range without rounding or changing the caller's text. */
+const javaDecimalExtraValueSchema = (bits: 32 | 64) => {
+  const upperBound = 1n << BigInt(bits - 1);
+  const range = `signed ${String(bits)}-bit`;
+  return z
+    .string()
+    .max(MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH, { abort: true })
+    .regex(/^-?\d+$/u, {
+      message: "Integer extra values must be signed decimal text",
+      abort: true,
+    })
+    .refine((value) => {
+      const decimal = BigInt(value);
+      return decimal >= -upperBound && decimal < upperBound;
+    }, `Integer extra value is outside the ${range} range`)
+    .describe(`Integer extra value as ${range} decimal text`);
+};
 /** Maximum typed extras admitted for one Android activity request. */
 export const MAX_ADB_ACTIVITY_EXTRAS = 16;
 // Android's `am start --ef` parses this text with Float.valueOf. Keep the
@@ -83,16 +101,12 @@ const activityExtraSchema = z.discriminatedUnion("type", [
   z.strictObject({
     key: activityExtraKeySchema,
     type: z.literal("int").describe("Integer extra value type"),
-    value: activityExtraNonEmptyValueSchema
-      .regex(/^-?\d+$/u, "Integer extra values must be an integer")
-      .describe("Integer extra value as signed decimal text"),
+    value: javaDecimalExtraValueSchema(32),
   }),
   z.strictObject({
     key: activityExtraKeySchema,
     type: z.literal("long").describe("Long extra value type"),
-    value: activityExtraNonEmptyValueSchema
-      .regex(/^-?\d+$/u, "Long extra values must be an integer")
-      .describe("Long extra value as signed decimal text"),
+    value: javaDecimalExtraValueSchema(64),
   }),
   z.strictObject({
     key: activityExtraKeySchema,
@@ -330,7 +344,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(512)
       .regex(
-        /^[A-Za-z0-9._\x2d]+(?:\/[A-Za-z0-9._$\x2d]*)?$/u,
+        /^[A-Za-z0-9._\x2d]+\/[A-Za-z0-9._$\x2d]+$/u,
         "Component must be package/activity form",
       )
       .optional()
