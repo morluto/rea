@@ -350,6 +350,7 @@
 * **certificates:** disclose undecoded unsigned attributes ([#7920](https://github.com/morluto/rea/issues/7920)) ([33d6975](https://github.com/morluto/rea/commit/33d697574928fa8ce225b094fea69a791ba4ee18))
 * **certificates:** unify OID decoding and validate reports ([79b8219](https://github.com/morluto/rea/commit/79b8219f290ef6304e469d9b8c40dc2af30edba9))
 * **changed-behavior:** withhold equality for unknowns and contradictions ([#7624](https://github.com/morluto/rea/issues/7624)) ([e109431](https://github.com/morluto/rea/commit/e1094313f504a2ed3611b3c18d31120bc4fe847b)), closes [#7384](https://github.com/morluto/rea/issues/7384) [#7383](https://github.com/morluto/rea/issues/7383)
+* **ci:** align desktop assertions and calibration entry points ([433fd94](https://github.com/morluto/rea/commit/433fd9486dbcd58dd1308ac435849e5ff97b701c))
 * **ci:** align static checks and regression fixtures with current contracts ([#7349](https://github.com/morluto/rea/issues/7349)) ([1201c25](https://github.com/morluto/rea/commit/1201c25542bc1e6233265fb220b334f81886550c))
 * **ci:** align tests with current evidence contracts ([ec34109](https://github.com/morluto/rea/commit/ec3410998b70290847f930538e57d0af0ac1bffb))
 * **ci:** await website worker tests and format Wrangler config ([9ebbe67](https://github.com/morluto/rea/commit/9ebbe67e05af08b567e215340da993c08dae378f))
