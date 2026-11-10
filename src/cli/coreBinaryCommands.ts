@@ -238,8 +238,16 @@ const registerXrefsCommand = (
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "xrefs", () =>
-        runDirectAnalysis(
+      logCliCommand(logger, "xrefs", () => {
+        if (args.address === undefined && options.address === undefined)
+          throw new AnalysisInputError("xrefs", undefined, [
+            {
+              path: ["address"],
+              reason: "missing",
+              message: "Provide an address or --address.",
+            },
+          ]);
+        return runDirectAnalysis(
           args.path,
           "xrefs",
           {
@@ -251,8 +259,8 @@ const registerXrefsCommand = (
             ),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        );
+      }),
   });
 };
 
