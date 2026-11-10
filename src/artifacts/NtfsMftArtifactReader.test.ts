@@ -3,7 +3,17 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { MFT_DEFAULT_RECORD_BYTES } from "../domain/windows/ntfsMft.js";
+import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  MFT_DEFAULT_RECORD_BYTES,
+  MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+  NTFS_MFT_FILE_LIMIT_CODE,
+  NTFS_MFT_MAX_FILE_SETTING,
+  ntfsMftFileLimit,
+  ntfsMftFileLimitMessage,
+} from "../domain/windows/ntfsMft.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -63,6 +73,58 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
       truncated_tail_bytes: 0,
     },
   });
+});
+
+it("reports the configured file ceiling as a structured limit", async () => {
+  const admission = {
+    maximumBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+    source: "setting" as const,
+  };
+  const fileBytes = recordBytes({}).length;
+  const fileLimit = ntfsMftFileLimit(fileBytes, admission);
+  let failure: unknown;
+  try {
+    await scanCanonicalArtifactInventory(
+      await writeMft("$MFT", recordBytes({})),
+      {
+        environment: {
+          [NTFS_MFT_MAX_FILE_SETTING]: String(MINIMUM_NTFS_MFT_MAX_FILE_BYTES),
+        },
+      },
+    );
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("inventory failure was not an artifact reader failure");
+  expect(failure.admission).toEqual({
+    kind: "ntfs-mft-file",
+    maximumBytes: admission.maximumBytes,
+    source: admission.source,
+    fileLimit,
+  });
+  expect(
+    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+  ).toEqual(
+    expect.objectContaining({
+      code: "truncated",
+      message: ntfsMftFileLimitMessage(fileLimit),
+      remediation: { action: ntfsMftFileLimitMessage(fileLimit) },
+      details: expect.objectContaining({
+        reason: "limit",
+        boundary: "file-size",
+        admission: "ntfs-mft-file",
+        file_limit_code: NTFS_MFT_FILE_LIMIT_CODE,
+        setting: NTFS_MFT_MAX_FILE_SETTING,
+        file_bytes: fileBytes,
+        maximum_bytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+        maximum_bytes_source: "setting",
+        floor_bytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+        restart_required: true,
+      }),
+    }),
+  );
 });
 
 it("names a failed fixup in the coverage limitations", async () => {

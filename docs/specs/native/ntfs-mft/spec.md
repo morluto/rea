@@ -27,8 +27,12 @@ its own.
   rather than as a clean record, and a trailing partial record as a byte count.
 - Stop at the first record that does not begin with the `FILE` signature and
   name its offset, rather than guessing at the remaining bytes.
-- Bound the whole file at a fixed 512 MiB ceiling and report the ceiling as a
-  `limit` failure with its boundary.
+- Bound the whole file by `REA_NTFS_MFT_MAX_FILE_BYTES` (default 512 MiB,
+  floor 48 bytes, maximum 8 GiB). A file above the effective ceiling is a
+  `limit` failure with boundary `file-size` and code `ntfs_mft_file_size`.
+  The failure names the setting, the effective value, whether it came from
+  the default or the setting, and the allowed range, and says to restart REA
+  after changing the setting. There is no runtime override.
 - Parse only the records' headers and fixups. Attributes, filenames, data
   streams and the `$UsnJrnl:$J` journal are not decoded in this step, so no path,
   file size, file reference correlation or change history is claimed.

@@ -1,6 +1,7 @@
 import { err, ok, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,
+  RegionFileAdmissionLimit,
   RegionDecoder,
 } from "../firmware/regionDecoder.js";
 
@@ -29,11 +30,61 @@ const USA_MIN_ENTRIES = 2;
 /** NTFS fixes up one 512-byte sector at a time. */
 const FIXUP_SECTOR_BYTES = 512;
 /**
- * Fixed whole-file ceiling. Records are inventoried from their headers only;
- * attributes and their payloads are not decoded, so this is deliberately
- * smaller than a volume's MFT can be.
+ * Whole-file ceiling used when `REA_NTFS_MFT_MAX_FILE_BYTES` is unset.
+ * Headers and fixups are inventoried without attribute payloads, so the
+ * default stays below a volume-sized MFT until an operator raises it.
  */
-export const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
+export const NTFS_MFT_MAX_FILE_SETTING = "REA_NTFS_MFT_MAX_FILE_BYTES";
+export const DEFAULT_NTFS_MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
+/** A lower ceiling cannot admit one FILE record header. */
+export const MINIMUM_NTFS_MFT_MAX_FILE_BYTES = NTFS_MFT_MIN_RECORD_BYTES;
+/**
+ * Largest configurable whole-file admission. The reader copies the admitted
+ * file into one buffer. 8 GiB is an REA policy ceiling, not a measurement of
+ * host memory.
+ */
+export const MAXIMUM_NTFS_MFT_MAX_FILE_BYTES = 8 * 1024 * 1024 * 1024;
+
+/** Effective whole-file ceiling and whether it came from the default or the setting. */
+export interface NtfsMftFileAdmission {
+  readonly maximumBytes: number;
+  readonly source: "default" | "setting";
+}
+
+export const NTFS_MFT_FILE_LIMIT_CODE = "ntfs_mft_file_size";
+
+/** Structured refusal when a file is outside the effective whole-file ceiling. */
+export interface NtfsMftFileLimit extends RegionFileAdmissionLimit {
+  readonly code: typeof NTFS_MFT_FILE_LIMIT_CODE;
+  readonly setting: typeof NTFS_MFT_MAX_FILE_SETTING;
+  readonly restartRequired: true;
+}
+
+export const ntfsMftFileLimit = (
+  fileBytes: number,
+  admission: NtfsMftFileAdmission,
+): NtfsMftFileLimit => ({
+  code: NTFS_MFT_FILE_LIMIT_CODE,
+  setting: NTFS_MFT_MAX_FILE_SETTING,
+  fileBytes: Number.isSafeInteger(fileBytes) ? fileBytes : null,
+  maximumBytes: admission.maximumBytes,
+  source: admission.source,
+  defaultBytes: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
+  floorBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+  maximumSettingBytes: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
+  restartRequired: true,
+});
+
+/** Name the effective ceiling, its source, the allowed range, and the required restart. */
+export const ntfsMftFileLimitMessage = (limit: NtfsMftFileLimit): string =>
+  [
+    `The effective ${limit.setting} value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(limit.defaultBytes)} bytes, floor ${String(limit.floorBytes)} bytes, maximum ${String(limit.maximumSettingBytes)} bytes).`,
+    limit.fileBytes === null
+      ? "The supplied length is not a safe integer."
+      : `The file is ${String(limit.fileBytes)} bytes.`,
+    `Set ${limit.setting} in the environment that starts REA to a positive decimal integer from ${String(limit.floorBytes)} to ${String(limit.maximumSettingBytes)}, then restart REA.`,
+    "There is no runtime override.",
+  ].join(" ");
 
 /** FILE record header fields; offsets are from the record start. */
 const RECORD_HEADER = {
@@ -137,10 +188,12 @@ const failure = (
 const limit = (
   message: string,
   boundary?: RegionDecodeFailure["boundary"],
+  fileAdmission?: RegionDecodeFailure["fileAdmission"],
 ): RegionDecodeFailure => ({
   kind: "limit",
   message,
   ...(boundary === undefined ? {} : { boundary }),
+  ...(fileAdmission === undefined ? {} : { fileAdmission }),
 });
 
 const namesOf = (raw: number): readonly string[] => {
@@ -373,14 +426,17 @@ class StreamingMftDecoder implements RegionDecoder<MftImage> {
 
 export const createMftDecoder = (
   fileBytes: number,
-): Result<RegionDecoder<MftImage>, RegionDecodeFailure> =>
-  Number.isSafeInteger(fileBytes) &&
-  fileBytes >= 0 &&
-  fileBytes <= MFT_MAX_FILE_BYTES
-    ? ok(new StreamingMftDecoder(fileBytes))
-    : err(
-        limit(
-          `file is ${String(fileBytes)} bytes, exceeding the fixed ${String(MFT_MAX_FILE_BYTES)}-byte (512 MiB) ceiling`,
-          "file-size",
-        ),
-      );
+  admission: NtfsMftFileAdmission = {
+    maximumBytes: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
+    source: "default",
+  },
+): Result<RegionDecoder<MftImage>, RegionDecodeFailure> => {
+  if (
+    Number.isSafeInteger(fileBytes) &&
+    fileBytes >= 0 &&
+    fileBytes <= admission.maximumBytes
+  )
+    return ok(new StreamingMftDecoder(fileBytes));
+  const fileLimit = ntfsMftFileLimit(fileBytes, admission);
+  return err(limit(ntfsMftFileLimitMessage(fileLimit), "file-size", fileLimit));
+};

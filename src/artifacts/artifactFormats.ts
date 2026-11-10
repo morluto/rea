@@ -470,9 +470,9 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "MFT inventory reports each FILE record's header, flags, record extent and update-sequence fixup result. Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
+      "MFT inventory reports each FILE record's header, flags, record extent and update-sequence fixup result. The whole file is bounded by REA_NTFS_MFT_MAX_FILE_BYTES (default 512 MiB; restart REA after changing it). Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
     createReader: (path, options) =>
-      new NtfsMftArtifactReader(path, sourceOf(options)),
+      new NtfsMftArtifactReader(path, sourceOf(options), options.environment),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

@@ -39,7 +39,10 @@ export const translateArtifactFailure = (
           : { readerLimit: cause.readerLimit }),
       },
     );
-    if (cause.admission !== undefined)
+    if (
+      cause.admission?.kind === "asar-header" ||
+      cause.admission?.kind === "asar-listing"
+    )
       error.bindLimit({
         ...analysisSettingLimit(
           cause.admission.kind === "asar-header"

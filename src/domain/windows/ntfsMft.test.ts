@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
+  MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
   MFT_DEFAULT_RECORD_BYTES,
-  MFT_MAX_FILE_BYTES,
+  MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+  NTFS_MFT_FILE_LIMIT_CODE,
+  NTFS_MFT_MAX_FILE_SETTING,
   createMftDecoder,
+  ntfsMftFileLimit,
+  ntfsMftFileLimitMessage,
   parseMftImage,
 } from "./ntfsMft.js";
 
@@ -252,14 +258,55 @@ describe("parseMftImage refusals and limits", () => {
     );
   });
 
-  it("refuses a file above the fixed ceiling", () => {
-    const decoder = createMftDecoder(MFT_MAX_FILE_BYTES + 1);
+  it("refuses a file above the effective ceiling and names the setting", () => {
+    const fileBytes = DEFAULT_NTFS_MFT_MAX_FILE_BYTES + 1;
+    const fileLimit = ntfsMftFileLimit(fileBytes, {
+      maximumBytes: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
+      source: "default",
+    });
+    const decoder = createMftDecoder(fileBytes);
     expect(decoder.ok).toBe(false);
     if (decoder.ok) return;
-    expect(decoder.error).toMatchObject({
+    expect(decoder.error).toEqual({
       kind: "limit",
       boundary: "file-size",
+      message: ntfsMftFileLimitMessage(fileLimit),
+      fileAdmission: fileLimit,
     });
+    expect(fileLimit).toEqual({
+      code: NTFS_MFT_FILE_LIMIT_CODE,
+      setting: NTFS_MFT_MAX_FILE_SETTING,
+      fileBytes,
+      maximumBytes: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
+      source: "default",
+      defaultBytes: DEFAULT_NTFS_MFT_MAX_FILE_BYTES,
+      floorBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      maximumSettingBytes: MAXIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      restartRequired: true,
+    });
+  });
+
+  it("uses a caller-selected ceiling instead of the default", () => {
+    const admission = {
+      maximumBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      source: "setting" as const,
+    };
+    const refused = createMftDecoder(
+      MINIMUM_NTFS_MFT_MAX_FILE_BYTES + 1,
+      admission,
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error.fileAdmission).toMatchObject({
+      code: NTFS_MFT_FILE_LIMIT_CODE,
+      setting: NTFS_MFT_MAX_FILE_SETTING,
+      maximumBytes: MINIMUM_NTFS_MFT_MAX_FILE_BYTES,
+      source: "setting",
+      restartRequired: true,
+    });
+    expect(
+      createMftDecoder(MINIMUM_NTFS_MFT_MAX_FILE_BYTES, admission).ok,
+    ).toBe(true);
   });
 
   it("decodes the same stream through the chunked decoder", () => {

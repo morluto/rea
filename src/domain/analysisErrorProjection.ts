@@ -806,20 +806,34 @@ const artifactStateErrorDetails = (
         : { reader_limit: { ...error.readerLimit } }),
       ...(error.admission === undefined
         ? {}
-        : {
-            admission: error.admission.kind,
-            ...(error.admission.kind === "asar-header"
-              ? {
-                  maximum_header_bytes: error.admission.maximumBytes,
-                  maximum_header_bytes_source: error.admission.source,
-                  setting: "REA_ASAR_MAX_HEADER_BYTES",
-                }
-              : {
-                  maximum_listing_bytes: error.admission.maximumBytes,
-                  maximum_listing_bytes_source: error.admission.source,
-                  setting: "REA_ASAR_MAX_LISTING_BYTES",
-                }),
-          }),
+        : error.admission.kind === "ntfs-mft-file"
+          ? {
+              admission: error.admission.kind,
+              file_limit_code: error.admission.fileLimit.code,
+              setting: error.admission.fileLimit.setting,
+              file_bytes: error.admission.fileLimit.fileBytes,
+              maximum_bytes: error.admission.maximumBytes,
+              maximum_bytes_source: error.admission.source,
+              default_bytes: error.admission.fileLimit.defaultBytes,
+              floor_bytes: error.admission.fileLimit.floorBytes,
+              maximum_setting_bytes:
+                error.admission.fileLimit.maximumSettingBytes,
+              restart_required: error.admission.fileLimit.restartRequired,
+            }
+          : {
+              admission: error.admission.kind,
+              ...(error.admission.kind === "asar-header"
+                ? {
+                    maximum_header_bytes: error.admission.maximumBytes,
+                    maximum_header_bytes_source: error.admission.source,
+                    setting: "REA_ASAR_MAX_HEADER_BYTES",
+                  }
+                : {
+                    maximum_listing_bytes: error.admission.maximumBytes,
+                    maximum_listing_bytes_source: error.admission.source,
+                    setting: "REA_ASAR_MAX_LISTING_BYTES",
+                  }),
+            }),
     };
   if (error instanceof UnknownRegistryError)
     return {

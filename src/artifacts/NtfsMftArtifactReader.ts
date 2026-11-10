@@ -2,7 +2,13 @@ import type { Readable } from "node:stream";
 
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
-import { createMftDecoder, type MftImage } from "../domain/windows/ntfsMft.js";
+import { parseNtfsMftFileAdmission } from "../config/ntfsMftFileAdmission.js";
+import {
+  createMftDecoder,
+  NTFS_MFT_MAX_FILE_SETTING,
+  type MftImage,
+  type NtfsMftFileAdmission,
+} from "../domain/windows/ntfsMft.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -25,13 +31,23 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   readonly format = "ntfs-mft" as const;
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
+  readonly #admission: NtfsMftFileAdmission;
   #prepared: Promise<void> | undefined;
   #metadata: ArtifactFormatMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    environment: Readonly<Record<string, string | undefined>> = {},
+  ) {
     this.#source = new ArtifactFileSource(path, "$MFT stream", admitted);
+    const parsed = parseNtfsMftFileAdmission(
+      environment[NTFS_MFT_MAX_FILE_SETTING],
+    );
+    if (!parsed.ok) throw parsed.error;
+    this.#admission = parsed.value;
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {
@@ -100,7 +116,7 @@ export class NtfsMftArtifactReader implements ArtifactReader {
 
   async #decode(signal?: AbortSignal): Promise<MftImage> {
     const { handle, initial } = await this.#source.read(signal);
-    const decoder = createMftDecoder(initial.size);
+    const decoder = createMftDecoder(initial.size, this.#admission);
     if (!decoder.ok) throw this.#failure(decoder.error);
     if (initial.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {
@@ -121,16 +137,25 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
-          `$MFT stream is malformed: ${failure.message}`,
-        )
-      : new ArtifactReaderFailure(
-          "limit",
-          `$MFT stream exceeds a fixed limit: ${failure.message}`,
-          failure.boundary === undefined ? {} : { boundary: failure.boundary },
-        );
+    if (failure.kind === "format")
+      return new ArtifactReaderFailure(
+        "format",
+        `$MFT stream is malformed: ${failure.message}`,
+      );
+    const fileLimit = failure.fileAdmission;
+    return new ArtifactReaderFailure("limit", failure.message, {
+      ...(failure.boundary === undefined ? {} : { boundary: failure.boundary }),
+      ...(fileLimit === undefined
+        ? {}
+        : {
+            admission: {
+              kind: "ntfs-mft-file",
+              maximumBytes: fileLimit.maximumBytes,
+              source: fileLimit.source,
+              fileLimit,
+            },
+          }),
+    });
   }
 }
 

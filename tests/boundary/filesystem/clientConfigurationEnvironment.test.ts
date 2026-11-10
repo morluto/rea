@@ -872,6 +872,11 @@ it.each([
     "REA_GHIDRA_COMPILER_SPEC_ID",
   ],
   [
+    "NTFS $MFT file ceiling below its floor",
+    { REA_NTFS_MFT_MAX_FILE_BYTES: "47" },
+    "REA_NTFS_MFT_MAX_FILE_BYTES",
+  ],
+  [
     "Windows ChangeTime drift window of zero",
     { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "0" },
     "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
