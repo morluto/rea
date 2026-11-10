@@ -7,7 +7,11 @@ export const BUILTIN_RESOURCE_METHODS = {
 } as const;
 
 /**
- * Release methods the value Node returns from each acquisition actually has.
+ * Release methods the resource handle from each acquisition actually has.
+ *
+ * `fs/promises.open` returns a Promise; the resource owner admits FileHandle
+ * methods when receiver writes can supply its fulfilled value, retaining
+ * ambiguity and the existing qualifier for conditional built-in identity.
  *
  * `fs.openSync` returns a numeric descriptor and `fs.open` in its callback form
  * returns `undefined`, so neither has a release method at all; the descriptor is

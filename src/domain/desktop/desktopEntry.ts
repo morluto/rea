@@ -93,11 +93,18 @@ export const parseDesktopEntry = (
       found ||= group === "Desktop Entry";
       continue;
     }
-    const entry = ENTRY.exec(line);
+    // Full-line trimming is syntax-only: string-value suffixes are data.
+    const entry = ENTRY.exec(raw.trimStart());
     if (group !== "Desktop Entry" || entry?.groups === undefined) continue;
     const { key, value } = entry.groups;
     if (key !== undefined && value !== undefined && !values.has(key))
-      values.set(key, unescapeValue(value));
+      // Keep the existing enum/boolean token treatment before value unescaping.
+      values.set(
+        key,
+        unescapeValue(
+          key === "Type" || key === "Terminal" ? value.trimEnd() : value,
+        ),
+      );
   }
   if (!found) return err("missing_desktop_entry_group");
   const field = (key: string) => values.get(key) ?? null;
@@ -342,4 +349,24 @@ export const unwrapDesktopCommand = (
       application_id: flatpakApplicationId(argv.slice(index + 2)),
     };
   return { kind: "direct", program, environment, index };
+};
+
+/** The first argument after an `env` prefix, the program, and a `flatpak run` id. */
+export const desktopArgumentIndex = (argv: readonly string[]): number => {
+  const command = unwrapDesktopCommand(argv);
+  if (command.kind === "direct") return command.index + 1;
+  let index = 0;
+  if (argv[0]?.split("/").at(-1) === "env") {
+    index = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) index += 1;
+  }
+  index += 1;
+  if (argv[index] === "run") index += 1;
+  for (; index < argv.length; index += 1) {
+    const token = argv[index] ?? "";
+    if (token === "--") return Math.min(index + 2, argv.length);
+    if (!token.startsWith("-")) return index + 1;
+    if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
+  }
+  return argv.length;
 };

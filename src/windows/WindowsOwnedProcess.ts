@@ -66,6 +66,119 @@ export class WindowsNativeControlUnavailableError extends RuntimeControlUnavaila
   }
 }
 
+const WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS = new Set([
+  "Create process atomically inside owned Job Object failed",
+  "Owned Windows process requires an absolute executable path",
+]);
+
+const WINDOWS_CONTROL_SPAWN_CONSTRAINTS = [
+  "Wrong native process launch argument count",
+  "Job memory limit must be a positive safe integer",
+  "Job memory limit must be a whole number of pages",
+  "Create owned Job Object failed",
+  "Apply kill-on-owner-close Job Object policy failed",
+  "Read Job Object policy failed",
+  "Job Object policy permits unexpected breakaway",
+  "Job Object memory limit was not applied exactly",
+  "Create owned Job Object notification port failed",
+  "Associate owned Job Object notification port failed",
+  "Create owned process output pipe failed",
+  "Protect parent process pipe handle inheritance failed",
+  "Open owned process null input failed",
+  "Initialize process attributes failed",
+  "Windows atomic process attribute is unavailable",
+  "Invalid child environment name",
+  "Empty child environment entry",
+  "Compare Windows environment names failed",
+  "Open suspended process default-owner token failed",
+  "Read suspended process user identity failed",
+  "Set suspended process file owner failed",
+  "Read caller process affinity failed",
+  "Preserve caller process affinity failed",
+  "Caller CPU affinity cannot bound an owned process in another processor group",
+  "Preserve caller process priority failed",
+  "Suspended process has no owned Job Object membership",
+  "Resume job-owned process failed",
+] as const;
+
+const WINDOWS_SPAWN_CONTROL_REMEDIATION =
+  "Inspect the preserved Windows native process launch control error. Ensure the host permits owned Job Object assignment, token normalization, pipe inheritance, and caller CPU affinity/priority preservation across processor groups, then retry.";
+
+/** A required host or Job Object control was rejected during native process_spawn. */
+export class WindowsNativeSpawnControlError extends RuntimeControlUnavailableError {
+  readonly code = "windows-native-spawn-control-unavailable";
+  readonly constraint: string | undefined;
+  readonly win32Code: number | undefined;
+
+  constructor(cause: unknown, message?: string) {
+    const constraint =
+      cause instanceof Error &&
+      typeof Reflect.get(cause, "constraint") === "string"
+        ? Reflect.get(cause, "constraint")
+        : undefined;
+    const win32Code =
+      cause instanceof Error &&
+      typeof Reflect.get(cause, "win32Code") === "number"
+        ? Reflect.get(cause, "win32Code")
+        : undefined;
+    super(message ?? (cause instanceof Error ? cause.message : String(cause)), {
+      cause,
+      retryable: true,
+      remediationAction: WINDOWS_SPAWN_CONTROL_REMEDIATION,
+    });
+    this.name = "WindowsNativeSpawnControlError";
+    this.constraint = constraint;
+    this.win32Code = win32Code;
+  }
+}
+
+/** Distinguish target executable launch failures from native host-control rejections in process_spawn. */
+export const isWindowsExecutableLaunchFailure = (cause: unknown): boolean => {
+  if (!(cause instanceof Error)) return false;
+  const constraint = Reflect.get(cause, "constraint");
+  if (typeof constraint === "string" && constraint.length > 0) {
+    return WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS.has(constraint);
+  }
+  if (
+    [...WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS].some((prefix) =>
+      cause.message.startsWith(prefix),
+    )
+  ) {
+    return true;
+  }
+  if (
+    WINDOWS_CONTROL_SPAWN_CONSTRAINTS.some((prefix) =>
+      cause.message.startsWith(prefix),
+    )
+  ) {
+    return false;
+  }
+  const code = Reflect.get(cause, "code");
+  return typeof code === "string" && code !== "ERR_REA_WINDOWS_NATIVE";
+};
+
+/** Wrap a raw native process_spawn host-control rejection as a RuntimeControlUnavailableError. */
+export const windowsNativeSpawnControlError = (
+  cause: unknown,
+): WindowsNativeSpawnControlError | undefined => {
+  if (cause instanceof WindowsNativeSpawnControlError) return cause;
+  if (!(cause instanceof Error)) return undefined;
+  const constraint = Reflect.get(cause, "constraint");
+  if (typeof constraint === "string" && constraint.length > 0) {
+    return WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS.has(constraint)
+      ? undefined
+      : new WindowsNativeSpawnControlError(cause);
+  }
+  if (
+    WINDOWS_CONTROL_SPAWN_CONSTRAINTS.some((prefix) =>
+      cause.message.startsWith(prefix),
+    )
+  ) {
+    return new WindowsNativeSpawnControlError(cause);
+  }
+  return undefined;
+};
+
 /** Encode one ordinary Windows argv token using the CRT backslash rules. */
 export const quoteWindowsProcessArgument = (value: string): string => {
   if (value.includes("\0"))
@@ -141,19 +254,35 @@ export class WindowsOwnedProcess extends EventEmitter {
     let controls: unknown[] = protocolStdin ? [true] : [];
     if (this.#memoryLimitBytes !== undefined)
       controls = [protocolStdin, this.#memoryLimitBytes];
-    const spawned = this.#authority.call("process_spawn", [
-      command,
-      line,
-      cwd ?? "",
-      entries,
-      ...controls,
-    ]);
-    const launched =
-      this.#memoryLimitBytes === undefined
-        ? launchSchema.parse(spawned)
-        : launchSchema
-            .extend({ jobMemoryLimitBytes: z.literal(this.#memoryLimitBytes) })
-            .parse(spawned);
+    let spawned: unknown;
+    try {
+      spawned = this.#authority.call("process_spawn", [
+        command,
+        line,
+        cwd ?? "",
+        entries,
+        ...controls,
+      ]);
+    } catch (cause: unknown) {
+      if (isWindowsExecutableLaunchFailure(cause)) throw cause;
+      throw new WindowsNativeSpawnControlError(cause);
+    }
+    let launched: z.infer<typeof launchSchema>;
+    try {
+      launched =
+        this.#memoryLimitBytes === undefined
+          ? launchSchema.parse(spawned)
+          : launchSchema
+              .extend({
+                jobMemoryLimitBytes: z.literal(this.#memoryLimitBytes),
+              })
+              .parse(spawned);
+    } catch (cause: unknown) {
+      throw new WindowsNativeSpawnControlError(
+        cause,
+        "Windows native process launch did not confirm required Job Object controls.",
+      );
+    }
     this.pid = launched.pid;
     this.#handle = launched.handle;
     this.stdin = protocolStdin
