@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { isAbsolute } from "node:path";
 
 const localPath = z
   .string()
