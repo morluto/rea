@@ -152,8 +152,16 @@ const registerDecompileCommand = (
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "decompile", () =>
-        runDirectAnalysis(
+      logCliCommand(logger, "decompile", () => {
+        if (args.address === undefined && options.procedure === undefined)
+          throw new AnalysisInputError("procedure_pseudo_code", undefined, [
+            {
+              path: ["procedure"],
+              reason: "missing",
+              message: "Provide an address or --procedure.",
+            },
+          ]);
+        return runDirectAnalysis(
           args.path,
           "procedure_pseudo_code",
           {
@@ -174,8 +182,8 @@ const registerDecompileCommand = (
             ),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        );
+      }),
   });
 };
 
