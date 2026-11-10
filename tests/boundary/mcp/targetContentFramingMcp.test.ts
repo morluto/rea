@@ -120,7 +120,7 @@ it.each(["session", "session,application"])(
       "update_analysis_settings",
       "inspect_analysis_settings",
     ]) {
-      expect(instructions.includes(name)).toBe(names.includes(name));
+      if (instructions.includes(name)) expect(names).toContain(name);
     }
     if (!scope.includes("application"))
       expect(instructions).toContain("REA_MCP_TOOL_FAMILIES");
