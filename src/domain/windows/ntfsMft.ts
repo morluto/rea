@@ -253,7 +253,11 @@ const readRecord = (
   recordBytes: number,
 ): MftRecord => {
   const record = bytes.subarray(fileOffset, fileOffset + recordBytes);
-  const view = new DataView(record.buffer, record.byteOffset, record.byteLength);
+  const view = new DataView(
+    record.buffer,
+    record.byteOffset,
+    record.byteLength,
+  );
 
   const flags = view.getUint16(RECORD_HEADER.flags, true);
   const baseRecordReference = view.getBigUint64(
@@ -297,10 +301,7 @@ const readRecord = (
  * trailer words. A sector whose trailer is not the sequence number was not
  * cleanly written, so the record's attributes cannot be trusted.
  */
-const verifyFixups = (
-  record: Uint8Array,
-  view: DataView,
-): MftRecordFixups => {
+const verifyFixups = (record: Uint8Array, view: DataView): MftRecordFixups => {
   const usaOffset = view.getUint16(RECORD_HEADER.updateSequenceOffset, true);
   const usaCount = view.getUint16(RECORD_HEADER.updateSequenceCount, true);
   const sectors = Math.floor(record.length / FIXUP_SECTOR_BYTES);
