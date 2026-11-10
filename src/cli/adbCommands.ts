@@ -36,11 +36,24 @@ export const registerAdbCommands = (
       }),
     );
 
+  const localPath = z
+    .string()
+    .min(1)
+    .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
+
+  const localPath = z
+    .string()
+    .min(1)
+    .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
+
   const serial = z
     .string()
     .min(1)
     .max(256)
-    .regex(/^[^\x00\s"']+$/u, "Device serial cannot contain whitespace or quotes")
+    .regex(
+      /^[^\x00\s"']+$/u,
+      "Device serial cannot contain whitespace or quotes",
+    )
     .describe("Device serial exactly as `adb devices` reports it");
 
   cli.command(CLI_COMMANDS.inspectAdbClient, {
@@ -86,12 +99,9 @@ export const registerAdbCommands = (
       package: z.string().min(1).describe("Installed package name"),
     }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe(
-          "Local directory for the pulled APK set; a package-named subdirectory is created inside",
-        ),
+      "output-directory": localPath.describe(
+        "Local directory for the pulled APK set; a package-named subdirectory is created inside",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.pullAdbPackage, "pull_adb_package", {
@@ -147,10 +157,9 @@ export const registerAdbCommands = (
       "device-path": z.string().min(1).describe("Absolute device path to pull"),
     }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for the pulled file"),
+      "output-directory": localPath.describe(
+        "Local directory for the pulled file",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.pullAdbFile, "pull_adb_file", {
@@ -164,7 +173,7 @@ export const registerAdbCommands = (
       "Push one local file to the device; refuses existing targets without --overwrite",
     args: z.object({
       serial,
-      "local-path": z.string().min(1).describe("Existing local file"),
+      "local-path": localPath.describe("Existing local file"),
       "device-path": z.string().min(1).describe("Absolute device destination"),
     }),
     options: z.object({
@@ -185,10 +194,7 @@ export const registerAdbCommands = (
     description: "Capture one screen frame as a digested PNG",
     args: z.object({ serial }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for screen.png"),
+      "output-directory": localPath.describe("Local directory for screen.png"),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.captureAdbScreen, "capture_adb_screen", {
@@ -261,10 +267,9 @@ export const registerAdbCommands = (
     description: "Collect and digest one device-generated bugreport archive",
     args: z.object({ serial }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for the bugreport zip"),
+      "output-directory": localPath.describe(
+        "Local directory for the bugreport zip",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.collectAdbBugreport, "collect_adb_bugreport", {
@@ -289,7 +294,7 @@ export const registerAdbCommands = (
       "Install one local APK; --replace re-installs keeping the app's data",
     args: z.object({
       serial,
-      "apk-path": z.string().min(1).describe("Local APK file to install"),
+      "apk-path": localPath.describe("Local APK file to install"),
     }),
     options: z.object({
       replace: z
@@ -358,11 +363,7 @@ export const registerAdbCommands = (
           throw new Error(`--extra expects type:key:value, received: ${entry}`);
         return {
           type: entry.slice(0, first) as
-            | "string"
-            | "boolean"
-            | "int"
-            | "long"
-            | "float",
+            "string" | "boolean" | "int" | "long" | "float",
           key: entry.slice(first + 1, second),
           value: entry.slice(second + 1),
         };
