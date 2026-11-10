@@ -9,7 +9,13 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  MCP_TOOLS_LIST_PAGE_BUDGET_SETTING,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 import { createToolResultDelivery } from "./toolResult.js";
+import { paginateToolsList } from "./toolListPagination.js";
 
 /** FastMCP's default per-event SSE limit, the bound #9093 reports. */
 const FASTMCP_SSE_EVENT_LIMIT_BYTES = 1_048_576;
@@ -175,7 +181,7 @@ describe("tools/list pagination", () => {
     }
   });
 
-  it("lists a single oversized tool instead of failing the page", async () => {
+  it("fails a single oversized tool with the page-budget setting", async () => {
     const server = new EvidenceMcpServer(
       { name: "tools-list-pagination-test", version: "1" },
       { capabilities: {} },
@@ -186,16 +192,115 @@ describe("tools/list pagination", () => {
       "oversized_tool",
       {
         description: "A single tool whose schema exceeds the page budget.",
-        inputSchema: bigInputSchema("oversized", 40, 150),
+        inputSchema: bigInputSchema("oversized", 40, 800),
       },
       async () => ({ content: [{ type: "text", text: "ok" }] }),
     );
     const { client, close } = await connect(server);
     try {
-      const listed = await client.listTools();
-      expect(listed.tools.map((tool) => tool.name)).toEqual(["oversized_tool"]);
+      await expect(client.listTools()).rejects.toMatchObject({
+        code: -32000,
+        data: {
+          code: "resource_constraint",
+          details: {
+            reported_limits: {
+              setting: MCP_TOOLS_LIST_PAGE_BUDGET_SETTING,
+              source: "default",
+              effective_bytes: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.bytes,
+              default_bytes: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.defaultBytes,
+              maximum_bytes: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.maximumBytes,
+              tool_name: "oversized_tool",
+            },
+          },
+          remediation: {
+            action: expect.stringContaining(MCP_TOOLS_LIST_PAGE_BUDGET_SETTING),
+          },
+        },
+      });
     } finally {
       await close();
     }
+  });
+});
+
+const listedTool = (name: string, field: string) => ({
+  name,
+  description: `Tool ${name}`,
+  inputSchema: {
+    type: "object",
+    properties: { [field]: { type: "string", description: field } },
+  },
+});
+
+const toolsListMessage = (tools: readonly unknown[]): JSONRPCMessage => ({
+  jsonrpc: "2.0",
+  id: 1,
+  result: { tools },
+});
+
+const pageBudget = (bytes: number): McpToolsListPageBudget => ({
+  ...DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  bytes,
+  source: "setting",
+});
+
+describe("tools/list cursor identity", () => {
+  it("invalidates a cursor when a tool schema changes and the name does not", () => {
+    const original = [
+      listedTool("same", "alpha-field-with-enough-text"),
+      listedTool("other", "beta-field-with-enough-text"),
+    ];
+    const renamedSchema = [
+      listedTool("same", "gamma-field-with-different-text"),
+      listedTool("other", "beta-field-with-enough-text"),
+    ];
+    const whole = toolsListMessage(original);
+    const wholeBytes = Buffer.byteLength(JSON.stringify(whole), "utf8");
+    const budget = pageBudget(wholeBytes - 1);
+    const first = paginateToolsList(whole, undefined, budget);
+    expect(isToolsListReply(first)).toBe(true);
+    if (!isToolsListReply(first)) return;
+    const cursor = first.result.nextCursor;
+    expect(typeof cursor).toBe("string");
+    const resumed = paginateToolsList(
+      toolsListMessage(renamedSchema),
+      cursor,
+      budget,
+    );
+    expect(resumed).toMatchObject({
+      error: {
+        code: -32602,
+        message: expect.stringContaining("catalog changed"),
+      },
+    });
+    const same = paginateToolsList(toolsListMessage(original), cursor, budget);
+    expect(isToolsListReply(same)).toBe(true);
+  });
+
+  it("rejects one tool that exceeds an explicit page budget", () => {
+    const tool = listedTool("solo", "x".repeat(200));
+    const message = toolsListMessage([tool]);
+    const bytes = Buffer.byteLength(JSON.stringify(message), "utf8");
+    const refused = paginateToolsList(
+      message,
+      undefined,
+      pageBudget(bytes - 1),
+    );
+    expect(refused).toMatchObject({
+      error: {
+        code: -32000,
+        data: {
+          code: "resource_constraint",
+          details: {
+            reported_limits: {
+              setting: MCP_TOOLS_LIST_PAGE_BUDGET_SETTING,
+              source: "setting",
+              effective_bytes: bytes - 1,
+              tool_name: "solo",
+            },
+          },
+        },
+      },
+    });
   });
 });

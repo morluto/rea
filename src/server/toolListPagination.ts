@@ -6,16 +6,24 @@ import {
   type JSONRPCResultResponse,
 } from "@modelcontextprotocol/server";
 
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { canonicalJson } from "../domain/comparisonSemantics.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  type McpToolsListPageBudget,
+  mcpToolsListPageBudgetRecovery,
+} from "../config/mcpToolsListPageBudget.js";
 import { measureMcpResultWithinBudget } from "./toolResultEncoding.js";
 
 /**
  * One tools/list page must fit a single SSE event under the strictest known
  * client limit: FastMCP's default 1,048,576-byte event cap (#9093). The
- * budget covers the whole serialized JSON-RPC response and leaves 128 KiB of
- * headroom for SSE framing and transport-added fields. Catalogs that fit are
- * returned in one response, exactly as before; only oversized catalogs page.
+ * default budget covers the whole serialized JSON-RPC response and leaves
+ * 128 KiB of headroom for SSE framing and transport-added fields. Catalogs
+ * that fit are returned in one response, exactly as before; only oversized
+ * catalogs page. `REA_MCP_TOOLS_LIST_PAGE_BYTES` overrides the budget.
  */
-export const TOOL_LIST_PAGE_BUDGET_BYTES = 917_504;
 
 /** Opaque tools/list cursor: an offset into one snapshot of the catalog. */
 type ToolListCursor = {
@@ -49,22 +57,13 @@ const decodeToolListCursor = (raw: string): ToolListCursor | undefined => {
   }
 };
 
-/** Snapshot identity for one advertised catalog: the ordered tool names. */
+/**
+ * Snapshot identity for one advertised catalog. The digest covers each tool's
+ * full definition, including its schema, so a schema change invalidates a
+ * cursor even when the tool name is unchanged.
+ */
 const toolListDigest = (tools: readonly unknown[]): string =>
-  createHash("sha256")
-    .update(
-      tools
-        .map((tool) =>
-          typeof tool === "object" &&
-          tool !== null &&
-          !Array.isArray(tool) &&
-          typeof (tool as Record<string, unknown>).name === "string"
-            ? ((tool as Record<string, unknown>).name as string)
-            : "",
-        )
-        .join("\n"),
-    )
-    .digest("hex");
+  createHash("sha256").update(canonicalJson(tools, "tools/list")).digest("hex");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -78,6 +77,45 @@ const toolsListCursorError = (
     id: message.id,
     error: { code: -32602, message: text },
   }) as JSONRPCMessage;
+
+const advertisedToolName = (tool: unknown): string =>
+  isRecord(tool) && typeof tool.name === "string" ? tool.name : "unknown";
+
+/** One tool still exceeds the page budget, so tools/list cannot return it. */
+const toolsListPageBudgetError = (
+  message: JSONRPCResultResponse,
+  budget: McpToolsListPageBudget,
+  toolName: string,
+): JSONRPCMessage => {
+  const reason = `Advertised tool ${toolName} is larger than the tools/list page budget.`;
+  const error = new AnalysisResourceConstraintError(
+    "tools/list",
+    "transport",
+    reason,
+    {
+      setting: budget.setting,
+      effective_bytes: budget.bytes,
+      source: budget.source,
+      default_bytes: budget.defaultBytes,
+      floor_bytes: budget.floorBytes,
+      maximum_bytes: budget.maximumBytes,
+      tool_name: toolName,
+    },
+    {
+      remediationAction: mcpToolsListPageBudgetRecovery(budget),
+      retryable: false,
+    },
+  );
+  return {
+    jsonrpc: "2.0",
+    id: message.id,
+    error: {
+      code: -32000,
+      message: error.message,
+      data: projectAnalysisError(error),
+    },
+  } as JSONRPCMessage;
+};
 
 const pageToolsListMessage = (
   message: JSONRPCResultResponse,
@@ -100,6 +138,7 @@ const verifiedPage = (
   offset: number,
   end: number,
   digest: string,
+  budget: McpToolsListPageBudget,
 ): JSONRPCMessage => {
   let pageEnd = end;
   let paged = pageToolsListMessage(
@@ -110,7 +149,7 @@ const verifiedPage = (
       : undefined,
   );
   while (
-    !measureMcpResultWithinBudget(paged, TOOL_LIST_PAGE_BUDGET_BYTES).ok &&
+    !measureMcpResultWithinBudget(paged, budget.bytes).ok &&
     pageEnd - offset > 1
   ) {
     pageEnd -= 1;
@@ -120,6 +159,12 @@ const verifiedPage = (
       encodeToolListCursor({ v: 1, offset: pageEnd, digest }),
     );
   }
+  if (!measureMcpResultWithinBudget(paged, budget.bytes).ok)
+    return toolsListPageBudgetError(
+      message,
+      budget,
+      advertisedToolName(tools[offset]),
+    );
   return paged;
 };
 
@@ -129,6 +174,7 @@ const pageFromOffset = (
   tools: readonly unknown[],
   offset: number,
   digest: string,
+  budget: McpToolsListPageBudget,
 ): JSONRPCMessage => {
   const dummyCursor = encodeToolListCursor({
     v: 1,
@@ -146,12 +192,12 @@ const pageFromOffset = (
       "utf8",
     );
     const nextBytes = bytes + toolSize + (end === offset ? 0 : 1);
-    if (nextBytes > TOOL_LIST_PAGE_BUDGET_BYTES && end > offset) break;
+    if (nextBytes > budget.bytes && end > offset) break;
     bytes = nextBytes;
     end += 1;
-    if (bytes > TOOL_LIST_PAGE_BUDGET_BYTES) break;
+    if (bytes > budget.bytes) break;
   }
-  return verifiedPage(message, tools, offset, end, digest);
+  return verifiedPage(message, tools, offset, end, digest, budget);
 };
 
 /**
@@ -164,6 +210,7 @@ const pageFromOffset = (
 export const paginateToolsList = (
   message: JSONRPCMessage,
   cursor: string | undefined,
+  budget: McpToolsListPageBudget = DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
 ): JSONRPCMessage => {
   if (
     !isJSONRPCResultResponse(message) ||
@@ -194,11 +241,8 @@ export const paginateToolsList = (
     offset = parsed.offset;
   }
   if (offset === 0) {
-    const fits = measureMcpResultWithinBudget(
-      message,
-      TOOL_LIST_PAGE_BUDGET_BYTES,
-    );
+    const fits = measureMcpResultWithinBudget(message, budget.bytes);
     if (fits.ok) return message;
   }
-  return pageFromOffset(message, tools, offset, digest);
+  return pageFromOffset(message, tools, offset, digest, budget);
 };

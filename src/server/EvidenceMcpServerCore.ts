@@ -63,6 +63,10 @@ import {
   measureMcpResultWithinBudget,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 import { paginateToolsList } from "./toolListPagination.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
@@ -411,6 +415,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
       | undefined = undefined,
+    readonly toolsListPageBudget: McpToolsListPageBudget = DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -534,6 +539,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         this.outputSchemaProfile,
         this.maximumInputElements,
         this.evidenceReferenceAlternatives,
+        this.toolsListPageBudget,
       ),
     );
   }
@@ -577,6 +583,7 @@ class ErrorEvidenceTransport implements Transport {
     private readonly outputSchemaProfile: McpOutputSchemaProfile,
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly toolsListPageBudget: McpToolsListPageBudget,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -801,6 +808,7 @@ class ErrorEvidenceTransport implements Transport {
         ? paginateToolsList(
             message,
             this.pendingToolListCursors.get(message.id),
+            this.toolsListPageBudget,
           )
         : message;
     if (
