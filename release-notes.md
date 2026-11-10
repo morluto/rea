@@ -103,6 +103,7 @@
 * **cli:** validate browser scenarios offline ([#7343](https://github.com/morluto/rea/issues/7343)) ([d109a39](https://github.com/morluto/rea/commit/d109a3910522db9927e4160f9b22669cb2cda0d4))
 * **contracts:** inventory offline OpenAPI operation declarations ([#9104](https://github.com/morluto/rea/issues/9104)) ([91d73a1](https://github.com/morluto/rea/commit/91d73a113e557aea6e23f454f4adca7579405391))
 * **debugger:** share GDB and Rizin session caps as REA_ settings ([#8056](https://github.com/morluto/rea/issues/8056)) ([4a8d8f7](https://github.com/morluto/rea/commit/4a8d8f72b354dc96a8d1bce06da4bf6c7eda33ec))
+* **desktop:** build several tasks from one capture, and measure each task's pass rate within a budget ([#9216](https://github.com/morluto/rea/issues/9216)) ([d2f9b8b](https://github.com/morluto/rea/commit/d2f9b8b7de6aeec86d0e818bf1d04cb43bbc22af))
 * **desktop:** capture and export apps installed from a downloaded .deb ([#8954](https://github.com/morluto/rea/issues/8954)) ([970969c](https://github.com/morluto/rea/commit/970969cb53f788976e64eae387076fcea104b603))
 * **desktop:** capture, draft, export and witness a task inside a build computer ([#9045](https://github.com/morluto/rea/issues/9045)) ([c5301e6](https://github.com/morluto/rea/commit/c5301e6145a9c8e06719f27e83da55af8e5480fc))
 * **desktop:** check apps whose files REA can't read, through the app's own headless mode or a screen judge ([#9217](https://github.com/morluto/rea/issues/9217)) ([fe2985a](https://github.com/morluto/rea/commit/fe2985a0b4c3b7210109690c1efeb099780983aa))
