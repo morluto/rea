@@ -120,7 +120,13 @@ CLI output are unchanged.
 
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
 and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` raises the
-input bound alone, up to 1 GiB; the reply and deadline bounds are unchanged. The
+launch input default alone, up to 1 GiB. Per-call `producer_limits` selects
+`input_bytes`, `output_bytes`, `diagnostic_bytes`, `address_space_bytes`,
+`file_bytes`, and `cpu_seconds`; positive safe integers apply on the next call
+without restart. `input_bytes` overrides the launch default. File admission
+follows selected `output_bytes` unless `file_bytes` is explicit. The separate
+`pwntools_timeout_ms` controls each command wall deadline. On CLI pass
+`--producer-limits '{"cpu_seconds":60,"output_bytes":134217728}'`. The
 reply budget applies to the decoder record; the CLI/MCP Evidence envelope adds
 copies and encoding overhead. The
 pinned MCP SDK defaults to a 10 MiB receive buffer. Large complete results need
@@ -128,15 +134,16 @@ a caller-configured `StdioClientTransport({ maxBufferSize: ... })` and a matchin
 server `REA_MCP_MAX_RESPONSE_BYTES`. See [MCP delivery budgets](../../reference/mcp-contracts.md#tool-results).
 These settings affect delivery, not decoder coverage or limits. The large
 extended-index verification uses 256 MiB and an explicit five-minute request
-timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to at most 3 GiB virtual address space,
-30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
+timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to the selected policy: defaults are 3 GiB
+virtual address space, 30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
 retained, and the effective values are returned in the result limitations. Virtual address space is not RSS;
 Unicorn needs a large virtual map. Limits fail with no partial success, and
 owned process/root cleanup completes independently of cancellation.
 
-Core files, GDB session/state/control, optional pwndbg enrichment and instruction
-inspection are separate increments tracked by #969. This increment makes no
-real support claim for those features or other operating systems/architectures.
+For core files and optional pwndbg mapping context, use the
+[recorded-crash workflow](recorded-crashes.md). The binary-layout operations
+described here do not provide debugger session state or control, or establish
+support for other operating systems/architectures.
 
 Typed decoder failures retain bounded `captured_output` (stdout, stderr and an
 explicit truncation flag) alongside the original failure category and reason.
@@ -271,6 +278,12 @@ snapshot reading, directory traversal and payload hashing. The operation reads
 regular files only and rejects symbolic links.
 
 ## Byte entropy triage
+
+Entropy admission preserves the caller's spelling in `caller_input_path`. On
+Windows, the selected regular file's case-only filesystem spelling is used
+consistently in committed paths through both CLI and MCP. Symlink, junction and
+short-name aliases are not replaced with a different path. General path
+normalization remains lexical and does not probe source-discovered paths.
 
 `inspect_byte_entropy` / `inspect-byte-entropy` profiles any local regular file
 without an analysis engine, execution, extraction or network access.

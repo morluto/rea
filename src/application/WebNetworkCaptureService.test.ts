@@ -17,6 +17,7 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 
 it.each(["REDACTED", "[", "]", "/capture.har"])(
   "excludes sensitive path text even when a replacement marker would collide: %s",
@@ -209,18 +210,23 @@ it("projects completed raw capture facts on failure through the caller's selecti
   });
   const result = await new WebNetworkCaptureService({
     inspect: () => Promise.resolve({ ok: false, error }),
-  }).inspect({
-    capture_path: report.artifact.path,
-    format: "har",
-    record_ordinals: [0],
-    sensitive_values: ["private-marker"],
-  });
+  }).inspect(
+    {
+      capture_path: report.artifact.path,
+      format: "har",
+      record_ordinals: [0],
+      sensitive_values: ["private-marker"],
+    },
+    undefined,
+    { capture: "./capture.har" },
+  );
   if (result.ok) throw new Error("Cancellation must remain the primary result");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
   const partial = parseEvidence(result.error.partialObservation);
   expect(partial).toMatchObject({
     operation: "inspect_web_network_capture",
+    caller_input_path: "./capture.har",
     parameters: { record_ordinals: [0] },
     subject: { local_path: "" },
     normalized_result: {
@@ -247,6 +253,26 @@ it("does not expose a malformed capture-shaped partial observation", async () =>
   });
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error.partialObservation).toBeUndefined();
+});
+
+it("does not recover a rejected capture from a cleanup primary", async () => {
+  const malformed = fixture();
+  malformed.artifact.sha256 = "invalid";
+  malformed.limitations = ["rejected-capture-only-marker"];
+  const primary = new AnalysisCancelledError("inspect_web_network_capture", {
+    partialObservation: malformed,
+  });
+  const cleanup = new ProviderCleanupError("fixture", ["workspace"], {});
+  const error = analysisErrorWithCleanupFailure(primary, cleanup);
+  const result = await new WebNetworkCaptureService({
+    inspect: async () => err(error),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (result.ok) throw new Error("expected rejected capture");
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe("cleanup_incomplete");
+  expect(JSON.stringify(projected)).not.toContain(
+    "rejected-capture-only-marker",
+  );
 });
 
 it("keeps a redacted cleanup error linked to its live owner through service close", async () => {

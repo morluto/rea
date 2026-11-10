@@ -1,3 +1,4 @@
+import { fridaCapturePolicySchema } from "./fridaCapturePolicy.js";
 import { z } from "zod";
 
 /** Delivery selection is separate from the provider's live session lookup. */
@@ -8,6 +9,7 @@ export const fridaSessionStatusInputSchema = z.strictObject({
 
 /** Session identity and state shared by start, status and one-shot observations. */
 export const fridaSessionObservationSchema = z.strictObject({
+  capture_limits: fridaCapturePolicySchema.optional(),
   session_id: z.string().uuid(),
   device_id: z.string(),
   state: z.enum(["paused", "running", "detached"]),

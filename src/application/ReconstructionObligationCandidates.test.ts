@@ -79,10 +79,32 @@ const applicationWithUnknowns = (
       ],
     }),
   );
+  const root = createJavaScriptApplicationNode({
+    kind: "artifact",
+    identity: {
+      strategy: "content-digest",
+      stability: "global-exact",
+      sha256: APPLICATION_GRAPH_DIGESTS.asar,
+    },
+    observations: [
+      {
+        label: "managed root",
+        properties: {},
+        evidence: artifactEvidence(
+          APPLICATION_GRAPH_DIGESTS.asar,
+          "artifact-root",
+        ),
+      },
+    ],
+  });
   const graph = createJavaScriptApplicationGraph({
     schema: "JavaScriptApplicationGraph",
-    root_node_ids: base.root_node_ids,
-    nodes: [...base.nodes, ...unknownNodes],
+    root_node_ids: [root.node_id],
+    nodes: [
+      ...base.nodes.filter(({ node_id }) => node_id !== root.node_id),
+      ...unknownNodes,
+      root,
+    ],
     edges: base.edges,
     coverage: completeCoverage,
     limitations: base.limitations,

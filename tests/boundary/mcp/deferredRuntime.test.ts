@@ -92,8 +92,8 @@ it.each([
     expect(new Set(initial.tools.map(({ name }) => name))).toEqual(
       new Set([...HOT_TOOL_NAMES, "discover_tools"]),
     );
+    const ajv = new Ajv2020({ strict: false });
     for (const tool of initial.tools) {
-      const ajv = new Ajv2020({ strict: false });
       expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
       if (tool.outputSchema !== undefined)
         expect(ajv.validateSchema(tool.outputSchema as AnySchemaObject)).toBe(

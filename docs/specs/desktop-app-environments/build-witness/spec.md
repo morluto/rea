@@ -28,23 +28,50 @@ and the recording and writes the record as Evidence.
   out of every walk. A start returns once the capture reports the window
   open; a refused or early-ended start stops the capture and reports its
   output.
+- `start_build_capture` takes `state_paths`, at most 16 files or folders in
+  the home, relative to it, after `~/` or absolute, without `..` and not the
+  home itself; the controller resolves each under the computer's home, both
+  as named and with its links followed (a path not there yet through its
+  nearest existing folder), refuses one outside it or in `~/.rea-build`
+  either way before launching anything, and passes each as named to the
+  capture as `--state-path`. A selected file is a document, or the app's own
+  state under a hidden folder of the home as named, before links, or when it
+  is a lock the app holds, such as LibreOffice's `.~lock.<name>#`.
 - Acknowledgement: `capture-desktop-application` reports, beside each progress
   message, an `event`: `window_open`; `checkpoint` with its name, trigger,
-  time, entries walked, changes and retained files and bytes, once it is
-  taken, the baseline, `stop` and `exit` included; and `checkpoint_refused`
-  with the reason. `mark_build_checkpoint` writes `checkpoint <name>` and
-  waits for the event naming it, returning its counts. Names follow a narrow
-  pattern, without the capture's own names; a name already taken is refused.
+  time, entries walked, changes and retained files and bytes, and up to ten
+  changed files, home-relative, those under a selected path first, then
+  those the app held open, caches and browser-engine storage last, with a count
+  of the rest, once it is taken, the baseline, `stop` and `exit` included;
+  and `checkpoint_refused` with the reason. `mark_build_checkpoint` writes
+  `checkpoint <name>` and waits for the event naming it, returning its counts
+  and changed files, both `null` when the REA in the computer predates them
+  and its event leaves them out. Names follow a narrow pattern, without the capture's own
+  names; a name already taken is refused.
 - `stop_build_capture` sends `stop`, waits for the exit status, reads the
   capture's Evidence and, when `seed` and `end` were acknowledged, runs
   `describe-desktop-application-task --seed-checkpoint seed --end-checkpoint
   end` and returns the changed files, their net change and suggested checks.
+  A draft with no files carries `notes`, coded `no_change`,
+  `unowned_changes` (up to five changed home paths with their roles, and a
+  count of the rest), `uncheckable_changes` (dconf databases whose app keys
+  were read and changed, which no check reads; a version kept without its
+  bytes is unreadable, not empty), `unreadable_changes` (dconf
+  databases that changed but could not be read, with the read `error`) and
+  `no_document`; a drafted file whose suggestions are thin carries one
+  naming its `file`, coded `by_position`, `view_state_only`, `long_text`,
+  `cut_view` or `unreadable_view`.
 - `export_build_environment` writes the agent's task under `~/.rea-build`,
   runs `export-desktop-application` with it and the same checkpoints into a
   new folder there, reports a refused task with the export's own reason,
   lists the bundle with sizes and SHA-256, fetches it through the driver's
   `data/get` in answers of at most 8 MiB, checks each file and writes the
-  caller's new or empty folder through the safe output tree.
+  caller's new or empty folder through the safe output tree. The export
+  leaves lock files the app holds while it runs out of the seed, but never a
+  document or selected path, listing them in its limitations and README; a
+  start from a bundle whose computer never gets ready names the files its
+  seed holds by a profile lock's name, as a document lock or as a
+  `<file>.lck` beside a seeded file.
 - `check_build_task` reads the one app's `data/get` through the card's
   child URL, takes the state views beside its files and evaluates the task's
   checks with `evaluateTaskChecks`, one result per check. With `stage`, the
@@ -84,6 +111,12 @@ and the recording and writes the record as Evidence.
   and the export's limitations name what the Trash held at the seed; a
   start from a bundle folder writes no bytecode into it; the first
   screenshot waits, briefly and bounded, until the frame is not one colour.
+- Gaps of the blind validation's solve runs: the exported app opens the
+  seed's one document at launch, when its desktop entry takes files, so a
+  solving agent starts in the document rather than on the app's start
+  screen; and `export_build_environment` passes `--synthetic-seed`, so the
+  README says the seed was made for the task instead of calling it the
+  user's real data.
 
 - Gaps of the second review: calls on one computer (actions, capture
   steps, checks and close) run one at a time in arrival order, so a stage's
@@ -100,6 +133,74 @@ and the recording and writes the record as Evidence.
   fails on what the seed's view shows. The controller writes a folder's file
   list to a file that REA reads through `data/get`, so a large bundle's list
   is not cut at the 1 MiB of a command's output.
+- Gaps of the build batches: an archive request takes up to 16
+  `extra_packages`, archive package names validated as its `package` is,
+  installed beside the app and listed in `start_build_computer`'s result
+  (a `.deb` request's `dependencies` are listed there too), for a runtime
+  piece the app needs that its package does not install (MyPaint's SVG icon
+  loader `librsvg2-common`, which GTK only recommends; a Java 17 for
+  Freeplane, whose launcher refuses noble's Java 21). The export takes them
+  as repeatable `--extra-package` and installs them beside the app, and the
+  build export passes them, and a `.deb` request's `dependencies` too, so a
+  `.deb` apt also offers no longer loses them when it is installed by name.
+  The limitations and the README name them, leaving out only what the
+  bundle installs anyway: the app's own package and, when it is installed
+  from its `.deb`, the dependencies the `Packages` line names. A package the
+  captured `.deb` lists only as one alternative stays, since apt may pick
+  another, such as `openjdk-17-jre | java-runtime`.
+- Gaps of the third batch's GnuCash build: the build bundle installs
+  `dconf-cli`, so the capture reads the app's dconf settings, such as
+  GnuCash's "Show tips at startup" unticked before `seed`, and the seed
+  keeps them; an export whose dconf database changed by the seed but could
+  not be read names it, with the read error, in its limitations. A
+  `<file>.lck` or `<file>.LCK` beside a file the capture recorded in the
+  same folder, as GnuCash's `household.gnucash.LCK`, is a lock left out of
+  the seed; a lone `notes.lck` is seeded.
+- Gaps of the fourth batch: a desktop entry that is not reverse-DNS names
+  the environment whole, without a trailing version, so `glabels-3.0` gives
+  `glabels` rather than `0`, in the build computer and the export alike. The
+  capture launches the app with `LIBC_FATAL_STDERR_=1`, so a glibc abort's
+  reason reaches the app-exit error. A `.<file>.lock` or `.<file>.lck` beside
+  its file, as Grisbi's `.household.gsb.lock`, is a lock too, left out of the
+  seed and its text seeds; a lone `.notes.lock` is seeded. A seeded
+  LibreOffice `registrymodifications.xcu` ships without its `RecoveryList`
+  items, which started an Impress bundle into document recovery, and a
+  limitation and the README name the file. A checkpoint ranks caches and
+  browser-engine storage last under a selected folder too, unless named
+  themselves, so LibreOffice's icon cache no longer fills `changed_files`.
+- Gaps of the fifth batch: a checkpoint names first the files the app's
+  window titles have named so far, which the session now hands each
+  checkpoint, so a document saved and no longer held open (Gnumeric, LyX,
+  Tiled) leads; then files selected themselves; then those held open, under
+  a selected folder or in state directories; then the rest; then caches and
+  browser storage, which now include a whole `QtWebEngine` profile and
+  Chromium's `Visited Links`, `Platform Notifications` and `user_prefs.json`.
+  Example prompts name the app, and the export's limitations say when a
+  task's prompt names neither the app's title, environment nor package: a
+  solving agent's shell cannot see the computer's files. The unowned paths
+  limitation counts files or folders.
+- Gaps of the published bundles: app-state logs are retained because their
+  names alone do not distinguish diagnostic output from user history or
+  database writes. Locks remain excluded under the lock ownership rules.
+  LibreOffice's recovery list items are found with the shared XML parser and
+  cut by their source ranges, so quoting, spacing, comments and CDATA cannot fool the match,
+  and a registry that is not well-formed ships unchanged.
+- Gaps of the seventh batch: a window title names a file only by its whole
+  name, or its `~/` or absolute path, never by a folder of a path it shows,
+  and an extensionless name only standing alone; files under `~/.cache` and
+  dconf's databases are never named. CherryTree's title, which shows
+  `/home/user/Documents`, made `~/.cache/dconf/user` a second document, so
+  its bundle opened none; the state role and the checkpoint ranking share
+  the fix. VYM's `<map>.vym.lock` beside the map is a lock too, while a
+  project's `Gemfile.lock` beside its `Gemfile` stays seeded.
+- Gaps of the eighth batch (Poedit): a `*.lock` or `*.lck` directly in the
+  home and Lucene's `write.lock` anywhere are locks; a lock or log never
+  becomes an owned path, is never named among the unowned paths, and makes
+  no folder count as held open, so neither the capture nor the export points
+  `state_paths` at the home. A seed file keeps its permission bits at the
+  seed where the capture recorded them, through the module's `SEED_MODES`,
+  so a `0600` file an app checks boots `0600`; a file the capture never saw
+  change has no recorded mode.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

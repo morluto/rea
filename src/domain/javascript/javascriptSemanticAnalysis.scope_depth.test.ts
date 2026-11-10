@@ -227,13 +227,14 @@ it.each([
 );
 
 it("keeps established logical operands across a long chain", () => {
-  // Known-falsy operands select the right branch at every level; the value and
-  // provenance must still come from the one reachable operand.
-  const ir = analyzeJavaScriptSemantics(
-    `const tok = ${'false || null || 0 || "" || '.repeat(10)}require("electron").app;`,
-  );
-  expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
-  expect(onlyBinding(ir, "tok").provenance).toEqual({
+  // Known-falsy operands select the right branch at every level.
+  const source = `const tok = ${'false || null || 0 || "" || '.repeat(10)}require("electron").app;`;
+  const parsed = parseJavaScriptSource(source, "main.cjs");
+  if (parsed === null) throw new Error("fixture did not parse");
+  const proven = analyzeParsedJavaScriptSemantics(parsed);
+  const candidate = analyzeJavaScriptSemantics(source);
+  expect(proven.coverage).toEqual({ status: "complete", omittedCount: 0 });
+  expect(onlyBinding(proven, "tok").provenance).toEqual({
     status: "module",
     origins: [
       {
@@ -243,5 +244,15 @@ it("keeps established logical operands across a long chain", () => {
       },
     ],
     reason: null,
+  });
+  expect(onlyBinding(candidate, "tok").provenance).toMatchObject({
+    status: "ambiguous",
+    origins: [
+      {
+        specifier: "electron",
+        importedPath: ["app"],
+        loaderAuthority: "candidate",
+      },
+    ],
   });
 });

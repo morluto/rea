@@ -1,6 +1,15 @@
 import { expect, it, vi } from "vitest";
 
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  rebindEvidenceToTargetPath,
+  type Evidence,
+} from "../../domain/evidence.js";
+import { ok } from "../../domain/result.js";
+import { createJavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
+import { createJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
@@ -14,10 +23,59 @@ import {
 } from "./JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./JavaScriptRuntimeReconciliationService.js";
 import { traceJavaScriptSemanticsEvidence } from "./JavaScriptSemanticTraceService.js";
+import {
+  inspectAnalysisView,
+  projectRetainedAnalysis,
+} from "../analysisView/AnalysisViewService.js";
 
 const reference = ({ evidence_id }: Evidence) => ({
   kind: "retained-evidence" as const,
   evidence_id,
+});
+
+it("keeps a static trace subject unknown when legacy graph root evidence is omitted", () => {
+  const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    original.normalized_result,
+  );
+  const { graph_id: _graphId, ...graphInput } = result.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...graphInput,
+    nodes: graphInput.nodes.filter(({ kind }) => kind !== "artifact"),
+    root_node_ids: graphInput.nodes
+      .filter(({ kind }) => kind === "javascript-asset")
+      .map(({ node_id }) => node_id),
+    edges: [],
+  });
+  const { graph_id: _semanticId, ...semanticInput } = result.semantic_graph;
+  const semanticGraph = createJavaScriptSemanticGraph({
+    ...semanticInput,
+    application_graph_id: graph.graph_id,
+  });
+  if (original.subject === null)
+    throw new Error("Expected application subject");
+  const legacy = createEvidence(
+    {
+      path: original.subject.local_path,
+      sha256: original.subject.digest.sha256,
+      format: original.subject.format,
+    },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: { ...result, graph, semantic_graph: semanticGraph },
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const trace = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application: legacy,
+  });
+  if (!trace.ok) throw trace.error;
+  expect(trace.value.evidence.subject).toBeNull();
 });
 
 const native = createEvidence(
@@ -25,6 +83,104 @@ const native = createEvidence(
   { id: "fixture", name: "Native fixture", version: "1" },
   { operation: "procedure_info", parameters: {}, result: {} },
 );
+
+it("preserves the verified application subject in both trace workflows", async () => {
+  const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
+  if (original.subject === null)
+    throw new Error("Expected application subject");
+  const application = createEvidence(
+    {
+      path: original.subject.local_path,
+      sha256: original.subject.digest.sha256,
+      format: original.subject.format,
+      architecture: "x86_64",
+      name: "caller-selected-name",
+    },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: original.normalized_result,
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const feature = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application,
+  });
+  const semantic = traceJavaScriptSemanticsEvidence({
+    application,
+    query: {
+      seed: { kind: "property", name: "unobserved" },
+      direction: "ownership",
+    },
+  });
+  for (const result of [feature, semantic]) {
+    if (!result.ok) throw result.error;
+    expect(result.value.evidence.subject).toEqual(application.subject);
+    expect(result.value.evidence.limitations).not.toContain(
+      "Artifact identity is unavailable for this observation.",
+    );
+  }
+  if (!feature.ok) throw feature.error;
+  const view = await inspectAnalysisView({
+    source: { kind: "inline", evidence: feature.value.evidence },
+    view: { kind: "summary" },
+  });
+  if (!view.ok) throw view.error;
+  expect(view.value.subject).toEqual(application.subject);
+  const selected = parseEvidence({
+    ...feature.value.evidence,
+    subject: { ...feature.value.evidence.subject, name: "selected display" },
+  });
+  const retained = projectRetainedAnalysis(
+    selected,
+    {
+      recordEvidence: () => ok("added"),
+      evidenceById: () => feature.value.evidence,
+    },
+    { kind: "summary" },
+  );
+  if (!retained.ok) throw retained.error;
+  expect(retained.value.subject?.name).toBe("selected display");
+  expect(
+    rebindEvidenceToTargetPath(feature.value.evidence, {
+      path: application.subject!.local_path,
+      sha256: "f".repeat(64),
+      format: application.subject!.format,
+      architecture: "x86_64",
+      name: "wrong artifact",
+    }),
+  ).toBe(feature.value.evidence);
+});
+
+it("does not attribute a multi-source reconciliation graph to its envelope subject", () => {
+  const original = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right;
+  const reconciliation = createEvidence(
+    { path: "/other/artifact", sha256: "f".repeat(64), format: "file" },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: original.normalized_result,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: original.evidence_links,
+    },
+  );
+  const result = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application: reconciliation,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.evidence.subject).toBeNull();
+  expect(result.value.evidence.limitations).toContain(
+    "Artifact identity is unavailable for this observation.",
+  );
+});
 
 it("resolves feature native arrays without changing source identity or unknowns", () => {
   const input = {

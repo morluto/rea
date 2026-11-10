@@ -353,7 +353,7 @@ it("retains the absolute header budget for GGUF without allocating that extent",
   }
 });
 
-it("names exact offset limits instead of the retained report allowance", async () => {
+it("rejects impossible GGUF string lengths before representation capacity", async () => {
   const base = ggufFixture({ tensors: [] });
   const oversized = ggufFixture({
     metadata: [
@@ -365,27 +365,11 @@ it("names exact offset limits instead of the retained report allowance", async (
     ],
     tensors: [],
   });
-  for (const [label, bytes, allowance] of [
-    ["offset", oversized.bytes, String(Number.MAX_SAFE_INTEGER)],
-  ] as const) {
-    const { path, provider } = await providerAt(bytes);
-    const result = await provider.inspect({ path, hash: "header" });
-    if (result.ok) throw new Error(`${label} capacity was accepted`);
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      retryable: false,
-      remediationAction: expect.stringContaining(allowance),
-    });
-    const remediation =
-      "remediationAction" in result.error ? result.error.remediationAction : "";
-    expect(remediation).not.toContain(String(MODEL_REPORT_BYTES));
-    expect(remediation).not.toContain("100,000,000");
-    expect(result.error).toMatchObject({
-      reportedLimits: expect.not.objectContaining({
-        maximum_report_bytes: MODEL_REPORT_BYTES,
-      }),
-    });
-  }
+  const { provider, path } = await providerAt(oversized.bytes);
+  expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+    ok: false,
+    error: { _tag: "BinaryTargetError" },
+  });
 });
 
 it.each([MODEL_METADATA_NESTING + 3, 4096])(
@@ -449,6 +433,26 @@ it.each([7, 8, 99])(
     });
   },
 );
+
+it("rejects impossible counts inside omitted GGUF arrays before capacity", async () => {
+  const base = ggufFixture();
+  const nested = Buffer.concat([
+    ...Array.from({ length: MODEL_METADATA_NESTING + 3 }, () =>
+      Buffer.concat([base.u32(9), base.u64(1n)]),
+    ),
+    base.u32(7),
+    base.u64(0xffffffffffffffffn),
+  ]);
+  const fixture = ggufFixture({
+    metadata: [{ key: "custom.nested", type: 9, value: nested }],
+    tensors: [],
+  });
+  const { provider, path } = await providerAt(fixture.bytes);
+  expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+    ok: false,
+    error: { _tag: "BinaryTargetError" },
+  });
+});
 
 it("preserves safetensors scalar, empty and packed tensor declarations and raw string metadata", async () => {
   const fixture = safetensorsFixture();
@@ -933,6 +937,28 @@ it("refuses an oversized declared header before reading or expanding it", async 
 const malformed = [
   ["truncated GGUF", () => ggufFixture().bytes.subarray(0, 21)],
   [
+    "GGUF string whose declared bytes exceed the file and report budget",
+    () => {
+      const base = ggufFixture({ tensors: [] });
+      return ggufFixture({
+        tensors: [],
+        metadata: [
+          { key: "custom.value", type: 8, value: base.u64(6_000_000n) },
+        ],
+      }).bytes;
+    },
+  ],
+  [
+    "GGUF count whose minimum directory exceeds the file and report budget",
+    () => {
+      const header = Buffer.alloc(24);
+      header.write("GGUF");
+      header.writeUInt32LE(3, 4);
+      header.writeBigUInt64LE(65537n, 8);
+      return header;
+    },
+  ],
+  [
     "invalid UTF8",
     () => {
       const f = ggufFixture({
@@ -1108,6 +1134,37 @@ it.each(malformed)(
     });
   },
 );
+
+it("retains GGUF representation capacity when declared string bytes can fit", async () => {
+  const base = ggufFixture({ tensors: [] });
+  const bytes = ggufFixture({
+    tensors: [],
+    metadata: [{ key: "custom.value", type: 8, value: base.u64(6_000_000n) }],
+  }).bytes;
+  const { provider, path } = await providerAt(bytes);
+  await truncate(path, bytes.length + 6_000_000);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Oversized representation was accepted");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
+  });
+});
+
+it("retains GGUF representation capacity when the declared directory can fit", async () => {
+  const header = Buffer.alloc(24);
+  header.write("GGUF");
+  header.writeUInt32LE(3, 4);
+  header.writeBigUInt64LE(65537n, 8);
+  const { provider, path } = await providerAt(header);
+  await truncate(path, 24 + 65537 * 24);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Oversized representation was accepted");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
+  });
+});
 
 it("retains GGUF declarations and metadata when storage overlap is refused", async () => {
   const seed = ggufFixture();
@@ -1336,7 +1393,7 @@ it("bounds expansion before allocation and distinguishes unsupported pickle and 
   const { provider, path, root } = await providerAt(fixture.bytes);
   const huge = await provider.inspect({ path, hash: "header" });
   if (huge.ok) throw new Error("Huge count admitted");
-  expect(huge.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(huge.error._tag).toBe("BinaryTargetError");
   await writeFile(path, Buffer.from([0x80, 4, 0, 0]));
   const pickle = await provider.inspect({ path, hash: "header" });
   if (pickle.ok) throw new Error("Pickle admitted");
@@ -1541,4 +1598,108 @@ it("retains explicit scoped identity through shared service and preserves caller
   );
   if (stopped.ok) throw new Error("Cancellation ignored");
   expect(stopped.error.cause).toBe(reason);
+});
+
+it.each([false, true])(
+  "rejects raw uint64 extents before host conversion (big endian: %s)",
+  async (bigEndian) => {
+    const maximum = 0xffffffffffffffffn;
+    const base = ggufFixture({ bigEndian, tensors: [], metadata: [] });
+    const countCases = [8, 16].map((offset) => {
+      const bytes = Buffer.from(base.bytes);
+      (bigEndian
+        ? bytes.writeBigUInt64BE.bind(bytes)
+        : bytes.writeBigUInt64LE.bind(bytes))(maximum, offset);
+      return bytes;
+    });
+    const tensor = ggufFixture({
+      bigEndian,
+      metadata: [],
+      tensors: [{ name: "x", type: 0, shape: [1n], offset: 0n, bytes: 4 }],
+    });
+    base.u64(maximum).copy(tensor.bytes, tensor.header.length - 8);
+    const cases = [
+      tensor.bytes,
+      ...countCases,
+      ggufFixture({
+        bigEndian,
+        tensors: [],
+        metadata: [{ key: "value", type: 8, value: base.u64(maximum) }],
+      }).bytes,
+      ggufFixture({
+        bigEndian,
+        tensors: [],
+        metadata: [
+          {
+            key: "array",
+            type: 9,
+            value: Buffer.concat([base.u32(0), base.u64(maximum)]),
+          },
+        ],
+      }).bytes,
+    ];
+    for (const bytes of cases) {
+      const { provider, path } = await providerAt(bytes);
+      expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+        ok: false,
+        error: { _tag: "BinaryTargetError" },
+      });
+    }
+  },
+);
+
+it("rejects impossible safetensors header and data extents before numeric conversion", async () => {
+  const prefix = Buffer.alloc(8);
+  prefix.writeBigUInt64LE(0xffffffffffffffffn);
+  const header = Buffer.from(
+    '{"x":{"dtype":"F32","shape":[1],"data_offsets":[0,18446744073709551615]}}',
+  );
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64LE(BigInt(header.length));
+  for (const bytes of [
+    Buffer.concat([prefix, Buffer.from("{")]),
+    Buffer.concat([length, header, Buffer.alloc(4)]),
+  ]) {
+    const { provider, path } = await providerAt(bytes);
+    expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+      ok: false,
+      error: { _tag: "BinaryTargetError" },
+    });
+  }
+});
+
+it("rejects a tensor directory whose old 20-byte estimate fits but fixed fields do not", async () => {
+  const header = Buffer.alloc(24);
+  header.write("GGUF");
+  header.writeUInt32LE(3, 4);
+  header.writeBigUInt64LE(65537n, 8);
+  const { provider, path } = await providerAt(header);
+  await truncate(path, 24 + 65537 * 20);
+  expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+    ok: false,
+    error: { _tag: "BinaryTargetError" },
+  });
+});
+
+it("retains decoded counts when a physically fitting GGUF header exceeds the header budget", async () => {
+  const count = 4_166_667;
+  const header = Buffer.alloc(24);
+  header.write("GGUF");
+  header.writeUInt32LE(3, 4);
+  header.writeBigUInt64LE(BigInt(count), 8);
+  const { provider, path } = await providerAt(header);
+  await truncate(path, header.length + count * 24);
+  const result = await provider.inspect({ path, hash: "header" });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      partialObservation: {
+        normalized_result: {
+          declared_tensor_count: count,
+          declared_metadata_count: 0,
+        },
+      },
+    },
+  });
 });

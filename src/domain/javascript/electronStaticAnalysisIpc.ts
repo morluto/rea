@@ -8,6 +8,7 @@ import type {
 } from "./electronStaticAnalysisTypes.js";
 import {
   boundedExpression,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
   handlerKind,
@@ -91,6 +92,7 @@ const inspectIpcCall = (
   if (findingState.handler_kind === "missing")
     context.accumulator.unknownFindings += 1;
   const finding: ElectronIpcFinding = {
+    ...(scoped?.authority ?? electronCandidateAuthority(node.callee, context)),
     ...findingState,
     ...(scoped === undefined ? {} : { receiver: scoped.receiver }),
     ...channelReference,
@@ -112,6 +114,7 @@ const scopedIpcDescriptor = (
   | {
       readonly descriptor: ElectronIpcDescriptor;
       readonly receiver: ElectronIpcReceiver;
+      readonly authority: { readonly loader_authority?: "candidate" };
     }
   | undefined => {
   if (
@@ -143,6 +146,7 @@ const scopedIpcDescriptor = (
     ? undefined
     : {
         descriptor,
+        authority: receiver.authority,
         receiver: { kind, owner_location: range(receiver.owner) },
       };
 };

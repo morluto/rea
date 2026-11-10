@@ -7,6 +7,7 @@ Setup previews configuration changes and asks for approval before applying them.
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | Connect an agent                   | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
 | Install a Claude Code/Codex plugin | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
+| Run unreleased code                | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
 | Diagnose one task                  | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
 | Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
 | Update or remove REA               | [Maintenance](#diagnose-update-and-remove)                                                                          |
@@ -384,14 +385,22 @@ Select the part you want to check:
 | One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
 | Installed workflow instructions     | `rea doctor --skill --json`                                                |
+| Desktop app environment builds      | `rea doctor --provider desktop_build --client claude_code --json`          |
 
 A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
-Provider checks read the terminal running doctor. A client-started server may
-receive a different environment, and doctor cannot observe it. When an available
+With one selected client, Ghidra, IDA, JADX and Kuna provider checks use the
+client's recorded environment over the terminal it inherits. If that registration
+cannot be read or a setting a provider needs cannot be resolved, its available
+value is `null` and its check is `unknown`; its configured value is also `null`
+when the configuration setting itself is unknown. Doctor does not infer
+readiness from the terminal. A missing registration still uses terminal settings
+for setup. Other checks, including Hopper, use the terminal running doctor. A
+client-started server may receive a different environment, and doctor cannot
+observe it. When an available
 provider relies on a setting that a registration's file does not record, or
 records with other text, doctor adds a non-blocking
 `registration_environment:<client>` check with `classification: "unknown"`. The
@@ -594,6 +603,36 @@ Use the connected server's actual tool list and advertised input schemas for
 feature selection. The same package version string in a development checkout
 does not establish that its bytes match the npm tarball. Update a registration
 through a reviewed, scoped setup plan, then restart/reconnect the agent.
+
+### Run REA from a checkout
+
+To run code that is not released yet, build a checkout with the Node.js
+version in `.nvmrc`:
+
+```bash
+git clone https://github.com/morluto/rea.git
+cd rea
+npm ci
+npm run build:cached
+```
+
+Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
+wherever these docs say `rea …`, run
+`node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
+the checkout's `scripts/rea.mjs` with your agents.
+
+After `git pull`, run `npm ci` and `npm run build:cached` again. If the
+checkout's skill changed, refresh each installed copy before restarting its
+agent. For example, preview and review the Claude Code skill changes:
+
+```bash
+rea setup --skill-client claude_code --dry-run --json
+```
+
+Then apply the reviewed changes with `rea setup --skill-client claude_code --yes --json`.
+Substitute the relevant skill client; use the checkout's
+`node /absolute/path/to/rea/scripts/rea.mjs` form if `rea` is not linked. For desktop builds, also pack the [build computer's runtime
+archive](../desktop-build-computer.md#requirements) again.
 
 ## Skill-only installation
 
