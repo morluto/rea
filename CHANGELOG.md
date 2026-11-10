@@ -1,5 +1,7 @@
 # Changelog
 
+The next release changes analysis-setting output (#9885). `update_analysis_settings`, `inspect_analysis_settings`, and limit errors no longer include `rea_restart_required`, `restart_required`, `restartRequired`, or `effect`. Read `update_mode` (`runtime` or `restart`) and `pending_restart`. There is no compatibility alias. Release Please should copy this migration into that release's breaking-changes section.
+
 ## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-25)
 
 ### Highlights

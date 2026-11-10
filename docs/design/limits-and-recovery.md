@@ -257,8 +257,8 @@ are runtime-wide, not scoped to a target or an individual connection.
 ### Failure and retry
 
 An ASAR admission error supplies `details.limit` with the exact setting,
-effective value, units, bounds, scope, application point, restart requirement
-and, when known, required bytes and value source. The agent can immediately call:
+effective value, units, bounds, scope, application point, `update_mode`,
+`pending_restart` and, when known, required bytes and value source. The agent can immediately call:
 
 ```json
 {
@@ -284,6 +284,14 @@ or applicable. Do not infer a source because a value happens to equal a default.
 Error copying, attribution, redaction, and delivery must preserve these facts.
 Human-readable remediation explains the same failure; clients should not need
 to parse that sentence to identify an editable setting.
+
+This output is breaking. Results and errors no longer carry the previous
+restart boolean or a single effect field, and there is no compatibility alias.
+Read `update_mode` to see whether the setter can change the active value, and
+`pending_restart` to see whether a configured value is waiting. A configuration
+error for a Windows ChangeTime setting carries those two fields on
+`details.settings`, not only in the constraint sentence. The removed field names
+are listed in the changelog.
 
 `scope` and `applies_at` describe a continuing caller, such as an MCP
 connection. A one-shot invocation, such as a CLI command, has released its

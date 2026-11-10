@@ -70,6 +70,6 @@ export const regexMatchingDeadlineRecovery = (
 ): string =>
   [
     `The effective ${REGEX_MATCHING_DEADLINE_SETTING} value is ${String(deadline.deadlineMs)} ms (source ${deadline.source}; default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms, floor 1 ms, maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms).`,
-    `Set ${REGEX_MATCHING_DEADLINE_SETTING} in the environment that starts REA to a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)}, then restart REA. In a running MCP server, use update_analysis_settings with setting regex.matching_deadline_ms and action set instead; the new value applies to new work without a REA restart.`,
+    `regex.matching_deadline_ms can be changed at runtime with update_analysis_settings. The launch seed is ${REGEX_MATCHING_DEADLINE_SETTING}, a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)}.`,
     "The worker old-generation heap does not raise this deadline.",
   ].join(" ");

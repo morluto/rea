@@ -7,6 +7,10 @@ import {
 export interface ConfigurationSettingIssue {
   readonly setting: string;
   readonly constraint: string;
+  /** Whether `update_analysis_settings` can change this setting, when the producer owns that fact. */
+  readonly update_mode?: "runtime" | "restart";
+  /** True when the rejected value is configured but not active in this process. */
+  readonly pending_restart?: boolean;
 }
 
 /** Rejected settings retained for diagnostics; their values are not. */
@@ -24,9 +28,16 @@ export class ConfigurationError extends AnalysisError {
   constructor(message: string, options?: ConfigurationErrorOptions) {
     super(message, options);
     this.remediationAction = options?.remediationAction;
-    this.settings = (options?.settings ?? []).map(
-      ({ setting, constraint }) => ({ setting, constraint }),
-    );
+    this.settings = (options?.settings ?? []).map((issue) => ({
+      setting: issue.setting,
+      constraint: issue.constraint,
+      ...(issue.update_mode === undefined
+        ? {}
+        : { update_mode: issue.update_mode }),
+      ...(issue.pending_restart === undefined
+        ? {}
+        : { pending_restart: issue.pending_restart }),
+    }));
   }
 }
 
