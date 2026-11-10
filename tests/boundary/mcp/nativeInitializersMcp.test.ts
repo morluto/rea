@@ -8,6 +8,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   machoArm64FatInitializers,
   elf64PieInitializers,
+  elfUnmappedInitializerTargets,
 } from "../../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -19,6 +20,44 @@ const connect = async (mcp: TestMcp) => {
   const client = await mcp.connect(createServer({ kind: "session", session }));
   return { client, session };
 };
+
+mcpTest(
+  "retains unmapped ELF values without fabricating target file locations",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory(
+        "rea-native-init-unmapped-mcp-",
+      );
+      const path = join(root, "program");
+      await writeFile(path, elfUnmappedInitializerTargets());
+      const response = await client.callTool({
+        name: "inspect_native_initializers",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const evidence = toolContract(
+        "inspect_native_initializers",
+      ).outputSchema.parse(response.structuredContent);
+      expect(
+        evidence.normalized_result.entries.map((entry) => [
+          entry.value_va,
+          entry.value_file_offset,
+        ]),
+      ).toEqual([
+        ["0x0", null],
+        ["0x10", null],
+        ["0x401000", 0x100],
+      ]);
+      expect(evidence.normalized_result.coverage).toMatchObject({
+        examined_entries: 3,
+        total_entries: 3,
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);
 
 mcpTest(
   "advertises inspect_native_initializers and pages ELF initializers",

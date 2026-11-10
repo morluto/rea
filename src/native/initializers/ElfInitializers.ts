@@ -193,14 +193,13 @@ const readDynamicTags = (
 
 /**
  * File offset of `size` bytes at `address`: a whole slot, or a target's first
- * byte. `mappings` is built once per image, so each lookup is logarithmic. Only
- * a genuinely unmapped span falls back to section headers; an ambiguous one
- * stays unknown and makes the report incomplete.
+ * byte. Only load mappings establish linked addresses: section declarations
+ * cannot supply backing for an unmapped or zero-filled address. Ambiguous
+ * mappings stay unknown and make the report incomplete.
  */
 const fileOffsetFor = (
   scan: ElfScan,
   mappings: FileMappingIndex,
-  index: ElfSectionIndex,
   address: bigint,
   size: number,
 ): number | null => {
@@ -208,11 +207,8 @@ const fileOffsetFor = (
     return mappings.offset(address, size);
   } catch (cause) {
     if (!(cause instanceof BinaryMappingFailure)) throw cause;
-    if (cause.reason === "ambiguous") {
-      note(scan, AMBIGUOUS_MAPPING);
-      return null;
-    }
-    return index.fileOffsetAt(address, size);
+    if (cause.reason === "ambiguous") note(scan, AMBIGUOUS_MAPPING);
+    return null;
   }
 };
 
@@ -234,22 +230,16 @@ const vaForFile = (
   return null;
 };
 
-/** Address lookups over the section headers, built once per image. */
+/** Section-name labels, independent of load-address translation. */
 interface ElfSectionIndex {
   /** Name of the smallest SHF_ALLOC section containing `address`; earlier headers win ties. */
   readonly nameAt: (address: bigint) => string | null;
-  /**
-   * File offset of `width` bytes at `address` in the first file-backed section,
-   * in header order, that covers `address`. Null when that section ends before
-   * the span does.
-   */
-  readonly fileOffsetAt: (address: bigint, width: number) => number | null;
 }
 
 const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
-  const ranges = (keep: (section: NativeSection) => boolean) =>
+  const named = buildAddressRangeIndex(
     sections.flatMap((section) =>
-      keep(section)
+      section.size !== 0n && (section.flags & 2n) !== 0n
         ? [
             {
               start: section.address,
@@ -258,9 +248,7 @@ const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
             },
           ]
         : [],
-    );
-  const named = buildAddressRangeIndex(
-    ranges((section) => section.size !== 0n && (section.flags & 2n) !== 0n),
+    ),
     (left, right) =>
       left.size < right.size
         ? -1
@@ -268,23 +256,10 @@ const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
           ? 1
           : left.index - right.index,
   );
-  const backed = buildAddressRangeIndex(
-    ranges((section) => section.file_backed),
-    (left, right) => left.index - right.index,
-  );
   return {
     nameAt(address) {
       const name = named.at(address)?.value.name;
       return name == null || name.length === 0 ? null : name;
-    },
-    fileOffsetAt(address, width) {
-      const section = backed.at(address)?.value;
-      if (
-        section === undefined ||
-        address + BigInt(width) > section.address + section.size
-      )
-        return null;
-      return Number(section.offset) + Number(address - section.address);
     },
   };
 };
@@ -967,9 +942,9 @@ export const readElfInitializers = async (
   const index = indexSections(directory.sections);
   const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
   const locate = (address: bigint): number | null =>
-    fileOffsetFor(scan, mappings, index, address, wordOf(scan.bits));
+    fileOffsetFor(scan, mappings, address, wordOf(scan.bits));
   const locateTarget = (address: bigint): number | null =>
-    fileOffsetFor(scan, mappings, index, address, 1);
+    fileOffsetFor(scan, mappings, address, 1);
   const declaredSources = collectSources(
     scan,
     tags,
@@ -1031,7 +1006,7 @@ export const readElfInitializers = async (
     tables: symbols.tables,
     notes: scan.notes,
     fileOffset: (address, width) =>
-      fileOffsetFor(scan, mappings, index, address, width),
+      fileOffsetFor(scan, mappings, address, width),
     signal,
   });
   if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)

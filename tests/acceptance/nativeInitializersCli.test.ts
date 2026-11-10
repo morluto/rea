@@ -4,12 +4,41 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   elfRelocatableCtors,
+  elfUnmappedInitializerTargets,
   machoArm64Initializers,
 } from "../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const contract = toolContract("inspect_native_initializers");
+
+cliTest(
+  "keeps unmapped ELF target locations null in public CLI Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-native-init-unmapped-cli-");
+    const path = join(root, "program");
+    await writeFile(path, elfUnmappedInitializerTargets());
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(
+      evidence.normalized_result.entries.map((entry) => [
+        entry.value_va,
+        entry.value_file_offset,
+      ]),
+    ).toEqual([
+      ["0x0", null],
+      ["0x10", null],
+      ["0x401000", 0x100],
+    ]);
+    expect(evidence.normalized_result.coverage).toMatchObject({
+      examined_entries: 3,
+      total_entries: 3,
+    });
+  },
+);
 
 cliTest(
   "lists Mach-O initializers and finalizers through the public CLI",

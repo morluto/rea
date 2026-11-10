@@ -54,7 +54,11 @@ Each `entries[]` item reports:
   limitation says so.
 - `value_va`, `value_file_offset` and `section`: the resolved target address,
   its file offset and its containing section. These are null when the value
-  was not established. A file offset is also null when load segments map the
+  was not established. In a linked ELF, file offsets come only from `PT_LOAD`:
+  an unmapped or zero-filled target keeps its observed address but has a null
+  file offset, even if a section header declares bytes at that address. ET_REL
+  targets retain their relocation symbol's section-relative coordinates.
+  A file offset is also null when load segments map the
   address ambiguously (overlapping segments with different file offsets, or
   file and zero-fill memory), and the report is then `incomplete`.
 - `symbol`: a defined symbol whose value equals the target exactly, or the

@@ -111,6 +111,50 @@ const cStringTable = (
   return { bytes: Buffer.concat(parts), offsets };
 };
 
+/** Linked ELF64 with two unmapped targets beside a one-byte mapped constructor. */
+export const elfUnmappedInitializerTargets = (
+  options: { readonly type?: 2 | 3; readonly metadataAllocated?: boolean } = {},
+): Buffer => {
+  const file = Buffer.alloc(0x600);
+  const names = cStringTable([".text", ".init_array", ".comment", ".shstrtab"]);
+  const comment = Buffer.from(
+    "Unmapped initializer targets must not point into metadata.\0",
+  );
+  elfIdent(file, 64, options.type ?? 2, 62);
+  file.writeBigUInt64LE(64n, 32);
+  file.writeBigUInt64LE(0x400n, 40);
+  file.writeUInt16LE(64, 52);
+  file.writeUInt16LE(56, 54);
+  file.writeUInt16LE(3, 56);
+  file.writeUInt16LE(64, 58);
+  file.writeUInt16LE(5, 60);
+  file.writeUInt16LE(4, 62);
+  phdr64(file, 64, 1, 4, 0, 0x400000, 0x100);
+  phdr64(file, 120, 1, 5, 0x100, 0x401000, 1);
+  phdr64(file, 176, 1, 6, 0x140, 0x402000, 24);
+  file[0x100] = 0xc3;
+  file.writeBigUInt64LE(0n, 0x140);
+  file.writeBigUInt64LE(0x10n, 0x148);
+  file.writeBigUInt64LE(0x401000n, 0x150);
+  comment.copy(file, 0x200);
+  names.bytes.copy(file, 0x280);
+  shdr64(file, 1, 0x400, names.offsets[0]!, 1, 6, 0x401000, 0x100, 1);
+  shdr64(file, 2, 0x400, names.offsets[1]!, 14, 3, 0x402000, 0x140, 24, 0, 8);
+  shdr64(
+    file,
+    3,
+    0x400,
+    names.offsets[2]!,
+    1,
+    options.metadataAllocated === true ? 2 : 0,
+    0,
+    0x200,
+    comment.length,
+  );
+  shdr64(file, 4, 0x400, names.offsets[3]!, 3, 0, 0, 0x280, names.bytes.length);
+  return file;
+};
+
 /**
  * ELF64 PIE: DT_INIT, RELATIVE init_array, one import, one RELR fini slot.
  * `needed` prepends that many DT_NEEDED entries, which repeat by design.

@@ -29,6 +29,7 @@ import {
   elf32RelativeInitializers,
   elf64PieInitializers,
   elfRelocatableCtors,
+  elfUnmappedInitializerTargets,
   macho32Initializers,
   machoArm64FatInitializers,
   machoArm64Initializers,
@@ -69,6 +70,55 @@ const read = async (
         : { architecture: page.architecture }),
     }),
   );
+
+it.each([
+  { type: 2 as const, metadataAllocated: false },
+  { type: 3 as const, metadataAllocated: false },
+  { type: 2 as const, metadataAllocated: true },
+])(
+  "keeps section metadata from inventing linked target file offsets ($type / $metadataAllocated)",
+  async (options) => {
+    const report = await read(elfUnmappedInitializerTargets(options));
+    expect(
+      report.entries.map((entry) => [entry.value_va, entry.value_file_offset]),
+    ).toEqual([
+      ["0x0", null],
+      ["0x10", null],
+      ["0x401000", 0x100],
+    ]);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      examined_entries: 3,
+      total_entries: 3,
+    });
+  },
+);
+
+it("preserves a real mapping to file offset zero instead of treating zero as missing", async () => {
+  const bytes = elfUnmappedInitializerTargets({ type: 3 });
+  bytes.writeBigUInt64LE(0n, 64 + 16);
+  bytes.writeBigUInt64LE(0n, 64 + 24);
+  const report = await read(bytes);
+  expect(
+    report.entries.slice(0, 2).map((entry) => entry.value_file_offset),
+  ).toEqual([0, 0x10]);
+});
+
+it("does not use metadata to back a target in a load segment's zero-fill tail", async () => {
+  const bytes = elfUnmappedInitializerTargets();
+  bytes.writeBigUInt64LE(0x2000n, 176 + 40);
+  bytes.writeBigUInt64LE(0x403000n, 0x140);
+  bytes.writeBigUInt64LE(0x403000n, 0x400 + 3 * 64 + 16);
+  const report = await read(bytes);
+  expect(report.entries[0]).toMatchObject({
+    value_va: "0x403000",
+    value_file_offset: null,
+  });
+  expect(report.entries[2]).toMatchObject({
+    value_va: "0x401000",
+    value_file_offset: 0x100,
+  });
+});
 
 /** One ELF64 section header for {@link withExtraSections}. */
 const sectionHeader = (
