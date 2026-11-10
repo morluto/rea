@@ -164,6 +164,46 @@ cliTest(
         field: "task.0",
       },
       {
+        arguments: [
+          "export-desktop-application",
+          "unread",
+          "output",
+          "--download-install",
+          "",
+        ],
+        field: "downloadInstall",
+      },
+      {
+        arguments: [
+          "export-desktop-application",
+          "unread",
+          "output",
+          "--screens",
+          "",
+        ],
+        field: "screens",
+      },
+      {
+        arguments: [
+          "export-desktop-application",
+          "unread",
+          "output",
+          "--consent",
+          "",
+        ],
+        field: "consent",
+      },
+      {
+        arguments: [
+          "export-desktop-application",
+          "unread",
+          "output",
+          "--withheld-copy",
+          "",
+        ],
+        field: "withheldCopy",
+      },
+      {
         arguments: ["describe-desktop-application-task", ""],
         field: "capture",
       },
