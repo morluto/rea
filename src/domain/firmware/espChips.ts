@@ -9,6 +9,8 @@
  *   `components/soc/<target>/include/soc/soc.h`;
  * - page sizes: `SOC_MMU_PAGE_SIZE_8KB_SUPPORTED` in `soc_caps.h` and
  *   `components/soc/<target>/Kconfig.mmu`;
+ * - bootloader flash offset: `ESP_ROM_BOOTLOADER_OFFSET_FLASH` in
+ *   `components/esp_rom/<target>/esp_rom_caps.h`, which the ROM fixes;
  * - segment length limit: `SOC_SPI_MEM_SUPPORT_CACHE_32BIT_ADDR_MAP` in
  *   `soc_caps.h`, which sets `ESP_IMAGE_MAX_FLASH_ADDR_SIZE` in
  *   `components/bootloader_support/src/esp_image_format.c`.
@@ -31,6 +33,8 @@ export interface EspChip {
   /** ESP-IDF `IDF_TARGET` name, as `esptool --chip` also spells it. */
   readonly target: string;
   readonly isa: EspChipIsa;
+  /** Where the ROM loads the second-stage bootloader from flash. */
+  readonly romBootloaderOffset: number;
   /** `SOC_SPI_MEM_SUPPORT_CACHE_32BIT_ADDR_MAP`, which lifts the 16 MiB segment limit. */
   readonly cache32BitAddressMap: boolean;
   /** `should_map` ranges with fixed bounds. */
@@ -56,6 +60,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0000,
     target: "esp32",
     isa: "xtensa",
+    romBootloaderOffset: 0x1000,
     cache32BitAddressMap: false,
     mapped: [range(0x400d_0000, 0x4040_0000), range(0x3f40_0000, 0x3f80_0000)],
   },
@@ -63,6 +68,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0002,
     target: "esp32s2",
     isa: "xtensa",
+    romBootloaderOffset: 0x1000,
     cache32BitAddressMap: false,
     mapped: [range(0x4008_0000, 0x4080_0000), range(0x3f00_0000, 0x3ff8_0000)],
   },
@@ -70,6 +76,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0005,
     target: "esp32c3",
     isa: "riscv",
+    romBootloaderOffset: 0x0,
     cache32BitAddressMap: false,
     mapped: [range(0x4200_0000, 0x4280_0000), range(0x3c00_0000, 0x3c80_0000)],
   },
@@ -77,6 +84,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0009,
     target: "esp32s3",
     isa: "xtensa",
+    romBootloaderOffset: 0x0,
     cache32BitAddressMap: true,
     mapped: [range(0x4200_0000, 0x4400_0000), range(0x3c00_0000, 0x3e00_0000)],
   },
@@ -84,6 +92,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x000c,
     target: "esp32c2",
     isa: "riscv",
+    romBootloaderOffset: 0x0,
     cache32BitAddressMap: false,
     mapped: [range(0x4200_0000, 0x4240_0000), range(0x3c00_0000, 0x3c40_0000)],
   },
@@ -91,6 +100,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x000d,
     target: "esp32c6",
     isa: "riscv",
+    romBootloaderOffset: 0x0,
     cache32BitAddressMap: false,
     mapped: [],
     pageSizedMapping: { low: 0x4200_0000, pageSizes: C6_H2_PAGE_SIZES },
@@ -99,6 +109,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0010,
     target: "esp32h2",
     isa: "riscv",
+    romBootloaderOffset: 0x0,
     cache32BitAddressMap: false,
     mapped: [],
     pageSizedMapping: { low: 0x4200_0000, pageSizes: C6_H2_PAGE_SIZES },
@@ -107,6 +118,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0012,
     target: "esp32p4",
     isa: "riscv",
+    romBootloaderOffset: 0x2000,
     cache32BitAddressMap: true,
     mapped: [range(0x4000_0000, 0x4400_0000), range(0x4800_0000, 0x4c00_0000)],
   },
@@ -114,6 +126,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0014,
     target: "esp32c61",
     isa: "riscv",
+    romBootloaderOffset: 0x0,
     cache32BitAddressMap: true,
     mapped: [range(0x4200_0000, 0x4400_0000)],
   },
@@ -121,6 +134,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0017,
     target: "esp32c5",
     isa: "riscv",
+    romBootloaderOffset: 0x2000,
     cache32BitAddressMap: true,
     mapped: [range(0x4200_0000, 0x4400_0000)],
   },
@@ -128,6 +142,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0019,
     target: "esp32h21",
     isa: "riscv",
+    romBootloaderOffset: 0x0,
     cache32BitAddressMap: false,
     mapped: [range(0x4200_0000, 0x4300_0000)],
   },
@@ -135,6 +150,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x001c,
     target: "esp32h4",
     isa: "riscv",
+    romBootloaderOffset: 0x2000,
     cache32BitAddressMap: true,
     mapped: [range(0x4200_0000, 0x4400_0000)],
   },
@@ -142,6 +158,7 @@ const CHIPS: readonly EspChip[] = [
     chipId: 0x0020,
     target: "esp32s31",
     isa: "riscv",
+    romBootloaderOffset: 0x2000,
     cache32BitAddressMap: true,
     mapped: [range(0x4000_0000, 0x4400_0000), range(0x5000_0000, 0x5400_0000)],
   },
@@ -151,6 +168,11 @@ const BY_ID = new Map(CHIPS.map((chip) => [chip.chipId, chip]));
 
 export const espChipForId = (chipId: number): EspChip | undefined =>
   BY_ID.get(chipId);
+
+/** Every flash offset a ROM loads a bootloader from, lowest first. */
+export const ESP_ROM_BOOTLOADER_OFFSETS: readonly number[] = [
+  ...new Set(CHIPS.map(({ romBootloaderOffset }) => romBootloaderOffset)),
+].sort((left, right) => left - right);
 
 const SIXTEEN_MIB = 0x100_0000;
 

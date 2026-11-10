@@ -7,7 +7,9 @@ import type {
   ProviderFailureStage,
 } from "./providerOperationHealth.js";
 import {
+  dialogTimeoutFromDiagnostic,
   hopperStartupFailure,
+  invalidDialogTimeoutMessage,
   type HopperStartupFailureCode,
   type HopperStartupFailureDiagnostic,
 } from "./hopperStartupFailure.js";
@@ -163,6 +165,12 @@ export class HopperProcessError extends HopperError {
     this.requestId = context.requestId;
     this.launcherFailure = context.launcherFailure;
     const failure = hopperStartupFailure(exitCode);
+    this.userMessage =
+      failure?.code === "invalid_dialog_timeout"
+        ? invalidDialogTimeoutMessage(
+            dialogTimeoutFromDiagnostic(context.diagnostic),
+          )
+        : failure?.message;
     this.stage =
       context.stage ??
       (failure === undefined
@@ -171,7 +179,6 @@ export class HopperProcessError extends HopperError {
           : "analysis"
         : "launch");
     this.failureCode = failure?.code;
-    this.userMessage = failure?.message;
     this.providerState =
       context.providerState ?? (exitCode === null ? "unknown" : "exited");
   }

@@ -70,6 +70,7 @@ export default defineConfig({
           { text: "Apple applications", link: "/apple-application-analysis" },
           { text: "Desktop installations", link: "/desktop-applications" },
           { text: "Firmware", link: "/firmware-analysis" },
+          { text: "iNES containers", link: "/ines-containers" },
           { text: "SQLite databases", link: "/sqlite-databases" },
           { text: "Packet captures", link: "/packet-captures" },
           { text: "Signal recordings", link: "/signal-recordings" },

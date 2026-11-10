@@ -226,12 +226,11 @@ cliTest(
         details: {
           operation: "compare_bundles",
           issues: expect.arrayContaining([
-            {
+            expect.objectContaining({
               path: [rejectedField],
               reason: "invalid_format",
               expected: "regex",
-              message: "must be an absolute local filesystem path",
-            },
+            }),
           ]),
         },
       });

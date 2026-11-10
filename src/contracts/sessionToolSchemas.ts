@@ -3,9 +3,6 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 
-import { processTraceSpecificationSchema } from "../domain/process/processTraceSpecification.js";
-import { evidenceSchema } from "../domain/evidence.js";
-import { evidenceSourceInputSchema } from "../domain/evidenceReference.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { evidenceRecordFiltersSchema } from "../domain/evidenceRecordSummary.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
@@ -44,23 +41,6 @@ export const bundleComparisonMcpInputSchema =
       "Absolute local filesystem path to the right Evidence bundle.",
     ),
   });
-
-/** Evidence references for deterministic process comparison. */
-export const processComparisonInputSchema = z.strictObject({
-  left: evidenceSchema,
-  right: evidenceSchema,
-  trace_spec: processTraceSpecificationSchema.optional(),
-  max_capture_age_ms: z.int().nonnegative().optional(),
-});
-
-/** Name each compared artifact inventory once: inline, retained, or in a local Evidence file. */
-export const artifactComparisonInputSchema = z.strictObject({
-  left: evidenceSourceInputSchema,
-  right: evidenceSourceInputSchema,
-});
-export type ArtifactComparisonInput = z.output<
-  typeof artifactComparisonInputSchema
->;
 
 /** Residual-unknown list filters. */
 export const listUnknownsInputSchema = z.strictObject({

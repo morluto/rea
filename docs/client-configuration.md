@@ -283,8 +283,9 @@ patterns. A provider being unavailable does not discard its selected paths;
 doctor reports its readiness separately. Explicit selections override discovered
 defaults, including when setup runs again with a changed selection. Unrelated
 environment variables, process ownership tokens and one-shot target paths are not
-copied. Existing client environment overrides remain intact unless setup supplies
-the same key.
+copied. For an explicitly configured startup target, see the
+[initial-target settings](mcp-contracts.md#initial-target-at-startup). Existing
+client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.

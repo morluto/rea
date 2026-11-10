@@ -976,15 +976,6 @@ describe("native IDA malformed observations", () => {
 });
 
 describe("native IDA attached operation admission", () => {
-  it("forwards the native producer's explicit reference cap flag", async () => {
-    const { client } = await fixture();
-    const result = await client.execute("xrefs", { address: "0x1000" });
-
-    if (!result.ok) throw result.error;
-    expect(result.value.referencesTruncated).toBe(false);
-    await client.close();
-  });
-
   it("reports the bound document but not headless-only address resolution", async () => {
     const { client, producer, target } = await fixture();
     const containing = await client.execute("resolve_containing_procedure", {

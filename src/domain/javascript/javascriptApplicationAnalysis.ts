@@ -12,8 +12,7 @@ import {
   isValidatedImmutableJavaScriptSemanticGraph,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { integrityContradictionSchema } from "../artifactGraph.js";
 import { artifactIntegrityPolicySchema } from "../artifactIntegrityPolicy.js";
 import { localPathStringSchema } from "../localPath.js";
@@ -57,6 +56,8 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_utility_entrypoints: countSchema,
   native_addon_bindings: countSchema,
   resolved_native_addon_bindings: countSchema,
+  /** Absent in evidence produced before protocol registrations were reported. */
+  protocol_registrations: countSchema.exactOptional(),
 });
 
 const reconstructionStatisticsSchema = z.strictObject({

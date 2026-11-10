@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
 import { resolveInvestigationEvidenceClosure } from "./InvestigationEvidence.js";
 
@@ -64,12 +66,28 @@ it("keeps a selected transitive closure distinct from unrelated records and reje
   records.clear();
   const added = records.recordEvidence(root);
   if (!added.ok) throw added.error;
-  expect(
-    resolveInvestigationEvidenceClosure(records, [root.evidence_id]),
-  ).toMatchObject({
+  const missing = resolveInvestigationEvidenceClosure(records, [
+    root.evidence_id,
+  ]);
+  expect(missing).toMatchObject({
     ok: false,
-    error: { _tag: "EvidenceIntegrityError" },
+    error: {
+      _tag: "EvidenceIntegrityError",
+      reason: "missing",
+      referenceScope: "retained-closure",
+    },
   });
+  if (missing.ok) throw new Error("missing source closure was resolved");
+  const projected = projectAnalysisError(missing.error);
+  expect(projected).toMatchObject({
+    details: {
+      evidence_id: leaf.evidence_id,
+      reference_scope: "retained-closure",
+      reason: "missing",
+    },
+  });
+  expect(projected.message).toContain(leaf.evidence_id);
+  expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
 });
 
 it("rejects a lookup that returns another semantic Evidence identity", () => {
@@ -86,6 +104,7 @@ it("rejects a lookup that returns another semantic Evidence identity", () => {
       reason: "identity_mismatch",
       evidenceId: selectedId,
       actual: record.evidence_id,
+      referenceScope: undefined,
     },
   });
 });

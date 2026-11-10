@@ -44,10 +44,18 @@ export const createHarValidator = (): ((
   if (typeof plugin !== "function")
     throw new Error("Pinned AJV formats plugin is unavailable");
   plugin(ajv);
+  ajv.addFormat(HAR_REQUEST_URL_FORMAT, harRequestUrlValidator(plugin));
   const propertiesSchema = z.record(z.string(), z.unknown());
   const correctedSchemas: Record<string, Record<string, unknown>> = {
     timings: timingsSchema,
     cache: { ...schemas.cache, type: "object" },
+    request: {
+      ...schemas.request,
+      properties: {
+        ...propertiesSchema.parse(schemas.request?.properties),
+        url: { type: "string", format: HAR_REQUEST_URL_FORMAT },
+      },
+    },
     entry: {
       ...schemas.entry,
       properties: {
@@ -123,3 +131,24 @@ const allowObservedProducerRepresentations = (
   }
   return adaptedPlaywrightEntries;
 };
+
+const HAR_REQUEST_URL_FORMAT = "absolute-url";
+
+// HAR 1.2 defines request.url only as the absolute request URL. har-schema's
+// RFC 3986 `uri` format rejects URLs exactly as browsers serialize and send
+// them, such as an unescaped `|` or `{` in the query. Keep every RFC 3986 URL
+// admitted, even one WHATWG would rewrite. Otherwise admit only a spelling that
+// WHATWG URL serialization reproduces unchanged, so a URL admitted by this
+// branch reads the same under WHATWG as it was recorded.
+const harRequestUrlValidator = (
+  plugin: object,
+): ((value: string) => boolean) => {
+  const getFormat: unknown = Reflect.get(plugin, "get");
+  const rfc3986 = isCallable(getFormat) ? getFormat("uri") : undefined;
+  if (!isCallable(rfc3986))
+    throw new Error("Pinned AJV uri format is unavailable");
+  return (value) => rfc3986(value) === true || URL.parse(value)?.href === value;
+};
+
+const isCallable = (value: unknown): value is (argument: string) => unknown =>
+  typeof value === "function";

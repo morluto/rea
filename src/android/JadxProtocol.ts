@@ -2,7 +2,10 @@ import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
-import { dexStaticValueSchema } from "../domain/android/androidAnalysis.js";
+import {
+  androidMethodSelectorSchema,
+  dexStaticValueSchema,
+} from "../domain/android/androidAnalysis.js";
 import {
   dexDescriptorSchema,
   dexTypeSchema,
@@ -27,9 +30,15 @@ const jadxInputFailureSchema = z.strictObject({
   field: z.enum(["class_name", "method_name", "overload_index"]),
   message: z.string().min(1),
 });
+const jadxReferenceLimitSchema = z.strictObject({
+  kind: z.literal("reference-output-limit"),
+  stage: z.enum(["method_inventory", "caller_inventory"]),
+  limit_bytes: z.int().positive().safe(),
+});
 const bridgeFailureSchema = z.discriminatedUnion("kind", [
   jadxInputFailureSchema,
   jadxMemoryFailureSchema,
+  jadxReferenceLimitSchema,
 ]);
 
 /** Arbitrary upstream failure text stays text unless it matches a named bridge contract. */
@@ -87,6 +96,15 @@ export const parseJadxClassPage = (value: JsonValue): JadxClassPage => {
   return value as JadxClassPage;
 };
 
+const jadxMethodMetadataSchema = z.object({
+  name: z.string(),
+  raw_name: z.string().min(1),
+  signature: z.string(),
+  dex_descriptor: dexDescriptorSchema,
+  is_constructor: z.boolean(),
+  def_pos: z.int(),
+});
+
 export const jadxClassSchema = z.object({
   full_name: z.string().min(1),
   raw_name: z.string().min(1),
@@ -94,16 +112,7 @@ export const jadxClassSchema = z.object({
   method_count: count,
   field_count: count,
   inner_class_count: count,
-  methods: z.array(
-    z.object({
-      name: z.string(),
-      raw_name: z.string().min(1),
-      signature: z.string(),
-      dex_descriptor: dexDescriptorSchema,
-      is_constructor: z.boolean(),
-      def_pos: z.int(),
-    }),
-  ),
+  methods: z.array(jadxMethodMetadataSchema),
   fields: z.array(
     z.object({
       name: z.string(),
@@ -117,6 +126,13 @@ export const jadxClassSchema = z.object({
   inner_classes: z.array(z.string()),
   /** Original binary names, index-aligned with the display names above. */
   inner_class_raw_names: z.array(z.string()),
+});
+/** Reference-only prototypes are not an external class definition or field inventory. */
+export const jadxExternalReferenceSummarySchema = z.object({
+  reference_target: z.literal("external"),
+  class_name: z.string().min(1),
+  observed_method_count: count,
+  prototypes: z.array(jadxMethodMetadataSchema).min(1),
 });
 export const jadxMethodSchema = z.object({
   class_name: z.string(),
@@ -132,6 +148,9 @@ export const jadxMethodSchema = z.object({
 });
 export const jadxXrefsSchema = z.object({
   target: z.string(),
+  reference_target: z.literal("external").optional(),
+  reference_scope: z.literal("direct_dex_invokes").optional(),
+  dex_descriptor: dexDescriptorSchema.optional(),
   overload_index: count.optional(),
   reported_signature: z.string().optional(),
   total: count,
@@ -145,6 +164,7 @@ export const jadxXrefsSchema = z.object({
       containing_class: z.string(),
       top_class: z.string(),
       def_pos: z.int(),
+      source_selector: androidMethodSelectorSchema.optional(),
       direct_invokes_exhaustive: z.boolean().optional(),
       direct_invokes: z
         .array(

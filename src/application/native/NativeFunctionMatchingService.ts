@@ -20,6 +20,7 @@ import { resolveNativeMatchingSources } from "./NativeMatchingSources.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { NativeMatchingAllowance } from "../../config/nativeMatchingAllowance.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
+import { NATIVE_FUNCTION_MATCHING_PREDICATE } from "../../domain/native/functionMatching.js";
 
 const OPERATION = "match_native_functions";
 
@@ -144,7 +145,7 @@ const matchWithAdmission = async (
   await checkpoint();
   const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
     operation: OPERATION,
-    predicateType: "rea.native-function-matching",
+    predicateType: NATIVE_FUNCTION_MATCHING_PREDICATE,
     confidence: "derived",
     authority: "analyst-inference",
     parameters: {

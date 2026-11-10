@@ -418,13 +418,12 @@ for (const group of groups) {
         });
         if (client === "grok_build") {
           const original = await readFile(config, "utf8");
-          await writeFile(
-            config,
-            original.replace(
-              "[mcp_servers.rea]",
-              "[mcp_servers.rea]\ndisabled = true",
-            ),
+          const disabled = original.replace(
+            "[mcp_servers.rea]",
+            "[mcp_servers.rea]\ndisabled = true",
           );
+          expect(disabled).not.toBe(original);
+          await writeFile(config, disabled);
           expect(
             (await run(["doctor", "--client", "grok_build", "--json"]))
               .exitCode,

@@ -4,7 +4,10 @@ import { fc, it } from "@fast-check/vitest";
 import canonicalize from "canonicalize";
 import { describe, expect } from "vitest";
 
-import { digestCanonicalValue } from "./canonicalDigest.js";
+import {
+  CanonicalDigestError,
+  digestCanonicalValue,
+} from "./canonicalDigest.js";
 
 const legacyDigest = (value: unknown): string => {
   const encoded = canonicalize(value);
@@ -52,8 +55,27 @@ describe("incremental canonical digest", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     const recursiveJson = { toJSON: (): unknown => recursiveJson };
-    for (const value of [NaN, Infinity, -Infinity, 1n, cyclic, recursiveJson])
-      expect(() => digestCanonicalValue(value)).toThrow();
+    for (const [value, code] of [
+      [Number.NaN, "nan"],
+      [Number.POSITIVE_INFINITY, "infinity"],
+      [Number.NEGATIVE_INFINITY, "infinity"],
+    ] as const) {
+      expect(() => digestCanonicalValue(value)).toThrow(CanonicalDigestError);
+      try {
+        digestCanonicalValue(value);
+      } catch (cause) {
+        expect(cause).toMatchObject({ _tag: "CanonicalDigestError", code });
+      }
+    }
+    for (const value of [cyclic, recursiveJson]) {
+      expect(() => digestCanonicalValue(value)).toThrow(CanonicalDigestError);
+      try {
+        digestCanonicalValue(value);
+      } catch (cause) {
+        expect(cause).toMatchObject({ code: "circular" });
+      }
+    }
+    expect(() => digestCanonicalValue(1n)).toThrow();
   });
 
   it("preserves canonical bytes across large keys, repeated leaves and buffer flushes", () => {

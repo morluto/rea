@@ -48,6 +48,78 @@ fixture servers. Custom orchestration languages, replay engines, or separate
 prepare/execute plans need an observed requirement those primitives cannot
 satisfy. A plan without execution does not establish runtime behavior.
 
+## Exercise the analyst workflow
+
+Before defining a new provider-backed tool, state the analyst's question, what
+they already have, the intended result and authority, and what must remain
+unknown. Try the nearest existing REA workflow and the relevant native provider
+or ordinary script path when available. Identify the specific gap and what a
+new or extended contract would add; upstream capability alone does not require
+a new tool or equal support from every provider.
+
+Exercise the task through REA as a whole and compare relevant provider behavior
+with an independent artifact or format observation where possible. Use the
+caller's selected target and authority. Record the provider version, target and
+observed coverage, and distinguish an unsupported operation from an empty
+result or an untested path.
+
+Include the boundary cases that could change the answer: provider labels versus
+source facts, addresses versus file locations, partial results, and a useful
+recovery after failure or session close when those apply to the task. Check that
+composed results keep each observation's identity, limitations and source
+association. Existing real-provider lanes and focused tests establish their
+selected scenarios; they do not by themselves establish a different workflow or
+provider equivalence. If a provider cannot be exercised, report that limitation
+and continue with the available evidence. Measure agent tool selection only with
+an actual agent evaluation; a scripted tool sequence does not establish it. Use
+[testing guidance](testing.md#provider-backed-workflow-verification) to select
+the cases that establish the proposed contract.
+
+## Audit existing tools
+
+Scope an audit by analyst tasks and the caller's target, providers and authority.
+Record the source revision and, when used, the running server, catalog and
+provider versions; a connected server can differ from the current checkout.
+Inspect the live CLI help or MCP descriptions and schemas alongside the owning
+contracts and documentation. Choose representative tasks and their nearest REA
+and native alternatives rather than counting upstream commands.
+
+Exercise the selected public workflows, including the steps before and after a
+tool call. Check task selection, input choices, returned facts and their source,
+partial or unsupported outcomes, and applicable session and recovery behavior.
+Compare native provider output and an independent artifact observation where
+available. Inspect existing tests and real-provider lanes for the scenario they
+actually cover; a passing test does not establish a different task or host.
+Use [workflow verification](testing.md#provider-backed-workflow-verification)
+for counterexamples and lifecycle controls relevant to the audit.
+
+Report working routes as well as findings. Separate a reproduced contract bug,
+an intentional limitation, a design opportunity and an unverified hypothesis;
+include the smallest useful reproduction, impact and coverage limits. Do not
+claim autonomous-agent selection from a scripted trace. Check related reports
+before proposing another issue, and avoid treating lack of API parity as a bug.
+
+## Design recovery around the failure
+
+Distinguish a request that violates its input contract from a valid selection
+that the current target, provider inventory, or project cannot resolve. The
+same `invalid_request` code can represent either. Suggest schema inspection
+only when the input contract is the problem; for a valid lookup, preserve the
+caller's exact selector, the observed reason and any candidates, and give a
+next step that addresses that outcome. An inventory miss does not prove that
+the artifact lacks the requested item.
+
+Keep recovery within the selected target, provider, project and authority. If
+another context could help, describe it as an explicit choice and state any
+relevant loss of state; do not switch or select a candidate automatically.
+Preserve uncertainty, partial observations, and session or cleanup state. A
+suggested retry must be safe and explain any required change or wait.
+
+Verify recovery through the public workflow: reproduce the failure, follow
+the suggested next step when feasible, and check the result and session state.
+Include a malformed-input control so schema guidance remains available when it
+is actually needed. Compare CLI and MCP when both expose the operation.
+
 ## Define the contract
 
 - Use strict inputs with explicit target identity and required fields. Preserve
@@ -82,6 +154,51 @@ satisfy. A plan without execution does not establish runtime behavior.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
   [admission limits and recovery](design/limits-and-recovery.md).
+
+### Compose declared Evidence inputs
+
+Declare each logical Evidence source with the shared `evidenceInputSchema`:
+complete inline Evidence or an exact
+`{kind: "retained-evidence", evidence_id}` reference. Use that declaration in
+single, optional, array and nested source fields across domains. Keep complete
+record schemas for stored Evidence, bundle records and pure semantic inputs;
+request alternatives do not change those representations. Ordinary IDs in
+parameters or result data are not implicitly source selectors.
+
+Derive borrowing request validation and source resolution from the canonical
+request schema with `getEvidenceInputContract` and `resolveEvidenceRequest`.
+The shared application entrypoint selects references for CLI and MCP before the
+format owner admits, authenticates and interprets their records. Preserve
+admission before copying large source payloads. Do not maintain a second list
+of source paths or resolve references only in an adapter. A resolved reference
+has the same identity, caller-selected observations, provenance, coverage and
+partial or unknown facts as its complete inline record; it never reruns a
+producer or upgrades incomplete evidence.
+Keep Evidence-bearing request unions outside skipping `default` wrappers;
+use `prefault` when a default must pass through branch selection. Catalog
+conformance rejects unsupported source containers rather than silently losing
+their references.
+
+Return authenticated source records alongside derived workflow Evidence when
+the adapter must retain them. Keep links to those exact sources and require the
+source closure when the workflow follows their links. Missing references and
+incompatible workflow roles are explicit failures; do not infer a substitute
+from ledger order, display names or the active target. A summary or inspection
+page has its own identity: consumers needing complete source facts use its
+`normalized_result.parent_evidence_id`, unless their contract explicitly accepts
+that view.
+
+New provider-owned source observations require a retention owner. Existing
+caller-owned inputs can also compose on a fixed port without a recorder;
+when a recorder is available, preserve its acceptance or rejection and retain
+completed sources through cancellation.
+
+MCP supplies the current ledger lookup. CLI commands that advertise
+`--evidence-bundle` use one explicitly selected, authenticated bundle for the
+command's lifetime. Keep cleanup with that owner. A retained reference does not
+grant filesystem access: file selectors remain separate, explicit contracts
+where supported. See [retained Evidence inputs](mcp-contracts.md#retained-application-evidence-inputs)
+and [CLI reuse](cli.md#import-export-and-compare-evidence).
 
 ### Interpret boundary facts once
 
@@ -131,6 +248,47 @@ state what it cannot distinguish. Static inspection does not establish that the
 artifact can execute successfully.
 
 ## Own the lifecycle
+
+The investigation owns authenticated Evidence and complete Unknown revision
+history independently of an engine. `close_binary` drains earlier admitted work,
+releases engine resources and clears replay/invalidation state; investigation
+references survive, including target-free closes and cleanup failures. A target
+switch does not make historical observations current for its new engine.
+
+`reset_investigation` is the explicit destructive boundary. It drains earlier
+analysis, imports, exports and Unknown operations, then clears investigation and
+replay/source bindings while retaining a healthy active engine. Metadata mutation
+invalidation remains in force until that engine is recreated. Later admitted work
+waits for the transition; earlier late results cannot repopulate cleared history.
+Runtime disposal seals new acquisitions and releases records after successful
+owned engine/file cleanup; failed cleanup keeps the owner available for retry.
+
+Records are retained in memory under a fixed per-owner representation allowance
+derived from one quarter of initial available V8 heap. Admission accounts for
+Evidence, Unknown history and indexes before atomic commit; metadata replacement
+uses its size delta and duplicates do not accumulate. There is no silent eviction.
+`binary_session.investigation` reports committed counts, estimated representation
+bytes and the allowance; these estimates are not process RSS measurements. Live
+authentication headroom is checked separately. On refusal, export a checkpoint,
+reset, and import only the required investigation, or start a process with a
+larger heap. Retention does not promise automatic persistence.
+
+An MCP request retains its original session admission until its handler cleanup
+and response send settle. A reset queued behind that request therefore cannot
+invalidate Evidence before its reply is sent. Nested work borrows the same
+admission. Cancellation before sending releases a suppressed reply after handler
+cleanup; cancellation after sending starts still waits for transport settlement.
+Lifecycle tools drain earlier admissions without acquiring one themselves.
+
+`reset_investigation(save_path)` saves the complete cross-domain canonical bundle
+once before clearing. It awaits file sync, atomic publication and staging cleanup;
+failed save, incomplete cleanup or cancellation observed before reset commit
+preserves all records. Publication
+can precede cancellation or cleanup failure; the error retains its committed file
+receipt. Import that bundle to restore original Evidence IDs and all Unknown
+revisions in a new process. Engine replay snapshots remain a separate target and
+profile-bound mechanism. This checkpoint contract does not promise recovery from
+an uncheckpointed process exit or parent-directory loss after a host crash.
 
 `SafeOutputTree` publishes only after file readback, nested-directory fsync
 from children to parents, and root-parent fsync on hosts that support directory

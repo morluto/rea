@@ -4,6 +4,7 @@ import {
   sameRegularFileState,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { assertKunaFileState } from "./KunaProjectState.js";
 import { createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
@@ -126,7 +127,7 @@ const readSpan = async (
       },
     );
     if (buffer.length !== length)
-      throw new Error(`${path} is shorter than its recorded span`);
+      throw new KunaDocumentError("span_short", { path });
     if (!sameRegularFileState(expected, await owner.handle.stat()))
       throw new RegularFileChangedError(path);
     await assertKunaFileState(path, expected);

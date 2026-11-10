@@ -3,14 +3,14 @@ import * as t from "@babel/types";
 
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   semanticScopeId,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
+import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import {
   childNodes,
   javaScriptAstChildKeys,
@@ -500,7 +500,7 @@ export const createSemanticModuleInterop = (
     const required =
       converted === undefined
         ? undefined
-        : semanticRequireOrigin(converted.input, state)?.origin;
+        : readSemanticRequireOrigin(converted.input, state)?.origin;
     if (
       converted === undefined ||
       required === undefined ||
@@ -596,7 +596,7 @@ export const createSemanticModuleInterop = (
       resolveSemanticBindingState(state, input, input.name) !== binding
     )
       return undefined;
-    const required = semanticRequireOrigin(initial.node, state)?.origin;
+    const required = readSemanticRequireOrigin(initial.node, state)?.origin;
     if (required === undefined || required.importedPath.length !== 0)
       return undefined;
     if (convertedCall === undefined) return undefined;

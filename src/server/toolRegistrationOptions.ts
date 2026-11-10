@@ -4,6 +4,11 @@ import type {
 } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
+import type { z } from "zod";
+import {
+  getEvidenceInputContract,
+  type EvidenceRequestFrameInput,
+} from "../domain/evidenceInputContract.js";
 import {
   toolInputSchemaWithMetadata,
   toolOutputSchemaWithMetadata,
@@ -193,16 +198,35 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
 ): {
   readonly title: Contract["title"];
   readonly description: Contract["description"];
-  readonly inputSchema: Contract["inputSchema"];
+  readonly inputSchema: StandardSchemaWithJSON<
+    z.input<Contract["inputSchema"]>,
+    EvidenceRequestFrameInput<z.output<Contract["inputSchema"]>>
+  >;
   readonly outputSchema: Contract["outputSchema"];
   readonly annotations: Contract["annotations"];
-} => ({
-  title: contract.title,
-  description: contract.description,
-  inputSchema: toolInputSchemaWithMetadata(contract),
-  outputSchema: toolOutputSchemaWithMetadata(contract),
-  annotations: contract.annotations,
-});
+} => {
+  const advertised = toolInputSchemaWithMetadata(contract);
+  const evidenceInputs = getEvidenceInputContract<Contract["inputSchema"]>(
+    contract.inputSchema,
+  );
+  // The application owns source admission. Preserve the exact advertised
+  // declaration while the SDK validates only the borrowing request envelope.
+  const inputSchema = {
+    "~standard": {
+      version: advertised["~standard"].version,
+      vendor: advertised["~standard"].vendor,
+      jsonSchema: advertised["~standard"].jsonSchema,
+      validate: evidenceInputs.frameSchema["~standard"].validate,
+    },
+  };
+  return {
+    title: contract.title,
+    description: contract.description,
+    inputSchema,
+    outputSchema: toolOutputSchemaWithMetadata(contract),
+    annotations: contract.annotations,
+  };
+};
 
 /** Register a workflow that validates raw input before effects and projects its own errors. */
 export const applicationToolRegistrationOptions = <

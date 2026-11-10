@@ -645,7 +645,8 @@ const readSegmentSpan = (
   const { nameBytes, address: vmaddr, memorySize: vmsize } = parsed.value;
   const end = nameBytes.indexOf(0);
   return {
-    name: new TextDecoder("utf-8", { fatal: false }).decode(
+    // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
+    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,

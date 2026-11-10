@@ -34,10 +34,8 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import {
-  APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-  NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY,
-} from "./NativeMacOSProviderMetadata.js";
+import { APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE } from "./NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";

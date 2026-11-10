@@ -230,10 +230,13 @@ export const assertStableRegularFileIdentity = async (
       throw cause;
     }
   };
+  const selected = await named();
+  assertRegularFileActive(options.signal);
+  const opened = await file.stat({ bigint });
+  assertRegularFileActive(options.signal);
   if (
-    !sameRegularFileState(before, await file.stat({ bigint })) ||
-    !sameRegularFileState(before, await named())
+    !sameRegularFileState(before, opened) ||
+    !sameRegularFileState(before, selected)
   )
     throw new RegularFileChangedError(path);
-  assertRegularFileActive(options.signal);
 };

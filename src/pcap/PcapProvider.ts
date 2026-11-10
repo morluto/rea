@@ -1,3 +1,4 @@
+import { PCAP_PROVIDER_IDENTITY } from "./PcapProviderIdentity.js";
 import { PCAP_HTTP_URI_FIELDS } from "./PcapHttpUri.js";
 import {
   type ExecutionOptions,
@@ -67,11 +68,6 @@ import {
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
 
-export const PCAP_PROVIDER_IDENTITY = {
-  id: "pcap",
-  name: "Packet capture analysis",
-  version: null,
-} as const;
 const FIELDS = [
   "frame.number",
   "frame.protocols",

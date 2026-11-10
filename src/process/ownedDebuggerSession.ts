@@ -1,11 +1,92 @@
 import { readFile } from "node:fs/promises";
 
+import type { DebuggerAdmissionLimit } from "../config/debuggerSessionLimits.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
   | { readonly status: "stopped" | "already_exited" }
   | { readonly status: "incomplete"; readonly reason: string };
+
+/** Structured facts a limit error exposes. The sentence is display text. */
+export const debuggerAdmissionDiagnostics = (
+  admission: DebuggerAdmissionLimit,
+): {
+  readonly setting: string;
+  readonly effective_value: number;
+  readonly source: DebuggerAdmissionLimit["source"];
+  readonly default_value: number;
+  readonly minimum: number;
+  readonly maximum: number;
+  readonly unit: DebuggerAdmissionLimit["unit"];
+  readonly restart_required: true;
+} => ({
+  setting: admission.setting,
+  effective_value: admission.value,
+  source: admission.source,
+  default_value: admission.defaultValue,
+  minimum: admission.minimum,
+  maximum: admission.maximum,
+  unit: admission.unit,
+  restart_required: true,
+});
+
+/** Name the setting, the effective value, its source, the range, and a restart. */
+export const debuggerAdmissionRecovery = (
+  admission: DebuggerAdmissionLimit,
+): string =>
+  `The effective ${admission.setting} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+
+/** Fixed startup deadline. Distinct from the shared command deadline setting. */
+export const fixedDeadlineGuidance = (
+  what: string,
+  timeoutMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
+  remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
+
+/** Shared command deadline. The setting, not a per-provider constant, owns the cap. */
+export const configurableDeadlineGuidance = (
+  what: string,
+  admission: DebuggerAdmissionLimit,
+): {
+  readonly userMessage: string;
+  readonly remediationAction: string;
+  readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
+} => {
+  const recovery = debuggerAdmissionRecovery(admission);
+  return {
+    userMessage: `${what} reached its ${String(admission.value)} ms deadline (deadlineExpired). ${recovery}`,
+    remediationAction: recovery,
+    diagnostics: debuggerAdmissionDiagnostics(admission),
+  };
+};
+
+/** Capacity refusal whose projection carries the setting, value, source, and range. */
+export const debuggerResourceConstraintError = (
+  operation: string,
+  resource: "memory" | "transport",
+  summary: string,
+  remediation: string,
+  admission: DebuggerAdmissionLimit,
+  reported: Readonly<Record<string, JsonValue>>,
+): AnalysisResourceConstraintError => {
+  const facts = debuggerAdmissionDiagnostics(admission);
+  const recovery = debuggerAdmissionRecovery(admission);
+  return new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    `${summary} ${recovery}`,
+    { ...facts, ...reported },
+    {
+      remediationAction: `${remediation} ${recovery}`,
+      diagnostics: facts,
+    },
+  );
+};
 
 const DETACH_TIMEOUT_MS = 1_000;
 const MAX_LATE_DEBUGGER_OUTPUT_BYTES = 64 * 1024;

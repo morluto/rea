@@ -21,7 +21,9 @@ const it = test.skipIf(process.platform === "win32");
 
 it("identifies a caller-selected kuna by version and digest", async () => {
   const root = await createTestTempDirectory("rea-kuna-install-");
-  const kuna = await writeFakeKuna(root);
+  const kuna = await writeFakeKuna(root, {
+    version: { stdout: "kuna 1.986\n" },
+  });
   const link = join(root, "current-kuna");
   await symlink(kuna, link);
 
@@ -35,7 +37,7 @@ it("identifies a caller-selected kuna by version and digest", async () => {
     value: {
       configuration: { command: link, cacheRoot: join(root, "cache") },
       executable: await realpath(kuna),
-      version: "1.833",
+      version: "1.986",
       verified: true,
       // A `#!` launcher reports its interpreter; ownership checks must not expect the path.
       script: true,
@@ -102,14 +104,14 @@ fs.renameSync(process.argv[1] + ".new", process.argv[1]);
 it("accepts another release but reports it as unverified", async () => {
   const root = await createTestTempDirectory("rea-kuna-unverified-");
   const kuna = await writeFakeKuna(root, {
-    version: { stdout: "kuna 1.900\n" },
+    version: { stdout: "kuna 1.833\n" },
   });
 
   const result = await inspectKunaInstallation({ REA_KUNA_COMMAND: kuna });
 
   expect(result).toMatchObject({
     ok: true,
-    value: { version: "1.900", verified: false },
+    value: { version: "1.833", verified: false },
   });
 });
 

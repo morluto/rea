@@ -47,6 +47,8 @@ import {
 import {
   OwnedWorkerRuntime,
   OwnedWorkerRuntimeCleanupError,
+  WorkerCleanupRegistry,
+  processWorkerCleanup,
 } from "../../process/OwnedWorkerRuntime.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
 import {
@@ -168,14 +170,19 @@ export class JavaScriptAnalysisWorker {
     }
   };
 
+  readonly #workerCleanup: WorkerCleanupRegistry;
+
   constructor(
     readonly limits: JavaScriptSourceAnalysisLimits = DEFAULTS,
     readonly launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
     sourceCount?: number,
+    workerCleanup: WorkerCleanupRegistry = processWorkerCleanup,
   ) {
+    this.#workerCleanup = workerCleanup;
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-javascript-analysis-",
       launcher,
+      cleanupRegistry: workerCleanup,
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
@@ -301,7 +308,7 @@ export class JavaScriptAnalysisWorker {
         );
       // Host ownership preparation is outside the parser execution deadline.
       await prepareProcessOwnershipInspection(signal);
-      await OwnedWorkerRuntime.retryPending();
+      await this.#workerCleanup.retry();
       deadline = new ProviderStartupDeadline(this.limits.timeoutMs, signal);
       this.#deadline = deadline;
       await this.#start(deadline);
@@ -355,11 +362,15 @@ export class JavaScriptAnalysisWorker {
       );
       for (;;) {
         const response = await this.#next(deadline, file.path);
-        if (response.kind === "ready" || response.id !== id)
+        // A ready frame is outside this job. A frame for another job is not
+        // this request's result; keep waiting so a later caller abort is
+        // still cancellation.
+        if (response.kind === "ready")
           throw new AnalysisOutputError(
             OPERATION,
             "JavaScript worker response names a different source job",
           );
+        if (response.id !== id) continue;
         if (response.kind === "phase") {
           this.#phase = response.phase;
           await onPhase?.(response.phase);

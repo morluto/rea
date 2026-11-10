@@ -1,11 +1,9 @@
 import { expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 import { machoImage } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
-import { createServer } from "../../../../src/server/createServer.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   NativeCommandFailure,
@@ -15,6 +13,7 @@ import {
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { createTestBinarySession } from "../../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
   NativeFixtureRunner,
@@ -229,7 +228,6 @@ it("keeps other dyld_info nonzero exits as command failures", async () => {
 
 it("does not treat a newline in the echoed operand path as dyld_info evidence", async () => {
   const target = await makeTarget("\nmissing LC_UUID load command\n");
-  const path = target.path;
   const runner = new UuidlessDyldRunner("malformed load command table");
   const result = await new NativeMacOSProvider({}, runner, "darwin")
     .createClient(target)
@@ -295,41 +293,35 @@ it("delivers partial UUID-less inspection Evidence through production MCP", asyn
   const session = createTestBinarySession(
     new NativeMacOSProvider({}, new UuidlessDyldRunner(), "darwin"),
   );
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "macho-uuidless-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const opened = await client.callTool({
-      name: "open_binary",
-      arguments: { path },
-    });
-    expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "macho-uuidless-test", version: "1" },
+  });
+  const opened = await client.callTool({
+    name: "open_binary",
+    arguments: { path },
+  });
+  expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
 
-    const inspected = await client.callTool({
-      name: "inspect_macho",
-      arguments: {},
-    });
-    expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
-    expect(inspected.structuredContent).toMatchObject({
-      normalized_result: {
-        uuid: null,
-        imports: { items: [], total: null, exhaustive: false },
-        exports: {
-          items: expect.arrayContaining([
-            expect.objectContaining({ name: "_main", source: "nm" }),
-          ]),
-          total: null,
-          exhaustive: false,
-        },
-        limitations: expect.arrayContaining([
-          "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
+  const inspected = await client.callTool({
+    name: "inspect_macho",
+    arguments: {},
+  });
+  expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
+  expect(inspected.structuredContent).toMatchObject({
+    normalized_result: {
+      uuid: null,
+      imports: { items: [], total: null, exhaustive: false },
+      exports: {
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "_main", source: "nm" }),
         ]),
+        total: null,
+        exhaustive: false,
       },
-    });
-  } finally {
-    await Promise.all([client.close(), server.close(), session.close()]);
-  }
+      limitations: expect.arrayContaining([
+        "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
+      ]),
+    },
+  });
 });

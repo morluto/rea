@@ -22,16 +22,20 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
-  resolvePairedEvidenceRequest,
+  resolveEvidenceRequest,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { z } from "zod";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
+import {
+  withEvidenceSources,
+  type AnalysisResultWithSources,
+} from "../investigation/recordEvidenceSources.js";
 
 const OPERATION = "compare_wasm_interfaces";
 const parseInspection = (
@@ -81,17 +85,18 @@ export const compareWasmInterfaces = async (
   rawInput: unknown,
   options?: ExecutionOptions,
   lookup?: EvidenceLookup,
-): Promise<Result<Evidence, AnalysisError>> => {
+): Promise<AnalysisResultWithSources<EvidenceWorkflowExecution>> => {
   if (options?.signal?.aborted)
     return err(
       new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
     );
-  const parsed = compareWasmInterfacesInputSchema.safeParse(rawInput);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput),
-    );
-  const resolved = resolvePairedEvidenceRequest(parsed.data, lookup);
+  const resolved = resolveEvidenceRequest(
+    OPERATION,
+    rawInput,
+    compareWasmInterfacesInputSchema,
+    lookup,
+    options,
+  );
   if (!resolved.ok) return resolved;
   const assertActive = () => {
     if (options?.signal?.aborted)
@@ -102,13 +107,13 @@ export const compareWasmInterfaces = async (
   try {
     await setImmediate();
     assertActive();
-    const parsedLeft = parseInspection(resolved.value.left);
+    const parsedLeft = parseInspection(resolved.value.input.left);
     if (!parsedLeft.ok) return parsedLeft;
-    const parsedRight = parseInspection(resolved.value.right);
+    const parsedRight = parseInspection(resolved.value.input.right);
     if (!parsedRight.ok) return parsedRight;
     const left = parsedLeft.value;
     const right = parsedRight.value;
-    const scope = parsed.data.scope;
+    const scope = resolved.value.input.scope;
     const selected = (entry: WasmInterfaceEntry): boolean =>
       scope === "both" ||
       entry.direction === (scope === "imports" ? "import" : "export");
@@ -270,7 +275,12 @@ export const compareWasmInterfaces = async (
       evidenceLinks: [left.evidence.evidence_id, right.evidence.evidence_id],
     });
     await setImmediate();
-    return completeProviderEvidence(evidence, options?.signal);
+    const completed = completeProviderEvidence(evidence, options?.signal);
+    const sources = [left.evidence, right.evidence];
+    return withEvidenceSources(
+      completed.ok ? ok({ evidence: completed.value, sources }) : completed,
+      sources,
+    );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return err(cause);
     throw cause;

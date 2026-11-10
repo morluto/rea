@@ -1,7 +1,6 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import {
@@ -25,6 +24,7 @@ import { processScenarioSchema } from "../../../src/domain/process/processScenar
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   arrayItemSchemaError,
   strictGatewayItemSchemaErrors,
@@ -83,16 +83,13 @@ const unsupportedDependencyKeywords = (
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
 ): Promise<readonly AdvertisedTool[]> => {
-  const client = new Client({ name: "compact-profile", version: "0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    return (await client.listTools()).tools;
-  } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-  }
+  const mcp = createTestMcp();
+  onTestFinished(() => mcp.close());
+  const client = await mcp.connect(server, {
+    name: "compact-profile",
+    version: "0",
+  });
+  return (await client.listTools()).tools;
 };
 
 const registerCatalog = (server: EvidenceMcpServer): void => {
@@ -513,36 +510,33 @@ describe("MCP compact input schema canonical enforcement", () => {
         };
       },
     );
-    const client = new Client({ name: "compact-validation", version: "0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
-        ({ name }) => name === contract.name,
-      );
-      if (advertised === undefined)
-        throw new Error("Process capture tool was not advertised");
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      const validate = ajv.compile(advertised.inputSchema);
-      const valid = { executable: "node", environment: { APP_MODE: "test" } };
-      const reserved = {
-        executable: "node",
-        environment: { REA_PROCESS_RUN_ID: "caller-value" },
-      };
-      expect(validate(valid)).toBe(true);
-      expect(processScenarioSchema.safeParse(valid).success).toBe(true);
-      expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
-      const result = await client.callTool({
-        name: contract.name,
-        arguments: reserved,
-      });
-      expect(result.isError).toBe(true);
-      expect(handlerCalled).toBe(false);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "compact-validation",
+      version: "0",
+    });
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === contract.name,
+    );
+    if (advertised === undefined)
+      throw new Error("Process capture tool was not advertised");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(advertised.inputSchema);
+    const valid = { executable: "node", environment: { APP_MODE: "test" } };
+    const reserved = {
+      executable: "node",
+      environment: { REA_PROCESS_RUN_ID: "caller-value" },
+    };
+    expect(validate(valid)).toBe(true);
+    expect(processScenarioSchema.safeParse(valid).success).toBe(true);
+    expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
+    const result = await client.callTool({
+      name: contract.name,
+      arguments: reserved,
+    });
+    expect(result.isError).toBe(true);
+    expect(handlerCalled).toBe(false);
   });
 
   it("compacts plain standard schemas that are not Zod instances", async () => {
@@ -625,30 +619,28 @@ it.each(["full", "compact"] as const)(
       calls++;
       return { content: [{ type: "text", text: "accepted" }] };
     });
-    const client = new Client({ name: "resource-scope", version: "1" });
-    const [ct, st] = InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(st);
-      await client.connect(ct);
-      const definition = (await client.listTools()).tools.find(
-        ({ name }) => name === "resource_fixture",
-      );
-      if (definition === undefined) throw new Error("Missing resource fixture");
-      const advertised = new Ajv2020({ strict: false }).compile(
-        definition.inputSchema,
-      );
-      for (const value of [7, "seven"]) {
-        const args = { child: { value } };
-        expect(advertised(args)).toBe(canonical(args));
-        const result = await client.callTool({
-          name: "resource_fixture",
-          arguments: args,
-        });
-        expect(result.isError === true).toBe(!canonical(args));
-      }
-      expect(calls).toBe(1);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "resource-scope",
+      version: "1",
+    });
+    const definition = (await client.listTools()).tools.find(
+      ({ name }) => name === "resource_fixture",
+    );
+    if (definition === undefined) throw new Error("Missing resource fixture");
+    const advertised = new Ajv2020({ strict: false }).compile(
+      definition.inputSchema,
+    );
+    for (const value of [7, "seven"]) {
+      const args = { child: { value } };
+      expect(advertised(args)).toBe(canonical(args));
+      const result = await client.callTool({
+        name: "resource_fixture",
+        arguments: args,
+      });
+      expect(result.isError === true).toBe(!canonical(args));
     }
+    expect(calls).toBe(1);
   },
 );

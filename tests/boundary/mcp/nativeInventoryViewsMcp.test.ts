@@ -130,6 +130,7 @@ it("shares complete/summary source identity and advertised contracts across all 
     );
     if (!Array.isArray(complete.normalized_result))
       throw new Error("Expected complete row array");
+    expect(complete.normalized_result.length).toBeGreaterThan(0);
     if (operation === "search_procedures")
       expect(complete.normalized_result).toEqual(searchProcedureRows);
     expect(complete.parameters).not.toHaveProperty("detail");

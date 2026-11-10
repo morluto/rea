@@ -138,6 +138,7 @@ const harness = (options?: {
     Record<string, "error" | "timeout" | "empty" | "null">
   >;
   readonly info?: "ok" | "unavailable" | "error";
+  readonly listProfile?: typeof profile;
   readonly subject?: boolean;
   readonly mismatch?: string;
   readonly unprofiled?: string;
@@ -170,7 +171,7 @@ const harness = (options?: {
               })),
               provider,
               {
-                analysisProfile: profile,
+                analysisProfile: options?.listProfile ?? profile,
                 ...(options?.subject === false ? {} : { subject }),
               },
             ),
@@ -613,6 +614,37 @@ describe("decompile_all resume", () => {
     expect(
       await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).toContain(sentinel);
+  });
+
+  it("names the resume identity that differs instead of directing callers to the input schema", async () => {
+    expect((await run(harness().tools, directory())).ok).toBe(true);
+
+    const resumed = await run(
+      harness({ listProfile: otherProfile }).tools,
+      directory(),
+      { resume: true },
+    );
+
+    expect(resumed.ok).toBe(false);
+    if (resumed.ok) return;
+    expect(resumed.error).toBeInstanceOf(AnalysisInputError);
+    if (!(resumed.error instanceof AnalysisInputError)) return;
+    expect(resumed.error.userMessage).toBe(
+      "The decompile journal does not match the current analysis profile digest.",
+    );
+    expect(resumed.error.conformsToInputContract).toBe(true);
+    expect(resumed.error.remediationAction).toContain("new output directory");
+    expect(resumed.error.issues).toEqual([
+      expect.objectContaining({
+        path: ["output_directory"],
+        expected: expect.objectContaining({
+          analysis_profile_digest: profile.digest,
+        }),
+        observed: expect.objectContaining({
+          analysis_profile_digest: otherProfile.digest,
+        }),
+      }),
+    ]);
   });
 });
 

@@ -41,5 +41,13 @@ it("retains wrapped TypeScript call literals for semantic queries", () => {
       direction: "forward-influence",
     }),
   );
-  expect(result.seed_node_ids).toContain(call.node_id);
+  const argument = graph.nodes.find(
+    (node) =>
+      node.kind === "expression" &&
+      node.properties.literal_argument_value === -7 &&
+      node.properties.literal_argument_call_site_node_id === call.node_id,
+  );
+  if (argument === undefined) throw new Error("Expected literal argument");
+  expect(result.seed_node_ids).toContain(argument.node_id);
+  expect(result.nodes.map(({ node_id }) => node_id)).toContain(call.node_id);
 });

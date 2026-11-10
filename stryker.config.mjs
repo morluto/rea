@@ -125,10 +125,6 @@ export default {
       },
       {
         kind: "declaration",
-        name: "DEFAULT_MAX_SESSIONS",
-      },
-      {
-        kind: "declaration",
         owner: "GdbSessionManager",
         method: "#startProtocol",
         name: "session",
@@ -211,6 +207,12 @@ export default {
         owner: "RizinDebugSessionManager",
         method: "#receive",
         name: "nextOffset",
+      },
+    ]),
+    ...mutationRanges("src/domain/analysisResourceLimits.ts", [
+      {
+        kind: "declaration",
+        name: "DEFAULT_DEBUGGER_MAX_SESSIONS",
       },
     ]),
     ...mutationRanges("src/cli/reverseEngineeringCommands.ts", [

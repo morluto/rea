@@ -3,6 +3,9 @@ import { z } from "zod";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { retainedEvidenceReferenceSchema } from "../evidenceReference.js";
 
+export const NATIVE_FUNCTION_MATCHING_PREDICATE =
+  "rea.native-function-matching";
+
 const evidenceId = prefixedDigestSchema("ev");
 export const nativeMatchStateSchema = z.enum([
   "matched",

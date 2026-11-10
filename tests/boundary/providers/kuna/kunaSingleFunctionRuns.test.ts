@@ -93,10 +93,13 @@ it("admits no more concurrent single-function runs than its slots", async () => 
       (left, right) => left.at - right.at,
     );
     const exits = await fakeKunaExits(kuna);
-    expect(first).toBeDefined();
-    expect(second).toBeDefined();
+    if (first === undefined || second === undefined)
+      throw new Error("Expected both single-function runs");
+    const firstExit = exits.get(first.pid);
+    expect(firstExit).toBeDefined();
+    if (firstExit === undefined) throw new Error("Missing first process exit");
     // The second run starts only after the first one's process finished.
-    expect(second?.at).toBeGreaterThanOrEqual(exits.get(first?.pid ?? 0) ?? 0);
+    expect(second.at).toBeGreaterThanOrEqual(firstExit);
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }

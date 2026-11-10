@@ -79,7 +79,9 @@ await withVerifierCleanup(async () => {
         (entry) =>
           entry.response_address_count > entry.response_addresses.length,
       );
-    assert.equal(result.coverage, partial ? "partial" : "complete");
+    // Count discrepancies prove partial coverage, but matching counts do not
+    // rule out unresolved HTTP targets or unavailable DNS identity extraction.
+    if (partial) assert.equal(result.coverage, "partial");
     assert.deepEqual(
       await hashVerifierFile(path, resources),
       identity,

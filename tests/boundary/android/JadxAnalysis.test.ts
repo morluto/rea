@@ -691,6 +691,9 @@ it.each([
       name: "get_class_summary",
       class_name: "fixture.Target",
       ...(values ? { dex_static_values: true } : {}),
+      ...(operation === "trace_android_references" && "method_name" in input
+        ? { reference_target: true, method_name: input.method_name }
+        : {}),
     });
   },
 );
@@ -881,6 +884,12 @@ it.each([
   async (fields, expected) => {
     const result = await traceWithReference(fields as Record<string, unknown>);
     expect(result).toMatchObject({
+      direct_invokes_coverage: {
+        complete_using_nodes: 0,
+        partial_using_nodes: 0,
+        unknown_using_nodes: 1,
+        recorded_sites: 0,
+      },
       references: [
         { direct_invokes: expected, direct_invokes_exhaustive: null },
       ],
@@ -910,6 +919,12 @@ it("preserves bounded instruction coverage separately from using-node coverage",
   expect(result).toMatchObject({
     coverage: "complete",
     reference_unit: "using_node",
+    direct_invokes_coverage: {
+      complete_using_nodes: 0,
+      partial_using_nodes: 1,
+      unknown_using_nodes: 0,
+      recorded_sites: 1,
+    },
     references: [
       { direct_invokes: [invokeSite], direct_invokes_exhaustive: false },
     ],

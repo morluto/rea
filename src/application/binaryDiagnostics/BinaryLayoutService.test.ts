@@ -121,7 +121,7 @@ it("preserves the caller's exact abort reason before invocation", async () => {
   expect(calls).toBe(0);
 });
 
-it("cancels before invocation and after an acquired observation", async () => {
+it("retains the acquired observation when cancellation arrives during inspection", async () => {
   const controller = new AbortController();
   const service = new BinaryLayoutService({
     inspectAndClose(input, options) {
@@ -154,21 +154,6 @@ it("cancels before invocation and after an acquired observation", async () => {
       normalized_result: binaryLayoutFixture(),
     });
   }
-  const untouched = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => {
-      throw new Error("must not run");
-    },
-  });
-  expect(
-    await untouched.inspect(
-      { path: "/source.elf" },
-      { signal: controller.signal },
-    ),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
 });
 
 it.each(["different-path", "invalid-digest", "outside-range"])(

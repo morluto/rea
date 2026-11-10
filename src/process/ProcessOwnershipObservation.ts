@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { readFile, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,6 +24,7 @@ import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
 } from "./DarwinProcessRunTokenReader.js";
+import { darwinHelperCacheDirectory } from "./DarwinHelperCache.js";
 import {
   ProcessRunTokenReadError,
   readProcessRunTokens,
@@ -1095,6 +1097,11 @@ export const createSystemProcessOwnershipHost = (
           executable: swiftcPath,
           sdkRoot: hostEnvironment.SDKROOT ?? "",
         });
+  const helperCacheDirectory = darwinHelperCacheDirectory({
+    home: hostEnvironment.HOME,
+    compilerSelected: darwinCompiler !== undefined,
+    moduleCachePath: darwinModuleCachePath,
+  });
   const darwinTokens =
     platform === "darwin"
       ? createDarwinProcessRunTokenReader({
@@ -1103,6 +1110,9 @@ export const createSystemProcessOwnershipHost = (
           ...(darwinModuleCachePath === undefined
             ? {}
             : { moduleCachePath: darwinModuleCachePath }),
+          ...(helperCacheDirectory === undefined
+            ? {}
+            : { helperCacheDirectory }),
           ...(options.compileTimeoutMs === undefined
             ? {}
             : { compileTimeoutMs: options.compileTimeoutMs }),
@@ -1348,9 +1358,9 @@ export const createSystemProcessOwnershipHost = (
         liveAfterRetry.some((entry) => entry.pid === pid),
       );
       if (stillUnresolved.length > 0)
-        throw new Error(
-          `process identity snapshot is unavailable for ${String(stillUnresolved.length)} live processes`,
-        );
+        throw new ProcessAdmissionError("identity_snapshot_unavailable", {
+          live_processes: stillUnresolved.length,
+        });
     }
     return processes.map(({ pid }) => {
       const observation = identities.get(pid);
@@ -1369,7 +1379,7 @@ export const createSystemProcessOwnershipHost = (
         try {
           const processes = await listProcesses(signal);
           if (!processes.some(({ pid }) => pid === process.pid))
-            throw new Error("ps did not report REA's current process");
+            throw new ProcessAdmissionError("current_process_unreported");
         } catch (cause: unknown) {
           if (isExpectedAbort(cause, signal)) throw cause;
           throw new LinuxOwnedProcessPrerequisiteError(cause);

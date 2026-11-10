@@ -1,4 +1,4 @@
-import { CI_FLAGS } from "./scopes.mjs";
+import { CI_FLAGS, CI_LANES } from "./scopes.mjs";
 import { recordQualification } from "./qualification.mjs";
 
 const jobs = JSON.parse(process.env.CI_JOBS);
@@ -30,23 +30,8 @@ if (outputs.tier === "full" && selectedScopes.length !== CI_FLAGS.length)
   throw new Error("Full qualification requires every canonical CI scope");
 const required = reused ? ["changes"] : ["changes", "static", "test"];
 if (outputs.tier === "full") required.push("static-deep");
-const lanes = {
-  code: [
-    "build",
-    "test-shard",
-    ...(outputs.tier === "fast" ? ["test-source"] : []),
-  ],
-  reverse_tools: ["reverse-tools-quality"],
-  runtime: ["windows-native-build", "package-e2e"],
-  package: ["windows-curated"],
-  sqlite: ["sqlite-runtime"],
-  apple: ["apple-artifacts"],
-  fixtures: ["conformance-fixtures"],
-  readiness: ["reconstruction-readiness"],
-  docs: ["docs"],
-  workflows: ["static"],
-};
-for (const scope of selectedScopes) required.push(...(lanes[scope] ?? [scope]));
+for (const scope of selectedScopes)
+  required.push(...CI_LANES[scope].required[outputs.tier]);
 const failed = [...new Set(required)].filter(
   (name) => jobs[name]?.result !== "success",
 );

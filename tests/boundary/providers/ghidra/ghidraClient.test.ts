@@ -21,6 +21,8 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import pino from "pino";
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import type { Logger } from "pino";
 import type { ProgressUpdate } from "../../../../src/application/ProgressReporter.js";
 
@@ -1153,8 +1155,12 @@ it("reports owner closure to live startup callers without cancelling their signa
   });
   const controllers = [new AbortController(), new AbortController()];
   const waits = controllers.map(({ signal }) => client.start(signal));
-  try {
-    await pending;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      pending,
+      Promise.race(waits),
+      "startup observation",
+    );
     const closing = client.close();
     release?.();
     for (const wait of waits)
@@ -1168,11 +1174,17 @@ it("reports owner closure to live startup callers without cancelling their signa
     await expect(closing).resolves.toEqual({ ok: true, value: null });
     expect(controllers.every(({ signal }) => !signal.aborted)).toBe(true);
     expect(client.isReady()).toBe(false);
-  } finally {
-    release?.();
-    await client.close();
-    observe.mockRestore();
-  }
+  }, [
+    () => release?.(),
+    async () => {
+      const result = await client.close();
+      if (!result.ok) throw result.error;
+    },
+    async () => {
+      await Promise.allSettled(waits);
+    },
+    () => observe.mockRestore(),
+  ]);
 });
 
 it.skipIf(process.platform === "win32")(

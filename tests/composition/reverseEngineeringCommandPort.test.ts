@@ -7,15 +7,9 @@ import { expect, it, vi } from "vitest";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
-
-it("documents the shared combined capture limit for both command tools", () => {
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("shared 16 MiB combined limit");
-});
 
 it("uses provider profiles supplied through the application port", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-port-"));

@@ -176,7 +176,10 @@ it("rejects unrequested bodies and a document for a different input", async () =
   };
   expect(await parseKunaCallGraph(wire(body), input)).toMatchObject({
     ok: false,
-    error: { reason: "functions row codeC must be null" },
+    error: {
+      reason: "row_must_be_null",
+      diagnostics: { member: "functions", field: "codeC" },
+    },
   });
 });
 
@@ -316,6 +319,21 @@ it.each([
     expect(parseKunaIncomingReferences(wire(value), input, "0x2000").ok).toBe(
       false,
     );
+  },
+);
+
+it.each([
+  ["not-an-address", "invalid_address"],
+  ["@18446744073709551616", "address_exceeds_u64"],
+] as const)(
+  "keeps the failed address field for incoming reference %s",
+  (token, code) => {
+    const value = xrefs();
+    value.xrefs[0]!.from_address = token;
+    expect(parseKunaIncomingReferences(wire(value), input, "0x2000")).toEqual({
+      ok: false,
+      error: { code, field: "from_address" },
+    });
   },
 );
 

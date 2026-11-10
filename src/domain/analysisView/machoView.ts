@@ -9,11 +9,12 @@ import {
 } from "../native/nativeInspection.js";
 import { err, ok, type Result } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -155,9 +156,12 @@ const summarizeMacho = (
 /** Project retained inspect_macho Evidence without rerunning native tools. */
 export const projectMachoView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "macho")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof machoViewRequestSchema>
+  >(admitted, "summary", "macho");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -203,7 +207,7 @@ export const projectMachoView = (
       parent.limitations,
     );
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       limitations,

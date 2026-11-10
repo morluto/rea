@@ -455,6 +455,7 @@ export const environmentStateViewOf = (
 ): EnvironmentStateView => {
   const result = projectAnalysisView(
     {
+      predicateType: capture.predicate_type,
       evidenceId: capture.evidence_id,
       operation: capture.operation,
       normalizedResult: capture.normalized_result,

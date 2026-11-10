@@ -1,4 +1,5 @@
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
+import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import { CALL_RELATIONSHIP_TRAVERSALS } from "./CallRelationshipTraversal.js";
@@ -17,6 +18,7 @@ import {
 } from "../contracts/enhancedInputs.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -100,7 +102,52 @@ type BatchDecompileItem = {
   readonly status: "ok" | "error";
   readonly pseudocode?: string;
   readonly error?: ReturnType<typeof projectAnalysisError>;
+  /** Caveats of this item's own observation when it supplied no pseudocode. */
+  readonly limitations?: string[];
 };
+
+/**
+ * Guidance for a batch item whose provider returned null pseudocode, by
+ * whether that observation reported caveats for the item to carry.
+ */
+export const NULL_PSEUDOCODE_GUIDANCE = {
+  reported: {
+    userMessage:
+      "The provider returned no pseudocode for this function; this item's limitations hold that observation's caveats, including any reason the provider reported.",
+    remediationAction:
+      "Read this item's limitations for the provider's reason before retrying; another provider may decompile this entry.",
+  },
+  none: {
+    userMessage:
+      "The provider returned no pseudocode for this function and reported no caveat or reason for it.",
+    remediationAction:
+      "The provider gave no further explanation; another provider may decompile this entry.",
+  },
+} as const;
+
+/**
+ * The item error for a provider answer without usable text. Null is the
+ * provider's observation that it has no pseudocode for this function; empty
+ * or non-text pseudocode is unreadable output.
+ */
+const missingPseudocodeError = (
+  providerId: string,
+  pseudocode: JsonValue,
+  caveats: keyof typeof NULL_PSEUDOCODE_GUIDANCE,
+): AnalysisError =>
+  pseudocode === null
+    ? new AnalysisCapabilityUnavailableError(
+        providerId,
+        "procedure_pseudo_code",
+        "provider returned null pseudocode",
+        NULL_PSEUDOCODE_GUIDANCE[caveats],
+      )
+    : new AnalysisOutputError(
+        "procedure_pseudo_code",
+        typeof pseudocode === "string"
+          ? "provider returned empty pseudocode"
+          : "provider returned non-text pseudocode",
+      );
 
 const isAnalysisCancellation = (
   error: AnalysisError,
@@ -491,40 +538,43 @@ export class EnhancedTools {
   ): Promise<Result<BatchDecompileItem[], AnalysisCancelledError>> {
     const items: BatchDecompileItem[] = [];
     for (const { address, procedure, providerProcedure } of ready) {
-      const result = await this.#call(
+      const observed = await this.#observe(
         "procedure_pseudo_code",
         { procedure: providerProcedure },
         signal,
         procedure.status === "resolved" ? "provider" : undefined,
       );
-      if (!result.ok && isAnalysisCancellation(result.error))
-        return err(result.error);
-      const item: BatchDecompileItem = !result.ok
-        ? {
-            address,
-            procedure,
-            status: "error",
-            error: projectAnalysisError(result.error),
-          }
-        : typeof result.value !== "string" || result.value.length === 0
-          ? {
-              address,
-              procedure,
-              status: "error",
-              error: projectAnalysisError(
-                new AnalysisOutputError(
-                  "procedure_pseudo_code",
-                  "provider returned empty pseudocode",
-                ),
-              ),
-            }
-          : {
-              address,
-              procedure,
-              status: "ok",
-              pseudocode: result.value,
-            };
-      items.push(item);
+      if (!observed.ok) {
+        if (isAnalysisCancellation(observed.error)) return err(observed.error);
+        items.push({
+          address,
+          procedure,
+          status: "error",
+          error: projectAnalysisError(observed.error),
+        });
+        continue;
+      }
+      const { result: pseudocode, provider } = observed.value;
+      if (typeof pseudocode === "string" && pseudocode.length > 0) {
+        items.push({ address, procedure, status: "ok", pseudocode });
+        continue;
+      }
+      // Only this observation can explain its missing text, so its caveats
+      // stay with the item; the batch Evidence still aggregates them.
+      const limitations = [...new Set(observed.value.limitations)];
+      items.push({
+        address,
+        procedure,
+        status: "error",
+        error: projectAnalysisError(
+          missingPseudocodeError(
+            provider.id,
+            pseudocode,
+            limitations.length === 0 ? "none" : "reported",
+          ),
+        ),
+        ...(limitations.length === 0 ? {} : { limitations }),
+      });
     }
     return ok(items);
   }
@@ -733,7 +783,8 @@ export class EnhancedTools {
       {},
       signal,
     );
-    if (direct.ok || !permitsCapabilityFallback(direct.error)) return direct;
+    if (direct.ok) return ok(withOverviewInventoryCoverage(direct.value));
+    if (!permitsCapabilityFallback(direct.error)) return direct;
     const document = await resolveAnalysisDocument(
       this.analysis,
       undefined,
@@ -768,12 +819,14 @@ export class EnhancedTools {
     if (!stringCount.ok) return stringCount;
 
     return ok(
-      projectBinaryOverview({
-        document: document.value,
-        ...(segments?.ok ? { segments: segments.value } : {}),
-        procedure_count: procedureCount.value,
-        string_count: stringCount.value,
-      }),
+      withOverviewInventoryCoverage(
+        projectBinaryOverview({
+          document: document.value,
+          ...(segments?.ok ? { segments: segments.value } : {}),
+          procedure_count: procedureCount.value,
+          string_count: stringCount.value,
+        }),
+      ),
     );
   }
 

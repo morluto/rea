@@ -355,6 +355,23 @@ describe("tool result projection", () => {
       },
     });
   });
+  it("keeps an absent post-authentication dialog out of publisher verification", () => {
+    const result = delivery.toCallToolResult(
+      err(new HopperProcessError(81)),
+      contract,
+    );
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "provider_unavailable",
+        details: { failure_code: "demo_dialog_absent", exit_code: 81 },
+        category: "unavailable",
+      },
+    });
+    expect(
+      (result.structuredContent as { error: { details: unknown } }).error
+        .details,
+    ).not.toHaveProperty("launch_rejection");
+  });
   it("projects bounded private-display coordinates without raw stderr", () => {
     const result = delivery.toCallToolResult(
       err(

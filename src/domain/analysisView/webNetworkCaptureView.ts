@@ -1,4 +1,7 @@
-import { projectProtobufCapturePage } from "./protobufCaptureView.js";
+import {
+  projectProtobufCapturePage,
+  protobufViewRequestSchema,
+} from "./protobufCaptureView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -17,17 +20,19 @@ import {
   type WebNetworkCaptureRecord,
   type WebNetworkCapture,
 } from "../webNetworkCapture.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
   qlogSummarySchema,
+  qlogViewRequestSchema,
   summarizeQlogCapture,
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
@@ -468,8 +473,8 @@ const parseCaptureParent = (
 /** Page immutable retained facts; no capture file, provider or network is consulted. */
 export const projectWebNetworkCaptureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (
     view.kind !== "summary" &&
     view.kind !== "capture" &&
@@ -486,6 +491,12 @@ export const projectWebNetworkCaptureView = (
         },
       ]),
     );
+  assertOwnedView<
+    | SummaryAnalysisView
+    | z.output<typeof captureViewRequestSchema>
+    | z.output<typeof protobufViewRequestSchema>
+    | z.output<typeof qlogViewRequestSchema>
+  >(view, "summary", "capture", "protobuf", "qlog");
   const parsed = parseCaptureParent(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -519,7 +530,7 @@ export const projectWebNetworkCaptureView = (
     });
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -558,7 +569,7 @@ export const projectWebNetworkCaptureView = (
     const projected = projectQlogCapturePage(report.qlog, view);
     return projected.ok
       ? ok({
-          kind: "qlog",
+          kind: "qlog" as const,
           view,
           ...shared,
           ...projected.value,
@@ -571,7 +582,7 @@ export const projectWebNetworkCaptureView = (
   }
   const records = report.records.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "capture",
+    kind: "capture" as const,
     view,
     ...shared,
     items: captureViewItemsSchema.parse(

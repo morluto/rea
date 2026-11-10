@@ -1167,16 +1167,14 @@ const declarationCountsExceed = <Metadata>(
   return surplus > unknown;
 };
 
-const metadataGroupKey = <Metadata>(metadata: Metadata): string => {
+const metadataEntries = <Metadata>(metadata: Metadata) => {
   const record = metadata as Record<
     string,
     string | number | boolean | undefined
   >;
-  return JSON.stringify(
-    Object.keys(record)
-      .sort()
-      .map((key) => [key, record[key]]),
-  );
+  return Object.keys(record)
+    .sort()
+    .map((key) => [key, record[key]] as const);
 };
 
 type CountedScriptMapGroup<Metadata> = ScriptMapCandidate<Metadata> & {
@@ -1289,14 +1287,15 @@ const scriptMapFactsExceed = <Metadata>(
 ): boolean => {
   if (needed.length === 0) return false;
   if (declarationCountsExceed(needed, slots)) return true;
-  const needGroups = groupScriptMapFacts(
-    needed,
-    (item) => `${metadataGroupKey(item.metadata)}\0${item.declaration ?? ""}`,
+  const needGroups = groupScriptMapFacts(needed, (item) =>
+    compositeKey([metadataEntries(item.metadata), item.declaration]),
   );
-  const slotGroups = groupScriptMapFacts(
-    slots,
-    (slot) =>
-      `${metadataGroupKey(slot.metadata)}\0${slot.declaration ?? ""}\0${slot.unknown ? "unknown" : "exact"}`,
+  const slotGroups = groupScriptMapFacts(slots, (slot) =>
+    compositeKey([
+      metadataEntries(slot.metadata),
+      slot.declaration,
+      slot.unknown,
+    ]),
   );
   if (scriptMapMetadataFitsAll(needGroups, slotGroups, metadataCompatible))
     return false;

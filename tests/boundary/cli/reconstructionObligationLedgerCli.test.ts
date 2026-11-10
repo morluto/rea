@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { reconstructionObligationLedgerSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
@@ -376,25 +376,23 @@ describe("reconstruction proof applicability through CLI", () => {
     reason,
     codes,
   } of reconstructionProofApplicabilityCases())
-    it(
+    cliTest(
       name,
-      async () => {
-        const { stdout } = await execute(
-          process.execPath,
-          [
-            "scripts/rea.mjs",
+      async ({ cli }) => {
+        const invocation = {
+          arguments: [
             "build-reconstruction-obligation-ledger",
             JSON.stringify(input),
             "--json",
           ],
-          {
-            cwd: process.cwd(),
-            env: process.env,
-            maxBuffer: 16 * 1_024 * 1_024,
-          },
-        );
+        };
+        const result =
+          name === "matching implementation and revision"
+            ? await cli.run(invocation)
+            : await runFileCli(cli, invocation);
+        expect(result.exitCode, result.stderr).toBe(0);
         const ledger = reconstructionObligationLedgerSchema.parse(
-          JSON.parse(stdout).normalized_result,
+          (result.json as { normalized_result: unknown }).normalized_result,
         );
         expect(ledger.status).toBe(status);
         const obligation = ledger.obligations[0]!;

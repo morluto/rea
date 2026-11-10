@@ -8,7 +8,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/sqliteDatabase.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import {
   withArtifactFileHandle,
   assertArtifactReadActive,

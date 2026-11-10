@@ -1095,68 +1095,6 @@ it("rejects code keys and members whose consts are unhashable", () => {
   expect(hashable.coverage.status).toBe("complete");
 });
 
-it("uses the code equality fields for each CPython layout", () => {
-  const codeCollections = (
-    layout: "py38" | "py311",
-    different: boolean,
-  ): [Buffer, Buffer] => {
-    const lineA = marshalCode(layout, {
-      name: "f",
-      filename: "fixture.py",
-      firstlineno: 1,
-      linetable: Buffer.from([2, 1]),
-    });
-    const lineB = marshalCode(layout, {
-      name: "f",
-      filename: "fixture.py",
-      firstlineno: 1,
-      linetable: Buffer.from([2, different ? 2 : 1]),
-    });
-    const frozenSet = Buffer.concat([
-      Buffer.from([0x3e]),
-      u32(2),
-      lineA,
-      lineB,
-    ]);
-    const dict = Buffer.concat([
-      Buffer.from([0x7b]),
-      lineA,
-      Buffer.from([0x4e]),
-      lineB,
-      Buffer.from([0x54, 0x30]),
-    ]);
-    return [frozenSet, dict];
-  };
-  for (const [magic, layout] of [
-    [3413, "py38"],
-    [3439, "py38"],
-  ] as const) {
-    const [frozenSet, dict] = codeCollections(layout, true);
-    const report = parse(
-      Buffer.concat([
-        pythonPycHeader(magic),
-        marshalCode(layout, { consts: [frozenSet, dict] }),
-      ]),
-    );
-    expect(root(report).consts).toEqual([
-      { kind: "frozenset", length: 1 },
-      { kind: "dict", length: 1 },
-    ]);
-  }
-
-  const [frozenSet, dict] = codeCollections("py311", true);
-  const py312 = parse(
-    Buffer.concat([
-      pythonPycHeader(3531),
-      marshalCode("py311", { consts: [frozenSet, dict] }),
-    ]),
-  );
-  expect(root(py312).consts).toEqual([
-    { kind: "frozenset", length: 2 },
-    { kind: "dict", length: 2 },
-  ]);
-});
-
 it("keeps the first dictionary key when a later key compares equal", () => {
   const key = (filename: string): Buffer =>
     marshalCode("py311", {

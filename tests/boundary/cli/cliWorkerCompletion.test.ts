@@ -136,8 +136,23 @@ processTest(
   "publishes one fatal CLI response and does not dispatch commands queued behind it",
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-cli-worker-fatal-");
-    const result = await processes.run(process.execPath, [worker], {
-      input: Buffer.concat([
+    const child = processes.spawn(process.execPath, [worker]);
+    const closed = new Promise<void>((resolve) => {
+      child.once("close", () => resolve());
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    const frames: unknown[] = [];
+    child.stdout.on(
+      "data",
+      createCliSessionFrameReader((frame: unknown) => {
+        frames.push(frame);
+      }),
+    );
+    child.stdin.end(
+      Buffer.concat([
         encodeCliSessionFrame({ id: 1, arguments: null, cwd: root, env: {} }),
         encodeCliSessionFrame({
           id: 2,
@@ -146,15 +161,17 @@ processTest(
           env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
         }),
       ]),
-      timeoutMs: 15_000,
-    });
-    expect(result.signal, result.stderr).toBeNull();
-    expect(result.exitCode, result.stderr).toBe(1);
-    expect(result.stderr).toContain(
+    );
+    expect(await waitForExit(child, 15_000), stderr).toBe(true);
+    await closed;
+    expect(child.signalCode, stderr).toBeNull();
+    expect(child.exitCode, stderr).toBe(1);
+    expect(stderr).toContain(
       "CLI session command is missing its arguments, cwd, or environment",
     );
-    expect(result.stdout).toContain('"id":1');
-    expect(result.stdout).toContain('"fatal":true');
-    expect(result.stdout).not.toContain('"id":2');
+    expect(frames).toEqual([
+      { ready: true },
+      expect.objectContaining({ id: 1, fatal: true, exitCode: 1 }),
+    ]);
   },
 );

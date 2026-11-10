@@ -4,7 +4,9 @@ import type {
   HeaderArchitecture,
   MipsElfMetadata,
   PeCodeViewRecord,
+  RiscvElfMetadata,
   UniversalMachOSlice,
+  UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import {
@@ -46,7 +48,7 @@ export type ExecutableMetadata =
       readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
-      readonly riscv: ElfFamilyMetadata;
+      readonly riscv: RiscvElfMetadata;
     }
   | {
       readonly format: "elf";
@@ -76,6 +78,7 @@ export type ExecutableMetadata =
       readonly architecture: HeaderArchitecture;
       readonly availableArchitectures: readonly HeaderArchitecture[];
       readonly universalSlice: UniversalMachOSlice;
+      readonly universalSlices: readonly UniversalMachOSliceIdentity[];
     }
   | {
       readonly format: "pe";
@@ -301,6 +304,15 @@ const parseFatMachO = (
     architecture: selected.architecture,
     availableArchitectures: declaredFamilies(declarations),
     universalSlice: { offset: selected.offset, size: selected.size },
+    universalSlices:
+      header.state === "parsed"
+        ? header.slices.map(({ offset, size, cpuType, cpuSubtype }) => ({
+            offset,
+            size,
+            cpuType,
+            cpuSubtype,
+          }))
+        : [],
   });
 };
 
@@ -385,8 +397,10 @@ const parseElf = (
 ): Result<ExecutableMetadata, string> => {
   const fixedHeader = readElfFixedHeader(bytes, fileSize);
   if (!fixedHeader.ok) return fixedHeader;
-  const { elfClass, byteOrder, architecture, type, flags } = fixedHeader.value;
-  if (architecture === null) return err("unsupported ELF architecture");
+  const { elfClass, byteOrder, architecture, machine, type, flags } =
+    fixedHeader.value;
+  if (architecture === null)
+    return err(`unsupported ELF architecture: e_machine ${String(machine)}`);
   if (
     architecture === "mips" ||
     architecture === "riscv" ||

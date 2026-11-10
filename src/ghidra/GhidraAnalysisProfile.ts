@@ -406,6 +406,14 @@ export const ghidraProfileLanguageOverride = (
     : { languageId, compilerSpecId };
 };
 
+/** Read back the language a provider-pinned profile imports with, for any pinned lane. */
+export const ghidraProfilePinnedLanguage = (
+  parameters: Readonly<Record<string, unknown>>,
+): GhidraLanguageOverride | undefined =>
+  parameters.language_selection === "provider-pinned-v1"
+    ? ghidraProfileLanguageOverride(parameters)
+    : undefined;
+
 /** Whether a committed profile and the active configuration select the same language. */
 export const sameGhidraLanguageOverride = (
   left: GhidraLanguageOverride | undefined,

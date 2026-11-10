@@ -35,6 +35,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
 
 /** One regular file or unpublished filesystem entry in a private extraction. */
 export interface FirmwareEntry {
@@ -43,6 +44,7 @@ export interface FirmwareEntry {
   readonly size: number;
   readonly kind: "file" | "symlink" | "special";
   readonly linkTarget: string | null;
+  readonly linkTargetHex?: string;
 }
 
 const throwIfFirmwareInventoryCancelled = (
@@ -428,6 +430,9 @@ export const inventoryFirmwareOutput = async (
       if (stat.isFile()) bytes += stat.size;
       if (bytes > maxBytes)
         throw firmwareStagingLimit(operation, "max_output_bytes", maxBytes);
+      const linkTarget = stat.isSymbolicLink()
+        ? observedSymlinkTarget(await readlink(path, { encoding: "buffer" }))
+        : undefined;
       entries.push({
         path,
         relativePath: relative(root, path).split(sep).join("/"),
@@ -437,7 +442,8 @@ export const inventoryFirmwareOutput = async (
           : stat.isFile()
             ? "file"
             : "special",
-        linkTarget: stat.isSymbolicLink() ? await readlink(path) : null,
+        linkTarget: linkTarget?.text ?? null,
+        ...(linkTarget === undefined ? {} : { linkTargetHex: linkTarget.hex }),
       });
     }
   }

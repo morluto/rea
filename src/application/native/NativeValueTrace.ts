@@ -12,13 +12,11 @@ import {
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
 import type { EnhancedResult } from "../EnhancedToolTypes.js";
-import { jsonParts } from "../../domain/jsonSerialization.js";
 import {
   renderSourceLimitations,
   type SourceLimitation,
 } from "../SourceLimitations.js";
-
-const NODE_PAYLOAD_BYTES = 8 * 1024 * 1024;
+import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
@@ -27,8 +25,6 @@ export const traceNativeValues = async (
   signal?: AbortSignal,
 ): EnhancedResult => {
   const input = nativeValueTraceInputSchema.parse(parameters);
-  const nodes: typeof nativeValueTraceSchema._output.nodes = [];
-  const edges: typeof nativeValueTraceSchema._output.edges = [];
   const procedures: typeof nativeValueTraceSchema._output.procedures = [];
   const unknowns: typeof nativeValueTraceSchema._output.unknowns = [];
   const sourceLimitations: SourceLimitation[] = [];
@@ -43,34 +39,19 @@ export const traceNativeValues = async (
   const pending = [{ procedure: input.procedure, depth: 0 }];
   const attempted = new Set<string>();
   const visited = new Set<string>();
+  // Calls not followed because of depth or candidate policy. They narrow the
+  // traversal only if no other path analyzes or queues the destination.
+  const unexpanded: {
+    caller: string;
+    address: string;
+    destination: string;
+    reason: "max_depth" | "ambiguous_call_candidates";
+  }[] = [];
+  const budget = createValueTraceBudget(input, unknowns);
+  const { nodes, edges } = budget;
   let targetSha256: string | undefined;
-  let truncated = false;
   let decompilations = 0;
   let callSites = 0;
-  let bytes = 0;
-  let nodeBudgetReached = false;
-  const retainNode = (value: (typeof nodes)[number]): boolean => {
-    if (nodeBudgetReached) return false;
-    if (nodes.length >= input.max_nodes) {
-      truncated = true;
-      nodeBudgetReached = true;
-      return false;
-    }
-    let size = 0;
-    // Reuse bounded JSON encoding to count escapes and UTF-8 expansion
-    // before allocating a complete serialized node that might not fit.
-    for (const part of jsonParts(value)) {
-      size += Buffer.byteLength(part);
-      if (size > NODE_PAYLOAD_BYTES - bytes) {
-        truncated = true;
-        nodeBudgetReached = true;
-        return false;
-      }
-    }
-    bytes += size;
-    nodes.push(value);
-    return true;
-  };
   while (pending.length > 0) {
     if (signal?.aborted)
       return err(
@@ -86,12 +67,14 @@ export const traceNativeValues = async (
     )
       continue;
     if (decompilations >= input.max_functions) {
-      truncated = true;
-      unknowns.push({
+      budget.narrow("max_functions", {
         procedure: next.procedure,
         address: null,
         reason: "decompilation budget reached",
       });
+      // Keep the unanalyzed selector queued so later accounting attributes
+      // it to this budget rather than to a depth limit.
+      pending.unshift(next);
       break;
     }
     // An exact selector is attempted once per trace, even on failure. Only
@@ -163,14 +146,12 @@ export const traceNativeValues = async (
       });
       continue;
     }
-    if (flow.truncated) {
-      truncated = true;
-      unknowns.push({
+    if (flow.truncated)
+      budget.narrow("provider_pcode_truncated", {
         procedure: address,
         address: null,
         reason: "Provider p-code was truncated",
       });
-    }
     const ids = new Set<string>();
     // Keep generated parameter identity independent of which operations fit
     // the budget, while preserving every provider-supplied operation ID.
@@ -191,7 +172,7 @@ export const traceNativeValues = async (
         kind: "operation" as const,
         parameter: null,
       };
-      if (!retainNode(node)) break;
+      if (!budget.retainNode(node)) break;
       ids.add(operation.id);
     }
     for (const parameter of flow.parameters) {
@@ -201,7 +182,7 @@ export const traceNativeValues = async (
         localId = `${parameterId}#${suffix}`;
       const id = qualified(localId);
       if (
-        !retainNode({
+        !budget.retainNode({
           id,
           procedure: address,
           evidence_id: evidenceId,
@@ -216,33 +197,37 @@ export const traceNativeValues = async (
     for (const use of flow.parameter_uses) {
       const source = parameterIds.get(use.ordinal);
       if (!ids.has(use.use) || source === undefined) continue;
-      if (edges.length >= input.max_edges) {
-        truncated = true;
+      if (
+        !budget.retainEdge(
+          {
+            source,
+            target: qualified(use.use),
+            input_index: use.input_index,
+            kind: "parameter-use",
+            status: "derived",
+            evidence_id: evidenceId,
+          },
+          address,
+        )
+      )
         break;
-      }
-      edges.push({
-        source,
-        target: qualified(use.use),
-        input_index: use.input_index,
-        kind: "parameter-use",
-        status: "derived",
-        evidence_id: evidenceId,
-      });
     }
     for (const edge of flow.def_use) {
       if (!ids.has(edge.definition) || !ids.has(edge.use)) continue;
-      if (edges.length >= input.max_edges) {
-        truncated = true;
+      if (
+        !budget.retainEdge(
+          {
+            source: qualified(edge.definition),
+            target: qualified(edge.use),
+            input_index: edge.input_index,
+            kind: "def-use",
+            status: "derived",
+            evidence_id: evidenceId,
+          },
+          address,
+        )
+      )
         break;
-      }
-      edges.push({
-        source: qualified(edge.definition),
-        target: qualified(edge.use),
-        input_index: edge.input_index,
-        kind: "def-use",
-        status: "derived",
-        evidence_id: evidenceId,
-      });
     }
     for (const operation of flow.operations) {
       if (
@@ -250,9 +235,10 @@ export const traceNativeValues = async (
         !["CALL", "CALLIND"].includes(operation.opcode)
       )
         continue;
+      // A full edge budget cannot retain this call or expand its destination.
+      if (budget.edgesExhausted()) break;
       if (callSites >= input.max_call_sites) {
-        truncated = true;
-        unknowns.push({
+        budget.narrow("max_call_sites", {
           procedure: address,
           address: operation.address,
           reason: "Call-site resolution budget reached",
@@ -305,19 +291,21 @@ export const traceNativeValues = async (
           reason: `Call target ${targets.data.status}`,
         });
       for (const target of targets.data.targets) {
-        if (edges.length >= input.max_edges) {
-          truncated = true;
-          break;
-        }
         const destination = target.procedure ?? target.address;
-        edges.push({
-          source: qualified(operation.id),
-          target: destination,
-          input_index: null,
-          kind: "call",
-          status: target.status,
-          evidence_id: evidenceId,
-        });
+        if (
+          !budget.retainEdge(
+            {
+              source: qualified(operation.id),
+              target: destination,
+              input_index: null,
+              kind: "call",
+              status: target.status,
+              evidence_id: evidenceId,
+            },
+            address,
+          )
+        )
+          break;
         if (target.status !== "candidate")
           callBindings.push({
             caller: address,
@@ -329,27 +317,20 @@ export const traceNativeValues = async (
           });
         if (next.depth < input.max_depth && target.status !== "candidate")
           pending.push({ procedure: destination, depth: next.depth + 1 });
-        else if (!visited.has(destination)) {
-          truncated = true;
-          unknowns.push({
-            procedure: address,
+        else
+          unexpanded.push({
+            caller: address,
             address: operation.address,
+            destination,
             reason:
               target.status === "candidate"
-                ? "Ambiguous call candidates were not traversed"
-                : "Call depth budget reached",
+                ? "ambiguous_call_candidates"
+                : "max_depth",
           });
-        }
       }
     }
-    if (
-      truncated &&
-      (nodeBudgetReached ||
-        nodes.length >= input.max_nodes ||
-        edges.length >= input.max_edges ||
-        bytes >= NODE_PAYLOAD_BYTES)
-    )
-      break;
+    // Remaining work is attributed to the rejecting budget recorded above.
+    if (budget.exhausted()) break;
   }
   if (targetSha256 === undefined)
     return err(
@@ -358,6 +339,26 @@ export const traceNativeValues = async (
         "No seed function could be analyzed",
       ),
     );
+  // A destination queued at a lower depth is omitted by the budget that ended
+  // traversal, and one already attempted was not narrowed by this call.
+  const queued = new Set(pending.map(({ procedure }) => procedure));
+  for (const skipped of unexpanded) {
+    const { destination } = skipped;
+    if (
+      visited.has(destination) ||
+      attempted.has(destination) ||
+      queued.has(destination)
+    )
+      continue;
+    budget.narrow(skipped.reason, {
+      procedure: skipped.caller,
+      address: skipped.address,
+      reason:
+        skipped.reason === "ambiguous_call_candidates"
+          ? "Ambiguous call candidates were not traversed"
+          : "Call depth budget reached",
+    });
+  }
   const parametersByProcedure = new Map<string, typeof nodes>();
   const returnsByProcedure = new Map<string, typeof nodes>();
   for (const node of nodes) {
@@ -392,37 +393,45 @@ export const traceNativeValues = async (
         });
         continue;
       }
-      if (edges.length >= input.max_edges) {
-        truncated = true;
+      if (
+        !budget.retainEdge(
+          {
+            source: binding.call,
+            target: node.id,
+            input_index: ordinal + 1,
+            kind: "argument-binding",
+            status: "derived",
+            evidence_id: binding.evidence_id,
+          },
+          binding.caller,
+        )
+      )
         break;
-      }
-      edges.push({
-        source: binding.call,
-        target: node.id,
-        input_index: ordinal + 1,
-        kind: "argument-binding",
-        status: "derived",
-        evidence_id: binding.evidence_id,
-      });
     }
     if (binding.output)
       for (const node of returnsByProcedure.get(binding.callee) ?? []) {
-        if (edges.length >= input.max_edges) {
-          truncated = true;
+        if (
+          !budget.retainEdge(
+            {
+              source: node.id,
+              target: binding.call,
+              input_index: 1,
+              kind: "return-binding",
+              status: "derived",
+              evidence_id: node.evidence_id,
+            },
+            binding.caller,
+          )
+        )
           break;
-        }
-        edges.push({
-          source: node.id,
-          target: binding.call,
-          input_index: 1,
-          kind: "return-binding",
-          status: "derived",
-          evidence_id: node.evidence_id,
-        });
       }
   }
   const page = nodes.slice(input.offset, input.offset + input.limit);
   const pageIds = new Set(page.map(({ id }) => id));
+  // Every edge source is a retained node, so a page holding every node holds
+  // every edge; traversal truncation is independent of the requested page.
+  const pageTruncated = page.length !== nodes.length;
+  const traversal = budget.traversal();
   const result = nativeValueTraceSchema.parse({
     seed: input.procedure,
     target_sha256: targetSha256,
@@ -437,11 +446,13 @@ export const traceNativeValues = async (
       input.offset + page.length < nodes.length
         ? input.offset + page.length
         : null,
-    truncated: truncated || page.length !== nodes.length,
+    page_truncated: pageTruncated,
+    traversal,
+    truncated: pageTruncated || traversal.status === "truncated",
     limitations: [
       "Static decompiler def-use graphs cover recovered block members; when membership is unavailable they exclude operations marked dead. Logical CALL argument positions bind to recovered HighParam ordinals and RETURN values bind to recovered CALL outputs; these are decompiler-derived dependencies, not original source or runtime observations. Missing parameters, variadic arguments and alias dependencies remain unknown.",
       "LOAD and STORE are memory operations; object fields, persistent state and RNG semantics are not inferred from names or pseudocode.",
-      "Traversal caps depth, decompilations, call-site resolutions, nodes, edges and node payloads (8388608 bytes, 8 MiB). This release has no runtime override for the 8388608-byte node-payload allowance. Complete serialized output is bounded to 33554432 bytes (32 MiB) and that output allowance has no runtime override. Pagination reruns analysis and returns edges whose source is on the node page; endpoints outside the page retain stable identities.",
+      "Traversal caps depth, decompilations, call-site resolutions, nodes, edges and node payloads (8388608 bytes, 8 MiB); traversal.reasons names each cap or policy this trace reached. This release has no runtime override for the 8388608-byte node-payload allowance. Complete serialized output is bounded to 33554432 bytes (32 MiB) and that output allowance has no runtime override. Pagination reruns analysis and returns edges whose source is on the node page; endpoints outside the page retain stable identities.",
       ...renderSourceLimitations(sourceLimitations),
     ],
   });

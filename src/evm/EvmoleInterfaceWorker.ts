@@ -1,3 +1,4 @@
+import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
@@ -23,7 +24,7 @@ class UnsupportedContainer extends Error {}
 const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined)
-    throw new Error("Owned worker request path missing.");
+    throw new EvmAdmissionError("request_path_missing");
   const request = requestSchema.parse(
     JSON.parse(await readFile(requestPath, "utf8")),
   );

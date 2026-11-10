@@ -27,6 +27,7 @@ import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
 } from "../process/RuntimeControlUnavailableError.js";
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
@@ -237,18 +238,31 @@ const classifyWabtFailure = (
         remediationAction: `The WABT tool allowance is ${String(WABT_LIMITS.toolBytes)} bytes. This release has no runtime override. command_timeout_ms and REA_WABT_BIN_DIRECTORY do not raise it. Select tools within the allowance. Do not repeat the unchanged call.`,
       },
     );
-  if (phase === "configuration")
+  if (phase === "configuration") {
+    const admission = cause instanceof WabtAdmissionError ? cause : undefined;
     return new AnalysisCapabilityUnavailableError(
       WABT_PROVIDER_IDENTITY.id,
       "inspect_wasm_artifact",
-      reason,
+      admission?.code ?? reason,
       {
         cause,
         ...artifactOptions,
-        userMessage: reason,
+        ...(admission === undefined
+          ? {}
+          : {
+              diagnostics: {
+                code: admission.code,
+                ...admission.detail,
+              },
+            }),
+        userMessage:
+          admission === undefined
+            ? reason
+            : "WABT configuration cannot be used",
         remediationAction: wabtConfigurationRecoveryAction(cause),
       },
     );
+  }
   if (
     phase === "artifact" &&
     cause instanceof ArtifactReaderFailure &&

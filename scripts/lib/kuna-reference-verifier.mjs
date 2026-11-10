@@ -21,6 +21,8 @@ export const verifyKunaReferences = async ({
   address,
   expectedCaller,
   nativeIncoming,
+  verifyNamedTrace = false,
+  minimumTraceReferences = 1,
 }) => {
   const before = await Promise.all([
     entries(join(cacheRoot, "projects")),
@@ -80,7 +82,44 @@ export const verifyKunaReferences = async ({
       direction: "forward",
     });
     assert.equal(path.value.goal_status, "reached");
-    composed = { graph_ms: graph.ms, path_ms: path.ms };
+    let traceMs;
+    if (verifyNamedTrace) {
+      const trace = await call("trace_feature", { query: name });
+      traceMs = trace.ms;
+      assert.ok(
+        trace.value.matches.some(
+          (match) => match.type === "procedure" && match.address === address,
+        ),
+        `${name} was not retained in its feature trace`,
+      );
+      assert.ok(
+        incoming.value.length >= minimumTraceReferences,
+        `${name} fixture did not produce the expected incoming references`,
+      );
+      const references = trace.value.references.filter(
+        (row) => row.target_address === address,
+      );
+      assert.deepEqual(
+        references.map((row) => row.source_address).sort(),
+        [...incoming.value].sort(),
+        `${name} lost or duplicated an observed incoming reference`,
+      );
+      for (const reference of references) {
+        assert.equal(reference.containing_procedure.status, "unavailable");
+        assert.equal(reference.containing_procedure.provider_id, "kuna");
+        assert.ok(
+          trace.value.residual_unknowns.some((unknown) =>
+            unknown.includes(reference.source_address),
+          ),
+        );
+      }
+      assert.equal(trace.value.truncated, false);
+    }
+    composed = {
+      graph_ms: graph.ms,
+      path_ms: path.ms,
+      ...(traceMs === undefined ? {} : { feature_trace_ms: traceMs }),
+    };
   }
   assert.deepEqual(
     await Promise.all([

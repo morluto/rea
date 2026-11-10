@@ -13,6 +13,8 @@ import {
   expectForeignHostRefused,
   rawHttpRequest,
 } from "../../../tests/support/http/rawRequest.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   hostHeaderAllowlist,
   McpSessionSlot,
@@ -21,6 +23,7 @@ import {
 } from "./serveStreamableHttp.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
+import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 
 const servers: StreamableHttpServer[] = [];
@@ -344,6 +347,49 @@ it.each([
   });
   expect(response.status).toBe(200);
   expect(JSON.parse(response.body)).toEqual({ allowed: true });
+});
+
+it("serves every declared repeated host while refusing undeclared hosts and origins", async () => {
+  const parsed = parseMcpHttpArguments([
+    "--http",
+    "--allowed-hosts",
+    "a.example",
+    "--allowed-hosts=b.example",
+  ]);
+  if (!parsed.ok || parsed.allowedHosts === undefined)
+    throw new Error("Expected valid repeated host lists");
+  const { served } = await start({
+    host: "0.0.0.0",
+    allowedHosts: parsed.allowedHosts,
+    routes: [
+      {
+        method: "GET",
+        path: "/probe",
+        handle: () => Response.json({ allowed: true }),
+      },
+    ],
+  });
+  const url = new URL(served.url);
+  url.hostname = "127.0.0.1";
+  url.pathname = "/probe";
+  for (const host of ["a.example", "b.example"]) {
+    const response = await rawHttpRequest(url, {
+      headers: { host, origin: `http://${host}` },
+    });
+    expect(response.status, host).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ allowed: true });
+  }
+  expect(
+    (await rawHttpRequest(url, { headers: { host: "undeclared.example" } }))
+      .status,
+  ).toBe(403);
+  expect(
+    (
+      await rawHttpRequest(url, {
+        headers: { host: "a.example", origin: "http://undeclared.example" },
+      })
+    ).status,
+  ).toBe(403);
 });
 
 it("announces an admitted non-loopback URL and gates it on the operator allowlist", async () => {
@@ -1060,21 +1106,25 @@ it.each(["replacement", "DELETE"])(
     const first = await connect(served.url);
     let next: Awaited<ReturnType<typeof connect>> | undefined;
     let replacement: ReturnType<typeof connect> | undefined;
+    let deletion:
+      | ReturnType<typeof first.transport.terminateSession>
+      | undefined;
+    const request = first.client
+      .callTool({ name: "slow", arguments: {} })
+      .catch(() => undefined);
     try {
-      void first.client
-        .callTool({ name: "slow", arguments: {} })
-        .catch(() => undefined);
-      await started;
-      const deletion =
+      await awaitAcknowledgement(started, request, "tool start");
+      deletion =
         ending === "DELETE" ? first.transport.terminateSession() : undefined;
-      if (deletion !== undefined) await aborted;
+      if (deletion !== undefined)
+        await awaitAcknowledgement(aborted, deletion, "tool cancellation");
       let connected = false;
       replacement = connect(served.url).then((value) => {
         connected = true;
         next = value;
         return value;
       });
-      await aborted;
+      await awaitAcknowledgement(aborted, replacement, "tool cancellation");
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(connections).toBe(1);
       expect(connected).toBe(false);
@@ -1088,9 +1138,15 @@ it.each(["replacement", "DELETE"])(
       ]);
     } finally {
       release();
-      await replacement?.catch(() => undefined);
-      await first.client.close();
-      await next?.client.close();
+      await closeVerifierResources([
+        () => first.client.close(),
+        async () => {
+          await Promise.allSettled([request, deletion, replacement]);
+        },
+        async () => {
+          await next?.client.close();
+        },
+      ]);
     }
   },
 );
@@ -1118,7 +1174,11 @@ it.each(["ready", "failure"] as const)(
     });
     const settled = starting.catch(() => undefined);
     try {
-      await factoryStarted.promise;
+      await awaitAcknowledgement(
+        factoryStarted.promise,
+        starting,
+        "factory start",
+      );
       expect((await fetch(new URL("/pending", url))).status).toBe(503);
       expect(handled).not.toHaveBeenCalled();
       factoryGate.release();
@@ -1178,14 +1238,19 @@ it.each(["open stream", "late response"])(
     const response = fetch(new URL("/stream", served.url)).catch(
       () => undefined,
     );
-    await entered.promise;
-    if (timing === "open stream") await response;
-    let closed = false;
-    const closing = served.prepareShutdown().then(() => {
-      closed = true;
-    });
+    let closing: Promise<void> | undefined;
     try {
-      await cancelling.promise;
+      await awaitAcknowledgement(entered.promise, response, "route start");
+      if (timing === "open stream") await response;
+      let closed = false;
+      closing = served.prepareShutdown().then(() => {
+        closed = true;
+      });
+      await awaitAcknowledgement(
+        cancelling.promise,
+        closing,
+        "body cancellation",
+      );
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(closed).toBe(false);
       expect(shutdownHooks()).toBe(0);
@@ -1194,8 +1259,14 @@ it.each(["open stream", "late response"])(
       expect(shutdownHooks()).toBe(1);
     } finally {
       cleanup.release();
-      await closing;
-      await (await response)?.body?.cancel().catch(() => undefined);
+      await closeVerifierResources([
+        async () => {
+          await (closing ?? served.close());
+        },
+        async () => {
+          await (await response)?.body?.cancel().catch(() => undefined);
+        },
+      ]);
     }
   },
 );
@@ -1542,13 +1613,14 @@ it.each(["prepareShutdown", "close"] as const)(
     const response = fetch(new URL("/pending", served.url)).catch(
       () => undefined,
     );
-    await started;
-    let closed = false;
-    const closing = served[method]().then(() => {
-      closed = true;
-    });
+    let closing: Promise<void> | undefined;
     try {
-      await cleanupStarted;
+      await awaitAcknowledgement(started, response, "route start");
+      let closed = false;
+      closing = served[method]().then(() => {
+        closed = true;
+      });
+      await awaitAcknowledgement(cleanupStarted, closing, "route finalizer");
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(closed).toBe(false);
       expect(shutdownHooks()).toBe(0);
@@ -1557,8 +1629,14 @@ it.each(["prepareShutdown", "close"] as const)(
       expect(shutdownHooks()).toBe(1);
     } finally {
       release();
-      await closing;
-      await response;
+      await closeVerifierResources([
+        async () => {
+          await (closing ?? served.close());
+        },
+        async () => {
+          await response;
+        },
+      ]);
     }
   },
 );
@@ -1865,7 +1943,7 @@ it.each(["replacement", "DELETE", "shutdown"])(
     );
     try {
       // With no stream prefetch, this proves the SDK is waiting on the old body.
-      await readStarted;
+      await awaitAcknowledgement(readStarted, pending, "request body read");
       if (ending === "shutdown") await slot.close();
       else {
         if (ending === "DELETE") {
@@ -1990,12 +2068,14 @@ it.each(["after timeout", "during drain"])(
       },
     });
     const first = await connect(served.url);
+    const request = first.client
+      .callTool({ name: "slow", arguments: {} })
+      .catch(() => undefined);
+    let replacement: Promise<Response | undefined> | undefined;
+    let pendingClose: Promise<void> | undefined;
     try {
-      void first.client
-        .callTool({ name: "slow", arguments: {} })
-        .catch(() => undefined);
-      await started;
-      const replacement = fetch(served.url, {
+      await awaitAcknowledgement(started, request, "tool start");
+      replacement = fetch(served.url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -2007,8 +2087,8 @@ it.each(["after timeout", "during drain"])(
         if (shutdownTiming === "during drain") return undefined;
         throw cause;
       });
-      await drainStarted;
-      const pendingClose =
+      await awaitAcknowledgement(drainStarted, replacement, "session drain");
+      pendingClose =
         shutdownTiming === "during drain" ? served.close() : undefined;
       const refused = await replacement;
       if (shutdownTiming === "after timeout") expect(refused?.status).toBe(503);
@@ -2024,7 +2104,15 @@ it.each(["after timeout", "during drain"])(
       expect(shutdowns).toBe(1);
     } finally {
       release();
-      await first.client.close();
+      await closeVerifierResources([
+        () => first.client.close(),
+        async () => {
+          await Promise.allSettled([request, replacement]);
+        },
+        async () => {
+          await pendingClose;
+        },
+      ]);
     }
   },
 );

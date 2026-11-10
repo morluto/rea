@@ -12,10 +12,12 @@ import {
   isErasedJavaScriptDeclaration,
   isUnmodeledJavaScriptRuntimeScope,
 } from "./javascriptModuleDeclaration.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   isUnshadowedGlobal,
+  semanticBindingAtRead,
+} from "./javascriptSemanticMutationInitializers.js";
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,

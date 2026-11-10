@@ -6,7 +6,7 @@ import type {
   FridaInstrumentationPort,
   FridaRemoteConnection,
 } from "../application/frida/FridaInstrumentationPort.js";
-import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
+import { createFridaInstrumentationProvider } from "../composition/frida.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -27,7 +27,7 @@ const exactlyOneScriptSource =
 export const registerFridaCommands = (
   cli: CliInstance,
   logger: Logger,
-  provider: FridaInstrumentationPort = new FridaInstrumentationManager(),
+  provider: FridaInstrumentationPort = createFridaInstrumentationProvider(),
 ): void => {
   const service = new FridaInstrumentationService(provider);
   // CLI calls own a disposable provider; MCP retains its shared provider until

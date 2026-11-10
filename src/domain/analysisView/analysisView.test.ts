@@ -38,6 +38,7 @@ import {
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
@@ -48,6 +49,7 @@ const layoutParent = (): AnalysisViewParent => {
 const javascriptParent = (
   analysis = analysisViewJavaScriptAnalysis(),
 ): AnalysisViewParent => ({
+  predicateType: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.predicate_type,
   evidenceId: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.evidence_id,
   operation: "analyze_javascript_application",
   normalizedResult: analysis,
@@ -57,6 +59,7 @@ const javascriptParent = (
 const nativeParent = (
   result: unknown = ghidraFunctionDossier(),
 ): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: "ev_" + "b".repeat(64),
   operation: "analyze_function",
   normalizedResult: result,
@@ -363,6 +366,7 @@ it("rejects artifact summary views when inspection substep coverage count disagr
   const source = ARTIFACT_COMPARISON_EXAMPLE.left;
   const inspection = createArtifactInspection(source);
   const parent: AnalysisViewParent = {
+    predicateType: "rea.analysis",
     evidenceId: `ev_${"a".repeat(64)}`,
     operation: "inspect_artifact",
     normalizedResult: {
@@ -782,9 +786,15 @@ it("projects JavaScript summary and preserves selected module observations", () 
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
     kind: "javascript-asset",
+    observations: expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          source: "export const secret = 1;\n",
+          text: "should not leak",
+        }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(item.value.item)).toContain("export const secret = 1;");
-  expect(JSON.stringify(item.value.item)).toContain("should not leak");
   const page = projectAnalysisView(parent, {
     kind: "page",
     collection: "modules",
@@ -1571,6 +1581,7 @@ it("rejects unsupported parent operations and incompatible collections", () => {
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const unsupported = projectAnalysisView(
     {
+      predicateType: "rea.analysis",
       evidenceId: `ev_${"d".repeat(64)}`,
       operation: "inspect_recorded_crash",
       normalizedResult: { path: "/artifacts/crash.core" },

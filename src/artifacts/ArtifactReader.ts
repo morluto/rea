@@ -1,8 +1,10 @@
+import { fixedAllowanceRemediation } from "../domain/fixedAllowanceRemediation.js";
 import type {
   ArtifactAdmissionLimit,
   ArtifactLimitBoundary,
 } from "../domain/artifactOperationError.js";
 import type {
+  ArtifactContainerIntegrityPair,
   ArtifactIntegrityClaim,
   ArtifactIntegrityDetails,
 } from "../domain/artifactIntegrity.js";
@@ -46,6 +48,8 @@ export interface ArtifactEntry {
   readonly executable: boolean;
   readonly encrypted: boolean;
   readonly byteOffset: number | null;
+  /** Stored source extent; expanded size may differ for compressed members. */
+  readonly byteLength?: number;
   readonly declaredIntegrity: ArtifactIntegrityClaim | null;
   readonly formatMetadata?: ArtifactFormatMetadata;
   readonly unpacked: boolean;
@@ -109,6 +113,7 @@ export const sameArtifactEntry = (
   entry.executable === produced.executable &&
   entry.encrypted === produced.encrypted &&
   entry.byteOffset === produced.byteOffset &&
+  entry.byteLength === produced.byteLength &&
   sameDeclaredIntegrity(entry.declaredIntegrity, produced.declaredIntegrity) &&
   sameFormatMetadata(entry.formatMetadata, produced.formatMetadata) &&
   entry.unpacked === produced.unpacked &&
@@ -189,14 +194,20 @@ export interface ArtifactReader {
     | "directory"
     | ZipPackageFormat
     | "asar"
+    | "ines"
     | "godot-pck"
     | "unityfs"
     | "uimage"
     | "pyinstaller"
+    | "dotnet-bundle"
+    | "bun-standalone"
     | "node-sea"
     | "intel-hex"
     | "srec"
     | "esp-image"
+    | "uf2"
+    | "dfuse"
+    | "esp-flash-image"
     | "fit"
     | "file";
   entries(
@@ -206,6 +217,8 @@ export interface ArtifactReader {
   open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable>;
   provenance(): readonly ArtifactCommand[];
   formatMetadata?(): ArtifactFormatMetadata | undefined;
+  /** A checksum the container declares over its own bytes, with the observed value. */
+  containerIntegrity?(): ArtifactContainerIntegrityPair | undefined;
   /** Bind materialization to the exact inventoried carrier before creating outputs. */
   prepareContainer?(
     expectedSha256: string,
@@ -332,6 +345,19 @@ export class ArtifactReaderFailure extends Error {
     };
   }
 }
+
+/** Fixed reader input ceilings share producer-owned recovery across CLI and MCP. */
+export const artifactFixedLimitFailure = (
+  name: string,
+  maximum: number,
+  unit: string,
+): ArtifactReaderFailure => {
+  const message = `${fixedAllowanceRemediation(`${name} of ${String(maximum)} ${unit}`, "parser")} This release has no runtime override. Summary delivery and pagination do not raise this input limit.`;
+  return new ArtifactReaderFailure("limit", message, {
+    boundary: "capacity",
+    userMessage: message,
+  });
+};
 
 const combineCleanup = (
   primary: AnalysisCleanupObservation | undefined,

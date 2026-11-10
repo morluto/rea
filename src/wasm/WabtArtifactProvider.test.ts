@@ -436,7 +436,12 @@ it("returns actionable unavailable without creating a workspace when tools are a
     ok: false,
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
-      userMessage: expect.stringContaining("REA_WABT_BIN_DIRECTORY"),
+      reason: "directory_not_absolute",
+      userMessage: "WABT configuration cannot be used",
+      diagnostics: {
+        code: "directory_not_absolute",
+        setting: "REA_WABT_BIN_DIRECTORY",
+      },
     },
   });
 });

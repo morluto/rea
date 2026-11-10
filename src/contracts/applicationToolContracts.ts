@@ -83,7 +83,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "search_guidance",
     ...toolContractMetadata("search_guidance"),
     description:
-      "Search only the installed REA workflow guidance. Every non-generic query word must occur in a section. Returns ranked sections, bounded pages, and locators for read_guidance_section. No target or provider is accessed.",
+      "Search only the installed REA workflow guidance. Every non-generic query word must occur in a section; sections holding every word in their own text rank before parents whose words are spread across subsections. Returns ranked sections, bounded pages, and locators for read_guidance_section. No target or provider is accessed.",
     kind: "application",
     inputSchema: searchGuidanceInputSchema,
     outputSchema: searchGuidanceOutputSchema,

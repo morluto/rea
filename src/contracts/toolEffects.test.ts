@@ -17,6 +17,7 @@ const EXECUTION_WORDING =
   /\b(?:run|runs|running|launch|launches|launching|execute|executes|executing|execution|start|starts|install|installs|uninstall|uninstalls)\b/iu;
 
 const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
+  inspect_artifact: "states that mapper execution remains unobserved",
   guided_workflows:
     "renders existing guidance and states that it does not start analysis",
   inspect_analysis_settings:

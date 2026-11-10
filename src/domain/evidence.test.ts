@@ -66,6 +66,42 @@ it.each(RAW_ONLY_ARCHITECTURES)(
   },
 );
 
+it("keeps 6502 confined to explicit raw Evidence subjects alongside iNES", () => {
+  const selected = {
+    path: TARGET.path,
+    sha256: TARGET.sha256,
+    format: "raw-binary" as const,
+    architecture: "6502" as const,
+  };
+  expect(
+    createEvidence(selected, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: null,
+    }).subject,
+  ).toMatchObject({ format: "raw-binary", architecture: "6502" });
+  expect(
+    createEvidence(
+      {
+        path: selected.path,
+        sha256: selected.sha256,
+        format: "ines",
+      },
+      PROVIDER,
+      { operation: "inspect", parameters: {}, result: null },
+    ).subject,
+  ).toMatchObject({ format: "ines", architecture: null });
+  for (const format of ["pe", "ines"] as const) {
+    expect(() =>
+      createEvidence({ ...selected, format }, PROVIDER, {
+        operation: "inspect",
+        parameters: {},
+        result: null,
+      }),
+    ).toThrow();
+  }
+});
+
 it("preserves omitted relationship diagnostics and authenticates reported diagnostics", () => {
   const observation = {
     operation: "procedure_callees",

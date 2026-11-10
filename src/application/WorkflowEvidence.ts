@@ -1,3 +1,4 @@
+import { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
@@ -91,10 +92,14 @@ export const executeComposedWorkflow = async (
   let perItemBytes = 0;
   let omittedObservations = 0;
   let cachePolicy: "live" | undefined;
-  const result = await execute({
+  const workScope = new AnalysisWorkScope();
+  const observed: AnalysisOperationPort = {
     resourceScope: analysis.resourceScope,
     execute: async (operation, parameters, options) => {
-      const execution = await analysis.execute(operation, parameters, options);
+      const execution = await analysis.execute(operation, parameters, {
+        ...options,
+        workScope,
+      });
       if (execution.ok && execution.value.evidenceId !== undefined)
         evidenceLinks.add(execution.value.evidenceId);
       if (execution.ok && execution.value.sourceEvidence !== undefined) {
@@ -139,7 +144,10 @@ export const executeComposedWorkflow = async (
         }
       return execution;
     },
-  });
+  };
+  const result = await Promise.resolve()
+    .then(() => execute(observed))
+    .finally(() => workScope.clear());
   const sources = sourceLedger.recordsForAnalysis();
   if (!result.ok) return withEvidenceSources(result, sources);
   for (const source of sources) evidenceLinks.add(source.evidence_id);

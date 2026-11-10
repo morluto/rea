@@ -10,9 +10,16 @@ import type { ArtifactEntry } from "./ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as espImageDecoding from "../domain/firmware/espImage.js";
 import {
+  TWO_OTA_PARTITIONS,
+  flashImage,
+  partitionTable,
+} from "../domain/firmware/espFlash.fixture.js";
+import {
   ESP32C3_APP_SEGMENTS,
+  ESP32C3_BOOTLOADER_SEGMENTS,
   esp8266Image,
   espImage,
+  pattern,
   signedEspImage,
 } from "../../tests/fixtures/espImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -212,6 +219,67 @@ it("extracts byte-exact segments that re-inventory as raw files", async () => {
   } finally {
     await resourceScope.close();
   }
+});
+
+const rootMetadata = async (bytes: Uint8Array) =>
+  (
+    await scanCanonicalArtifactInventory(await writeImage(bytes))
+  ).occurrences.find((row) => row.logical_path === ".")?.format_metadata;
+const bootloaderOf = (chipId: number) =>
+  espImage({ segments: ESP32C3_BOOTLOADER_SEGMENTS, chipId });
+const TABLE = partitionTable(TWO_OTA_PARTITIONS);
+
+it("says when an image is the bootloader of a flash dump read from a later address", async () => {
+  // ESP32 and S2 ROMs load the bootloader from 0x1000, so a dump read from
+  // there has the table at file 0x7000; a C5's ROM loads from 0x2000.
+  for (const [chipId, flashOffset] of [
+    [0x0000, 0x1000],
+    [0x0017, 0x2000],
+  ] as const) {
+    const tableFileOffset = 0x8000 - flashOffset;
+    expect(
+      await rootMetadata(
+        flashImage(0x8000, [
+          { at: 0, bytes: bootloaderOf(chipId) },
+          { at: tableFileOffset, bytes: TABLE },
+        ]),
+      ),
+    ).toMatchObject({
+      flash_dump: {
+        flash_offset: flashOffset,
+        table_file_offset: tableFileOffset,
+      },
+    });
+  }
+});
+
+it("reads no flash dump without a table after a bootloader", async () => {
+  const esp32 = bootloaderOf(0x0000);
+  // A table inside the image's segment is segment data.
+  const data = Buffer.alloc(0x7400);
+  TABLE.copy(data, 0x7000 - 0x20);
+  const spanning = espImage({
+    segments: [{ address: 0x3ffe_0000, data }],
+    chipId: 0x0000,
+  });
+  for (const bytes of [
+    esp32,
+    // Bytes that begin like a table but are not one.
+    flashImage(0x8000, [
+      { at: 0, bytes: esp32 },
+      {
+        at: 0x7000,
+        bytes: Buffer.concat([TABLE.subarray(0, 32), pattern(32, 9)]),
+      },
+    ]),
+    // An app carries esp_app_desc_t, so it is no bootloader.
+    flashImage(0x8000, [
+      { at: 0, bytes: espImage({ segments: ESP32C3_APP_SEGMENTS, chipId: 0 }) },
+      { at: 0x7000, bytes: TABLE },
+    ]),
+    spanning,
+  ])
+    expect(await rootMetadata(bytes)).toMatchObject({ flash_dump: null });
 });
 
 it("refuses an ESP8266 image with its specific reason", async () => {

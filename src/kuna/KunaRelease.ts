@@ -1,5 +1,5 @@
 /** Kuna release whose CLI and project layout REA verified; others report as unverified. */
-export const KUNA_VERIFIED_VERSION = "1.833";
+export const KUNA_VERIFIED_VERSION = "1.986";
 
 /** Stable provider ID shared by readiness, doctor and Evidence. */
 export const KUNA_PROVIDER_ID = "kuna";

@@ -102,7 +102,7 @@ const admissionCases: readonly AdmissionCase[] = [
   {
     name: "malformed Unicode escape",
     properties: "application.version=12.1.4\nother=\\u00xx\n",
-    error: "Malformed Unicode escape in Java properties file",
+    error: "malformed_unicode_escape",
   },
 ];
 

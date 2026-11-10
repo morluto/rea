@@ -1,17 +1,15 @@
 import { setImmediate } from "node:timers/promises";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ok } from "../../domain/result.js";
-import { resolveSourceToBundleReference } from "../../application/javascript/SourceToBundleReference.js";
 import {
   requireAnalysisViewRetention,
   inspectAnalysisViewValidated,
 } from "../../application/analysisView/AnalysisViewService.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
 import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
-import { compareSourceToBundleEvidence } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { executeSourceToBundleComparison } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
@@ -43,27 +41,17 @@ export const registerCompareSourceToBundleTool = (
             if (!retention.ok)
               return server.delivery.toCallToolResult(retention, contract);
           }
-          const resolved = resolveApplicationEvidenceRequest(
-            input,
-            options.evidenceById,
-          );
-          if (!resolved.ok)
-            return server.delivery.toCallToolResult(resolved, contract);
-          const reference = await resolveSourceToBundleReference(
-            resolved.value.reference,
-            context.mcpReq.signal,
-            options.artifactResources,
-          );
-          if (!reference.ok)
-            return server.delivery.toCallToolResult(reference, contract);
-          const parsed = {
-            ...reference.value,
-            application: resolved.value.application,
-          };
           const result = await logToolExecution(
             options.logger,
             contract.name,
-            () => Promise.resolve(compareSourceToBundleEvidence(parsed)),
+            () =>
+              executeSourceToBundleComparison(
+                input,
+                contract.inputSchema,
+                options.evidenceById,
+                options.artifactResources,
+                { signal: context.mcpReq.signal },
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);

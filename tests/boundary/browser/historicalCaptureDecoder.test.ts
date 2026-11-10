@@ -22,7 +22,7 @@ import { MitmproxyCaptureAdapter } from "../../../src/browser/history/MitmproxyC
 import {
   MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
   HAR_CAPTURE_PROVIDER_IDENTITY,
-} from "../../../src/browser/history/CaptureRelease.js";
+} from "../../../src/browser/history/CaptureProviderIdentities.js";
 import {
   inspectWebNetworkCaptureInputSchema,
   WEB_NETWORK_CAPTURE_LIMITS,

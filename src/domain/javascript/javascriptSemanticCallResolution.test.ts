@@ -54,6 +54,7 @@ it("orders exported callable initializers within their enclosing declaration", (
     resolution: "exact",
     calleeCallableIds: [original.callableId],
   });
+  expect(ir.callSites[1]).toBeDefined();
   expect(ir.callSites[1]?.resolution).not.toBe("exact");
 });
 

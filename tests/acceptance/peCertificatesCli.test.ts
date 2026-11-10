@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -33,7 +34,16 @@ cliTest.for(["pubkey", "signature"])(
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({
       code: "invalid_request",
-      details: { operation: "inspect_pe_certificates" },
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining("padding"),
+          }),
+        ],
+      },
     });
     // Only zero the advertised unused bit; all ASN.1 lengths stay unchanged.
     const last = at + marker.length - 1;
@@ -126,10 +136,9 @@ cliTest(
   "resolves a relative PE path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-cert-cli-rel-");
-    await writeFile(
-      join(root, "unsigned.exe"),
-      peWithoutCertificateTableFixture(),
-    );
+    const path = join(root, "unsigned.exe");
+    const bytes = peWithoutCertificateTableFixture();
+    await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-pe-certificates", "unsigned.exe", "--json"],
       cwd: root,
@@ -138,8 +147,25 @@ cliTest(
     const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
       result.json,
     );
-    expect(evidence.normalized_result.table).toBeNull();
-    expect(evidence.subject?.local_path).toBe(join(root, "unsigned.exe"));
+    expect(evidence).toMatchObject({
+      confidence: "observed",
+      subject: { local_path: path, format: "pe", architecture: "x86" },
+      normalized_result: {
+        artifact: {
+          path,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+        format: "pe32",
+        machine: 0x14c,
+        table: null,
+        entries: [],
+        coverage: { status: "complete", examined_entries: 0, certificates: 0 },
+        limitations: expect.arrayContaining([
+          expect.stringContaining("IMAGE_DIRECTORY_ENTRY_SECURITY is absent"),
+        ]),
+      },
+    });
   },
 );
 

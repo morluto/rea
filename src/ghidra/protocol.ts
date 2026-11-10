@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -44,11 +45,9 @@ export const parseGhidraResponseLine = (
     const response = responseSchema.safeParse(parsed);
     return response.success
       ? ok(response.data)
-      : err(new Error("Ghidra bridge response has an invalid shape"));
+      : err(new GhidraAdmissionError("response_shape"));
   } catch (cause: unknown) {
-    return err(
-      new Error("Ghidra bridge response is not valid JSON", { cause }),
-    );
+    return err(new GhidraAdmissionError("response_json", undefined, { cause }));
   }
 };
 

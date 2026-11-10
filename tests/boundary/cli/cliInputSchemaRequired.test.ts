@@ -247,6 +247,7 @@ describe("CLI advertised input schemas", () => {
       cli as unknown as CliInstance,
       "group",
     );
+    expect(advertised.args?.properties.scope).toBeDefined();
     expect(advertised.args?.required ?? []).not.toContain("scope");
   });
 });

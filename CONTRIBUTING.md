@@ -16,10 +16,9 @@ import inventory. For current provider wiring, start with
 [`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
 the other `src/composition/` factories for tool services, including
 [`gpu.ts`](src/composition/gpu.ts) and [`model.ts`](src/composition/model.ts).
-Live Frida and Cutter adapters are constructed directly in
-[`src/cli/fridaCommands.ts`](src/cli/fridaCommands.ts),
-[`src/cli/cutterCommands.ts`](src/cli/cutterCommands.ts), and
-[`src/server/createServer.ts`](src/server/createServer.ts).
+Live Frida, Cutter, GDB and Rizin construction also uses shared composition
+factories. For service ownership, availability and catalog declarations, follow
+the [capability composition guide](docs/capability-composition.md).
 Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
@@ -247,6 +246,15 @@ CLI or MCP server; it compiles the runtime and bundles the authored skill.
 catalogs, documentation projections, or managed verification evidence. Turbo
 caches deterministic builds and static checks across Git worktrees. After a package, lockfile, or managed-skill version change, run
 `npm run metadata:generate` before building.
+
+Dependabot proposes updates for the npm lockfiles, website Python requirements,
+and GitHub Actions. Review dependency changes and run the checks relevant to
+their consumers. For dependencies maintained outside Dependabot, including
+`third_party/` and the HTTP/3 lab's pinned requirements, the maintainer should
+review upstream security advisories when updating or using them. Preserve source
+and version provenance, update license notices when needed, and report which
+verification was actually repeated. The lab requirements describe a recorded
+environment; a dependency update does not verify the revised environment.
 
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.

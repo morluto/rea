@@ -666,7 +666,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         "began reading a different",
       );
       expect(await readFile(configPath, "utf8")).toBe(original);
-      expect(await readdir(home)).toEqual(["client.json", "private"]);
+      expect((await readdir(home)).sort()).toEqual(["client.json", "private"]);
     } finally {
       await chmod(locked, 0o700);
     }

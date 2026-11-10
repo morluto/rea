@@ -175,9 +175,9 @@ it.each([
     require('node:fs').readFileSync('also-wrong');
   `);
   expect(ir.configurationOperations).toEqual([]);
-  expect(
-    ir.bindings.find(({ name }) => name === "fs")?.provenance.status,
-  ).not.toBe("module");
+  const binding = ir.bindings.find(({ name }) => name === "fs");
+  expect(binding).toBeDefined();
+  expect(binding?.provenance.status).not.toBe("module");
 });
 
 it("keeps local loader reassignment separate from the ambient loader", () => {

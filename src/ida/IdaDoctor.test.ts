@@ -32,9 +32,9 @@ it.each([true, false])(
         workspaceRoot: rawRoot,
       }),
     );
-    const before = await readdir(root);
+    const before = (await readdir(root)).sort();
     const inspection = await inspectIdaRegistration(path, resourceScope);
-    const after = await readdir(root);
+    const after = (await readdir(root)).sort();
     expect(inspection.available).toBe(exists);
     expect(
       inspection.checks.find(({ name }) => name === "private_workspace")
@@ -62,7 +62,7 @@ it.skipIf(process.platform === "win32")(
         workspaceRoot: selected,
       }),
     );
-    const before = await readdir(root);
+    const before = (await readdir(root)).sort();
     const inspection = await inspectIdaRegistration(path, resourceScope);
     expect(inspection.available).toBe(false);
     const check = inspection.checks.find(
@@ -71,7 +71,7 @@ it.skipIf(process.platform === "win32")(
     expect(check).toMatchObject({ ok: false, code: "invalid_configuration" });
     expect(check?.detail).toContain(selected);
     expect(check?.detail).toContain("ENOTDIR");
-    expect(await readdir(root)).toEqual(before);
+    expect((await readdir(root)).sort()).toEqual(before);
     expect(await readdir(workspace)).toEqual([]);
   },
 );
