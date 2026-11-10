@@ -99,6 +99,8 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "start_build_computer",
   "act_on_build_computer",
   "close_build_computer",
+  // Manifest inventory is reached through the MCP application tool; no CLI subcommand in this slice.
+  "inspect_cargo_manifest",
   "start_build_capture",
   "mark_build_checkpoint",
   "stop_build_capture",

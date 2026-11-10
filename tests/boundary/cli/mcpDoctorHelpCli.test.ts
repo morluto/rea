@@ -72,7 +72,9 @@ describe("MCP doctor help boundary", () => {
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
+});
 
+describe("MCP doctor help option position", () => {
   workspaceCliTest(
     "answers help in option position regardless of surrounding output options",
     async ({ cli }) => {
