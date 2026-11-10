@@ -331,6 +331,23 @@ export const fitMetadataSchema = z.strictObject({
 export type FitMetadata = z.infer<typeof fitMetadataSchema>;
 
 /**
+ * Header fields a Windows Prefetch file records about one executable. Values
+ * the file leaves absent stay null; last-run times and the read-ahead list are
+ * not decoded by this reader and are not reported as empty.
+ */
+export const prefetchMetadataSchema = z.strictObject({
+  kind: z.literal("windows-prefetch"),
+  version: z.enum(["17", "23"]),
+  file_bytes: offset,
+  declared_file_bytes: uint32.nullable(),
+  executable_name: z.string().nullable(),
+  executable_path_hash: z.string().nullable(),
+  run_count: uint32.nullable(),
+  run_time_slots: uint32.nullable(),
+});
+export type PrefetchMetadataFacts = z.infer<typeof prefetchMetadataSchema>;
+
+/**
  * One /images node's facts. Null fields are absent unless unreadable_fields
  * identifies an interpretation failure. Load and entry are declarations;
  * stored bytes may be compressed or ciphered.
@@ -892,6 +909,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  prefetchMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -1089,6 +1107,10 @@ const declarationsByKind: {
       cipher_algo: metadata.cipher_algo,
     }),
     unreadable: (metadata) => metadata.unreadable_fields,
+  },
+  "windows-prefetch": {
+    notCompared:
+      "Its fields come from the Prefetch header's own bytes, which content comparison covers.",
   },
 };
 

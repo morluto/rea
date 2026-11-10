@@ -302,7 +302,8 @@ export type BinaryTarget =
           | "esp-image"
           | "uf2"
           | "dfuse"
-          | "fit";
+          | "fit"
+          | "windows-prefetch";
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

@@ -43,7 +43,8 @@ type FormatsWithReaders =
   | "uf2"
   | "dfuse"
   | "esp-flash-image"
-  | "fit";
+  | "fit"
+  | "windows-prefetch";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;

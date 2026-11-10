@@ -15,6 +15,7 @@ import {
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
+import { prefetchFixture } from "../windows/Prefetch.fixture.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -536,6 +537,21 @@ it("classifies nested ESP images as containers by bytes", () => {
   });
   // An unsupported ESP8266 image is a plain file, not a container.
   expect(classifyArtifactBytesAtPath("esp8266.bin", esp8266Image())).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies a Prefetch header by its version tag and signature", () => {
+  const prefetch = prefetchFixture({ version: "23" });
+  expect(classifyArtifactBytesAtPath("CUSTOM.PF", prefetch)).toEqual({
+    kind: "container",
+    format: "windows-prefetch",
+  });
+  // The tag alone is not enough: the signature byte still has to say "S".
+  const noSignature = Buffer.from(prefetch);
+  noSignature[4] = 0x00;
+  expect(classifyArtifactBytesAtPath("CUSTOM.PF", noSignature)).toEqual({
     kind: "resource",
     format: "file",
   });
