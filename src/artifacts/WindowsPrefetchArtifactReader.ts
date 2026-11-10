@@ -63,7 +63,10 @@ export class WindowsPrefetchArtifactReader implements ArtifactReader {
       limitations = this.#limitations;
     });
     if (limitations.length > 0)
-      options?.onCoverage?.({ status: "complete", limitations: [...limitations] });
+      options?.onCoverage?.({
+        status: "complete",
+        limitations: [...limitations],
+      });
     // No members: the root occurrence carries every header fact, so the loop
     // body is empty and only cancellation can interrupt it.
     await setImmediate();

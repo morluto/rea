@@ -7,7 +7,9 @@ import { prefetchFixture, writePrefetch } from "./windows/Prefetch.fixture.js";
 
 const PARSED_VERSIONS = ["17", "23"] as const;
 
-const readerFor = async (bytes: Buffer): Promise<WindowsPrefetchArtifactReader> =>
+const readerFor = async (
+  bytes: Buffer,
+): Promise<WindowsPrefetchArtifactReader> =>
   new WindowsPrefetchArtifactReader(
     await writePrefetch("GOOGLE.EXE-1.pf", bytes),
   );
