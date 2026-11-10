@@ -81,9 +81,14 @@ export const registerCoreNativeCommands = (
   cli.command(CLI_COMMANDS.traceNativeValues, {
     description: "Trace bounded native def-use and call dependencies",
     args: z.object({
-      path: z.string().describe("Local native executable or app path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Local native executable or app path"),
       procedure: z
         .string()
+        .min(1)
         .describe("Explicit native procedure symbol or address"),
     }),
     options: z.object({
