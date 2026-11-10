@@ -297,19 +297,22 @@ it("retains a malformed artifact parent and refuses publication through both del
       evidenceOutput: join(root, "cli.json"),
     },
   );
-  // Preserve every diagnostic from the owner; CLI delivery only adds closure.
+  // The one-shot CLI also explains that malformed embedded sources could not
+  // be collected before exit; the application still returns its typed cause.
   expect(cli).toMatchObject(projected);
   expect(cli).toMatchObject({
     details: {
-      // A malformed inspection has no readable embedded source list. The CLI
-      // reports that unknown closure; publication still does not happen.
+      partial_observation: evidence,
       source_closure: {
         publication: "not_published",
         complete: false,
+        collection_failure: "Error",
         records: [],
         omitted_count: 0,
         omitted: [],
-        collection_failure: expect.any(String),
+        recovery: expect.stringContaining(
+          "this invocation retains nothing after exit",
+        ),
       },
     },
   });

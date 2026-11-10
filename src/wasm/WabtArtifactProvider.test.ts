@@ -4,17 +4,17 @@ import { join, resolve } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { WabtArtifactProvider } from "./WabtArtifactProvider.js";
-import { wasmArtifactSchema } from "../domain/wasm/wasmArtifact.js";
+import { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import {
+  wasmArtifactSchema,
+  WASM_RESOURCE_DEFAULTS,
+} from "../domain/wasm/wasmArtifact.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  WABT_LIMITS,
-  admitWabtVersion,
-  WABT_ACCEPTED_RANGE,
-} from "./WabtRelease.js";
+import { admitWabtVersion, WABT_ACCEPTED_RANGE } from "./WabtRelease.js";
 
 // Admission must not outrun the `1.0.x` banners wasmArtifactSchema accepts.
 it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
@@ -222,6 +222,92 @@ const createWabtArtifactFixture = async () => {
 };
 
 it.each([
+  "max_input_bytes",
+  "max_tool_bytes",
+  "max_output_bytes",
+  "max_interface_bytes",
+  "max_artifact_paths",
+] as const)(
+  "recovers the same complete artifact by changing only %s",
+  async (parameter) => {
+    const fixture = await createWabtArtifactFixture();
+    const wat = await readFile(
+      new URL("../../tests/fixtures/wasm/decoded.wat", import.meta.url),
+      "utf8",
+    );
+    const provider = new WabtArtifactProvider(
+      { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+      (input) => {
+        const output =
+          input.arguments[0] === "--version"
+            ? "1.0.42\n"
+            : input.command.includes("objdump")
+              ? fixture.dump
+              : input.command.includes("wasm2wat")
+                ? wat
+                : "";
+        return spawnOwnedProviderProcess({
+          ...input,
+          hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+          command: process.execPath,
+          arguments: ["-e", `process.stdout.write(${JSON.stringify(output)})`],
+        });
+      },
+    );
+    onTestFinished(() => provider.close());
+    const service = new WasmArtifactService(provider);
+    const candidatePaths: string[] = [];
+    if (parameter === "max_artifact_paths") {
+      for (let i = 0; i < 17; i++) {
+        const candidate = join(
+          fixture.selectedRoot,
+          `candidate-${String(i)}.wasm`,
+        );
+        await writeFile(candidate, fixture.bytes);
+        candidatePaths.push(candidate);
+      }
+    }
+    const input = {
+      path: fixture.path,
+      glue_paths: [],
+      candidate_paths: candidatePaths,
+    };
+    const rejected = await service.inspect({
+      ...input,
+      ...(parameter === "max_artifact_paths" ? {} : { [parameter]: 1 }),
+    });
+    if (parameter === "max_interface_bytes") {
+      if (!rejected.ok) throw rejected.error;
+      expect(rejected.value.normalized_result).toMatchObject({
+        interface: { state: "partial" },
+      });
+    } else {
+      if (rejected.ok) throw new Error("Expected byte admission to fail");
+      expect(projectAnalysisError(rejected.error).remediation.action).toContain(
+        parameter,
+      );
+    }
+    const requestedBudget = parameter === "max_artifact_paths" ? 17 : 10_000;
+    const recovered = await service.inspect({
+      ...input,
+      [parameter]: requestedBudget,
+    });
+    if (!recovered.ok) throw recovered.error;
+    const report = wasmArtifactSchema.parse(recovered.value.normalized_result);
+    expect(report.artifact.sha256).toBe(
+      createHash("sha256").update(fixture.bytes).digest("hex"),
+    );
+    expect(report.wat.text).toBe(wat);
+    expect(report.interface?.state).toBe("complete");
+    expect(report.candidates).toHaveLength(candidatePaths.length + 1);
+    expect(recovered.value.parameters[parameter]).toBe(requestedBudget);
+    expect(report.tool_profile.output_budget_bytes).toBe(
+      parameter === "max_output_bytes" ? 10_000 : 32 * 1024 * 1024,
+    );
+  },
+);
+
+it.each([
   {
     label: "initially malformed",
     preamble: "",
@@ -366,7 +452,7 @@ const assertModeOutcome = (
           normalized_result: {
             tool_profile: {
               timeout_ms: 42_000,
-              output_budget_bytes: WABT_LIMITS.outputBytes,
+              output_budget_bytes: WASM_RESOURCE_DEFAULTS.outputBytes,
             },
           },
         },
@@ -1414,16 +1500,16 @@ it("reports WABT output beyond the budget as a resource constraint with a bounde
   expect(result.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     resource: "memory",
-    reportedLimits: { max_output_bytes: WABT_LIMITS.outputBytes },
+    reportedLimits: { max_output_bytes: WASM_RESOURCE_DEFAULTS.outputBytes },
   });
   const projection = projectAnalysisError(result.error);
   expect(projection).toMatchObject({
     code: "resource_constraint",
     message: expect.stringContaining(
-      `${String(WABT_LIMITS.outputBytes)}-byte output budget`,
+      `${String(WASM_RESOURCE_DEFAULTS.outputBytes)}-byte output budget`,
     ),
     remediation: {
-      action: expect.stringContaining("retrying with the same input"),
+      action: expect.stringContaining("max_output_bytes"),
     },
   });
   expect(projection.details?.captured_output).toEqual({
@@ -1524,8 +1610,8 @@ it("bounds the excerpt when cleanup also fails after the output budget", () => {
       diagnostics: {
         previous_error: {
           failure_kind: "output-limit",
-          message: `WABT output exceeded the ${String(WABT_LIMITS.outputBytes)}-byte output budget`,
-          max_output_bytes: WABT_LIMITS.outputBytes,
+          message: `WABT output exceeded the ${String(WASM_RESOURCE_DEFAULTS.outputBytes)}-byte output budget`,
+          max_output_bytes: WASM_RESOURCE_DEFAULTS.outputBytes,
         },
         captured_output: { stdout: "(module", stderr: "w".repeat(4096) },
       },
@@ -1535,5 +1621,8 @@ it("bounds the excerpt when cleanup also fails after the output budget", () => {
 it("does not blame the input when a version probe exceeds the budget", () => {
   expect(
     wabtFailure(outputLimitFailure(), "configuration", "/module.wasm"),
-  ).toMatchObject({ _tag: "AnalysisOutputError" });
+  ).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { max_output_bytes: 32 * 1024 * 1024 },
+  });
 });

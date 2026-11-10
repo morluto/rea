@@ -98,6 +98,36 @@ it("treats both explicitly selected files as documents when one ends in -journal
     });
 });
 
+describe("desktop state view admission", () => {
+  it.each([{ text_lines: 0 }, { xml_depth: 495 }, { json_depth: 992 }])(
+    "rejects an invalid view policy before reading a capture: %j",
+    async (viewPolicy) => {
+      const refused = await inspectDesktopApplicationState(
+        "/must-not-read",
+        readers,
+        undefined,
+        { viewPolicy },
+      );
+      expect(refused).toMatchObject({ _tag: "AnalysisInputError" });
+    },
+  );
+
+  it("preserves an unresolved captured path instead of reading the current file", async () => {
+    const folder = await writeCaptureFolder(capture());
+    const missing = `${HOME}/Documents/missing.txt`;
+    const refused = await inspectDesktopApplicationState(
+      folder,
+      readers,
+      undefined,
+      { paths: [missing] },
+    );
+    expect(refused).toMatchObject({
+      _tag: "AnalysisInputError",
+      userMessage: expect.stringContaining(missing),
+    });
+  });
+});
+
 describe("inspectDesktopApplicationState", () => {
   it("assigns roles and reads each version into typed views and changes", async () => {
     const folder = await writeCaptureFolder(capture());

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { desktopLibraryPolicy } from "./libraryPolicy.js";
 import { readElfDependencies } from "./elfDependencies.js";
 import { elfImage, readImage } from "./elfImage.fixture.js";
 
@@ -61,10 +62,34 @@ describe("readElfDependencies", () => {
       { length: 513 },
       (_, index) => `lib${String(index)}.so`,
     );
-    expect(await dependencies(elfImage({ needed: names }))).toEqual({
+    const image = elfImage({ needed: names });
+    expect(await dependencies(image)).toMatchObject({
       ok: false,
-      error: "ELF dynamic table names more than 512 distinct needed libraries",
+      error: expect.stringContaining("library-policy.libraries=512"),
     });
+    expect(
+      await readElfDependencies(
+        readImage(image),
+        image.length,
+        desktopLibraryPolicy({ libraries: 513 }),
+      ),
+    ).toMatchObject({ ok: true, value: { needed: names } });
+  });
+
+  it("distinguishes a bounded string read from truncation and recovers with its named budget", async () => {
+    const needed = "l".repeat(4096);
+    const image = elfImage({ needed: [needed] });
+    expect(await dependencies(image)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("library-policy.string_bytes=4096 bytes"),
+    });
+    expect(
+      await readElfDependencies(
+        readImage(image),
+        image.length,
+        desktopLibraryPolicy({ string_bytes: 4097 }),
+      ),
+    ).toMatchObject({ ok: true, value: { needed: [needed] } });
   });
 
   it("reports no dependencies for a static image", async () => {
