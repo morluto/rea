@@ -159,7 +159,7 @@ const launcherDigestMismatchRemediation = ({
   observedSha256,
 }: HopperLauncherDigestMismatch): string =>
   [
-    `The ${packageFamily} package signature verified under the pinned publisher key, but its Hopper launcher SHA-256 ${observedSha256} differs from main_exe_hash ${declaredSha256} declared by release ${releaseVersion};`,
+    `The ${packageFamily} package signature verified under the pinned publisher key, but its Hopper launcher SHA-256 ${observedSha256} differs from main_exe_hash ${declaredSha256} declared by release ${normalizePackageOutput(releaseVersion)};`,
     "this indicates stale feed metadata rather than a tampered download, so retrying the same release will fail identically.",
     "Retry setup once the vendor republishes a main_exe_hash that matches the package.",
   ].join(" ");

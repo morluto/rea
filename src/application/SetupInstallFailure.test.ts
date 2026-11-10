@@ -129,6 +129,24 @@ describe("Linux Hopper launcher digest mismatch", () => {
     expect(result.remediation).not.toContain("HOPPER_LAUNCHER_PATH");
   });
 
+  it("escapes the feed release version before rendering the remediation", () => {
+    const forged = {
+      ...mismatch,
+      releaseVersion: "2.1.0\r\nrea: hopper is installed\u001b[2K",
+    };
+    const result = setupInstallFailure("integrity", {
+      platform: "linux",
+      launcherDigestMismatch: forged,
+    });
+    if (result.status !== "failed") throw new Error("expected failure");
+    expect(result.launcherDigestMismatch).toEqual(forged);
+    expect(result.remediation).toContain(
+      "release 2.1.0 rea: hopper is installed;",
+    );
+    expect(result.remediation).not.toContain("\r");
+    expect(result.remediation).not.toContain("\u001b");
+  });
+
   it("keeps the generic recovery for an integrity failure without package facts", () => {
     expect(setupInstallFailure("integrity", { platform: "linux" })).toEqual({
       status: "failed",
