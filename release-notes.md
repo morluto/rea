@@ -409,6 +409,7 @@
 * **cli:** protect Amp settings during default registration ([#8076](https://github.com/morluto/rea/issues/8076)) ([4b961e3](https://github.com/morluto/rea/commit/4b961e3715375971aee6dec848827c9c072d947b))
 * **cli:** publish the GPU inventory digest format in the CLI schema ([#9062](https://github.com/morluto/rea/issues/9062)) ([415ddb7](https://github.com/morluto/rea/commit/415ddb74c0d41c77e070c7adfee834be0fef4028))
 * **cli:** recognize integrity failures with partial observations ([#7836](https://github.com/morluto/rea/issues/7836)) ([0747e46](https://github.com/morluto/rea/commit/0747e46401a4f5e487302dcc5061548b4634db5c))
+* **cli:** refuse an unsupported Node.js release before linking ([#9297](https://github.com/morluto/rea/issues/9297)) ([dbfab4a](https://github.com/morluto/rea/commit/dbfab4a65db9bba84b5cde652048401fb19c153d))
 * **cli:** refuse lossy text output ([#7852](https://github.com/morluto/rea/issues/7852)) ([3a51230](https://github.com/morluto/rea/commit/3a512303d956931608d66bece4b8e858bca1fcea))
 * **cli:** reject empty artifact command targets before resolution ([#8834](https://github.com/morluto/rea/issues/8834)) ([47cedcc](https://github.com/morluto/rea/commit/47cedcc93aa639fb8445ab344308a6837d2b9d5a))
 * **cli:** reject empty Evidence file arguments ([#7988](https://github.com/morluto/rea/issues/7988)) ([d157560](https://github.com/morluto/rea/commit/d157560d402fbd1b54069ff59039dcde73e4a7e1))
