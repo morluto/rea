@@ -606,6 +606,16 @@ it("classifies a FIT by a /images node within the first 4 KiB", () => {
     });
 });
 
+it("classifies a REGF hive base block by its signature, under any name", () => {
+  const hive = Buffer.alloc(8_192);
+  hive.write("regf", 0, "latin1");
+  for (const path of ["evidence/SYSTEM", "evidence/NTUSER.DAT", "evidence/hive.bin"])
+    expect(classifyArtifactBytesAtPath(path, hive)).toEqual({
+      kind: "executable",
+      format: "regf-hive",
+    });
+});
+
 describe("FAT prefix observation coverage", () => {
   it("does not invent an observation for a header beyond the retained prefix", () => {
     const bytes = Buffer.alloc(8_224);

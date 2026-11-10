@@ -40,6 +40,7 @@ import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
+import { RegistryHiveArtifactReader } from "./RegistryHiveArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
@@ -464,6 +465,14 @@ const NON_ZIP_FORMATS = {
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options)),
+  }),
+  "regf-hive": described("regf-hive", {
+    ...plain,
+    retainClassifiedSource: true,
+    readerLimitation:
+      "Registry hive inventory reports the base block's versions, sequence numbers, checksum status and hive-bin and cell spans. Key nodes, values, security descriptors and transaction logs are not decoded, so no key path or value is established.",
+    createReader: (path, options) =>
+      new RegistryHiveArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

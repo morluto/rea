@@ -299,6 +299,21 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   last_line: offset,
 });
 
+/** REGF hive base-block and bin facts; key/value decoding is a later step. */
+export const regfHiveMetadataSchema = z.strictObject({
+  kind: z.literal("regf-hive"),
+  major_version: uint32,
+  minor_version: uint32,
+  primary_sequence: uint32,
+  secondary_sequence: uint32,
+  dirty: z.boolean(),
+  checksum_matches: z.boolean(),
+  hive_bin_count: offset,
+  hive_bins_data_size: offset,
+  cell_count: offset,
+  allocated_cell_count: offset,
+});
+
 /**
  * U-Boot FIT root facts. Configuration references are declared names; a
  * reference that names no image is reported as a limitation, not removed.
@@ -886,6 +901,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageSignatureBlockMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  regfHiveMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
@@ -1035,6 +1051,10 @@ const declarationsByKind: {
   "uf2-region": {
     notCompared:
       "Its familyID and addresses are in its path, family_name is REA's label for the familyID, and its block counts and positions are layout; content comparison covers its bytes.",
+  },
+  "regf-hive": {
+    notCompared:
+      "Its fields come from the file's own base block and bins, which content comparison covers.",
   },
   dfuse: {
     notCompared:

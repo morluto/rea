@@ -52,6 +52,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "dfuse",
   "esp-flash-image",
   "fit",
+  "regf-hive",
 ]);
 
 /** Format-owned architecture declarations shared by Evidence and persisted executions. */

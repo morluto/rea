@@ -43,7 +43,8 @@ type FormatsWithReaders =
   | "uf2"
   | "dfuse"
   | "esp-flash-image"
-  | "fit";
+  | "fit"
+  | "regf-hive";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;
