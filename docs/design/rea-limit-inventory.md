@@ -5,8 +5,8 @@ from this revision of `src`. A numeric `REA_` limit is a name under `src` (tests
 excluded) that carries a byte, time, count, heap, budget, deadline, or maximum.
 `scripts/verify/rea-numeric-limits.mjs` fails the static checks when one of those
 names is neither an environment seed of
-[`ANALYSIS_SETTINGS`](../../src/domain/analysisSettingDefinitions.ts) nor an
-entry in [`numericLimitRegistry.ts`](../../src/domain/numericLimitRegistry.ts)
+[`ANALYSIS_SETTINGS`](https://github.com/morluto/rea/blob/main/src/domain/analysisSettingDefinitions.ts) nor an
+entry in [`numericLimitRegistry.ts`](https://github.com/morluto/rea/blob/main/src/domain/numericLimitRegistry.ts)
 with a reason.
 
 `update_mode` is `runtime` when `update_analysis_settings` can change the active
