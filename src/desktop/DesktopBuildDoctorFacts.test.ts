@@ -36,7 +36,7 @@ const configRunner = (path: string) =>
 case "$1 $2" in
   "config debug") printf '{"search_path":[{"path":"%s","exists":true}]}' "$AGENT_ENV_CONFIG" ;;
   "config explain") printf '%s' "$FAKE_EXPLANATION" ;;
-  *) echo 'agent-env 0.9.1464' ;;
+  *) echo 'agent-env 0.9.1485' ;;
 esac`,
   );
 
@@ -90,7 +90,7 @@ it.skipIf(process.platform === "win32")(
       run: async (_command, args) => {
         if (args[0] === "--version")
           return {
-            stdout: "agent-env 0.9.1464",
+            stdout: "agent-env 0.9.1485",
             stderr: "",
             stdoutBytes: 19,
             stderrBytes: 0,
@@ -268,7 +268,7 @@ it.skipIf(process.platform === "win32")(
           throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
         }
         return {
-          stdout: "agent-env 0.9.1464",
+          stdout: "agent-env 0.9.1485",
           stderr: "",
           stdoutBytes: 19,
           stderrBytes: 0,
@@ -290,7 +290,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-empty-runner-");
     const runner = join(bin, "agent-env");
-    await program(runner, 'echo "agent-env 0.9.1464"');
+    await program(runner, 'echo "agent-env 0.9.1485"');
     const environment = {
       HOME: home,
       USERPROFILE: home,
@@ -319,7 +319,7 @@ it.skipIf(process.platform === "win32")(
     ).toBe(runner);
     const facts = await readFacts(environment, ["claude_code"]);
     expect(facts.registrations[0]).toMatchObject({
-      runner: { status: "current", version: "0.9.1464" },
+      runner: { status: "current", version: "0.9.1485" },
     });
     expect(facts.registrations[0]?.differing ?? []).not.toContain(
       "REA_AGENT_ENV_COMMAND",
@@ -369,7 +369,7 @@ it.skipIf(process.platform === "win32")(
     await program(join(bin, "docker"), "exit 1");
     await program(
       join(bin, "agent-env"),
-      'if [ "$1" = "--version" ]; then printf x >> "$REA_TEST_RUNNER_LOG"; fi; echo "agent-env 0.9.1464"',
+      'if [ "$1" = "--version" ]; then printf x >> "$REA_TEST_RUNNER_LOG"; fi; echo "agent-env 0.9.1485"',
     );
     const environment = {
       HOME: home,
@@ -452,6 +452,132 @@ it.skipIf(process.platform === "win32")(
       },
     ]);
     expect(JSON.stringify(facts.registrations)).not.toContain("/private/");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "verifies a client's custom docker and runtime archive without requiring the terminal's paths",
+  async () => {
+    const { root, bin, home } = await buildHost("rea-doctor-custom-paths-");
+    const docker = join(root, "custom-docker");
+    await program(
+      docker,
+      'if [ "$1" = info ]; then echo /tmp; else exit 0; fi',
+    );
+    await program(
+      join(bin, "docker"),
+      'if [ "$1" = info ]; then echo /tmp; else exit 0; fi',
+    );
+    const python = (await execute("which", ["python3"])).stdout.trim();
+    const clientPython = join(root, "python-client");
+    const pythonCalls = join(root, "python-calls");
+    await program(
+      clientPython,
+      `printf '%s\\n' "$1" >> "${pythonCalls}"\nexec "${python}" "$@"`,
+    );
+    await writeFile(
+      join(bin, "agent-env"),
+      `#!${clientPython}\nprint("agent-env 0.9.1431")\n`,
+      { mode: 0o755 },
+    );
+    const packed = join(root, "packed");
+    await mkdir(join(packed, "runtime", "scripts"), { recursive: true });
+    await writeFile(join(packed, "runtime", "scripts", "rea.mjs"), "");
+    await writeFile(
+      join(packed, "runtime", "package.json"),
+      JSON.stringify({ version: PRODUCT_IDENTITY.packageVersion }),
+    );
+    const archive = join(root, "custom.tar.gz");
+    await execute("tar", ["-czf", archive, "-C", packed, "runtime"]);
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: docker,
+              REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+              REA_AGENT_ENV_COMMAND: join(bin, "agent-env"),
+            },
+          },
+        },
+      }),
+    );
+    const facts = await readFacts(
+      {
+        HOME: home,
+        USERPROFILE: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+        XDG_CACHE_HOME: join(root, "cache"),
+      },
+      ["claude_code"],
+    );
+    expect(facts.registrations[0]).toMatchObject({
+      registered: true,
+      unrecorded: [],
+      unresolved: [],
+    });
+    expect(facts.registrations[0]?.differing ?? []).toEqual([]);
+    expect(facts.registrations[0]?.unchecked ?? []).toEqual([]);
+    expect((await readFile(pythonCalls, "utf8")).split("\n")).toContain("-I");
+    expect(JSON.stringify(facts.registrations)).not.toContain(root);
+    const registration = (runner: string) =>
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: docker,
+              REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+              REA_AGENT_ENV_COMMAND: runner,
+            },
+          },
+        },
+      });
+    const clientFacts = () =>
+      readFacts(
+        {
+          HOME: home,
+          USERPROFILE: home,
+          PATH: `${bin}:/usr/bin:/bin`,
+          XDG_CACHE_HOME: join(root, "cache"),
+        },
+        ["claude_code"],
+      );
+    await writeFile(
+      join(home, ".claude.json"),
+      registration(join(root, "missing-runner")),
+    );
+    expect((await clientFacts()).registrations[0]?.unchecked).toContain(
+      "REA_BUILD_COMPUTER_REA_ARCHIVE",
+    );
+    const wrapper = join(root, "wrapper");
+    await program(wrapper, 'echo "agent-env 0.9.1431"');
+    await writeFile(join(home, ".claude.json"), registration(wrapper));
+    expect((await clientFacts()).registrations[0]?.unchecked).toContain(
+      "REA_BUILD_COMPUTER_REA_ARCHIVE",
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      registration(join(bin, "agent-env")),
+    );
+    await rm(archive);
+    expect(
+      (
+        await readFacts(
+          {
+            HOME: home,
+            USERPROFILE: home,
+            PATH: `${bin}:/usr/bin:/bin`,
+            XDG_CACHE_HOME: join(root, "cache"),
+          },
+          ["claude_code"],
+        )
+      ).registrations[0]?.differing,
+    ).toContain("REA_BUILD_COMPUTER_REA_ARCHIVE");
   },
 );
 
@@ -580,7 +706,7 @@ it("recognizes a gzip runtime archive with a different top folder", async () => 
 
   const python = (await execute("which", ["python3"])).stdout.trim();
   const runner = join(bin, "agent-env");
-  await writeFile(runner, `#!${python}\nprint('agent-env 0.9.1464')\n`, {
+  await writeFile(runner, `#!${python}\nprint('agent-env 0.9.1485')\n`, {
     mode: 0o755,
   });
   const withoutSystemPython = await readFacts(
