@@ -100,6 +100,38 @@ const failureMessage = (cause: unknown): string => {
   throw cause;
 };
 
+/**
+ * `.dynsym` entry 0 is the reserved undefined symbol. The gABI requires every
+ * field, including `st_name`, to be zero. A nonzero name does not by itself
+ * define a symbol, so the inventory continues and the deviation is recorded.
+ * Any other nonzero field means the reserved slot holds a real symbol.
+ */
+const reservedElfDynamicSymbolNote = (
+  bytes: Uint8Array,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  fileOffset: number,
+): string | null => {
+  const parsed = readElfSymbol(bytes, bits, littleEndian);
+  if (!parsed.ok)
+    throw new BinaryFormatFailure(parsed.error.kind, parsed.error.message);
+  const symbol = parsed.value;
+  if (
+    symbol.binding !== 0 ||
+    symbol.type !== 0 ||
+    symbol.other !== 0 ||
+    symbol.section_index !== 0 ||
+    symbol.value !== 0n ||
+    symbol.size !== 0n
+  )
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF dynamic symbol table null entry has nonzero fields",
+    );
+  if (symbol.name_offset === 0) return null;
+  return `ELF dynamic symbol 0 at file offset ${hex(fileOffset)} has nonzero st_name ${hex(symbol.name_offset)}. st_info, st_other, st_shndx, st_value and st_size are zero, so the entry was skipped and was not reported as an export.`;
+};
+
 const PE_LIMITATIONS = [
   "Rows reproduce the PE export directory; they do not establish that an export is reachable, safe to call or loaded at runtime.",
   "Forwarded exports resolve in another DLL, which is not opened; ordinal-only exports have no name in this image.",
@@ -624,13 +656,14 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
-  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
-  // after every field is observed as zero; neither ELF layout has padding.
-  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
-    throw new BinaryFormatFailure(
-      "malformed",
-      "ELF dynamic symbol table null entry has nonzero fields",
-    );
+  // Entry zero is skipped only after it is observed to be the undefined
+  // symbol. A stray st_name is recorded; any other nonzero field is refused.
+  const nullSymbolNote = reservedElfDynamicSymbolNote(
+    bytes.subarray(table, table + width),
+    directory.bits,
+    directory.little,
+    table,
+  );
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
@@ -761,7 +794,10 @@ function* parseElfExports(
     exports,
     coverage: coverage(issues, count - 1, exports.length),
     issues,
-    limitations: ELF_LIMITATIONS,
+    limitations: [
+      ...ELF_LIMITATIONS,
+      ...(nullSymbolNote === null ? [] : [nullSymbolNote]),
+    ],
   };
 }
 

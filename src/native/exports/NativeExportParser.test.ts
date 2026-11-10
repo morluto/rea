@@ -866,37 +866,6 @@ describe("export inventory review regressions", () => {
     });
   });
 
-  it.each([32, 64] as const)(
-    "rejects nonzero reserved fields in the ELF%s null symbol",
-    (bits) => {
-      for (const little of [true, false]) {
-        // ELF32/64 symbol records have no padding: every field in entry zero
-        // is reserved as zero by the ABI, independently of host endianness.
-        const width = bits === 64 ? 24 : 16;
-        for (let byte = 0; byte < width; byte++) {
-          const bytes = elfExportImage({
-            bits,
-            little,
-            symbols: [{ name: "kept_export" }],
-          });
-          bytes[0x100 + byte] = 1;
-          expect(() => parseNativeExports(bytes, artifact)).toThrow(
-            BinaryFormatFailure,
-          );
-        }
-        expect(
-          parse(
-            elfExportImage({
-              bits,
-              little,
-              symbols: [{ name: "kept_export" }],
-            }),
-          ).exports.map(({ name }) => name),
-        ).toEqual(["kept_export"]);
-      }
-    },
-  );
-
   it("rejects a dynamic symbol table without its null entry", () => {
     expect(() =>
       parseNativeExports(
@@ -905,6 +874,98 @@ describe("export inventory review regressions", () => {
       ),
     ).toThrow(BinaryFormatFailure);
   });
+});
+
+/** The fixture's `.dynsym` starts at file offset 0x100. */
+const NULL_SYMBOL_OFFSET = 0x100;
+
+const writeNullSymbolName = (
+  bytes: Buffer,
+  nameOffset: number,
+  little: boolean,
+): void => {
+  if (little) bytes.writeUInt32LE(nameOffset, NULL_SYMBOL_OFFSET);
+  else bytes.writeUInt32BE(nameOffset, NULL_SYMBOL_OFFSET);
+};
+
+const nullSymbolNameNote = (nameOffset: number): string =>
+  `ELF dynamic symbol 0 at file offset 0x100 has nonzero st_name 0x${nameOffset.toString(16)}. st_info, st_other, st_shndx, st_value and st_size are zero, so the entry was skipped and was not reported as an export.`;
+
+describe("ELF dynamic symbol null entry", () => {
+  it.each([32, 64] as const)(
+    "rejects an ELF%s null symbol with a nonzero field other than st_name",
+    (bits) => {
+      for (const little of [true, false]) {
+        const width = bits === 64 ? 24 : 16;
+        for (let byte = 4; byte < width; byte++) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          bytes[NULL_SYMBOL_OFFSET + byte] = 1;
+          expect(() => parseNativeExports(bytes, artifact)).toThrow(
+            BinaryFormatFailure,
+          );
+        }
+        const named = elfExportImage({
+          bits,
+          little,
+          symbols: [{ name: "kept_export" }],
+        });
+        writeNullSymbolName(named, 0x956, little);
+        named[NULL_SYMBOL_OFFSET + (bits === 64 ? 4 : 12)] = 0x12;
+        expect(() => parseNativeExports(named, artifact)).toThrow(
+          expect.objectContaining({
+            name: "BinaryFormatFailure",
+            message: "ELF dynamic symbol table null entry has nonzero fields",
+          }),
+        );
+      }
+    },
+  );
+
+  it.each([32, 64] as const)(
+    "records a nonzero st_name on an otherwise undefined ELF%s symbol",
+    (bits) => {
+      for (const little of [true, false]) {
+        const clean = parse(
+          elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          }),
+        );
+        expect(clean.exports.map(({ name }) => name)).toEqual(["kept_export"]);
+        expect(clean.limitations.join("\n")).not.toContain("st_name");
+        // 0x956 is the reported shape and falls outside this fixture's
+        // string table. Offset 1 is the bytes of kept_export.
+        for (const nameOffset of [0x956, 1]) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          writeNullSymbolName(bytes, nameOffset, little);
+          const result = parse(bytes);
+          expect(result.exports.map(({ name }) => name)).toEqual([
+            "kept_export",
+          ]);
+          expect(result.issues).toEqual([]);
+          expect(result.coverage).toEqual({
+            status: "complete",
+            reason: null,
+            examined_entries: 1,
+            exports: 1,
+          });
+          expect(result.limitations).toEqual([
+            ...clean.limitations,
+            nullSymbolNameNote(nameOffset),
+          ]);
+        }
+      }
+    },
+  );
 });
 
 describe("ELF symbol-name text", () => {

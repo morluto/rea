@@ -407,6 +407,23 @@ it.each(["partial", "unsupported"] as const)(
   },
 );
 
+it("shows a nonzero null-symbol st_name in the summary without dropping exports", () => {
+  const bytes = elfExportImage({ symbols: [{ name: "kept_export" }] });
+  bytes.writeUInt32LE(0x956, 0x100);
+  const report = parseNativeExports(bytes, artifact);
+  expect(project(report, { kind: "summary" })).toMatchObject({
+    unknowns: [],
+    summary: {
+      export_count: 1,
+      issue_count: 0,
+      coverage: { status: "complete", exports: 1 },
+    },
+    limitations: expect.arrayContaining([
+      expect.stringContaining("nonzero st_name 0x956"),
+    ]),
+  });
+});
+
 it("revalidates mutable imports and refuses inconsistent coverage and format-incompatible fields", () => {
   const report = elf();
   const input = { ...parent(report), sealedResult: true };
