@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
 import { z } from "incur";
-import { DARWIN_REMEDIATION } from "../../src/application/ownedProcessAvailability.js";
+import { DARWIN_PROCESS_OWNERSHIP_REMEDIATION } from "../../src/process/ProcessOwnershipObservation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -63,7 +63,7 @@ cliTest.skipIf(process.platform !== "darwin")(
       expect(apktoolGroup).toMatchObject({
         available: false,
         reason: "provider_unavailable",
-        remediation: DARWIN_REMEDIATION,
+        remediation: DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
       });
       const failedProbe = await client.callTool({
         name: "inspect_apktool_client",
