@@ -297,7 +297,23 @@ it("retains a malformed artifact parent and refuses publication through both del
       evidenceOutput: join(root, "cli.json"),
     },
   );
-  expect(cli).toEqual(projected);
+  expect(cli).toEqual({
+    ...projected,
+    details: {
+      ...projected.details,
+      source_closure: {
+        publication: "not_published",
+        complete: false,
+        collection_failure: "Error",
+        records: [],
+        omitted_count: 0,
+        omitted: [],
+        recovery: expect.stringContaining(
+          "No bundle was written and this invocation retains nothing after exit.",
+        ),
+      },
+    },
+  });
   expect(JSON.stringify(projected)).toContain(evidence.evidence_id);
   expect(await readdir(root)).toEqual([]);
 });
