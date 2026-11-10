@@ -4,7 +4,10 @@ import {
   type DesktopLibraryPolicy,
 } from "./libraryPolicy.js";
 import { readElfDynamicEntry } from "../elfDynamicEntry.js";
-import { readElfFixedHeader } from "../elfFixedHeader.js";
+import {
+  admitElfFixedHeaderFacts,
+  readElfHeaderFacts,
+} from "../elfFixedHeader.js";
 import {
   readElfProgramHeader,
   type ElfProgramHeader,
@@ -25,7 +28,7 @@ export interface ElfLibraryIdentity {
   readonly byte_order: "little" | "big";
 }
 
-/** A readable identity survives a later dependency-table failure. */
+/** A readable identity survives later header or dependency-table admission failures. */
 export type ElfDependenciesFailure =
   | {
       readonly kind: "incompatible";
@@ -261,13 +264,13 @@ export const readElfDependencies = async (
   expected?: ElfLibraryIdentity,
 ): Promise<Result<ElfDependencies, ElfDependenciesFailure>> => {
   const header = Buffer.from(await read(0, 64));
-  const fixed = readElfFixedHeader(header, size);
-  if (!fixed.ok)
-    return err({ kind: "unreadable", identity: null, reason: fixed.error });
+  const facts = readElfHeaderFacts(header, size);
+  if (!facts.ok)
+    return err({ kind: "unreadable", identity: null, reason: facts.error });
   const identity: ElfLibraryIdentity = {
-    machine: fixed.value.machine,
-    bits: fixed.value.elfClass,
-    byte_order: fixed.value.byteOrder,
+    machine: facts.value.machine,
+    bits: facts.value.elfClass,
+    byte_order: facts.value.byteOrder,
   };
   if (expected !== undefined && !elfLibraryIdentityMatches(expected, identity))
     return err({
@@ -275,6 +278,9 @@ export const readElfDependencies = async (
       identity,
       reason: `Incompatible ELF library: expected machine ${expected.machine}, ELF${expected.bits}, ${expected.byte_order}-endian; observed machine ${identity.machine}, ELF${identity.bits}, ${identity.byte_order}-endian`,
     });
+  const fixed = admitElfFixedHeaderFacts(facts.value, size);
+  if (!fixed.ok)
+    return err({ kind: "unreadable", identity, reason: fixed.error });
   const dependencies = await readDependencyTables(
     read,
     header,

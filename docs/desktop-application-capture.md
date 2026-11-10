@@ -277,10 +277,11 @@ needing image before it is selected or its dependencies are walked. A foreign
 search-path candidate is skipped in favor of later directories or the cache; a
 cache architecture flag alone does not establish compatibility. If a candidate's
 identity cannot be read, that lookup stays unresolved, without selecting its
-package or guessing that a later candidate would load. A compatible library
-whose dependency table cannot be read keeps its known ownership and an
-incompleteness reason. REA asks `dpkg-query -S` for each selected library's
-package. Libraries in the executable's own folder belong to the application: they are walked but not
+package or guessing that a later candidate would load. A compatible identity
+remains available if a later header or dependency-table check fails; its package
+is retained with an incompleteness reason. REA asks `dpkg-query -S` for each
+selected library's package. Libraries in the executable's own folder belong to
+the application: they are walked but not
 listed, and neither is the application's own package. One batched
 `apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
 recorded vendor repository with a verified key offers, in any component its

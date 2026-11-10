@@ -11,6 +11,50 @@ import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
+  "retains a compatible candidate's package when its declared header size is invalid",
+  async () => {
+    const root = await createTestTempDirectory("rea-library-header-");
+    const bin = join(root, "bin"),
+      libraries = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(libraries)]);
+    const executable = join(bin, "app"),
+      library = join(libraries, "libchoice.so");
+    const candidate = elfImage({ needed: ["libunknown.so"] });
+    candidate.writeUInt16LE(0, 52);
+    await Promise.all([
+      writeFile(
+        executable,
+        elfImage({ needed: ["libchoice.so"], runpath: libraries }),
+      ),
+      writeFile(library, candidate),
+    ]);
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .map((path) => `native-owner: ${path}`)
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(result).toEqual({
+      library_packages: ["native-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+      library_packages_reason: expect.stringContaining(
+        "invalid ELF header size",
+      ),
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "queries ownership only for the compatible library selected after a foreign RPATH candidate",
   async () => {
     const root = await createTestTempDirectory("rea-library-architecture-");

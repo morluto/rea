@@ -108,6 +108,44 @@ describe("readElfDependencies", () => {
 });
 
 describe("ELF dependency identity and failures", () => {
+  it.each(["size", "version"])(
+    "retains decoded identity when fixed-header %s admission fails",
+    async (field) => {
+      const image = elfImage({ needed: ["libcore.so"] });
+      if (field === "size") image.writeUInt16LE(0, 52);
+      else image.writeUInt32LE(2, 20);
+      expect(await dependencies(image)).toMatchObject({
+        ok: false,
+        error: {
+          kind: "unreadable",
+          identity: { machine: 183, bits: 64, byte_order: "little" },
+          reason: expect.stringContaining(
+            field === "size" ? "header size" : "header version",
+          ),
+        },
+      });
+    },
+  );
+
+  it("classifies a foreign candidate before its declared header extent is admitted", async () => {
+    const image = elfImage({});
+    image.writeUInt16LE(0, 52);
+    expect(
+      await readElfDependencies(
+        readImage(image),
+        image.length,
+        desktopLibraryPolicy(),
+        { machine: 62, bits: 64, byte_order: "little" },
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "incompatible",
+        identity: { machine: 183, bits: 64, byte_order: "little" },
+      },
+    });
+  });
+
   it.each([
     { machine: 62, bits: 64 as const, byte_order: "little" as const },
     { machine: 183, bits: 32 as const, byte_order: "little" as const },
