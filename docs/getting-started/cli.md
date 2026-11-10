@@ -1419,9 +1419,12 @@ to `--evidence_output` under the same new-file and atomic rules, then keeps its
 error code, message and remediation when cleanup is confirmed. With `--detail summary`,
 `details.partial_observation` holds the summary view of the partial Evidence
 instead of the complete record, and `details.diagnostics.evidence_bundle`
-reports the written path and byte count. If publication is refused before
-commit, for example because the file already exists, the complete partial
-Evidence stays inline and `details.diagnostics.evidence_bundle_error` gives the
+reports the written path and byte count. Linked source records must all be
+available before publication; missing sources leave the destination unchanged
+and are reported in `details.source_closure`. A provider cleanup failure can
+still publish its captured Evidence without clearing the cleanup error or its
+resource ownership. If publication is refused before commit, for example because
+the file already exists, the complete partial Evidence stays inline and `details.diagnostics.evidence_bundle_error` gives the
 refusal's code, message and a limitation. A refusal after commit keeps the
 receipt in `details.diagnostics.evidence_bundle` and the delivered view: when
 staging cleanup stays incomplete, the code becomes `cleanup_incomplete`, the
