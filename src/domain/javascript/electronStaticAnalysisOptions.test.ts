@@ -386,8 +386,18 @@ describe("Electron option captures and initialization", () => {
     expect(analysis.electron.browser_windows).toMatchObject([
       {
         options_status: "object-literal",
-        preload_path: "preload.js",
-        preload_resolution_context: "filesystem-expression",
+        preload_path: null,
+        preload_resolution_context: null,
+        loader_authority: "candidate",
+        web_preferences: expect.arrayContaining([
+          expect.objectContaining({
+            name: "preload",
+            value: expect.objectContaining({
+              status: "dynamic",
+              expression: expect.stringContaining('require("path").join'),
+            }),
+          }),
+        ]),
       },
     ]);
   });
@@ -1137,7 +1147,11 @@ describe("Electron option evidence", () => {
       utilityProcess.fork("./worker.js", [], { serviceName: "kept", cwd: "/app" });
     `);
 
-    expect(analysis.parse_status).toBe("complete");
+    expect(analysis.parse_status).toBe("partial");
+    expect(analysis.analysis_coverage?.syntax).toEqual({
+      status: "complete",
+      error_count: 0,
+    });
     expect(analysis.electron.browser_windows[0]).toMatchObject({
       preload_path: "./kept.js",
       preload_resolution_context: "module-specifier",
@@ -1182,7 +1196,7 @@ describe("Electron option evidence", () => {
     },
   );
 
-  it("selects proven Electron preloads while ignoring media attributes and unrelated properties", () => {
+  it("retains conditional Electron preloads while ignoring unrelated properties", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       jsx("audio", { controls: true, preload: "metadata", src });
       (0, React.createElement)(\`video\`, { preload: "auto" });
@@ -1192,8 +1206,12 @@ describe("Electron option evidence", () => {
       new BrowserWindow({webPreferences: {preload: "./preload.js"}});
     `);
 
-    expect(analysis.role_paths.map(({ path }) => path)).toEqual([
-      "./preload.js",
+    expect(analysis.role_paths).toEqual([]);
+    expect(analysis.electron.browser_windows).toEqual([
+      expect.objectContaining({
+        preload_path: "./preload.js",
+        loader_authority: "candidate",
+      }),
     ]);
   });
 
@@ -1257,7 +1275,11 @@ describe("Electron empty option keys", () => {
       `);
 
       expect(analysis.parse_error_count).toBe(0);
-      expect(analysis.parse_status).toBe("complete");
+      expect(analysis.parse_status).toBe("partial");
+      expect(analysis.analysis_coverage?.syntax).toEqual({
+        status: "complete",
+        error_count: 0,
+      });
       expect(analysis.electron.browser_windows).toMatchObject([
         {
           web_preferences_status: "object-literal",
@@ -1283,7 +1305,11 @@ describe("Electron empty option keys", () => {
       `);
 
       expect(analysis.parse_error_count).toBe(0);
-      expect(analysis.parse_status).toBe("complete");
+      expect(analysis.parse_status).toBe("partial");
+      expect(analysis.analysis_coverage?.syntax).toEqual({
+        status: "complete",
+        error_count: 0,
+      });
       expect(analysis.electron.browser_windows).toMatchObject([
         {
           web_preferences_status: "object-literal",
@@ -1310,7 +1336,11 @@ describe("Electron empty option keys", () => {
       `);
 
       expect(analysis.parse_error_count).toBe(0);
-      expect(analysis.parse_status).toBe("complete");
+      expect(analysis.parse_status).toBe("partial");
+      expect(analysis.analysis_coverage?.syntax).toEqual({
+        status: "complete",
+        error_count: 0,
+      });
       expect(analysis.electron.utility_processes).toMatchObject([
         { module_path: "./worker.js", service_name: "kept" },
       ]);

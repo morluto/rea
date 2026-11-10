@@ -138,8 +138,14 @@ export const deliverAnalysisEvidence = async (
   // Later inspect_analysis_view requests are separate questions and do not
   // inherit the parent's selected input path.
   const selected =
-    detail === "summary" && evidence.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, evidence.caller_input_path)
+    detail === "summary" &&
+    (evidence.caller_input_path !== undefined ||
+      evidence.caller_input_paths !== undefined)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          evidence.caller_input_path,
+          evidence.caller_input_paths,
+        )
       : delivered.value;
   const published = await publishEvidenceDelivery({
     bundle,

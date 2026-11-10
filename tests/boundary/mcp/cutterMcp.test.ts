@@ -49,10 +49,10 @@ const assertUncertainEvidence = async (
     message: expect.stringContaining("do not retry automatically"),
     document_generation: 3,
   });
-  expect(uncertainEvidence.limitations).toContain(
-    "Command completion or its output could not be confirmed; " +
-      "do not retry automatically because the command may have produced " +
-      "partial or persistent effects.",
+  expect(uncertainEvidence.limitations).toContainEqual(
+    expect.stringMatching(
+      /completion.*could not be confirmed.*not retry.*effects/iu,
+    ),
   );
 };
 

@@ -28,7 +28,7 @@ const HANDSHAKE_BYTES = 64 * 1024;
 const STDERR_BYTES = 16 * 1024;
 const TEARDOWN_MS = 120_000;
 const RUNNER_REMEDIATION =
-  "Set REA_AGENT_ENV_COMMAND to the absolute path of the agent-env program of an agentenv-framework install (a venv, uv tool or pipx), then restart REA.";
+  "Put agent-env on PATH, or set REA_AGENT_ENV_COMMAND to the absolute path of the agent-env program of an agentenv-framework install (a venv, uv tool or pipx), then restart REA. rea doctor --provider desktop_build checks the build host.";
 
 const handshakeSchema = z.union([
   z.strictObject({
@@ -90,7 +90,7 @@ export const agentEnvInterpreter = async (
   if (command === undefined || !isAbsolute(command))
     throw unavailable(
       operation,
-      "Build computers need REA_AGENT_ENV_COMMAND, the absolute path of agentenv's agent-env program; REA runs its helper with that runner's Python.",
+      "Build computers need REA_AGENT_ENV_COMMAND, the absolute path of agentenv's agent-env program, or agent-env on PATH; REA runs its helper with that runner's Python.",
     );
   let program: string;
   let head: string;
@@ -220,7 +220,12 @@ export class ComputerHelper {
     });
   }
 
-  /** Spawn the helper for a bundle folder; it deploys the bundle's smoke task. */
+  /**
+   * Spawn the helper for a bundle folder; it deploys the bundle's smoke task.
+   * Python writes no bytecode, in the helper or the children that inherit its
+   * environment, such as agentenv's own import of the bundle's app class, so
+   * the bundle's files stay as they were shared.
+   */
   static async spawn(options: {
     readonly bundle: string;
     readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -238,6 +243,7 @@ export class ComputerHelper {
       runId: randomUUID(),
       expectedCommand: null,
       hostEnvironment: environment,
+      env: { PYTHONDONTWRITEBYTECODE: "1" },
       stdin: "pipe",
       signal,
     });

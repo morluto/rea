@@ -44,6 +44,7 @@ export const analysisErrorWithCleanupFailure = (
       ...childFailureDiagnostics({
         primary_error: {
           error: primary,
+          omitRecovery: true,
           ...(primary.capturedOutput === undefined
             ? {}
             : { capturedOutput: "omit" as const }),

@@ -1,6 +1,17 @@
 import { readObjcPropertyList } from "./AppleObjcProperties.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { SwiftNominalReaders } from "./AppleSwiftNominalTypes.js";
+import { err, ok, type Result } from "../domain/result.js";
+
+/** A failed list still owns the names read before its unreadable suffix. */
+export type ObjcProtocolListResult = Result<
+  string[],
+  {
+    readonly _tag: "ProtocolListUnreadable";
+    readonly names: string[];
+    readonly reason: string;
+  }
+>;
 
 /** Read protocol lists and absolute protocol method declarations with cycle-safe identities. */
 export const createObjcProtocolReader = (input: {
@@ -19,23 +30,36 @@ export const createObjcProtocolReader = (input: {
   const { readers: read, result, failures } = input;
   const visited = new Set<bigint>();
   const name = (address: bigint) => read.string(read.pointer(address + 8n));
-  const list = (address: bigint, onTruncated?: () => void): string[] => {
-    if (address === 0n) return [];
-    // `count` is plain uintptr_t data, not a pointer fixup.
-    const count = read.u64(address);
-    if (count > 20000n)
-      throw new RangeError("Protocol list exceeds 20000 entries");
+  /** Own the list pointer field as well as the list's count and entries. */
+  const readList = (
+    field: bigint,
+    onTruncated?: () => void,
+  ): ObjcProtocolListResult => {
     const names: string[] = [];
-    for (let index = 0n; index < count; index++) {
-      if (!read.admit()) {
-        onTruncated?.();
-        break;
+    try {
+      const address = read.pointer(field);
+      if (address === 0n) return ok(names);
+      // `count` is plain uintptr_t data, not a pointer fixup.
+      const count = read.u64(address);
+      if (count > 20000n)
+        throw new RangeError("Protocol list exceeds 20000 entries");
+      for (let index = 0n; index < count; index++) {
+        if (!read.admit()) {
+          onTruncated?.();
+          break;
+        }
+        const protocol = read.pointer(address + 8n + index * 8n);
+        names.push(name(protocol));
+        record(protocol);
       }
-      const protocol = read.pointer(address + 8n + index * 8n);
-      names.push(name(protocol));
-      record(protocol);
+      return ok(names);
+    } catch (cause: unknown) {
+      return err({
+        _tag: "ProtocolListUnreadable",
+        names,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
     }
-    return names;
   };
   const methods = (
     address: bigint,
@@ -97,7 +121,11 @@ export const createObjcProtocolReader = (input: {
       const onTruncated = () => {
         budgetTruncated = true;
       };
-      const adopted = list(read.pointer(address + 16n), onTruncated);
+      const adopted = readList(address + 16n, onTruncated);
+      if (!adopted.ok)
+        failures.push(
+          `Protocol 0x${address.toString(16)} adopted protocol list: ${adopted.error.reason}`,
+        );
       if (protocolName.length === 0)
         throw new TypeError("Objective-C protocol has an empty name");
       const skipped: string[] = [];
@@ -165,6 +193,7 @@ export const createObjcProtocolReader = (input: {
         );
       const decodeReasons = [
         ...propertyReasons,
+        ...(adopted.ok ? [] : ["protocol_list_unreadable"]),
         ...(skipped.length === 0 ? [] : ["protocol_method_selector_empty"]),
         ...(budgetTruncated ? ["max_records_reached"] : []),
       ];
@@ -176,7 +205,7 @@ export const createObjcProtocolReader = (input: {
       });
       result.objc_protocol_records.push({
         name: protocolName,
-        adopted_protocols: adopted,
+        adopted_protocols: adopted.ok ? adopted.value : adopted.error.names,
         methods: required,
         optional_methods: optional,
         location: read.location(address),
@@ -195,5 +224,5 @@ export const createObjcProtocolReader = (input: {
       );
     }
   };
-  return { list, record };
+  return { readList, record };
 };

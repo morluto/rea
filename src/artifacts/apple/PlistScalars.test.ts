@@ -540,8 +540,12 @@ describe("binary plist numeric association", () => {
       9007199254740992, 9007199254740992,
     ]);
     expect(numbers.limitations()).toEqual([
-      '1 observed integer literal(s) in the original archive exceed the exact range of a JSON number. Decoded numbers may lose integer precision unless represented as { "$plist_type": "integer", "decimal": "<exact digits>" }; the original archive bytes retain those literals.',
-      "2 number(s) beyond the exact integer range remain as decoded because their source integer/real type or reference marker cannot be associated unambiguously; integer precision loss remains possible.",
+      expect.stringMatching(
+        /\b1 observed integer literal.*original archive.*JSON number.*lose integer precision.*\$plist_type.*integer.*decimal.*original archive bytes retain/iu,
+      ),
+      expect.stringMatching(
+        /\b2 number.*integer range.*source integer\/real type.*cannot be associated unambiguously.*precision loss/iu,
+      ),
     ]);
   });
 

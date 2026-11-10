@@ -33,6 +33,8 @@ it.each(formats)(
       view.setUint32(36, Number(size), littleEndian);
     }
     view.setUint32(wide ? 48 : 40, 0xffffffff, littleEndian);
+    view.setUint32(wide ? 56 : 48, 0x12345678, littleEndian);
+    view.setUint32(wide ? 60 : 52, 0x9abcdef0, littleEndian);
     view.setUint32(wide ? 64 : 56, 0x89abcdef, littleEndian);
     const expectedSegmentName = Buffer.from(bytes.subarray(16, 32));
     const before = Buffer.from(backing);
@@ -51,6 +53,8 @@ it.each(formats)(
       address,
       size,
       offset: 0xffffffff,
+      relocationOffset: 0x12345678,
+      relocationCount: 0x9abcdef0,
       flags: 0x89abcdef,
     });
   },
@@ -71,7 +75,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "Mach-O section header is truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },

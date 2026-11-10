@@ -1,11 +1,11 @@
 import { z } from "incur";
 import type { Logger } from "pino";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
+import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
@@ -17,8 +17,10 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
   reverseCommandTimeoutSchema,
+  rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -47,57 +49,19 @@ const executeWithCleanup = async (
   service: ReverseEngineeringService,
   signal: AbortSignal,
   execute: () => Promise<Result<Evidence, AnalysisError>>,
-): Promise<Result<Evidence, AnalysisError>> => {
-  let result: Result<Evidence, AnalysisError>;
-  try {
-    result = await execute();
-  } catch (cause) {
-    await service.close().catch(() => undefined);
-    throw cause;
-  }
-  const hadIncompleteCleanup = !result.ok && result.error.cleanupIncomplete;
-  try {
-    await service.close();
-  } catch (cause) {
-    if (result.ok) return err(asCleanupError(cause));
-    const cleanup = cause instanceof AnalysisError ? cause.cleanup : undefined;
-    const error = new AnalysisOutputError(
-      "reverse_engineering_cleanup",
-      "Provider cleanup remains incomplete after the command failed.",
-      {
-        cause: result.error,
-        ...(cleanup === undefined ? {} : { cleanup }),
-        ...(result.error.capturedOutput === undefined
-          ? {}
-          : { capturedOutput: result.error.capturedOutput }),
-        ...(result.error.partialObservation === undefined
-          ? {}
-          : { partialObservation: result.error.partialObservation }),
-      },
-    );
-    return err(error);
-  }
-  if (!result.ok && hadIncompleteCleanup && !result.error.cleanupIncomplete) {
-    const evidence = cleanupOnlyCompleteEvidence(result.error);
-    if (evidence !== undefined)
-      return cancelledAfterCleanup({ ok: true, value: evidence }, signal);
-  }
-  return cancelledAfterCleanup(result, signal);
-};
-
-/** Late cancellation observed during finalization keeps the completed Evidence as partial data. */
-const cancelledAfterCleanup = (
-  result: Result<Evidence, AnalysisError>,
-  signal: AbortSignal,
-): Result<Evidence, AnalysisError> =>
-  result.ok && signal.aborted
-    ? err(
-        new AnalysisCancelledError(result.value.operation, {
-          cause: signal.reason,
-          partialObservation: result.value,
-        }),
-      )
-    : result;
+  operation: "inspect_with_objdump" | "execute_rizin_command",
+) =>
+  finishAnalysisCommand(
+    execute,
+    service,
+    operation === "inspect_with_objdump"
+      ? OBJDUMP_PROVIDER_IDENTITY.id
+      : RIZIN_PROVIDER_IDENTITY.id,
+    operation,
+    signal,
+    undefined,
+    { recoverResolvedCleanup: cleanupOnlyCompleteEvidence },
+  );
 
 const cleanupOnlyCompleteEvidence = (
   error: AnalysisError,
@@ -118,15 +82,6 @@ const cleanupOnlyCompleteEvidence = (
     ? parsed.data
     : undefined;
 };
-
-const asCleanupError = (cause: unknown): AnalysisError =>
-  cause instanceof AnalysisError
-    ? cause
-    : new AnalysisOutputError(
-        "reverse_engineering_cleanup",
-        "Provider process cleanup failed.",
-        { cause },
-      );
 
 /** One-shot debugger cleanup: the retained owner's closeAll decides whether cleanup remains incomplete. */
 const closeDebuggerCommandSession = async (
@@ -217,7 +172,7 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -231,27 +186,31 @@ export const registerReverseEngineeringCommands = (
           };
           const inputError = cliEvidenceDeliveryInputError(delivery);
           if (inputError !== undefined) return projectAnalysisError(inputError);
-          const result = await executeWithCleanup(service, signal, () =>
-            service.inspectWithObjdump(
-              {
-                ...args,
-                follow_debug_links: options.followDebugLinks,
-                ...(options.symbol === undefined
-                  ? {}
-                  : { symbol: options.symbol }),
-                ...(options.commandTimeoutMs === undefined
-                  ? {}
-                  : { command_timeout_ms: options.commandTimeoutMs }),
-              },
-              { signal },
-            ),
+          const result = await executeWithCleanup(
+            service,
+            signal,
+            () =>
+              service.inspectWithObjdump(
+                {
+                  ...args,
+                  follow_debug_links: options.followDebugLinks,
+                  ...(options.symbol === undefined
+                    ? {}
+                    : { symbol: options.symbol }),
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
+                },
+                { signal },
+              ),
+            "inspect_with_objdump",
           );
           return result.ok
             ? publishCliAnalysisEvidence(
                 { ok: true, value: result.value },
                 delivery,
               )
-            : projectAnalysisError(result.error);
+            : result.error;
         }),
       ),
   });
@@ -260,7 +219,7 @@ export const registerReverseEngineeringCommands = (
     args: z.object({}),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
@@ -278,23 +237,27 @@ export const registerReverseEngineeringCommands = (
             const inputError = cliEvidenceDeliveryInputError(delivery);
             if (inputError !== undefined)
               return projectAnalysisError(inputError);
-            const result = await executeWithCleanup(service, signal, () =>
-              service.inspectWithObjdump(
-                {
-                  operation: "architectures",
-                  ...(options.commandTimeoutMs === undefined
-                    ? {}
-                    : { command_timeout_ms: options.commandTimeoutMs }),
-                },
-                { signal },
-              ),
+            const result = await executeWithCleanup(
+              service,
+              signal,
+              () =>
+                service.inspectWithObjdump(
+                  {
+                    operation: "architectures",
+                    ...(options.commandTimeoutMs === undefined
+                      ? {}
+                      : { command_timeout_ms: options.commandTimeoutMs }),
+                  },
+                  { signal },
+                ),
+              "inspect_with_objdump",
             );
             return result.ok
               ? publishCliAnalysisEvidence(
                   { ok: true, value: result.value },
                   delivery,
                 )
-              : projectAnalysisError(result.error);
+              : result.error;
           },
         ),
       ),
@@ -309,23 +272,43 @@ export const registerReverseEngineeringCommands = (
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     options: z.object({
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      asmArch: rizinInputSchema.shape.asm_arch,
+      asmBits: cliDecimalField(rizinInputSchema.shape.asm_bits),
+      asmCpu: rizinInputSchema.shape.asm_cpu,
+      baseAddress: rizinInputSchema.shape.base_address,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await executeWithCleanup(service, signal, () =>
-            service.executeRizinCommand(
-              {
-                ...args,
-                ...(options.commandTimeoutMs === undefined
-                  ? {}
-                  : { command_timeout_ms: options.commandTimeoutMs }),
-              },
-              { signal },
-            ),
+          const result = await executeWithCleanup(
+            service,
+            signal,
+            () =>
+              service.executeRizinCommand(
+                {
+                  ...args,
+                  ...(options.asmArch === undefined
+                    ? {}
+                    : { asm_arch: options.asmArch }),
+                  ...(options.asmBits === undefined
+                    ? {}
+                    : { asm_bits: options.asmBits }),
+                  ...(options.asmCpu === undefined
+                    ? {}
+                    : { asm_cpu: options.asmCpu }),
+                  ...(options.baseAddress === undefined
+                    ? {}
+                    : { base_address: options.baseAddress }),
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
+                },
+                { signal },
+              ),
+            "execute_rizin_command",
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          return projectCliAnalysisResult(result);
         }),
       ),
   });

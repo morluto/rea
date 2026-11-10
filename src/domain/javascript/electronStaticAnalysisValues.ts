@@ -18,8 +18,23 @@ export const electronCalleePath = (
   const { root, members } = electronMemberPath(callee);
   if (!members.every((member): member is string => member !== null))
     return undefined;
-  const exported = context.electronBindings?.get(root.start ?? -1);
+  const exported =
+    context.electronBindings?.get(root.start ?? -1) ??
+    context.electronCandidateBindings?.get(root.start ?? -1);
   return exported === undefined ? undefined : [...exported, ...members];
+};
+
+/** Keep the identity uncertainty attached to each derived finding. */
+export const electronCandidateAuthority = (
+  callee: t.Node,
+  context: JavaScriptFindingContext,
+): { readonly loader_authority?: "candidate" } => {
+  const { root } = electronMemberPath(callee);
+  const offset = root.start ?? -1;
+  return context.electronBindings?.has(offset) !== true &&
+    context.electronCandidateBindings?.has(offset) === true
+    ? { loader_authority: "candidate" }
+    : {};
 };
 
 /** Preserve one literal value or the exact inert expression. */

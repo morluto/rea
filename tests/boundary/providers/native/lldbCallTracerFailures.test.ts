@@ -393,7 +393,6 @@ describe("LLDB completed trace retention after process cleanup", () => {
         complete: true,
       };
       if (phase === "clean") {
-        expect(result.ok).toBe(true);
         if (!result.ok) throw result.error;
         expect(result.value.run).toEqual(completed);
         expect(result.value.stdout).toEqual(stdout);
@@ -403,7 +402,6 @@ describe("LLDB completed trace retention after process cleanup", () => {
         });
         return;
       }
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cleanup failure");
       expect(result.error).toBeInstanceOf(ProviderCleanupError);
       expect(result.error.cleanupIncomplete).toBe(true);
@@ -568,7 +566,6 @@ describe("LLDB failure retention through the production tracer", () => {
 
     const result = await tracer.trace(request);
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected unavailable tracer result");
     expect(result.error).toMatchObject({
       _tag: "ProviderAdapterError",
@@ -754,7 +751,6 @@ describe("LLDB primary outcome during owned process cleanup", () => {
         expect(observedStop?.status).toMatch(
           /^(already-exited|verified-cleanup|terminated|killed)$/u,
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected the bridge target error");
         expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
         if (!(result.error instanceof AnalysisCapabilityUnavailableError))
@@ -840,7 +836,6 @@ describe("LLDB process exit while output is still open", () => {
         expect(stopReceipt?.status).toMatch(
           /^(already-exited|verified-cleanup|terminated|killed)$/u,
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected the bridge target error");
         expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
         if (!(result.error instanceof AnalysisCapabilityUnavailableError))
@@ -963,7 +958,6 @@ describe("LLDB target proof published before interruption", () => {
             const result = await tracer.trace(request, controller.signal);
 
             expect(leader.interrupted).toBe(true);
-            expect(result.ok).toBe(false);
             if (result.ok) throw new Error("Expected an interrupted trace");
             expect(result.error).toBeInstanceOf(
               interruption === "caller cancellation"
@@ -1044,7 +1038,6 @@ describe("LLDB target proof read by cleanup retry", () => {
         try {
           const result = await tracer.trace(request, controller.signal);
 
-          expect(result.ok).toBe(false);
           if (result.ok) throw new Error("Expected a cancelled trace");
           expect(result.error).toBeInstanceOf(AnalysisCancelledError);
           expect(result.error.cleanupIncomplete).toBe(true);
@@ -1270,7 +1263,6 @@ describe("LLDB process exit at output-close loop completion", () => {
         expect(stopReceipt?.status).toMatch(
           /^(already-exited|verified-cleanup|terminated|killed)$/u,
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected the bridge target error");
         expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
         if (!(result.error instanceof AnalysisCapabilityUnavailableError))
@@ -1323,7 +1315,6 @@ describe("LLDB late timeout publication", () => {
 
     const result = await tracer.trace(request);
     if (runtime === undefined) throw new Error("LLDB fixture did not run");
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the late deadline to be retained");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     if (!(result.error instanceof AnalysisTimeoutError)) return;
@@ -1381,7 +1372,6 @@ describe("LLDB pre-target phase proof", () => {
     );
     try {
       const rejected = await tracer.trace(request);
-      expect(rejected.ok).toBe(false);
       if (rejected.ok) throw new Error("Expected launch refusal");
       expect(projectAnalysisError(rejected.error)).toMatchObject({
         code: "capability_unavailable",
@@ -1395,7 +1385,6 @@ describe("LLDB pre-target phase proof", () => {
         code: "ENOENT",
       });
       const completed = await tracer.trace(request);
-      expect(completed.ok).toBe(true);
       if (!completed.ok) throw completed.error;
       expect(completed.value.run).toMatchObject(successfulTracerOutput);
       expect(launches).toBe(2);
@@ -1664,7 +1653,6 @@ it("retains journal descriptor cleanup after a cancelled run instead of removing
     await release?.();
   });
   const result = await tracer.trace(request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancelled controlled run");
   const partial = nativeCallPartialObservationSchema.parse(
     result.error.partialObservation,
@@ -1939,7 +1927,6 @@ for (const {
       await descriptorControl?.closeCaptured();
     });
     const result = await tracer.trace(request, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained readback cleanup");
     expect(result.error.cleanupIncomplete).toBe(true);
     const partial = nativeCallPartialObservationSchema.parse(

@@ -52,6 +52,7 @@ const report: AppleIps = {
     type_mismatches: [],
   },
   unlisted_body_keys: [],
+  join: null,
   limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
 };
 
@@ -126,7 +127,6 @@ it.each(["288", "309 "])(
       identity,
       inspect: () => Promise.resolve(ok(malformed)),
     }).inspect({ path: report.artifact.path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected unsupported provider crash kind");
     expect(result.error._tag).toBe("AnalysisOutputError");
   },
@@ -175,7 +175,6 @@ it("records the selected report as a file subject", async () => {
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
@@ -323,3 +322,53 @@ it.each([
     if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
   },
 );
+
+it.each([
+  [undefined, 16, false],
+  ["/artifacts/other.bin", 16, false],
+  ["/artifacts/selected.bin", 15, false],
+  ["/artifacts/selected.bin", 16, true],
+] as const)(
+  "binds returned join identity to selected path %s and allowance %s",
+  async (selected, maximum, accepted) => {
+    const joined: AppleIps = {
+      ...report,
+      join: {
+        status: "unreadable",
+        path: "/artifacts/selected.bin",
+        sha256: "b".repeat(64),
+        bytes: 16,
+        reason: "Not a Mach-O image",
+      },
+    };
+    const result = await new AppleIpsService({
+      identity,
+      inspect: async () => ok(joined),
+    }).inspect({
+      path: report.artifact.path,
+      ...(selected === undefined ? {} : { join_path: selected }),
+      max_join_bytes: maximum,
+    });
+    expect(result.ok).toBe(accepted);
+    if (result.ok)
+      expect(result.value.locations).toEqual([
+        { kind: "artifact-path", path: report.artifact.path },
+        { kind: "artifact-path", path: "/artifacts/selected.bin" },
+      ]);
+    else expect(result.error._tag).toBe("AnalysisOutputError");
+  },
+);
+
+it("rejects a provider's omitted join after explicit selection", async () => {
+  const result = await new AppleIpsService({
+    identity,
+    inspect: async () => ok(report),
+  }).inspect({
+    path: report.artifact.path,
+    join_path: "/artifacts/selected.bin",
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});

@@ -6,7 +6,7 @@ cliTest.for(["inspect-apple-ips", "inspect-pe-imports"])(
   "rejects an empty %s target before resolving the working directory",
   async (command, { cli }) => {
     const root = await createTestTempDirectory("rea-empty-diagnostic-target-");
-    // docs/cli.md: an empty string never selects the working directory.
+    // docs/getting-started/cli.md: an empty string never selects the working directory.
     const empty = await cli.run({
       arguments: [command, "", "--json"],
       cwd: root,

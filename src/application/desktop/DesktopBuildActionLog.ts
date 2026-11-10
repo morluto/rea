@@ -26,16 +26,25 @@ export interface BuildComputerAction {
   readonly outcome: Outcome;
 }
 
-/** A value within the log's allowance, and whether it was cut. */
+/** Text as the log may keep it: a known secret's value replaced by its handle. */
+type Redact = (text: string) => string;
+
+/** A value within the log's allowance, redacted, and whether it was cut. */
 const bounded = (
   value: JsonValue,
+  redact: Redact,
 ): { readonly value: JsonValue; readonly cut: boolean } => {
   if (typeof value === "string") {
-    const { text, truncated } = boundedUtf8Text(value, LOGGED_TEXT_BYTES);
+    const { text, truncated } = boundedUtf8Text(
+      redact(value),
+      LOGGED_TEXT_BYTES,
+    );
     return { value: text, cut: truncated };
   }
   if (Array.isArray(value)) {
-    const items = value.slice(0, LOGGED_LIST_ITEMS).map(bounded);
+    const items = value
+      .slice(0, LOGGED_LIST_ITEMS)
+      .map((item) => bounded(item, redact));
     return {
       value: items.map((item) => item.value),
       cut: value.length > items.length || items.some((item) => item.cut),
@@ -43,7 +52,7 @@ const bounded = (
   }
   if (value === null || typeof value !== "object") return { value, cut: false };
   const fields = Object.entries(value).map(
-    ([name, field]) => [name, bounded(field)] as const,
+    ([name, field]) => [redact(name), bounded(field, redact)] as const,
   );
   return {
     value: Object.fromEntries(
@@ -65,8 +74,12 @@ const jsonBytes = (entry: BuildComputerAction): number =>
 export class BuildComputerActionLog {
   readonly #kept: { entry: BuildComputerAction; bytes: number }[] = [];
   readonly #lastApplied: Partial<Record<ComputerAction, number>> = {};
+  readonly #lastUnsettled: Partial<Record<ComputerAction, number>> = {};
   #total = 0;
   #bytes = 0;
+
+  /** `redact` takes each string the log keeps, so no known secret's value stays in it. */
+  constructor(private readonly redact: Redact = (text) => text) {}
 
   /** Every action logged, kept or not; the next one's index. */
   get total(): number {
@@ -88,6 +101,11 @@ export class BuildComputerActionLog {
     return { ...this.#lastApplied };
   }
 
+  /** The index of the last action whose reply was lost, kept or not. */
+  get lastUnsettled(): Readonly<Partial<Record<ComputerAction, number>>> {
+    return { ...this.#lastUnsettled };
+  }
+
   /** Log an action as it is sent, pending, and how to record how it ended. */
   begin(
     action: ComputerAction,
@@ -95,11 +113,14 @@ export class BuildComputerActionLog {
     args: Readonly<Record<string, JsonValue>>,
   ): {
     readonly index: number;
-    readonly settle: (outcome: Exclude<Outcome, "pending">) => void;
+    readonly settle: (
+      outcome: Exclude<Outcome, "pending">,
+      observation?: { readonly unsettled?: boolean },
+    ) => void;
   } {
     const index = this.#total;
     const fields = Object.entries(args).map(
-      ([name, value]) => [name, bounded(value)] as const,
+      ([name, value]) => [name, bounded(value, this.redact)] as const,
     );
     const truncated = fields.flatMap(([name, field]) =>
       field.cut ? [name] : [],
@@ -120,11 +141,16 @@ export class BuildComputerActionLog {
     this.#keep(this.#kept.length, entry);
     return {
       index,
-      settle: (outcome) => {
+      settle: (outcome, observation) => {
         if (outcome === "applied")
           this.#lastApplied[action] = Math.max(
             index,
             this.#lastApplied[action] ?? index,
+          );
+        if (observation?.unsettled === true)
+          this.#lastUnsettled[action] = Math.max(
+            index,
+            this.#lastUnsettled[action] ?? index,
           );
         // An action dropped while pending leaves only its outcome above.
         const slot = index - this.dropped;
@@ -151,5 +177,5 @@ export class BuildComputerActionLog {
 /** What later stages read of a computer's action log. */
 export type ReadonlyActionLog = Pick<
   BuildComputerActionLog,
-  "total" | "dropped" | "entries" | "lastApplied"
+  "total" | "dropped" | "entries" | "lastApplied" | "lastUnsettled"
 >;

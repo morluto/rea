@@ -13,11 +13,11 @@ const MIB = 1024 * 1024;
 /** Entries a zip view lists; past them it counts entries and is truncated. */
 export const MAX_ZIP_ENTRIES = 1000;
 /** Largest entry read, uncompressed. */
-const MAX_ZIP_ENTRY_BYTES = 16 * MIB;
+export const MAX_ZIP_ENTRY_BYTES = 16 * MIB;
 /** Uncompressed bytes read from one archive, the same as the largest file the state view reads. */
 const MAX_ZIP_BYTES = 64 * MIB;
 /** Most an entry may expand over its compressed size; a zip bomb expands about a thousand times. */
-const MAX_ZIP_RATIO = 100;
+export const MAX_ZIP_RATIO = 100;
 
 /** Why an archive has no view; the exported reader words it the same. */
 export const UNREADABLE_ZIP = "not a readable zip archive";
@@ -138,7 +138,7 @@ export const zipEntryAt = (
 ): Record<string, JsonValue> | "none" | undefined => {
   const [first, second] = pointer.slice(1).split("/");
   if (first !== "entries" || second === undefined) return undefined;
-  const entry = locatePointer(view, `/entries/${second}`);
+  const entry = locatePointer(view, `/entries/${second}`, "zip");
   if (entry.kind !== "value") return "none";
   return isRecord(entry.value) ? entry.value : undefined;
 };
@@ -161,18 +161,27 @@ export const entryWithoutView = (
   return VIEW_FORMATS.has(entry.format ?? null) ? undefined : "has no view";
 };
 
-/** The entry whose view a pointer goes into when it has none, so its `view` of `null` is no JSON value, and why. */
+/**
+ * The entry whose view a pointer goes into when it has none, so its `view` of
+ * `null` is no JSON value, and why; `unread` when reading its view failed.
+ */
 export const viewlessEntryAt = (
   view: JsonValue | null,
   pointer: string,
-): { readonly name: string; readonly reason: string } | undefined => {
+):
+  | { readonly name: string; readonly reason: string; readonly unread: boolean }
+  | undefined => {
   const entry = zipEntryAt(view, pointer);
   if (typeof entry !== "object" || pointer.split("/")[3] !== "view")
     return undefined;
   const reason = entryWithoutView(entry);
   return reason === undefined
     ? undefined
-    : { name: typeof entry.name === "string" ? entry.name : "", reason };
+    : {
+        name: typeof entry.name === "string" ? entry.name : "",
+        reason,
+        unread: typeof entry.view_error === "string",
+      };
 };
 
 /**

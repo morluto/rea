@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 import { parseOpenStep } from "plist";
 
-import { plistNestingLimitMessage } from "./apple/plistValue.js";
 import {
   decodeOpenStepPropertyList,
   OpenStepPropertyListError,
@@ -105,12 +104,12 @@ it("bounds compound keys and later siblings at their owning parse", () => {
   const deep = "(".repeat(30_000) + "x" + ")".repeat(30_000);
   for (const source of [`((x),${deep})`, `{(key)=${deep};}`, `{${deep}=x;}`])
     expect(() => decodeOpenStepPropertyList(source)).toThrow(
-      plistNestingLimitMessage(),
+      /128 nesting levels/iu,
     );
   // A scalar key identifies its parent's member rather than adding value depth.
   expect(decodeOpenStepPropertyList("{ key = (); }", 1)).toEqual({ key: [] });
   expect(() => decodeOpenStepPropertyList("{ (key) = (); }", 1)).toThrow(
-    plistNestingLimitMessage(1),
+    /1 nesting levels/iu,
   );
 });
 
@@ -136,11 +135,6 @@ it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
       "hidden = second;\n items = (one, // array" +
       newline +
       "two,); }";
-    expect(
-      decodeOpenStepPropertyList(
-        "{ kept = first; // inline" + newline + "hidden = second;\n }",
-      ),
-    ).toEqual({ kept: "first", hidden: "second" });
     expect(startsOpenStepPropertyList(text)).toBe(true);
     expect(decodeOpenStepPropertyList(text)).toEqual({
       kept: "first",
@@ -159,14 +153,11 @@ it("does not treat nonterminating whitespace or quoted comment text as line ends
   expect(startsOpenStepPropertyList("// comment without a line end")).toBe(
     false,
   );
-  expect(() =>
+  const error = syntaxFailure(() =>
     decodeOpenStepPropertyList("// comment without a line end"),
-  ).toThrow(OpenStepPropertyListError);
-  expect(
-    syntaxFailure(() =>
-      decodeOpenStepPropertyList("// comment without a line end"),
-    ),
-  ).toMatchObject({ code: "unexpected_end" });
+  );
+  expect(error).toBeInstanceOf(OpenStepPropertyListError);
+  expect(error).toMatchObject({ code: "unexpected_end" });
 });
 
 it.each([

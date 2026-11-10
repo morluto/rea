@@ -12,10 +12,7 @@ import {
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
-import {
-  astObservationEvidence,
-  staticInferenceEvidence,
-} from "./JavaScriptArtifactGraphEvidence.js";
+import { staticInferenceEvidence } from "./JavaScriptArtifactGraphEvidence.js";
 import type {
   ElectronIpcContext,
   ElectronIpcRecord,
@@ -23,6 +20,8 @@ import type {
 import {
   addElectronAstEdge,
   addElectronInferenceEdge,
+  ELECTRON_CANDIDATE_LIMITATION,
+  electronFindingEvidence,
   electronFindingSourceNode,
   electronObservationIdentity,
 } from "./ElectronBoundaryGraphContext.js";
@@ -111,6 +110,7 @@ const addIpcRecord = (
     coverage,
     relation: record.finding.mode === "invoke" ? "invokes" : "sends",
     operation: "map-ipc-transmission",
+    loaderAuthority: record.finding.loader_authority,
     properties: {
       side: record.finding.side,
       operation: record.finding.operation,
@@ -150,10 +150,13 @@ const addChannelNode = (
   return context.accumulator.addNode({
     kind: "ipc-channel",
     identity:
-      finding.resolution_basis === "wrapper-substitution"
+      finding.resolution_basis === "wrapper-substitution" ||
+      finding.loader_authority === "candidate"
         ? artifactLocalIdentity(
             file.sha256,
-            "electron-inferred-ipc-channel",
+            finding.loader_authority === "candidate"
+              ? "electron-candidate-ipc-channel"
+              : "electron-inferred-ipc-channel",
             identityKey,
           )
         : electronObservationIdentity(
@@ -174,36 +177,67 @@ const addChannelNode = (
           channel: finding.channel,
           channel_expression: finding.channel_expression,
           resolution: finding.channel === null ? "dynamic" : "literal",
+          ...(finding.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           ...(finding.invocation_location === undefined
             ? {}
             : { invocation_location: finding.invocation_location }),
         },
-        evidence: (finding.resolution_basis === "wrapper-substitution"
-          ? staticInferenceEvidence
-          : astObservationEvidence)({
-          sha256: file.sha256,
-          path: file.path,
-          range: finding.location,
-          operation: "observe-ipc-channel-expression",
-          coverage,
-          limitations: [
-            ...(finding.receiver === undefined
-              ? []
-              : [
-                  "The receiver is a source-level allocation, not a runtime frame identity; registration and dispatch remain unverified.",
-                ]),
-            ...(finding.resolution_basis !== "wrapper-substitution"
-              ? []
-              : [
-                  "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified.",
-                ]),
-            ...(finding.channel !== null
-              ? []
-              : [
-                  "The channel expression is dynamic; its runtime value and pairings remain unknown.",
-                ]),
-          ],
-        }),
+        evidence:
+          finding.resolution_basis !== "wrapper-substitution"
+            ? electronFindingEvidence(
+                {
+                  sha256: file.sha256,
+                  path: file.path,
+                  range: finding.location,
+                  operation: "observe-ipc-channel-expression",
+                  coverage,
+                  limitations: [
+                    ...(finding.receiver === undefined
+                      ? []
+                      : [
+                          "The receiver is a source-level allocation, not a runtime frame identity; registration and dispatch remain unverified.",
+                        ]),
+                    ...(finding.channel !== null
+                      ? []
+                      : [
+                          "The channel expression is dynamic; its runtime value and pairings remain unknown.",
+                        ]),
+                  ],
+                },
+                finding.loader_authority,
+              )
+            : staticInferenceEvidence({
+                sha256: file.sha256,
+                path: file.path,
+                range: finding.location,
+                operation: "observe-ipc-channel-expression",
+                coverage,
+                ...(finding.loader_authority === "candidate"
+                  ? { confidence: "low" as const }
+                  : {}),
+                limitations: [
+                  ...(finding.loader_authority === "candidate"
+                    ? [ELECTRON_CANDIDATE_LIMITATION]
+                    : []),
+                  ...(finding.receiver === undefined
+                    ? []
+                    : [
+                        "The receiver is a source-level allocation, not a runtime frame identity; registration and dispatch remain unverified.",
+                      ]),
+                  ...(finding.resolution_basis !== "wrapper-substitution"
+                    ? []
+                    : [
+                        "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified.",
+                      ]),
+                  ...(finding.channel !== null
+                    ? []
+                    : [
+                        "The channel expression is dynamic; its runtime value and pairings remain unknown.",
+                      ]),
+                ],
+              }),
       },
     ],
   });
@@ -245,19 +279,38 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
           channel_expression: finding.channel_expression,
           handler_kind: finding.handler_kind,
           handler_location: finding.handler_location,
+          ...(finding.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           ...(finding.invocation_location === undefined
             ? {}
             : { invocation_location: finding.invocation_location }),
         },
-        evidence: (finding.resolution_basis === "wrapper-substitution"
-          ? staticInferenceEvidence
-          : astObservationEvidence)({
-          sha256: file.sha256,
-          path: file.path,
-          range: handlerRange,
-          operation: "observe-ipc-handler",
-          coverage,
-        }),
+        evidence:
+          finding.resolution_basis !== "wrapper-substitution"
+            ? electronFindingEvidence(
+                {
+                  sha256: file.sha256,
+                  path: file.path,
+                  range: handlerRange,
+                  operation: "observe-ipc-handler",
+                  coverage,
+                },
+                finding.loader_authority,
+              )
+            : staticInferenceEvidence({
+                sha256: file.sha256,
+                path: file.path,
+                range: handlerRange,
+                operation: "observe-ipc-handler",
+                coverage,
+                ...(finding.loader_authority === "candidate"
+                  ? {
+                      confidence: "low" as const,
+                      limitations: [ELECTRON_CANDIDATE_LIMITATION],
+                    }
+                  : {}),
+              }),
       },
     ],
   });
@@ -270,6 +323,7 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
     relation: "contains",
     operation: "locate-ipc-handler",
     properties: { side: finding.side, operation: finding.operation },
+    loaderAuthority: finding.loader_authority,
   });
   addElectronInferenceEdge(context, {
     source: handler,
@@ -279,6 +333,7 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
     coverage,
     relation: "handles",
     operation: "map-ipc-handler-registration",
+    loaderAuthority: finding.loader_authority,
     properties: {
       channel: finding.channel,
       channel_expression: finding.channel_expression,
@@ -362,17 +417,23 @@ const addValidationObservation = (input: ValidationObservationInput): void => {
           mechanism: validation.mechanism,
           expected: validation.expected,
           enforcement: validation.enforcement,
+          ...(validation.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
         },
-        evidence: astObservationEvidence({
-          sha256: file.sha256,
-          path: file.path,
-          range: validation.location,
-          operation: "observe-ipc-sender-validation-candidate",
-          coverage,
-          limitations: [
-            "A comparison or string check is visible, but static syntax alone does not prove rejection, ordering, or complete sender validation.",
-          ],
-        }),
+        evidence: electronFindingEvidence(
+          {
+            sha256: file.sha256,
+            path: file.path,
+            range: validation.location,
+            operation: "observe-ipc-sender-validation-candidate",
+            coverage,
+            limitations: [
+              "A comparison or string check is visible, but static syntax alone does not prove rejection, ordering, or complete sender validation.",
+            ],
+          },
+          validation.loader_authority,
+        ),
       },
     ],
   });

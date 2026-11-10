@@ -1,3 +1,5 @@
+import { isUtf8 } from "node:buffer";
+
 import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
@@ -241,9 +243,15 @@ const readMetadataStreams = (
   const zero = versionBytes.indexOf(0);
   const decodedVersionLength = zero < 0 ? versionBytes.length : zero;
   budget.reserveString(decodedVersionLength, rootOffset + 16);
-  const version = versionBytes
-    .subarray(0, decodedVersionLength)
-    .toString("utf8");
+  const versionText = versionBytes.subarray(0, decodedVersionLength);
+  if (!isUtf8(versionText))
+    throw managedFailure(
+      "invalid-metadata-root",
+      "metadata.version",
+      "Metadata version is not valid UTF-8",
+      rootOffset + 16,
+    );
+  const version = versionText.toString("utf8");
   let cursor = align4(16 + versionLength);
   requireRange(bytes, rootOffset, cursor, 4, "metadata.stream-count");
   const streamCount = bytes.readUInt16LE(cursor + 2);

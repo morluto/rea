@@ -71,8 +71,8 @@ source, link, or rendered-document checks. -->
 - User-visible CLI/MCP output (if applicable):
 - Remaining proof gaps:
 
-For boundary fixes, identify the applicable [boundary regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#boundary-regressions)
-and [lifecycle regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#lifecycle-regressions)
+For boundary fixes, identify the applicable [boundary regressions](https://github.com/morluto/rea/blob/main/docs/development/testing.md#boundary-regressions)
+and [lifecycle regressions](https://github.com/morluto/rea/blob/main/docs/development/testing.md#lifecycle-regressions)
 covered by the evidence above, and explain relevant gaps.
 
 For evidence-bearing changes:
@@ -99,7 +99,7 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
   its new behavior and migration, and why compatibility/deprecation cannot
   preserve it. Every release increments minor, including breaking changes;
   keep breaking markers and migration notes so callers can assess compatibility.
-  See docs/releasing.md. -->
+  See docs/development/releasing.md. -->
 - Real Hopper/Ghidra, browser, or OS coverage:
 - Package or release metadata impact:
 - Security, privacy, process, or containment review:

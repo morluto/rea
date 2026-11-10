@@ -31,15 +31,15 @@ it.each([65_536, 70_000])(
       Buffer.alloc(size, 0x61),
       Buffer.from([0]),
     ]);
-    expect(() => readElfStringBytes(table, 1)).toThrow(
-      BinaryStringReadLimitFailure,
-    );
+    let failure: unknown;
     try {
       readElfStringBytes(table, 1);
     } catch (cause) {
-      expect(cause).toBeInstanceOf(BinaryFormatFailure);
-      expect(cause).toMatchObject({ maximumBytes: 65_536 });
+      failure = cause;
     }
+    expect(failure).toBeInstanceOf(BinaryStringReadLimitFailure);
+    expect(failure).toBeInstanceOf(BinaryFormatFailure);
+    expect(failure).toMatchObject({ maximumBytes: 65_536 });
   },
 );
 
