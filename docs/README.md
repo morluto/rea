@@ -111,6 +111,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 ## Development and verification
 
 - [Settings and recovery](design/limits-and-recovery.md)
+- [REA limit inventory](design/rea-limit-inventory.md)
 - [Flutter budget calibration](verification/flutter-budget-calibration.md)
 - [Source-map budget calibration](verification/source-map-budget-calibration.md)
 - [Source-location delivery qualification](verification/source-location-delivery.md)
