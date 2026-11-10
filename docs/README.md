@@ -111,6 +111,10 @@ product pages. The VitePress documentation source is this `docs/` tree.
 ## Development and verification
 
 - [Settings and recovery](design/limits-and-recovery.md)
+- [Flutter budget calibration](verification/flutter-budget-calibration.md)
+- [Source-map budget calibration](verification/source-map-budget-calibration.md)
+- [Source-location delivery qualification](verification/source-location-delivery.md)
+- [JavaScript precision calibration](verification/javascript-precision-calibration.md)
 - [MCP tool design](development/tool-design.md)
 - [Testing REA](development/testing.md)
 - [Client and agent verification](development/client-verification.md)

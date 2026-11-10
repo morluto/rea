@@ -1329,6 +1329,48 @@ posix.each([
   },
 );
 
+posix(
+  "probes within the call's output allowance and identifies nothing from output that allowance cut",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    // A banner that would identify the tool, cut by the call's allowance.
+    const run = vi.fn(
+      async (
+        _command: string,
+        args: readonly string[],
+        _options?: ExecFileOutputOptions,
+      ) =>
+        args[0] === "-v"
+          ? {
+              stdout: "rizin 0.9.1 @ linux-x86-64",
+              stderr: "",
+              outputTruncated: true,
+            }
+          : { stdout: "command output", stderr: "" },
+    );
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const result = await service.executeRizinCommand({
+      path,
+      command: "iI",
+      max_output_bytes: 26,
+    });
+    if (!result.ok) throw result.error;
+    expect(run.mock.calls.map(([, , options]) => options?.maxBuffer)).toEqual([
+      26, 26,
+    ]);
+    expect(result.value.provider.version).toBeNull();
+    expect(result.value.parameters).toMatchObject({
+      provider_version_banner_truncated: false,
+      provider_identity: "assumed",
+      provider_version_probe: { exit_code: 0, output_truncated: true },
+    });
+  },
+);
+
 posix.each([
   ["beyond the budget", " ".repeat(2_049), true],
   ["within the budget", "  ", false],

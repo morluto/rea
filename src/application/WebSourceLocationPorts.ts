@@ -1,3 +1,4 @@
+import type { SourceMapLimitSelection } from "../domain/sourceMapLimits.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import type {
@@ -39,6 +40,7 @@ export interface WebSourceMapPort {
       readonly url: string;
       readonly position: WebSourceLocationInput["generated_position"];
       readonly decodeTimeoutMs?: number;
+      readonly limits?: SourceMapLimitSelection;
     },
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>>;

@@ -264,12 +264,30 @@ is retained in the classification evidence list.
 
 ### Resource admission
 
-The static provider admits regular input files up to 128 MiB before retaining
-their bytes. Reads remain bounded if a file grows after admission. Metadata,
-CIL decoding, and projected inspection records have a separate conservative
-64 MiB representation budget; shared heap strings are cached, but repeated
-output occurrences still consume that budget. These are inspection resource
-policies, not PE format limits or a hard bound on total V8 heap use.
+The static provider defaults to a 128 MiB eagerly retained PE snapshot and a
+separate conservative 64 MiB budget for metadata, CIL decoding and projected
+inspection records. All three static inspection tools accept
+`max_snapshot_bytes` and `max_metadata_representation_bytes` as positive safe
+integers in bytes. CLI inspection and path comparison expose
+`--max-snapshot-bytes` and `--max-metadata-representation-bytes`. An omitted
+value keeps its default; explicit values apply to that call without a restart.
+
+Snapshot refusal names its selected byte budget and tells the caller to raise
+it for the same complete file. Representation exhaustion retains partial or
+unavailable coverage and names the selected budget in its `resource-limit`
+issue; raise that budget on the next inspection, or select fewer `type_names`
+for members. For example:
+
+```bash
+rea inspect-managed-members /absolute/path/Assembly.dll --max-snapshot-bytes 268435456 --max-metadata-representation-bytes 134217728
+```
+
+Reads remain bounded if a file grows after admission. A cached snapshot is
+rechecked against the current call's snapshot allowance and on-disk digest.
+Shared heap strings are cached, but repeated output occurrences still consume
+the representation budget. These are per-call resource policies, not PE format
+limits or a bound on total V8 heap use. Raising one does not raise the other,
+transport limits or available host memory.
 
 Path-based member comparison uses the same per-input snapshot policy and
 inspects its two selected paths sequentially, retaining each inspection rather
@@ -326,7 +344,7 @@ original `resource-limit` coordinate. It does not return partially admitted
 member collections: empty fields, methods, references and edges are unexamined,
 not proof of absence; exported types, user strings and signature-resolution
 attestation remain null. Summary and retained pages keep this partial coverage.
-The capacity limit is unchanged. If metadata or the type inventory itself cannot
+The selected capacity applies to the metadata and member projection together. If metadata or the type inventory itself cannot
 be admitted, the result remains unavailable.
 
 Use the returned `types[].full_name` values to select declaring types before

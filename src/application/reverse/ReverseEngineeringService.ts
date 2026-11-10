@@ -29,6 +29,8 @@ import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+  DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+  MAX_REVERSE_COMMAND_OUTPUT_BYTES,
   MAX_REVERSE_COMMAND_TIMEOUT_MS,
   objdumpInputSchema,
   type ProviderToolIdentification,
@@ -102,10 +104,16 @@ interface CommandLaunchOutcome {
   succeeded: number;
 }
 
-const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
-export const REVERSE_COMMAND_OUTPUT_LIMITATION = `REA stopped collecting output at its ${String(MAX_COMBINED_OUTPUT_BYTES)}-byte cap and requested termination of the provider process; the captured stdout and stderr are a prefix and command completion is unknown. Narrow the command or page its output.`;
-// Eight concurrent captures bound retained provider output to 128 MiB.
+const reverseCommandOutputLimitation = (
+  bytes: number,
+  source: "default" | "request",
+): string =>
+  `REA stopped collecting output at max_output_bytes=${String(bytes)} bytes (source ${source}, default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)}, range 1..${String(MAX_REVERSE_COMMAND_OUTPUT_BYTES)}) and requested termination of the provider process; captured stdout and stderr are a prefix and command completion is unknown. Narrow or page the provider command, or increase max_output_bytes (--max-output-bytes on the CLI) for the next call; no restart is required. Confirm command effects and cleanup before deciding whether it is safe to repeat. Client receive limits are separate.`;
+// Bound simultaneous provider process families independently of output admission.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
+const MAX_ACTIVE_CAPTURE_BYTES =
+  MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS *
+  DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES;
 
 export interface ReverseEngineeringServiceOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
@@ -178,6 +186,17 @@ export const resolveRizinCommandRequest = (
       );
 };
 
+/** One accepted command, including the controls retained through admission and cleanup. */
+interface ReverseCommandObservation {
+  readonly operation: ReverseEngineeringOperation;
+  readonly profile: ReverseEngineeringProviderCommand;
+  readonly path: string | undefined;
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly signal: AbortSignal | undefined;
+  readonly timeoutMs: number;
+  readonly outputBudgetBytes: number;
+}
+
 /** Shared application workflow for caller-selected local analysis commands. */
 export class ReverseEngineeringService {
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -198,6 +217,7 @@ export class ReverseEngineeringService {
     AbortController,
     Promise<Result<Evidence, AnalysisError>>
   >();
+  #reservedOutputBytes = 0;
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #dispatched = 0;
@@ -337,6 +357,7 @@ export class ReverseEngineeringService {
     const {
       detail,
       command_timeout_ms: commandTimeoutMs,
+      max_output_bytes: maxOutputBytes,
       ...input
     } = parsed.value;
     if (detail === "summary") {
@@ -354,14 +375,17 @@ export class ReverseEngineeringService {
     } else parameters = input;
     if (commandTimeoutMs !== undefined)
       parameters = { ...parameters, command_timeout_ms: commandTimeoutMs };
-    const observed = await this.#observe(
-      "inspect_with_objdump",
-      command,
-      input.operation === "architectures" ? undefined : input.path,
+    if (maxOutputBytes !== undefined)
+      parameters = { ...parameters, max_output_bytes: maxOutputBytes };
+    const observed = await this.#observe({
+      operation: "inspect_with_objdump",
+      profile: command,
+      path: input.operation === "architectures" ? undefined : input.path,
       parameters,
-      options.signal,
-      commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-    );
+      signal: options.signal,
+      timeoutMs: commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+      outputBudgetBytes: maxOutputBytes ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+    });
     return observed.ok && detail === "summary"
       ? summarizeRetainedAnalysis(observed.value, retention)
       : observed;
@@ -382,26 +406,27 @@ export class ReverseEngineeringService {
     request: RizinInput,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<Result<Evidence, AnalysisError>> {
-    const { command_timeout_ms: commandTimeoutMs, ...input } = request;
+    const {
+      command_timeout_ms: commandTimeoutMs,
+      max_output_bytes: maxOutputBytes,
+      ...input
+    } = request;
     const command = this.#commands.rizin(input);
-    return this.#observe(
-      "execute_rizin_command",
-      command,
-      input.path,
-      commandTimeoutMs === undefined ? input : request,
-      options.signal,
-      commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-    );
+    return this.#observe({
+      operation: "execute_rizin_command",
+      profile: command,
+      path: input.path,
+      parameters: request,
+      signal: options.signal,
+      timeoutMs: commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+      outputBudgetBytes: maxOutputBytes ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+    });
   }
 
   #observe(
-    operation: ReverseEngineeringOperation,
-    profile: ReverseEngineeringProviderCommand,
-    path: string | undefined,
-    parameters: Readonly<Record<string, JsonValue>>,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
+    request: ReverseCommandObservation,
   ): Promise<Result<Evidence, AnalysisError>> {
+    const { operation, signal, outputBudgetBytes } = request;
     if (signal?.aborted)
       return Promise.resolve(
         err(new AnalysisCancelledError(operation, { cause: signal.reason })),
@@ -417,21 +442,26 @@ export class ReverseEngineeringService {
       );
     if (
       this.#activeOperations.size >=
-      MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS
+        MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS ||
+      this.#reservedOutputBytes + outputBudgetBytes > MAX_ACTIVE_CAPTURE_BYTES
     )
       return Promise.resolve(
         err(
           new AnalysisResourceConstraintError(
             operation,
             "transport",
-            `Concurrent reverse-engineering operation capacity reached (${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations). This release has no runtime override.`,
+            `Reverse-engineering capture capacity reached (${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations or ${String(MAX_ACTIVE_CAPTURE_BYTES)} reserved output bytes).`,
             {
               max_concurrent_operations:
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
+              max_active_capture_bytes: MAX_ACTIVE_CAPTURE_BYTES,
+              reserved_output_bytes: this.#reservedOutputBytes,
+              requested_output_bytes: outputBudgetBytes,
             },
             {
-              remediationAction: `Wait for an active objdump or rizin command to finish, then retry. This capacity of ${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations has no runtime override, and command_timeout_ms does not raise it.`,
+              retryable: true,
+              remediationAction: `Wait for active objdump or rizin work to finish, then retry, or lower max_output_bytes to fit the ${String(MAX_ACTIVE_CAPTURE_BYTES)}-byte aggregate capture admission. This live capacity has no runtime override; command_timeout_ms does not raise it. No restart is required.`,
             },
           ),
         ),
@@ -446,30 +476,32 @@ export class ReverseEngineeringService {
       signal === undefined || signal instanceof AbortSignal
         ? controller.signal
         : signal;
-    const running = this.#observeProvider(
-      operation,
-      profile,
-      path,
-      parameters,
-      operationSignal,
-      timeoutMs,
-    );
+    this.#reservedOutputBytes += outputBudgetBytes;
+    const running = this.#observeProvider({
+      ...request,
+      signal: operationSignal,
+    });
     const tracked = running.finally(() => {
       signal?.removeEventListener("abort", relayAbort);
       this.#activeOperations.delete(controller);
+      this.#reservedOutputBytes -= outputBudgetBytes;
     });
     this.#activeOperations.set(controller, tracked);
     return tracked;
   }
 
   async #observeProvider(
-    operation: ReverseEngineeringOperation,
-    profile: ReverseEngineeringProviderCommand,
-    path: string | undefined,
-    parameters: Readonly<Record<string, JsonValue>>,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
+    request: ReverseCommandObservation,
   ): Promise<Result<Evidence, AnalysisError>> {
+    const {
+      operation,
+      profile,
+      path,
+      parameters,
+      signal,
+      timeoutMs,
+      outputBudgetBytes,
+    } = request;
     const { executable: command, arguments: args } = profile;
     const hash = (file: string): Promise<string> =>
       this.#digest(file, { signal, timeoutMs, stat: this.#stat });
@@ -560,6 +592,7 @@ export class ReverseEngineeringService {
       environment,
       signal,
       timeoutMs,
+      outputBudgetBytes,
       hash,
     );
     // An error before Evidence exists keeps the executable the caller
@@ -596,7 +629,7 @@ export class ReverseEngineeringService {
         signal,
         timeout: timeoutMs,
         stopSignal: "SIGTERM",
-        maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
+        maxBuffer: outputBudgetBytes,
       });
       stdout = output.stdout;
       stderr = output.stderr;
@@ -774,8 +807,6 @@ export class ReverseEngineeringService {
               : { cleanupOwner: darwinFailure.cleanupOwner }),
           });
         } else {
-          const provider =
-            operation === "inspect_with_objdump" ? "objdump" : "rizin";
           const setting =
             operation === "inspect_with_objdump"
               ? "REA_OBJDUMP_COMMAND"
@@ -1061,11 +1092,15 @@ export class ReverseEngineeringService {
         : digestAfter === null || digest === undefined
           ? null
           : digestAfter !== digest;
+    const outputBudgetSource =
+      parameters.max_output_bytes === undefined ? "default" : "request";
     const result = {
       stdout,
       stderr,
       exit_code: exitCode,
       signal: signalName,
+      output_budget_bytes: outputBudgetBytes,
+      output_budget_source: outputBudgetSource,
       output_truncated: outputTruncated,
       completion_status: completionStatus,
       artifact_sha256_after: absolutePath === undefined ? null : digestAfter,
@@ -1108,7 +1143,12 @@ export class ReverseEngineeringService {
           ]
         : []),
       ...(outputLimitReached
-        ? [REVERSE_COMMAND_OUTPUT_LIMITATION]
+        ? [
+            reverseCommandOutputLimitation(
+              outputBudgetBytes,
+              outputBudgetSource,
+            ),
+          ]
         : outputTruncated
           ? [
               "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
@@ -1157,6 +1197,9 @@ export class ReverseEngineeringService {
           ...(absolutePath === undefined
             ? {
                 operation: "architectures",
+                ...(typeof parameters.max_output_bytes === "number"
+                  ? { max_output_bytes: parameters.max_output_bytes }
+                  : {}),
                 ...(typeof parameters.command_timeout_ms === "number"
                   ? { command_timeout_ms: parameters.command_timeout_ms }
                   : {}),
@@ -1204,6 +1247,7 @@ export class ReverseEngineeringService {
     environment: NodeJS.ProcessEnv,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    outputBudgetBytes: number,
     hash: (file: string) => Promise<string>,
   ): Promise<Result<ProviderIdentification, AnalysisError>> {
     const probe = profile.versionProbe;
@@ -1357,6 +1401,7 @@ export class ReverseEngineeringService {
       environment,
       signal,
       timeoutMs,
+      outputBudgetBytes,
     );
     // A probe that ends the call keeps the path and digest it ran from.
     if (!outcome.ok) return err(outcome.error.retainDiagnostics(parameters));
@@ -1421,7 +1466,8 @@ export class ReverseEngineeringService {
 
   /**
    * Run one version probe under the call's deadline and cancellation. Its
-   * output stays separate from the command's; a failed probe keeps bounded
+   * output stays separate from the command's but runs, before the command,
+   * within the output bytes the call reserved; a failed probe keeps bounded
    * diagnostics.
    */
   async #runVersionProbe(
@@ -1431,6 +1477,7 @@ export class ReverseEngineeringService {
     environment: NodeJS.ProcessEnv,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    outputBudgetBytes: number,
   ): Promise<Result<VersionProbeOutcome, AnalysisError>> {
     try {
       const output = await this.#run(executable, probe.arguments, {
@@ -1438,7 +1485,7 @@ export class ReverseEngineeringService {
         signal,
         timeout: timeoutMs,
         stopSignal: "SIGTERM",
-        maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
+        maxBuffer: outputBudgetBytes,
       });
       // Replacement characters could read as a version, and a banner accepted
       // beside undecodable stderr would drop the probe's diagnostics, so output
@@ -1457,10 +1504,13 @@ export class ReverseEngineeringService {
         output.stdout.split(/\r?\n/u, 1)[0] ?? "",
         VERSION_PROBE_TEXT_BYTES,
       );
-      // A cut banner identifies nothing: the cut could fall inside its version.
-      const identification = banner.truncated
-        ? undefined
-        : probe.identify(banner.text.trim());
+      // A cut banner identifies nothing: the cut could fall inside its
+      // version, whether the record's budget or the call's output allowance
+      // cut it.
+      const identification =
+        banner.truncated || output.outputTruncated === true
+          ? undefined
+          : probe.identify(banner.text.trim());
       return ok(
         identification === undefined
           ? {
@@ -1764,7 +1814,8 @@ const runOwnedCommandOutput =
         },
         {
           timeoutMs: options.timeout ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-          diagnosticBytes: MAX_COMBINED_OUTPUT_BYTES,
+          diagnosticBytes:
+            options.maxBuffer ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
           acceptNonZeroExit: true,
         },
         { signal: options.signal },
@@ -1930,7 +1981,7 @@ const reverseCommandTimeoutGuidance = (
     timeoutMs < MAX_REVERSE_COMMAND_TIMEOUT_MS
       ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
       : `command_timeout_ms is already at the maximum ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)} ms; no higher deadline is supported.`
-  } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+  } The new value applies on the next call; no restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes). Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
 /** The limitation for a post-run hash that read the artifact and failed. */
