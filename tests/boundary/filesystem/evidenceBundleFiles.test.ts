@@ -297,7 +297,22 @@ it("retains a malformed artifact parent and refuses publication through both del
       evidenceOutput: join(root, "cli.json"),
     },
   );
-  expect(cli).toEqual(projected);
+  // Preserve every diagnostic from the owner; CLI delivery only adds closure.
+  expect(cli).toMatchObject(projected);
+  expect(cli).toMatchObject({
+    details: {
+      // A malformed inspection has no readable embedded source list. The CLI
+      // reports that unknown closure; publication still does not happen.
+      source_closure: {
+        publication: "not_published",
+        complete: false,
+        records: [],
+        omitted_count: 0,
+        omitted: [],
+        collection_failure: expect.any(String),
+      },
+    },
+  });
   expect(JSON.stringify(projected)).toContain(evidence.evidence_id);
   expect(await readdir(root)).toEqual([]);
 });
