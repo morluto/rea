@@ -45,15 +45,6 @@ export const registerAdbCommands = (
   );
   const packageName = adbInputSchemas.pull_adb_package.shape.package;
 
-  const packageName = z
-    .string()
-    .min(1)
-    .max(256)
-    .regex(
-      /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/u,
-      "Package name must be dot-separated Java identifiers",
-    );
-
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:
       "Inspect the caller-selected adb client without contacting devices",
@@ -374,7 +365,11 @@ export const registerAdbCommands = (
           );
         extras.push({
           type: entry.slice(0, first) as
-            "string" | "boolean" | "int" | "long" | "float",
+            | "string"
+            | "boolean"
+            | "int"
+            | "long"
+            | "float",
           key: entry.slice(first + 1, second),
           value: entry.slice(second + 1),
         });
