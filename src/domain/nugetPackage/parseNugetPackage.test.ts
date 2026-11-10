@@ -685,6 +685,27 @@ describe("parseNugetPackage: name uncertainty and read allowances", () => {
     ]);
   });
 
+  it("tells two nuspec members apart by their stored spelling", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("Example.Package.nuspec", {
+          text: NUSPEC,
+          sourcePath: "./Example.Package.nuspec",
+        }),
+      ]),
+    );
+    // The reader rewrote the second name; the archive still stores two members,
+    // so the published paths and identities must not collapse into one.
+    expect(package_.nuspecs.map((entry) => entry.path)).toEqual([
+      "Example.Package.nuspec",
+      "./Example.Package.nuspec",
+    ]);
+    expect(new Set(package_.nuspecs.map((entry) => entry.nuspec_id)).size).toBe(
+      2,
+    );
+  });
+
   it("classifies a backslash current-directory prefix after separator folding", () => {
     const package_ = parsed(
       parse([

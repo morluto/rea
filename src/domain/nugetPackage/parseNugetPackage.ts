@@ -313,6 +313,7 @@ const dependencyGroupsOf = (
 
 const nuspecOf = (
   member: NugetArchiveMember,
+  occurrence: number,
   nuspecs: NugetNuspec[],
   budget: DiagnosticBudget,
 ): void => {
@@ -379,8 +380,17 @@ const nuspecOf = (
     return;
   }
   nuspecs.push({
-    nuspec_id: digest("nuspec", member.path, source),
-    path: member.path,
+    // Identity and the published path follow the stored spelling plus the
+    // occurrence, exactly as `assetOf` does: `./Example.nuspec` and
+    // `Example.nuspec` are two archive members, and duplicate spellings are
+    // two occurrences of one.
+    nuspec_id: digest(
+      "nuspec",
+      member.path,
+      member.sourcePath ?? "",
+      occurrence,
+    ),
+    path: member.sourcePath ?? member.path,
     bytes: member.bytes ?? Buffer.byteLength(source, "utf8"),
     id: textOf(metadata, "id"),
     version: textOf(metadata, "version"),
@@ -492,14 +502,15 @@ export const parseNugetPackage = (
         "Unix symlink members are inventoried without following their target.",
       );
     }
+    const occurrence = countedPaths.get(member.path) ?? 0;
     if (isNuspecPath(path)) {
       // Count candidates before parsing: a second nuspec that fails to parse
       // is still a second nuspec, and rejecting it must not erase the fact.
       nuspecMembers += 1;
-      nuspecOf(member, nuspecs, budget);
+      nuspecOf(member, occurrence, nuspecs, budget);
     }
-    assets.push(assetOf(member, countedPaths.get(member.path) ?? 0));
-    countedPaths.set(member.path, (countedPaths.get(member.path) ?? 0) + 1);
+    assets.push(assetOf(member, occurrence));
+    countedPaths.set(member.path, occurrence + 1);
     admitted += 1;
   }
 
