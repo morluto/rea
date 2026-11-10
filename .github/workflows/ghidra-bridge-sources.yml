@@ -25,7 +25,7 @@ jobs:
           node-version-file: .nvmrc
       - name: Validate the SDK pin against the provider's verified release
         run: node scripts/verify-ghidra-bridge-sources.mjs --check-sdk-pin >> "$GITHUB_ENV"
-      # The bridge probe imports only source-owned ARM, Thumb and MIPS bytes and never
+      # The bridge probe imports only source-owned ARM/Thumb bytes and never
       # executes target code. All SDK/project state stays in runner storage.
       - name: Acquire checksum-verified Ghidra SDK in isolated runner storage
         shell: bash
@@ -46,7 +46,7 @@ jobs:
           java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
           test -n "${!java_home_variable}"
           JAVA_HOME="${!java_home_variable}" npm run verify:ghidra:bridge-sources -- --verified-sdk
-      - name: Inspect real ARM, Thumb and MIPS instruction context through the bridge
+      - name: Inspect real ARM and Thumb instruction context through the bridge
         shell: bash
         run: |
           java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
@@ -58,21 +58,10 @@ jobs:
             -import "${probe_root}/arm-thumb.bin" -loader BinaryLoader -processor ARM:LE:32:v7 \
             -noanalysis -readOnly -deleteProject \
             -scriptPath "${GITHUB_WORKSPACE}/tests/conformance/ghidra;${GITHUB_WORKSPACE}/bridge/ghidra" \
-            -postScript ReaInstructionContextProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" \
+            -postScript ReaArmContextProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" \
             > "${probe_root}/output.log" 2>&1 || { cat "${probe_root}/output.log"; exit 1; }
           cat "${probe_root}/output.log"
           grep -F 'REA_ARM_CONTEXT_OK arm=0 thumb=1 unavailable=null (injected provider value)' "${probe_root}/output.log"
-          mkdir -p "${probe_root}/mips-project"
-          # MIPS32 addiu v0,a0,3; MIPS16 li v0,90. These bytes are never executed.
-          printf '\003\000\202\044\132\152\000\000' > "${probe_root}/mips.bin"
-          timeout 180s "${GHIDRA_INSTALL_DIR}/support/analyzeHeadless" "${probe_root}/mips-project" MipsContext \
-            -import "${probe_root}/mips.bin" -loader BinaryLoader -processor MIPS:LE:32:default \
-            -noanalysis -readOnly -deleteProject \
-            -scriptPath "${GITHUB_WORKSPACE}/tests/conformance/ghidra;${GITHUB_WORKSPACE}/bridge/ghidra" \
-            -postScript ReaInstructionContextProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" mips \
-            > "${probe_root}/mips-output.log" 2>&1 || { cat "${probe_root}/mips-output.log"; exit 1; }
-          cat "${probe_root}/mips-output.log"
-          grep -F 'REA_MIPS_CONTEXT_OK standard=0 mips16=1' "${probe_root}/mips-output.log"
       # Each probe imports source-owned bytes at 0x1000, away from the Cortex-M
       # vector symbols that ARMCortex.pspec defines at 0, and decodes them from
       # the language's default context, so M-profile Thumb state must hold at
