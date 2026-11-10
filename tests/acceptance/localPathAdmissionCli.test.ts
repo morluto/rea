@@ -83,6 +83,7 @@ cliTest(
         arguments: ["export-desktop-application", "capture", ""],
         field: "directory",
       },
+      { arguments: ["doctor", "--target", ""], field: "target" },
     ];
     for (const selection of selections) {
       const result = await runFileCli(cli, {

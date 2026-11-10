@@ -17,6 +17,7 @@ import {
   toolFamiliesConstraint,
 } from "../config/mcpToolFamilies.js";
 import { isUpdateFailure } from "../application/UpdateFailure.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import {
   confirmInteractiveSetup,
   renderSetupDryRun,
@@ -135,7 +136,9 @@ const registerDoctorCommand = (
   cli.command(CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
-      target: z.string().optional().describe("Optional app path to check"),
+      target: localPathStringSchema
+        .optional()
+        .describe("Optional app path to check"),
       client: z
         .array(supportedClientSchema)
         .default([])
