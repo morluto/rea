@@ -1,10 +1,14 @@
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -70,9 +74,10 @@ export class RustBinaryProvider implements RustBinaryPort {
     input: InspectRustBinaryInput,
     options?: ExecutionOptions,
   ): Promise<Result<RustBinary, AnalysisError>> {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           RUST_BINARY_INPUT_BYTES,
           options?.signal,
@@ -122,7 +127,7 @@ export class RustBinaryProvider implements RustBinaryPort {
         return ok(parsed.data);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path));
+      return err(failureFor(cause, input.path, snapshot));
     }
   }
 }
@@ -161,12 +166,16 @@ const outputLimit = (path: string) =>
     fixedAllowanceOptions("The Rust complete-report allowance", "report"),
   );
 
+/** Resource-guard guidance delivered with every Rust inspection report. */
+export const RUST_RESOURCE_GUARD_LIMITATION =
+  "Resource guards bound the selected file to 256 MiB, the compressed dependency stream to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.";
+
 const limitationsFor = (
   image: ReturnType<typeof readRustBinaryImage>,
 ): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
   "Only the .dep-v0 dependency section and read-only compiler path strings are inspected. Functions, types, and runtime behavior are not recovered.",
-  "Resource guards bound the selected file to 256 MiB, a dependency section to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the section size, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.",
+  RUST_RESOURCE_GUARD_LIMITATION,
   ...(image.section_names_limitation === undefined
     ? []
     : [image.section_names_limitation]),
@@ -271,7 +280,11 @@ const failureForPrimary = (
   return artifactFailure(facts, path);
 };
 
-const failureFor = (cause: unknown, path: string): AnalysisError => {
+const failureFor = (
+  cause: unknown,
+  path: string,
+  snapshot?: StableArtifactSnapshot,
+): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
   return projectStableArtifactFailure(
     cause,
@@ -279,6 +292,7 @@ const failureFor = (cause: unknown, path: string): AnalysisError => {
     path,
     RUST_BINARY_PROVIDER_IDENTITY.id,
     OPERATION,
+    snapshot,
   );
 };
 
@@ -339,9 +353,11 @@ const artifactReaderFailure = (
       },
     );
   if (cause.reason === "path")
-    return new AnalysisInputError(OPERATION, { cause }, [
-      { path: ["path"], reason: "invalid_format", message: cause.message },
-    ]);
+    return new AnalysisInputError(
+      OPERATION,
+      { cause, ...stableArtifactInputRecovery(cause) },
+      [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+    );
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: { path, reason: cause.message },

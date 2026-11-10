@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   cdpCleanupGraceExpired,
   cdpCommandDeadlineRecovery,
+  cdpDiscoveryTimeoutRecovery,
 } from "./browserDeadline.js";
 import { listBrowserTargetsInputSchema } from "./browserObservation.js";
 import {
@@ -47,6 +48,7 @@ describe("web deadline controls", () => {
     expect(parsed.total_analysis_timeout_ms).toBeUndefined();
     expect(parsed.max_heap_mb).toBeUndefined();
     expect(parsed.source_map_fetch_timeout_ms).toBeUndefined();
+    expect(parsed.discovery_timeout_ms).toBeUndefined();
     expect(parsed.command_timeout_ms).toBeUndefined();
   });
 
@@ -54,9 +56,22 @@ describe("web deadline controls", () => {
     expect(
       analyzeWebBundleInputSchema.safeParse({
         ...bundle,
+        discovery_timeout_ms: 2_147_483_647,
         command_timeout_ms: 2_147_483_647,
       }).success,
     ).toBe(true);
+    expect(
+      listBrowserTargetsInputSchema.safeParse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        discovery_timeout_ms: 15_000,
+      }).success,
+    ).toBe(true);
+    expect(
+      listBrowserTargetsInputSchema.safeParse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        discovery_timeout_ms: 0,
+      }).success,
+    ).toBe(false);
     expect(
       listBrowserTargetsInputSchema.safeParse({
         cdp_endpoint: "http://127.0.0.1:9222",
@@ -108,6 +123,35 @@ describe("web deadline controls", () => {
     expect(inspector.userMessage).not.toContain("command_timeout_ms");
     expect(inspector.remediationAction).not.toContain("--command-timeout-ms");
     expect(inspector.remediationAction).toContain("no runtime override");
+    const selectableDiscovery = cdpDiscoveryTimeoutRecovery(
+      "inspect_web_page",
+      15_000,
+      "browser-socket",
+      "The 67108864-byte browser-socket message budget",
+    );
+    expect(selectableDiscovery.userMessage).toContain(
+      "15000 ms discovery_timeout_ms",
+    );
+    expect(selectableDiscovery.remediationAction).toContain(
+      "Increase discovery_timeout_ms above 15000",
+    );
+    expect(selectableDiscovery.remediationAction).toContain(
+      "--discovery-timeout-ms",
+    );
+    expect(selectableDiscovery.remediationAction).toContain(
+      "command_timeout_ms does not raise it",
+    );
+    const fixedDiscovery = cdpDiscoveryTimeoutRecovery(
+      "observe_web_execution",
+      10_000,
+      "response",
+      "The 8388608-byte discovery document budget",
+    );
+    expect(fixedDiscovery.userMessage).not.toContain("discovery_timeout_ms");
+    expect(fixedDiscovery.remediationAction).not.toContain(
+      "--discovery-timeout-ms",
+    );
+    expect(fixedDiscovery.remediationAction).toContain("no runtime override");
   });
 });
 

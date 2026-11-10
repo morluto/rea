@@ -4,6 +4,7 @@ import type {
 } from "./managedMemberComparison.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
 import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
+import { appendAll } from "../arrayAppend.js";
 
 interface ComparisonCoverageInput {
   readonly left: ManagedMemberInspection;
@@ -131,6 +132,14 @@ const sideCoverageStatus = (
       ? "complete"
       : "partial";
 
+/** Copy the source's typed capacity facts without retaining unrelated issue inventories. */
+const resourceLimits = (
+  result: ManagedMemberInspection,
+): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
+  result.coverage.issues.flatMap(({ code, scope, detail, offset }) =>
+    code === "resource-limit" ? [{ code, scope, detail, offset }] : [],
+  );
+
 export const sideManifest = (
   side: ManagedMemberComparisonSide,
 ): ManagedMemberComparisonResult["left"] => ({
@@ -141,6 +150,7 @@ export const sideManifest = (
   metadata_status: side.result.metadata.status,
   methods_total: side.result.methods.length,
   fields_total: side.result.fields.length,
+  resource_limits: resourceLimits(side.result),
 });
 
 export const buildComparisonSummary = (
@@ -179,6 +189,27 @@ export const buildComparisonMatching = (
     ({ match }) => match.status === "unmatched",
   ).length,
 });
+
+/** Carry each side's representation-budget diagnostic and its recovery. */
+const capacityLimitations = (
+  left: ManagedMemberInspection,
+  right: ManagedMemberInspection,
+): string[] => {
+  const exceeded = new Set(
+    (["left", "right"] as const).flatMap((side) =>
+      resourceLimits(side === "left" ? left : right).map(
+        ({ scope, detail }) =>
+          `The ${side} managed member observation exceeded capacity at ${scope}: ${detail}. Its member collections are not examined to completion, so empty or missing members do not establish absence, addition or removal.`,
+      ),
+    ),
+  );
+  return exceeded.size === 0
+    ? []
+    : [
+        ...exceeded,
+        "Compare a smaller selection by inspecting both sides with the same type_names, or by passing --type to CLI compare-managed-members; a single selected type can still exceed capacity.",
+      ];
+};
 
 export const comparisonLimitations = (
   left: ManagedMemberInspection,
@@ -220,6 +251,7 @@ export const comparisonLimitations = (
     );
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");
+  appendAll(limitations, capacityLimitations(left, right));
   if (selectionAgreement === "different")
     limitations.push(
       "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",

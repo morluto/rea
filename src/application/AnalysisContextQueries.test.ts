@@ -8,6 +8,7 @@ import {
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
+  type AnalysisExecution,
 } from "./AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -21,7 +22,6 @@ import {
   primaryAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import type { AnalysisExecution } from "./AnalysisProvider.js";
 import type { Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";

@@ -79,7 +79,11 @@ const output = {
   windows: capture.windows,
   verified:
     capture.coverage.status === "partial_attach" &&
-    capture.actions.every(({ status }) => status === "completed") &&
+    capture.actions.length === input.actions.length &&
+    capture.actions.every(
+      ({ step_id, status }, index) =>
+        step_id === input.actions[index].step_id && status === "completed",
+    ) &&
     capture.actions.some(
       ({ kind, window_index }) =>
         kind === "renderer-reload" && window_index === 1,

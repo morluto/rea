@@ -201,7 +201,7 @@ test("traces a procedure found only by its alias through the composed feature tr
 test("omits a data entry an alias names while keeping the code entry that shares it", async ({
   mcp,
 }) => {
-  const { search, observe } = await aliasSession(
+  const { client, search, observe } = await aliasSession(
     mcp,
     "rea-kuna-alias-macho-",
     {
@@ -234,4 +234,52 @@ test("omits a data entry an alias names while keeping the code entry that shares
     ),
   );
   expect(await search({ pattern: "global_count" })).toEqual([]);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "procedure_address",
+      arguments: { procedure: "global_count" },
+    }),
+  );
+  expect(error.recovery).toBeUndefined();
+  expect(error.remediation.action).toContain("address_name");
+});
+
+test("reports lookup failures with recovery for the selected target, not the input schema", async ({
+  mcp,
+}) => {
+  const { client } = await aliasSession(mcp, "rea-kuna-lookup-recovery-", {
+    functions: VERSIONED,
+  });
+  for (const [procedure, guidance] of [
+    ["0x1335", "list_procedures"],
+    ["absent_name", "search_procedures"],
+    ["audit_transform", "exact address"],
+  ]) {
+    const response = await client.callTool({
+      name: "procedure_address",
+      arguments: { procedure },
+    });
+    const { error } = parseMcpToolError(response);
+    expect(error.code).toBe("invalid_request");
+    expect(error.recovery).toBeUndefined();
+    expect(error.remediation.action).toContain(guidance);
+    expect(error.remediation.action).not.toContain("input schema");
+  }
+  const assemblyError = parseMcpToolError(
+    await client.callTool({
+      name: "procedure_assembly",
+      arguments: { procedure: "0x1335" },
+    }),
+  ).error;
+  expect(assemblyError.remediation.action).toContain("Kuna procedure");
+  expect(assemblyError.remediation.action).not.toContain("decompile");
+  const missingAddress = parseMcpToolError(
+    await client.callTool({
+      name: "xrefs",
+      arguments: { address: "absent_name" },
+    }),
+  ).error;
+  expect(missingAddress.recovery).toBeUndefined();
+  expect(missingAddress.message).toContain("no inventory entry named");
+  expect(missingAddress.remediation.action).toContain("address");
 });

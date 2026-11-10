@@ -232,7 +232,6 @@ it.each(["api-surface", "environment-manifest", "environment-state"])(
       },
       analysisViewRequestSchema.parse({ kind }),
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected parent admission to fail");
     expect(result.error.cause).toMatchObject({ name: "ZodError" });
     expect(projectAnalysisError(result.error)).toMatchObject({

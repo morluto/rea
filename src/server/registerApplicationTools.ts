@@ -1,8 +1,11 @@
+import { registerPlaywrightTraceTool } from "./registerApplicationTools/playwrightTrace.js";
+import { registerApiContractTool } from "./registerApplicationTools/apiContract.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import { registerTraceFeatureTool } from "./registerApplicationTools/traceFeature.js";
 import { registerTraceJavaScriptSemanticsTool } from "./registerApplicationTools/traceSemantics.js";
 import { registerCompareApplicationVersionsTool } from "./registerApplicationTools/compareVersions.js";
+import { registerCompareEndpointsTool } from "./registerApplicationTools/compareEndpoints.js";
 import { registerCompareSourceToBundleTool } from "./registerApplicationTools/compareSourceToBundle.js";
 import { registerCompareJavaScriptExportShapesTool } from "./registerApplicationTools/compareExportShapes.js";
 import { registerCoverageTools } from "./registerApplicationTools/coverage.js";
@@ -23,6 +26,9 @@ export const registerApplicationTools = (
   registerTraceFeatureTool(server, options);
   registerTraceJavaScriptSemanticsTool(server, options);
   registerCompareApplicationVersionsTool(server, options);
+  registerCompareEndpointsTool(server, options);
+  registerApiContractTool(server, options);
+  registerPlaywrightTraceTool(server, options);
   registerCompareSourceToBundleTool(server, options);
   registerCompareJavaScriptExportShapesTool(server, options);
   registerReconstructionObligationLedgerTool(server, options);

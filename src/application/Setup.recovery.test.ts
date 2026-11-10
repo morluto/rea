@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
+import { discoverSetupState } from "./SetupPlan.js";
+import { macHopperInstallDisclosure } from "./MacHopper.js";
 import {
   parseLinuxDistribution,
   type LinuxDistribution,
@@ -13,6 +16,8 @@ import {
 import type { SetupProgressEvent } from "./SetupTypes.js";
 import { setupCleanupError, SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err, ok } from "../domain/result.js";
+import { SetupSkillInstallError } from "./SetupSkill.js";
 
 describe("setup workflow", () => {
   it("rejects Node 25 before applying setup actions", async () => {
@@ -690,6 +695,8 @@ describe("setup Hopper install eligibility", () => {
     { version: "14.", installs: false },
     { version: "14.0\n", installs: false },
     { version: "99999999999999999", installs: false },
+    // REA's own floor admits these; the selected release's minimum is
+    // compared by the installer, which this recording host replaces.
     { version: "12", installs: true },
     { version: "12.0", installs: true },
   ])(
@@ -707,6 +714,35 @@ describe("setup Hopper install eligibility", () => {
           status: "needs_human",
           remediation: "Upgrade to macOS 12 or newer.",
         });
+    },
+  );
+
+  it.each(["12.0", "12.3", "12.4", "14.5"])(
+    "leaves Hopper support on macOS %s unknown until the release minimum is read",
+    async (version) => {
+      const host = new FakeSetupHost("darwin");
+      host.version = version;
+
+      const discovery = await discoverSetupState({
+        host,
+        providerConfigured: false,
+        forceHopperInstall: false,
+        proposeHopper: true,
+        initialDoctor: await host.doctor(),
+      });
+      expect(discovery).toMatchObject({
+        hopperInstall: { supported: "unknown" },
+        installHopper: true,
+      });
+      const plan = await runSetup(
+        { ...options(false, true), dryRun: true },
+        host,
+      );
+      // The installer owns the disclosed check; its refusal is tested there.
+      expect(
+        plan.plannedActions.find(({ kind }) => kind === "install_hopper")
+          ?.detail,
+      ).toBe(macHopperInstallDisclosure.detail);
     },
   );
 });
@@ -781,3 +817,244 @@ it.each(["return", "throw"] as const)(
     expect(failure.hasCleanupOwner).toBe(false);
   },
 );
+
+describe("setup cancellation", () => {
+  it.each([
+    { status: "configured", backupPath: "/fixture/codex.bak" },
+    {
+      status: "failed",
+      reason: "rollback",
+      backupPath: "/fixture/codex.bak",
+      failure: {
+        kind: "restore",
+        path: "/fixture/codex.toml",
+        detail: "denied",
+      },
+    },
+  ] as const)(
+    "preserves completed client results after cancellation: $status",
+    async (completed) => {
+      const host = new FakeSetupHost();
+      host.hopper = "/Applications/Hopper";
+      host.clients = [{ name: "codex", configPath: "/fixture/codex.toml" }];
+      const controller = new AbortController();
+      const reason = new Error("cancel after client write");
+      host.configureClient = async () => {
+        controller.abort(reason);
+        return completed;
+      };
+      const failure = await runSetup(
+        {
+          ...options(true),
+          installSkill: false,
+          clientIds: ["codex"],
+          signal: controller.signal,
+        },
+        host,
+      ).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      expect(
+        projectAnalysisError(failure as AnalysisCancelledError),
+      ).toMatchObject({
+        code: "cancelled",
+        details: {
+          diagnostics: { setup_progress: { clients: { codex: completed } } },
+        },
+      });
+      if (completed.status === "configured")
+        expect((failure as AnalysisCancelledError).diagnostics).toMatchObject({
+          setup_progress: { appliedActions: ["configured_codex"] },
+        });
+    },
+  );
+
+  it.each([true, false])(
+    "preserves a completed skill result when cancellation arrives: success %s",
+    async (success) => {
+      const host = new FakeSetupHost();
+      host.hopper = "/Applications/Hopper";
+      const controller = new AbortController();
+      const reason = new Error("cancel after skill write");
+      const skillFailure = new SetupSkillInstallError({
+        path: "/fixture/skill",
+        stage: "write",
+        reason: "denied",
+        rollbackFailures: [
+          { path: "/fixture/skill", reason: "restore failed" },
+        ],
+        recoveryBackupPaths: ["/fixture/skill.backup"],
+        cause: new Error("denied"),
+      });
+      host.installSkill = async () => {
+        controller.abort(reason);
+        return success ? ok("installed") : err(skillFailure);
+      };
+      const failure = await runSetup(
+        {
+          ...options(true),
+          installSkill: true,
+          clientIds: [],
+          signal: controller.signal,
+        },
+        host,
+      ).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      expect((failure as AnalysisCancelledError).diagnostics).toMatchObject({
+        setup_progress: success
+          ? {
+              appliedActions: ["installed_skill"],
+              skill: { status: "installed" },
+            }
+          : {
+              skill: {
+                status: "failed",
+                path: "/fixture/skill",
+                reason: "denied",
+                rollbackFailures: [{ reason: "restore failed" }],
+                recoveryBackupPaths: ["/fixture/skill.backup"],
+              },
+            },
+      });
+    },
+  );
+});
+
+describe("setup cancellation during installation and cleanup", () => {
+  it("carries the caller's cancellation into the Hopper install", async () => {
+    const host = new FakeSetupHost("darwin");
+    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    const controller = new AbortController();
+    const reason = new Error("stop setup");
+    let received: AbortSignal | undefined;
+    host.installHopper = (_replaceExisting, signal?: AbortSignal) => {
+      received = signal;
+      controller.abort(reason);
+      return Promise.resolve({
+        status: "failed",
+        code: "setup_cancelled",
+        remediation: "Setup was cancelled.",
+      });
+    };
+
+    const failure: unknown = await runSetup(
+      {
+        ...options(true, true),
+        clientIds: ["codex"],
+        signal: controller.signal,
+      },
+      host,
+    ).catch((cause: unknown) => cause);
+
+    expect(received).toBe(controller.signal);
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({ cause: reason });
+    expect(host.configurations).toBe(0);
+  });
+
+  it("reports cancellation during final cleanup with the completed setup result", async () => {
+    const clients = {
+      codex: { status: "configured", backupPath: "/fixture/codex.toml.bak" },
+      cursor: { status: "configured", backupPath: "/fixture/cursor.json.bak" },
+    } as const;
+    const input = {
+      ...options(true),
+      installSkill: false,
+      proposeHopper: false,
+      clientIds: Object.keys(clients),
+    };
+    const prepared = () => {
+      const host = new FakeSetupHost();
+      host.hopper = "/Applications/Hopper";
+      host.clients = [
+        { name: "codex", configPath: "/fixture/codex.toml" },
+        { name: "cursor", configPath: "/fixture/cursor.json" },
+      ];
+      for (const [name, result] of Object.entries(clients))
+        host.clientResults.set(name, result);
+      return host;
+    };
+    const control = await runSetup(input, prepared());
+    expect(control).toMatchObject({
+      status: "ready",
+      appliedActions: ["configured_codex", "configured_cursor"],
+      clients,
+      doctor: { healthy: true, scope: { clients: ["codex", "cursor"] } },
+    });
+    const controller = new AbortController();
+    const reason = new Error("stop setup");
+    const host = Object.assign(prepared(), {
+      close: () => {
+        controller.abort(reason);
+        return Promise.resolve(undefined);
+      },
+    });
+
+    const failure: unknown = await runSetup(
+      { ...input, signal: controller.signal },
+      host,
+    ).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
+      throw new Error("Expected setup to report its cancellation");
+    expect(failure).toMatchObject({
+      cause: reason,
+      diagnostics: { setup_result: control },
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: { setup_result: { clients, doctor: control.doctor } },
+      },
+    });
+  });
+
+  it("retains the completed result and cancellation when final cleanup also fails", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel during final cleanup");
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [{ name: "codex", configPath: "/fixture/codex.toml" }];
+    host.clientResults.set("codex", {
+      status: "configured",
+      backupPath: "/fixture/codex.bak",
+    });
+    Object.assign(host, {
+      close: async () => {
+        controller.abort(reason);
+        return setupCleanupError(undefined, {
+          reason: "close failed",
+          resources: ["/fixture/handle"],
+        });
+      },
+    });
+    const failure = await runSetup(
+      {
+        ...options(true),
+        installSkill: false,
+        clientIds: ["codex"],
+        signal: controller.signal,
+      },
+      host,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisError);
+    expect(projectAnalysisError(failure as AnalysisError)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: ["/fixture/handle"],
+        diagnostics: {
+          primary_error: {
+            code: "cancelled",
+            details: {
+              diagnostics: {
+                setup_result: {
+                  clients: { codex: { backupPath: "/fixture/codex.bak" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+});

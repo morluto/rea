@@ -27,6 +27,7 @@ const scriptedConnection = (
 ): JebMcpConnection & { readonly calls: unknown[][] } => {
   const calls: unknown[][] = [];
   return {
+    sessionGeneration: 1,
     calls,
     async connect() {
       return Object.keys(responses);
@@ -491,6 +492,7 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     entered = resolve;
   });
   const provider = providerWith({
+    sessionGeneration: 1,
     async connect() {
       return ["get_client_information"];
     },
@@ -641,7 +643,6 @@ it("project-open refusal retains the selected engine-host artifact path", async 
     operation: "open_jeb_project",
     input: { path: "/targets/Example.apk" },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Refused artifact accepted");
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "execution_failure",
@@ -710,7 +711,6 @@ it.each([
     const result = await provider.execute(request, {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Cancelled metadata lookup accepted");
     expect(result.error).toMatchObject({
       _tag: "AnalysisCancelledError",
@@ -738,7 +738,6 @@ it.each([
       }),
     );
     const completed = await control.execute(request);
-    expect(completed.ok).toBe(true);
     if (!completed.ok) throw completed.error;
     expect(completed.value.result).toMatchObject({
       engine: { version: "5.48.0" },

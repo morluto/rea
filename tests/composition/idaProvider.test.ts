@@ -236,6 +236,8 @@ describe("IDA provider selection cancellation", () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError", cause: cancellationReason },
     });
+    if (replacement.ok) throw new Error("Expected cancellation");
+    expect(replacement.error.cause).toBe(cancellationReason);
     expect(session.activeTarget()?.sha256).toBe(first.target.sha256);
     expect(
       (await session.execute("procedure_pseudo_code", { procedure: "main" }))
@@ -272,6 +274,8 @@ describe("IDA provider selection cancellation", () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError", cause: reason },
     });
+    if (profile.ok) throw new Error("Expected cancellation");
+    expect(profile.error.cause).toBe(reason);
     expect(runCalls).toBe(0);
   });
 });

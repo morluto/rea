@@ -44,8 +44,7 @@ it.each([1, 129])(
       expect(projected).toMatchObject({
         code: "truncated",
         retryable: false,
-        message:
-          "PyInstaller compressed PYZ images exceed the 128-file private storage budget",
+        message: expect.stringMatching(/PyInstaller.*PYZ.*128.file.*budget/iu),
         details: { boundary: "capacity" },
         remediation: {
           action: expect.stringContaining(

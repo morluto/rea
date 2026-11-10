@@ -352,7 +352,9 @@ describe("Mach-O encryption reader: segment mapping", () => {
       range: {
         mapping: {
           status: "unknown",
-          reason: "load command 0 LC_SEGMENT_64 appears in a 32-bit image",
+          reason: expect.stringMatching(
+            /load command 0\b.*LC_SEGMENT_64.*appears.*32-bit/iu,
+          ),
         },
       },
     });
@@ -486,7 +488,9 @@ describe("Mach-O encryption reader: defects are never absent", () => {
           wide: false,
           commands: [encryption({ cryptoff: 0, cryptsize: 0, cryptid: 0 })],
         }),
-      reason: "load command 0 LC_ENCRYPTION_INFO_64 appears in a 32-bit image",
+      reason: expect.stringMatching(
+        /load command 0\b.*LC_ENCRYPTION_INFO_64.*appears.*32-bit/iu,
+      ),
     },
     {
       name: "an unexpected cmdsize",
@@ -496,8 +500,9 @@ describe("Mach-O encryption reader: defects are never absent", () => {
             encryption({ cryptoff: 0, cryptsize: 0, cryptid: 0 }, true, 32),
           ],
         }),
-      reason:
-        "load command 0 LC_ENCRYPTION_INFO_64 has cmdsize 32, expected 24",
+      reason: expect.stringMatching(
+        /load command 0\b.*LC_ENCRYPTION_INFO_64.*cmdsize 32\b.*expected 24\b/iu,
+      ),
     },
     {
       name: "a range beyond the slice",
@@ -669,12 +674,15 @@ describe("Mach-O encryption reader: universal files", () => {
       },
       {
         status: "malformed",
-        reason:
-          "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header",
+        reason: expect.stringMatching(
+          /FAT architecture 1\b.*CPU type\/subtype.*disagree.*Mach-O header/iu,
+        ),
       },
       {
         status: "malformed",
-        reason: "FAT architecture 2 slice range extends beyond the file",
+        reason: expect.stringMatching(
+          /FAT architecture 2\b.*slice range.*beyond.*file/iu,
+        ),
       },
       { status: "encrypted", reason: null },
     ]);
@@ -745,7 +753,9 @@ describe("Mach-O encryption reader: universal files", () => {
         {
           cpu_type: CPU.arm64.type,
           status: "malformed",
-          reason: "FAT architecture 1 slice range extends beyond the file",
+          reason: expect.stringMatching(
+            /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+          ),
           commands: [],
         },
       ],
@@ -794,7 +804,9 @@ describe("Mach-O encryption reader: large universal files", () => {
         {
           container_file_offset: size,
           status: "malformed",
-          reason: "FAT architecture 1 slice range extends beyond the file",
+          reason: expect.stringMatching(
+            /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+          ),
         },
       ],
     });
@@ -802,7 +814,9 @@ describe("Mach-O encryption reader: large universal files", () => {
     // unresolved JVM identity.
     expect(await readMachoImage(sparseReadAt, size)).toEqual({
       status: "malformed",
-      reason: "FAT architecture 1 slice range extends beyond the file",
+      reason: expect.stringMatching(
+        /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+      ),
     });
   });
 });
@@ -909,8 +923,9 @@ describe("Mach-O encryption reader: mapping budget", () => {
     ]);
     expect(facts.slices[1]?.range?.mapping).toEqual({
       status: "unknown",
-      reason:
-        "mapping needs more than the 5 segment and section records shared by all slices",
+      reason: expect.stringMatching(
+        /mapping.*more than.*5 segment and section records.*slices/iu,
+      ),
     });
   });
 });

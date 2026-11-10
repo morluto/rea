@@ -67,6 +67,7 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import {
+  compactInputSchemaByDefault,
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -788,7 +789,7 @@ const readZcodeFallbackServers = async (
         path,
         detail: ownershipBlocker,
       });
-    const environment = clientRegistrationEnvironment(parsed);
+    const environment = clientRegistrationEnvironment(parsed, client.name);
     if (!environment.ok)
       return err({
         kind: "malformed",
@@ -908,6 +909,7 @@ const clientConfigurationDesired = async (
   if (format === "dsh") {
     const validated = clientRegistrationEnvironment(
       effective,
+      client.name,
       providerEnvironment,
     );
     if (!validated.ok) throw validated.error;
@@ -921,6 +923,7 @@ const clientConfigurationDesired = async (
   }
   const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
+    client.name,
     providerEnvironment,
     "effective",
     client.name === "codex" || client.name === "kimi"
@@ -933,12 +936,13 @@ const clientConfigurationDesired = async (
   // timeout facts; the target file's fragment remains the value being written.
   const environment = clientRegistrationEnvironment(
     parsed,
+    client.name,
     providerEnvironment,
     "fragment",
   );
   if (!environment.ok) throw environment.error;
   const registrationEnvironment =
-    client.name === "kimi" &&
+    compactInputSchemaByDefault(client) &&
     snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
       undefined
       ? {

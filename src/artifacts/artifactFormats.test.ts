@@ -25,11 +25,13 @@ type FormatsWithReaders =
   | ZipPackageFormat
   | "dotnet-bundle"
   | "bun-standalone"
+  | "deno-standalone"
   | "dmg"
   | "asar"
   | "ines"
   | "godot-pck"
   | "unityfs"
+  | "wxapkg"
   | "uimage"
   | "mach-o-universal"
   | "directory"

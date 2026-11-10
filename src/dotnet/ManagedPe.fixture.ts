@@ -18,12 +18,27 @@ interface ManagedPeFixtureOptions {
   }[];
   readonly fieldName?: string;
   readonly fieldSignature?: Buffer;
+  /** Field rows; the last TypeDef owns them all, as with MethodDef rows. */
+  readonly fieldRowCount?: number;
+  /**
+   * Field rows owned by the first TypeDef; the last TypeDef owns the rest.
+   * Lets a test select a type with a few members while the bulk of the
+   * member inventory stays on another type.
+   */
+  readonly firstTypeFieldRowCount?: number;
+  /**
+   * Give every Field, MethodDef and MemberRef row its own name, like a real
+   * assembly, instead of sharing one name across all rows.
+   */
+  readonly distinctMemberNames?: boolean;
   readonly ilBody?: Buffer;
   readonly malformedAssemblyReferenceRows?: readonly number[];
   readonly malformedCustomAttributeRows?: readonly number[];
   readonly metadataExtraData?: number;
   readonly metadataValidMaskExtra?: bigint;
   readonly methodRowCount?: number;
+  /** MethodDef rows owned by the first TypeDef; the last TypeDef owns the rest. */
+  readonly firstTypeMethodRowCount?: number;
   readonly methodName?: string;
   readonly methodFlags?: number;
   readonly methodSignature?: Buffer;
@@ -603,7 +618,10 @@ interface FixtureMetadataRowContext {
     readonly additionalTypeNames: readonly number[];
     readonly typeNamespace: number;
     readonly fieldName: number;
+    readonly fieldNames: readonly number[];
     readonly methodName: number;
+    readonly methodNames: readonly number[];
+    readonly memberRefNames: readonly number[];
     readonly pinvokeModuleName: number | null;
     readonly pinvokeImportName: number | null;
     readonly resourceName: number;
@@ -650,6 +668,13 @@ const repeatedRows = (
   count: number,
   createRow: () => Buffer,
 ): readonly Buffer[] => Array.from({ length: count }, createRow);
+
+/** One name per row when distinct names were generated, else the shared name. */
+const cycleName = (names: readonly number[], index: number): number => {
+  const name = names[index % names.length];
+  if (name === undefined) throw new Error("Fixture name list is empty");
+  return name;
+};
 
 const customAttributeRows = (
   {
@@ -791,7 +816,7 @@ const fixtureIndexWidths = ({
     [0, options.moduleRowCount ?? 1],
     [1, indexes.typeReferences.length + 1],
     [2, indexes.additionalTypeNames.length + 1],
-    [4, 1],
+    [4, options.fieldRowCount ?? 1],
     [6, options.methodRowCount ?? 1],
     [8, 0],
     [10, options.memberRefRowCount ?? 1],
@@ -836,6 +861,32 @@ const fixtureIndexWidths = ({
   };
 };
 
+const typeDefTable = (
+  options: ManagedPeFixtureOptions,
+  indexes: FixtureMetadataRowContext["indexes"],
+  heapSizes: FixtureMetadataRowContext["heapSizes"],
+  widths: FixtureIndexWidths,
+  nestedRows: ReadonlySet<number>,
+): readonly [number, readonly Buffer[]] => [
+  2,
+  [...indexes.additionalTypeNames, indexes.typeName].map((name, index) =>
+    typeDefRow({
+      name,
+      flags: nestedRows.has(index + 1) ? 0x0010_0002 : 0x0010_0001,
+      namespace: indexes.typeNamespace,
+      fieldList: index === 0 ? 1 : 1 + (options.firstTypeFieldRowCount ?? 0),
+      methodList: index === 0 ? 1 : 1 + (options.firstTypeMethodRowCount ?? 0),
+      stringSize: heapSizes.strings,
+      typeDefOrRefSize: widths.typeDefOrRef,
+      fieldListSize: widths.table(4),
+      methodListSize: widths.table(6),
+      ...(options.extendsRaw === undefined
+        ? {}
+        : { extendsRaw: options.extendsRaw }),
+    }),
+  ),
+];
+
 const fixtureMetadataRows = ({
   options,
   methodRva,
@@ -861,41 +912,23 @@ const fixtureMetadataRows = ({
       ),
     ],
     typeRefTable(options, indexes, heapSizes, widths),
-    [
-      2,
-      [...indexes.additionalTypeNames, indexes.typeName].map((name, index) =>
-        typeDefRow({
-          name,
-          flags: nestedRows.has(index + 1) ? 0x0010_0002 : 0x0010_0001,
-          namespace: indexes.typeNamespace,
-          fieldList: 1,
-          methodList: 1,
-          stringSize: heapSizes.strings,
-          typeDefOrRefSize: widths.typeDefOrRef,
-          fieldListSize: widths.table(4),
-          methodListSize: widths.table(6),
-          ...(options.extendsRaw === undefined
-            ? {}
-            : { extendsRaw: options.extendsRaw }),
-        }),
-      ),
-    ],
+    typeDefTable(options, indexes, heapSizes, widths, nestedRows),
     [
       4,
-      [
+      Array.from({ length: options.fieldRowCount ?? 1 }, (_, index) =>
         fieldRow(
-          indexes.fieldName,
+          cycleName(indexes.fieldNames, index),
           indexes.fieldSignature,
           heapSizes.strings,
           heapSizes.blobs,
         ),
-      ],
+      ),
     ],
     [
       6,
-      repeatedRows(options.methodRowCount ?? 1, () =>
+      Array.from({ length: options.methodRowCount ?? 1 }, (_, index) =>
         methodDefRow({
-          name: indexes.methodName,
+          name: cycleName(indexes.methodNames, index),
           signature: indexes.methodSignature,
           stringSize: heapSizes.strings,
           blobSize: heapSizes.blobs,
@@ -909,9 +942,9 @@ const fixtureMetadataRows = ({
     ],
     [
       10,
-      repeatedRows(options.memberRefRowCount ?? 1, () =>
+      Array.from({ length: options.memberRefRowCount ?? 1 }, (_, index) =>
         memberRefRow({
-          name: indexes.constructorName,
+          name: cycleName(indexes.memberRefNames, index),
           signature: indexes.constructorSignature,
           stringSize: heapSizes.strings,
           blobSize: heapSizes.blobs,
@@ -1029,6 +1062,29 @@ const buildManagedFixtureMetadata = (
   const typeNamespace = strings.add(options.typeNamespace ?? "Fixture");
   const fieldName = strings.add(options.fieldName ?? "counter");
   const methodName = strings.add(options.methodName ?? "Main");
+  const distinctNames = <T>(
+    count: number,
+    single: T,
+    distinct: (index: number) => T,
+  ): readonly T[] =>
+    options.distinctMemberNames === true
+      ? Array.from({ length: count }, (_, index) => distinct(index))
+      : [single];
+  const fieldNames = distinctNames(
+    options.fieldRowCount ?? 1,
+    fieldName,
+    (index) => strings.add(`Field${String(index)}`),
+  );
+  const methodNames = distinctNames(
+    options.methodRowCount ?? 1,
+    methodName,
+    (index) => strings.add(`Method${String(index)}`),
+  );
+  const memberRefNames = distinctNames(
+    options.memberRefRowCount ?? 1,
+    constructorName,
+    (index) => strings.add(`Member${String(index)}`),
+  );
   const pinvokeModuleName =
     options.pinvoke === undefined
       ? null
@@ -1091,7 +1147,10 @@ const buildManagedFixtureMetadata = (
       additionalTypeNames,
       typeNamespace,
       fieldName,
+      fieldNames,
       methodName,
+      methodNames,
+      memberRefNames,
       pinvokeModuleName,
       pinvokeImportName,
       resourceName,

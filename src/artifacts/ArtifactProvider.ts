@@ -270,8 +270,12 @@ class ArtifactClient implements AnalysisClient {
         );
       }
       if (operation === "inspect_keyed_archive") {
+        // A bundle target reads bundle-relative archives whatever its
+        // executable admitted as; only a plist opened on its own is standalone.
         const standalone =
-          this.target.kind === "artifact" && this.target.format === "plist";
+          this.target.bundleInfoPlist === undefined &&
+          this.target.kind === "artifact" &&
+          this.target.format === "plist";
         const selectedPath = artifactTargetSelectedPath(this.target);
         const result = standalone
           ? await inspectStandaloneKeyedArchive({
@@ -335,6 +339,9 @@ class ArtifactClient implements AnalysisClient {
             inputFormat: this.target.format,
             espFlashSelection: espFlashSelection(this.target),
             outputRoot: parsed.output_root,
+            ...(parsed.occurrence_ids === undefined
+              ? {}
+              : { occurrenceIds: parsed.occurrence_ids }),
             environment: this.environment,
             asarHeaderAdmission: runtimeAsarHeaderAdmission(
               this.environment,
