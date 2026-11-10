@@ -25,35 +25,68 @@ export const registerSqliteCommands = (
     args: z.object({
       path: localPathStringSchema.describe("Local SQLite database snapshot"),
     }),
-    options: z.object({
-      workerTimeoutMs: cliDecimalField(
-        inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
-      ),
-      table: z
-        .string()
-        .optional()
-        .describe("Exact ordinary table name to read"),
-      column: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Repeat to select exact row columns in the requested order; requires table",
+    options: z
+      .object({
+        workerTimeoutMs: cliDecimalField(
+          inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
         ),
-      schemaScope: z
-        .enum(["inventory", "selected_table", "database"])
-        .optional()
-        .describe(
-          "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
+        table: z
+          .string()
+          .optional()
+          .describe("Exact ordinary table name to read"),
+        column: z
+          .array(z.string())
+          .min(1)
+          .optional()
+          .describe(
+            "Repeat to select exact row columns in the requested order; requires table",
+          ),
+        schemaScope: z
+          .enum(["inventory", "selected_table", "database"])
+          .optional()
+          .describe(
+            "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
+          ),
+        rowLimit: cliDecimalField(
+          inspectSqliteDatabaseInputSchema.shape.row_limit,
+        ).describe(
+          "Positive safe integer row count; default 20; requires table",
         ),
-      rowLimit: cliDecimalField(
-        inspectSqliteDatabaseInputSchema.shape.row_limit,
-      ).describe("Positive safe integer row count; default 20; requires table"),
-      rowOffset: cliDecimalField(
-        inspectSqliteDatabaseInputSchema.shape.row_offset,
-      ).describe(
-        "Non-negative safe integer rows to skip before the window; default 0; requires table",
-      ),
-    }),
+        rowOffset: cliDecimalField(
+          inspectSqliteDatabaseInputSchema.shape.row_offset,
+        ).describe(
+          "Non-negative safe integer rows to skip before the window; default 0; requires table",
+        ),
+      })
+      // Mirror inspectSqliteDatabaseInputSchema: rowLimit, rowOffset, column,
+      // and selected_table scope all require an explicit table selection.
+      .superRefine((options, context) => {
+        if (options.table !== undefined) return;
+        if (options.rowLimit !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: ["rowLimit"],
+            message: "rowLimit requires an explicit table selection",
+          });
+        if (options.rowOffset !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: ["rowOffset"],
+            message: "rowOffset requires an explicit table selection",
+          });
+        if (options.column !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: ["column"],
+            message: "column requires an explicit table selection",
+          });
+        if (options.schemaScope === "selected_table")
+          context.addIssue({
+            code: "custom",
+            path: ["schemaScope"],
+            message: "selected_table schema scope requires table",
+          });
+      }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectSqliteDatabase, () =>

@@ -11,6 +11,7 @@ import {
 } from "../domain/rawBinary.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 
 /** Decimal integer argv text. Leading zeros stay decimal; `0x` and exponent spellings do not. */
@@ -169,9 +170,7 @@ export const providerSelectionOption = analysisProviderSelectorSchema
   );
 
 /** Optional path to the local analysis snapshot loaded or updated by a command. */
-export const snapshotSelectionOption = z
-  .string()
-  .min(1)
+export const snapshotSelectionOption = localPathStringSchema
   .optional()
   .describe("Load and update a local analysis snapshot");
 
