@@ -1,8 +1,13 @@
+import { artifactOperationCause } from "../ArtifactFileOperation.js";
 import {
   nesContainerFormat,
   parseInesLayout,
 } from "../../domain/inesContainer.js";
 import type { GodotPckAdmission } from "../GodotPckLocation.js";
+import {
+  resolveArtifactReaderLimits,
+  type ArtifactReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
 import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
 import type {
   ArtifactReaderAdmission,
@@ -70,6 +75,7 @@ interface RootClassification {
 type RootInventoryClassification = RootClassification & {
   readonly rootSource: RootInventorySource | undefined;
   readonly readerAdmission: ArtifactReaderAdmission | undefined;
+  readonly recognitionLimitations?: readonly string[];
 };
 
 /** The admitted descriptor and the single owner that can confirm its close. */
@@ -90,6 +96,7 @@ export const classifyAndHashRootForInventory = async (
     | "selectedPath"
     | "expectedRootSha256"
     | "espFlashSelection"
+    | "readerLimits"
   >,
   probeFacts?: ArtifactEmbeddedFormatProbeFacts,
 ): Promise<RootInventoryClassification> => {
@@ -142,6 +149,7 @@ export const classifyAndHashRootForInventory = async (
       source,
       options.signal,
       probeFacts,
+      options.readerLimits,
     );
     const admittedDigest =
       options.expectedRootSha256 === undefined
@@ -166,6 +174,7 @@ export const classifyAndHashRootForInventory = async (
       options.asarHeaderAdmission,
       options.selectedPath,
       options.espFlashSelection,
+      options.readerLimits,
     );
     const format =
       typeof classified === "string" ? classified : classified.kind;
@@ -179,11 +188,26 @@ export const classifyAndHashRootForInventory = async (
       ));
     const retainSource =
       artifactFormatDescriptor(format)?.retainClassifiedSource === true;
+    const bunRecognition = probes.completedFacts().bunStandalone;
+    const seaRecognition = probes.completedFacts().nodeSeaRecognitionFailure;
+    const recognitionLimitations = [
+      ...(bunRecognition?.status === "limited"
+        ? [
+            `Bun graph recognition remains unknown: ${bunRecognition.failure.message}`,
+          ]
+        : []),
+      ...(seaRecognition === undefined
+        ? []
+        : [`Node SEA recognition remains unknown: ${seaRecognition.message}`]),
+    ];
     outcome = {
       kind: "completed",
       value: {
         format,
         digest,
+        ...(recognitionLimitations.length === 0
+          ? {}
+          : { recognitionLimitations }),
         rootSource: retainSource ? source : undefined,
         readerAdmission:
           typeof classified !== "string"
@@ -219,6 +243,7 @@ const classifyRootFormat = async (
   asarHeaderAdmission?: AsarHeaderAdmission,
   selectedPath?: string,
   espFlashSelection?: EspFlashSelection,
+  readerLimits: ArtifactReaderLimits = resolveArtifactReaderLimits(),
 ): Promise<ArtifactOccurrence["artifact_format"] | ArtifactFormatAdmission> => {
   const { handle } = source;
   const probe = createArtifactClassificationProbe(asarHeaderAdmission);
@@ -244,14 +269,13 @@ const classifyRootFormat = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    abortIfNeeded(signal);
     if (cause instanceof RegularFileChangedError)
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during classification: ${path}`,
         { cause: cause.cause ?? cause },
       );
-    throw cause;
+    throw artifactOperationCause(cause);
   }
   // Fill each range: a short result is end of file, not a partial host read.
   const read = async (position: number, length: number): Promise<Buffer> => {
@@ -354,14 +378,24 @@ const classifyRootFormat = async (
     abortIfNeeded(signal);
     if (sea !== undefined) {
       const decoded = await decodeNodeSeaBlob(
-        await readNodeSeaBlob(handle, sea, archiveBytes, signal),
+        await readNodeSeaBlob(source, sea, signal, readerLimits.node_sea),
         signal,
+        readerLimits.node_sea,
       );
-      return { kind: "node-sea", source, location: sea, decoded };
+      return {
+        kind: "node-sea",
+        source,
+        location: sea,
+        decoded,
+        limits: readerLimits.node_sea,
+      };
     }
     const bun = await embeddedProbes.bunStandalone();
     if (bun.status === "present")
       return { kind: "bun-standalone", source, probe: bun };
+    const deno = await embeddedProbes.denoStandalone();
+    if (deno.status === "present")
+      return { kind: "deno-standalone", source, probe: deno };
     const packaged = await embeddedProbes.pyInstaller();
     abortIfNeeded(signal);
     if (format !== "mach-o-universal") {

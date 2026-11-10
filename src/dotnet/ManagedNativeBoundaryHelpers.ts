@@ -321,9 +321,15 @@ export const nativeImplementations = (
   const implementations: NativeImplementation[] = [];
   for (const method of methods) {
     if (method.kind !== "method") continue;
-    const { codeType, managedKind, pinvokeFlag } = method.implementation;
+    const { codeType, managedKind, pinvokeFlag, internalCall } =
+      method.implementation;
     const pinvokeDeclared = pinvokeTokens.has(method.token) || pinvokeFlag;
-    if (!pinvokeDeclared && codeType === "il" && managedKind === "managed")
+    if (
+      !pinvokeDeclared &&
+      !internalCall &&
+      codeType === "il" &&
+      managedKind === "managed"
+    )
       continue;
     implementations.push({
       token: method.token,
@@ -335,7 +341,12 @@ export const nativeImplementations = (
       code_type: codeType,
       managed_kind: managedKind,
       pinvoke_declared: pinvokeDeclared,
-      boundary_kind: boundaryKind(pinvokeDeclared, codeType, managedKind),
+      boundary_kind: boundaryKind(
+        pinvokeDeclared,
+        codeType,
+        managedKind,
+        internalCall,
+      ),
       body_interpretation:
         method.rva === 0 ? "not-file-backed" : "native-or-runtime",
     });
@@ -347,10 +358,11 @@ const boundaryKind = (
   pinvokeDeclared: boolean,
   codeType: ManagedMethodImplementationFlags["codeType"],
   managedKind: ManagedMethodImplementationFlags["managedKind"],
+  internalCall: boolean,
 ): NativeImplementation["boundary_kind"] => {
   if (pinvokeDeclared) return "pinvoke";
   if (codeType === "native") return "native-body";
-  if (codeType === "runtime") return "runtime-provided";
+  if (codeType === "runtime" || internalCall) return "runtime-provided";
   if (managedKind === "unmanaged") return "unmanaged-method";
   return "mixed-or-unknown";
 };

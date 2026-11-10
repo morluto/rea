@@ -133,65 +133,80 @@ ${body}
     });
 
     const { client, call } = await connectLocalToolsMcp(environment);
-    const schema = await advertisedMcpToolSchemas(
-      client,
-      "inspect_wasm_artifact",
-    );
-    const valid = withEvidenceCallerInputPath(
-      createEvidence(
-        undefined,
-        { id: "fixture-wabt", name: "fixture", version: "1" },
-        {
-          operation: "inspect_wasm_artifact",
-          parameters: {},
-          result: wasmArtifactFixture(),
-          confidence: "observed",
-        },
-      ),
-      "./selected.wasm",
-      {
-        candidate_paths: ["./candidate.wasm", "./candidate.wasm"],
-        glue_paths: ["./glue.js"],
-      },
-    );
-    expect(
-      schema.ajv.validate(schema.outputSchema, valid),
-      JSON.stringify(schema.ajv.errors),
-    ).toBe(true);
-    const response = await call("inspect_wasm_artifact", {
-      path: selected,
-      candidate_paths: [candidate],
-      glue_paths: [glue],
-    });
-    const mcpError = parseMcpToolError(response).error;
-    expect(mcpError.code).toBe("invalid_request");
-    const partialReference = z
-      .object({
-        kind: z.literal("retained-evidence"),
-        evidence_id: z.string(),
-      })
-      .parse(
-        z
-          .object({ partial_observation: z.unknown() })
-          .passthrough()
-          .parse(mcpError.details).partial_observation,
+    try {
+      const response = await call("inspect_wasm_artifact", {
+        path: selected,
+        candidate_paths: [candidate],
+        glue_paths: [glue],
+      });
+      const mcpError = parseMcpToolError(response).error;
+      expect(mcpError.code).toBe("invalid_request");
+      const partialReference = z
+        .object({
+          kind: z.literal("retained-evidence"),
+          evidence_id: z.string(),
+        })
+        .parse(
+          z
+            .object({ partial_observation: z.unknown() })
+            .passthrough()
+            .parse(mcpError.details).partial_observation,
+        );
+      const retainedReply = await call("get_evidence_bundle", {
+        detail: "complete",
+      });
+      expect(retainedReply.isError).not.toBe(true);
+      const retainedBundle = toolContract(
+        "get_evidence_bundle",
+      ).outputSchema.parse(retainedReply.structuredContent).result;
+      if ("kind" in retainedBundle)
+        throw new Error("Expected complete retained Evidence");
+      const retained = parseEvidence(
+        retainedBundle.records.find(
+          (record) => record.evidence_id === partialReference.evidence_id,
+        ),
       );
-    const retainedReply = await call("get_evidence_bundle", {
-      detail: "complete",
-    });
-    expect(retainedReply.isError).not.toBe(true);
-    const retainedBundle = toolContract(
-      "get_evidence_bundle",
-    ).outputSchema.parse(retainedReply.structuredContent).result;
-    if ("kind" in retainedBundle)
-      throw new Error("Expected complete retained Evidence");
-    const retained = parseEvidence(
-      retainedBundle.records.find(
-        (record) => record.evidence_id === partialReference.evidence_id,
-      ),
-    );
-    expect(retained.evidence_id).toBe(partialReference.evidence_id);
-    expect(retained.normalized_result).toMatchObject(expected);
-    await client.ping();
+      expect(retained.evidence_id).toBe(partialReference.evidence_id);
+      expect(retained.normalized_result).toMatchObject(expected);
+      await client.ping();
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+cliTest(
+  "advertises ordered WASM caller selections through the SDK output schema",
+  async () => {
+    const { client } = await connectLocalToolsMcp();
+    try {
+      const schema = await advertisedMcpToolSchemas(
+        client,
+        "inspect_wasm_artifact",
+      );
+      const valid = withEvidenceCallerInputPath(
+        createEvidence(
+          undefined,
+          { id: "fixture-wabt", name: "fixture", version: "1" },
+          {
+            operation: "inspect_wasm_artifact",
+            parameters: {},
+            result: wasmArtifactFixture(),
+            confidence: "observed",
+          },
+        ),
+        "./selected.wasm",
+        {
+          candidate_paths: ["./candidate.wasm", "./candidate.wasm"],
+          glue_paths: ["./glue.js"],
+        },
+      );
+      expect(
+        schema.ajv.validate(schema.outputSchema, valid),
+        JSON.stringify(schema.ajv.errors),
+      ).toBe(true);
+    } finally {
+      await client.close();
+    }
   },
 );
