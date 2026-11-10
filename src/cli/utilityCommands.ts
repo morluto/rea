@@ -154,7 +154,13 @@ const registerNativeCommands = (
   ] as const) {
     cli.command(command, {
       description: `Run ${tool} without launching Hopper`,
-      args: z.object({ path: z.string().describe("Mach-O or app path") }),
+      args: z.object({
+        path: z
+          .string()
+          .min(1)
+          .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+          .describe("Mach-O or app path"),
+      }),
       run: ({ args }) =>
         logCliCommand(logger, command, () =>
           runProviderAnalysis(args.path, tool, {}, logger),
