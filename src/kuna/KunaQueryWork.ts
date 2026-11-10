@@ -3,7 +3,7 @@ import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { err, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
@@ -180,5 +180,23 @@ export class KunaQueryWork {
     return err(
       new AnalysisCancelledError(operation, { cause: signal?.reason }),
     );
+  }
+
+  /** Retire abandoned work before retrying, retaining its physical failures. */
+  async retire<T>(
+    pending: KunaPendingQuery<T>,
+    signal: AbortSignal | undefined,
+    operation: string,
+  ): Promise<Result<null, AnalysisError>> {
+    const result = await this.wait(pending, signal, operation);
+    if (
+      !result.ok &&
+      (!(result.error instanceof AnalysisCancelledError) ||
+        result.error.cleanupIncomplete)
+    )
+      return result;
+    return signal?.aborted
+      ? err(new AnalysisCancelledError(operation, { cause: signal.reason }))
+      : ok(null);
   }
 }

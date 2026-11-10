@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { explicitSetupRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
 import {
   DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS,
-  MAXIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
+  MAX_NODE_TIMER_DELAY_MS,
   MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
 } from "../domain/analysisResourceLimits.js";
 import {
@@ -35,7 +35,7 @@ it("records the default caller-scan budget and forwards an explicit setting", ()
     milliseconds: DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS,
     source: "default",
     floorMilliseconds: MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
-    maximumMilliseconds: MAXIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
+    maximumMilliseconds: MAX_NODE_TIMER_DELAY_MS,
   });
   const selected = parseConfig({
     [HOPPER_CALLER_SCAN_BUDGET_SETTING]: "250",
@@ -66,7 +66,7 @@ it("explains the time budget and that fixed byte allowances have no override", (
     `The default is ${String(DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS)} ms`,
   );
   expect(time).toContain(
-    `from ${String(MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS)} to ${String(MAXIMUM_HOPPER_CALLER_SCAN_BUDGET_MS)} ms`,
+    `from ${String(MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS)} to ${String(MAX_NODE_TIMER_DELAY_MS)} ms`,
   );
   expect(time).toContain("no runtime override");
   expect(time).toContain(

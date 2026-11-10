@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "../javascript/javascriptModuleUnits.js";
 import {
   AnalysisInputError,
   type AnalysisInputIssue,
@@ -10,7 +11,10 @@ import type { ApplicationNode } from "../javascript/javascriptApplicationGraphSc
 import { err, ok, type Result } from "../result.js";
 import { z } from "zod";
 import type { JavaScriptModuleReference } from "./javascriptModuleReferences.js";
-import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleReferences.js";
+import {
+  javascriptFactBasis,
+  javascriptModuleReferencesRequestSchema,
+} from "./javascriptModuleReferences.js";
 import {
   javascriptApplicationSourceCoverage,
   javascriptStaticSourceCoverageSummary,
@@ -80,17 +84,12 @@ interface ModuleEntry {
   readonly paths: readonly string[];
 }
 
-const isModuleNode = (node: ApplicationNode): node is ModuleEntry["node"] =>
-  node.kind === "javascript-asset" ||
-  node.kind === "javascript-module" ||
-  node.kind === "source-module";
-
 /** One owner for the module kinds and path semantics of every module view. */
 function* moduleEntries(
   nodes: readonly ApplicationNode[],
 ): Generator<ModuleEntry> {
   for (const node of nodes) {
-    if (isModuleNode(node)) {
+    if (isJavaScriptModuleUnit(node)) {
       const paths = javascriptModulePaths(node);
       yield { node, path: paths[0] ?? null, paths };
     }
@@ -200,27 +199,21 @@ const moduleReference = ({
   path,
 }: ModuleEntry): JavaScriptModuleReference => {
   let ranges = 0;
-  const support = new Map<string, JavaScriptModuleReference["basis"][number]>();
-  for (const { evidence } of node.observations) {
+  for (const { evidence } of node.observations)
     if (
       evidence.location.available &&
       evidence.location.value.kind === "source-range"
     )
       ranges += 1;
-    const { authority, state, confidence } = evidence;
-    support.set(`${authority}:${state}:${confidence}`, {
-      authority,
-      state,
-      confidence,
-    });
-  }
   return {
     node_id: node.node_id,
     kind: node.kind,
     path,
     identity: node.identity,
     retained_source_range_count: ranges,
-    basis: [...support.values()],
+    basis: javascriptFactBasis(
+      node.observations.map(({ evidence }) => evidence),
+    ),
   };
 };
 
@@ -402,7 +395,7 @@ export const projectJavaScriptApplicationView = (
     // Summary coverage counts modules. Graph nodes that are not modules stay
     // in summary.coverage.application rather than inflating this total.
     const moduleCount = analysis.graph.nodes.reduce(
-      (count, node) => count + Number(isModuleNode(node)),
+      (count, node) => count + Number(isJavaScriptModuleUnit(node)),
       0,
     );
     return ok({

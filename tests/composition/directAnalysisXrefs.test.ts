@@ -211,8 +211,12 @@ describe("direct CLI cross-reference name resolution", () => {
     ).then(projectCliAnalysisResult);
     expect(missing).toMatchObject({
       code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("use different address coordinates"),
+      },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });
+    expect(missing).not.toHaveProperty("recovery");
     expect(JSON.stringify(missing)).toContain("missing_symbol");
     expect(provider.closed()).toBe(2);
   });
@@ -228,7 +232,13 @@ describe("direct CLI cross-reference name resolution", () => {
         address: "ambiguous",
       },
     ).then(projectCliAnalysisResult);
-    expect(result).toMatchObject({ code: "invalid_request" });
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("Select an exact address"),
+      },
+    });
+    expect(result).not.toHaveProperty("recovery");
     expect(JSON.stringify(result)).toContain("0x1000");
     expect(JSON.stringify(result)).toContain("0x2000");
     expect(provider.closed()).toBe(1);

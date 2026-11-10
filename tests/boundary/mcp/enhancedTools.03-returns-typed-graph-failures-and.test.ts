@@ -101,6 +101,9 @@ it("exact-name xrefs preserves ambiguity independently of inventory order and ac
     });
     expect(parseMcpToolError(rejected).error).toMatchObject({
       code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("Select an exact address"),
+      },
       details: {
         issues: [
           expect.objectContaining({
@@ -110,6 +113,7 @@ it("exact-name xrefs preserves ambiguity independently of inventory order and ac
         ],
       },
     });
+    expect(parseMcpToolError(rejected).error.recovery).toBeUndefined();
   }
   expect(queried).toEqual([]);
   rows = [

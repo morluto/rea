@@ -31,7 +31,14 @@ export const registerVerifyManagedNativeBoundaries = (
           const result = await logToolExecution(
             options.logger,
             nativeVerificationContract.name,
-            () => Promise.resolve(executeManagedNativeBoundaries(input)),
+            () =>
+              Promise.resolve(
+                executeManagedNativeBoundaries(
+                  input,
+                  options.session.evidenceForAnalysis.bind(options.session),
+                  { signal: context.mcpReq.signal },
+                ),
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(
@@ -42,6 +49,7 @@ export const registerVerifyManagedNativeBoundaries = (
           const recordedSources = recordEvidenceSources(
             options.recordEvidence,
             execution.sourceEvidence,
+            { evidence: execution.evidence },
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(

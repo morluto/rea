@@ -11,7 +11,7 @@ import {
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { applicationToolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
@@ -27,7 +27,7 @@ export const registerArtifactComparisonTool = (
   const evidenceById = session.evidenceForAnalysis.bind(session);
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    applicationToolRegistrationOptions(contract),
     async (input, context) =>
       runAdmittedToolOperation(
         server,
@@ -58,6 +58,10 @@ export const registerArtifactComparisonTool = (
           const recordedSources = recordEvidenceSources(
             (source) => session.recordEvidence(source),
             [left, right],
+            {
+              evidence,
+              evidenceForAnalysis: session.evidenceForAnalysis.bind(session),
+            },
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(recordedSources, contract);

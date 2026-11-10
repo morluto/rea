@@ -89,6 +89,7 @@ describe("loadEnvironmentState", () => {
     const notEvidence = loadEnvironmentState({}, source);
     if (notEvidence.ok || !(notEvidence.error instanceof AnalysisInputError))
       throw new Error("Expected an input refusal");
+    expect(notEvidence.error.issues.length).toBeGreaterThan(0);
     expect(
       notEvidence.error.issues.every((issue) => issue.path[0] === "state"),
     ).toBe(true);
@@ -747,11 +748,9 @@ it("retains arbitrary dictionary keys and owned JSON references at state intake"
   const entity = document.rea_state.entities[0]!;
   const fields = entity.fields;
   const owned = parseStateDocument(state, document, true);
-  expect(owned.ok).toBe(true);
   if (!owned.ok) throw owned.error;
   expect(owned.value.entities[0]?.fields).toBe(fields);
   const copied = parseStateDocument(state, document);
-  expect(copied.ok).toBe(true);
   if (!copied.ok) throw copied.error;
   expect(copied.value.entities[0]?.fields).not.toBe(fields);
   expect(copied.value.entities[0]?.fields).toEqual(fields);

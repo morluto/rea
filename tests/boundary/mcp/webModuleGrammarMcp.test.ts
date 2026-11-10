@@ -1,7 +1,6 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 
 import { WebModuleTraceService } from "../../../src/application/WebModuleTraceService.js";
 import { LocalWebModuleArtifacts } from "../../../src/browser/modules/WebModuleArtifacts.js";
@@ -10,7 +9,7 @@ import {
   webModuleTraceResultSchema,
   type WebModuleResolutionRequest,
 } from "../../../src/domain/webModuleTrace.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -59,20 +58,11 @@ it.each([
         "Retained module tracing must not acquire a binary provider",
       );
     });
-    const server = createServer(
-      { kind: "session", session },
-      { webModuleTrace: service },
-    );
-    const client = new Client({ name: "module-grammar", version: "1" });
-    onTestFinished(async () => {
-      await client.close();
-      await server.close();
-      await session.close();
+    const { client } = await createApplicationMcpHarness({
+      session,
+      serverOptions: { webModuleTrace: service },
+      clientIdentity: { name: "module-grammar", version: "1" },
     });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const response = await client.callTool({
       name: "trace_web_module_imports",
       arguments: { manifest_path: manifestPath, script_index: 0 },

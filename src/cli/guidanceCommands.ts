@@ -14,6 +14,7 @@ import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
 
 /** Guidance descriptors owned by one CLI host. */
 export class CliGuidanceResources {
@@ -64,9 +65,10 @@ export const registerGuidanceCommands = (
         locator: readGuidanceSectionInputSchema.shape.locator
           .optional()
           .describe("Required with --action read; locator returned by search"),
-        limit: searchGuidanceLimitSchema
-          .optional()
-          .describe("Maximum search matches; search only, defaults to 8"),
+        // Decimal tokens only: numeric coercion would read "0x2" as 2.
+        limit: cliDecimalField(searchGuidanceLimitSchema.optional()).describe(
+          "Maximum search matches; search only, defaults to 8",
+        ),
         cursor: searchGuidanceInputSchema.shape.cursor
           .optional()
           .describe("Continue a search page; search only"),

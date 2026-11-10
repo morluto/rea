@@ -13,6 +13,7 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import type { JavaScriptElectronIdentity } from "./javascriptSemanticAnalysis.js";
@@ -62,6 +63,7 @@ const ipcEndpointKey = (value: ElectronIpcFinding): string =>
     value.side,
     value.operation,
     value.channel,
+    value.loader_authority ?? "proven",
     javascriptSourceRangeKey(value.location),
   ]);
 
@@ -138,7 +140,9 @@ const priorPath = (
 };
 
 /** One physical IPC operation, independent of how its channel was resolved. */
-const ipcSiteKey = (value: ElectronIpcFinding): string =>
+const ipcSiteKey = (
+  value: Pick<ElectronIpcFinding, "side" | "operation" | "location">,
+): string =>
   JSON.stringify([
     value.side,
     value.operation,
@@ -202,7 +206,12 @@ interface BridgeExposure {
 }
 
 const bridgeExposureKey = (value: ElectronContextBridgeFinding): string =>
-  JSON.stringify([value.world, value.api_key, value.api_key_expression]);
+  JSON.stringify([
+    value.world,
+    value.api_key,
+    value.api_key_expression,
+    value.loader_authority ?? "proven",
+  ]);
 
 const bridgeContributionKey = (value: ElectronContextBridgeFinding): string =>
   JSON.stringify([value.world_id, value.members, value.unknown_members]);
@@ -231,6 +240,7 @@ const mergeBridgeExposures = (
 });
 
 interface PathContext {
+  readonly loader_authority?: "candidate";
   readonly entryNode: t.Node;
   /** Source ranges of the local calls this path made since its entry. */
   readonly calls: string[];
@@ -420,11 +430,15 @@ export function* collectElectronWrappedCallPathsSteps(
       accumulator.unknownFindings += 1;
       return null;
     }
+    const authorityContext =
+      value.kind === "external" && value.loaderAuthority === "candidate"
+        ? { ...context, loader_authority: "candidate" as const }
+        : context;
     return (
       value.conditions?.reduce(
         (current, branch) => condition(current, branch.node, branch.positive),
-        context,
-      ) ?? context
+        authorityContext,
+      ) ?? authorityContext
     );
   };
   // Duplicate checks consult only facts at the same endpoint and call site.
@@ -432,6 +446,110 @@ export function* collectElectronWrappedCallPathsSteps(
   let ipcByEndpoint: Map<string, IpcEndpointFacts> | undefined;
   // Direct operations whose channel the syntax pass left unresolved, by site.
   let unresolvedIpcSites: Map<string, number> | undefined;
+  // Traced invocation outcomes at IPC sites: the call sites of invocations
+  // that supplied a literal channel, or any other outcome.
+  const literalInvocationSites = new Map<
+    string,
+    {
+      readonly node: t.Node;
+      readonly calls: Set<string>;
+      // Literals whose guarded registration has no IPC finding of its own.
+      readonly guardedChannels: Set<string>;
+    }
+  >();
+  const openInvocationSites = new Set<string>();
+  // Runtime references to each binding: direct call sites, or null when any
+  // other reference can invoke it from sites the trace never seeds.
+  let directCalls:
+    | Map<JavaScriptSemanticBindingState, t.CallExpression[] | null>
+    | undefined;
+  const directCallsTo = (
+    binding: JavaScriptSemanticBindingState,
+  ): readonly t.CallExpression[] | null => {
+    if (directCalls === undefined) {
+      const references = new Map<
+        JavaScriptSemanticBindingState,
+        t.CallExpression[] | null
+      >();
+      traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
+        enter: (node, parent, readAncestors) => {
+          if (
+            !t.isIdentifier(node) ||
+            parent === null ||
+            semanticIdentifierRole(node, parent, readAncestors) === null
+          )
+            return;
+          const referenced = resolveSemanticBindingState(
+            state,
+            node,
+            node.name,
+          );
+          if (referenced === undefined) return;
+          const calls = references.get(referenced);
+          if (calls === null) return;
+          if (!t.isCallExpression(parent) || parent.callee !== node)
+            references.set(referenced, null);
+          else if (calls === undefined) references.set(referenced, [parent]);
+          else calls.push(parent);
+        },
+      });
+      directCalls = references;
+    }
+    return directCalls.get(binding) ?? [];
+  };
+  /**
+   * Whether every invocation of the function enclosing a node is a direct call
+   * whose own invocation chain the trace followed. Seeds start only at literal
+   * arguments, so an untraced call site may supply any channel.
+   */
+  const tracedInvocationsOnly = (
+    node: t.Node,
+    traced: ReadonlySet<string>,
+    active: ReadonlySet<t.Node> = new Set(),
+  ): boolean => {
+    let fn = state.parentsByNode.get(node);
+    while (fn !== undefined && !t.isFunction(fn))
+      fn = state.parentsByNode.get(fn);
+    // Top-level code runs once with the values the trace evaluated.
+    if (fn === undefined) return true;
+    if (active.has(fn)) return false;
+    const declarator = state.parentsByNode.get(fn);
+    const declaration = t.isFunctionDeclaration(fn)
+      ? fn
+      : t.isVariableDeclarator(declarator) && declarator.init === fn
+        ? state.parentsByNode.get(declarator)
+        : undefined;
+    const owner =
+      declaration === undefined
+        ? undefined
+        : state.parentsByNode.get(declaration);
+    // An exported declaration is invoked by importers this file never sees.
+    if (
+      declaration === undefined ||
+      t.isExportNamedDeclaration(owner) ||
+      t.isExportDefaultDeclaration(owner)
+    )
+      return false;
+    const id = t.isFunctionDeclaration(fn)
+      ? fn.id
+      : t.isVariableDeclarator(declarator) && t.isIdentifier(declarator.id)
+        ? declarator.id
+        : undefined;
+    const binding =
+      id === undefined || id === null
+        ? undefined
+        : resolveSemanticBindingState(state, id, id.name);
+    const calls = binding === undefined ? null : directCallsTo(binding);
+    return (
+      calls !== null &&
+      calls.length > 0 &&
+      calls.every(
+        (call) =>
+          traced.has(ipcInvocationKey(range(call))) &&
+          tracedInvocationsOnly(call, traced, new Set([...active, fn])),
+      )
+    );
+  };
   const ipcAtEndpoint = (): Map<string, IpcEndpointFacts> => {
     if (ipcByEndpoint !== undefined) return ipcByEndpoint;
     ipcByEndpoint = new Map();
@@ -766,6 +884,9 @@ export function* collectElectronWrappedCallPathsSteps(
   ): void => {
     if (context.entryKind === null) return;
     const path: ElectronCallPath = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       entry_kind: context.entryKind,
       entry: context.entry,
       ...(context.entryKind !== "bridge-member" ||
@@ -825,24 +946,35 @@ export function* collectElectronWrappedCallPathsSteps(
     endpoint: string,
     guardedDispatch: boolean,
   ): void => {
+    const location = range(node);
+    // The site evaluated in its own scope is not an invocation of it.
+    const invocationSite =
+      context.calls.length > 0
+        ? ipcSiteKey({ ...descriptor, location })
+        : undefined;
+    const open = (): void => {
+      if (invocationSite !== undefined) openInvocationSites.add(invocationSite);
+    };
     const first = args[0];
     if (first?.kind !== "literal" || typeof first.value !== "string") {
       accumulator.unknownFindings += 1;
-      return;
+      return open();
     }
     const channelContext = metadataContext(context, first);
-    if (!channelContext) return;
+    if (!channelContext) return open();
     const handlerValue = args[1] ?? symbolicUnknown("missing handler");
     const handlerContext = metadataContext(channelContext, handlerValue);
-    if (!handlerContext) return;
+    if (!handlerContext) return open();
     const channel = first.value;
-    const location = range(node);
     const invocationLocation =
       javascriptSourceRangeKey(range(context.entryNode)) ===
       javascriptSourceRangeKey(location)
         ? undefined
         : range(context.entryNode);
     const findingContext = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       module_key: null,
       location,
       ...(invocationLocation === undefined
@@ -936,6 +1068,21 @@ export function* collectElectronWrappedCallPathsSteps(
         : undefined;
     if (!findingGuarded && registrationKey !== undefined)
       unconditionalRegistrations.add(registrationKey);
+    // A guarded registration keeps its predicate on the call path instead of
+    // becoming an IPC finding, so the site carries its channel to pairing.
+    const guardedOnly =
+      findingGuarded &&
+      (registrationKey === undefined ||
+        !unconditionalRegistrations.has(registrationKey));
+    if (invocationSite !== undefined) {
+      let traced = literalInvocationSites.get(invocationSite);
+      if (traced === undefined) {
+        traced = { node, calls: new Set(), guardedChannels: new Set() };
+        literalInvocationSites.set(invocationSite, traced);
+      }
+      for (const call of context.calls) traced.calls.add(call);
+      if (guardedOnly) traced.guardedChannels.add(channel);
+    }
     if (!duplicate && !findingGuarded) {
       const value: ElectronIpcFinding = {
         ...finding,
@@ -986,11 +1133,7 @@ export function* collectElectronWrappedCallPathsSteps(
         if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
           accumulator.unknownFindings += 1;
       }
-    } else if (
-      findingGuarded &&
-      (registrationKey === undefined ||
-        !unconditionalRegistrations.has(registrationKey))
-    ) {
+    } else if (guardedOnly) {
       accumulator.unknownFindings += 1;
       // A guarded registration is a path candidate even when its callback has
       // no observable body. Keep its predicate instead of promoting it to an
@@ -1097,6 +1240,9 @@ export function* collectElectronWrappedCallPathsSteps(
       // call contributes a separate API per key it is invoked with.
       const inventory = bridgeMemberInventory(object);
       const finding: ElectronContextBridgeFinding = {
+        ...(context.loader_authority === "candidate"
+          ? { loader_authority: "candidate" as const }
+          : {}),
         world: exposure.world,
         world_id: worldId,
         api_key: key.value,
@@ -1435,7 +1581,34 @@ export function* collectElectronWrappedCallPathsSteps(
   if (remainingVisits < 0 || resolver.truncated) {
     accumulator.unknownFindings += 1;
     accumulator.electronCallPathLimitReached = true;
-  }
+  } else
+    // A dynamic site's channels are enumerated only when the complete trace
+    // reached it with literal channels, no other invocation outcome, and no
+    // way to invoke its wrapper from sites the trace does not seed.
+    for (const [site, index] of unresolvedIpcSites ?? []) {
+      const entry = accumulator.ipc[index];
+      const traced = literalInvocationSites.get(site);
+      if (
+        entry?.value.channel === null &&
+        traced !== undefined &&
+        !openInvocationSites.has(site) &&
+        tracedInvocationsOnly(traced.node, traced.calls)
+      )
+        accumulator.ipc[index] = {
+          ...entry,
+          value: {
+            ...entry.value,
+            invocation_channels: "literal",
+            ...(traced.guardedChannels.size === 0
+              ? {}
+              : {
+                  guarded_invocation_channels: [...traced.guardedChannels].sort(
+                    compareUnicodeCodePoints,
+                  ),
+                }),
+          },
+        };
+    }
   if (resolver.unresolved) accumulator.unknownFindings += 1;
   return paths;
 }

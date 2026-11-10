@@ -30,6 +30,18 @@ const allowedCycles = [
   ["javascriptStaticAnalysisFindings.ts", "javascriptStaticAnalysisState.ts"],
 ];
 
+const allowedCycleEdges = [
+  "electronStaticAnalysisTypes.ts -> javascriptStaticAnalysisTypes.ts",
+  "javascriptRouteFacts.ts -> javascriptSourceCoordinates.ts",
+  "javascriptSourceCoordinates.ts -> javascriptStaticAnalysisTypes.ts",
+  "javascriptStaticAnalysisTypes.ts -> electronStaticAnalysisTypes.ts",
+  "javascriptStaticAnalysisTypes.ts -> javascriptRouteFacts.ts",
+  "javascriptRuntimeReconciliationActive.ts -> javascriptRuntimeReconciliationCaptureParsing.ts",
+  "javascriptRuntimeReconciliationCaptureParsing.ts -> javascriptRuntimeReconciliationActive.ts",
+  "javascriptStaticAnalysisFindings.ts -> javascriptStaticAnalysisState.ts",
+  "javascriptStaticAnalysisState.ts -> javascriptStaticAnalysisFindings.ts",
+].sort();
+
 const productionFiles = (directory: string): string[] => {
   const files: string[] = [];
   for (const name of readdirSync(directory)) {
@@ -109,11 +121,18 @@ const stronglyConnected = (
 
 describe("javascript semantic import cycles", () => {
   it("keeps the semantic modules out of one import cycle", () => {
-    const cycles = stronglyConnected(importGraph()).map((cycle) =>
-      cycle.join("\n"),
-    );
+    const graph = importGraph();
+    const cycles = stronglyConnected(graph).map((cycle) => cycle.join("\n"));
     expect(cycles).toEqual(
       allowedCycles.map((cycle) => [...cycle].sort().join("\n")),
     );
+    const internalEdges = allowedCycles.flatMap((cycle) =>
+      cycle.flatMap((source) =>
+        [...(graph.get(source) ?? [])]
+          .filter((target) => cycle.includes(target))
+          .map((target) => `${source} -> ${target}`),
+      ),
+    );
+    expect(internalEdges.sort()).toEqual(allowedCycleEdges);
   });
 });

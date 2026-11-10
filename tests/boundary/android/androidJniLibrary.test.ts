@@ -108,7 +108,6 @@ it.each([
     const fixture = jniElfFixture({ bits, machine, encoding });
     const original = Buffer.from(fixture.bytes);
     const result = await inspectAndroidJniLibrary(fixture.bytes);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error.message);
     expect(androidJniLibraryFactsSchema.safeParse(result.value).success).toBe(
       true,

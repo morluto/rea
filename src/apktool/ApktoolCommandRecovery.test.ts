@@ -1,9 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
@@ -30,9 +31,11 @@ const provider = () =>
     environment: { REA_APKTOOL_COMMAND: "/authored/apktool" },
   });
 const version = {
-  stdout: { text: "2.9.3\n" },
-  stderr: { text: "" },
-} as Awaited<ReturnType<typeof runOwnedCommand>>;
+  stdout: { text: "2.9.3\n", bytes: 6, observedBytes: 6 },
+  stderr: { text: "", bytes: 0, observedBytes: 0 },
+  exitCode: 0,
+  signal: null,
+};
 const inspect = (client: ApktoolProvider, signal?: AbortSignal) =>
   client.execute(
     { operation: "inspect_apktool_client", input: {} },
@@ -254,8 +257,8 @@ it("attributes prerequisite cleanup to decode and preserves its live recovery", 
   try {
     const result = await client.execute({
       operation: "decode_android_resources",
-      input: {},
-    } as never);
+      input: { path: "/fixture/input.apk", include_strings: false },
+    });
     if (result.ok) throw new Error("Expected prerequisite failure");
     expect(result.error).toMatchObject({
       operation: "decode_android_resources",
@@ -319,6 +322,7 @@ it("retries failed command peers without repeating successful helper cleanup", a
 it("joins preparation during close and retains a late helper handoff", async () => {
   const client = provider();
   const ready = createDeferred<void>();
+  const entered = createDeferred<void>();
   const cleanup = new ProviderCleanupError(
     "process-ownership",
     ["late-helper"],
@@ -328,6 +332,7 @@ it("joins preparation during close and retains a late helper handoff", async () 
     cleanup.resolveCleanup();
   });
   vi.mocked(prepareOwnedCommand).mockImplementationOnce(async () => {
+    entered.resolve();
     await ready.promise;
     throw new DarwinProcessOwnershipInspectionError(
       "physical preparation failure",
@@ -335,12 +340,13 @@ it("joins preparation during close and retains a late helper handoff", async () 
     );
   });
   const pending = inspect(client);
-  await vi.waitFor(() => expect(prepareOwnedCommand).toHaveBeenCalledOnce());
   let closed = false;
-  const closing = client.close().then(() => {
-    closed = true;
-  });
-  try {
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered.promise, pending, "command preparation");
+    closing = client.close().then(() => {
+      closed = true;
+    });
     await Promise.resolve();
     expect(closed).toBe(false);
     ready.resolve();
@@ -351,11 +357,16 @@ it("joins preparation during close and retains a late helper handoff", async () 
     expect(close).toHaveBeenCalledOnce();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(runOwnedCommand).not.toHaveBeenCalled();
-  } finally {
-    ready.resolve();
-    await pending;
-    await closing;
-  }
+  }, [
+    () => ready.resolve(),
+    async () => {
+      await pending;
+    },
+    async () => {
+      await closing;
+    },
+    () => client.close(),
+  ]);
 });
 
 it("preserves an opaque cancellation reason before acquiring a command", async () => {

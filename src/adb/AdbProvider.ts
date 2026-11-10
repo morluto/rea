@@ -1,3 +1,4 @@
+import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -94,6 +95,7 @@ import {
 import {
   adbCommandOutputFailure,
   adbArguments,
+  adbSpawnCapacityError,
   runAdb,
   runAdbCapture,
   packageChangeRefusal,
@@ -151,13 +153,6 @@ import {
   listAdbDevicesOperation,
   type AdbCommandContext,
 } from "./AdbDeviceOperations.js";
-
-/** Stable identity for the ADB device-acquisition provider. */
-export const ADB_PROVIDER_IDENTITY = {
-  id: "adb",
-  name: "Android Debug Bridge",
-  version: null,
-} as const;
 
 const SHELL_TIMEOUT_MS = 30_000;
 const PACKAGE_LIST_TIMEOUT_MS = 60_000;
@@ -877,6 +872,11 @@ export class AdbProvider {
   async inspectAvailability(
     signal?: AbortSignal,
   ): Promise<ProviderAvailability> {
+    if (this.#closing)
+      throw new AnalysisCancelledError("inspect_adb_client", {
+        cause: signal?.reason,
+      });
+    const release = this.#beginOperation();
     try {
       const selection = await this.selection(signal);
       await inspectAdbClient(selection, signal);
@@ -893,7 +893,22 @@ export class AdbProvider {
       if (cause instanceof AdbConfigurationFailure)
         return adbConfigurationAvailability(cause);
       throw cause;
+    } finally {
+      release();
     }
+  }
+
+  /** Keep admitted probes and requests owned until their final cleanup settles. */
+  #beginOperation(): () => void {
+    let release!: () => void;
+    const active = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#activeOperations.add(active);
+    return () => {
+      this.#activeOperations.delete(active);
+      release();
+    };
   }
 
   /** Retry removal of owned output directories retained after failed cleanup. */
@@ -1249,11 +1264,7 @@ export class AdbProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return err(new AnalysisCancelledError(request.operation));
-    let release!: () => void;
-    const active = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.#activeOperations.add(active);
+    const release = this.#beginOperation();
     try {
       try {
         await this.#resources.retryCleanup();
@@ -1294,7 +1305,6 @@ export class AdbProvider {
       }
       return await this.#executeOperation(request, options);
     } finally {
-      this.#activeOperations.delete(active);
       release();
     }
   }
@@ -1321,6 +1331,18 @@ export class AdbProvider {
             ADB_PROVIDER_IDENTITY.id,
             request.operation,
             { prerequisite_operation: "inspect_adb_client" },
+          ),
+        );
+      if (
+        cause instanceof AdbConfigurationFailure &&
+        cause.code === "host_capacity"
+      )
+        return err(
+          adbSpawnCapacityError(
+            request.operation,
+            String(cause.diagnostics.filesystem_error),
+            cause,
+            cause.diagnostics,
           ),
         );
       if (cause instanceof AdbConfigurationFailure)
@@ -2311,7 +2333,26 @@ export class AdbProvider {
       { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
       signal,
     );
-    if (!pulled.ok) return pulled;
+    if (!pulled.ok) {
+      // A failed adb process can leave caller-visible bytes at the selected
+      // destination. Report only an observed regular file; its transfer and
+      // digest are unconfirmed, and the caller owns the output.
+      const output = await lstat(localPath).catch(() => undefined);
+      if (output?.isFile() === true && !output.isSymbolicLink())
+        pulled.error.retainPartialObservation({
+          provider_id: "adb",
+          operation,
+          result: {
+            client,
+            serial: input.serial,
+            local_path: localPath,
+            device_path: input.device_path,
+            digest_status: "unknown",
+            transfer_status: "unconfirmed",
+          },
+        });
+      return pulled;
+    }
     try {
       const digest = await hashAdbFile(
         localPath,
@@ -2413,7 +2454,7 @@ export class AdbProvider {
           signal,
         );
         if (!directoryProbe.ok) return directoryProbe;
-        const devicePath = directoryProbe.value
+        const devicePath = directoryProbe.value.matches
           ? `${input.device_path}${input.device_path.endsWith("/") ? "" : "/"}${basename(localPath)}`
           : input.device_path;
         const existsProbe = await probeAdbPathExistence(
@@ -2425,7 +2466,7 @@ export class AdbProvider {
           signal,
         );
         if (!existsProbe.ok) return existsProbe;
-        const deviceExists = existsProbe.value;
+        const deviceExists = existsProbe.value.matches;
         if (deviceExists && !input.overwrite)
           return err(
             new AnalysisOutputError(
@@ -2446,6 +2487,17 @@ export class AdbProvider {
           signal,
         );
         if (!pushed.ok) return pushed;
+        const observedProbeStartup =
+          directoryProbe.value.capturedOutput.stderr !== "" ||
+          existsProbe.value.capturedOutput.stderr !== "";
+        const probeOutput = observedProbeStartup
+          ? {
+              device_path_probes: {
+                directory: { ...directoryProbe.value.capturedOutput },
+                existence: { ...existsProbe.value.capturedOutput },
+              },
+            }
+          : undefined;
         const receipt = (
           deviceDigest: AdbDeviceDigest,
           rawResult?: {
@@ -2469,7 +2521,9 @@ export class AdbProvider {
             },
             provider,
             {
-              ...(rawResult === undefined ? {} : { rawResult }),
+              ...(rawResult === undefined && probeOutput === undefined
+                ? {}
+                : { rawResult: { ...rawResult, ...probeOutput } }),
               limitations: [
                 "Push writes a private snapshot of the caller's file to the device",
                 ...(deviceDigest.device_digest_source === "unavailable"
@@ -2494,10 +2548,16 @@ export class AdbProvider {
         if (!deviceDigest.ok) {
           const cancelled =
             deviceDigest.error instanceof AnalysisCancelledError;
+          // The check never started and the push already completed, so a
+          // retryable error would invite a repeat that overwrite=false refuses.
+          const hostCapacity =
+            deviceDigest.error instanceof AnalysisResourceConstraintError &&
+            deviceDigest.error.resource === "capacity";
           const verificationFailed =
             cancelled ||
-            deviceDigest.error instanceof AnalysisResourceConstraintError ||
-            deviceDigest.error instanceof AnalysisTimeoutError;
+            (!hostCapacity &&
+              (deviceDigest.error instanceof AnalysisResourceConstraintError ||
+                deviceDigest.error instanceof AnalysisTimeoutError));
           const completed = receipt({
             device_sha256: null,
             device_digest_source: "unavailable",
@@ -2505,7 +2565,9 @@ export class AdbProvider {
               ? "The device-side digest check was cancelled after push completed"
               : verificationFailed
                 ? `Device-side digest verification failed after push completed: ${deviceDigest.error.message}`
-                : "The device did not answer sha256sum, so the transfer is not device-side verified",
+                : hostCapacity
+                  ? `Push completed, but the transfer is not device-side verified: ${deviceDigest.error.reason}`
+                  : "The device did not answer sha256sum, so the transfer is not device-side verified",
           });
           if (verificationFailed)
             deviceDigest.error.retainPartialObservation(

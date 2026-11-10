@@ -1,3 +1,4 @@
+import { TSHARK_PROVIDER_IDENTITY } from "./TsharkProviderIdentity.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectPacketFieldsInput,
@@ -71,11 +72,7 @@ import {
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_packet_capture";
-export const TSHARK_PROVIDER_IDENTITY = {
-  id: "tshark-capture",
-  name: "REA TShark capture adapter",
-  version: "tshark@4",
-} as const;
+
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Packet inspection runs only on Linux; discovery and execution share this check. */

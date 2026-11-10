@@ -48,6 +48,9 @@ describe("IDA registration and MCP result boundaries", () => {
     for (const input of [
       { url: "https://example.com/mcp" },
       { url: "http://token@127.0.0.1/mcp" },
+      { url: "http://token@host.docker.internal:13337/mcp" },
+      { url: "http://host.docker.internal.example.com/mcp" },
+      { url: "ftp://host.docker.internal/mcp" },
       { command: "python", mode: "force_gui" },
       { command: "python", workspaceRoot: "relative" },
       { command: "python", args: "server.py" },
@@ -64,6 +67,13 @@ describe("IDA registration and MCP result boundaries", () => {
       }),
     );
     expect((await read(path)).ok).toBe(true);
+    for (const url of [
+      "http://host.docker.internal:13337/mcp",
+      "http://HOST.CONTAINERS.INTERNAL:13337/mcp",
+    ]) {
+      await writeFile(path, JSON.stringify({ url }));
+      expect(await read(path)).toMatchObject({ ok: true, value: { url } });
+    }
     await writeFile(path, "malformed");
     expect((await read(path)).ok).toBe(false);
     expect((await read(join(root, "absent"))).ok).toBe(false);
@@ -127,7 +137,6 @@ describe("IDA registration descriptor ownership", () => {
     const result = await readIdaConfiguration(path, {
       resourceScope: owner,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected close failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(retained).toHaveLength(1);
@@ -288,7 +297,6 @@ it.each(["env", "headers"] as const)(
         : { url: "http://127.0.0.1:8745/mcp" };
     await writeFile(path, JSON.stringify({ ...transport, [field]: mapping }));
     const result = await read(path);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const parsed =
       field === "env" && "env" in result.value

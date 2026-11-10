@@ -93,7 +93,9 @@ it("links one code-loaded type table among short runs across many mappings", () 
   });
   expect(result.types_field).toBeNull();
   expect(result.types_count).toBe(4);
-  expect(result.return_types.every((row) => row.name === "int")).toBe(true);
+  expect(result.return_types.map((row) => row.name)).toEqual(
+    Array.from({ length: 5 }, () => "int"),
+  );
   expect(Buffer.compare(bytes, snapshot)).toBe(0);
 });
 

@@ -48,13 +48,6 @@ const excludeSnapshotIdentity = (
   return { ...snapshot, path, admitted_sha256 };
 };
 
-/** Keep a real JSON-pointer ancestor when a property identity is explicitly excluded. */
-export const redactExplicitPointer = (
-  pointer: string,
-  values: readonly string[],
-): string =>
-  redactSensitivePointer(pointer, (value) => redactExplicitText(value, values));
-
 const redactSensitivePointer = (
   pointer: string,
   text: (value: string) => string,
@@ -145,9 +138,22 @@ const redactFailure = (
       ? {}
       : { observed: visit(issue.observed) }),
   });
+  const guidance = error.continuingCallerGuidance;
   const context = {
     cause: error,
     ...(error.limit === undefined ? {} : { limit: error.limit }),
+    ...(guidance === undefined
+      ? {}
+      : {
+          continuingCallerGuidance: {
+            ...(guidance.userMessage === undefined
+              ? {}
+              : { userMessage: text(guidance.userMessage) }),
+            ...(guidance.remediationAction === undefined
+              ? {}
+              : { remediationAction: text(guidance.remediationAction) }),
+          },
+        }),
     ...(error.cleanupPrimary === undefined
       ? {}
       : {
@@ -156,6 +162,9 @@ const redactFailure = (
     ...(error.diagnostics === undefined
       ? {}
       : { diagnostics: diagnostics(error.diagnostics) }),
+    ...(error.invocationDiagnostics === undefined
+      ? {}
+      : { invocationDiagnostics: diagnostics(error.invocationDiagnostics) }),
     ...(error.capturedOutput === undefined
       ? {}
       : {
@@ -242,7 +251,16 @@ const redactFailure = (
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,
-      context,
+      {
+        ...context,
+        ...(error.userMessage === undefined
+          ? {}
+          : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        conformsToInputContract: error.conformsToInputContract,
+      },
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)
@@ -261,6 +279,27 @@ const redactFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        ...(error.fallbackRemediationAction === undefined
+          ? {}
+          : {
+              fallbackRemediationAction: text(error.fallbackRemediationAction),
+            }),
+        ...(error.siblingOperations === undefined
+          ? {}
+          : { siblingOperations: error.siblingOperations }),
+        ...(error.siblingReasons === undefined
+          ? {}
+          : {
+              siblingReasons: Object.fromEntries(
+                Object.entries(error.siblingReasons).map(([op, msg]) => [
+                  op,
+                  text(msg),
+                ]),
+              ),
+            }),
         ...(error.retryable ? { retryable: true } : {}),
       },
     );

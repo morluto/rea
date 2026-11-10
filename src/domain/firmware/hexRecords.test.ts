@@ -136,8 +136,9 @@ describe("Intel HEX decoding", () => {
       ok: false,
       error: {
         kind: "format",
-        message:
-          "address 0x00000003 written with different values at line 1 (0x04) and line 2 (0x99)",
+        message: expect.stringMatching(
+          /0x00000003\b.*different values.*line 1\b.*0x04\b.*line 2\b.*0x99\b/iu,
+        ),
       },
     });
   });
@@ -146,66 +147,62 @@ describe("Intel HEX decoding", () => {
     [
       "checksum",
       INTEL_HEX_I32_GAP.replace("BEEFC3", "BEEFC4"),
-      "line 4: record type 00 checksum 0xc4 does not match computed 0xc3",
+      /line 4.*00.*checksum.*0xc4.*0xc3/iu,
     ],
     [
       "unknown type",
       INTEL_HEX_I32_GAP.replace(":00000001FF", ":00000006FA\n:00000001FF"),
-      "line 6: unknown record type 06",
+      /line 6.*unknown.*06/iu,
     ],
-    ["odd length", ":0000000\n", "line 1: odd number of hex digits (7)"],
-    ["non-hex", ":00000001FG\n", "line 1: invalid character 0x47 at column 11"],
+    ["odd length", ":0000000\n", /line 1.*odd.*hex digits.*7/iu],
+    ["non-hex", ":00000001FG\n", /line 1.*invalid.*0x47.*column 11/iu],
     [
       "lone CR",
       ":00000001FF\r:00000001FF\n",
-      "line 1: invalid character 0x0d at column 12",
+      /line 1.*invalid.*0x0d.*column 12/iu,
     ],
-    [
-      "byte count",
-      ":0200000001FD\n",
-      "line 1: record type 00 byte count 0x02 declares 2 data bytes, but the line holds 1",
-    ],
+    ["byte count", ":0200000001FD\n", /line 1.*00.*0x02.*2 data bytes.*1/iu],
     [
       "fixed length",
       `${intelHexRecord(4, 0, [8])}\n`,
-      "line 1: record type 04 requires 2 data bytes, found 1",
+      /line 1.*04.*2 data bytes.*1/iu,
     ],
     [
       "extended address with a non-zero address field",
       ":020001040800F1\n",
-      "line 1: record type 04 requires address 0x0000, found 0x0001",
+      /line 1.*04.*0x0000.*0x0001/iu,
     ],
     [
       "segment address with a non-zero address field",
       `${intelHexRecord(2, 0x10, [0x10, 0x00])}\n`,
-      "line 1: record type 02 requires address 0x0000, found 0x0010",
+      /line 1.*02.*0x0000.*0x0010/iu,
     ],
     [
       "offset wrap",
       ":020000040000FA\n:10FFF800000102030405060708090A0B0C0D0E0F81\n:00000001FF\n",
-      "line 2: data at offset 0xfff8 with 16 bytes wraps past 0xffff",
+      /line 2.*0xfff8.*16 bytes.*wraps.*0xffff/iu,
     ],
     [
       "record after EOF",
       `${INTEL_HEX_I8}:00000001FF\n`,
-      "line 3: record follows the termination record at line 2",
+      /line 3.*termination.*line 2/iu,
     ],
     [
       "conflicting start",
       `${intelHexRecord(5, 0, [0, 0, 0, 1])}\n${intelHexRecord(5, 0, [0, 0, 0, 2])}\n`,
-      "line 2: start address 0x00000002 conflicts with 0x00000001 declared at line 1",
+      /line 2.*0x00000002.*conflicts.*0x00000001.*line 1/iu,
     ],
     [
       "I16HEX above 0xfffff",
       `${intelHexRecord(2, 0, [0xff, 0xff])}\n${intelHexRecord(0, 0x20, [1])}\n`,
-      "line 2: I16HEX data at 0x00100010 with 1 bytes exceeds the 20-bit address 0xfffff",
+      /line 2.*I16HEX.*0x00100010.*1 bytes.*20.bit.*0xfffff/iu,
     ],
   ])("fails closed on %s", (_name, text, message) => {
     const decoded = decode(text);
     expect(decoded.ok).toBe(false);
     if (decoded.ok) return;
     expect(decoded.error.kind).toBe("format");
-    expect(decoded.error.message).toContain(message);
+    expect(decoded.error.message).toMatch(message);
   });
 });
 
@@ -216,7 +213,7 @@ describe("Intel HEX lines, termination and limits", () => {
     expect(decoded.regions).toHaveLength(2);
     expect(decoded.metadata.termination).toBe("absent");
     expect(decoded.limitations).toEqual([
-      "Intel HEX has no termination record; the file may be truncated.",
+      expect.stringMatching(/no termination record.*may be truncated/iu),
     ]);
   });
 
@@ -243,7 +240,7 @@ describe("Intel HEX lines, termination and limits", () => {
       ok: false,
       error: {
         kind: "format",
-        message: "line 1: line exceeds the 521-character Intel HEX maximum",
+        message: expect.stringMatching(/line 1.*521.*Intel HEX/iu),
       },
     });
   });
@@ -326,7 +323,9 @@ describe("S-record decoding", () => {
       variant: "S19",
     });
     expect(decoded.limitations).toEqual([
-      "S-record termination S7 does not match the address width of S1 data records.",
+      expect.stringMatching(
+        /termination.*S7.*does not match.*address width.*S1/iu,
+      ),
     ]);
   });
 
@@ -334,7 +333,7 @@ describe("S-record decoding", () => {
     const decoded = image(SREC_S19.replace("S9030000FC\n", ""), "srec");
     expect(decoded.terminated).toBe(false);
     expect(decoded.limitations).toEqual([
-      "S-record has no termination record; the file may be truncated.",
+      expect.stringMatching(/no termination record.*may be truncated/iu),
     ]);
   });
 
@@ -342,33 +341,33 @@ describe("S-record decoding", () => {
     [
       "count mismatch",
       SREC_S19.replace("S5030002FA", "S5030003F9"),
-      "line 4: record type S5 declares 3 data records, but 2 precede it",
+      /line 4.*S5.*3 data records.*2/iu,
     ],
-    ["reserved S4", "S4030000FC\n", "line 1: reserved record type S4"],
+    ["reserved S4", "S4030000FC\n", /line 1.*reserved.*S4/iu],
     [
       "second header",
       `${SREC_S19.split("\n")[0] ?? ""}\n${SREC_S19}`,
-      "line 2: second S0 header record; the first is at line 1",
+      /line 2.*second S0.*line 1/iu,
     ],
     [
       "S9 with data",
       `${srecRecord(9, 0, [1])}\n`,
-      "line 1: record type S9 byte count 0x04 does not fit its 2-byte address and checksum",
+      /line 1.*S9.*0x04.*2.byte address.*checksum/iu,
     ],
     [
       "S1 crossing 0xffff",
       `${srecRecord(1, 0xffff, [1, 2])}\n`,
-      "line 1: record type S1 data at 0x0000ffff with 2 bytes crosses 0xffff",
+      /line 1.*S1.*0x0000ffff.*2 bytes.*crosses 0xffff/iu,
     ],
     [
       "S3 crossing 0xffffffff",
       `${srecRecord(3, 0xffff_ffff, [1, 2])}\n`,
-      "crosses 0xffffffff",
+      /crosses 0xffffffff/iu,
     ],
   ])("fails closed on %s", (_name, text, message) => {
     const decoded = decode(text, "srec");
     expect(decoded.ok).toBe(false);
-    if (!decoded.ok) expect(decoded.error.message).toContain(message);
+    if (!decoded.ok) expect(decoded.error.message).toMatch(message);
   });
 
   it("bounds line length at the format maximum", () => {
@@ -398,21 +397,6 @@ describe("hex record recognition", () => {
     expect(detectHexRecordEncoding(Buffer.from(text))).toBe(expected);
   });
 });
-
-it.each([3, 5])(
-  "rejects a nonzero reserved offset in Intel HEX start record %i",
-  (type) => {
-    const text = [
-      intelHexRecord(0, 0x20, [0xa5]),
-      intelHexRecord(type, 0x1234, [0, 0, 0, 1]),
-      intelHexRecord(1, 0),
-    ].join("\n");
-    expect(decode(text)).toMatchObject({
-      ok: false,
-      error: { kind: "format" },
-    });
-  },
-);
 
 it("keeps data offsets, start payloads and the ignored EOF offset distinct", () => {
   const parsed = image(

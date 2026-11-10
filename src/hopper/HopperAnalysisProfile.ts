@@ -202,17 +202,6 @@ const resolveHopperAnalysisProfileInScope = async (
   });
 };
 
-/** Ghidra owns these lanes; Hopper names the family it declines rather than guessing. */
-const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
-  ElfMetadataArchitecture | "hexagon",
-  string
-> = {
-  mips: "MIPS",
-  riscv: "RISC-V",
-  powerpc: "PowerPC",
-  hexagon: "Hexagon",
-};
-
 /** Families with no verified Hopper lane, declined before any loader selection. */
 export type HopperDeclinedArchitecture =
   | ElfMetadataArchitecture
@@ -226,12 +215,17 @@ export const isHopperDeclinedArchitecture = (
   architecture === "hexagon" ||
   architecture === "arm64_32";
 
+/**
+ * Hopper states only what it owns: it does not admit the family. It routes the
+ * caller to the Ghidra provider without restating or promising Ghidra's lane
+ * facts.
+ */
 export const hopperDeclinedArchitectureReason = (
   architecture: HopperDeclinedArchitecture,
 ): string =>
   architecture === "arm64_32"
     ? "REA's Hopper adapter has no verified arm64_32 lane."
-    : `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`;
+    : `REA's Hopper adapter does not admit ${architecture} targets. Select the Ghidra provider instead.`;
 
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (

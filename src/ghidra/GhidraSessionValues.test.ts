@@ -142,6 +142,38 @@ describe("Ghidra MIPS soft-float storage report", () => {
   });
 });
 
+describe("Ghidra RISC-V calling-convention report", () => {
+  const valid = {
+    policy: "ilp32-prototype-v1",
+    functions: 11,
+    definitions: 11,
+  };
+  it("accepts the exact committed policy outcome", () => {
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), riscv_calling_convention: valid },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.riscv_calling_convention).toEqual(valid);
+  });
+  it.each([
+    ["an unknown policy", { ...valid, policy: "ilp32f-prototype-v1" }],
+    ["the MIPS policy", { ...valid, policy: "o32-soft-float-prototype-v1" }],
+    ["a negative count", { ...valid, definitions: -1 }],
+    ["a fractional count", { ...valid, functions: 1.5 }],
+    ["a missing count", { policy: valid.policy, functions: 2 }],
+    ["an undeclared field", { ...valid, prototype: "__rea_ilp32" }],
+    ["a non-object report", "ilp32-prototype-v1"],
+  ])("rejects %s", (_label, report) => {
+    expect(
+      parseGhidraSessionInfo(
+        { ...session(), riscv_calling_convention: report },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
 describe("Ghidra disabled analyzer report", () => {
   const valid = {
     format: "rea-ghidra-disabled-analyzers-v1",

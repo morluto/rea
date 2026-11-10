@@ -11,6 +11,14 @@ const input = analyzeWebBundleInputSchema.parse({
   include_script_sources: true,
 });
 
+const assertSettled = (outcomes: PromiseSettledResult<unknown>[]) => {
+  const failures = outcomes.flatMap((outcome) =>
+    outcome.status === "rejected" ? [outcome.reason as unknown] : [],
+  );
+  if (failures.length > 0)
+    throw new AggregateError(failures, "Browser admission cleanup failed");
+};
+
 it("shares a capture limit when browser providers use one admission", async () => {
   const admission = new WebBundleAnalysisAdmission();
   const first = createBrowserObservationProvider(admission);
@@ -18,7 +26,6 @@ it("shares a capture limit when browser providers use one admission", async () =
   const pending = first.analyzeBundle(input);
   const blocked = await second.analyzeBundle(input);
   try {
-    expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error("expected the shared admission to refuse");
     expect(projectAnalysisError(blocked.error)).toMatchObject({
       code: "resource_constraint",
@@ -28,8 +35,12 @@ it("shares a capture limit when browser providers use one admission", async () =
       },
     });
   } finally {
-    await pending;
-    await Promise.allSettled([first.close?.(), second.close?.()]);
+    const settled = await Promise.allSettled([pending]);
+    const closed = await Promise.allSettled([
+      first.close?.(),
+      second.close?.(),
+    ]);
+    assertSettled([...settled, ...closed]);
   }
 });
 
@@ -40,17 +51,17 @@ it("does not share a capture limit across browser providers", async () => {
   const other = second.analyzeBundle(input);
   try {
     const blocked = await other;
-    expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error("expected capture to fail closed");
     expect(projectAnalysisError(blocked.error).code).not.toBe(
       "resource_constraint",
     );
   } finally {
-    await Promise.allSettled([
+    const settled = await Promise.allSettled([
       pending,
       other,
       first.close?.(),
       second.close?.(),
     ]);
+    assertSettled(settled);
   }
 });

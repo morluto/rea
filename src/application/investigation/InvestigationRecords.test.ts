@@ -96,7 +96,9 @@ describe("investigation record ownership", () => {
       ...unknownInput("Is the missing Evidence present?"),
       supporting_evidence_ids: [`ev_${"f".repeat(64)}`],
     };
-    expect(records.recordEvidenceWithUnknown(evidence, invalid).ok).toBe(false);
+    const refused = records.recordEvidenceWithUnknown(evidence, invalid);
+    if (refused.ok) throw new Error("Expected invalid Unknown references");
+    expect(refused.error.partialObservation).toBeUndefined();
     expect(records.hasEvidence(evidence.evidence_id)).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
   });

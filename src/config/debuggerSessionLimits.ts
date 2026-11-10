@@ -1,4 +1,5 @@
 import {
+  DEBUGGER_CONTROL_REPLY_BYTES,
   DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS,
@@ -33,7 +34,7 @@ export const DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING =
 export interface DebuggerAdmissionLimit {
   readonly setting: string;
   readonly value: number;
-  readonly source: "default" | "setting" | "runtime";
+  readonly source: "default" | "setting";
   readonly defaultValue: number;
   readonly minimum: number;
   readonly maximum: number;
@@ -95,16 +96,16 @@ const constraintFor = (admission: DebuggerAdmissionLimit): string =>
       : ""
   }`;
 
-export const debuggerCommandDeadlineConstraint = constraintFor(
+const debuggerCommandDeadlineConstraint = constraintFor(
   DEFAULT_DEBUGGER_COMMAND_DEADLINE,
 );
-export const debuggerMaxSessionsConstraint = constraintFor(
+const debuggerMaxSessionsConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_SESSIONS_LIMIT,
 );
-export const debuggerMaxPendingCommandsConstraint = constraintFor(
+const debuggerMaxPendingCommandsConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS_LIMIT,
 );
-export const debuggerMaxCommandOutputBytesConstraint = constraintFor(
+const debuggerMaxCommandOutputBytesConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
 );
 
@@ -235,17 +236,10 @@ export const resolveDebuggerSessionLimits = (
  */
 export const debuggerControlReplyOutput: DebuggerAdmissionLimit = {
   setting: "debugger control-reply budget",
-  value: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  value: DEBUGGER_CONTROL_REPLY_BYTES,
   source: "default",
-  defaultValue: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
-  minimum: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
-  maximum: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  defaultValue: DEBUGGER_CONTROL_REPLY_BYTES,
+  minimum: DEBUGGER_CONTROL_REPLY_BYTES,
+  maximum: DEBUGGER_CONTROL_REPLY_BYTES,
   unit: "bytes",
 };
-
-/** Test and caller seams replace the launch value and record that source. */
-export const applyDebuggerAdmissionOverride = (
-  admission: DebuggerAdmissionLimit,
-  value: number | undefined,
-): DebuggerAdmissionLimit =>
-  value === undefined ? admission : { ...admission, value, source: "runtime" };

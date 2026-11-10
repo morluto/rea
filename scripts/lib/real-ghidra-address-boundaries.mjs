@@ -1,8 +1,16 @@
 import { requireMcpToolError } from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 
-/** Exercise segmented-address truncation through real CLI/MCP reads and edits. */
-export async function verifyGhidraAddressBoundaries(client, entry, cli) {
+/**
+ * Exercise segmented-address truncation through real CLI/MCP reads and edits.
+ * A read-only provider (Windows P0) must refuse edits before parsing them.
+ */
+export async function verifyGhidraAddressBoundaries(
+  client,
+  entry,
+  cli,
+  { mutable = true } = {},
+) {
   const query = async (name, args) => {
     const reply = await client.callTool(
       { name, arguments: args },
@@ -45,6 +53,14 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
       );
       assert.equal(reply.isError, true, `${name} accepted ${address}`);
       const error = requireMcpToolError(reply);
+      if (!mutable && name === "annotate_native_function") {
+        assert.equal(
+          error?.code,
+          "capability_unavailable",
+          JSON.stringify(reply),
+        );
+        continue;
+      }
       assert.equal(error?.code, "invalid_request", JSON.stringify(reply));
       assert.equal(error.details.operation, name);
       const issues = JSON.stringify(error.details.issues);
@@ -65,6 +81,63 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
     await query("read_bytes", { address: padded, length: 1 }),
     await query("read_bytes", { address: entry, length: 1 }),
   );
+  if (mutable) await verifyAliasNaming(query, entry, padded);
+  else await verifyNamingRefused(client, query, entry, padded);
+  for (const [command, flags, operation] of [
+    ["read-bytes", ["--length", "1"], "read_bytes"],
+    [
+      "annotate-native-function",
+      ["--name", "MUST_NOT_ALIAS"],
+      "annotate_native_function",
+    ],
+  ]) {
+    let failure;
+    try {
+      await cli(command, representations[0], flags);
+    } catch (error) {
+      assert.equal(error.code, 1);
+      failure = JSON.parse(error.stdout);
+    }
+    if (!mutable && operation === "annotate_native_function") {
+      assert.equal(failure?.code, "capability_unavailable");
+      continue;
+    }
+    assert.equal(failure?.code, "invalid_request");
+    assert.equal(failure.details.operation, operation);
+    assert.match(
+      JSON.stringify(failure.details.issues),
+      /cannot be represented without truncation/u,
+    );
+  }
+}
+
+/** A read-only provider refuses both naming operations and keeps the entry name. */
+async function verifyNamingRefused(client, query, entry, padded) {
+  const originalName = await query("address_name", { address: entry });
+  for (const [name, args] of [
+    ["set_address_name", { address: entry, name: "MUST_NOT_RENAME" }],
+    [
+      "set_addresses_names",
+      { names: { [entry]: "MUST_NOT_RENAME", [padded]: "MUST_NOT_RENAME" } },
+    ],
+  ]) {
+    const reply = await client.callTool(
+      { name, arguments: args },
+      { timeout: 240000 },
+    );
+    assert.equal(reply.isError, true, `${name} was not refused`);
+    const error = requireMcpToolError(reply);
+    assert.equal(error?.code, "capability_unavailable", JSON.stringify(reply));
+  }
+  assert.equal(
+    await query("address_name", { address: entry }),
+    originalName,
+    "A refused naming edit changed the entry name",
+  );
+}
+
+/** Equivalent spellings of one address share or reject one naming edit together. */
+async function verifyAliasNaming(query, entry, padded) {
   const originalName = await query("address_name", { address: entry });
   assert.equal(
     typeof originalName,
@@ -126,27 +199,5 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
         );
       throw cleanupCause;
     }
-  }
-  for (const [command, flags, operation] of [
-    ["read-bytes", ["--length", "1"], "read_bytes"],
-    [
-      "annotate-native-function",
-      ["--name", "MUST_NOT_ALIAS"],
-      "annotate_native_function",
-    ],
-  ]) {
-    let failure;
-    try {
-      await cli(command, representations[0], flags);
-    } catch (error) {
-      assert.equal(error.code, 1);
-      failure = JSON.parse(error.stdout);
-    }
-    assert.equal(failure?.code, "invalid_request");
-    assert.equal(failure.details.operation, operation);
-    assert.match(
-      JSON.stringify(failure.details.issues),
-      /cannot be represented without truncation/u,
-    );
   }
 }
