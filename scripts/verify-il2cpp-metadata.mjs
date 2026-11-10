@@ -79,6 +79,24 @@ await withVerifierCleanup(async () => {
       assert.equal(error.code, "resource_constraint");
       assert.equal(error.details.reported_limits.boundary, "mcp-response");
       assert.match(error.details.reported_limits.evidence_id, /^ev_/u);
+      const retained = (
+        await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: error.details.reported_limits.evidence_id,
+          },
+          view: { kind: "il2cpp-metadata", collection: "methods", limit: 16 },
+        })
+      ).normalized_result;
+      assert.ok(
+        report.methods.length > 0,
+        "Overflow retention needs a nonempty method oracle",
+      );
+      assert.deepEqual(
+        retained.items,
+        report.methods.slice(0, 16).map((row, index) => ({ ...row, index })),
+        "Failed complete delivery must retain its exact Evidence before reanalysis",
+      );
       console.log(
         `[ok] MCP complete delivery refused at the stdio budget (${error.details.reported_limits.response_bytes_at_least} bytes) with retained Evidence`,
       );

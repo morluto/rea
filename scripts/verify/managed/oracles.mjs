@@ -32,55 +32,120 @@ async function runManagedAppManifestSelfTest(context) {
   const members = inspectManagedMembersBytes(sample.bytes, sample.target);
   const method = members.methods[0];
   assert.ok(method);
-  const summary = await context.verifyManagedAppManifest(
-    {
-      label: "source-owned manifest verifier self-test",
-      target: {
-        path: sample.path,
-        sha256: sample.target.sha256,
-        mvid: artifact.module?.mvid,
-        assembly_name: artifact.assembly?.name,
-        runtime_family: artifact.classification.runtime_family,
-        managed_architecture: artifact.classification.managed_architecture,
+  const manifest = {
+    label: "source-owned manifest verifier self-test",
+    target: {
+      path: sample.path,
+      sha256: sample.target.sha256,
+      mvid: artifact.module?.mvid,
+      assembly_name: artifact.assembly?.name,
+      runtime_family: artifact.classification.runtime_family,
+      managed_architecture: artifact.classification.managed_architecture,
+    },
+    methods: [
+      {
+        label: "pinned-semantic-slice",
+        token: method.token,
+        signature_sha256: method.signature.raw_sha256,
+        il_size: method.body.il_size,
+        il_sha256: method.body.il_sha256,
+        normalized_il_sha256: method.body.normalized_il_sha256,
       },
-      methods: [
+    ],
+    application_graph: {
+      expected_node_kinds: [
+        "artifact",
+        "managed-assembly",
+        "managed-module",
+        "managed-type",
+        "managed-method",
+      ],
+      feature_traces: [
         {
-          label: "pinned-semantic-slice",
-          token: method.token,
-          signature_sha256: method.signature.raw_sha256,
-          il_size: method.body.il_size,
-          il_sha256: method.body.il_sha256,
-          normalized_il_sha256: method.body.normalized_il_sha256,
+          label: "trace pinned method by name",
+          method_token: method.token,
+          seed: "PinnedSemanticSlice",
+          match: "exact",
+          min_matched_seeds: 1,
         },
       ],
-      application_graph: {
-        expected_node_kinds: [
-          "artifact",
-          "managed-assembly",
-          "managed-module",
-          "managed-type",
-          "managed-method",
-        ],
-        feature_traces: [
-          {
-            label: "trace pinned method by name",
-            method_token: method.token,
-            seed: "PinnedSemanticSlice",
-            match: "exact",
-            min_matched_seeds: 1,
-          },
-        ],
-      },
     },
-    join(context.workspace, "source-owned-managed-app-manifest.json"),
+  };
+  const manifestPath = join(
+    context.workspace,
+    "source-owned-managed-app-manifest.json",
+  );
+  const summary = await context.verifyManagedAppManifest(
+    manifest,
+    manifestPath,
+  );
+  const rejectedMismatches = await verifyManifestRejections(
+    context,
+    manifest,
+    manifestPath,
   );
   return {
     verified: true,
+    rejected_mismatches: rejectedMismatches,
     assertions: summary.assertions,
     methods: summary.methods.length,
     applicationGraph: summary.application_graph ?? null,
     target: summary.target,
   };
+}
+
+async function verifyManifestRejections(context, manifest, manifestPath) {
+  const refusals = [
+    [
+      "target sha256",
+      ["target", "sha256"],
+      "0".repeat(64),
+      /target sha256 mismatch/u,
+    ],
+    [
+      "method token",
+      ["methods", 0, "token"],
+      "0x0600ffff",
+      /method 0x0600ffff was not returned/u,
+    ],
+    [
+      "signature sha256",
+      ["methods", 0, "signature_sha256"],
+      "0".repeat(64),
+      /signature sha256 mismatch/u,
+    ],
+    ["IL size", ["methods", 0, "il_size"], 999, /IL size mismatch/u],
+    [
+      "IL sha256",
+      ["methods", 0, "il_sha256"],
+      "0".repeat(64),
+      /IL sha256 mismatch/u,
+    ],
+    [
+      "normalized IL sha256",
+      ["methods", 0, "normalized_il_sha256"],
+      "0".repeat(64),
+      /normalized IL sha256 mismatch/u,
+    ],
+  ];
+  for (const [label, path, wrong, expected] of refusals) {
+    const rejected = structuredClone(manifest);
+    let owner = rejected;
+    for (const key of path.slice(0, -1)) owner = owner[key];
+    const key = path.at(-1);
+    assert.notEqual(
+      owner[key],
+      wrong,
+      `${label} control must differ from the valid manifest`,
+    );
+    owner[key] = wrong;
+    await assert.rejects(
+      () => context.verifyManagedAppManifest(rejected, manifestPath),
+      expected,
+      `Manifest verifier accepted an authored wrong ${label}`,
+    );
+  }
+  return refusals.map(([label]) => label);
 }
 
 async function runOptionalManagedAppManifest(context) {
