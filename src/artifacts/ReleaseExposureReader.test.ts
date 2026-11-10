@@ -4791,8 +4791,26 @@ describe("ReleaseExposureReader packaged map identity", () => {
   );
 });
 
-it("keeps distinct normalized linker-map occurrences after a declaration", async (context) => {
-  const root = await createTestTempDirectory("rea-map-identities-");
+it.for(["a.js", "z.js"])(
+  "keeps a distinct normalized linker-map occurrence when %s declares the other",
+  async (script, context) => {
+    const root = await createTestTempDirectory("rea-map-identities-");
+    const first = "café.map";
+    const second = "cafe\u0301.map";
+    await writeFile(join(root, first), "linker map\n");
+    await writeFile(join(root, second), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      context.skip();
+      return;
+    }
+    await writeFile(join(root, script), `//# sourceMappingURL=${first}\n`);
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
+  },
+);
+
+it("keeps a distinct normalized sibling linker map beside a declared one", async (context) => {
+  const root = await createTestTempDirectory("rea-sibling-map-identities-");
   const first = "café.map";
   const second = "cafe\u0301.map";
   await writeFile(join(root, first), "linker map\n");
@@ -4801,7 +4819,8 @@ it("keeps distinct normalized linker-map occurrences after a declaration", async
     context.skip();
     return;
   }
-  await writeFile(join(root, "z.js"), `//# sourceMappingURL=${first}\n`);
-  const scanned = await inspect(root);
-  expect(scanned.debug_companions.paths).toContain(join(root, second));
+  const script = join(root, "app.js");
+  await writeFile(script, `//# sourceMappingURL=${first}\n`);
+  const scanned = await inspect(script);
+  expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
 });

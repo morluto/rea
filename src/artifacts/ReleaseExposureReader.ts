@@ -810,8 +810,16 @@ interface ScanState {
   nativeDigests: Map<string, string>;
   limitations: string[];
   mapsRead: number;
-  /** Local targets of source-map declarations, whatever their file name. */
-  mapTargets: Set<string>;
+  /**
+   * Local targets of source-map declarations, whatever their file name, by
+   * lookup identity, each with the resolved spellings declarations wrote.
+   */
+  mapTargets: Map<string, Set<string>>;
+  /**
+   * Map targets a member or sibling reached through a declared spelling. Any
+   * other spelling in the same lookup bucket is a distinct occurrence.
+   */
+  claimedMapTargets: Set<string>;
   /** Members already examined as something other than a source map. */
   examinedLocations: Set<string>;
   /** Members already examined as a source map. */
@@ -870,7 +878,8 @@ const createState = (
   nativeDigests: new Map(),
   limitations: [],
   mapsRead: 0,
-  mapTargets: new Set(),
+  mapTargets: new Map(),
+  claimedMapTargets: new Set(),
   examinedLocations: new Set(),
   examinedMaps: new Set(),
   scriptTargets: new Set(),
@@ -1126,9 +1135,10 @@ const examineMapMember = async (
 ): Promise<boolean> => {
   // A member a script names or an owner marks as a map is a JavaScript map
   // whatever it is called. Only an undeclared `.map` may be a linker map.
+  // Another spelling of a declared target is undeclared until the scan ends.
   const undeclared =
     member.logical.toLowerCase().endsWith(".map") &&
-    !state.mapTargets.has(memberLocationKey(member.location));
+    !claimMapTarget(state, member.location);
   const declared = undeclared
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
@@ -2045,16 +2055,32 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
   // A map read before its declaration may have settled as a linker map.
   state.skippedMaps += retractLinkerMapGuesses(state, location);
-  if (state.examinedMaps.has(target) || state.mapTargets.has(target)) return;
-  if (state.examinedLocations.has(target)) {
+  if (state.examinedMaps.has(target)) return;
+  const spellings = state.mapTargets.get(target);
+  if (spellings === undefined && state.examinedLocations.has(target)) {
     state.skippedMaps += 1;
     return;
   }
-  state.mapTargetBytes += Buffer.byteLength(target);
+  const spelling = resolve(location);
+  if (spellings?.has(spelling)) return;
+  state.mapTargetBytes += Buffer.byteLength(spelling);
   if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES) {
     state.skippedMaps += 1;
     state.mapTargetsDiscarded = true;
-  } else state.mapTargets.add(target);
+  } else if (spellings === undefined)
+    state.mapTargets.set(target, new Set([spelling]));
+  else spellings.add(spelling);
+};
+
+/**
+ * Whether a declaration wrote this exact location. A lookup bucket alone
+ * does not prove which of its occurrences a declaration means.
+ */
+const claimMapTarget = (state: ScanState, location: string): boolean => {
+  const key = memberLocationKey(location);
+  if (state.mapTargets.get(key)?.has(resolve(location)) !== true) return false;
+  state.claimedMapTargets.add(key);
+  return true;
 };
 
 /**
@@ -2110,10 +2136,22 @@ const isDeclaredMap = (state: ScanState, member: MemberView): boolean => {
   return isSourceMap(member.logical, member.kind);
 };
 
-/** A declared map or script target that was never reached was not assessed. */
+/**
+ * A declared map or script target that was never reached was not assessed.
+ * When no declared spelling was reached, another spelling of the target may
+ * be the declared map, so its linker-map guess is no companion evidence.
+ */
 const noteUnreachedTargets = (state: ScanState): void => {
-  for (const target of state.mapTargets)
-    if (!state.examinedMaps.has(target)) state.skippedMaps += 1;
+  for (const target of state.mapTargets.keys()) {
+    const examined = state.examinedMaps.has(target);
+    if (!examined) state.skippedMaps += 1;
+    if (state.claimedMapTargets.has(target)) continue;
+    const guesses = state.linkerMapGuesses.get(target);
+    if (guesses === undefined) continue;
+    state.linkerMapGuesses.delete(target);
+    state.skippedCompanions += guesses.size;
+    if (examined) state.skippedMaps += guesses.size;
+  }
   for (const target of state.scriptTargets)
     if (!state.examinedScripts.has(target)) state.skippedMaps += 1;
 };
@@ -3172,7 +3210,8 @@ const scanSiblings = async (
     // A declared map stays a source map and a loaded script stays a script,
     // and `noteUnreachedTargets` counts either one.
     const key = memberLocationKey(sibling);
-    if (state.mapTargets.has(key) || state.scriptTargets.has(key)) continue;
+    if (claimMapTarget(state, sibling) || state.scriptTargets.has(key))
+      continue;
     // A link is not followed, so a linker map it names stays unread, not absent.
     if (entry.isSymbolicLink()) {
       state.skippedCompanions += 1;
