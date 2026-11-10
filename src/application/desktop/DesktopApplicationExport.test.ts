@@ -315,7 +315,7 @@ it("seeds the app's state at its own path and retains a selected alias", async (
     join(directory, "envs/notes/notes_app.py"),
     "utf8",
   );
-  expect(module).toContain('("settings", ".config/notes")');
+  expect(module).toContain('("settings", ".config/notes", "directory")');
 });
 
 it.each(["settings/notes", "chosen/notes"])(
@@ -357,7 +357,7 @@ it.each(["settings/notes", "chosen/notes"])(
       join(directory, "envs/notes/notes_app.py"),
       "utf8",
     );
-    expect(module).toContain(`("${selected}", ".config/notes")`);
+    expect(module).toContain(`("${selected}", ".config/notes", "directory")`);
   },
 );
 
@@ -406,13 +406,13 @@ it.each([true, false])(
       join(directory, "envs/notes/notes_app.py"),
       "utf8",
     );
-    expect(module).toContain('("settings", ".config/notes")');
+    expect(module).toContain('("settings", ".config/notes", "directory")');
     expect(module).not.toContain(
-      '("settings/state/notes", ".config/notes/state/notes")',
+      '("settings/state/notes", ".config/notes/state/notes", "directory")',
     );
     if (!redundant)
       expect(module).toContain(
-        '("settings/state/notes", ".local/share/separate")',
+        '("settings/state/notes", ".local/share/separate", "directory")',
       );
   },
 );
