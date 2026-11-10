@@ -49,6 +49,7 @@ describe("tool effects", () => {
       "install_adb_package",
       "instrument_with_frida",
       "load_frida_script",
+      "measure_build_task",
       "observe_native_calls",
       "push_adb_file",
       "resume_frida_session",

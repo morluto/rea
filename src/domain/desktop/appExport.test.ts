@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
+import type { DesktopApplicationState } from "./desktopState.js";
 
 import {
   capturedHomePath,
+  exportedStateFiles,
   appModuleFile,
   className,
   environmentName,
@@ -427,6 +429,39 @@ describe("README and class wording", () => {
     expect(renderReadme(own)).not.toContain("`envs/mousepad/seed/`");
   });
 });
+
+it.each(["directory", "file", undefined] as const)(
+  "preserves a selected state alias's recorded kind (%s)",
+  (kind) => {
+    const home = "/home/ada";
+    const target = `${home}/.config/notes`;
+    const selection = {
+      path: `${home}/settings`,
+      physical: target,
+      ...(kind === undefined ? {} : { kind }),
+    };
+    const files = exportedStateFiles(
+      {
+        host: { home },
+        application: { state_directories: [{ path: target }] },
+        session: { windows: [], opened_files: [] },
+        state: {
+          state_directories: [target],
+          content_roots: [],
+          selected_paths: [selection],
+        },
+      } as unknown as DesktopApplicationCapture,
+      { paths: [] } as unknown as DesktopApplicationState,
+    );
+    expect(files.stateAliases).toEqual([
+      {
+        alias: "settings",
+        target: ".config/notes",
+        kind: kind ?? "unknown",
+      },
+    ]);
+  },
+);
 
 it("keeps a nested selection under the state path of a selected alias", () => {
   const home = "/home/ada";

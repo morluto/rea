@@ -1,4 +1,9 @@
 import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  pythonDesktopViewPolicy,
+  type DesktopViewPolicy,
+} from "./desktopViewPolicy.js";
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
@@ -48,7 +53,7 @@ const PYTHON_XML_ELEMENT_OPENING = XML_ELEMENT_OPENING.replaceAll(
 );
 
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
-export const PYTHON_HELPERS = String.raw`
+const PYTHON_HELPER_BODY = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
 XML_ELEMENT_OPENING = re.compile(r"${PYTHON_XML_ELEMENT_OPENING}")
 def _opens_element(text: str) -> bool:
@@ -79,17 +84,13 @@ GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
 GZIP_HEADER = b"\x1f\x8b\x08"
 XML_SPACE = "xml:space"
-MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
-MAX_TABLES = 64
-MAX_ROWS = 500
-MAX_LINES = 5000
-MAX_XML_NODES = 5000
-MAX_XML_DEPTH = 64
 SQLITE_BUSY_S = 0.25
-MAX_PARSED_BYTES = 4 * 1024 * 1024
-PARSED_TOO_LARGE = "larger than the 4 MiB limit for JSON and key file views"
-MAX_JSON_VIEW_DEPTH = 500
+def _view_byte_limit(value: int) -> str:
+    return f"{value // (1024 * 1024)} MiB" if value % (1024 * 1024) == 0 else f"{value} bytes"
+
+
+PARSED_TOO_LARGE = f"larger than the {_view_byte_limit(MAX_PARSED_BYTES)} limit for JSON and key file views"
 JSON_TOO_DEEP = f"nested deeper than the {MAX_JSON_VIEW_DEPTH} levels a JSON view keeps"
 
 
@@ -153,38 +154,25 @@ def _seed_home(home: Path) -> None:
 def _ensure_state_aliases(home: Path) -> None:
     """Restore selected aliases without replacing any existing user data."""
     aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
-    for alias, target in aliases:
+    for alias, target, kind in aliases:
         link = home / alias
         destination = home / target
-        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        # A recorded directory is created. A legacy alias with no kind is
+        # created only when another alias is inside it, which proves it is a
+        # directory. A legacy leaf stays unclassified so a missing file is not
+        # turned into a directory.
+        has_children = any(Path(alias) in Path(child).parents for child, *_ in aliases)
+        if kind == "directory" or (kind == "unknown" and has_children):
+            destination.mkdir(parents=True, exist_ok=True)
+        elif kind == "file":
+            # The file itself stays absent so the app can create it. Its parent
+            # has to exist or that write fails with ENOENT.
+            destination.parent.mkdir(parents=True, exist_ok=True)
         if link.is_symlink() and link.resolve() == destination.resolve():
-            if has_children:
-                destination.mkdir(parents=True, exist_ok=True)
             continue
         if os.path.lexists(link):
             raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
         link.parent.mkdir(parents=True, exist_ok=True)
-        if has_children:
-            destination.mkdir(parents=True, exist_ok=True)
-        link.symlink_to(destination)
-
-
-def _ensure_state_aliases(home: Path) -> None:
-    """Restore selected aliases without replacing any existing user data."""
-    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
-    for alias, target in aliases:
-        link = home / alias
-        destination = home / target
-        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
-        if link.is_symlink() and link.resolve() == destination.resolve():
-            if has_children:
-                destination.mkdir(parents=True, exist_ok=True)
-            continue
-        if os.path.lexists(link):
-            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if has_children:
-            destination.mkdir(parents=True, exist_ok=True)
         link.symlink_to(destination)
 
 
@@ -236,6 +224,40 @@ def _cell(value, encoding: str):
     return value
 
 
+def _view_json_bytes(value, budget: int) -> int:
+    """Size the table/row JSON shapes without quoting a whole large cell.
+
+    Above budget the count establishes overflow only. Numeric spelling follows
+    Python's compact JSON encoder, rather than assuming JavaScript's spelling.
+    """
+    if isinstance(value, str):
+        total = 2
+        for offset in range(0, len(value), 8192):
+            if total > budget:
+                break
+            # Public JSON quoting preserves escapes; remove each chunk's two
+            # quotes. A control-filled native cell never becomes one huge part.
+            total += len(json.dumps(value[offset:offset + 8192], ensure_ascii=False).encode("utf-8")) - 2
+        return total
+    if isinstance(value, list):
+        total = 2 + max(0, len(value) - 1)
+        for member in value:
+            if total > budget:
+                break
+            total += _view_json_bytes(member, budget - total)
+        return total
+    if isinstance(value, dict):
+        total = 2 + max(0, len(value) - 1)
+        for key, member in value.items():
+            if total > budget:
+                break
+            total += _view_json_bytes(key, budget - total) + 1
+            if total <= budget:
+                total += _view_json_bytes(member, budget - total)
+        return total
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 def _table(db, name: str, primary_key: list, encoding: str) -> dict:
     quoted = '"' + name.replace('"', '""') + '"'
     columns = [column[0] for column in db.execute(f"select * from main.{quoted} limit 0").description]
@@ -246,14 +268,31 @@ def _table(db, name: str, primary_key: list, encoding: str) -> dict:
         projected.append(f"CASE typeof({column}) WHEN 'text' THEN 't' || hex(CAST({column} AS BLOB)) "
                          f"WHEN 'blob' THEN 'b' || hex({column}) ELSE {column} END")
     cursor = db.execute(f"select {', '.join(projected)} from main.{quoted} not indexed limit {MAX_ROWS + 1}")
-    rows = [[_cell(value, encoding) for value in row] for row in cursor]
-    return {"columns": columns, "primary_key": primary_key,
-            "rows": rows[:MAX_ROWS], "truncated": len(rows) > MAX_ROWS}
+    view = {"columns": columns, "primary_key": primary_key, "rows": [], "truncated": True}
+    spent = _view_json_bytes(view, MAX_SQLITE_VIEW_BYTES)
+    if spent > MAX_SQLITE_VIEW_BYTES:
+        return {"error": SQLITE_VIEW_TOO_LARGE}
+    for index, row in enumerate(cursor):
+        if index == MAX_ROWS:
+            break
+        projected = [_cell(value, encoding) for value in row]
+        spent += (1 if view["rows"] else 0) + _view_json_bytes(projected, MAX_SQLITE_VIEW_BYTES - spent)
+        if spent > MAX_SQLITE_VIEW_BYTES:
+            return {"error": SQLITE_VIEW_TOO_LARGE}
+        view["rows"].append(projected)
+    else:
+        view["truncated"] = False
+        # JSON false takes one byte more than true, reserved only when known.
+        spent += 1
+    return {"error": SQLITE_VIEW_TOO_LARGE} if spent > MAX_SQLITE_VIEW_BYTES else view
 
 
 def _sqlite(path: Path) -> dict:
     """The database's ordinary tables, in schema order, up to REA's table and row limits."""
     with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=SQLITE_BUSY_S)) as db:
+        # Match the independent native value/record boundary before SQL hex
+        # expansion; the selected projected-view allowance is separate.
+        db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, SQLITE_VALUE_BYTES)
         kinds = dict(db.execute("select name, type from temp.pragma_table_list where schema = 'main'"))
         names = [name for (name,) in db.execute("select name from sqlite_schema where type = 'table'")
                  if kinds.get(name) == "table"]
@@ -262,10 +301,21 @@ def _sqlite(path: Path) -> dict:
             for name in names[:MAX_TABLES]}
         encoding = {"UTF-8": "utf-8", "UTF-16le": "utf-16-le", "UTF-16be": "utf-16-be"}[
             db.execute("PRAGMA encoding").fetchone()[0]]
-        tables = {name: _table(db, name, keys[name], encoding) for name in names[:MAX_TABLES]}
+        tables = {}
+        for name in names[:MAX_TABLES]:
+            try:
+                tables[name] = _table(db, name, keys[name], encoding)
+            except sqlite3.Error as error:
+                reason = str(error)
+                if getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_TOOBIG:
+                    reason += (f". SQLite value/record exceeds the fixed {SQLITE_VALUE_BYTES}-byte native limit, including SQL hex expansion. "
+                               "Increasing sqlite_view_bytes does not raise this boundary. Keep the complete database; "
+                               "use a narrower REA SQLite table/column projection only if it preserves the required facts, "
+                               "or use a format-specific reader.")
+                tables[name] = {"error": reason}
     cut = len(names) > MAX_TABLES
     return {"format": "sqlite", "view": {"tables": tables, "tables_truncated": cut},
-            "truncated": cut or any(table["truncated"] for table in tables.values())}
+            "truncated": cut or any(table.get("truncated", "error" in table) for table in tables.values())}
 
 
 def _text(text: str) -> dict:
@@ -360,20 +410,24 @@ def _bytes_view(name: str, data: bytes) -> dict:
 
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
-    too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
+    too_large = {"format": None, "view": None, "error": VIEW_TOO_LARGE}
     if path.stat().st_size > MAX_VIEW_BYTES:
         return too_large
     with path.open("rb") as file:
-        data = file.read(8192)
+        data = file.read(min(8192, MAX_VIEW_BYTES + 1))
+        if len(data) > MAX_VIEW_BYTES:
+            return too_large
         whole = data.startswith(GZIP_HEADER) or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data)
-        data += file.read(MAX_VIEW_BYTES + 1 - len(data)) if whole else b""
+        remaining = MAX_VIEW_BYTES + 1 - len(data)
+        if whole and remaining > 0:
+            data += file.read(remaining)
+    if len(data) > MAX_VIEW_BYTES:
+        return too_large
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
     if data.startswith(ZIP_HEADER):
         with path.open("rb") as file:
             return _zip(file, os.fstat(file.fileno()).st_size)
-    if len(data) > MAX_VIEW_BYTES:
-        return too_large
     if data.startswith(GZIP_HEADER):
         return _gzip(path.name, data)
     return _bytes_view(path.name, data)
@@ -405,6 +459,13 @@ def _views(home: Path, paths: list, leaving_out=()) -> dict:
                     files[key] = {"format": None, "view": None, "error": str(error)}
     return files
 `.concat(PYTHON_ZIP_HELPERS);
+
+/** Render the accepted policy before helpers which consume it. */
+export const renderPythonHelpers = (policy: DesktopViewPolicy): string =>
+  `\n${pythonDesktopViewPolicy(policy)}\n${PYTHON_HELPER_BODY}`;
+
+/** Default helpers for existing generated-reader consumers. */
+export const PYTHON_HELPERS = renderPythonHelpers(DESKTOP_VIEW_DEFAULTS);
 
 /** Constants the class module assigns before the helpers. */
 const PYTHON_CONSTANTS = [
@@ -455,6 +516,7 @@ export const ownlessBody = (
   title: string,
   dconf: boolean,
   relaunch: boolean,
+  aliases = false,
 ): string => {
   const reset = relaunch
     ? `
@@ -466,14 +528,22 @@ export const ownlessBody = (
   const serves = relaunch
     ? "and keeps its task's state on screen, so its reset only relaunches it"
     : "so it serves no data operations";
+  const restore = aliases ? "\n        _ensure_state_aliases(Path.home())" : "";
   if (dconf)
     return `    """${title}, launched at boot with its captured settings. It owns no files, ${serves}."""
 
     def __init__(self) -> None:
         super().__init__()
-        _load_dconf(Path.home())
+        _load_dconf(Path.home())${restore}
 ${reset}${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+  if (!aliases)
+    return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+  return `    """${title}, launched at boot. No state was observed, ${serves}."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        _ensure_state_aliases(Path.home())
+${reset}${PYTHON_READY_CHECK}`;
 };
 
 /** The data hooks of an app whose withheld files no get serves: neither as parts nor in the views. */
