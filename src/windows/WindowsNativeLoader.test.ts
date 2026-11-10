@@ -318,4 +318,64 @@ describe("packaged Windows native architecture binding", () => {
       reason: expect.stringContaining("reports x64"),
     });
   });
+
+  it.each([
+    ["x64", "arm64", 0xaa64],
+    ["arm64", "x64", 0x8664],
+  ] as const)(
+    "enforces bidirectional cross-architecture rejections and multi-architecture manifest admission on %s hosts",
+    (hostArch, otherArch, otherMachine) => {
+      const current = fixture({}, hostArch);
+      const other = fixture({}, otherArch);
+
+      expect(
+        loadWindowsNativeAuthority({
+          ...current.host,
+          readManifest: () => other.manifest,
+        }),
+      ).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        reason: expect.stringContaining("architecture"),
+      });
+      expect(current.requested).toEqual([]);
+
+      const wrongMachine = fixture({}, hostArch);
+      wrongMachine.bytes.writeUInt16LE(otherMachine, 68);
+      wrongMachine.manifest.artifactSha256 = createHash("sha256")
+        .update(wrongMachine.bytes)
+        .digest("hex");
+      expect(loadWindowsNativeAuthority(wrongMachine.host)).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        reason: expect.stringContaining("PE32+"),
+      });
+      expect(wrongMachine.loads()).toBe(0);
+
+      const multiManifest = {
+        ...other.manifest,
+        sourceSha256: "a".repeat(64),
+        artifacts: {
+          [otherArch]: {
+            artifact: other.manifest.artifact,
+            artifactSha256: other.manifest.artifactSha256,
+          },
+          [hostArch]: {
+            artifact: current.manifest.artifact,
+            artifactSha256: current.manifest.artifactSha256,
+          },
+        },
+      };
+      expect(
+        loadWindowsNativeAuthority({
+          ...current.host,
+          readManifest: () => multiManifest,
+        }),
+      ).toMatchObject({
+        available: true,
+        authority: { inspection: { architecture: hostArch } },
+      });
+      expect(current.loads()).toBe(1);
+    },
+  );
 });
