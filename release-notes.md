@@ -305,6 +305,7 @@
 * **browser:** keep negative script columns Chrome reports ([#8684](https://github.com/morluto/rea/issues/8684)) ([8db538a](https://github.com/morluto/rea/commit/8db538a7ca85318d320e83fd8d4d714cfd978c14))
 * **browser:** keep opaque cookie partitions unaligned ([#7203](https://github.com/morluto/rea/issues/7203)) ([6749bd0](https://github.com/morluto/rea/commit/6749bd090dc1b5a31ad60a8932e8fbad48f814e6))
 * **browser:** keep the Chromium sandbox for REA-launched browsers ([#8738](https://github.com/morluto/rea/issues/8738)) ([30a11af](https://github.com/morluto/rea/commit/30a11af92362ff34d716eefd34658ce49b3beca7))
+* **browser:** mask unused PNG transparency key bits ([#9890](https://github.com/morluto/rea/issues/9890)) ([fe791ff](https://github.com/morluto/rea/commit/fe791ff159c85b10d281d8874f29202bd3517e25))
 * **browser:** normalize discovery wire facts at the shared boundary ([#7204](https://github.com/morluto/rea/issues/7204)) ([1cd8259](https://github.com/morluto/rea/commit/1cd82597da9711454415f2702c7e44ea153c4438))
 * **browser:** parse HTTP Link whitespace correctly ([b989e3c](https://github.com/morluto/rea/commit/b989e3c3a38fef51968b2706f8fb94c335f83190))
 * **browser:** preserve comparison evidence identity ([76441ed](https://github.com/morluto/rea/commit/76441ed31b282e5b0f31c0679764277c71884400))
