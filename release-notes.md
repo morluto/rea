@@ -451,6 +451,7 @@
 * **cli:** validate MCP registration before side effects ([#9057](https://github.com/morluto/rea/issues/9057)) ([e9ea9d6](https://github.com/morluto/rea/commit/e9ea9d6f50b155a44af4b3ff4afbb5597c9d55f9))
 * **cli:** validate outline-depth before numeric coercion ([#7505](https://github.com/morluto/rea/issues/7505)) ([baec375](https://github.com/morluto/rea/commit/baec375c347f129cb109823cff31831e906039f0))
 * **cli:** validate paths before capture file admission ([#9318](https://github.com/morluto/rea/issues/9318)) ([425581e](https://github.com/morluto/rea/commit/425581e838be7d9b7578379059e15cdec71d2077))
+* **cli:** verify partial Evidence closure before publication ([dc7594e](https://github.com/morluto/rea/commit/dc7594e85f6193b1da0cda9c858bcd3ca923ef56))
 * **comparison:** preserve same-entry correspondence across renames ([#8263](https://github.com/morluto/rea/issues/8263)) ([6e2404b](https://github.com/morluto/rea/commit/6e2404b8690f6faa75227d895c937be5b77ef238))
 * **comparison:** retain integrity conflicts for duplicate paths ([#9647](https://github.com/morluto/rea/issues/9647)) ([9e0bc71](https://github.com/morluto/rea/commit/9e0bc71e7878d3e93a91ff270e796f204e492fe1))
 * **config:** preserve captured environments across provider launches ([3864c7d](https://github.com/morluto/rea/commit/3864c7d667593c3149ae81861540194a7bf81e99))
