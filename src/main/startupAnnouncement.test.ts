@@ -75,9 +75,9 @@ describe("MCP startup banners", () => {
     ]);
   });
 
-  it("announces before a banner reaches a client that suppresses logging", () => {
-    // The banner is not a log record: it is the one thing a client host shows,
-    // so it is written whatever REA_LOG_LEVEL says, as the sibling servers do.
+  it("writes the banner without consulting a log level", () => {
+    // A banner is not a log record: it is the one thing a client host shows, so
+    // it is written whatever REA_LOG_LEVEL says, as the sibling servers do.
     const { lines, sink: bannerSink } = sink();
     announceDeferredStdioStartup(bannerSink, { profile: "full", toolCount: 3 });
     expect(lines).toHaveLength(1);

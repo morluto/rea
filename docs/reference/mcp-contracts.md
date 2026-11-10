@@ -1293,13 +1293,16 @@ leave the one channel a client host shows empty.
   and the analysis runtime composes on the first tool call. An entry that
   composes eagerly writes no such line, because its runtime line below arrives at
   startup anyway.
-- `MCP analysis runtime ready` appears once each composed analysis runtime is
-  ready: immediately at startup when the process composes eagerly, on the first
-  tool call when the stdio entry defers it, and once per session for `--http`. It
-  names the transport, the enabled optional tool flags that `binary_session` also
-  reports as capability availability, the optional observation adapters that
-  constructed, and the ones whose module failed to load, whose reasons stay in
-  their own structured warning records.
+- `MCP analysis runtime ready` appears once, when this process first composes an
+  analysis runtime: at startup when it composes eagerly over stdio, on the first
+  tool call when the stdio entry defers it, and when the first `--http` session
+  composes one — later sessions on a live listener do not repeat it. It names the
+  transport, the enabled optional tool flags that `binary_session` also reports
+  as capability availability, the optional observation adapters that constructed,
+  and the ones whose module failed to load, whose reasons stay in their own
+  structured warning records. A listener's banner may reach stderr before its
+  buffered `MCP transport listening` log record, so a reader must not take stream
+  order as lifecycle order.
 
 These banners report what composition observed. They are not a functional probe
 of the selected executables, which each tool performs when it runs, so an
