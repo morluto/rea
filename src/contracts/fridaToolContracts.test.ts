@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "./toolContracts.js";
-import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "./fridaToolContracts.js";
+import {
+  FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION,
+  FRIDA_TOOL_CONTRACTS,
+} from "./fridaToolContracts.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
+import { advertisedInputJsonSchema } from "./toolSchemaMetadata.js";
 
 const contract = (name: string) => {
   const found = TOOL_CONTRACTS.find((candidate) => candidate.name === name);
@@ -166,5 +170,72 @@ describe("Frida tool contracts", () => {
     expect(isValidFridaRemoteAddress("127.0.0.1:")).toBe(false);
     expect(isValidFridaRemoteAddress("frida-target/path")).toBe(false);
     expect(isValidFridaRemoteAddress("user@frida-target")).toBe(false);
+  });
+});
+
+const REMOTE_ADDRESS_TOOLS = [
+  "list_frida_devices",
+  "list_frida_processes",
+  "start_frida_session",
+  "instrument_with_frida",
+] as const;
+
+const advertisedRemoteAddressPattern = (toolName: string): string => {
+  const found = FRIDA_TOOL_CONTRACTS.find(
+    (candidate) => candidate.name === toolName,
+  );
+  if (found === undefined) throw new Error(`Missing ${toolName}`);
+  const projected = advertisedInputJsonSchema(found);
+  const remote = (projected["properties"] as Record<string, unknown>)[
+    "remote"
+  ] as Record<string, unknown>;
+  const address = (remote["properties"] as Record<string, unknown>)[
+    "address"
+  ] as Record<string, unknown>;
+  // A refine predicate does not project; only an advertised pattern does.
+  expect(typeof address["pattern"]).toBe("string");
+  return String(address["pattern"]);
+};
+
+describe("Frida remote address advertisement", () => {
+  it.each(REMOTE_ADDRESS_TOOLS)(
+    "%s advertises the character set so a projected schema agrees with canonical validation",
+    (toolName) => {
+      const advertised = new RegExp(
+        advertisedRemoteAddressPattern(toolName),
+        "u",
+      );
+
+      for (const accepted of [
+        "127.0.0.1:27042",
+        "frida-target.example",
+        "[::1]:27042",
+      ]) {
+        expect(advertised.test(accepted), accepted).toBe(true);
+        expect(isValidFridaRemoteAddress(accepted), accepted).toBe(true);
+      }
+      // Both validators reject these, so a schema-driven caller cannot build them.
+      for (const rejected of [
+        " ",
+        "frida target",
+        "user@frida-target",
+        "frida-target/path",
+        "frida-target?query=1",
+        "frida-target#fragment",
+      ]) {
+        expect(advertised.test(rejected), rejected).toBe(false);
+        expect(isValidFridaRemoteAddress(rejected), rejected).toBe(false);
+      }
+    },
+  );
+
+  it("advertises a pattern a strict consumer can compile under both unicode modes", () => {
+    const pattern = advertisedRemoteAddressPattern("list_frida_devices");
+    // `v` mode reserves `/` inside a character class, so a bare solidus would
+    // throw here and leave a strict consumer unable to load the Frida tools.
+    expect(() => new RegExp(pattern, "u")).not.toThrow();
+    expect(() => new RegExp(pattern, "v")).not.toThrow();
+    expect(new RegExp(pattern, "v").test("frida-target/path")).toBe(false);
+    expect(new RegExp(pattern, "v").test("frida-target.example")).toBe(true);
   });
 });
