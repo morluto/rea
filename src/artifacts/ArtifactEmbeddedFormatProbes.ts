@@ -6,6 +6,10 @@ import {
   locateDenoStandalone,
   type DenoStandaloneProbe,
 } from "./deno/DenoStandaloneLocation.js";
+import {
+  resolveArtifactReaderLimits,
+  type ArtifactReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import type {
   StableRegularFileDescriptor,
   RegularFileState,
@@ -28,13 +32,15 @@ import {
   type PyInstallerCookieObservation,
 } from "./pyinstaller/CArchiveLayout.js";
 
-/** Completed observations only; omission means unexamined, and null is examined absence. */
+/** Completed observations and explicit recognition limits; null alone is examined absence. */
 export interface ArtifactEmbeddedFormatProbeFacts {
   readonly sourceState: RegularFileState;
+  readonly readerLimits?: ArtifactReaderLimits;
   readonly bunStandalone?: BunStandaloneProbe;
   readonly denoStandalone?: DenoStandaloneProbe;
   readonly godotPck?: GodotPckLocation | null;
   readonly nodeSea?: NodeSeaLocation | null;
+  readonly nodeSeaRecognitionFailure?: ArtifactReaderFailure;
   readonly dotnetBundleHeaderOffset?: number | null;
   readonly pyInstaller?: PyInstallerCookieObservation;
 }
@@ -48,6 +54,7 @@ export class ArtifactEmbeddedFormatProbes {
     private readonly source: StableRegularFileDescriptor,
     private readonly signal?: AbortSignal,
     previous?: ArtifactEmbeddedFormatProbeFacts,
+    private readonly limits: ArtifactReaderLimits = resolveArtifactReaderLimits(),
   ) {
     abortIfNeeded(signal);
     if (
@@ -58,7 +65,22 @@ export class ArtifactEmbeddedFormatProbes {
         "integrity",
         `Root artifact changed before inventory: ${path}`,
       );
-    this.#facts = previous ?? { sourceState: regularFileState(source.initial) };
+    const reusable =
+      previous !== undefined &&
+      JSON.stringify(previous.readerLimits) === JSON.stringify(limits);
+    if (previous !== undefined && !reusable) {
+      const {
+        bunStandalone: _bun,
+        nodeSea: _sea,
+        nodeSeaRecognitionFailure: _seaLimit,
+        ...facts
+      } = previous;
+      this.#facts = { ...facts, readerLimits: limits };
+    } else
+      this.#facts = previous ?? {
+        sourceState: regularFileState(source.initial),
+        readerLimits: limits,
+      };
   }
 
   async godotPck(prefix?: Uint8Array): Promise<GodotPckLocation | undefined> {
@@ -79,13 +101,29 @@ export class ArtifactEmbeddedFormatProbes {
     abortIfNeeded(this.signal);
     if (this.#facts.nodeSea !== undefined)
       return this.#facts.nodeSea ?? undefined;
-    const location = await locateNodeSea(
-      this.source.handle,
-      this.source.initial.size,
-      this.signal,
-    );
-    this.#facts = { ...this.#facts, nodeSea: location ?? null };
-    return location;
+    if (this.#facts.nodeSeaRecognitionFailure !== undefined) return undefined;
+    try {
+      const location = await locateNodeSea(
+        this.source.handle,
+        this.source.initial.size,
+        this.signal,
+        this.limits.node_sea,
+      );
+      this.#facts = { ...this.#facts, nodeSea: location ?? null };
+      return location;
+    } catch (cause) {
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        (cause.readerLimit?.parameter ===
+          "artifact_limits.node_sea.recognition_header_count" ||
+          cause.readerLimit?.parameter ===
+            "artifact_limits.node_sea.recognition_load_command_bytes")
+      ) {
+        this.#facts = { ...this.#facts, nodeSeaRecognitionFailure: cause };
+        return undefined;
+      }
+      throw cause;
+    }
   }
 
   async pyInstaller(): Promise<PyInstallerCookie | undefined> {
@@ -131,6 +169,7 @@ export class ArtifactEmbeddedFormatProbes {
       this.source.handle,
       this.source.initial.size,
       this.signal,
+      this.limits.bun,
     );
     abortIfNeeded(this.signal);
     this.#facts = { ...this.#facts, bunStandalone: observed };

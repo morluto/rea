@@ -368,9 +368,22 @@ const registerJavaScriptApplicationCommand = (
               signal,
             );
             if (!sourcePaths.ok) return sourcePaths.error;
+            const precision =
+              options.semanticPrecision === undefined
+                ? undefined
+                : await parseCliJsonInput(
+                    options.semanticPrecision,
+                    "analyze_javascript_application",
+                    signal,
+                  );
+            if (precision !== undefined && !precision.ok)
+              return precision.error;
             return runCliJavaScriptApplicationAnalysis(
               {
                 input_path: absoluteCallerPath(args.path),
+                ...(precision === undefined
+                  ? {}
+                  : { semantic_precision: precision.value }),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined

@@ -1,3 +1,7 @@
+import {
+  desktopViewPolicy,
+  type DesktopViewPolicyInput,
+} from "../../domain/desktop/desktopViewPolicy.js";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -29,6 +33,7 @@ import type { DesktopExportRequest } from "./DesktopApplicationExport.js";
 /** What the export reads a reader's file from: the retained content, the seeds it ships and each file's versions. */
 export interface ReaderSources {
   readonly capture: string;
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   readonly copies: readonly RetainedCopy[];
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly ends: StateEnds;
@@ -107,14 +112,18 @@ const exportReaderViews =
 
 /** What a task's checks read beyond the state view: the text seeds' views as the bundle ships them, its readers' and its screenshots. */
 export const taskReads = async (
-  request: Pick<DesktopExportRequest, "capture" | "tasks" | "screens">,
+  request: Pick<
+    DesktopExportRequest,
+    "capture" | "tasks" | "screens" | "viewPolicy"
+  >,
   maxBytes: number,
-  found: Omit<ReaderSources, "capture" | "screens" | "maxBytes">,
+  found: Omit<ReaderSources, "capture" | "screens" | "maxBytes" | "viewPolicy">,
 ) => {
   const sources = {
     ...found,
     capture: request.capture,
     screens: request.screens,
+    viewPolicy: request.viewPolicy,
     maxBytes,
   };
   return readsOf(request.tasks.length, sources);
@@ -132,6 +141,7 @@ const readsOf = async (tasks: number, sources: ReaderSources) => ({
               sources.copies,
               sources.identity,
               sources.signal,
+              desktopViewPolicy(sources.viewPolicy),
             ),
           sources.maxBytes,
         ),
