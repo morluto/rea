@@ -412,7 +412,11 @@ const registerSearchCommand = (
   cli.command(CLI_COMMANDS.search, {
     description: "Search every analyzed string or procedure name",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("App or program path"),
       pattern: z
         .string()
         .min(1)
