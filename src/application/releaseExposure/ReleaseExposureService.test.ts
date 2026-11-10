@@ -1292,6 +1292,34 @@ describe("ReleaseExposureService hosts without an ASAR layout", () => {
   });
 });
 
+describe("ReleaseExposureService partial inventory beside an ASAR layout", () => {
+  it("keeps safe fuses unknown when partial inventory may have missed a host outside an ASAR layout", async () => {
+    const { service, desktop, electronFuses } = owners({
+      ...directoryScan(["/work/app/a/a.exe"]),
+      coverage: "unknown",
+    });
+    const report = electronDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "a/resources/app.asar",
+              local_path: "/work/app/a/resources/app.asar",
+            },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+});
+
 describe("ReleaseExposureService Electron host identity", () => {
   it("keeps safe fuses decided when inventory stopped after the named executable", async () => {
     const { service, desktop, electronFuses } = owners({
