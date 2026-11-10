@@ -134,9 +134,10 @@ retained, and the effective values are returned in the result limitations. Virtu
 Unicorn needs a large virtual map. Limits fail with no partial success, and
 owned process/root cleanup completes independently of cancellation.
 
-Core files, GDB session/state/control, optional pwndbg enrichment and instruction
-inspection are separate increments tracked by #969. This increment makes no
-real support claim for those features or other operating systems/architectures.
+For core files and optional pwndbg mapping context, use the
+[recorded-crash workflow](recorded-crashes.md). The binary-layout operations
+described here do not provide debugger session state or control, or establish
+support for other operating systems/architectures.
 
 Typed decoder failures retain bounded `captured_output` (stdout, stderr and an
 explicit truncation flag) alongside the original failure category and reason.
@@ -271,6 +272,12 @@ snapshot reading, directory traversal and payload hashing. The operation reads
 regular files only and rejects symbolic links.
 
 ## Byte entropy triage
+
+Entropy admission preserves the caller's spelling in `caller_input_path`. On
+Windows, the selected regular file's case-only filesystem spelling is used
+consistently in committed paths through both CLI and MCP. Symlink, junction and
+short-name aliases are not replaced with a different path. General path
+normalization remains lexical and does not probe source-discovered paths.
 
 `inspect_byte_entropy` / `inspect-byte-entropy` profiles any local regular file
 without an analysis engine, execution, extraction or network access.

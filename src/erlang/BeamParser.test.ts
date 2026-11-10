@@ -8,7 +8,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   erlangBeamChunksFixture,
-  erlangBeamDeclaredRowsFixture,
+  erlangBeamRowsFixture,
   erlangBeamFixture,
   erlangBeamLegacyAtomsFixture,
   erlangBeamManyAtomsFixture,
@@ -280,7 +280,7 @@ it("rejects combined table rows before allocating them", () => {
   const overflow = MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS - below * 2 + 1;
   expect(() =>
     parse(
-      erlangBeamDeclaredRowsFixture([
+      erlangBeamRowsFixture([
         ["ExpT", below],
         ["ImpT", below],
         ["FunT", overflow],
@@ -293,10 +293,22 @@ it("rejects combined table rows before allocating them", () => {
       message: expect.stringContaining("row budget"),
     }),
   );
+  const complete = Buffer.alloc(
+    4 + (MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1) * 12,
+  );
+  complete.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
+  expect(() =>
+    parse(
+      erlangBeamChunksFixture([
+        ["ExpT", complete],
+        ["ImpT", Buffer.alloc(1)],
+      ]),
+    ),
+  ).toThrow(/import table is truncated/);
   const count = Buffer.alloc(4);
   count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
   expect(() => parse(erlangBeamChunksFixture([["ExpT", count]]))).toThrow(
-    /row budget/,
+    /truncated/,
   );
   count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS);
   expect(() => parse(erlangBeamChunksFixture([["ExpT", count]]))).toThrow(
@@ -359,7 +371,7 @@ it.each([
   },
   {
     resource: "table-rows",
-    bytes: erlangBeamDeclaredRowsFixture([
+    bytes: erlangBeamRowsFixture([
       ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
     ]),
     settings: {},
