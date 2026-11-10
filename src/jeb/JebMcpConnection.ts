@@ -7,6 +7,7 @@ import {
   mcpTextBlocks,
   parseMcpJsonOrText,
 } from "../providers/McpToolResult.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisCancelledError,
@@ -99,10 +100,14 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
   endpoint,
   timeouts,
 ) => {
-  const discoveryTimeoutMs =
-    timeouts?.discoveryTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
-  const requestTimeoutMs =
-    timeouts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
+  const discoveryTimeoutMs = () =>
+    currentAnalysisOperationSnapshot()?.overrides["jeb.mcp_timeout_ms"] ??
+    timeouts?.discoveryTimeoutMs ??
+    DEFAULT_REQUEST_TIMEOUT_MSEC;
+  const requestTimeoutMs = () =>
+    currentAnalysisOperationSnapshot()?.overrides["jeb.mcp_timeout_ms"] ??
+    timeouts?.requestTimeoutMs ??
+    DEFAULT_REQUEST_TIMEOUT_MSEC;
   let state: JebMcpConnectionOwner | undefined;
   let sessionGeneration = 0;
   let closing: Promise<void> | undefined;
@@ -211,7 +216,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
       Result<readonly string[], unknown>
     >(async (startupSignal) => {
       const deadline = new JebMcpDeadline(
-        discoveryTimeoutMs,
+        discoveryTimeoutMs(),
         startupSignal,
         "discovery",
       );
@@ -277,7 +282,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
           ? owner.signal.signal
           : AbortSignal.any([signal, owner.signal.signal]);
       const deadline = new JebMcpDeadline(
-        discoveryTimeoutMs,
+        discoveryTimeoutMs(),
         discoverySignal,
         "discovery",
       );
@@ -307,7 +312,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         signal === undefined
           ? owner.signal.signal
           : AbortSignal.any([signal, owner.signal.signal]);
-      const deadline = new JebMcpDeadline(requestTimeoutMs, requestSignal);
+      const deadline = new JebMcpDeadline(requestTimeoutMs(), requestSignal);
       let result: unknown;
       try {
         result = await owner.client.callTool(

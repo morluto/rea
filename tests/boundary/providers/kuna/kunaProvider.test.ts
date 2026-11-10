@@ -1068,7 +1068,7 @@ it.each([
     behavior: { project: "hang" } as const,
     environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
     cause: "AnalysisTimeoutError",
-    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
+    next: "To retry, set kuna.project_timeout_ms above 300 ms with update_analysis_settings. It can be changed at runtime. The launch seed is REA_KUNA_PROJECT_TIMEOUT_MS. Then reopen the target so the export runs again.",
     details: {
       timeout_ms: 300,
       captured_output: { truncated: expect.any(Boolean) },

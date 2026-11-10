@@ -34,7 +34,7 @@ export const DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING =
 export interface DebuggerAdmissionLimit {
   readonly setting: string;
   readonly value: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
   readonly defaultValue: number;
   readonly minimum: number;
   readonly maximum: number;

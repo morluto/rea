@@ -17,6 +17,17 @@ export interface AnalysisSettingValues {
   readonly "javascript.max_heap_mb": number;
   readonly "wasm.command_timeout_ms": number;
   readonly "native.matching_representation_bytes": number;
+  readonly "bridge.max_request_bytes": number;
+  readonly "debugger.command_deadline_ms": number;
+  readonly "debugger.max_command_output_bytes": number;
+  readonly "hopper.caller_scan_budget_ms": number;
+  readonly "jeb.mcp_timeout_ms": number;
+  readonly "kuna.project_timeout_ms": number;
+  readonly "kuna.function_timeout_ms": number;
+  readonly "pwntools.max_input_bytes": number;
+  readonly "windows.change_time_drift_ms": number;
+  readonly "windows.change_time_settle_poll_ms": number;
+  readonly "windows.change_time_settle_max_polls": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {

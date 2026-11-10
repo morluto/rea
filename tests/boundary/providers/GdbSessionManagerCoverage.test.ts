@@ -1919,10 +1919,11 @@ it("preserves a timeout while startup waits for the automatic-loading response",
     details: {
       diagnostics: {
         setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
+        analysis_setting: "debugger.command_deadline_ms",
         effective_value: 25,
         source: "setting",
         unit: "ms",
-        update_mode: "restart",
+        update_mode: "runtime",
         pending_restart: false,
       },
     },
@@ -3567,7 +3568,7 @@ process.stdin.on('data', (chunk) => {
       { kind: "command_bytes", maximum: 16_777_216 },
     ]);
     expect(result.value.evidence.limitations.join(" ")).toContain(
-      "Set REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+      "debugger.max_command_output_bytes",
     );
   }
   expect(
@@ -3829,9 +3830,7 @@ it("keeps the session usable after an oversized stream record is dropped", async
     const limitations = executed.value.evidence.limitations.join(" ");
     expect(limitations).toContain("MI line limit");
     expect(limitations).toContain("does not raise it");
-    expect(limitations).not.toContain(
-      "Set REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
-    );
+    expect(limitations).not.toContain("debugger.max_command_output_bytes");
   }
   const second = await manager.execute(started.value.session_id, "after-drop");
   expect(second.ok).toBe(true);
@@ -3904,9 +3903,7 @@ process.stdin.on('data', (chunk) => {
     ]);
     const limitations = result.value.evidence.limitations.join(" ");
     expect(limitations).toContain("16384 record cap");
-    expect(limitations).not.toContain(
-      "Set REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
-    );
+    expect(limitations).not.toContain("debugger.max_command_output_bytes");
   }
 });
 

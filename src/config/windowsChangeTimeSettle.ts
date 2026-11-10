@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import {
+  DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS,
+  DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
+  DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
+  MAXIMUM_WINDOWS_CHANGE_TIME_DRIFT_MS,
+  MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
+  MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
+} from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -19,18 +28,18 @@ interface WindowsChangeTimeBound {
  */
 export const WINDOWS_CHANGE_TIME_DRIFT_MS = {
   setting: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
-  defaultValue: 2_000,
+  defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS,
   floor: 1,
-  maximum: 60_000,
+  maximum: MAXIMUM_WINDOWS_CHANGE_TIME_DRIFT_MS,
   unit: "ms",
 } as const satisfies WindowsChangeTimeBound;
 
 /** Delay between ChangeTime observations. Unset keeps the 25 ms poll. */
 export const WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = {
   setting: "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
-  defaultValue: 25,
+  defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   floor: 1,
-  maximum: 1_000,
+  maximum: MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   unit: "ms",
 } as const satisfies WindowsChangeTimeBound;
 
@@ -40,9 +49,9 @@ export const WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = {
  */
 export const WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = {
   setting: "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
-  defaultValue: 40,
+  defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   floor: 1,
-  maximum: 1_000,
+  maximum: MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   unit: "polls",
 } as const satisfies WindowsChangeTimeBound;
 
@@ -61,11 +70,11 @@ export interface WindowsChangeTimeSettingFailure {
 /** Effective settle budget and whether each part came from the default or a setting. */
 export interface WindowsChangeTimeSettleLimits {
   readonly driftMs: number;
-  readonly driftSource: "default" | "setting";
+  readonly driftSource: "default" | "setting" | "runtime";
   readonly pollMs: number;
-  readonly pollSource: "default" | "setting";
+  readonly pollSource: "default" | "setting" | "runtime";
   readonly maxPolls: number;
-  readonly maxPollsSource: "default" | "setting";
+  readonly maxPollsSource: "default" | "setting" | "runtime";
 }
 
 const windowsChangeTimeSettingFailure = (
@@ -175,4 +184,23 @@ export const resolveWindowsChangeTimeSettle = (
     maxPolls: maxPolls ?? WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.defaultValue,
     maxPollsSource: maxPolls === undefined ? "default" : "setting",
   });
+};
+
+/** Apply the accepted operation snapshot. An explicit caller budget is left alone. */
+export const applyWindowsChangeTimeSnapshot = (
+  limits: WindowsChangeTimeSettleLimits,
+): WindowsChangeTimeSettleLimits => {
+  const overrides = currentAnalysisOperationSnapshot()?.overrides;
+  if (overrides === undefined) return limits;
+  const driftMs = overrides["windows.change_time_drift_ms"];
+  const pollMs = overrides["windows.change_time_settle_poll_ms"];
+  const maxPolls = overrides["windows.change_time_settle_max_polls"];
+  return {
+    driftMs: driftMs ?? limits.driftMs,
+    driftSource: driftMs === undefined ? limits.driftSource : "runtime",
+    pollMs: pollMs ?? limits.pollMs,
+    pollSource: pollMs === undefined ? limits.pollSource : "runtime",
+    maxPolls: maxPolls ?? limits.maxPolls,
+    maxPollsSource: maxPolls === undefined ? limits.maxPollsSource : "runtime",
+  };
 };

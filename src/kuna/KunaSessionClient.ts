@@ -39,6 +39,7 @@ import { combineFunctionRelationshipCoverage } from "../domain/functionCallCover
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -278,8 +279,9 @@ const exportUnavailableMessage = (
 /**
  * How a request that needs the export reports the export's failure. A session
  * never rebuilds a failed export, so repeating the request cannot succeed; the
- * error says what to change before reopening the target. Kuna settings are read
- * when REA starts, so changing one also needs a restart. Cancellation and
+ * error says what to change before reopening the target. A failed export is
+ * not rebuilt in the same session. The project deadline can change at runtime
+ * for the next export. Cancellation and
  * unproven cleanup keep their own errors, which callers must still observe.
  */
 const exportUnavailable = (
@@ -292,9 +294,17 @@ const exportUnavailable = (
   const exported = projectAnalysisError(failure);
   const restart =
     "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
+  if (failure instanceof AnalysisTimeoutError)
+    failure.bindLimit(
+      analysisSettingLimit(
+        "kuna.project_timeout_ms",
+        failure.timeoutMs,
+        undefined,
+      ),
+    );
   const next =
     failure instanceof AnalysisTimeoutError
-      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms in the environment that starts REA. ${restart}`
+      ? `To retry, set kuna.project_timeout_ms above ${String(failure.timeoutMs)} ms with update_analysis_settings. It can be changed at runtime. The launch seed is REA_KUNA_PROJECT_TIMEOUT_MS. Then reopen the target so the export runs again.`
       : failure instanceof AnalysisResourceConstraintError &&
           failure.remediationAction !== undefined
         ? // A fixed buffer (`memory`) is no setting, so a restart cannot help.
