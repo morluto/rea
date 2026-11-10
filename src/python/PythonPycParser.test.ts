@@ -407,6 +407,30 @@ it("charges long digits to the string budget and keeps large previews bounded", 
   );
 });
 
+it("reads marshal one-byte string tags as Latin-1 with Unicode identity", () => {
+  for (const tag of [0x61, 0x41, 0x7a, 0x5a]) {
+    const encoded = Buffer.concat([
+      Buffer.from([tag]),
+      tag === 0x61 || tag === 0x41 ? u32(1) : Buffer.from([1]),
+      Buffer.from([0xe9]),
+    ]);
+    const sameUnicode = marshalUnicode(Buffer.from("é", "utf8"));
+    const set = Buffer.concat([
+      Buffer.from([0x3c]),
+      u32(2),
+      encoded,
+      sameUnicode,
+    ]);
+    const report = root(parse(withConsts([encoded, set])));
+    expect(report.consts[0]).toMatchObject({
+      kind: "str",
+      value: "é",
+      bytes: 1,
+    });
+    expect(report.consts[1]).toEqual({ kind: "set", length: 1 });
+  }
+});
+
 it("decodes marshal strings with CPython surrogatepass rules", () => {
   const report = parse(
     withConsts([marshalUnicode(Buffer.from("efbbbf73eda080efbbbf", "hex"))]),

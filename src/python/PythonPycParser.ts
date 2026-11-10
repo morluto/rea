@@ -436,13 +436,19 @@ class MarshalReader {
         };
       case TYPE_INTERNED:
       case TYPE_UNICODE:
-        return this.utf8(this.nonNegativeInt32("Marshal string length"), false);
+        return this.string(
+          this.nonNegativeInt32("Marshal string length"),
+          "utf8",
+        );
       case TYPE_ASCII:
       case TYPE_ASCII_INTERNED:
-        return this.utf8(this.nonNegativeInt32("Marshal string length"), true);
+        return this.string(
+          this.nonNegativeInt32("Marshal string length"),
+          "latin1",
+        );
       case TYPE_SHORT_ASCII:
       case TYPE_SHORT_ASCII_INTERNED:
-        return this.utf8(this.u8(), true);
+        return this.string(this.u8(), "latin1");
       case TYPE_TUPLE:
         return this.sequenceValue(
           "tuple",
@@ -1492,17 +1498,20 @@ class MarshalReader {
     );
   }
 
-  utf8(length: number, ascii: boolean): MarshalValue {
+  string(length: number, encoding: "latin1" | "utf8"): MarshalValue {
     const bytes = this.blob(length);
-    if (ascii) {
-      if (bytes.some((byte) => byte > 0x7f))
-        malformed("Marshal ASCII string contains a non-ASCII byte.");
+    if (encoding === "latin1") {
+      // CPython reads the ASCII-tagged forms as one-byte Unicode, even when
+      // high bytes appear. Identity must agree with the UTF-8 string form.
+      const value = bytes.toString("latin1");
       return {
         kind: "str",
-        value: bytes.toString("latin1"),
+        value,
         previewEnd: Math.min(length, PYTHON_PYC_CONST_PREVIEW_LIMIT),
         bytes: length,
-        raw: bytes,
+        raw: bytes.some((byte) => byte > 0x7f)
+          ? Buffer.from(value, "utf8")
+          : bytes,
       };
     }
     const decoded = decodeMarshalUtf8(bytes, PYTHON_PYC_CONST_PREVIEW_LIMIT);
