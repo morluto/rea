@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -52,34 +52,29 @@ export const findDotnetBundleHeader = async (
   abortIfNeeded(signal);
   let tail = Buffer.alloc(0);
   if (markerSearchEnd === 0) return undefined;
-  try {
-    for await (const value of readFileHandleChunks(handle, {
-      end: markerSearchEnd - 1,
-      signal,
-    })) {
-      abortIfNeeded(signal);
-      const chunk: Buffer = value;
-      const bytes = Buffer.concat([tail, chunk]);
-      for (
-        let index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE);
-        index >= 0;
-        index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE, index + 1)
-      ) {
-        if (index < 8) continue;
-        const offset = bytes.readBigUInt64LE(index - 8);
-        // HostWriter.IsBundle uses the first apphost marker. Later markers may
-        // belong to embedded native apphosts, whose coordinates are not this host's.
-        if (offset === 0n) return undefined;
-        if (offset > BigInt(size - 12))
-          fail(".NET bundle header is outside the host file");
-        return Number(offset);
-      }
-      // A complete marker already examined must not be examined again.
-      tail = bytes.subarray(Math.max(0, bytes.length - 39));
-    }
-  } catch (cause) {
+  for await (const value of readArtifactFileChunks(handle, {
+    end: markerSearchEnd - 1,
+    signal,
+  })) {
     abortIfNeeded(signal);
-    throw cause;
+    const chunk: Buffer = value;
+    const bytes = Buffer.concat([tail, chunk]);
+    for (
+      let index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE);
+      index >= 0;
+      index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE, index + 1)
+    ) {
+      if (index < 8) continue;
+      const offset = bytes.readBigUInt64LE(index - 8);
+      // HostWriter.IsBundle uses the first apphost marker. Later markers may
+      // belong to embedded native apphosts, whose coordinates are not this host's.
+      if (offset === 0n) return undefined;
+      if (offset > BigInt(size - 12))
+        fail(".NET bundle header is outside the host file");
+      return Number(offset);
+    }
+    // A complete marker already examined must not be examined again.
+    tail = bytes.subarray(Math.max(0, bytes.length - 39));
   }
   return undefined;
 };
@@ -99,7 +94,8 @@ export const readDotnetBundle = async (
       "unavailable",
       `Unsupported .NET bundle header ${majorVersion}.${minorVersion}; supported versions are 1.0, 2.0 and 6.0`,
     );
-  const count = await cursor.u32();
+  const count = await cursor.i32();
+  if (count < 0) fail(".NET bundle entry count is negative");
   if (count > MAX_ENTRIES)
     throw artifactFixedLimitFailure(
       ".NET bundle entry count",
@@ -110,13 +106,13 @@ export const readDotnetBundle = async (
   const configuration: { offset: number; size: number; type: number }[] = [];
   if (majorVersion >= 2) {
     configuration.push({
-      offset: await cursor.u64(),
-      size: await cursor.u64(),
+      offset: await cursor.nonnegativeI64(),
+      size: await cursor.nonnegativeI64(),
       type: 3,
     });
     configuration.push({
-      offset: await cursor.u64(),
-      size: await cursor.u64(),
+      offset: await cursor.nonnegativeI64(),
+      size: await cursor.nonnegativeI64(),
       type: 4,
     });
     const flags = await cursor.u64();
@@ -134,9 +130,10 @@ export const readDotnetBundle = async (
   let expandedBytes = 0;
   for (let index = 0; index < count; index++) {
     abortIfNeeded(signal);
-    const offset = await cursor.u64();
-    const fileSize = await cursor.u64();
-    const compressedSize = majorVersion === 6 ? await cursor.u64() : 0;
+    const offset = await cursor.nonnegativeI64();
+    const fileSize = await cursor.nonnegativeI64();
+    const compressedSize =
+      majorVersion === 6 ? await cursor.nonnegativeI64() : 0;
     const fileType = (await cursor.take(1))[0]!;
     const path = await cursor.string();
     const normalized = normalizeArtifactPath(path);
@@ -221,17 +218,13 @@ class BundleCursor {
       let read = 0;
       while (read < this.#cache.length) {
         abortIfNeeded(this.signal);
-        const reply = await this.handle
-          .read(
-            this.#cache,
-            read,
-            this.#cache.length - read,
-            this.#cacheOffset + read,
-          )
-          .catch((cause: unknown) => {
-            abortIfNeeded(this.signal);
-            throw cause;
-          });
+        const reply = await this.handle.read(
+          this.#cache,
+          read,
+          this.#cache.length - read,
+          this.#cacheOffset + read,
+        );
+        abortIfNeeded(this.signal);
         if (reply.bytesRead === 0) fail("Truncated .NET bundle manifest");
         read += reply.bytesRead;
       }
@@ -244,8 +237,15 @@ class BundleCursor {
   async u32(): Promise<number> {
     return (await this.take(4)).readUInt32LE();
   }
-  async u64(): Promise<number> {
-    const value = (await this.take(8)).readBigUInt64LE();
+  async i32(): Promise<number> {
+    return (await this.take(4)).readInt32LE();
+  }
+  async nonnegativeI64(): Promise<number> {
+    const value = (await this.take(8)).readBigInt64LE();
+    if (value < 0n) fail(".NET bundle offset or size is negative");
+    return this.exactInteger(value);
+  }
+  private exactInteger(value: bigint): number {
     if (value > BigInt(Number.MAX_SAFE_INTEGER))
       throw artifactFixedLimitFailure(
         ".NET bundle exact integer range",
@@ -253,6 +253,9 @@ class BundleCursor {
         "integer units",
       );
     return Number(value);
+  }
+  async u64(): Promise<number> {
+    return this.exactInteger((await this.take(8)).readBigUInt64LE());
   }
   async string(): Promise<string> {
     let length = 0;

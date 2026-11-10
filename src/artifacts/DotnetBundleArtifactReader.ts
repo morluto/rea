@@ -6,7 +6,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import {
   ArtifactReaderFailure,
@@ -186,7 +186,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     const input =
       storedBytes === 0
         ? Readable.from([])
-        : readFileHandleChunks(source.handle, {
+        : readArtifactFileChunks(source.handle, {
             start: file.offset,
             end: file.offset + storedBytes - 1,
             signal,
@@ -221,7 +221,6 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         );
       await this.#source.readSelectedPath(signal);
     } catch (cause) {
-      abortIfNeeded(signal);
       if (cause instanceof ArtifactReaderFailure) throw cause;
       const malformedCompression =
         inflater !== undefined &&

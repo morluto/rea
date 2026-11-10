@@ -41,6 +41,18 @@ describe("detectStateFormat", () => {
     ).toBe("binary");
   });
 
+  it("reads Unicode XML names in unnamed formats and rejects malformed XML", () => {
+    for (const [text, format] of [
+      ['<地图 名称="甲"><节点/></地图>', "xml"],
+      ['<!DOCTYPE 地图 SYSTEM "map.dtd"><地图/>', "xml"],
+      ["<地图><节点></地图>", "text"],
+      ["<ada@example.test>\nBuy milk", "text"],
+    ] as const) {
+      expect(detectStateFormat("map.dat", bytes(text))).toBe(format);
+      expect(textSyntaxFormat("map.dat", text)).toBe(format);
+    }
+  });
+
   it("tells JSON, XML, key files and plain text apart", () => {
     expect(detectStateFormat("/h/a.json", bytes('{"a":1}'))).toBe("json");
     expect(detectStateFormat("/h/notes", bytes("{not json"))).toBe("text");
@@ -160,6 +172,43 @@ describe("detectStateFormat with a DOCTYPE", () => {
       detectStateFormat(
         "/h/Documents/note.abw",
         abiword(' [<!ENTITY lol "lol">]'),
+      ),
+    ).toBe("text");
+  });
+
+  it("reads a file that opens with a DOCTYPE naming no internal subset and then an element as XML, as KmPlot's plot, whatever it is called", () => {
+    const plot = (doctype: string, body = '<function type="cartesian"/>') =>
+      bytes(`${doctype}\n<kmpdoc version="4">\n    ${body}\n</kmpdoc>\n`);
+
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot("<!DOCTYPE kmpdoc>"),
+      ),
+    ).toBe("xml");
+    expect(
+      textSyntaxFormat(
+        "/h/Documents/lesson_plots.fkt",
+        '<!DOCTYPE kmpdoc>\n<kmpdoc version="4"/>\n',
+      ),
+    ).toBe("xml");
+    expect(
+      textSyntaxFormat(
+        "/h/Documents/state.txt",
+        '<!DOCTYPE state SYSTEM "state[1].dtd"><state/>',
+      ),
+    ).toBe("xml");
+    // A DOCTYPE that can declare entities, or text that is not well formed, stays text.
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot('<!DOCTYPE kmpdoc [<!ENTITY e "x">]>', "<f>&e;</f>"),
+      ),
+    ).toBe("text");
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot("<!DOCTYPE kmpdoc>", "<function>"),
       ),
     ).toBe("text");
   });

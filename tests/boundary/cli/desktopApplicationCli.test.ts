@@ -2,6 +2,7 @@ import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { expectCliMcpEvidenceParity } from "../../fixtures/cliMcpEvidenceParity.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
@@ -28,6 +29,7 @@ cliTest(
       cwd: root,
     });
     expect(explicit.exitCode).toBe(0);
+    expect(parseEvidence(explicit.json).caller_input_path).toBe(".");
     expect(parseEvidence(explicit.json).normalized_result).toMatchObject({
       files: [{ path: "marker.txt" }],
     });
@@ -71,7 +73,7 @@ cliTest(
     try {
       const source = await service.inspect({ path: installation });
       if (!source.ok) throw source.error;
-      expect(evidence).toEqual(source.value);
+      expectCliMcpEvidenceParity(evidence, source.value, installation);
     } finally {
       await service.close();
     }
@@ -113,6 +115,7 @@ cliTest(
     expect(compact.json).toMatchObject({
       evidence_bundle: { path: bundlePath, bytes: expect.any(Number) },
       summary: {
+        caller_input_path: installation,
         normalized_result: {
           kind: "summary",
           parent_evidence_id: evidence.evidence_id,
@@ -134,6 +137,9 @@ cliTest(
       ],
     });
     expect(overwrite.exitCode).not.toBe(0);
+    expect(overwrite.json).toMatchObject({
+      details: { partial_observation: { caller_input_path: installation } },
+    });
   },
 );
 

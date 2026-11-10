@@ -369,23 +369,33 @@ describe("Ghidra snapshot profile admission", () => {
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "observed-call-inventory-and-discovery-v7",
       legacy: "resolved-call-reference-diagnostics-v1",
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "observed-call-inventory-and-discovery-v7",
       legacy: "decoded-call-target-coverage-v2",
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "observed-call-inventory-and-discovery-v7",
       legacy: "decoded-call-target-coverage-v3",
     },
     {
       parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
+      current: "observed-call-inventory-and-discovery-v7",
       legacy: "function-body-call-coverage-v4",
+    },
+    {
+      parameter: "call_relationship_coverage",
+      current: "observed-call-inventory-and-discovery-v7",
+      legacy: "function-body-call-coverage-v5",
+    },
+    {
+      parameter: "call_relationship_coverage",
+      current: "observed-call-inventory-and-discovery-v7",
+      legacy: "function-body-call-coverage-v6",
     },
   ])(
     "refuses snapshots with outdated $parameter semantics",
