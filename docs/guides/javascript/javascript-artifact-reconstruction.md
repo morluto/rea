@@ -22,7 +22,9 @@ rea analyze-javascript-application /absolute/path/to/apps/app.asar \
 
 Generic `rea analyze` selects this static provider for directories and `.asar`
 paths when neither `--provider` nor `--snapshot` is supplied. The dedicated
-command and the generic route return their complete results inline. Native
+command and the generic route return complete results inline by default.
+Summary and route-view delivery export the full Evidence to `--evidence_output`
+and return a projection; see [route delivery](../../javascript-route-inventory.md). Native
 targets, single JavaScript files, `.app` bundles, and explicit deep-provider or
 snapshot requests retain the native deep-analysis route.
 
@@ -85,6 +87,11 @@ edges for the selected candidate. Previously retained Evidence keeps its origina
 properties and remains readable without migration.
 
 ## Select sources before analysis
+
+Explicit `source_paths` retain the acquisition owner's requested order, including
+selected dependency files. First-party priority applies only to unscoped analysis.
+Recovered syntax or incomplete semantic examination keeps Electron coverage
+partial even when useful windows or IPC facts were retained.
 
 For a question about known entry sources, supply exact artifact-relative file
 paths in `source_paths`, or repeat `--source-path` on either CLI route:
@@ -181,7 +188,9 @@ coverage, limitations, and `normalized_result.parent_evidence_id`. Pass that ID
 to `inspect_analysis_view` for module pages or items, or to the application
 workflows as a retained reference. The summary does not repeat or truncate the
 analysis; a server without session retention refuses summary detail with
-`capability_unavailable`. CLI output is unchanged and always complete.
+`capability_unavailable`. On the CLI, `--detail summary --evidence_output PATH`
+exports the full Evidence and returns its summary; the default remains complete
+inline delivery.
 
 With a connected MCP `client` and the caller-selected absolute `inputPath`, this
 recipe analyzes once and pages module identities using the returned ID:
@@ -322,6 +331,12 @@ module facts together with any parent application-projection limit. Cleanup
 failure does not authorize expanding relationships that parent admission declined.
 
 ## What is reconstructed
+
+Electron `BrowserView` and `WebContentsView` expose `webContents` and accept
+`webPreferences`, including declared preloads. `BaseWindow` has neither surface
+of its own. Preload associations retain the parsed constructor's mechanism rather
+than labeling every view as a BrowserWindow. These are static associations, not
+proof that a renderer or preload executed.
 
 The projector reuses the content-addressed artifact inventory and safe artifact
 readers. It retains canonical artifact-relative paths, exact byte counts,
@@ -514,6 +529,25 @@ Re-analyze both snapshots to compare using the v3 rules.
 If fingerprint construction reaches its structural
 bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.
+
+## Cached-data compilation boundaries
+
+The [feature specification](../../specs/javascript/v8-cached-data/spec.md) defines
+the static admission and uncertainty contract.
+
+A `node:vm` compilation reports whether `cachedData` is declared, absent or
+unknown. Explicitly supplied undefined bytes are treated as absent; shadowed
+identifiers remain declarations. Source syntax alone does not establish valid cache bytes, V8 acceptance
+or execution. The summary counts declared compilations, not executions.
+
+A proven synchronous filesystem read or awaited promise-based read supplies a
+cache path. The producer retains its path base: source-directory expressions
+can name inventoried artifacts, while relative literal paths depend on the
+target working directory and remain unresolved. Other supplied values retain
+their bounded source expression. Declared paths, exact-file lookup
+status, candidate paths and resolution limitations remain separate; an unresolved
+path never becomes a resolved file. Opaque inventoried cache bytes can remain
+unavailable to the JavaScript resolver even when their occurrence is known.
 
 ## Authority and unknowns
 
@@ -729,7 +763,7 @@ These safeguards are not caller-selectable output budgets. Source-map parsing
 reports truncation when its format or parser safety boundary is reached. The
 application graph has no aggregate node, edge, root, or observation prefix cap.
 
-Semantic evaluation retains at most 256 distinct primitive candidates per
+By default, semantic evaluation retains at most 256 distinct primitive candidates per
 expression and at most 1 MiB of worst-case JSON string bytes across a normalized
 primitive value's string candidates. The byte budget estimates six JSON bytes
 per UTF-16 code unit, the expansion bound for escaped strings, and bounds both
@@ -749,12 +783,47 @@ available for endpoint queries, tracing and comparison. Each analysis records en
 later projections: a selected healthy sibling can remain exact while whole-file
 coverage reports the encountered bound. Projection preserves limiting values
 from the shared property-slot owner. Expression
-evaluation and provenance walks stop after 256 nested levels. Union products
+evaluation and provenance walks default to 256 nested levels. Union products
 and string lengths are checked before allocating combinations or concatenated
 strings. When a boundary is reached, the value stays unknown, semantic coverage
 becomes partial, and graph evidence retains the expression location and typed
 limiting reason. The number of unresolved alternatives is unknown; it is not
 reported as an exact omission count.
+
+`semantic_precision` selects per-source evaluator budgets independently of
+retained graph capacity, worker memory and deadlines. Both
+`analyze_javascript_application` and `analyze_web_bundle` accept a partial object:
+
+| Field                  | Default | Unit                                        |
+| ---------------------- | ------: | ------------------------------------------- |
+| `primitive_candidates` |     256 | alternatives per normalized primitive value |
+| `primitive_bytes`      | 1048576 | estimated JSON bytes per primitive value    |
+| `expression_depth`     |     256 | nested expression/provenance levels         |
+| `getter_expansions`    |     512 | scheduled states per precise getter query   |
+| `alias_selections`     |     512 | additional precise selector states          |
+| `wrapper_visits`       | 1000000 | wrapper visits/substitutions per source     |
+| `wrapper_depth`        |     128 | active symbolic wrapper levels              |
+
+`primitive_bytes` charges six estimated JSON bytes per UTF-16 code unit plus
+quotes before creating concatenated strings. Ordinary ASCII can exhaust that
+conservative estimate before its actual JSON encoding reaches the selected
+byte count. The [calibration record](../../verification/javascript-precision-calibration.md)
+keeps existing defaults for its measured literal-value tasks; it does not
+establish optimal candidate, getter or alias budgets for larger applications.
+
+All fields accept positive safe integers; worker memory, execution and JSON
+representation bounds remain independently enforced. Omission keeps the defaults;
+invalid values fail validation. For example, retry a finite candidate-limit
+observation with `semantic_precision: {"primitive_candidates": 512}`. The CLI
+accepts `--semantic-precision '{"primitive_candidates":512}'` or a JSON file.
+An override applies to that next analysis without restarting REA, remains in
+Evidence parameters and effective coverage, and cannot change already retained
+facts. Increasing these budgets does not raise graph retention, worker heap,
+transfer admission, or parent result memory. Cyclic or unsupported evaluations
+remain unknown. Wrapper limitations name visits and depth separately so a
+caller can change the resource actually exhausted. Finite inline literal object
+spreads use iterative syntax traversal and no longer inherit a duplicate
+semantic-depth cut.
 
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous

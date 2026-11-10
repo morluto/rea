@@ -48,7 +48,7 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
       return [];
     },
   });
-  const inspection = host.providerInspections!();
+  const inspection = host.providerInspections!([]);
   let closing: Promise<unknown> | undefined;
   await withVerifierCleanup(async () => {
     await awaitAcknowledgement(
@@ -83,7 +83,7 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
     await host.close!();
     expect(failure.cleanupIncomplete).toBe(false);
     expect(closes).toEqual({ successful: 1, refused: 2 });
-    await expect(host.providerInspections!()).rejects.toThrow(
+    await expect(host.providerInspections!([])).rejects.toThrow(
       "scope is closed",
     );
   }, [

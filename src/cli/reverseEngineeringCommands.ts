@@ -17,6 +17,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
   reverseCommandTimeoutSchema,
+  reverseCommandOutputBytesSchema,
   rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -173,6 +174,7 @@ export const registerReverseEngineeringCommands = (
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
       commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -197,6 +199,9 @@ export const registerReverseEngineeringCommands = (
                   ...(options.symbol === undefined
                     ? {}
                     : { symbol: options.symbol }),
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
                   ...(options.commandTimeoutMs === undefined
                     ? {}
                     : { command_timeout_ms: options.commandTimeoutMs }),
@@ -220,6 +225,7 @@ export const registerReverseEngineeringCommands = (
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
       commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
     }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
@@ -244,6 +250,9 @@ export const registerReverseEngineeringCommands = (
                 service.inspectWithObjdump(
                   {
                     operation: "architectures",
+                    ...(options.maxOutputBytes === undefined
+                      ? {}
+                      : { max_output_bytes: options.maxOutputBytes }),
                     ...(options.commandTimeoutMs === undefined
                       ? {}
                       : { command_timeout_ms: options.commandTimeoutMs }),
@@ -277,6 +286,7 @@ export const registerReverseEngineeringCommands = (
       asmCpu: rizinInputSchema.shape.asm_cpu,
       baseAddress: rizinInputSchema.shape.base_address,
       commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -300,6 +310,9 @@ export const registerReverseEngineeringCommands = (
                   ...(options.baseAddress === undefined
                     ? {}
                     : { base_address: options.baseAddress }),
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
                   ...(options.commandTimeoutMs === undefined
                     ? {}
                     : { command_timeout_ms: options.commandTimeoutMs }),

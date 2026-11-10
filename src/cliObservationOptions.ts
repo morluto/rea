@@ -93,6 +93,12 @@ export const electronPageInspectionOptions = z.object({
 });
 
 export const javascriptApplicationOptions = z.object({
+  semanticPrecision: z
+    .string()
+    .optional()
+    .describe(
+      "Inline JSON or JSON file with per-source semantic_precision evaluator budgets; independent of graph retention and worker memory.",
+    ),
   ...javascriptRouteDeliveryOptions,
   maxSemanticNodes: cliDecimalField(
     javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes,
