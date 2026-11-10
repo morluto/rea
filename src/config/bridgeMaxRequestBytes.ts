@@ -1,6 +1,7 @@
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -102,6 +103,9 @@ export const parseBridgeMaxRequestBytes = (
 export const resolveBridgeMaxRequestBytes = (
   environment: Readonly<Record<string, string | undefined>>,
 ): BridgeMaxRequestBytes => {
+  const override = currentAnalysisSettingOverride("bridge.max_request_bytes");
+  if (override !== undefined)
+    return { maximumBytes: override, source: "runtime" };
   const parsed = parseBridgeMaxRequestBytes(
     environment[BRIDGE_MAX_REQUEST_BYTES_SETTING],
   );

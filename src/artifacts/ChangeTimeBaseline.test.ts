@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 
 import { expect, it } from "vitest";
 
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { settleChangeTimeBaseline } from "../filesystem/ChangeTimeBaseline.js";
 
 const DRIFT_MS = 2_000;
@@ -228,4 +229,27 @@ it("throws the caller's typed cancellation rather than the raw reason", async ()
       cancellationError: (reason) => new Cancelled(String(reason)),
     }),
   ).rejects.toBeInstanceOf(Cancelled);
+});
+
+it("uses a Windows settle override before rejecting an invalid launch seed", async () => {
+  const observed = await runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "windows.change_time_drift_ms": 50,
+        "windows.change_time_settle_poll_ms": 10,
+        "windows.change_time_settle_max_polls": 4,
+      },
+    },
+    () =>
+      settleChangeTimeBaseline(async () => statsAt(1_000), {
+        environment: {
+          REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "nope",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "0",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001",
+        },
+        platform: "linux",
+      }),
+  );
+  expect(observed.ctimeMs).toBe(1_000);
 });

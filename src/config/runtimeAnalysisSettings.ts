@@ -1,4 +1,5 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
@@ -7,8 +8,12 @@ import {
   DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
   DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
 } from "../domain/analysisResourceLimits.js";
-import { parseAsarListingAdmission } from "./asarListingAdmission.js";
 import {
+  parseAsarListingAdmission,
+  DEFAULT_ASAR_LISTING_ADMISSION,
+} from "./asarListingAdmission.js";
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
 } from "./asarHeaderAdmission.js";
@@ -145,25 +150,42 @@ export const runtimeAsarHeaderAdmission = (
   const parsed = parseAsarHeaderAdmission(
     environment.REA_ASAR_MAX_HEADER_BYTES,
   );
-  if (!parsed.ok) throw parsed.error;
+  const headerOverride =
+    read?.().overrides["asar.max_header_bytes"] ??
+    currentAnalysisSettingOverride("asar.max_header_bytes");
+  if (!parsed.ok && headerOverride === undefined) throw parsed.error;
   const listing = parseAsarListingAdmission(
     environment.REA_ASAR_MAX_LISTING_BYTES,
   );
-  if (!listing.ok) throw listing.error;
-  const baseline = parsed.value;
+  const listingOverride =
+    read?.().overrides["asar.max_listing_bytes"] ??
+    currentAnalysisSettingOverride("asar.max_listing_bytes");
+  if (!listing.ok && listingOverride === undefined) throw listing.error;
+  const baseline = parsed.ok ? parsed.value : DEFAULT_ASAR_HEADER_ADMISSION;
+  const listingBaseline = listing.ok
+    ? listing.value
+    : DEFAULT_ASAR_LISTING_ADMISSION;
   return read === undefined
-    ? { ...baseline, listing: listing.value }
+    ? {
+        maximumBytes: headerOverride ?? baseline.maximumBytes,
+        source: headerOverride === undefined ? baseline.source : "runtime",
+        listing: {
+          maximumBytes: listingOverride ?? listingBaseline.maximumBytes,
+          source:
+            listingOverride === undefined ? listingBaseline.source : "runtime",
+        },
+      }
     : {
         listing: {
           get maximumBytes() {
             return (
               read().overrides["asar.max_listing_bytes"] ??
-              listing.value.maximumBytes
+              listingBaseline.maximumBytes
             );
           },
           get source() {
             return read().overrides["asar.max_listing_bytes"] === undefined
-              ? listing.value.source
+              ? listingBaseline.source
               : "runtime";
           },
         },

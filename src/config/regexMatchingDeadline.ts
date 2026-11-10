@@ -5,6 +5,7 @@ import {
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 export const REGEX_MATCHING_DEADLINE_SETTING = "REA_REGEX_MATCHING_DEADLINE_MS";
@@ -57,6 +58,9 @@ export const parseRegexMatchingDeadline = (
 export const resolveRegexMatchingDeadline = (
   environment: Readonly<Record<string, string | undefined>>,
 ): RegexMatchingDeadline => {
+  const override = currentAnalysisSettingOverride("regex.matching_deadline_ms");
+  if (override !== undefined)
+    return { deadlineMs: override, source: "runtime" };
   const parsed = parseRegexMatchingDeadline(
     environment[REGEX_MATCHING_DEADLINE_SETTING],
   );
