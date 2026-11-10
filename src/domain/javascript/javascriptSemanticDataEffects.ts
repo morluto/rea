@@ -613,7 +613,23 @@ const rejectsHttpPathLiteral = (
   const first = node.arguments[0];
   if (first === undefined) return false;
   const firstValue = unwrapJavaScriptExpression(first).node;
-  const optionsIndex = t.isObjectExpression(firstValue) ? 0 : 1;
+  // A non-object first argument is the options slot only for the `(url, options)`
+  // overload. Measured on Node 24.22.1, `http.request(() => {}, {path: "/a b"})` builds a
+  // request to `/` because `ClientRequest` reads the function as the callback and
+  // replaces options with defaults, so the second object is never read. Only a string,
+  // template or `new URL` target proves that overload.
+  const urlTarget =
+    t.isStringLiteral(firstValue) ||
+    t.isTemplateLiteral(firstValue) ||
+    (t.isNewExpression(firstValue) &&
+      t.isIdentifier(firstValue.callee) &&
+      firstValue.callee.name === "URL");
+  const optionsIndex = t.isObjectExpression(firstValue)
+    ? 0
+    : urlTarget
+      ? 1
+      : -1;
+  if (optionsIndex < 0) return false;
   // Only a spread at or before the options slot can move it. Measured on Node 24.22.1,
   // `http.request({path: "/a b"}, ...callbacks)` still throws ERR_UNESCAPED_CHARACTERS,
   // because expanding a later argument cannot change the object Node already picked.

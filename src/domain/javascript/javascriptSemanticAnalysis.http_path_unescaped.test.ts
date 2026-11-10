@@ -90,3 +90,19 @@ it("keeps the request when a spread precedes the options slot", () => {
   ).requestOperations;
   expect(operations).toHaveLength(1);
 });
+
+it("keeps the request when a non-object first argument is the callback", () => {
+  // `ClientRequest` reads the function as the callback and replaces options with defaults,
+  // so the second object is never read. Measured on Node 24.22.1.
+  const operations = analyzeJavaScriptSemantics(
+    `import http from "node:http";\nfunction f() { http.request(() => {}, { path: "/a b" }); }`,
+  ).requestOperations;
+  expect(operations).toHaveLength(1);
+});
+
+it.each([
+  [`http.request("/x", { path: "/a b" })`],
+  [`http.request(new URL("http://h/"), { path: "/a b" })`],
+] as const)("still reads slot 1 for a proven url target: %s", (call) => {
+  expect(requestsFor(call)).toEqual([]);
+});
