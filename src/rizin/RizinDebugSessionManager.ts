@@ -28,6 +28,7 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ProviderProcessSupervisor,
@@ -263,13 +264,11 @@ export class RizinDebugSessionManager {
   #closingAll = false;
   readonly #startDrainWaiters: Array<() => void> = [];
   readonly #command: string;
-  readonly #commandDeadline: DebuggerAdmissionLimit;
-  readonly #frameTimeoutMs: number;
+  readonly #launchCommandDeadline: DebuggerAdmissionLimit;
   readonly #startupTimeoutMs: number;
   readonly #maxSessions: DebuggerAdmissionLimit;
   readonly #maxPendingCommands: DebuggerAdmissionLimit;
-  readonly #commandOutput: DebuggerAdmissionLimit;
-  readonly #maxCommandOutputBytes: number;
+  readonly #launchCommandOutput: DebuggerAdmissionLimit;
   readonly #platform: NodeJS.Platform;
   readonly #stopProcess: typeof stopOwnedDebuggerProcess;
   readonly #spawnProcess: typeof spawnOwnedProviderProcess;
@@ -287,16 +286,39 @@ export class RizinDebugSessionManager {
     this.#environment = { ...environment };
     this.#command = environment.REA_RIZIN_COMMAND ?? "rizin";
     const limits = resolveDebuggerSessionLimits(this.#environment);
-    this.#commandDeadline = limits.commandDeadline;
-    this.#frameTimeoutMs = this.#commandDeadline.value;
+    this.#launchCommandDeadline = limits.commandDeadline;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
     this.#maxSessions = limits.maxSessions;
     this.#maxPendingCommands = limits.maxPendingCommands;
-    this.#commandOutput = limits.maxCommandOutputBytes;
-    this.#maxCommandOutputBytes = this.#commandOutput.value;
+    this.#launchCommandOutput = limits.maxCommandOutputBytes;
     this.#platform = options.platform ?? process.platform;
     this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
     this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
+  }
+
+  get #commandDeadline(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.command_deadline_ms"
+      ];
+    return override === undefined
+      ? this.#launchCommandDeadline
+      : { ...this.#launchCommandDeadline, value: override, source: "runtime" };
+  }
+  get #frameTimeoutMs(): number {
+    return this.#commandDeadline.value;
+  }
+  get #commandOutput(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.max_command_output_bytes"
+      ];
+    return override === undefined
+      ? this.#launchCommandOutput
+      : { ...this.#launchCommandOutput, value: override, source: "runtime" };
+  }
+  get #maxCommandOutputBytes(): number {
+    return this.#commandOutput.value;
   }
 
   async start(

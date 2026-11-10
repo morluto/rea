@@ -7,20 +7,35 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import {
+  DEFAULT_JEB_MCP_TIMEOUT_MS,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 
 /** Which JEB MCP phase consumed `REA_JEB_MCP_TIMEOUT_MS`. */
 export type JebMcpDeadlinePhase = "discovery" | "tools/call";
 
-/** Name the launch-environment deadline that both JEB phases share. */
+/** Name the deadline that both JEB phases share. */
 export const jebMcpTimeoutGuidance = (
   phase: JebMcpDeadlinePhase,
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
-  userMessage: `This request reached REA's configured JEB ${phase === "discovery" ? "catalog discovery" : phase} deadline of ${String(timeoutMs)} ms (deadlineExpired).`,
-  remediationAction: `Increase REA_JEB_MCP_TIMEOUT_MS in REA's launch environment to an integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds (omitted means ${String(DEFAULT_REQUEST_TIMEOUT_MSEC)} ms) and restart and reconnect REA to apply it. The same setting raises catalog discovery and each tools/call. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
+) => {
+  const override =
+    currentAnalysisOperationSnapshot()?.overrides["jeb.mcp_timeout_ms"];
+  const limit = analysisSettingLimit(
+    "jeb.mcp_timeout_ms",
+    timeoutMs,
+    override === undefined ? undefined : "runtime",
+  );
+  return {
+    userMessage: `This request reached REA's configured JEB ${phase === "discovery" ? "catalog discovery" : phase} deadline of ${String(timeoutMs)} ms (deadlineExpired).`,
+    remediationAction: `jeb.mcp_timeout_ms is ${String(timeoutMs)} ms (source ${limit.source ?? "unknown"}; default ${String(DEFAULT_JEB_MCP_TIMEOUT_MS)} ms, floor ${String(limit.minimum)} ms, maximum ${String(limit.maximum)} ms). It can be changed at runtime with update_analysis_settings. The launch seed is REA_JEB_MCP_TIMEOUT_MS. The same setting raises catalog discovery and each tools/call. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+    limit,
+  };
+};
 
 /** SDK 2.3.1 preserves an SdkError abort reason by identity. */
 export class JebMcpDeadline {

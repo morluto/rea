@@ -23,6 +23,7 @@ import type {
   GdbOutputLimit,
 } from "../domain/commandObservation.js";
 import { DEBUGGER_CONTROL_REPLY_BYTES } from "../domain/analysisResourceLimits.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ProviderProcessSupervisor,
@@ -596,8 +597,7 @@ export class GdbSessionManager {
   >();
   readonly #command: string;
   readonly #environment: NodeJS.ProcessEnv;
-  readonly #commandDeadline: DebuggerAdmissionLimit;
-  readonly #commandTimeoutMs: number;
+  readonly #launchCommandDeadline: DebuggerAdmissionLimit;
   readonly #startupTimeoutMs: number;
   readonly #platform: NodeJS.Platform;
   readonly #stopProcess: typeof stopOwnedDebuggerProcess;
@@ -610,9 +610,32 @@ export class GdbSessionManager {
   readonly #readInferiorProcessStartTime: ProcessStartTimeReader | undefined;
   readonly #maxSessions: DebuggerAdmissionLimit;
   readonly #maxPendingCommands: DebuggerAdmissionLimit;
-  readonly #commandOutput: DebuggerAdmissionLimit;
-  readonly #maxCommandOutputBytes: number;
+  readonly #launchCommandOutput: DebuggerAdmissionLimit;
   readonly #controlReplyBytes: number;
+  get #commandDeadline(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.command_deadline_ms"
+      ];
+    return override === undefined
+      ? this.#launchCommandDeadline
+      : { ...this.#launchCommandDeadline, value: override, source: "runtime" };
+  }
+  get #commandTimeoutMs(): number {
+    return this.#commandDeadline.value;
+  }
+  get #commandOutput(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.max_command_output_bytes"
+      ];
+    return override === undefined
+      ? this.#launchCommandOutput
+      : { ...this.#launchCommandOutput, value: override, source: "runtime" };
+  }
+  get #maxCommandOutputBytes(): number {
+    return this.#commandOutput.value;
+  }
   #sessionReservations = 0;
   #closing = false;
   #closePromise: Promise<void> | undefined;
@@ -642,8 +665,7 @@ export class GdbSessionManager {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#command = this.#environment.REA_GDB_COMMAND ?? "gdb";
     const limits = resolveDebuggerSessionLimits(this.#environment);
-    this.#commandDeadline = limits.commandDeadline;
-    this.#commandTimeoutMs = this.#commandDeadline.value;
+    this.#launchCommandDeadline = limits.commandDeadline;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
     this.#platform = options.platform ?? process.platform;
     this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
@@ -653,8 +675,7 @@ export class GdbSessionManager {
     this.#readInferiorProcessStartTime = options.readInferiorProcessStartTime;
     this.#maxSessions = limits.maxSessions;
     this.#maxPendingCommands = limits.maxPendingCommands;
-    this.#commandOutput = limits.maxCommandOutputBytes;
-    this.#maxCommandOutputBytes = this.#commandOutput.value;
+    this.#launchCommandOutput = limits.maxCommandOutputBytes;
     this.#controlReplyBytes =
       options.controlReplyBytes ?? DEBUGGER_CONTROL_REPLY_BYTES;
   }

@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { defaultKunaCacheDirectory } from "../config/kunaCacheDirectory.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
@@ -59,7 +60,9 @@ export const kunaFunctionDeadline = (
   configuration: KunaConfiguration,
 ): KunaDeadline => ({
   setting: "REA_KUNA_TIMEOUT_MS",
-  ms: configuration.functionTimeoutMs,
+  ms:
+    currentAnalysisOperationSnapshot()?.overrides["kuna.function_timeout_ms"] ??
+    configuration.functionTimeoutMs,
 });
 
 /** The project export and whole-program string, graph and xref scans. */
@@ -67,7 +70,9 @@ export const kunaProjectDeadline = (
   configuration: KunaConfiguration,
 ): KunaDeadline => ({
   setting: "REA_KUNA_PROJECT_TIMEOUT_MS",
-  ms: configuration.projectTimeoutMs,
+  ms:
+    currentAnalysisOperationSnapshot()?.overrides["kuna.project_timeout_ms"] ??
+    configuration.projectTimeoutMs,
 });
 
 /** Why the configured environment cannot select a Kuna installation. */

@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import {
   PWNTOOLS_LIMITS,
   resolvePwntoolsLimits,
@@ -296,7 +297,12 @@ const classifyPwntoolsDecoderFailure = (
           ...(cause.reason === "limit"
             ? {
                 userMessage: `${cause.message} Selected producer_limits.input_bytes is ${String(limits.input_bytes)} bytes. ${budgetRecovery}`,
-                remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} on the next call (CLI --producer-limits JSON). No restart is required. Changing REA_PWNTOOLS_MAX_INPUT_BYTES affects the launch default instead. CPU, memory, output and transport allowances remain independent.`,
+                remediationAction: `pwntools.max_input_bytes is the launch default of ${String(PWNTOOLS_LIMITS.input_bytes)} bytes and can be changed at runtime with update_analysis_settings. The launch seed is REA_PWNTOOLS_MAX_INPUT_BYTES. producer_limits.input_bytes overrides that default on the next call (CLI --producer-limits JSON). The effective input_bytes for this call is ${String(limits.input_bytes)}. CPU, memory, output and transport allowances remain independent.`,
+                limit: analysisSettingLimit(
+                  "pwntools.max_input_bytes",
+                  limits.input_bytes,
+                  undefined,
+                ),
               }
             : {}),
         },

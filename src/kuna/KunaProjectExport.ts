@@ -215,7 +215,7 @@ export const exportKunaProject = async (
 ): Promise<KunaExportOutcome> => {
   const { installation, signal } = request;
   const { configuration } = installation;
-  const deadline = Date.now() + configuration.projectTimeoutMs;
+  const deadline = Date.now() + kunaProjectDeadline(configuration).ms;
   const input = join(request.workspace, "input", basename(request.targetPath));
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
   await mkdir(request.output, { recursive: true, mode: 0o700 });

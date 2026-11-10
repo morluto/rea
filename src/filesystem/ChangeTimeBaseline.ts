@@ -1,6 +1,7 @@
 import type { Stats } from "node:fs";
 
 import {
+  applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
   type WindowsChangeTimeSettleLimits,
 } from "../config/windowsChangeTimeSettle.js";
@@ -49,7 +50,7 @@ const limitsFrom = (
     seams.environment ?? process.env,
   );
   if (!resolved.ok) throw resolved.error;
-  return resolved.value;
+  return applyWindowsChangeTimeSnapshot(resolved.value);
 };
 
 /** Stop settling as soon as the owning operation is cancelled. */
