@@ -1,4 +1,9 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { WEB_NETWORK_CAPTURE_FORMATS } from "../domain/webNetworkCapture.js";
 import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -19,7 +24,7 @@ export const registerWebNetworkCaptureCommands = (
     description:
       "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
     args: z.object({
-      capturePath: z.string().describe("Absolute local capture path"),
+      capturePath: localPath.describe("Absolute local capture path"),
       format: z
         .enum(WEB_NETWORK_CAPTURE_FORMATS)
         .describe("Producer capture format"),
