@@ -303,6 +303,17 @@ The decoded `document.xml` region retains pool, element and attribute counts
 with the rendered XML text. See [AXML](../axml.md) for chunk layout and
 coverage boundaries.
 
+Decode a compiled Android resource table the same way:
+
+```sh
+rea inspect-artifact resources.arsc --detail summary --evidence_output evidence.json --json
+rea extract-artifact resources.arsc --json
+```
+
+The decoded `resources.xml` region names every package, type and entry with
+its decoded configuration qualifier and literal value. See
+[arsc](../arsc.md) for the projection layout and resource bounds.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh

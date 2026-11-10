@@ -77,7 +77,7 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
 
   constructor(
     path: string,
-    readonly format: "intel-hex" | "srec" | "uf2" | "dfuse" | "axml",
+    readonly format: "intel-hex" | "srec" | "uf2" | "dfuse" | "axml" | "arsc",
     decoding: RegionDecoding<Image>,
     admitted?: StableRegularFileDescriptor,
   ) {

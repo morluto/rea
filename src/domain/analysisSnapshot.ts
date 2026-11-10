@@ -78,6 +78,7 @@ const formatSchema = z.enum([
   "unityfs",
   "wxapkg",
   "axml",
+  "arsc",
   "dmg",
   "pkg",
   "intel-hex",

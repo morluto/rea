@@ -33,6 +33,7 @@ import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
 import { AxmlArtifactReader } from "./AxmlArtifactReader.js";
+import { ArscArtifactReader } from "./ArscArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -342,6 +343,16 @@ const NON_ZIP_FORMATS = {
       "AXML inventory decodes the document chunk stream into XML text; resource table names, DEX references and runtime behavior are not resolved.",
     createReader: (path, options) =>
       new AxmlArtifactReader(path, sourceOf(options)),
+  }),
+  arsc: container("arsc", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ARSC inventory decodes the resource table into an XML projection of packages, types and entries; library/overlay/staged-alias chunks are walked but not projected, and runtime resource behavior is not evaluated.",
+    createReader: (path, options) =>
+      new ArscArtifactReader(path, sourceOf(options)),
   }),
   uimage: container("uimage", {
     roleContainer: true,

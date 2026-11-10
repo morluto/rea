@@ -378,6 +378,27 @@ export const axmlMetadataSchema = z.strictObject({
 });
 export type AxmlMetadata = z.infer<typeof axmlMetadataSchema>;
 
+/** Android compiled resource table facts from the chunk stream. */
+export const arscMetadataSchema = z.strictObject({
+  kind: z.literal("arsc"),
+  package_count: offset,
+  type_count: offset,
+  entry_count: offset,
+  string_count: offset,
+  declared_size: offset,
+});
+export type ArscMetadata = z.infer<typeof arscMetadataSchema>;
+
+/** The decoded resource-table XML region; counts describe the projection. */
+export const arscDocumentMetadataSchema = z.strictObject({
+  kind: z.literal("arsc-document"),
+  package_count: offset,
+  type_count: offset,
+  entry_count: offset,
+  string_count: offset,
+  length: offset,
+});
+
 /** The decoded XML text region; counts describe the rendered document. */
 export const axmlDocumentMetadataSchema = z.strictObject({
   kind: z.literal("axml-document"),
@@ -970,6 +991,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   hexRecordRegionMetadataSchema,
   axmlMetadataSchema,
   axmlDocumentMetadataSchema,
+  arscMetadataSchema,
+  arscDocumentMetadataSchema,
   uImageMetadataSchema,
   uImageEntryMetadataSchema,
   espImageMetadataSchema,
@@ -1101,6 +1124,14 @@ const declarationsByKind: {
   "axml-document": {
     notCompared:
       "The counts describe the decoded document, and length follows from them; the region's bytes are compared by content.",
+  },
+  arsc: {
+    notCompared:
+      "Its fields come from the table's own chunk stream, which content comparison covers.",
+  },
+  "arsc-document": {
+    notCompared:
+      "The counts describe the decoded table projection, and length follows from them; the region's bytes are compared by content.",
   },
   uimage: {
     notCompared:

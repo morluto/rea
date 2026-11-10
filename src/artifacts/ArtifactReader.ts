@@ -203,6 +203,7 @@ export interface ArtifactReader {
     | "unityfs"
     | "wxapkg"
     | "axml"
+    | "arsc"
     | "uimage"
     | "pyinstaller"
     | "dotnet-bundle"

@@ -295,6 +295,7 @@ export type BinaryTarget =
           | "unityfs"
           | "wxapkg"
           | "axml"
+          | "arsc"
           | "uimage"
           | "dmg"
           | "pkg"
