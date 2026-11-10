@@ -109,8 +109,8 @@ const registerOverviewCommands = (
           "binary_overview",
           {},
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        );
+      }),
   });
 };
 
@@ -238,8 +238,10 @@ const registerXrefsCommand = (
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "xrefs", () =>
-        runDirectAnalysis(
+      logCliCommand(logger, "xrefs", () => {
+        if (args.address === undefined && options.address === undefined)
+          throw new Error("xrefs requires an address or --address");
+        return runDirectAnalysis(
           args.path,
           "xrefs",
           {
