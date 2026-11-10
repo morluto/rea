@@ -131,3 +131,16 @@ it.each([
     });
   },
 );
+
+it("rejects an empty annotate-native-function procedure before opening a target", async () => {
+  const { serve, runs } = registry();
+  expect(
+    await serve(["annotate-native-function", ".", "", "--name", "renamed"]),
+  ).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "procedure", code: "too_small" }),
+    ],
+  });
+  for (const run of runs) expect(run).not.toHaveBeenCalled();
+});
