@@ -5,14 +5,19 @@ import { inspectBinaryHardeningInputSchema } from "../domain/native/binaryHarden
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
+import { producerLimitsOption } from "./producerLimitsOption.js";
+import { pwntoolsProducerLimitsSchema } from "../domain/native/pwntoolsResourceLimits.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createNativeInitializersService,
+  createElfUnwindRangesService,
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
+  createKernelBuildConfigService,
   createPeLoadConfigService,
   createBinaryHardeningService,
   createPeResourcesService,
@@ -34,8 +39,12 @@ import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectWindowsShortcutInputSchema } from "../domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
+import { inspectNativeInitializersInputSchema } from "../domain/native/nativeInitializers.js";
+import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
+import { inspectElfUnwindRangesInputSchema } from "../domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
+import { inspectKernelBuildConfigInputSchema } from "../domain/native/kernelBuildConfig.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
@@ -85,6 +94,103 @@ export const registerBinaryDiagnosticsCommands = (
               elf,
               "rea-elf-notes",
               "inspect_elf_notes",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectNativeInitializers, {
+    description:
+      "List ELF and Mach-O initializer and finalizer functions without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local ELF32/ELF64, thin Mach-O or universal Mach-O image",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectNativeInitializersInputSchema.shape.max_file_bytes,
+      ),
+      offset: cliDecimalField(
+        inspectNativeInitializersInputSchema.shape.offset,
+      ),
+      limit: cliDecimalField(inspectNativeInitializersInputSchema.shape.limit),
+      architecture: machoSliceArchitectureSchema
+        .optional()
+        .describe(
+          "CPU family of the slice to read from a universal Mach-O; required for universal files",
+        ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const initializers = createNativeInitializersService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectNativeInitializers,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                initializers.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    offset: options.offset,
+                    limit: options.limit,
+                    ...(options.architecture === undefined
+                      ? {}
+                      : { architecture: options.architecture }),
+                  },
+                  { signal },
+                ),
+              initializers,
+              "rea-native-initializers",
+              "inspect_native_initializers",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+
+  cli.command(CLI_COMMANDS.inspectElfUnwindRanges, {
+    description:
+      "Inspect ELF unwind function ranges without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local ELF32/ELF64 image"),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectElfUnwindRangesInputSchema.shape.max_file_bytes,
+      ),
+      maxRanges: cliDecimalField(
+        inspectElfUnwindRangesInputSchema.shape.max_ranges,
+      ),
+      offset: cliDecimalField(inspectElfUnwindRangesInputSchema.shape.offset),
+      limit: cliDecimalField(inspectElfUnwindRangesInputSchema.shape.limit),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const unwind = createElfUnwindRangesService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectElfUnwindRanges,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                unwind.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_ranges: options.maxRanges,
+                    offset: options.offset,
+                    limit: options.limit,
+                  },
+                  { signal },
+                ),
+              unwind,
+              "rea-elf-unwind-ranges",
+              "inspect_elf_unwind_ranges",
               signal,
             ).then(projectCliAnalysisResult),
         );
@@ -168,6 +274,12 @@ export const registerBinaryDiagnosticsCommands = (
       maxEntries: cliDecimalField(
         inspectKernelModuleInputSchema.shape.max_entries,
       ),
+      maxModinfoKeyBytes: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_modinfo_key_bytes,
+      ),
+      maxModinfoValueBytes: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_modinfo_value_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -184,12 +296,72 @@ export const registerBinaryDiagnosticsCommands = (
                     path: absoluteCallerPath(args.path),
                     max_file_bytes: options.maxFileBytes,
                     max_entries: options.maxEntries,
+                    max_modinfo_key_bytes: options.maxModinfoKeyBytes,
+                    max_modinfo_value_bytes: options.maxModinfoValueBytes,
                   },
                   { signal },
                 ),
               kernelModule,
               "rea-kernel-module",
               "inspect_kernel_module",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectKernelBuildConfig, {
+    description:
+      "Inspect a Linux kernel image's version banner and embedded build config without executing it",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local vmlinux ELF, raw Image, x86 bzImage/zImage, or configs.ko",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_entries,
+      ),
+      maxConfigBytes: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_config_bytes,
+      ),
+      maxPayloadBytes: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_payload_bytes,
+      ),
+      offset: cliDecimalField(inspectKernelBuildConfigInputSchema.shape.offset),
+      limit: cliDecimalField(inspectKernelBuildConfigInputSchema.shape.limit),
+      name: inspectKernelBuildConfigInputSchema.shape.name,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const kernelBuildConfig = createKernelBuildConfigService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectKernelBuildConfig,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                kernelBuildConfig.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                    max_config_bytes: options.maxConfigBytes,
+                    max_payload_bytes: options.maxPayloadBytes,
+                    offset: options.offset,
+                    limit: options.limit,
+                    ...(options.name === undefined
+                      ? {}
+                      : { name: options.name }),
+                  },
+                  { signal },
+                ),
+              kernelBuildConfig,
+              "rea-kernel-build-config",
+              "inspect_kernel_build_config",
               signal,
             ).then(projectCliAnalysisResult),
         );
@@ -583,6 +755,7 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
+      producerLimits: producerLimitsOption(pwntoolsProducerLimitsSchema),
       pwntoolsTimeoutMs: cliDecimalField(
         inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
       ),
@@ -593,6 +766,9 @@ export const registerBinaryDiagnosticsCommands = (
           const result = await service.inspectAndClose(
             {
               path: absoluteCallerPath(args.path),
+              ...(options.producerLimits === undefined
+                ? {}
+                : { producer_limits: options.producerLimits }),
               ...(options.pwntoolsTimeoutMs === undefined
                 ? {}
                 : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
@@ -615,6 +791,7 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
+      producerLimits: producerLimitsOption(pwntoolsProducerLimitsSchema),
       debuggerContext: z
         .boolean()
         .default(false)
@@ -630,6 +807,9 @@ export const registerBinaryDiagnosticsCommands = (
             {
               path: absoluteCallerPath(args.path),
               include_debugger_context: options.debuggerContext,
+              ...(options.producerLimits === undefined
+                ? {}
+                : { producer_limits: options.producerLimits }),
               ...(options.pwntoolsTimeoutMs === undefined
                 ? {}
                 : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),

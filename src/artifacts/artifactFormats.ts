@@ -17,6 +17,8 @@ import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
+import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
+import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
@@ -47,6 +49,9 @@ import { ZipArtifactReader } from "./ZipArtifactReader.js";
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
 
 export interface ArtifactReaderConstruction {
+  readonly readerLimits?:
+    | import("../domain/artifactReaderLimits.js").ArtifactReaderLimits
+    | undefined;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly unreadableDirectories: "fail" | "omit";
   readonly admission?: ArtifactReaderAdmission | undefined;
@@ -95,6 +100,10 @@ function admittedAs(
   kind: "bun-standalone",
   options: ArtifactReaderConstruction,
 ): BunStandaloneAdmission | ReturnType<typeof sourceOf>;
+function admittedAs(
+  kind: "deno-standalone",
+  options: ArtifactReaderConstruction,
+): DenoStandaloneAdmission | ReturnType<typeof sourceOf>;
 function admittedAs(
   kind: "godot-pck",
   options: ArtifactReaderConstruction,
@@ -156,7 +165,13 @@ const zipDescriptor = (id: ZipPackageFormat) =>
     id,
     ZIP_FAMILY_CAPABILITIES,
     (path, options) =>
-      new ZipArtifactReader(path, id, undefined, sourceOf(options)),
+      new ZipArtifactReader(
+        path,
+        id,
+        undefined,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
   );
 
 function described<Id extends ArtifactFormatId>(
@@ -220,6 +235,7 @@ const NON_ZIP_FORMATS = {
       new DotnetBundleArtifactReader(
         path,
         admittedAs("dotnet-bundle", options),
+        options.readerLimits?.dotnet_bundle,
       ),
   }),
   "bun-standalone": container("bun-standalone", {
@@ -229,6 +245,19 @@ const NON_ZIP_FORMATS = {
       new BunStandaloneArtifactReader(
         path,
         admittedAs("bun-standalone", options),
+        options.readerLimits?.bun,
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  "deno-standalone": container("deno-standalone", {
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Deno compile inventory reports the embedded virtual filesystem, remote modules, and recorded options. Environment-file values and CA certificate bytes are retained in local Evidence with their counts and byte lengths. The npm snapshot is not decoded, and the executable is not run.",
+    createReader: (path, options) =>
+      new DenoStandaloneArtifactReader(
+        path,
+        admittedAs("deno-standalone", options),
       ),
   }),
   dmg: container("dmg", {
@@ -275,7 +304,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "PCK inventory establishes packaged bytes and metadata; scenes, binary resources, GDScript bytecode and runtime signal behavior were not decoded.",
     createReader: (path, options) =>
-      new GodotPckArtifactReader(path, admittedAs("godot-pck", options)),
+      new GodotPckArtifactReader(
+        path,
+        admittedAs("godot-pck", options),
+        options.readerLimits?.godot,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   unityfs: container("unityfs", {
     roleContainer: true,
@@ -351,7 +385,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "Node SEA inventory establishes the injected blob, flags, fuse sentinel, main script, optional code cache, snapshot, and assets. V8 snapshots and code cache are not deserialized, and the application is not executed.",
     createReader: (path, options) =>
-      new NodeSeaArtifactReader(path, admittedAs("node-sea", options)),
+      new NodeSeaArtifactReader(
+        path,
+        admittedAs("node-sea", options),
+        options.readerLimits?.node_sea,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   "intel-hex": container("intel-hex", {
     roleContainer: true,

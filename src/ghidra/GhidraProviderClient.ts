@@ -7,7 +7,12 @@ import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
+import {
+  MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+} from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -162,8 +167,6 @@ export type GhidraProviderClientFactory = (
       | "attestDosTargetSnapshot"
     >
   >;
-
-type GhidraProviderClientInstance = ReturnType<GhidraProviderClientFactory>;
 
 interface GhidraExecutionMetadata {
   readonly sourceEvidence?: readonly Evidence[];
@@ -860,6 +863,12 @@ export const createGhidraProviderClient = (input: {
   ) => {
     return createAnalysisExecution(normalized, committedProfile.provider, {
       ...observation,
+      ...(operation === "analyze_function"
+        ? {
+            requiresSourceEvidence: true as const,
+            cachePolicy: "live" as const,
+          }
+        : {}),
       ...(projectHistory === undefined
         ? {}
         : {
@@ -983,6 +992,18 @@ export const createGhidraProviderClient = (input: {
       if (!started.ok) return started;
       const called = await client.callTool(operation, input.value, {
         decompileTimeoutSeconds: config.ghidraDecompileTimeoutSeconds ?? null,
+        decompileMaxPayloadMiB: config.ghidraDecompileMaxPayloadMiB ?? null,
+        valueFlowLimits: {
+          max_operations:
+            config.ghidraValueFlowMaxOperations ??
+            DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+          max_inputs_per_operation:
+            config.ghidraValueFlowMaxInputsPerOperation ??
+            DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+          max_edges:
+            config.ghidraValueFlowMaxEdges ??
+            DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+        },
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
         ...(options?.progress === undefined
           ? {}

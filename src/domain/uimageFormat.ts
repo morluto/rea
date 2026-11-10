@@ -295,11 +295,26 @@ export const parseMultiImageTable = (
     cursor += 4;
     if (size === 0) break;
     sizes.push(size);
-    if (sizes.length > UIMAGE_MAX_SUB_IMAGES)
+    if (sizes.length > UIMAGE_MAX_SUB_IMAGES) {
+      // Even the shortest continuation needs a zero terminator and all the
+      // declared image bytes, with alignment between consecutive images.
+      const minimumData = sizes.reduce(
+        (total, current, index) =>
+          total +
+          (index + 1 < sizes.length ? Math.ceil(current / 4) * 4 : current),
+        0,
+      );
+      if (cursor + 4 + minimumData > payloadSize)
+        return err(
+          malformed(
+            "uImage multi-image table and declared sub-images cannot fit in the payload",
+          ),
+        );
       return err({
         _tag: "UImageCapacityFailure",
         message: `uImage multi-image table declares more than ${UIMAGE_MAX_SUB_IMAGES} sub-images`,
       });
+    }
   }
   const subImages: UImageSubImage[] = [];
   let offset = UIMAGE_HEADER_SIZE + cursor;

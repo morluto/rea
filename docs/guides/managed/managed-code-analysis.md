@@ -212,13 +212,9 @@ rea inspect-managed-members /absolute/path/Assembly.dll --type Namespace.Type \
 bundle format. Its parent directory must exist, and it never replaces an
 existing path. Relative paths resolve against the command's working directory.
 The option also works with complete delivery when a saved bundle is useful.
-Summary without a destination is rejected before analysis. A publication failure
-returns a typed error with the completed Evidence under
-`details.partial_observation`; it does not report successful summary delivery.
-Cancellation before publication prevents the new output. Once atomic
-publication has started, it can complete despite cancellation; a cancelled
-delivery then retains the committed path and byte count under
-`details.diagnostics.evidence_bundle`.
+Summary without a destination is rejected before analysis. For partial Evidence
+and committed-file receipts after failure or cancellation, see
+[Evidence publication and source recovery](../../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 
 Copy `normalized_result.parent_evidence_id` from the summary into the
 `source.evidence_id` field of the `managed-members` request above, then save that
@@ -268,12 +264,30 @@ is retained in the classification evidence list.
 
 ### Resource admission
 
-The static provider admits regular input files up to 128 MiB before retaining
-their bytes. Reads remain bounded if a file grows after admission. Metadata,
-CIL decoding, and projected inspection records have a separate conservative
-64 MiB representation budget; shared heap strings are cached, but repeated
-output occurrences still consume that budget. These are inspection resource
-policies, not PE format limits or a hard bound on total V8 heap use.
+The static provider defaults to a 128 MiB eagerly retained PE snapshot and a
+separate conservative 64 MiB budget for metadata, CIL decoding and projected
+inspection records. All three static inspection tools accept
+`max_snapshot_bytes` and `max_metadata_representation_bytes` as positive safe
+integers in bytes. CLI inspection and path comparison expose
+`--max-snapshot-bytes` and `--max-metadata-representation-bytes`. An omitted
+value keeps its default; explicit values apply to that call without a restart.
+
+Snapshot refusal names its selected byte budget and tells the caller to raise
+it for the same complete file. Representation exhaustion retains partial or
+unavailable coverage and names the selected budget in its `resource-limit`
+issue; raise that budget on the next inspection, or select fewer `type_names`
+for members. For example:
+
+```bash
+rea inspect-managed-members /absolute/path/Assembly.dll --max-snapshot-bytes 268435456 --max-metadata-representation-bytes 134217728
+```
+
+Reads remain bounded if a file grows after admission. A cached snapshot is
+rechecked against the current call's snapshot allowance and on-disk digest.
+Shared heap strings are cached, but repeated output occurrences still consume
+the representation budget. These are per-call resource policies, not PE format
+limits or a bound on total V8 heap use. Raising one does not raise the other,
+transport limits or available host memory.
 
 Path-based member comparison uses the same per-input snapshot policy and
 inspects its two selected paths sequentially, retaining each inspection rather
@@ -330,7 +344,7 @@ original `resource-limit` coordinate. It does not return partially admitted
 member collections: empty fields, methods, references and edges are unexamined,
 not proof of absence; exported types, user strings and signature-resolution
 attestation remain null. Summary and retained pages keep this partial coverage.
-The capacity limit is unchanged. If metadata or the type inventory itself cannot
+The selected capacity applies to the metadata and member projection together. If metadata or the type inventory itself cannot
 be admitted, the result remains unavailable.
 
 Use the returned `types[].full_name` values to select declaring types before
@@ -654,7 +668,8 @@ unchanged signature. Comparison retains exact byte-based pairs for malformed
 signatures, including empty, truncated, or invalid headers, but reports them as
 unknown with a `signature-malformed` limitation when no change is observed.
 This applies to historical Evidence without signature-resolution attestation as
-well. Runtime-provided methods are counted separately in
+well. Runtime-provided methods have the Runtime code type or the InternalCall
+implementation flag, as core library FCalls do. They are counted separately in
 `native_implementations.runtime_provided`; they have no file-backed native body
 for this workflow to map and do not increase `native_body_unresolved`. Historical
 verification Evidence without this separate count leaves it unknown (`null`).

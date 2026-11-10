@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · **简体中文** · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA：逆向一切
 
@@ -83,6 +83,10 @@ npx rea-agents setup
 设置流程支持 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他智能体](../getting-started/installation.md#supported-agents)。提供方配置和手动注册 MCP 的方法见[安装与设置](../getting-started/installation.md)。
 
 MCP 默认使用紧凑输入 Schema 来减少上下文开销。需要完整字段说明和嵌套验证细节时，在 MCP 注册中设置 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。两种配置都保留完整工具集和规范的服务端验证；见 MCP 合约指南。
+
+设置会直接注册所选运行时和 REA 入口脚本。使用包运行器时，请保留其缓存条目和运行时，并从目标项目以外的可信目录获取包。 请参阅安装指南。
+
+默认公布完整输出 Schema。如果客户端限制 `tools/list` 的大小，请在 MCP 注册中设置 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 或 `off`。服务端验证和结构化结果仍保持完整。 请参阅 MCP 合约指南中的“Output schemas”。
 
 ### 询问智能体
 
@@ -173,6 +177,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | 数据包捕获            | 端点、DNS、TLS SNI、协议分布和 HTTP 请求                                     | 调用方提供的 tshark 和 capinfos；[pcap 指南](../guides/data/pcap-analysis.md)                                                                     |
 | .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                   | 静态检查；[托管代码指南](../guides/managed/managed-code-analysis.md)                                                                              |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
+| Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length            | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                              |
 | Android APK           | 清单声明、类、反编译的方法和引用                                             | Linux/macOS/Windows x64 上的无界面 JADX 和完整 JDK；[Android 指南](../guides/android/android-analysis.md)                                         |
 | Android 设备          | 设备、软件包、进程、日志、转储、屏幕截图以及 APK/文件传输                    | 调用方提供的 adb（模拟器或实体设备）；[ADB 指南](../guides/android/adb-device-analysis.md)                                                        |
 | JEB 项目              | 引擎支持的项目单元、工件摘要和类型/方法的伪代码                              | 由调用方启动、提供 MCP 的 JEB 客户端，通过 REA_JEB_MCP_URL 选择；[JEB 指南](../providers/jeb-analysis.md)                                         |
@@ -271,6 +276,12 @@ REA 导出可直接运行的环境，并附带基本测试，检查环境能否�
 [构建环境指南](https://rea.tools/guides/rl-environments/) ·
 [环境参考文档](../agent-environments.md) ·
 [在 X 上观看演示](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### 桌面应用环境
+
+REA 也能为 Linux 桌面应用构建环境，智能体通过截图、鼠标和键盘使用它。只需一行请求，例如“帮我构建一个 Gnote 环境，让智能体在购物清单笔记中加入橄榄油”，你的智能体就会在本地构建计算机上安装应用、编写任务、导出环境，并在全新的计算机上检查任务。构建环境的机器需要 amd64 或 arm64 上的 Linux、Docker，以及指南固定的 agentenv 框架版本。
+
+[设置桌面应用环境](../desktop-build-computer.md)
 
 ## 常见问题
 

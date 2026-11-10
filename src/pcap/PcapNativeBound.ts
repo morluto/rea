@@ -1,3 +1,4 @@
+import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
 import { selectArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import {
   pcapCaptureHostSupported,
@@ -16,10 +17,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
-import {
-  BOUNDED_PRODUCER_LIMITS,
-  prlimitCeilingArguments,
-} from "../process/LinuxResourceLimits.js";
+import { prlimitCeilingArguments } from "../process/LinuxResourceLimits.js";
 import type { runPcapCommand } from "./PcapCommand.js";
 import type { ArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 
