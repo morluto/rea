@@ -88,6 +88,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
   readonly #groups: GroupState[] = [];
   readonly #excluded: Exclusion[] = [];
   #unavailableResponse = false;
+  #unreadableHeaderMember = false;
 
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
@@ -240,6 +241,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
     if (group.paths !== undefined && !group.paths.has(path))
       group.paths.set(path, ordinal);
     if (status === null || mime === null) this.#unavailableResponse = true;
+    if (headers?.unreadableMember === true) this.#unreadableHeaderMember = true;
     if (status !== null) group.statuses.add(status);
     if (mime !== null) group.contentTypes.add(mime);
     if (queryNames !== undefined && group.queryNames !== undefined) {
@@ -343,11 +345,18 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
       ),
       excluded_records: [...this.#excluded],
       limitations: this.sortedLimitations(),
-      unknowns: this.#unavailableResponse
-        ? [
-            "Some retained records have unavailable status or content type values.",
-          ]
-        : [],
+      unknowns: [
+        ...(this.#unavailableResponse
+          ? [
+              "Some retained records have unavailable status or content type values.",
+            ]
+          : []),
+        ...(this.#unreadableHeaderMember
+          ? [
+              "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
+            ]
+          : []),
+      ],
     };
   }
 }

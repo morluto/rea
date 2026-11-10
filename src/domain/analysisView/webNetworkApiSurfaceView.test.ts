@@ -240,6 +240,46 @@ it("keeps header names typed when recorded members are malformed", () => {
   });
   expect(JSON.stringify(result.value)).not.toContain("untyped");
   expect(JSON.stringify(result.value)).not.toContain("nameless");
+  expect(result.value.unknowns).toContain(
+    "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
+  );
+});
+
+it("keeps a recorded empty header or cookie name apart from an omitted member", () => {
+  const capture = analysisViewCaptureFixture();
+  capture.records = capture.records.slice(0, 1);
+  capture.total_records = 1;
+  capture.records[0]!.reported = {
+    request: {
+      method: "GET",
+      url: "https://api.test/empty",
+      headers: [{ name: "", value: "value" }, { value: "nameless" }],
+      cookies: [{ name: "", value: null }],
+    },
+    response: {
+      status: 200,
+      content: { mimeType: "text/plain" },
+      cookies: [{ name: "", value: "set" }],
+    },
+  };
+  const result = project(
+    capture,
+    0,
+    50,
+    { sensitive_value_count: 0 },
+    undefined,
+    true,
+  );
+  if (!result.ok || result.value.kind !== "api-surface")
+    throw new Error("Expected surface");
+  expect(result.value.groups[0]?.request_header_names).toEqual({
+    request_headers: [{ name: "", record_ordinals: [0] }],
+    cookie_names: [{ name: "", record_ordinals: [0] }],
+    set_cookie_names: [{ name: "", record_ordinals: [0] }],
+  });
+  expect(result.value.unknowns).toContain(
+    "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
+  );
 });
 
 it("preserves decoded empty and Unicode query names, plus distinctions and caller ordinal order", () => {

@@ -51,8 +51,28 @@ export interface RecordedHeaderNames {
   readonly request: ReadonlySet<string>;
   readonly cookie: ReadonlySet<string>;
   readonly setCookie: ReadonlySet<string>;
+  /** A member whose name is not a string, so the name list cannot be complete. */
+  readonly unreadableMember: boolean;
 }
-const recordedName = z.string().min(1);
+/**
+ * The recorded spelling, including the empty name a schema-valid HAR member may
+ * carry; only a non-string member is unreadable.
+ */
+const recordedName = z.string();
+/**
+ * Charge one recorded array's names without copying them, so the reservation
+ * precedes the input-sized name list this reader derives.
+ */
+const recordedNamesBytes = (value: unknown): number => {
+  if (!Array.isArray(value)) return 0;
+  let bytes = ENTRY_BYTES * value.length;
+  for (const member of value)
+    if (typeof member === "object" && member !== null && "name" in member) {
+      const name: unknown = (member as { readonly name: unknown }).name;
+      if (typeof name === "string") bytes += textBytes(name.length);
+    }
+  return bytes;
+};
 /** Read one recorded array without letting a malformed member discard the rest. */
 const memberNames = (value: unknown): readonly unknown[] =>
   Array.isArray(value)
@@ -85,18 +105,15 @@ export const readRecordedHeaderNames = (
     typeof record.response === "object" && record.response !== null
       ? (record.response as { readonly cookies?: unknown })
       : {};
-  const groups = [
-    memberNames(request.headers),
-    memberNames(request.cookies),
-    memberNames(response.cookies),
-  ];
-  let bytes = RECORD_SCRATCH_BYTES;
-  for (const members of groups) {
-    bytes += members.length * ENTRY_BYTES;
-    for (const member of members)
-      if (typeof member === "string") bytes += textBytes(member.length);
+  const arrays = [request.headers, request.cookies, response.cookies];
+  // Reserve every input-sized name list before deriving any of them, so an
+  // over-budget record costs nothing proportional to the rejected input.
+  if (!temporary(RECORD_SCRATCH_BYTES)) return null;
+  for (const array of arrays) {
+    const bytes = recordedNamesBytes(array);
+    if (bytes > 0 && !temporary(bytes)) return null;
   }
-  if (!temporary(bytes)) return null;
+  const groups = arrays.map(memberNames);
   const names = (members: readonly unknown[]) => {
     const selected = new Set<string>();
     for (const member of members) {
@@ -109,6 +126,9 @@ export const readRecordedHeaderNames = (
     request: names(groups[0]!),
     cookie: names(groups[1]!),
     setCookie: names(groups[2]!),
+    unreadableMember: groups.some((members) =>
+      members.some((member) => typeof member !== "string"),
+    ),
   };
 };
 // Conservative representation allowances, not an enforced V8 heap limit.
