@@ -122,7 +122,11 @@ const registerDecompileCommand = (
   cli.command(CLI_COMMANDS.decompile, {
     description: "Read one part of an app as code",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("App or program path"),
       address: z
         .string()
         .min(1)
