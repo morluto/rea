@@ -1,4 +1,9 @@
 import { z } from "incur";
+
+const localPath = z
+  .string()
+  .min(1)
+  .regex(/^[^\x00]*$/u, "Local path cannot contain NUL");
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -48,7 +53,7 @@ const registerOverviewCommands = (
   cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
     args: z.object({
-      path: z.string().describe("App, program, or analysis database path"),
+      path: localPath.describe("App, program, or analysis database path"),
     }),
     options: overviewOptions.extend({
       integrityPolicy: javascriptApplicationOptions.shape.integrityPolicy,
