@@ -72,8 +72,8 @@ Prefer an existing `rea` CLI. When none is installed and REA package acquisition
 is within the authorized scope, use `npx -y rea-agents@latest` in its place from a
 trusted directory outside the target project and outside any REA source checkout,
 with absolute target paths. Inside a checkout npm treats `rea-agents` as a local
-match only for an unversioned request or one naming the checkout's exact version,
-and the checkout's package is unbuilt, so such a request fails and the client
+match for an unversioned request, the exact version, or any range the checkout
+satisfies, and the checkout's package is unbuilt, so such a request fails and the client
 reports a closed connection. An `@latest` request keeps resolving the registry
 entry, so this shadowing does not explain a failure of the `npx -y
 rea-agents@latest` form above. Managed

@@ -24,7 +24,7 @@
 
 [البدء السريع](#البدء-السريع) · [كيف يعمل REA](#كيف-يعمل-rea) · [ما الذي يمكنك تحليله](#ما-الذي-يمكنك-تحليله) · [دراسات الحالة](#دراسات-الحالة) · [إنشاء بيئات التعلم المعزز](#build-rl-environments) · [الأسئلة الشائعة](#الأسئلة-الشائعة) · [أدوات GNU objdump وRizin](../reverse-engineering-tools.md) · [التوثيق](#التوثيق)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@
 بعد تثبيت Node.js وnpm، نفّذ:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 اختر الوكلاء، وراجع التغييرات المقترحة، ثم وافق عليها. يضيف الإعداد خادم MCP الخاص بـ REA وتعليمات سير العمل المطابقة، مع الاحتفاظ بنسخ احتياطية من الإعدادات الموجودة. أعد تشغيل وكيلك بعد ذلك.
@@ -311,7 +311,7 @@ agent-env run ./my-env
 <details>
 <summary><strong>ماذا يفعل تثبيت المهارة من skills.sh؟</strong></summary>
 
-توفّر المهارة تعليمات الاستقصاء لوكيلك. استخدم `npx rea-agents setup` لتسجيل خادم MCP الخاص بـ REA وتثبيت التعليمات المطابقة، ثم أعد تشغيل وكيلك. راجع [تثبيت المهارة وحدها](../getting-started/installation.md#skill-only-installation).
+توفّر المهارة تعليمات الاستقصاء لوكيلك. استخدم `npx rea-agents@latest setup` لتسجيل خادم MCP الخاص بـ REA وتثبيت التعليمات المطابقة، ثم أعد تشغيل وكيلك. راجع [تثبيت المهارة وحدها](../getting-started/installation.md#skill-only-installation).
 
 </details>
 

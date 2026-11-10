@@ -24,7 +24,7 @@
 
 [Mulai Cepat](#mulai-cepat) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Contoh Penggunaan](#contoh-penggunaan) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentasi](#dokumentasi)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Di Linux, peluncuran Ghidra, JADX dan alat firmware serta analisis statis JavaSc
 Dengan Node.js dan npm yang telah terpasang, jalankan:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui perubahan tersebut. Proses penyiapan menambahkan server MCP REA dan instruksi alur kerja yang sesuai, serta membuat cadangan konfigurasi yang sudah ada. Setelah itu, mulai ulang agen Anda.
@@ -323,7 +323,7 @@ Lihat [startup dan pemecahan masalah Hopper](../getting-started/installation.md#
 <details>
 <summary><strong>Apa fungsi memasang skill dari skills.sh?</strong></summary>
 
-Skill tersebut menyediakan instruksi investigasi untuk agen Anda. Gunakan `npx rea-agents setup` untuk mendaftarkan server MCP REA dan memasang instruksi yang sesuai, lalu mulai ulang agen Anda.
+Skill tersebut menyediakan instruksi investigasi untuk agen Anda. Gunakan `npx rea-agents@latest setup` untuk mendaftarkan server MCP REA dan memasang instruksi yang sesuai, lalu mulai ulang agen Anda.
 
 Lihat [instalasi khusus skill](../getting-started/installation.md#skill-only-installation).
 

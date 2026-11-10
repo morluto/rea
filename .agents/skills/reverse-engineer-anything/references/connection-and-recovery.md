@@ -161,8 +161,8 @@ installation’s absolute runtime and entry script, or continue through the CLI.
 Acquire packages from a trusted directory outside the target project and outside
 any REA source checkout. Keep a
 package-runner installation and its runtime available while registrations use it.
-Inside a checkout, npm resolves an unversioned `rea-agents` request, or one naming
-the checkout's exact version, to the local unbuilt package, so the launcher fails
+Inside a checkout, npm resolves an unversioned `rea-agents` request, the exact
+version, or any range the checkout satisfies, to the local unbuilt package, so the launcher fails
 before REA starts and a registration that runs from there reports a closed
 connection rather than a REA diagnostic. A request with `@latest` or another
 version still resolves the registry entry and is unaffected.

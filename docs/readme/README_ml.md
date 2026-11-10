@@ -24,7 +24,7 @@
 
 [ദ്രുതാരംഭം](#ദ്രുതാരംഭം) · [REA എങ്ങനെ പ്രവർത്തിക്കുന്നു](#rea-എങ്ങനെ-പ്രവർത്തിക്കുന്നു) · [എന്തൊക്കെ വിശകലനം ചെയ്യാം](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം) · [ഉദാഹരണങ്ങൾ](#ഉദാഹരണങ്ങൾ) · [RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക](#build-rl-environments) · [പതിവുചോദ്യങ്ങൾ](#പതിവുചോദ്യങ്ങൾ) · [ഡോക്യുമെന്റേഷൻ](#ഡോക്യുമെന്റേഷൻ)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -77,7 +77,7 @@ Linux-ൽ Ghidra, JADX, firmware tool launches, static JavaScript/Electron analy
 Node.js-ഉം npm-ഉം ഇൻസ്റ്റാൾ ചെയ്തശേഷം ഈ command പ്രവർത്തിപ്പിക്കുക:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 നിങ്ങൾ ഉപയോഗിക്കുന്ന agents തിരഞ്ഞെടുക്കുക, നിർദ്ദേശിച്ച മാറ്റങ്ങൾ പരിശോധിക്കുക, തുടർന്ന് അവയ്ക്ക് അനുമതി നൽകുക. നിലവിലുള്ള configuration-ന്റെ backup-ുകൾ സൂക്ഷിച്ചുകൊണ്ട് setup, REA-യുടെ MCP server-ഉം അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങളും ചേർക്കും. അതിനുശേഷം നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക.
@@ -315,7 +315,7 @@ Local MCP servers പിന്തുണയ്ക്കുന്ന ഏത് age
 <details>
 <summary><strong>skills.sh-ൽ നിന്ന് skill ഇൻസ്റ്റാൾ ചെയ്യുന്നത് എന്താണ് ചെയ്യുന്നത്?</strong></summary>
 
-ഈ skill നിങ്ങളുടെ agent-ന് അന്വേഷണ നിർദ്ദേശങ്ങൾ നൽകുന്നു. REA-യുടെ MCP server രജിസ്റ്റർ ചെയ്യാനും അനുയോജ്യമായ നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യാനും `npx rea-agents setup` ഉപയോഗിക്കുക; തുടർന്ന് നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക. [Skill-only installation](../getting-started/installation.md#skill-only-installation) കാണുക.
+ഈ skill നിങ്ങളുടെ agent-ന് അന്വേഷണ നിർദ്ദേശങ്ങൾ നൽകുന്നു. REA-യുടെ MCP server രജിസ്റ്റർ ചെയ്യാനും അനുയോജ്യമായ നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യാനും `npx rea-agents@latest setup` ഉപയോഗിക്കുക; തുടർന്ന് നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക. [Skill-only installation](../getting-started/installation.md#skill-only-installation) കാണുക.
 
 </details>
 

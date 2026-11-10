@@ -23,7 +23,7 @@
 
 [Γρήγορη εκκίνηση](#γρήγορη-εκκίνηση) · [Πώς λειτουργεί το REA](#πώς-λειτουργεί-το-rea) · [Τι μπορείς να αναλύσεις](#τι-μπορείς-να-αναλύσεις) · [Μελέτες περίπτωσης](#μελέτες-περίπτωσης) · [Δημιουργία περιβαλλόντων RL](#build-rl-environments) · [Συχνές ερωτήσεις](#συχνές-ερωτήσεις) · [Τεκμηρίωση](#τεκμηρίωση)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -77,7 +77,7 @@
 Αφού εγκαταστήσεις το Node.js και το npm, εκτέλεσε:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Επίλεξε τους agents σου, έλεγξε τις προτεινόμενες αλλαγές και ενέκρινέ τες. Η διαδικασία προσθέτει τον MCP server του REA και τις αντίστοιχες οδηγίες εργασίας, κρατώντας αντίγραφα ασφαλείας των υφιστάμενων ρυθμίσεων. Στη συνέχεια, επανεκκίνησε τον agent σου.
@@ -313,7 +313,7 @@ agent-env run ./my-env
 <details>
 <summary><strong>Τι προσφέρει η εγκατάσταση του skill από το skills.sh;</strong></summary>
 
-Το skill παρέχει οδηγίες διερεύνησης για τον agent σου. Χρησιμοποίησε `npx rea-agents setup` για να καταχωρίσεις τον MCP server του REA και να εγκαταστήσεις τις αντίστοιχες οδηγίες. Στη συνέχεια, επανεκκίνησε τον agent σου. Δες την [εγκατάσταση μόνο του skill](../getting-started/installation.md#skill-only-installation).
+Το skill παρέχει οδηγίες διερεύνησης για τον agent σου. Χρησιμοποίησε `npx rea-agents@latest setup` για να καταχωρίσεις τον MCP server του REA και να εγκαταστήσεις τις αντίστοιχες οδηγίες. Στη συνέχεια, επανεκκίνησε τον agent σου. Δες την [εγκατάσταση μόνο του skill](../getting-started/installation.md#skill-only-installation).
 
 </details>
 

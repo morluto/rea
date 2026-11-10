@@ -24,7 +24,7 @@
 
 [快速开始](#快速开始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什么](#可以分析什么) · [案例](#案例) · [构建 RL 环境](#build-rl-environments) · [常见问题](#常见问题) · [GNU objdump 和 Rizin 工具](../reverse-engineering-tools.md) · [文档](#文档)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Linux 上的 Ghidra、JADX、固件工具启动和静态 JavaScript/Electron 分
 安装 Node.js 和 npm 后，运行：
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 选择智能体，检查计划中的变更并批准。设置流程会添加 REA 的 MCP 服务和匹配的工作流指引，并备份已有配置。完成后重启智能体。
@@ -309,7 +309,7 @@ REA 会在操作需要时启动 Hopper。在 macOS 上，首次运行时可能�
 <details>
 <summary><strong>从 skills.sh 安装 skill 有什么作用？</strong></summary>
 
-skill 为智能体提供调查指引。使用 `npx rea-agents setup` 注册 REA 的 MCP 服务并安装匹配的指引，然后重启智能体。见[仅安装 skill](../getting-started/installation.md#skill-only-installation)。
+skill 为智能体提供调查指引。使用 `npx rea-agents@latest setup` 注册 REA 的 MCP 服务并安装匹配的指引，然后重启智能体。见[仅安装 skill](../getting-started/installation.md#skill-only-installation)。
 
 </details>
 

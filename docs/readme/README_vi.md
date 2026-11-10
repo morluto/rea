@@ -24,7 +24,7 @@
 
 [Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Trên Linux, khởi chạy Ghidra, JADX và công cụ firmware cùng phân tíc
 Sau khi cài Node.js và npm, chạy:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Chọn các tác nhân, xem lại những thay đổi được đề xuất và chấp thuận. Quá trình thiết lập thêm máy chủ MCP của REA cùng hướng dẫn quy trình tương ứng, đồng thời sao lưu cấu hình hiện có. Sau đó khởi động lại tác nhân.
@@ -311,7 +311,7 @@ REA khởi chạy Hopper khi một thao tác cần đến nó. Trên macOS, hộ
 <details>
 <summary><strong>Cài skill từ skills.sh có tác dụng gì?</strong></summary>
 
-Skill cung cấp hướng dẫn điều tra cho tác nhân. Dùng `npx rea-agents setup` để đăng ký máy chủ MCP của REA và cài hướng dẫn tương ứng, sau đó khởi động lại tác nhân. Xem [chỉ cài skill](../getting-started/installation.md#skill-only-installation).
+Skill cung cấp hướng dẫn điều tra cho tác nhân. Dùng `npx rea-agents@latest setup` để đăng ký máy chủ MCP của REA và cài hướng dẫn tương ứng, sau đó khởi động lại tác nhân. Xem [chỉ cài skill](../getting-started/installation.md#skill-only-installation).
 
 </details>
 

@@ -24,7 +24,7 @@
 
 [クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [RL 環境を構築する](#build-rl-environments) · [よくある質問](#よくある質問) · [ドキュメント](#ドキュメント)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Linux での Ghidra、JADX、ファームウェアツールの起動と静的 Ja
 Node.js と npm がインストールされている環境で実行します。
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 使うエージェントを選び、予定されている変更を確認して承認してください。セットアップは REA の MCP サーバーと対応するワークフローの手順を追加し、既存の設定をバックアップします。完了後にエージェントを再起動してください。
@@ -313,7 +313,7 @@ REA は必要な操作の際に Hopper を起動します。macOS では、初�
 <details>
 <summary><strong>skills.sh からスキルをインストールすると何ができますか？</strong></summary>
 
-スキルはエージェントに調査の手順を提供します。`npx rea-agents setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../getting-started/installation.md#skill-only-installation)を参照してください。
+スキルはエージェントに調査の手順を提供します。`npx rea-agents@latest setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../getting-started/installation.md#skill-only-installation)を参照してください。
 
 </details>
 

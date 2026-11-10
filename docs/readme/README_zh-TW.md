@@ -24,7 +24,7 @@
 
 [快速開始](#快速開始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什麼](#可以分析什麼) · [案例](#案例) · [建立 RL 環境](#build-rl-environments) · [常見問題](#常見問題) · [文件](#文件)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Linux 上的 Ghidra、JADX、韌體工具啟動和靜態 JavaScript/Electron 分
 安裝 Node.js 和 npm 後，執行：
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 選擇 AI 代理，檢查計劃中的變更並核准。設定流程會添加 REA 的 MCP 服務和對應的工作流程指引，並備份已有組態。完成後重新啟動 AI 代理。
@@ -311,7 +311,7 @@ REA 會在操作需要時啟動 Hopper。在 macOS 上，首次執行時可能�
 <details>
 <summary><strong>從 skills.sh 安裝 skill 有什麼作用？</strong></summary>
 
-skill 為 AI 代理提供調查指引。使用 `npx rea-agents setup` 註冊 REA 的 MCP 服務並安裝對應的指引，然後重新啟動 AI 代理。見[僅安裝 skill](../getting-started/installation.md#skill-only-installation)。
+skill 為 AI 代理提供調查指引。使用 `npx rea-agents@latest setup` 註冊 REA 的 MCP 服務並安裝對應的指引，然後重新啟動 AI 代理。見[僅安裝 skill](../getting-started/installation.md#skill-only-installation)。
 
 </details>
 

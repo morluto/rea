@@ -24,7 +24,7 @@
 
 [Hızlı başlangıç](#hızlı-başlangıç) · [REA nasıl çalışır](#rea-nasıl-çalışır) · [Neleri analiz edebilirsiniz](#neleri-analiz-edebilirsiniz) · [Örnek çalışmalar](#örnek-çalışmalar) · [RL ortamları oluşturun](#build-rl-environments) · [Sık sorulan sorular](#sık-sorulan-sorular) · [GNU objdump ve Rizin araçları](../reverse-engineering-tools.md) · [Belgeler](#belgeler)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Linux’ta Ghidra, JADX ve firmware araçlarının başlatılması ile statik Ja
 Node.js ve npm yüklüyken şu komutu çalıştırın:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Ajanlarınızı seçin, önerilen değişiklikleri inceleyin ve onaylayın. Kurulum, mevcut yapılandırmaları yedekleyerek REA'nın MCP sunucusunu ve uyumlu iş akışı talimatlarını ekler. Ardından ajanınızı yeniden başlatın.
@@ -305,7 +305,7 @@ REA, bir işlem gerektirdiğinde Hopper'ı başlatır. macOS'ta ilk çalıştır
 <details>
 <summary><strong>skills.sh üzerinden skill yüklemek ne yapar?</strong></summary>
 
-Skill, ajanınıza araştırma talimatları sağlar. REA'nın MCP sunucusunu kaydetmek ve uyumlu talimatları yüklemek için `npx rea-agents setup` kullanın, ardından ajanınızı yeniden başlatın. [Yalnızca skill yükleme](../getting-started/installation.md#skill-only-installation) belgesine bakın.
+Skill, ajanınıza araştırma talimatları sağlar. REA'nın MCP sunucusunu kaydetmek ve uyumlu talimatları yüklemek için `npx rea-agents@latest setup` kullanın, ardından ajanınızı yeniden başlatın. [Yalnızca skill yükleme](../getting-started/installation.md#skill-only-installation) belgesine bakın.
 
 </details>
 

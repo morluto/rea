@@ -24,7 +24,7 @@
 
 [Jaldi shuru karein](#jaldi-shuru-karein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [Amli misaalein](#amli-misaalein) · [RL environments banayein](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -80,7 +80,7 @@ ke "Linux owned-process prerequisite" section mein hain.
 Node.js aur npm installed hon to yeh command chalayein:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Apne agents select karein, proposed changes dekhein aur approve karein. Setup
@@ -384,7 +384,7 @@ dekhein.
 
 Skill aapke agent ko jaanch karne ki instructions deti hai. REA ka MCP server
 register karne aur matching instructions install karne ke liye
-`npx rea-agents setup` use karein, phir agent restart karein.
+`npx rea-agents@latest setup` use karein, phir agent restart karein.
 [Sirf skill ki installation](../getting-started/installation.md#skill-only-installation) dekhein.
 
 </details>

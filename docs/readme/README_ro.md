@@ -24,7 +24,7 @@
 
 [Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Construiește medii RL](#build-rl-environments) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -80,7 +80,7 @@ pentru a verifica dacă procesele îi aparțin. Pașii de remediere sunt în
 Cu Node.js și npm instalate, rulează:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Alege agenții, verifică modificările propuse și aprobă-le. Configurarea adaugă
@@ -380,7 +380,7 @@ Consultă [pornirea Hopper și depanarea](../getting-started/installation.md#lau
 <details>
 <summary><strong>Ce face instalarea skill-ului de pe skills.sh?</strong></summary>
 
-Skill-ul oferă agentului instrucțiuni de investigare. Folosește `npx rea-agents setup`
+Skill-ul oferă agentului instrucțiuni de investigare. Folosește `npx rea-agents@latest setup`
 pentru a înregistra serverul MCP REA și a instala instrucțiunile corespunzătoare,
 apoi repornește agentul. Consultă [instalarea doar a skill-ului](../getting-started/installation.md#skill-only-installation).
 

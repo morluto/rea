@@ -84,7 +84,7 @@ checks. Recovery steps are in `docs/getting-started/installation.md` under
 With Node.js and npm installed, run:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Choose your agents, review the proposed changes, and approve them. Setup adds
@@ -385,7 +385,7 @@ Hopper manually if needed. See
 <details>
 <summary><strong>What does installing the skill from skills.sh do?</strong></summary>
 
-The skill supplies investigation instructions for your agent. Use `npx rea-agents setup`
+The skill supplies investigation instructions for your agent. Use `npx rea-agents@latest setup`
 to register REA's MCP server and install the matching instructions, then restart
 your agent. See [skill-only installation](docs/getting-started/installation.md#skill-only-installation).
 

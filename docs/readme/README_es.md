@@ -24,7 +24,7 @@
 
 [Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Crear entornos de RL](#build-rl-environments) · [Preguntas frecuentes](#preguntas-frecuentes) · [Documentación](#documentación)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ En Linux, iniciar Ghidra, JADX y herramientas de firmware, y analizar JavaScript
 Con Node.js y npm instalados, ejecuta:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Elige tus agentes, revisa los cambios propuestos y apruébalos. La configuración añade el servidor MCP de REA y las instrucciones de trabajo correspondientes, con copias de seguridad de la configuración existente. Reinicia tu agente al terminar.
@@ -311,7 +311,7 @@ REA inicia Hopper cuando una operación lo necesita. En macOS, puede aparecer un
 <details>
 <summary><strong>¿Qué hace la instalación de la skill desde skills.sh?</strong></summary>
 
-La skill proporciona instrucciones de investigación a tu agente. Usa `npx rea-agents setup` para registrar el servidor MCP de REA e instalar las instrucciones correspondientes; después reinicia tu agente. Consulta [instalación solo de la skill](../getting-started/installation.md#skill-only-installation).
+La skill proporciona instrucciones de investigación a tu agente. Usa `npx rea-agents@latest setup` para registrar el servidor MCP de REA e instalar las instrucciones correspondientes; después reinicia tu agente. Consulta [instalación solo de la skill](../getting-started/installation.md#skill-only-installation).
 
 </details>
 

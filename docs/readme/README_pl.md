@@ -24,7 +24,7 @@
 
 [Szybki start](#szybki-start) · [Jak działa REA](#jak-działa-rea) · [Co możesz analizować](#co-możesz-analizować) · [Przykłady zastosowań](#przykłady-zastosowań) · [Tworzenie środowisk RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentacja](#dokumentacja)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@latest setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ W Linuksie uruchamianie Ghidra, JADX i narzędzi firmware oraz statyczna analiza
 Po zainstalowaniu Node.js i npm uruchom:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@latest setup
 ```
 
 Wybierz swoich agentów, sprawdź proponowane zmiany i zatwierdź je. Konfigurator dodaje serwer MCP REA i pasujące instrukcje pracy, tworząc kopie zapasowe istniejącej konfiguracji. Następnie uruchom agenta ponownie.
@@ -311,7 +311,7 @@ REA uruchamia Hoppera, gdy wymaga tego operacja. W systemie macOS przy pierwszym
 <details>
 <summary><strong>Co daje zainstalowanie umiejętności z skills.sh?</strong></summary>
 
-Umiejętność dostarcza agentowi instrukcje prowadzenia analizy. Użyj `npx rea-agents setup`, aby zarejestrować serwer MCP REA i zainstalować pasujące instrukcje, a następnie uruchom agenta ponownie. Zobacz [instalację samej umiejętności](../getting-started/installation.md#skill-only-installation).
+Umiejętność dostarcza agentowi instrukcje prowadzenia analizy. Użyj `npx rea-agents@latest setup`, aby zarejestrować serwer MCP REA i zainstalować pasujące instrukcje, a następnie uruchom agenta ponownie. Zobacz [instalację samej umiejętności](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
