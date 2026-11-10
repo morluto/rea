@@ -43,8 +43,9 @@ export const createGhidraEndpoint = async (
     runtimeRoot,
     transport === "unix-socket" ? "bridge.sock" : "bridge-endpoint.json",
   );
-  // sockaddr_un includes a terminating NUL: macOS has 104 bytes, Linux 108.
-  const maximumPathBytes = platform === "darwin" ? 103 : 107;
+  // OpenJDK NIO reserves two bytes of sockaddr_un.sun_path, which has 104
+  // bytes on macOS and 108 on Linux, even for ordinary pathname sockets.
+  const maximumPathBytes = platform === "darwin" ? 102 : 106;
   if (
     transport !== "unix-socket" ||
     Buffer.byteLength(path, "utf8") <= maximumPathBytes
@@ -94,7 +95,26 @@ export const observeGhidraEndpoint = async (
         return { path: endpoint.path };
       }
       if (process.platform === "win32") {
-        const encoded = readWindowsPrivateRuntimeFile(endpoint.path);
+        let encoded: string;
+        try {
+          encoded = readWindowsPrivateRuntimeFile(
+            endpoint.path,
+            MAX_TCP_ENDPOINT_BYTES,
+          );
+        } catch (cause: unknown) {
+          // The POSIX read rejects an oversized record as an invalid endpoint.
+          // The Windows lease reports the same bound as a reader limit.
+          if (
+            cause instanceof ArtifactReaderFailure &&
+            cause.reason === "limit"
+          )
+            throw endpointFailure(
+              endpoint,
+              "Ghidra TCP endpoint is invalid",
+              cause,
+            );
+          throw cause;
+        }
         assertArtifactReadActive(options.signal);
         return parseTcpEndpoint(endpoint, encoded);
       }
@@ -176,6 +196,14 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+  // The native reader rejects expanded TCP records before JSON parsing.
+  // Keep that protocol refusal distinct from an unrelated observation failure.
+  const observationMessage =
+    endpoint.transport === "authenticated-loopback-tcp" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "limit"
+      ? "Ghidra TCP endpoint is invalid"
+      : "Ghidra endpoint observation failed";
   let failure =
     origin === "owned-or-classified" && primary instanceof GhidraSessionError
       ? primary
@@ -186,11 +214,7 @@ const observationFailure = (
           }))("cancelled", "Ghidra endpoint observation was cancelled", cause, {
             cancellation: { reason: artifactFileCancellationCause(cause) },
           })
-        : endpointFailure(
-            endpoint,
-            "Ghidra endpoint observation failed",
-            cause,
-          );
+        : endpointFailure(endpoint, observationMessage, cause);
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const cleanup = new ProviderCleanupError(
       "ghidra",

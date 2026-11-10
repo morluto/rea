@@ -12,6 +12,41 @@ export const nativeValueTraceInputSchema = z.strictObject({
   offset: z.int().min(0).default(0),
   limit: z.int().min(1).max(5_000).default(1_000),
 });
+
+/**
+ * Observed causes of a narrowed traversal. Budget codes name the input field a
+ * caller can raise; the remaining codes are fixed or provider-owned limits.
+ * `cleanup_incomplete` appears only in the partial trace a `cleanup_incomplete`
+ * failure retains, because unconfirmed provider cleanup stops the trace.
+ */
+export const nativeValueTraceTruncationReasonSchema = z.enum([
+  "max_depth",
+  "max_functions",
+  "max_call_sites",
+  "max_nodes",
+  "max_edges",
+  "node_payload_bytes",
+  "provider_pcode_truncated",
+  "ambiguous_call_candidates",
+  "cleanup_incomplete",
+]);
+export type NativeValueTraceTruncationReason = z.output<
+  typeof nativeValueTraceTruncationReasonSchema
+>;
+
+/** Traversal completeness under the requested budgets, independent of paging. */
+const nativeValueTraceTraversalSchema = z
+  .discriminatedUnion("status", [
+    z.strictObject({ status: z.literal("complete") }),
+    z.strictObject({
+      status: z.literal("truncated"),
+      reasons: z.array(nativeValueTraceTruncationReasonSchema).min(1),
+    }),
+  ])
+  .describe(
+    "complete: no trace budget, fixed node-payload allowance, provider p-code limit, ambiguous-candidate policy or unconfirmed provider cleanup stopped or narrowed the traversal; failed analyses and unresolved calls remain in unknowns. truncated: reasons lists each observed cause in schema order.",
+  );
+
 /** Def-use observations and call relationships retain separate authority. */
 export const nativeValueTraceSchema = z.strictObject({
   seed: z.string(),
@@ -68,6 +103,16 @@ export const nativeValueTraceSchema = z.strictObject({
   total_edges: z.int().nonnegative(),
   decompilations: z.int().nonnegative(),
   next_offset: z.int().nonnegative().nullable(),
-  truncated: z.boolean(),
+  page_truncated: z
+    .boolean()
+    .describe(
+      "This page omits retained nodes, and the edges they source, before offset or after next_offset.",
+    ),
+  traversal: nativeValueTraceTraversalSchema,
+  truncated: z
+    .boolean()
+    .describe(
+      "page_truncated or a truncated traversal. Read those fields to distinguish page omission from traversal truncation.",
+    ),
   limitations: z.array(z.string()),
 });

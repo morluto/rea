@@ -47,24 +47,33 @@ const registerExportEvidenceTool = ({
   resources,
   exportContract,
 }: EvidenceToolRegistration): void => {
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     exportContract.name,
     toolRegistrationOptions(exportContract),
     async (input, context) => {
-      const bundle = session.immutableEvidenceBundle();
-      const written = await writeEvidenceBundle(
-        bundle,
-        input.path,
-        input.overwrite,
-        resources,
+      return runAdmittedToolOperation(
+        server,
+        admission,
+        exportContract.name,
         context.mcpReq.signal,
+        async () => {
+          const bundle = session.immutableEvidenceBundle();
+          const written = await writeEvidenceBundle(
+            bundle,
+            input.path,
+            input.overwrite,
+            resources,
+            context.mcpReq.signal,
+          );
+          return written.ok
+            ? server.delivery.toCallToolResult(
+                ok(evidenceBundleExportReceipt(bundle, written.value)),
+                exportContract,
+              )
+            : server.delivery.toCallToolResult(written, exportContract);
+        },
       );
-      return written.ok
-        ? server.delivery.toCallToolResult(
-            ok(evidenceBundleExportReceipt(bundle, written.value)),
-            exportContract,
-          )
-        : server.delivery.toCallToolResult(written, exportContract);
     },
   );
 };
@@ -74,13 +83,21 @@ const registerSnapshotEvidenceTool = ({
   session,
   snapshotContract,
 }: EvidenceToolRegistration): void => {
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     snapshotContract.name,
     toolRegistrationOptions(snapshotContract),
-    (input) =>
-      server.delivery.toCallToolResult(
-        inspectEvidenceBundle(session.immutableEvidenceBundle(), input),
-        snapshotContract,
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        snapshotContract.name,
+        context.mcpReq.signal,
+        async () =>
+          server.delivery.toCallToolResult(
+            inspectEvidenceBundle(session.immutableEvidenceBundle(), input),
+            snapshotContract,
+          ),
       ),
   );
 };
@@ -148,19 +165,29 @@ const registerListUnknownsTool = ({
   session,
 }: UnknownToolRegistration): void => {
   const listContract = toolContract("list_unknowns");
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     listContract.name,
     toolRegistrationOptions(listContract),
-    (input) => {
-      const page = session.listUnknownsPage({
-        ...(input.status === undefined ? {} : { status: input.status }),
-        ...(input.severity === undefined ? {} : { severity: input.severity }),
-        ...(input.domain === undefined ? {} : { domain: input.domain }),
-        offset: input.offset,
-        ...(input.limit === undefined ? {} : { limit: input.limit }),
-      });
-      return server.delivery.toCallToolResult(ok(page), listContract);
-    },
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        listContract.name,
+        context.mcpReq.signal,
+        async () => {
+          const page = session.listUnknownsPage({
+            ...(input.status === undefined ? {} : { status: input.status }),
+            ...(input.severity === undefined
+              ? {}
+              : { severity: input.severity }),
+            ...(input.domain === undefined ? {} : { domain: input.domain }),
+            offset: input.offset,
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          });
+          return server.delivery.toCallToolResult(ok(page), listContract);
+        },
+      ),
   );
 };
 
@@ -169,17 +196,25 @@ const registerRecordUnknownTool = ({
   session,
 }: UnknownToolRegistration): void => {
   const recordContract = toolContract("record_unknown");
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     recordContract.name,
     toolRegistrationOptions(recordContract),
-    (input) => {
-      const result = session.recordUnknown(input);
-      return server.delivery.toCallToolResult(
-        result,
-        recordContract,
-        result.ok ? committedUnknownReceipt(result.value) : {},
-      );
-    },
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        recordContract.name,
+        context.mcpReq.signal,
+        async () => {
+          const result = session.recordUnknown(input);
+          return server.delivery.toCallToolResult(
+            result,
+            recordContract,
+            result.ok ? committedUnknownReceipt(result.value) : {},
+          );
+        },
+      ),
   );
 };
 
@@ -188,17 +223,25 @@ const registerUpdateUnknownTool = ({
   session,
 }: UnknownToolRegistration): void => {
   const updateContract = toolContract("update_unknown");
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     updateContract.name,
     toolRegistrationOptions(updateContract),
-    (input) => {
-      const result = session.updateUnknown(input);
-      return server.delivery.toCallToolResult(
-        result,
-        updateContract,
-        result.ok ? committedUnknownReceipt(result.value) : {},
-      );
-    },
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        updateContract.name,
+        context.mcpReq.signal,
+        async () => {
+          const result = session.updateUnknown(input);
+          return server.delivery.toCallToolResult(
+            result,
+            updateContract,
+            result.ok ? committedUnknownReceipt(result.value) : {},
+          );
+        },
+      ),
   );
 };
 
@@ -207,13 +250,21 @@ const registerVerifyUnknownTool = ({
   session,
 }: UnknownToolRegistration): void => {
   const verifyContract = toolContract("verify_unknown_resolution");
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     verifyContract.name,
     toolRegistrationOptions(verifyContract),
-    (input) =>
-      server.delivery.toCallToolResult(
-        session.verifyUnknownResolution(input.unknown_id),
-        verifyContract,
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        verifyContract.name,
+        context.mcpReq.signal,
+        async () =>
+          server.delivery.toCallToolResult(
+            session.verifyUnknownResolution(input.unknown_id),
+            verifyContract,
+          ),
       ),
   );
 };

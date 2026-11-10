@@ -1,3 +1,4 @@
+import { javaScriptSemanticPrecisionSchema } from "./javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { javaScriptSemanticResourceLimitSchema } from "./javascriptSemanticValueTypes.js";
 
@@ -31,6 +32,7 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
   examination: z.strictObject({
     status: z.enum(["complete", "limited", "not-examined"]),
     semantic_resource_limits: z.array(javaScriptSemanticResourceLimitSchema),
+    semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
     electron_call_paths_limited: z.boolean(),
   }),
   applicability: z.strictObject({ electron: z.enum(["observed", "unknown"]) }),

@@ -1,11 +1,14 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
+  artifactSelectedPathErrno,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -20,8 +23,9 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
-  WEB_NETWORK_CAPTURE_LIMITS,
   selectedWebNetworkCaptureTimeoutMs,
+  webNetworkCaptureBudgetFacts,
+  webNetworkCaptureBudgetRecovery,
   webNetworkCaptureTimeoutRecovery,
   type InspectWebNetworkCaptureInput,
 } from "../../domain/webNetworkCapture.js";
@@ -161,6 +165,24 @@ export const historicalCaptureFailure = (
       cause: artifactFileCancellationCause(cause),
     });
   if (
+    phase === "decoder" &&
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "limit"
+  )
+    return new AnalysisOutputError(OPERATION, cause.message, {
+      cause,
+      remediationAction: webNetworkCaptureBudgetRecovery(
+        input,
+        "max_reply_bytes",
+      ),
+      diagnostics: {
+        boundary: "historical-capture-reply",
+        maximum_reply_bytes: captureBudgets().outputBytes,
+        budget: webNetworkCaptureBudgetFacts(input, "max_reply_bytes"),
+      },
+    });
+  if (
     phase !== "decoder" &&
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
@@ -168,26 +190,42 @@ export const historicalCaptureFailure = (
       cause.reason === "format" ||
       cause.reason === "path")
   )
-    return new AnalysisInputError(OPERATION, { cause }, [
+    return new AnalysisInputError(
+      OPERATION,
       {
-        path: inputPath,
-        reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
-        message:
-          cause.reason === "limit"
-            ? `${cause.message}. Select a ${sourceLabel} within the ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget. This release has no runtime override. capture_timeout_ms does not raise it.`
-            : cause.message,
+        cause,
         ...(cause.reason === "limit"
           ? {
-              expected: {
-                [descriptorRead
-                  ? "maximum_descriptor_set_bytes"
-                  : "maximum_capture_bytes"]:
-                  WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+              diagnostics: {
+                budget: webNetworkCaptureBudgetFacts(input, "max_input_bytes"),
               },
+              remediationAction: webNetworkCaptureBudgetRecovery(
+                input,
+                "max_input_bytes",
+              ),
             }
-          : {}),
+          : stableArtifactInputRecovery(cause)),
       },
-    ]);
+      [
+        {
+          path: inputPath,
+          reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
+          message:
+            cause.reason === "limit"
+              ? `${cause.message}. Increase max_input_bytes above ${String(captureBudgets().inputBytes)} on the next call without restarting REA, or select a smaller complete ${sourceLabel}. Reply, worker heap and capture_timeout_ms controls remain separate.`
+              : cause.message,
+          ...(cause.reason === "limit"
+            ? {
+                expected: {
+                  [descriptorRead
+                    ? "maximum_descriptor_set_bytes"
+                    : "maximum_capture_bytes"]: captureBudgets().inputBytes,
+                },
+              }
+            : {}),
+        },
+      ],
+    );
   if (
     phase !== "decoder" &&
     cause instanceof Error &&
@@ -197,17 +235,14 @@ export const historicalCaptureFailure = (
     return new AnalysisAccessDeniedError(OPERATION, sourcePath, cause.code, {
       cause,
     });
-  if (
-    phase !== "decoder" &&
-    cause instanceof Error &&
-    "code" in cause &&
-    ["ENOENT", "ENOTDIR"].includes(String(cause.code))
-  )
+  const selectedPathErrno =
+    phase === "decoder" ? undefined : artifactSelectedPathErrno(cause);
+  if (selectedPathErrno !== undefined)
     return new AnalysisInputError(OPERATION, { cause }, [
       {
         path: inputPath,
         reason: "invalid_value",
-        message: `Selected ${sourceLabel} could not be read (${String(cause.code)}): ${sourcePath}.`,
+        message: `Selected ${sourceLabel} could not be read (${selectedPathErrno}): ${sourcePath}.`,
       },
     ]);
   if (
@@ -272,8 +307,8 @@ export const captureMemoryFailure = (
       boundary: "historical-capture-decoder",
       capture_path: input.capture_path,
       format: input.format,
-      maximum_input_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
-      maximum_reply_bytes: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+      maximum_input_bytes: captureBudgets().inputBytes,
+      maximum_reply_bytes: captureBudgets().outputBytes,
       ...(input.format !== "mitmproxy" && NODE_CAPTURE_HEAP_ENFORCED
         ? {
             old_generation_heap_mib: heap.oldGenerationMiB,

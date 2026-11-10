@@ -28,14 +28,22 @@ import {
 import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
+  compactInputSchemaByDefault,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import { clientRegistrationEnvironmentDetailsWithBudget } from "./ClientRegistrationEnvironment.js";
-import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
+import {
+  clientRegistrationEnvironmentDetailsWithBudget,
+  recordedProviderSettings,
+} from "./ClientRegistrationEnvironment.js";
+import type {
+  OwnedProviderSetting,
+  ProviderRequestBudgetResolver,
+  RecordedProviderSettings,
+} from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 import {
@@ -52,6 +60,8 @@ interface ClientRegistrationStatusBase {
   readonly package_reference?: string;
   /** Non-blocking timeout guidance; caller-selected values remain aligned. */
   readonly advisory?: string;
+  /** Provider settings this process selected that the registration's file does not carry. */
+  readonly provider_settings?: RecordedProviderSettings;
 }
 
 type RegistrationCommand = readonly [string, ...string[]];
@@ -99,6 +109,16 @@ interface ClientRegistrationReadOptions {
    */
   readonly evidence?: "readiness" | "ownership";
   readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
+  /** Settings to compare with each registration's file; omitted skips that read. */
+  readonly providerSettings?: Readonly<Record<string, string>>;
+  /** Which recorded provider settings hold a value the caller owns. */
+  readonly ownedProviderSetting?: OwnedProviderSetting;
+  /** Inspect selected resolved settings without returning their values in status. */
+  readonly observeProviderSetting?: (
+    client: string,
+    name: string,
+    value: string,
+  ) => void;
 }
 
 /** Registration facts shared by diagnostics and update maintenance. */
@@ -269,12 +289,15 @@ export const readClientRegistrationInspections = async (
       }
       const registration = parsedRegistration.value;
       const registrationEnvironment =
-        client.name === "kimi" || client.name === "codex"
+        compactInputSchemaByDefault(client) || client.name === "codex"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
+              client.name,
               {},
               "effective",
-              options.resolveProviderRequestBudget,
+              client.name === "kimi" || client.name === "codex"
+                ? options.resolveProviderRequestBudget
+                : undefined,
               options.platform,
             )
           : undefined;
@@ -311,7 +334,7 @@ export const readClientRegistrationInspections = async (
         command,
         commandFacts,
         platform: options.platform ?? process.platform,
-        kimiInputSchemaProfileSelected:
+        inputSchemaProfileSelected:
           registrationEnvironment?.ok === true &&
           snapshotEnvironment(
             registrationEnvironment.value.values,
@@ -362,6 +385,19 @@ export const readClientRegistrationInspections = async (
                 registrationEnvironment.value.timeoutInputs,
               )
             : undefined,
+          options.providerSettings === undefined
+            ? undefined
+            : recordedProviderSettings(
+                parsed,
+                client.name,
+                options.providerSettings,
+                options.platform,
+                options.ownedProviderSetting,
+                options.observeProviderSetting === undefined
+                  ? undefined
+                  : (name, value) =>
+                      options.observeProviderSetting!(client.name, name, value),
+              ),
         ),
         activation,
         commandFacts.identity,
@@ -432,14 +468,14 @@ const registrationAligned = ({
   command,
   commandFacts,
   platform,
-  kimiInputSchemaProfileSelected,
+  inputSchemaProfileSelected,
 }: {
   readonly registration: ClientRegistration;
   readonly client: SetupClient;
   readonly command: readonly string[];
   readonly commandFacts: ClientRegistrationCommandFacts;
   readonly platform: NodeJS.Platform;
-  readonly kimiInputSchemaProfileSelected: boolean;
+  readonly inputSchemaProfileSelected: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const { identity } = commandFacts;
   if (identity === "unknown") return "unknown";
@@ -461,7 +497,8 @@ const registrationAligned = ({
       registration.toolTimeoutMs === undefined)
   )
     return "stale";
-  if (client.name === "kimi" && !kimiInputSchemaProfileSelected) return "stale";
+  if (compactInputSchemaByDefault(client) && !inputSchemaProfileSelected)
+    return "stale";
   // A Harness registration only connects as the rea stdio server; another
   // server name or transport leaves the session without REA tools.
   if (
@@ -494,6 +531,7 @@ const configuredStatus = (
   policyRemediation?: string,
   packageReference?: string,
   advisory?: string,
+  providerSettings?: RecordedProviderSettings,
 ): ClientRegistrationStatus =>
   state === "aligned"
     ? {
@@ -506,6 +544,9 @@ const configuredStatus = (
         state,
         remediation: null,
         ...(advisory === undefined ? {} : { advisory }),
+        ...(providerSettings === undefined
+          ? {}
+          : { provider_settings: providerSettings }),
       }
     : {
         client: client.name,
@@ -516,6 +557,9 @@ const configuredStatus = (
           : { package_reference: packageReference }),
         state,
         remediation: policyRemediation ?? remediation(client),
+        ...(providerSettings === undefined
+          ? {}
+          : { provider_settings: providerSettings }),
       };
 
 const timeoutAdvisory = (

@@ -1,3 +1,4 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -6,7 +7,6 @@ import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
@@ -16,14 +16,14 @@ describe("artifact extraction identity", () => {
     const root = await createTestTempDirectory("rea-extract-order-");
     const source = join(root, "source.zip");
     await writeOrderedZip(source, ["ä.js", "a.js", "Z.js"]);
-    const result = await new ArtifactProvider(process.env)
-      .createClient(await archiveTarget(source))
-      .execute(
-        "extract_artifact",
-        artifactExtractionExecutionSchema.parse({
-          output_root: join(root, "output"),
-        }),
-      );
+    const result = await createOwnedArtifactClient(
+      await archiveTarget(source),
+    ).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: join(root, "output"),
+      }),
+    );
     if (!result.ok) throw result.error;
     const extracted = artifactExtractionResultSchema.parse(result.value.result);
     expect(

@@ -43,6 +43,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     javascript: z.array(projectedComponentSchema),
     signing: z.array(projectedComponentSchema),
   }),
+  unclassified_components: z.array(projectedComponentSchema),
   unavailable_components: z.array(unavailableComponentSchema),
   app_pack_children: z.array(
     z.union([projectedComponentSchema, unavailableComponentSchema]),
@@ -69,6 +70,15 @@ export type HarmonyApplicationProjectionResult = z.infer<
   typeof harmonyApplicationProjectionResultSchema
 >;
 type Component = z.infer<typeof projectedComponentSchema>;
+
+const PKG_CONTEXT_NOT_READ =
+  "pkgContextInfo.json is inventoried but not read, so bridge_candidates are not narrowed by its isSO declarations; narrowing requires parsed file content that this projection does not receive.";
+
+/** Whether the package carries the build-output declaration this projection cannot read. */
+const pkgContextDeclared = (
+  files: readonly ProjectedInventoryEntry[],
+): boolean =>
+  files.some(({ path }) => /(?:^|\/)pkgContextInfo\.json$/iu.test(path));
 
 /** Project exact HarmonyOS package paths and hashes without decoding or executing target code. */
 export const projectHarmonyInventory = (
@@ -97,6 +107,10 @@ export const projectHarmonyInventory = (
   }
   const manifests = classifyManifests(fileEntries);
   const classified = classify(all, manifests.components);
+  const classifiedFiles = new Set([
+    ...Object.values(classified).flat(),
+    ...children,
+  ]);
   const bridgeProjection = bridgeCandidates(
     classified.bytecode,
     classified.native_libraries,
@@ -117,6 +131,7 @@ export const projectHarmonyInventory = (
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid Ark bytecode.",
     "The signing component lists META-INF certificate-entry suffixes only; signatures applied by the packaging tool live in the ZIP signing block rather than archive entries, so an empty signing list does not mean the package is unsigned.",
     "Bridge candidates are path-based hypotheses, not decoded N-API declarations or observed runtime calls.",
+    ...(pkgContextDeclared(fileEntries) ? [PKG_CONTEXT_NOT_READ] : []),
     ...(rootFormat === "app-pack"
       ? [
           "App Pack child packages are listed by inventory path only; their contents are not recursively inventoried by this projection.",
@@ -138,6 +153,9 @@ export const projectHarmonyInventory = (
       .sort(compareUnicodeCodePoints),
     packaging_model: manifests.packagingModel,
     components: classified,
+    unclassified_components: all.filter(
+      (component) => !classifiedFiles.has(component),
+    ),
     unavailable_components: unavailable,
     app_pack_children: children,
     runtime_families: runtimeFamilies(all, classified),

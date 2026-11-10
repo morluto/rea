@@ -84,6 +84,7 @@ const freshInventory = () => {
   return inventory;
 };
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
   subject:
@@ -100,8 +101,7 @@ const page = (source: AnalysisViewParent, view: unknown) => {
     artifactInventoryViewRequestSchema.parse(view),
   );
   if (!result.ok) throw result.error;
-  if (result.value.kind !== "inventory")
-    throw new Error("Expected an inventory page");
+  if (!("items" in result.value)) throw new Error("Expected an inventory page");
   return result.value;
 };
 afterEach(() => vi.restoreAllMocks());
@@ -125,7 +125,7 @@ it.each(["node_count", "occurrence_count", "edge_count"] as const)(
           {
             path: ["source"],
             reason: "invalid_value",
-            message: "Artifact inventory members exceed their manifest counts",
+            message: expect.stringMatching(/members.*manifest.*counts/iu),
           },
         ],
       },

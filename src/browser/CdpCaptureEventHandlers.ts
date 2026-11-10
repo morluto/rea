@@ -187,6 +187,8 @@ const sourceMapForScript = (
   readonly budgetExhausted: boolean;
 } => {
   const declaredUrl = cdpStringValue(value);
+  if (value !== undefined && declaredUrl === undefined)
+    state.completeness.exclude("source_maps", "invalid_protocol_value");
   if (declaredUrl === undefined || declaredUrl === "")
     return {
       sourceMapUrl: null,

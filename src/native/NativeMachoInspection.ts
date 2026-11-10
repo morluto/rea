@@ -33,13 +33,20 @@ import type { MachoCommandNames } from "./MachoCommandNames.js";
 import type { ResolvedMachoSlice } from "./NativeMachoSelectedSlice.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import type {
+  MachoEncryptionFacts,
+  MachoSliceEncryption,
+} from "../domain/apple/machoEncryption.js";
 import {
   conflictingUuidCommandEvidence,
   isMissingUuidDyldFailure,
   isUnbackedTextDyldFailure,
   isVtoolContainerRefusal,
+  nativeCommandOperand,
   nativeMachoCapturedOutput,
-  missingUuidLimitation,
+  dyldRefusalLimitation,
+  dyldSliceRefusal,
   parseDyldFileTypeRefusal,
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
@@ -50,9 +57,18 @@ interface NativeMachoObservation {
   readonly locations: readonly EvidenceLocation[];
 }
 
+/** Structural encryption facts, or why the target bytes were not read. */
+export type MachoEncryptionRead =
+  | MachoEncryptionFacts
+  | { readonly status: "unread"; readonly reason: string };
+
 interface NativeMachoInspectionContext {
   readonly target: BinaryTarget;
   readonly signal?: AbortSignal;
+  /** Read load-command encryption facts from the bytes the tools inspect. */
+  readonly readEncryption: (
+    signal?: AbortSignal,
+  ) => Promise<MachoEncryptionRead>;
   readonly run: (
     tool: string,
     arguments_: readonly string[],
@@ -92,6 +108,9 @@ const REQUIRED_SLICE_COMMANDS = [
 const OPTIONAL_VTOOL_COMMAND = ["vtool", ["-show-build"]] as const;
 const VTOOL_UNAVAILABLE_LIMITATION =
   "vtool is unavailable; build metadata is normalized from binary load commands.";
+/** Recorded when vtool refuses the universal container and slice facts remain. */
+export const VTOOL_CONTAINER_REFUSAL_LIMITATION =
+  "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.";
 /** Inspect one Mach-O with the required native commands and normalized output. */
 export const inspectNativeMacho = async (
   context: NativeMachoInspectionContext,
@@ -111,7 +130,7 @@ export const inspectNativeMacho = async (
   const parsedLipo = parseLipoCapture(
     lipo,
     "inspect_macho",
-    context.target.path,
+    nativeCommandOperand(lipo) ?? context.target.path,
   );
   if (!parsedLipo.ok) return parsedLipo;
   const { format, architectures } = parsedLipo.value;
@@ -146,11 +165,11 @@ export const inspectNativeMacho = async (
       context.signal,
       tool === "dyld_info"
         ? (capture) =>
-            isMissingUuidDyldFailure(capture) ||
+            dyldSliceRefusal(capture) !== null ||
             isUnbackedTextDyldFailure(capture) ||
             parseDyldFileTypeRefusal(capture) !== null
         : tool === "vtool" && format === "fat"
-          ? (capture) => isVtoolContainerRefusal(capture, context.target.path)
+          ? (capture) => isVtoolContainerRefusal(capture)
           : undefined,
     );
   // vtool knows no variant subtypes, so no spelling selects an arm64e.x1 slice.
@@ -170,7 +189,7 @@ export const inspectNativeMacho = async (
     if (!captured.ok) return err(captured.error);
     if (
       (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
-      !isMissingUuidDyldFailure(captured.value) &&
+      dyldSliceRefusal(captured.value) === null &&
       !isUnbackedTextDyldFailure(captured.value) &&
       parseDyldFileTypeRefusal(captured.value) === null
     )
@@ -186,10 +205,8 @@ export const inspectNativeMacho = async (
     );
   else if (optional.ok) {
     captures.push(optional.value);
-    if (isVtoolContainerRefusal(optional.value, context.target.path))
-      limitations.push(
-        "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.",
-      );
+    if (isVtoolContainerRefusal(optional.value))
+      limitations.push(VTOOL_CONTAINER_REFUSAL_LIMITATION);
   } else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
@@ -284,7 +301,7 @@ export const inspectNativeMacho = async (
   // Only then does llvm-nm's dyld-info pass add names, and its exact names
   // disambiguate dyld_info rows. Refusals above are not export rows.
   if (
-    !isMissingUuidDyldFailure(dyldExports) &&
+    dyldSliceRefusal(dyldExports) === null &&
     !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
   ) {
     const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
@@ -304,10 +321,7 @@ export const inspectNativeMacho = async (
     sliceOutput(dyldImports),
     hasChainedFixups,
   );
-  if (
-    !isMissingUuidDyldFailure(dyldImports) &&
-    parsedImports.needsNameInventory
-  ) {
+  if (parsedImports.needsNameInventory) {
     const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
     if (!importNames.ok) return err(importNames.error);
     captures.push(importNames.value);
@@ -317,6 +331,7 @@ export const inspectNativeMacho = async (
       new Set(parseNmSymbolNames(importNames.value.stdout)),
     );
   }
+  const encryption = await context.readEncryption(context.signal);
   const selectedArchitectureName =
     (selection.status === "selected" ? selection.architecture.name : null) ??
     (architectures.length === 1 ? (architectures[0]?.name ?? null) : null);
@@ -331,8 +346,7 @@ export const inspectNativeMacho = async (
     binary.sliceSize,
     parsedImports.items,
     captures[nmIndex]!,
-    architectures,
-    context.target.path,
+    { format, architectures, encryption },
     {
       name: selectedArchitectureName,
       container_file_offset: containerOffset ?? null,
@@ -413,19 +427,25 @@ const normalizeMacho = (
   sliceSize: number,
   parsedImports: ReturnType<typeof parseDyldImports>["items"],
   exportNames: NativeCommandCapture,
-  architectures: readonly LipoArchitecture[],
-  artifactPath: string,
+  slices: {
+    readonly format: "thin" | "fat";
+    readonly architectures: readonly LipoArchitecture[];
+    readonly encryption: MachoEncryptionRead;
+  },
   selectedArchitecture: {
     readonly name: string | null;
     readonly container_file_offset: number | null;
   },
 ) => {
+  const { architectures } = slices;
+  const encryption = encryptionCoverage(slices);
   const byTool = captureLookup(captures);
   const dyldImportsCapture = byTool("dyld_info", 0);
   const dyldExportsCapture = byTool("dyld_info", 1);
-  const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
-  const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
-  const imports = missingImportsUuid ? [] : parsedImports.map(withRuntimeName);
+  const importsRefusal = dyldSliceRefusal(dyldImportsCapture);
+  const exportsRefusal = dyldSliceRefusal(dyldExportsCapture);
+  const imports =
+    importsRefusal === null ? parsedImports.map(withRuntimeName) : [];
   const imageBase =
     load.segments.find(
       (segment) =>
@@ -435,13 +455,11 @@ const normalizeMacho = (
         segment.file_size <= sliceSize,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(exportNames.stdout);
-  const dyldExports = missingExportsUuid
-    ? []
-    : parseDyldExports(
-        sliceOutput(dyldExportsCapture),
-        imageBase,
-        new Set(nmExports.map(({ name }) => name)),
-      );
+  const dyldExports = parseDyldExports(
+    sliceOutput(dyldExportsCapture),
+    imageBase,
+    new Set(nmExports.map(({ name }) => name)),
+  );
   const exports = uniqueSymbols([...dyldExports, ...nmExports]).map(
     withRuntimeName,
   );
@@ -449,7 +467,7 @@ const normalizeMacho = (
   const uuid = reconcileMachoUuid(
     load.commands,
     dwarfdump.stdout,
-    artifactPath,
+    nativeCommandOperand(dwarfdump) ?? "",
     selectedArchitecture.name === null
       ? null
       : {
@@ -472,8 +490,12 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
-    ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
-    ...(missingExportsUuid ? [missingUuidLimitation("exports")] : []),
+    ...(importsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("imports", importsRefusal)]),
+    ...(exportsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("exports", exportsRefusal)]),
     ...uuid.limitations,
     ...(imageBase === null &&
     /^\s*offset\s+symbol\s*$/mu.test(sliceOutput(byTool("dyld_info", 1)))
@@ -481,6 +503,8 @@ const normalizeMacho = (
           "Export virtual addresses are unavailable because no file-backed image base was observed.",
         ]
       : []),
+    ...encryption.limitations,
+    ...encryption.items.flatMap(encryptionLimitation),
   ];
   return inspectMachoSchema.parse({
     format: containerFormat === "fat" ? "mach-o-universal" : "mach-o",
@@ -509,7 +533,9 @@ const normalizeMacho = (
     ),
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
-      ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
+      ...(importsRefusal === null
+        ? []
+        : [dyldRefusalLimitation("imports", importsRefusal)]),
       ...(imports.some(({ name_status }) => name_status === "ambiguous")
         ? [
             "Import text contains name, flags, library, or addend boundaries whose split is ambiguous.",
@@ -517,11 +543,11 @@ const normalizeMacho = (
         : []),
     ]),
     exports: covered(exports, false, [
-      ...(missingExportsUuid
-        ? [missingUuidLimitation("exports")]
-        : [
+      ...(exportsRefusal === null
+        ? [
             "Merged nm/dyld_info results may be incomplete for stripped binaries.",
-          ]),
+          ]
+        : [dyldRefusalLimitation("exports", exportsRefusal)]),
       ...(dyldExports.some(({ sourceSymbol }) => sourceSymbol !== undefined)
         ? [
             "Renamed re-exports are listed under their exported name; the source library's symbol name is not reported.",
@@ -540,9 +566,82 @@ const normalizeMacho = (
       load.segmentLimitations.length === 0,
       load.segmentLimitations,
     ),
+    encryption,
     provenance,
     limitations,
   });
+};
+
+/** Label each slice with the one lipo record sharing its physical identity. */
+const encryptionCoverage = ({
+  format,
+  architectures,
+  encryption,
+}: {
+  readonly format: "thin" | "fat";
+  readonly architectures: readonly LipoArchitecture[];
+  readonly encryption: MachoEncryptionRead;
+}) => {
+  if (encryption.status !== "parsed")
+    return {
+      items: [],
+      total: null,
+      exhaustive: false,
+      limitations: [
+        encryption.status === "not-mach-o"
+          ? "Encryption load commands were not read: the structural reader did not recognize a Mach-O image."
+          : `Encryption load commands were not read: ${encryption.reason}`,
+      ],
+    };
+  const items = encryption.slices.map((slice) => {
+    const matches = architectures.filter((architecture) =>
+      lipoDescribesSlice(architecture, slice, format),
+    );
+    return {
+      ...slice,
+      architecture: matches.length === 1 ? (matches[0]?.name ?? null) : null,
+    };
+  });
+  return covered(items, true);
+};
+
+const lipoDescribesSlice = (
+  architecture: LipoArchitecture,
+  slice: MachoSliceEncryption,
+  format: "thin" | "fat",
+): boolean =>
+  (architecture.file_offset === null
+    ? format === "thin" && slice.container_file_offset === 0
+    : architecture.file_offset === slice.container_file_offset) &&
+  (architecture.size === null || architecture.size === slice.size) &&
+  (architecture.cpu_type_code === null ||
+    slice.cpu_type === null ||
+    architecture.cpu_type_code === slice.cpu_type) &&
+  (slice.cpu_subtype === null ||
+    (architecture.cpu_subtype_code === null
+      ? architecture.cpu_subtype_base === null ||
+        architecture.cpu_subtype_base === machoCpuSubtypeBase(slice.cpu_subtype)
+      : architecture.cpu_subtype_code === slice.cpu_subtype));
+
+const encryptionLimitation = (slice: MachoSliceEncryption): string[] => {
+  const name =
+    slice.architecture === null
+      ? `slice at offset ${slice.container_file_offset}`
+      : `${slice.architecture} slice`;
+  if (slice.status === "malformed" || slice.status === "unknown")
+    return [
+      `Encryption status of the ${name} is ${slice.status}: ${slice.reason ?? "no reason recorded"}.`,
+    ];
+  const { range } = slice;
+  if (slice.status !== "encrypted" || range === null) return [];
+  const cryptid = slice.commands[0]?.cryptid ?? null;
+  return range.container_start === range.container_end
+    ? [
+        `The ${name} declares encryption (cryptid ${cryptid}) over an empty range; no bytes are marked as ciphertext.`,
+      ]
+    : [
+        `Bytes ${range.container_start}-${range.container_end} (input file offsets, end exclusive) of the ${name} are ciphertext (cryptid ${cryptid}); disassembly, decompilation, strings and references derived from them do not describe program code.`,
+      ];
 };
 
 /** Slice output without the echoed operand path, which can contain any text. */

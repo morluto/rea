@@ -14,7 +14,7 @@ const fixture = async (maximum?: number, element: z.ZodType = z.unknown()) => {
   const canonical = z.strictObject({ values: z.array(element) });
   const server = new EvidenceMcpServerCore(
     { name: "input-capacity-fixture", version: "1" },
-    { ...(maximum === undefined ? {} : { maxToolInputElements: maximum }) },
+    maximum === undefined ? {} : { maxToolInputElements: maximum },
     undefined,
     createToolResultDelivery(16_384),
   );

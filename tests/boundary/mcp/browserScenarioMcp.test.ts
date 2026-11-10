@@ -1,5 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
@@ -19,7 +18,7 @@ import {
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
@@ -185,24 +184,14 @@ test.each(["full", "compact"] as const)(
     const session = createTestBinarySession(() => {
       throw new Error("Schema discovery must not start a deep provider");
     });
-    const server = createServer(
-      { kind: "session", session },
-      {
+    const { client } = await createApplicationMcpHarness({
+      session,
+      clientIdentity: { name: "browser-action-patterns", version: "1" },
+      serverOptions: {
         browserScenarioCapture: provider,
         environment: { REA_MCP_INPUT_SCHEMA_PROFILE: profile },
       },
-    );
-    const client = new Client({
-      name: "browser-action-patterns",
-      version: "1",
     });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    onTestFinished(async () => {
-      await Promise.all([client.close(), server.close(), session.close()]);
-    });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const tool = (await client.listTools()).tools.find(
       ({ name }) => name === "capture_browser_scenario",
     );
@@ -259,21 +248,16 @@ test.each(["full", "compact"] as const)(
 );
 
 describe("browser scenario MCP tool", () => {
-  const resources: Array<{ close(): Promise<unknown> }> = [];
-
-  afterEach(async () => {
-    await Promise.all(resources.splice(0).map((item) => item.close()));
-  });
-
   test("runs the explicit scenario request without a permission grant", async () => {
     const provider = new FakeBrowserScenarioProvider();
     const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(ok(null)),
     }));
-    const server = createServer(
-      { kind: "session", session },
-      {
+    const { client } = await createApplicationMcpHarness({
+      session,
+      clientIdentity: { name: "browser-scenario-test", version: "1" },
+      serverOptions: {
         browserObservation: new CdpBrowserProvider(),
         browserScenarioCapture: provider,
         availabilityPolicy: () => ({
@@ -281,13 +265,7 @@ describe("browser scenario MCP tool", () => {
           investigationInputRoots: 0,
         }),
       },
-    );
-    const client = new Client({ name: "browser-scenario-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    resources.push(client, server, session);
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+    });
 
     const minimal = await client.callTool({
       name: "capture_browser_scenario",
@@ -402,50 +380,45 @@ test("records a completed late-close cancellation as server Evidence", async () 
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(ok(null)),
   }));
-  const server = createServer(
-    { kind: "session", session },
-    {
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "scenario-late-close", version: "1" },
+    serverOptions: {
       browserScenarioCapture: provider,
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 0,
       }),
     },
-  );
-  const client = new Client({ name: "scenario-late-close", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  try {
-    const response = await client.callTool({
-      name: "capture_browser_scenario",
-      arguments: minimalScenario(),
-    });
-    const { error } = parseMcpToolError(response);
-    const reference = z
-      .object({
-        partial_observation: z.object({
-          kind: z.literal("retained-evidence"),
-          evidence_id: z.string(),
-        }),
-      })
-      .parse(error.details).partial_observation;
-    const retained = session.evidenceById(reference.evidence_id);
-    if (retained === undefined) throw new Error("Evidence was not retained");
-    expect(retained.operation).toBe("capture_browser_scenario");
-    expect(retained.normalized_result).toMatchObject({
-      browser: { cleanup: "terminated-owned-process" },
-    });
-    expect(
-      (retained.normalized_result as BrowserScenarioCapture).steps.every(
-        ({ status }) => status === "completed",
-      ),
-    ).toBe(true);
-    await expect(client.ping()).resolves.toEqual({});
-  } finally {
-    await Promise.all([client.close(), server.close(), session.close()]);
-  }
+  });
+  const response = await client.callTool({
+    name: "capture_browser_scenario",
+    arguments: minimalScenario(),
+  });
+  const { error } = parseMcpToolError(response);
+  const reference = z
+    .object({
+      partial_observation: z.object({
+        kind: z.literal("retained-evidence"),
+        evidence_id: z.string(),
+      }),
+    })
+    .parse(error.details).partial_observation;
+  const retained = session.evidenceById(reference.evidence_id);
+  if (retained === undefined) throw new Error("Evidence was not retained");
+  expect(retained.operation).toBe("capture_browser_scenario");
+  expect(retained.normalized_result).toMatchObject({
+    browser: { cleanup: "terminated-owned-process" },
+  });
+  expect(
+    (retained.normalized_result as BrowserScenarioCapture).steps.map(
+      ({ step_id, status }) => ({ step_id, status }),
+    ),
+  ).toEqual([
+    { step_id: "scenario_start", status: "completed" },
+    { step_id: "settle", status: "completed" },
+  ]);
+  await expect(client.ping()).resolves.toEqual({});
 });
 
 test("delivers a retained summary and pages its exact steps and events", async () => {
@@ -454,104 +427,96 @@ test("delivers a retained summary and pages its exact steps and events", async (
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(ok(null)),
   }));
-  const server = createServer(
-    { kind: "session", session },
-    {
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "scenario-summary", version: "1" },
+    serverOptions: {
       browserScenarioCapture: provider,
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 0,
       }),
     },
+  });
+  const tools = (await client.listTools()).tools;
+  const advertised = tools.find(
+    ({ name }) => name === "capture_browser_scenario",
   );
-  const client = new Client({ name: "scenario-summary", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  try {
-    const tools = (await client.listTools()).tools;
-    const advertised = tools.find(
-      ({ name }) => name === "capture_browser_scenario",
-    );
-    if (advertised?.outputSchema === undefined)
-      throw new Error("Missing advertised scenario output schema");
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const validateInput = ajv.compile(advertised.inputSchema);
-    const validateOutput = ajv.compile(
-      z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
-    );
-    const request = { ...minimalScenario(), detail: "summary" };
-    expect(validateInput(request), JSON.stringify(validateInput.errors)).toBe(
-      true,
-    );
+  if (advertised?.outputSchema === undefined)
+    throw new Error("Missing advertised scenario output schema");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const validateInput = ajv.compile(advertised.inputSchema);
+  const validateOutput = ajv.compile(
+    z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
+  );
+  const request = { ...minimalScenario(), detail: "summary" };
+  expect(validateInput(request), JSON.stringify(validateInput.errors)).toBe(
+    true,
+  );
 
-    const response = await client.callTool({
-      name: "capture_browser_scenario",
-      arguments: request,
-    });
-    expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(
-      validateOutput(response.structuredContent),
-      JSON.stringify(validateOutput.errors),
-    ).toBe(true);
-    const summary = z
-      .object({
-        normalized_result: z.object({
-          kind: z.literal("summary"),
-          parent_evidence_id: z.string(),
-          summary: z.object({
-            steps: z.array(z.object({ step_id: z.string() })),
-          }),
+  const response = await client.callTool({
+    name: "capture_browser_scenario",
+    arguments: request,
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(
+    validateOutput(response.structuredContent),
+    JSON.stringify(validateOutput.errors),
+  ).toBe(true);
+  const summary = z
+    .object({
+      normalized_result: z.object({
+        kind: z.literal("summary"),
+        parent_evidence_id: z.string(),
+        summary: z.object({
+          steps: z.array(z.object({ step_id: z.string() })),
         }),
-      })
-      .parse(response.structuredContent).normalized_result;
-    expect(summary.summary.steps.map(({ step_id }) => step_id)).toEqual([
-      "scenario_start",
-      "settle",
-    ]);
-    // Delivery detail is neither sent to the provider nor recorded as a scenario parameter.
-    expect(provider.scenarios[0]).not.toHaveProperty("detail");
-    const parent = session.evidenceById(summary.parent_evidence_id);
-    expect(parent?.operation).toBe("capture_browser_scenario");
-    expect(parent?.parameters).not.toHaveProperty("detail");
+      }),
+    })
+    .parse(response.structuredContent).normalized_result;
+  expect(summary.summary.steps.map(({ step_id }) => step_id)).toEqual([
+    "scenario_start",
+    "settle",
+  ]);
+  // Delivery detail is neither sent to the provider nor recorded as a scenario parameter.
+  expect(provider.scenarios[0]).not.toHaveProperty("detail");
+  const parent = session.evidenceById(summary.parent_evidence_id);
+  expect(parent?.operation).toBe("capture_browser_scenario");
+  expect(parent?.parameters).not.toHaveProperty("detail");
 
-    const page = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: {
-          kind: "retained-evidence",
-          evidence_id: summary.parent_evidence_id,
-        },
-        view: {
-          kind: "browser-scenario",
-          collection: "steps",
-          step_indices: [1],
-        },
+  const page = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: summary.parent_evidence_id,
       },
-    });
-    expect(page.isError, JSON.stringify(page)).not.toBe(true);
-    expect(page.structuredContent).toMatchObject({
-      normalized_result: {
+      view: {
         kind: "browser-scenario",
-        parent_evidence_id: summary.parent_evidence_id,
-        items: {
-          collection: "steps",
-          rows: [{ step_index: 1, step_id: "settle", artifacts: {} }],
-        },
-        coverage: { total: 1, exhausted: true },
+        collection: "steps",
+        step_indices: [1],
       },
-    });
+    },
+  });
+  expect(page.isError, JSON.stringify(page)).not.toBe(true);
+  expect(page.structuredContent).toMatchObject({
+    normalized_result: {
+      kind: "browser-scenario",
+      parent_evidence_id: summary.parent_evidence_id,
+      items: {
+        collection: "steps",
+        rows: [{ step_index: 1, step_id: "settle", artifacts: {} }],
+      },
+      coverage: { total: 1, exhausted: true },
+    },
+  });
 
-    const invalid = await client.callTool({
-      name: "capture_browser_scenario",
-      arguments: { ...minimalScenario(), detail: "brief" },
-    });
-    expect(parseMcpToolError(invalid)).toMatchObject({
-      error: { code: "invalid_request" },
-    });
-    expect(provider.scenarios).toHaveLength(1);
-  } finally {
-    await Promise.all([client.close(), server.close(), session.close()]);
-  }
+  const invalid = await client.callTool({
+    name: "capture_browser_scenario",
+    arguments: { ...minimalScenario(), detail: "brief" },
+  });
+  expect(parseMcpToolError(invalid)).toMatchObject({
+    error: { code: "invalid_request" },
+  });
+  expect(provider.scenarios).toHaveLength(1);
 });

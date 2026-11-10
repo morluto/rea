@@ -6,7 +6,6 @@ import {
   isObject,
   locateItem,
   at,
-  same,
   type JsonObject,
   type ParsedRequestBody,
   requestJson,
@@ -44,6 +43,7 @@ import {
   conflictsWithPlan,
   refinedBody,
   reconciledUpdateRule,
+  toggledRules,
 } from "./environmentStateWriteCalls.js";
 import {
   laterObservation,
@@ -175,6 +175,10 @@ export interface EffectContext {
   readonly io: WriteIo;
   readonly records: readonly StateRecordFacts[];
   readonly chronology: StateRecordChronology;
+  readonly overlapsWrite: (
+    record: StateRecordFacts,
+    exclude?: number,
+  ) => boolean;
   /** Whether a record may change state: a write the capture does not show reading only. */
   readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
@@ -316,6 +320,7 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   records: context.records,
   from: step.index,
   chronology: context.chronology,
+  overlapsWrite: context.overlapsWrite,
   viewOf: context.viewOf,
   withBody: context.io.withBody,
   queryOf: context.io.queryOf,
@@ -667,7 +672,7 @@ export const updateEntity = (
   }
   const unknown = context.unknown(type, collection, id);
   const call = { ...callOf(step, body), body };
-  const { explained, rules } = fitUpdateClocks(
+  const fitted = fitUpdateClocks(
     draft,
     after.object,
     explainUpdate({
@@ -688,6 +693,15 @@ export const updateEntity = (
       references: draft.plan.rules.filter((rule) => rule.rule === "reference"),
     }),
   );
+  // An action a later call shows flipping back what an earlier one set toggles it.
+  const { rules, later } = toggledRules(
+    fitted.rules,
+    fitted.explained.rules,
+    entity.fields,
+    draft.steady,
+    draft.updates,
+  );
+  const explained = { ...fitted.explained, rules: later };
   for (const member of keptOrders(call.body, after.object))
     draft.kept.add(member);
   if (explained.unexplained.length > 0 && !unknown) {

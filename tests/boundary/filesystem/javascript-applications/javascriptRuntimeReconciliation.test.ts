@@ -11,7 +11,7 @@ import { reconcileJavaScriptRuntimeEvidence } from "../../../../src/application/
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { mappedRuntimePaths } from "../../../../src/domain/javascript/javascriptRuntimeStaticCandidates.js";
 import { projectRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
-import { parseRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { electronPageInspectionSchema } from "../../../../src/domain/javascript/electronObservation.js";
 import {
   readRuntimeReconciliationInput,
@@ -49,13 +49,12 @@ it.each([
   {
     parameter: "include_script_sources",
     value: false,
-    message:
-      "Runtime Evidence contains source without source-capture selection",
+    message: /source.*without source-capture selection/i,
   },
   {
     parameter: "target_id",
     value: " target-main ",
-    message: "Runtime Evidence target disagrees with its captured result",
+    message: /target.*disagrees.*captured result/i,
   },
 ])(
   "preserves $parameter input paths for runtime Evidence",
@@ -84,7 +83,7 @@ it.each([
           {
             path: ["runtime_observations", 0, "parameters", parameter],
             reason: "invalid_value",
-            message,
+            message: expect.stringMatching(message),
           },
         ],
       },
@@ -186,15 +185,58 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
   expect(result.limitations.join(" ")).toMatch(
     /not reported as executed|not code reachability/u,
   );
-  expect(
-    result.graph.edges
-      .filter(({ relation }) => relation === "observed_as")
-      .every(
-        ({ evidence }) =>
-          evidence.authority === "cross-layer-reconciliation" &&
-          evidence.state === "inferred",
+  const exportBindings = javascriptApplicationAnalysisResultSchema
+    .parse(staticEvidence.normalized_result)
+    .graph.nodes.filter((node) =>
+      node.observations.some(
+        (observation) =>
+          observation.properties.semantic_role === "export-binding",
       ),
-  ).toBe(true);
+    )
+    .map((node) => node.node_id);
+  expect(exportBindings.length).toBeGreaterThan(0);
+  expect(
+    result.static_load_states.filter((row) =>
+      exportBindings.includes(row.static_node_id),
+    ),
+  ).toEqual([]);
+  expect(
+    result.reconciliations.filter(
+      (row) =>
+        row.static_node_id !== null &&
+        exportBindings.includes(row.static_node_id),
+    ),
+  ).toEqual([]);
+  const observedAsEdges = result.graph.edges.filter(
+    ({ relation }) => relation === "observed_as",
+  );
+  expect(observedAsEdges).toHaveLength(2);
+  for (const [entityKind, basis] of [
+    ["script", "content-and-location"],
+    ["worker", "artifact-path"],
+  ] as const) {
+    const reconciliation = result.reconciliations.find(
+      ({ entity_kind }) => entity_kind === entityKind,
+    );
+    if (reconciliation === undefined || reconciliation.status !== "matched")
+      throw new TypeError(`Expected matched ${entityKind} reconciliation`);
+    expect(observedAsEdges).toContainEqual(
+      expect.objectContaining({
+        source_node_id: reconciliation.static_node_id,
+        target_node_id: reconciliation.runtime_node_id,
+        relation: "observed_as",
+        properties: expect.objectContaining({
+          reconciliation_id: reconciliation.reconciliation_id,
+          static_layer_id: reconciliation.static_layer_id,
+          basis,
+        }),
+        evidence: expect.objectContaining({
+          authority: "cross-layer-reconciliation",
+          state: "inferred",
+        }),
+      }),
+    );
+  }
   const worker = result.reconciliations.find(
     ({ entity_kind: kind }) => kind === "worker",
   );
@@ -356,7 +398,7 @@ it("preserves unknown Electron frame provenance without linking it to an authori
       },
     },
   });
-  const captures = parseRuntimeCaptures([evidence]);
+  const captures = [parseRuntimeCapture(evidence, ["runtime_observations", 0])];
   expect(captures[0]?.scriptsCompleteWithinScope).toBe(false);
   const projected = projectRuntimeCaptures(captures);
   const script = projected.entities.find(({ kind }) => kind === "script");

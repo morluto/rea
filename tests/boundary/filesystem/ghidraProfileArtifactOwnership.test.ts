@@ -603,7 +603,12 @@ it.each(["seed", "extension"] as const)(
             ],
           },
         });
-      else expect(result.error.diagnostics?.reason).toContain("not a JAR");
+      else
+        expect(result.error.diagnostics).toMatchObject({
+          code: "not_jar",
+          reason: "not_jar",
+          path,
+        });
       allowClose = true;
       await scope.retryCleanup();
       expect(result.error.cleanupIncomplete).toBe(false);

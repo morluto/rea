@@ -78,9 +78,9 @@ describe("CdpBrowserProvider: redirect errors: redirect response validation", ()
           },
         ],
       });
-      expect(
-        inspection.network.requests[0]?.body_shapes.request,
-      ).not.toBeNull();
+      expect(inspection.network.requests[0]?.body_shapes.request).toEqual(
+        expect.any(Object),
+      );
       expect(inspection.network.requests[0]?.body_shapes.response).toBeNull();
       expect(inspection.network.requests[0]?.body_shapes.status).toBe(
         "partial",

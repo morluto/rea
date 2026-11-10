@@ -78,7 +78,6 @@ it.each(["bootstrap", "launch"] as const)(
       removal.failBootstrapWrite = false;
     });
     const started = await client.start();
-    expect(started.ok).toBe(false);
     if (started.ok) throw new Error("Expected failed fixture launch");
     expect(removal.bootstrapAttempts).toBe(1);
     expect(started.error.cleanupIncomplete).toBe(true);
@@ -132,7 +131,6 @@ it.each(["failed", "cancelled"] as const)(
     );
     expect(result.ok).toBe(false);
     if (outcome === "cancelled") {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancellation");
       expect(result.error).toBeInstanceOf(HopperCancelledError);
       expect(result.error.cause).toBe(reason);

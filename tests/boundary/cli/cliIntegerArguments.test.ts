@@ -1,5 +1,9 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { describe, expect } from "vitest";
 
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cliTest,
   runFileCli,
@@ -20,6 +24,19 @@ const NON_INTEGER_TEXT = [
   "9007199254740992",
 ];
 const NON_INTEGER_OPTION_TEXT = [...NON_INTEGER_TEXT, "-0"];
+
+/** A readable 256-byte file, so only option parsing can refuse the request. */
+const entropySample = async (): Promise<string> => {
+  const path = join(
+    await createTestTempDirectory("rea-entropy-options-"),
+    "sample.bin",
+  );
+  await writeFile(
+    path,
+    Uint8Array.from({ length: 256 }, (_, index) => index),
+  );
+  return path;
+};
 
 const expectCliValidationError = (result: CliResult, field: string): void => {
   expect(result.exitCode).toBe(1);
@@ -42,23 +59,6 @@ describe("CLI integer arguments", () => {
           "/nonexistent/missing.apk",
           "com.example.Main",
           "run",
-          `--overload-index=${value}`,
-          "--json",
-        ],
-      });
-
-      expectCliValidationError(result, "overloadIndex");
-    },
-  );
-
-  cliTest.for(NON_INTEGER_OPTION_TEXT)(
-    "rejects %j as an Android reference overload index",
-    async (value, { cli }) => {
-      const result = await cli.run({
-        arguments: [
-          "trace-android-references",
-          "/nonexistent/missing.apk",
-          "com.example.Main",
           `--overload-index=${value}`,
           "--json",
         ],
@@ -129,6 +129,23 @@ describe("CLI integer arguments", () => {
     },
   );
 
+  cliTest.for(NON_INTEGER_OPTION_TEXT)(
+    "rejects %j as an Android reference overload index",
+    async (value, { cli }) => {
+      const result = await runFileCli(cli, {
+        arguments: [
+          "trace-android-references",
+          "/nonexistent/missing.apk",
+          "com.example.Main",
+          `--overload-index=${value}`,
+          "--json",
+        ],
+      });
+
+      expectCliValidationError(result, "overloadIndex");
+    },
+  );
+
   cliTest.for(NON_INTEGER_TEXT)(
     "rejects %j as a Cutter expected generation",
     async (value, { cli }) => {
@@ -175,4 +192,164 @@ describe("CLI integer arguments", () => {
       expectCliValidationError(result, "record");
     },
   );
+});
+
+describe("byte-entropy window options", () => {
+  // The options share one parser, so one takes every malformed spelling.
+  // Numeric coercion reads "0x10" as a valid length and "0x100" as a valid
+  // block size; "384" is decimal but not a power of two.
+  for (const [flag, field, values] of [
+    ["--offset", "offset", NON_INTEGER_OPTION_TEXT],
+    ["--length", "length", ["0x10"]],
+    ["--block-size", "blockSize", ["0x100", "384"]],
+  ] as const) {
+    cliTest.for(values)(
+      `rejects %j as a byte-entropy ${flag} value`,
+      async (value, { cli }) => {
+        const result = await runFileCli(cli, {
+          arguments: [
+            "inspect-byte-entropy",
+            await entropySample(),
+            `${flag}=${value}`,
+            "--json",
+          ],
+        });
+
+        expectCliValidationError(result, field);
+      },
+    );
+  }
+
+  cliTest(
+    "keeps decimal byte-entropy windows and the omitted-length default",
+    async ({ cli }) => {
+      const path = await entropySample();
+      const window = async (...flags: string[]): Promise<unknown> => {
+        const result = await runFileCli(cli, {
+          arguments: ["inspect-byte-entropy", path, ...flags, "--json"],
+        });
+        expect(result.exitCode, result.stdout).toBe(0);
+        const { normalized_result: report } = JSON.parse(result.stdout) as {
+          normalized_result: { block_size: number; window: unknown };
+        };
+        return { block_size: report.block_size, window: report.window };
+      };
+
+      expect(await window()).toEqual({
+        block_size: 4096,
+        window: { offset: 0, length: 256 },
+      });
+      expect(
+        await window("--offset=016", "--length=16", "--block-size=256"),
+      ).toEqual({ block_size: 256, window: { offset: 16, length: 16 } });
+      expect(await window("--offset=0", "--length=0")).toEqual({
+        block_size: 4096,
+        window: { offset: 0, length: 0 },
+      });
+    },
+  );
+});
+
+describe("pyc and BEAM limit options", () => {
+  // One option takes every malformed spelling. Each sibling takes one
+  // spelling that numeric coercion admits within the field's bounds.
+  for (const [command, flag, field, values] of [
+    ["inspect-python-pyc", "--max-depth", "maxDepth", NON_INTEGER_OPTION_TEXT],
+    ["inspect-python-pyc", "--max-file-bytes", "maxFileBytes", ["0x10"]],
+    ["inspect-python-pyc", "--max-objects", "maxObjects", ["1e2"]],
+    ["inspect-python-pyc", "--max-string-bytes", "maxStringBytes", ["0x1"]],
+    ["inspect-erlang-beam", "--max-file-bytes", "maxFileBytes", ["0x10"]],
+    ["inspect-erlang-beam", "--max-chunks", "maxChunks", ["1e1"]],
+    ["inspect-erlang-beam", "--max-atoms", "maxAtoms", ["0b1"]],
+    [
+      "inspect-go-binary",
+      "--max-string-literals",
+      "maxStringLiterals",
+      ["", "0x10", "1e2"],
+    ],
+  ] as const) {
+    cliTest.for(values)(
+      `rejects %j as ${command} ${flag}`,
+      async (value, { cli }) => {
+        const result = await runFileCli(cli, {
+          arguments: [
+            command,
+            "/nonexistent/missing-artifact",
+            `${flag}=${value}`,
+            "--json",
+          ],
+        });
+
+        expectCliValidationError(result, field);
+      },
+    );
+  }
+
+  cliTest.for([
+    ["inspect-python-pyc", "--max-depth=016"],
+    ["inspect-erlang-beam", "--max-chunks=016"],
+  ] as const)("keeps a decimal %s limit", async ([command, flag], { cli }) => {
+    const result = await runFileCli(cli, {
+      arguments: [command, "/nonexistent/missing-artifact", flag, "--json"],
+    });
+
+    // The limit is admitted; the missing file is refused afterwards.
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [expect.objectContaining({ path: ["path"] })] },
+    });
+  });
+});
+
+describe("artifact decimal options", () => {
+  // Same admission as byte-entropy windows. One option takes every malformed
+  // spelling; siblings in artifactCommands.ts take one coercion each.
+  for (const [command, flag, field, values] of [
+    ["inspect-keyed-archive", "--offset", "offset", NON_INTEGER_OPTION_TEXT],
+    ["inspect-keyed-archive", "--limit", "limit", ["", "0x10", "1e2"]],
+    ["inspect-asset-catalog", "--offset", "offset", ["", "0x10"]],
+    ["inspect-asset-catalog", "--limit", "limit", ["1e2"]],
+    ["decode-interface-builder", "--max-documents", "maxDocuments", ["0x10"]],
+    ["decode-interface-builder", "--max-objects", "maxObjects", [""]],
+    [
+      "decode-interface-builder",
+      "--max-connections",
+      "maxConnections",
+      ["1e2"],
+    ],
+  ] as const) {
+    cliTest.for(values)(
+      `rejects %j as ${command} ${flag}`,
+      async (value, { cli }) => {
+        const result = await runFileCli(cli, {
+          arguments: [
+            command,
+            "/nonexistent/missing-artifact",
+            `${flag}=${value}`,
+            "--json",
+          ],
+        });
+
+        expectCliValidationError(result, field);
+      },
+    );
+  }
+
+  cliTest("keeps decimal keyed-archive offset and limit", async ({ cli }) => {
+    const result = await runFileCli(cli, {
+      arguments: [
+        "inspect-keyed-archive",
+        "/nonexistent/missing-archive",
+        "--offset=016",
+        "--limit=1",
+        "--json",
+      ],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "target_unavailable",
+    });
+  });
 });

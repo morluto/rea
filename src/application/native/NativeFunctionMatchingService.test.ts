@@ -74,7 +74,6 @@ it("retains transitive provenance without treating dependencies as native observ
     undefined,
     (id) => (id === dependency.evidence_id ? dependency : undefined),
   );
-  expect(missing.ok).toBe(false);
   if (missing.ok) throw new Error("Missing ancestor accepted");
   expect(missing.error).toMatchObject({
     evidenceId: ancestor.evidence_id,
@@ -115,8 +114,10 @@ it("keeps symbol origin unknown when supplied metadata describes a different sam
   const member = report.matches
     .flatMap((match) => match.left)
     .find((value) => value.address === "0x10");
-  expect(member?.limitations).toContain(
-    "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+  expect(member?.limitations).toContainEqual(
+    expect.stringMatching(
+      /symbol origin unavailable.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+    ),
   );
   expect(member?.evidence_links).toContain(alias.evidence_id);
 });
@@ -172,8 +173,10 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
         withBytes ? "identical-bytes" : null,
       );
       const member = report.matches[0]!.left[0]!;
-      expect(member.limitations).toContain(
-        "Conflicting generated and named symbol-origin observations; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      expect(member.limitations).toContainEqual(
+        expect.stringMatching(
+          /conflicting generated and named symbol-origin.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+        ),
       );
       expect(member.limitations.join(" ")).not.toContain(
         "Symbol origin unavailable",
@@ -933,7 +936,6 @@ it("enforces the caller-resolved representation allowance and names its setting"
   const lowered = await matchNativeFunctions(small, {
     representationAllowance: { maximumBytes: 64 * 1024, source: "runtime" },
   });
-  expect(lowered.ok).toBe(false);
   if (lowered.ok) throw new Error("Lowered allowance admitted the request");
   expect(lowered.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",

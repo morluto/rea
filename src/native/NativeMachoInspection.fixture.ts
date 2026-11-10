@@ -51,3 +51,10 @@ export const inspectionReader =
   (image = inspectionImage()) =>
   () =>
     readMachoCommandNames(readerOf(image), image.length, 1024 * 1024, 10000);
+
+/** Encryption facts for inspections whose assertions do not involve them. */
+export const unreadEncryption = () =>
+  Promise.resolve({
+    status: "unread",
+    reason: "not read in this test",
+  } as const);
