@@ -350,6 +350,7 @@ const registerAnnotationCommand = (
       path: z.string().describe("Local executable path"),
       procedure: z
         .string()
+        .min(1)
         .describe("Exact function entry address or unique name"),
     }),
     options: z.object({
