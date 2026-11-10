@@ -13,7 +13,10 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  artifactReadCancelledBy,
+  assertArtifactReadActive,
+} from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   createFitDigest,
@@ -30,11 +33,13 @@ const FDT_HEADER_BYTES = 40;
 export class FitArtifactReader implements ArtifactReader {
   readonly format = "fit" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
+  #entries = new Map<string, ArtifactEntry>();
   readonly #streams = new Set<Readable>();
   readonly #path: string;
   readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+  #prepared:
+    | { signal: AbortSignal | undefined; promise: Promise<void> }
+    | undefined;
   #metadata: FitMetadata | undefined;
   #coverage: ArtifactReaderTraversal | undefined;
   #closing = false;
@@ -66,8 +71,27 @@ export class FitArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      for (;;) {
+        const pending = (this.#prepared ??= {
+          signal,
+          promise: this.#prepare(signal),
+        });
+        try {
+          await pending.promise;
+          break;
+        } catch (cause: unknown) {
+          if (this.#prepared === pending) this.#prepared = undefined;
+          if (
+            pending.signal !== signal &&
+            signal?.aborted !== true &&
+            artifactReadCancelledBy(cause, pending.signal)
+          ) {
+            this.#assertOpen(signal);
+            continue;
+          }
+          throw cause;
+        }
+      }
       await this.#source.read(signal);
     });
     if (this.#coverage !== undefined)
@@ -207,6 +231,7 @@ export class FitArtifactReader implements ArtifactReader {
       this.#path,
       initial.size,
     );
+    const entries = new Map<string, ArtifactEntry>();
     let index = 0;
     for (const image of structure.images) {
       if (index % 256 === 0) await setImmediate();
@@ -228,15 +253,17 @@ export class FitArtifactReader implements ArtifactReader {
         adapterKey: `fit:${String(image.index)}`,
         formatMetadata: image.metadata,
       } satisfies ArtifactEntry;
-      this.#entries.set(entry.adapterKey, entry);
+      entries.set(entry.adapterKey, entry);
     }
+    await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#entries = entries;
     this.#metadata = structure.metadata;
     if (structure.limitations.length > 0)
       this.#coverage = {
         status: "complete",
         limitations: structure.limitations,
       };
-    await this.#source.read(signal);
   }
 
   /** One streamed pass per image feeds every supported digest. */

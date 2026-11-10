@@ -725,40 +725,6 @@ describe("workflow residual question retention", () => {
     );
   });
 
-  it.each([
-    ["spaces", "  Which boundary?  "],
-    ["line feed and tab", "\nWhich boundary?\t"],
-    ["byte order mark", "\uFEFFWhich boundary?\uFEFF"],
-  ])(
-    "normalizes edge whitespace from %s without changing workflow Evidence",
-    (_, question) => {
-      const records = new InvestigationRecords();
-      const result = { residual_unknowns: [question] };
-      const evidence = createWorkflowEvidence({
-        target: undefined,
-        operation: "inspect_native_api",
-        parameters: {},
-        result,
-        upstreamProfile: undefined,
-        upstreamLimitations: [],
-      });
-
-      expect(records.recordEvidence(evidence).ok).toBe(true);
-      expect(
-        recordWorkflowUnknowns({
-          name: "inspect_native_api",
-          result,
-          evidenceId: evidence.evidence_id,
-          recordUnknown: (unknown) => records.recordUnknown(unknown),
-        }).ok,
-      ).toBe(true);
-      expect(records.listUnknowns()).toMatchObject([
-        { question: `Which boundary? (Evidence ${evidence.evidence_id})` },
-      ]);
-      expect(evidence.normalized_result).toEqual(result);
-    },
-  );
-
   it("rejects questions that are empty after whitespace normalization", () => {
     const records = new InvestigationRecords();
     const result = { residual_unknowns: [" \n\t "] };

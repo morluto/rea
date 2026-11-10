@@ -37,6 +37,7 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -344,11 +345,9 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z
-        .string()
-        .describe(
-          "ASAR, extracted application directory, or JavaScript source file path",
-        ),
+      path: localPathStringSchema.describe(
+        "ASAR, extracted application directory, or JavaScript source file path",
+      ),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -369,11 +368,22 @@ const registerJavaScriptApplicationCommand = (
               signal,
             );
             if (!sourcePaths.ok) return sourcePaths.error;
+            const precision =
+              options.semanticPrecision === undefined
+                ? undefined
+                : await parseCliJsonInput(
+                    options.semanticPrecision,
+                    "analyze_javascript_application",
+                    signal,
+                  );
+            if (precision !== undefined && !precision.ok)
+              return precision.error;
             return runCliJavaScriptApplicationAnalysis(
               {
-                // An empty path names no file; leave it for input validation.
-                input_path:
-                  args.path === "" ? args.path : absoluteCallerPath(args.path),
+                input_path: absoluteCallerPath(args.path),
+                ...(precision === undefined
+                  ? {}
+                  : { semantic_precision: precision.value }),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.timeoutPolicy === undefined

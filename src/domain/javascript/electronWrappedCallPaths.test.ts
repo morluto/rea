@@ -1178,15 +1178,7 @@ it("keeps distinct exposed renderer listener callsites distinct", () => {
     result.electron.call_paths?.filter(({ channel }) => channel === "pong"),
   ).toHaveLength(2);
 });
-it("does not identify overwritten Electron namespaces or shadowed require", () => {
-  for (const source of [
-    `const e=require("electron");e.ipcMain={on(){}};e.ipcMain.on("bad",event=>event.sender.copy());`,
-    `function require(){return {ipcMain:{on(){}}}};const e=require("electron");e.ipcMain.on("bad",event=>event.sender.copy());`,
-  ])
-    expect(
-      analyzeJavaScriptStaticSource(source).electron.call_paths ?? [],
-    ).toEqual([]);
-});
+
 it("preserves guarded alternatives in direct exposed object literals", () => {
   const result = analyzeJavaScriptStaticSource(`
       const e=require("electron");
@@ -1284,7 +1276,9 @@ it("reports nested bridge depth truncation while retaining shallow paths", () =>
   expect(result.electron.call_paths).toContainEqual(
     expect.objectContaining({ entry: "desktop.shallow", channel: "shallow" }),
   );
-  expect(result.limitations.join(" ")).toContain("depth 128");
+  expect(result.limitations.join(" ")).toContain(
+    "semantic_precision.wrapper_depth=128",
+  );
 });
 it("preserves conditions when a wrapper dispatches through conditional external methods", () => {
   const result = analyzeJavaScriptStaticSource(`

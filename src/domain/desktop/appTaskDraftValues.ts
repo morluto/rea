@@ -1,15 +1,25 @@
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
-import { isXmlElement } from "./appTaskChecks.js";
 import {
   attributeKeyOf,
   NOISE_REASONS,
   type NoiseReason,
 } from "./appTaskDraftNoise.js";
-import { isIdentifyingAttribute } from "./attributeRank.js";
+import { isIdentifyingAttribute, isViewStateName } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { locatePointer, resolvePointer } from "./viewPointer.js";
+import { alternativePointers } from "./appTaskDraftAlternatives.js";
+import { isIdReference } from "./appTaskDraftMirrors.js";
+import { recordListsOf } from "./appTaskDraftNested.js";
+import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
+import { attributesOf, compactValue, previewWriter } from "./compactValue.js";
+import { pairMembers, pairedAtSeed } from "./memberPairing.js";
+import {
+  escapeToken,
+  isXmlElement,
+  locatePointer,
+  resolvePointer,
+} from "./viewPointer.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;
@@ -32,6 +42,7 @@ export interface DraftValue {
   readonly after: JsonValue;
   readonly note?: ValueNote;
   readonly refers_to?: readonly ValueReference[];
+  readonly alternatives?: readonly string[];
 }
 
 /** One entry of a drafted file's `values`, as the draft writes it. */
@@ -53,7 +64,7 @@ export const draftValueSchema = z.strictObject({
     .enum(VALUE_NOTES)
     .optional()
     .describe(
-      "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile, timestamp or upkeep: noise the app writes, left out of the suggested checks.",
+      "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile, timestamp, upkeep or layout: noise the app writes, left out of the suggested checks.",
     ),
   refers_to: z
     .array(
@@ -67,6 +78,12 @@ export const draftValueSchema = z.strictObject({
     .describe(
       'Other elements a value names by their key or id, such as category 44 naming <cat key="44" name="Groceries"/>.',
     ),
+  alternatives: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "A changed value's pointer naming its element by another identifier or name it holds alone, such as a shape's draw:name, for a check to use instead; at most three.",
+    ),
 });
 
 /** Bounds on the values a draft lists, so a large change cannot crowd out the rest of it. */
@@ -75,161 +92,13 @@ export const VALUE_LIMITS = {
   fileBytes: 8 * 1024,
   draftBytes: 24 * 1024,
   chars: 600,
-  references: 3,
+  references: 5,
 } as const;
 
 const isRecord = (
   value: JsonValue | undefined,
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const cut = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max)}…` : text;
-
-/** An element's attributes; none for a value that holds none. */
-const attributesOf = (element: Record<string, JsonValue>) => {
-  const { attributes } = element;
-  return isRecord(attributes) ? attributes : {};
-};
-
-/** Keep one character past the limit to distinguish an exact fit from a cut. */
-const previewWriter = (max: number) => {
-  const parts: string[] = [];
-  let length = 0;
-  const push = (text: string): boolean => {
-    const kept = text.slice(0, Math.max(0, max + 1 - length));
-    parts.push(kept);
-    length += kept.length;
-    return length <= max;
-  };
-  const escaped = (text: string, attribute = false): boolean => {
-    for (let index = 0; index < text.length; index += 1) {
-      const char = text[index] ?? "";
-      if (
-        !push(
-          char === "&"
-            ? "&amp;"
-            : char === "<"
-              ? "&lt;"
-              : attribute && char === '"'
-                ? "&quot;"
-                : char,
-        )
-      )
-        return false;
-    }
-    return true;
-  };
-  const jsonString = (text: string): boolean => {
-    if (!push('"')) return false;
-    for (let index = 0; index < text.length; index += 1) {
-      const code = text.codePointAt(index);
-      const width = code !== undefined && code > 0xffff ? 2 : 1;
-      const encoded = JSON.stringify(text.slice(index, index + width));
-      if (!push(encoded.slice(1, -1))) return false;
-      index += width - 1;
-    }
-    return push('"');
-  };
-  const startTag = (
-    element: Record<string, JsonValue> & { name: string },
-  ): boolean => {
-    if (!push("<") || !push(element.name)) return false;
-    const attributes = attributesOf(element);
-    for (const key in attributes) {
-      if (!Object.hasOwn(attributes, key)) continue;
-      if (
-        !push(" ") ||
-        !push(key) ||
-        !push('="') ||
-        !escaped(String(attributes[key]), true) ||
-        !push('"')
-      )
-        return false;
-    }
-    return true;
-  };
-  return {
-    push,
-    escaped,
-    jsonString,
-    startTag,
-    result: () => cut(parts.join(""), max),
-  };
-};
-
-/** An archive entry's own fields, without its view. */
-const isArchiveEntry = (value: JsonValue): value is Record<string, JsonValue> =>
-  isRecord(value) && "sha256" in value && "view" in value && "name" in value;
-
-/**
- * A value as an author reads it: a scalar as it is, cut past `max`
- * characters; an element as compact XML, with every text node the XML reader
- * kept, which already leaves out the whitespace an app lays out between
- * elements; an archive entry as its name, format and size; anything else as
- * JSON. Writing stops once past `max`, so a large subtree costs no more than
- * the cut.
- */
-export const compactValue = (
-  value: JsonValue | undefined,
-  format: "json" | "xml" | "archive",
-  max: number = VALUE_LIMITS.chars,
-): JsonValue => {
-  if (value === undefined) return null;
-  if (typeof value === "string") return cut(value, max);
-  if (value === null || typeof value !== "object") return value;
-  const { push, escaped, jsonString, startTag, result } = previewWriter(max);
-  const write = (node: JsonValue): boolean => {
-    if (format === "xml" && isXmlElement(node)) {
-      if (!startTag(node)) return false;
-      if (node.children.length === 0) return push("/>");
-      return (
-        push(">") &&
-        node.children.every((child) =>
-          typeof child === "string" ? escaped(child) : write(child),
-        ) &&
-        push("</") &&
-        push(node.name) &&
-        push(">")
-      );
-    }
-    if (format === "archive" && isArchiveEntry(node))
-      return write({
-        ...(node.name === undefined ? {} : { name: node.name }),
-        format: node.format ?? null,
-        size: node.size ?? null,
-      });
-    if (Array.isArray(node))
-      return (
-        push("[") &&
-        node.every(
-          (item, index) => (index === 0 || push(",")) && write(item),
-        ) &&
-        push("]")
-      );
-    if (isRecord(node)) {
-      if (!push("{")) return false;
-      let first = true;
-      for (const key in node) {
-        if (!Object.hasOwn(node, key)) continue;
-        if (
-          (!first && !push(",")) ||
-          !jsonString(key) ||
-          !push(":") ||
-          !write(node[key] ?? null)
-        )
-          return false;
-        first = false;
-      }
-      return push("}");
-    }
-    return typeof node === "string"
-      ? jsonString(node)
-      : push(JSON.stringify(node));
-  };
-  write(value);
-  return result();
-};
 
 /** The longest value a reference is resolved from. */
 const MAX_REFERENCE_CHARS = 64;
@@ -258,22 +127,37 @@ const indexUnder = (
 };
 
 /**
- * XML elements by the value of their `key` or `id` attribute, across a view,
- * and by tag: at most `PER_TAG` of a tag in document order, so a key that
- * records or archive entries repeat costs no more than that.
+ * XML elements by the value of their `key` or `id` attribute, `xmi:id`
+ * among them, across a view, and by tag: at most `PER_TAG` of a tag in
+ * document order, so a key that records or archive entries repeat costs no
+ * more than that. A view the app keeps of the document, as Umbrello's
+ * `listview` mirroring its model by id, names nothing.
  */
 const referenceIndex = (roots: readonly JsonValue[]) => {
   const index = new Map<string, Map<string, JsonValue[]>>();
   const pending: JsonValue[] = [...roots];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    if (isXmlElement(node))
+    if (isXmlElement(node) && isViewStateName(node.name)) continue;
+    if (isXmlElement(node)) {
       for (const [key, value] of Object.entries(attributesOf(node)))
         if (
           typeof value === "string" &&
           referable(value) &&
-          /^(?:key|id)$/iu.test(key.split(":").at(-1) ?? key)
+          /^(?:key|id)$/iu.test(localOf(key))
         )
           indexUnder(index, value, node);
+      // An id an app keeps as a child's text, as GnuCash's `<act:id type="guid">`, names the element it sits in.
+      for (const child of node.children) {
+        const id = leafText(child);
+        if (
+          isXmlElement(child) &&
+          /^id$/iu.test(localOf(child.name)) &&
+          id !== undefined &&
+          referable(id)
+        )
+          indexUnder(index, id, node);
+      }
+    }
     const children = isXmlElement(node)
       ? node.children
       : Array.isArray(node)
@@ -284,6 +168,53 @@ const referenceIndex = (roots: readonly JsonValue[]) => {
     for (const child of children) pending.push(child);
   }
   return index;
+};
+
+/** A name without its namespace prefix. */
+const localOf = (name: string) => name.split(":").at(-1) ?? name;
+
+/** An element's text when it holds only one text node, as `<act:name>Groceries</act:name>`. */
+const leafText = (node: JsonValue): string | undefined => {
+  const [only] = isXmlElement(node) ? node.children : [];
+  return isXmlElement(node) &&
+    node.children.length === 1 &&
+    typeof only === "string"
+    ? only
+    : undefined;
+};
+
+/** An element as a reference shows it: its start tag, and its name where a child holds one, as `<gnc:account version="2.0.0"><act:name>Groceries</act:name>…`. */
+const referenceTag = (
+  element: Record<string, JsonValue> & { name: string },
+) => {
+  const writer = previewWriter(VALUE_LIMITS.chars);
+  if (!writer.startTag(element)) return writer.result();
+  const children = isXmlElement(element) ? element.children : [];
+  if (children.length === 0) {
+    writer.push("/>");
+    return writer.result();
+  }
+  if (!writer.push(">")) return writer.result();
+  const named = children.find(
+    (child) =>
+      isXmlElement(child) &&
+      /^(?:name|title|label)$/iu.test(localOf(child.name)) &&
+      leafText(child) !== undefined,
+  );
+  if (isXmlElement(named)) {
+    if (
+      !writer.push("<") ||
+      !writer.push(named.name) ||
+      !writer.push(">") ||
+      !writer.escaped(leafText(named) ?? "") ||
+      !writer.push("</") ||
+      !writer.push(named.name) ||
+      !writer.push(">")
+    )
+      return writer.result();
+  }
+  writer.push("…");
+  return writer.result();
 };
 
 /** Whether an attribute's name and an element's tag share a stem, as HomeBank's `payee` and `<pay>`. */
@@ -299,7 +230,7 @@ const stemOf = (attribute: string, tag: string) => {
   );
 };
 
-/** What a value a pointer reads names: the one other element whose `key` or `id` it equals, or, among several, the one whose tag shares the attribute's stem. */
+/** What a value a pointer reads names: the one other element whose `key` or `id` it equals, or, among several, the one whose tag shares the attribute's stem, the one named for it first; a plain number only through an attribute so named, or one ending in `id`, `ref` or `key`. */
 const referencesFrom = (
   index: ReadonlyMap<string, ReadonlyMap<string, readonly JsonValue[]>>,
 ) => {
@@ -309,15 +240,33 @@ const referencesFrom = (
     self: JsonValue | undefined,
   ): ValueReference | undefined => {
     if (!referable(value)) return undefined;
+    // A plain number, as a list's `count="5"`, names an element only through an attribute named for one.
+    const plain = /^-?\d+(?:\.\d+)?$/u.test(value);
     const found = [...(index.get(value)?.values() ?? [])]
       .flat()
-      .filter((node) => node !== self);
-    const hinted =
+      .filter(
+        (node) =>
+          node !== self &&
+          (!plain ||
+            (attribute !== undefined &&
+              isXmlElement(node) &&
+              (stemOf(attribute, node.name) ||
+                /(?:id|ref|key)$/iu.test(localOf(attribute))))),
+      );
+    const stemmed =
       found.length === 1 || attribute === undefined
         ? found
         : found.filter(
             (node) => isXmlElement(node) && stemOf(attribute, node.name),
           );
+    // Among several, the tag the attribute is named for, as `account` an `<ACCOUNT>` before an `<ACCOUNTID>`.
+    const named = stemmed.filter(
+      (node) =>
+        isXmlElement(node) &&
+        localOf(node.name).toLowerCase() ===
+          localOf(attribute ?? "").toLowerCase(),
+    );
+    const hinted = stemmed.length > 1 && named.length === 1 ? named : stemmed;
     const [element] = hinted;
     return hinted.length === 1 && isXmlElement(element)
       ? {
@@ -330,17 +279,15 @@ const referencesFrom = (
   return resolve;
 };
 
-const referenceTag = (
-  element: Record<string, JsonValue> & { name: string },
-): string => {
-  const writer = previewWriter(VALUE_LIMITS.chars);
-  if (writer.startTag(element))
-    writer.push(
-      element.children instanceof Array && element.children.length === 0
-        ? "/>"
-        : ">…",
-    );
-  return writer.result();
+/** References without repeats, the first of each attribute and value. */
+const uniqueReferences = (references: readonly ValueReference[]) => {
+  const seen = new Set<string>();
+  return references.filter(({ attribute, value }) => {
+    const key = JSON.stringify([attribute, value]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 /** What a values list reads: a file's two ends and how it treats each pointer. */
@@ -363,31 +310,76 @@ export interface ValueContext {
 const byteLength = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value)).length;
 
+/** Records of attributes an element nests whose references a value lists, as the splits of a transaction. */
+const MAX_NESTED_RECORDS = 10;
+
+/** The references in an element's attributes other than its own identifiers; of one holding nothing but an identifier, as Parley's `<entry id="6"/>`, that identifier's. */
+const attributeReferences = (
+  resolve: ReturnType<typeof referencesFrom>,
+  element: JsonValue,
+) =>
+  Object.entries(isXmlElement(element) ? element.attributes : {}).flatMap(
+    ([key, item]) =>
+      typeof item === "string" &&
+      ((!isIdentifyingAttribute(key) && !/^key$/iu.test(key)) ||
+        isIdReference(element))
+        ? (resolve(item, key, element) ?? [])
+        : [],
+  );
+
 /**
  * The elements a value names: each attribute of an element by its own value,
- * other than the element's own identifiers, or a scalar, with the attribute
- * that holds it.
+ * other than the element's own identifiers, and of the records of
+ * attributes it nests, as a KMyMoney split's `account` and `payee`; or a
+ * scalar, with the attribute that holds it. Each once.
  */
 const referencesOf = (
   resolve: ReturnType<typeof referencesFrom>,
   view: JsonValue | null,
   pointer: string,
 ): ValueReference[] => {
-  const value = resolvePointer(view, pointer);
+  const value = resolvePointer(view, pointer, "xml");
   if (isXmlElement(value))
-    return Object.entries(attributesOf(value)).flatMap(([key, item]) =>
-      typeof item === "string" &&
-      !isIdentifyingAttribute(key) &&
-      !/^key$/iu.test(key)
-        ? (resolve(item, key, value) ?? [])
-        : [],
-    );
+    return uniqueReferences([
+      ...attributeReferences(resolve, value),
+      ...recordListsOf(value)
+        .flatMap(({ records }) => records)
+        .slice(0, MAX_NESTED_RECORDS)
+        .flatMap((record) => attributeReferences(resolve, record)),
+      // A field holding another element's id as its text, as a split's `<split:account>`.
+      ...[value, ...value.children].flatMap((field) => {
+        const text = leafText(field);
+        return isXmlElement(field) &&
+          text !== undefined &&
+          !/^id$/iu.test(localOf(field.name))
+          ? (resolve(text, field.name, value) ?? [])
+          : [];
+      }),
+    ]);
   if (typeof value !== "string") return [];
   const segments = pointer.split("/");
   const attribute =
     segments.at(-2) === "attributes" ? attributeKeyOf(pointer) : undefined;
-  const owner = resolvePointer(view, segments.slice(0, -2).join("/"));
+  const owner = resolvePointer(view, segments.slice(0, -2).join("/"), "xml");
   return [resolve(value, attribute, owner) ?? []].flat();
+};
+
+/** What a pointer names at the seed; an attribute of a member keyed by its new name, as a renamed layer, read from the member it pairs with there. */
+const seedValue = ({ ends, format }: ValueContext, pointer: string) => {
+  const key = attributeKeyOf(pointer);
+  const seen = resolvePointer(
+    ends.baseline,
+    pointer,
+    format(ends.baseline, pointer),
+  );
+  if (
+    seen !== undefined ||
+    key === undefined ||
+    format(ends.final, pointer) !== "xml"
+  )
+    return seen;
+  const member = pairedAtSeed(ends, pointer.split("/").slice(0, -2).join("/"));
+  return isXmlElement(member) ? member.attributes[key] : undefined;
 };
 
 /** A value's entry, with the references it holds, before any limit. */
@@ -399,7 +391,7 @@ const entryOf = (
 ): DraftValue => {
   const { baseline, final } = context.ends;
   const view = kind === "removed" ? baseline : final;
-  const located = locatePointer(view, pointer);
+  const located = locatePointer(view, pointer, context.format(view, pointer));
   const found = located.kind === "value";
   // A text node added or removed is reached only by its index among its element's children.
   const listPointer = pointer.replace(/\/\d+$/u, "");
@@ -408,8 +400,10 @@ const entryOf = (
     context.format(view, pointer) === "xml" &&
     kind !== "changed" &&
     /\/children\/\d+$/u.test(pointer) &&
-    Array.isArray(resolvePointer(view, listPointer)) &&
-    isXmlElement(resolvePointer(view, listPointer.replace(/\/children$/u, "")));
+    Array.isArray(resolvePointer(view, listPointer, "xml")) &&
+    isXmlElement(
+      resolvePointer(view, listPointer.replace(/\/children$/u, ""), "xml"),
+    );
   const note: ValueNote | undefined =
     found && located.byPosition.length > 0
       ? "by_position"
@@ -421,6 +415,12 @@ const entryOf = (
           VALUE_LIMITS.references,
         )
       : [];
+  const alternatives =
+    kind === "changed" &&
+    note === undefined &&
+    context.format(view, pointer) === "xml"
+      ? alternativePointers(view, pointer)
+      : [];
   return {
     pointer,
     kind,
@@ -428,24 +428,82 @@ const entryOf = (
       kind === "added"
         ? null
         : compactValue(
-            resolvePointer(baseline, pointer),
+            seedValue(context, pointer),
+            VALUE_LIMITS.chars,
             context.format(baseline, pointer),
           ),
     after:
       kind === "removed"
         ? null
         : compactValue(
-            resolvePointer(final, pointer),
+            resolvePointer(final, pointer, context.format(final, pointer)),
+            VALUE_LIMITS.chars,
             context.format(final, pointer),
           ),
     ...(note === undefined ? {} : { note }),
     ...(refers.length === 0 ? {} : { refers_to: refers }),
+    ...(alternatives.length === 0 ? {} : { alternatives }),
   };
 };
 
-/** How an entry sorts: what a check can name first, then what only position reaches, then noise. */
+/**
+ * The pointers a value added whole is listed by: a record of text fields in
+ * a list of its kind, as GnuCash's `<gnc:transaction>`, by each of its
+ * fields, and a field that lists such records, as its `<trn:splits>`, by
+ * each record, so the cut on one value never hides a field; anything else
+ * whole, as a document's root or a FreeCAD object of property lists.
+ */
+const fieldsOf = (view: JsonValue | null, pointer: string): string[] => {
+  const value = resolvePointer(view, pointer, "xml");
+  const list = resolvePointer(view, pointer.replace(/\/[^/]+$/u, ""), "xml");
+  if (
+    !isXmlElement(value) ||
+    !/\/children\/[^/]+$/u.test(pointer) ||
+    !Array.isArray(list) ||
+    list.filter((item) => isXmlElement(item) && item.name === value.name)
+      .length < 2 ||
+    !isRecordAt(view, pointer, value) ||
+    !value.children.some((child) => leafText(child) !== undefined)
+  )
+    return [pointer];
+  const members = (element: JsonValue) => {
+    const { keys } = pairMembers(
+      isXmlElement(element) ? element.children : [],
+      [],
+      undefined,
+      "xml",
+    ).newer;
+    return (isXmlElement(element) ? element.children : []).flatMap(
+      (child, index) =>
+        isXmlElement(child)
+          ? [{ child, key: escapeToken(keys[index] ?? String(index)) }]
+          : [],
+    );
+  };
+  return members(value).flatMap(({ child, key }) => {
+    const at = `${pointer}/children/${key}`;
+    const records = members(child);
+    return records.length > 0 &&
+      records.every(
+        ({ child: record }) =>
+          record.name === records[0]?.child.name && holdsFields(record),
+      )
+      ? records.map((record) => `${at}/children/${record.key}`)
+      : [at];
+  });
+};
+
+/** How an entry sorts: what a check can name first, text before attributes and whole elements, so a cut never drops the edit; then what only position reaches; then noise. */
 const rank = (entry: DraftValue) =>
-  entry.note === undefined ? 0 : entry.note === "by_position" ? 1 : 2;
+  entry.note === undefined
+    ? typeof entry.after === "string" &&
+      !entry.after.startsWith("<") &&
+      /\/children\/\d+$/u.test(entry.pointer)
+      ? 0
+      : 1
+    : entry.note === "by_position"
+      ? 2
+      : 3;
 
 /**
  * The values a file's net change added, changed and removed, at the pointers
@@ -482,6 +540,11 @@ export const draftValues = (
   const entries = [
     ...change.added
       .filter((pointer) => context.listed(final, pointer))
+      .flatMap((pointer) =>
+        context.format(final, pointer) === "xml"
+          ? fieldsOf(final, pointer)
+          : [pointer],
+      )
       .map((pointer) => entryOf(context, references, pointer, "added")),
     ...change.changed
       .filter((pointer) => context.listed(final, pointer))

@@ -133,14 +133,20 @@ elif command == "export-desktop-application":
             schema = json.load(handle)
         if os.environ.get("FAKE_REA_OLD_EXPORT"):
             schema["options"]["properties"].pop("syntheticSeed", None)
+        for name in os.environ.get("FAKE_REA_EXPORT_WITHOUT", "").split(","):
+            schema["options"]["properties"].pop(name, None)
         print(json.dumps(schema))
         sys.exit(0)
-    with open(option(args, "--task")) as handle:
-        note("tasks.jsonl", json.load(handle))
+    for path in options(args, "--task"):
+        with open(path) as handle:
+            note("tasks.jsonl", json.load(handle))
     with open(output(args[0], "EXPORT")) as handle:
         printed = handle.read()
     if "code" not in json.loads(printed):
         shutil.copytree(output(args[0], "BUNDLE"), args[1])
+        copy = option(args, "--withheld-copy") if "--withheld-copy" in args else None
+        if copy is not None and os.path.isdir(os.environ.get("FAKE_REA_WITHHELD", "")):
+            shutil.copytree(os.environ["FAKE_REA_WITHHELD"], copy)
     sys.stdout.write(printed)
     sys.exit(0 if "code" not in json.loads(printed) else 1)
 else:
@@ -152,7 +158,10 @@ const FAKE_APT_GET = String.raw`
 import os
 import re
 import sys
+import json
 
+with open(os.path.join(os.environ["FAKE_REA_NOTES"], "apt.jsonl"), "a") as handle:
+    handle.write(json.dumps({"argv": sys.argv[1:]}) + "\n")
 with open(os.environ["APT_CONFIG"]) as handle:
     conf = handle.read()
 lists = re.search(r'Dir::State::Lists "([^"]+)"', conf).group(1)
@@ -182,6 +191,8 @@ export interface FakeReaOutputs {
   readonly export: string;
   readonly bundle: string;
   readonly schema: string;
+  /** Where the real export copied the files it withheld from the seed. */
+  readonly withheld?: string;
 }
 
 export interface FakeBuildComputerRea {
@@ -222,6 +233,9 @@ export const fakeBuildComputerRea = async (
       FAKE_REA_EXPORT: outputs.export,
       FAKE_REA_BUNDLE: outputs.bundle,
       FAKE_REA_SCHEMA: outputs.schema,
+      ...(outputs.withheld === undefined
+        ? {}
+        : { FAKE_REA_WITHHELD: outputs.withheld }),
     },
     notes: async (name) => {
       const path = join(notes, name);

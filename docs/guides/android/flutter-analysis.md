@@ -217,3 +217,47 @@ The Gallery workflow and all 147 focused Flutter tests also pass on macOS Sonoma
 including the conflicting-load and note-range-limit CLI/MCP regressions. Windows
 verification runs under a non-administrator account. Verifiers use a shared
 temporary parent so each CLI/MCP process can own and release its own snapshots.
+
+## Selecting and recovering string-pool observations
+
+`inspect_dart_aot` accepts `pool_policy`; the CLI uses `--pool-policy` JSON:
+
+```sh
+rea inspect-dart-aot app.apk --pool-policy '{"contains":"package:my_app/"}'
+rea inspect-dart-aot app.apk --pool-policy '{"uri_limit":2000,"token_limit":4000,"run_bytes":4096,"token_bytes":256}'
+```
+
+A literal, case-sensitive `contains` filter runs before distinct collection,
+so an omitted URI or identifier can be selected without returning every other
+string. URI/token counts describe matching entries; `printable_run_count` counts
+complete printable runs before filtering. Unset budgets preserve the defaults:
+500 returned entries per URI category, 2000 identifier-like tokens, 1024 bytes
+per printable run, and 128 bytes per identifier. Budget values must be positive
+safe integers. Collection retains at most twice the selected category limit;
+counts remain lower bounds when that capacity is reached. A run exceeding
+`run_bytes` is omitted whole, rather than reported as a fabricated prefix.
+The result names the budget reached, and `string_pool.policy` records the
+selected filter and effective values. A larger budget or a narrower selection
+applies to the next call without a REA restart; explicit choices stay in Evidence.
+
+For a larger package-URI inventory, select the category and its relevant budget:
+
+```sh
+rea inspect-dart-aot app.apk --pool-policy '{"contains":"package:","uri_limit":2048}'
+```
+
+The equivalent MCP input is `pool_policy: {contains: "package:", uri_limit: 2048}`.
+This recovers all bounded package-URI observations in the measured Gallery and
+LocalSend APKs. Check the result's limits and coverage for other targets; long
+runs and unsupported snapshot layouts remain separate limitations. The
+[calibration report](../../verification/flutter-budget-calibration.md)
+keeps the default at 500 because increasing every complete overview also delivers
+more strings when they are unnecessary. Use `detail: "summary"` for the MCP
+identity/count task described above.
+
+These controls do not raise APK, ELF, library or response budgets, deserialize
+Dart objects, or establish typed class/function semantics. Retained
+`inspect_analysis_view` pages cover the returned selection; exhausting those
+pages does not recover facts that the producing pool scan omitted. Re-run the
+producer with the reported selection or budget change to obtain a new
+observation, checking its APK and library digests before comparing it.

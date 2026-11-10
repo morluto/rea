@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -148,7 +149,8 @@ describe("readReferenceSource entries", () => {
   it("reads a source file larger than the former 16 MiB ceiling", async () => {
     const root = await createTestTempDirectory("rea-reference-large-");
     const size = 16 * 1024 * 1024 + 1;
-    await writeFile(join(root, "large.bin"), Buffer.alloc(size, 0x61));
+    const bytes = Buffer.alloc(size, 0x61);
+    await writeFile(join(root, "large.bin"), bytes);
 
     const result = await readReferenceSource(root);
 
@@ -161,6 +163,15 @@ describe("readReferenceSource entries", () => {
         path: "large.bin",
         size,
       }),
+    );
+    const entry = result.value.entries.find(
+      (entry) => entry.path === "large.bin",
+    );
+    if (entry?.status !== "read" || entry.kind !== "file")
+      throw new Error("Expected captured file bytes");
+    expect(entry.bytes.byteLength).toBe(size);
+    expect(createHash("sha256").update(entry.bytes).digest("hex")).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
     );
   });
 
