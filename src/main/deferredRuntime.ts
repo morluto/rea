@@ -271,12 +271,6 @@ export const runDeferred = async (
   // A server already asked to close never reports itself ready to a client host.
   if (closing) await close();
   else
-    announceDeferredStdioStartup(
-      {
-        writeStderr: dependencies.writeStderr,
-        silent: config.logLevel === "silent",
-      },
-      advertisedCatalog,
-    );
+    announceDeferredStdioStartup(dependencies.writeStderr, advertisedCatalog);
   return 0;
 };

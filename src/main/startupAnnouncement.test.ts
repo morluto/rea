@@ -5,13 +5,12 @@ import {
   announceAnalysisRuntimeReady,
   announceDeferredStdioStartup,
   type AnalysisRuntimeAnnouncement,
-  type BannerSink,
 } from "./startupAnnouncement.js";
 
-/** Collect what a banner sink wrote instead of printing it. */
-const sink = (silent = false): { lines: string[]; sink: BannerSink } => {
+/** Collect what a banner wrote instead of printing it. */
+const sink = (): { lines: string[]; sink: (text: string) => void } => {
   const lines: string[] = [];
-  return { lines, sink: { writeStderr: (text) => lines.push(text), silent } };
+  return { lines, sink: (text) => lines.push(text) };
 };
 
 const VERSION = PRODUCT_IDENTITY.packageVersion;
@@ -76,15 +75,11 @@ describe("MCP startup banners", () => {
     ]);
   });
 
-  it("writes nothing when the operator selected silent logging", () => {
-    const { lines, sink: bannerSink } = sink(true);
+  it("announces before a banner reaches a client that suppresses logging", () => {
+    // The banner is not a log record: it is the one thing a client host shows,
+    // so it is written whatever REA_LOG_LEVEL says, as the sibling servers do.
+    const { lines, sink: bannerSink } = sink();
     announceDeferredStdioStartup(bannerSink, { profile: "full", toolCount: 3 });
-    announceAnalysisRuntimeReady(bannerSink, {
-      transport: "stdio",
-      availability: undefined,
-      providers: {},
-      providerLoadFailures: undefined,
-    });
-    expect(lines).toEqual([]);
+    expect(lines).toHaveLength(1);
   });
 });

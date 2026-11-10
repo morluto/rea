@@ -115,10 +115,11 @@ it("labels the listener transport it was started for", async () => {
   }
 });
 
-it("writes nothing when the operator selected silent logging", async () => {
+it("announces even when the host configured silent logging", async () => {
   const started = await startOneTransport(1, { level: "silent" });
   try {
-    expect(started.banner).toEqual([]);
+    expect(started.banner).toHaveLength(1);
+    expect(started.banner[0]?.startsWith(RUNTIME_READY)).toBe(true);
   } finally {
     await started.close();
   }

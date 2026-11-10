@@ -131,10 +131,6 @@ export const startMcpTransport = async (
   let runtimeAnnounced = false;
   const startupTransport: StartupTransport =
     dependencies.transport === "http" ? "streamable-http" : "stdio";
-  const bannerSink = {
-    writeStderr: dependencies.writeStderr,
-    silent: serverLogger.level === "silent",
-  };
   try {
     if (serverContext.signal?.aborted) throw serverContext.signal.reason;
     handle = await dependencies.serve(
@@ -168,7 +164,7 @@ export const startMcpTransport = async (
           );
           if (!runtimeAnnounced) {
             runtimeAnnounced = true;
-            announceAnalysisRuntimeReady(bannerSink, {
+            announceAnalysisRuntimeReady(dependencies.writeStderr, {
               transport: startupTransport,
               availability: server.capabilityAvailability,
               providers: observationProviders,

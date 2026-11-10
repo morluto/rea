@@ -11,6 +11,12 @@ import { PRODUCT_IDENTITY } from "../identity.js";
  * a client host that inherits a child's stderr shows those banners beside its
  * own output and the other servers' ones, and the tag is what tells them apart.
  * It names the project, not the binary.
+ *
+ * A banner states that this server started and what it detected, so it is
+ * written at every `REA_LOG_LEVEL`, `silent` included: the level governs the
+ * structured log, and neither sibling server consults it for its own start-up
+ * line. Suppressing the banner would leave the one channel a client host shows
+ * empty and the process indistinguishable from a misconfigured one.
  */
 const BANNER_TAG = "[rea]";
 
@@ -24,17 +30,6 @@ export type StartupTransport = "stdio" | "streamable-http";
 export type AdvertisedCatalog =
   | { readonly profile: "full"; readonly toolCount: number }
   | { readonly profile: "hot-cold" };
-
-/** Destination and silence rule shared by every banner. */
-export interface BannerSink {
-  readonly writeStderr: (text: string) => void;
-  /**
-   * `REA_LOG_LEVEL=silent` is the operator's instruction to write nothing.
-   * Every other level admits the banner, unlike a structured info record that a
-   * narrower threshold would hide by accident of configuration.
-   */
-  readonly silent: boolean;
-}
 
 /** Inputs for the line written once each composed analysis runtime is ready. */
 export interface AnalysisRuntimeAnnouncement {
@@ -98,18 +93,16 @@ export const analysisRuntimeBanner = (
 
 /** Announce the deferred stdio server, which serves discovery before any runtime. */
 export const announceDeferredStdioStartup = (
-  sink: BannerSink,
+  writeStderr: (text: string) => void,
   catalog: AdvertisedCatalog,
 ): void => {
-  if (sink.silent) return;
-  sink.writeStderr(`${deferredStdioBanner(catalog)}\n`);
+  writeStderr(`${deferredStdioBanner(catalog)}\n`);
 };
 
 /** Announce the optional tools and providers one composed analysis runtime detected. */
 export const announceAnalysisRuntimeReady = (
-  sink: BannerSink,
+  writeStderr: (text: string) => void,
   announcement: AnalysisRuntimeAnnouncement,
 ): void => {
-  if (sink.silent) return;
-  sink.writeStderr(`${analysisRuntimeBanner(announcement)}\n`);
+  writeStderr(`${analysisRuntimeBanner(announcement)}\n`);
 };

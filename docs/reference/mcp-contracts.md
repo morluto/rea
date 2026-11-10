@@ -1278,11 +1278,9 @@ starts this process shows nothing else it could inspect. These are human
 banners, not log records: each is one newline-terminated line that leads with
 the `[rea]` project tag, so it reads beside the `[jcalculator]` and
 `[dependancythang]` banners other MCP servers print into the same inherited
-stream. They appear at every `REA_LOG_LEVEL` that admits info lines — including
-`warn`, `error` and `fatal` thresholds, which would otherwise hide them by
-accident of configuration — and an explicit `REA_LOG_LEVEL=silent` writes
-nothing, because a banner is informational rather than the only route to the
-server the way an ephemeral HTTP port is:
+stream. A banner is written at every `REA_LOG_LEVEL`, `silent` included:
+`REA_LOG_LEVEL` governs the structured log, and suppressing the banner would
+leave the one channel a client host shows empty.
 
 ```text
 [rea] MCP server ready — REA 6.8.0, 252 tools, stdio (analysis runtime deferred)

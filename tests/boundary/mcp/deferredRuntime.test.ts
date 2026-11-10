@@ -60,6 +60,30 @@ const connect = async (
   return { client, stderr: () => stderr };
 };
 
+/**
+ * A healthy server announces itself on stderr and writes nothing else, whatever
+ * `REA_LOG_LEVEL` says; the analysis banner follows once a tool call composes
+ * the runtime, and composes only once.
+ */
+const expectOnlyStartupBanners = (stderr: string): void => {
+  const lines = stderr.split("\n").filter((line) => line !== "");
+  expect(lines.length).toBeGreaterThan(0);
+  for (const line of lines)
+    expect(line).toMatch(
+      /^\[rea\] MCP (?:server ready|analysis runtime ready) — /u,
+    );
+  // A deferred entry announces readiness before anything composes; an eager one
+  // has nothing to announce until its runtime is ready, and composes at startup.
+  const ready = lines.filter((line) =>
+    line.startsWith("[rea] MCP server ready"),
+  );
+  expect(ready.length).toBeLessThanOrEqual(1);
+  if (ready.length === 1) expect(lines[0]).toBe(ready[0]);
+  expect(
+    lines.filter((line) => line.includes("MCP analysis runtime ready")).length,
+  ).toBeLessThanOrEqual(1);
+};
+
 it.each([
   { mode: "legacy", environment: {} },
   { mode: "auto", environment: {} },
@@ -164,7 +188,7 @@ it.each([
         initial.tools.length + 2,
       );
     }
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -253,7 +277,7 @@ registerHooks({
     );
     expect(result.isError).not.toBe(true);
     expect(await loadedModules()).toEqual(new Set(["entrypoint", ...modules]));
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -354,7 +378,7 @@ it.each([
       expect(invalid._meta?.["io.modelcontextprotocol/serverInfo"]).toEqual(
         recorded.info,
       );
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -378,7 +402,7 @@ it("composes a scoped registration instead of serving the recorded catalog", asy
     arguments: {},
   });
   expect(status.isError).not.toBe(true);
-  expect(stderr()).toBe("");
+  expectOnlyStartupBanners(stderr());
 });
 
 it("preserves connection creation time across deferred materialization", async () => {
@@ -1085,13 +1109,14 @@ const until = async (predicate) => {
 let entered = false;
 let release;
 const held = new Promise(resolve => { release = resolve; });
+const banners = [];
 let close;
 const result = await runDeferred({
   env: { REA_LOG_LEVEL: "silent" }, stdin: input,
   serve: (factory, options) => serveStdio(factory, { ...options, transport: new StdioServerTransport(input, output) }),
   loadOptionalProviders: async () => { entered = true; await held; return {}; },
   captureShutdown: owned => { close = owned; },
-  registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
+  registerShutdown: () => () => {}, writeStderr: text => { banners.push(text); }, setExitCode: () => {},
 }, parsed.value);
 assert.equal(result, 0);
 const send = value => { const bytes = Buffer.from(JSON.stringify(value) + "\\n"); writes.push(bytes); input.write(bytes); };
@@ -1105,6 +1130,8 @@ try {
   release();
   await until(() => responses.some(value => value.id === 2) && responses.some(value => value.id === 3));
   await close();
+  for (const banner of banners)
+    assert.match(banner, /^\\[rea\\] MCP .* ready — /u);
   assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
   assert.equal(responses.filter(value => value.id === 2).length, 1);
   assert.equal(responses.filter(value => value.id === 3).length, 1);
