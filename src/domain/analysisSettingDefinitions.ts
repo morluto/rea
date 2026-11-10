@@ -43,7 +43,6 @@ import {
   DEFAULT_REGF_MAX_FILE_BYTES,
   MAXIMUM_REGF_MAX_FILE_BYTES,
   MINIMUM_REGF_MAX_FILE_BYTES,
-  REGF_HIVE_MAX_FILE_SETTING,
 } from "./windows/registryHive.js";
 interface SettingDefinition {
   readonly environment?: string;
@@ -322,7 +321,8 @@ export const ANALYSIS_SETTINGS = {
     operations: ["match_native_functions"],
   },
   "regf.hive_max_file_bytes": {
-    environment: REGF_HIVE_MAX_FILE_SETTING,
+    updateMode: "runtime",
+    environment: "REA_REGF_HIVE_MAX_FILE_BYTES",
     defaultValue: DEFAULT_REGF_MAX_FILE_BYTES,
     minimum: MINIMUM_REGF_MAX_FILE_BYTES,
     maximum: MAXIMUM_REGF_MAX_FILE_BYTES,

@@ -66,7 +66,8 @@ export const regfHiveFileLimit = (
   defaultBytes: DEFAULT_REGF_MAX_FILE_BYTES,
   floorBytes: MINIMUM_REGF_MAX_FILE_BYTES,
   maximumSettingBytes: MAXIMUM_REGF_MAX_FILE_BYTES,
-  reaRestartRequired: false,
+  updateMode: "runtime",
+  pendingRestart: false,
 });
 
 /** Name the effective ceiling, its source, the allowed range, and the runtime update. */

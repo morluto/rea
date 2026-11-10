@@ -117,7 +117,8 @@ it("reports the configured file ceiling as a structured limit", async () => {
       maximum_bytes_source: "setting",
       floor_bytes: MINIMUM_REGF_MAX_FILE_BYTES,
       maximum_setting_bytes: MAXIMUM_REGF_MAX_FILE_BYTES,
-      rea_restart_required: false,
+      update_mode: "runtime",
+      pending_restart: false,
       limit: {
         setting: REGF_HIVE_MAX_FILE_SETTING_ID,
         effective_value: MINIMUM_REGF_MAX_FILE_BYTES,
@@ -129,7 +130,8 @@ it("reports the configured file ceiling as a structured limit", async () => {
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
     },
   });
@@ -187,7 +189,8 @@ it("applies a runtime ceiling on the next inventory", async () => {
         setting: REGF_HIVE_MAX_FILE_SETTING_ID,
         effective_value: MINIMUM_REGF_MAX_FILE_BYTES,
         source: "runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
     },
   });

@@ -220,7 +220,8 @@ describe("createRegfDecoder", () => {
       defaultBytes: DEFAULT_REGF_MAX_FILE_BYTES,
       floorBytes: MINIMUM_REGF_MAX_FILE_BYTES,
       maximumSettingBytes: MAXIMUM_REGF_MAX_FILE_BYTES,
-      reaRestartRequired: false,
+      updateMode: "runtime",
+      pendingRestart: false,
     });
   });
 
@@ -240,7 +241,8 @@ describe("createRegfDecoder", () => {
       setting: REGF_HIVE_MAX_FILE_SETTING_ID,
       maximumBytes: MINIMUM_REGF_MAX_FILE_BYTES,
       source: "setting",
-      reaRestartRequired: false,
+      updateMode: "runtime",
+      pendingRestart: false,
     });
     expect(createRegfDecoder(MINIMUM_REGF_MAX_FILE_BYTES, admission).ok).toBe(
       true,
