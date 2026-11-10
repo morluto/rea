@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { semanticLoopValueSource } from "./javascriptSemanticIterationSources.js";
 import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyKey,
@@ -362,11 +363,16 @@ export class GetterResultWalker {
     const expression = unwrapJavaScriptExpression(current.node).node;
     if (t.isIdentifier(expression) && this.#alias(current, expression)) return;
     if (t.isForOfStatement(expression)) {
-      this.#enqueue(() => ({
-        ...current,
-        node: expression.right,
-        path: [null, ...current.path],
-      }));
+      const source = semanticLoopValueSource(
+        expression,
+        this.query.state.parentsByNode.get(expression) ?? null,
+      );
+      if (source !== undefined)
+        this.#enqueue(() => ({
+          ...current,
+          node: source.node,
+          path: [...source.projection, ...current.path],
+        }));
       return;
     }
     if (t.isThisExpression(expression) || t.isSuper(expression))

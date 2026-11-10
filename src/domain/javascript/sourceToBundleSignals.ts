@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { applicationNodeContentDigest } from "./javascriptApplicationFileIdentity.js";
 
 import {
   compareUnicodeCodePoints,
@@ -270,8 +271,8 @@ const projectCurrentOccurrences = (
 const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
   const digests = new Set<string>();
   const paths: CurrentPath[] = [];
-  if (node.identity.strategy === "content-digest")
-    digests.add(node.identity.sha256);
+  const digest = applicationNodeContentDigest(node);
+  if (digest !== null) digests.add(digest);
   if (node.identity.strategy === "source-map-original") {
     if (node.identity.source_sha256 !== null)
       digests.add(node.identity.source_sha256);

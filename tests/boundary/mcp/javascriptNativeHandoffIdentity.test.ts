@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { APPLICATION_FILE_OCCURRENCE } from "../../../src/domain/javascript/javascriptApplicationFileIdentity.js";
 import {
   applicationFeatureTraceResultSchema,
   type ApplicationFeatureTraceResult,
@@ -71,9 +72,22 @@ const expectHandoffIdentity = (
   );
   if (expected.available) {
     expect(node?.identity).toMatchObject({
-      strategy: "content-digest",
-      sha256: expected.nativeDigest,
+      strategy: "artifact-local-key",
+      stability: "artifact-version",
+      namespace: APPLICATION_FILE_OCCURRENCE,
+      artifact_sha256: expected.nativeDigest,
     });
+    expect(node?.observations).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          file_occurrence: {
+            container_sha256: expected.archiveDigest,
+            path: expected.addon,
+            sha256: expected.nativeDigest,
+          },
+        }),
+      }),
+    );
     expect(trace.native_handoffs).toHaveLength(1);
     expect(trace.native_handoffs[0]).toMatchObject({
       native_node_id: node?.node_id,

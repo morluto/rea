@@ -11,6 +11,7 @@ import {
   type ApplicationGraphEvidence,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
+import { artifactOccurrenceKey } from "../../domain/javascript/javascriptApplicationFileIdentity.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptHtmlInlineScriptsObservation,
@@ -394,6 +395,8 @@ export const fileOccurrenceIdentity = (file: JavaScriptArtifactFile) => ({
   sha256: file.sha256,
 });
 
+export { artifactOccurrenceKey };
+
 /** Stable identity for a fact scoped to one exact artifact. */
 export const artifactLocalIdentity = (
   sha256: string,
@@ -433,8 +436,9 @@ export const createElectronRoleNode = (
   // Raw application-relative declarations keep their source occurrence even
   // when identical source bytes appear under separate application prefixes.
   const identityPath =
+    input.resolution.resolved_path === null ||
     input.resolution.runtime_path_base === "application-root"
-      ? compositeKey([input.anchor.path, target])
+      ? artifactOccurrenceKey(input.anchor, target)
       : target;
   return context.accumulator.addNode({
     kind: input.kind,

@@ -10,6 +10,7 @@ import {
   parseJavaScriptApplicationGraph,
   serializeJavaScriptApplicationGraph,
 } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { APPLICATION_FILE_OCCURRENCE } from "../../../src/domain/javascript/javascriptApplicationFileIdentity.js";
 
 it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
   "preserves source-map graph evidence coordinates after %j",
@@ -184,16 +185,14 @@ it("resolves a bare source-map file name and module worker URL next to the scrip
     "self.onmessage = () => {};",
   );
   await writeFile(join(root, "dist", "sw.js"), "self.onfetch = () => {};");
-  await writeFile(
-    join(root, "dist", "app.js.map"),
-    JSON.stringify({
-      version: 3,
-      sources: ["../src/app.js"],
-      sourcesContent: ['new Worker("worker.js");'],
-      names: [],
-      mappings: "AAAA",
-    }),
-  );
+  const mapSource = JSON.stringify({
+    version: 3,
+    sources: ["../src/app.js"],
+    sourcesContent: ['new Worker("worker.js");'],
+    names: [],
+    mappings: "AAAA",
+  });
+  await writeFile(join(root, "dist", "app.js.map"), mapSource);
   const result = await reconstructJavaScriptArtifact({ input_path: root });
   const nodes = new Map(result.graph.nodes.map((node) => [node.node_id, node]));
   const mapEdge = result.graph.edges.find(
@@ -218,9 +217,16 @@ it("resolves a bare source-map file name and module worker URL next to the scrip
           properties.available === true,
       ),
   ).toBe(true);
-  expect(nodes.get(mapEdge?.target_node_id ?? "")?.identity.strategy).toBe(
-    "content-digest",
-  );
+  const container = result.graph.nodes.find(({ kind }) => kind === "artifact");
+  if (container?.identity.strategy !== "content-digest")
+    throw new Error("expected the fixture container digest");
+  expect(nodes.get(mapEdge?.target_node_id ?? "")?.identity).toEqual({
+    strategy: "artifact-local-key",
+    stability: "artifact-version",
+    namespace: APPLICATION_FILE_OCCURRENCE,
+    artifact_sha256: createHash("sha256").update(mapSource).digest("hex"),
+    key: JSON.stringify([container.identity.sha256, "dist/app.js.map"]),
+  });
   const workerEdge = result.graph.edges.find(
     ({ relation, source_node_id }) =>
       relation === "maps_to" && nodes.get(source_node_id)?.kind === "worker",

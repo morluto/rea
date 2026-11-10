@@ -21,26 +21,31 @@ const graphIdentities = async (source: string) => {
   const { graph } = javascriptApplicationAnalysisResultSchema.parse(
     result.value.normalized_result,
   );
+  const artifact = graph.nodes.find(({ kind }) => kind === "artifact");
+  if (artifact?.identity.strategy !== "content-digest")
+    throw new Error("expected the fixture container identity");
+  const containerDigest = artifact.identity.sha256;
+  const comparableKey = (key: string): string => {
+    if (key.startsWith("[")) {
+      const tuple: unknown = JSON.parse(key);
+      if (Array.isArray(tuple) && tuple[0] === containerDigest)
+        return JSON.stringify(tuple.slice(1));
+    }
+    const prefix = `${containerDigest}:`;
+    return key.startsWith(prefix) ? key.slice(prefix.length) : key;
+  };
   return (
     graph.nodes
       .filter(({ kind }) => kind !== "javascript-asset" && kind !== "artifact")
-      // Artifact digests differ between spellings; keep the derived keys.
+      // artifact digests differ between spellings; keep the derived keys.
       .map(({ kind, identity }) => ({
         kind,
         strategy: identity.strategy,
         ...(identity.strategy === "artifact-local-key"
           ? {
               namespace: identity.namespace,
-              // Module-export identity is a JSON tuple whose first entry
-              // binds the whole container; only that digest changes here.
-              key:
-                identity.namespace === "module-export"
-                  ? JSON.stringify(
-                      (JSON.parse(identity.key) as unknown[]).slice(1),
-                    )
-                  : identity.namespace === "source-module"
-                    ? identity.key.replace(/^[0-9a-f]{64}:/u, "")
-                    : identity.key,
+              // retain the source path and semantic key while excluding only this fixture's container digest.
+              key: comparableKey(identity.key),
             }
           : {}),
       }))
@@ -50,8 +55,8 @@ const graphIdentities = async (source: string) => {
   );
 };
 
-// Each quoted literal has the same length as its template spelling, so
-// source locations and every derived identity stay comparable.
+// each quoted literal has the same length as its template spelling, so
+// source locations and the semantic portion of each identity stay comparable.
 it.each([
   "fetch('https://api.example.com/v1/users');",
   "client['get']('/api/items');",

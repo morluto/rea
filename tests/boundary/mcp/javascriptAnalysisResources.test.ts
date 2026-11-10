@@ -12,6 +12,7 @@ import { recoveryInstructions } from "../../../src/server/recoveryInstructions.j
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEncoding.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { retainedEvidenceReferenceSchema } from "../../../src/domain/evidenceReference.js";
+import { APPLICATION_FILE_OCCURRENCE } from "../../../src/domain/javascript/javascriptApplicationFileIdentity.js";
 
 it("delivers deadline recovery guidance at initialization before any tool call", async () => {
   const { client, transport } = createResourceClient();
@@ -125,7 +126,12 @@ it("accepts more work after application expansion exceeds memory and retains eve
       .object({
         normalized_result: z.object({
           item: z.object({
-            identity: z.object({ sha256: z.string() }),
+            identity: z.object({
+              strategy: z.literal("artifact-local-key"),
+              namespace: z.literal(APPLICATION_FILE_OCCURRENCE),
+              artifact_sha256: z.literal(digest),
+              key: z.string(),
+            }),
             observations: z.array(
               z.object({
                 properties: z.object({
@@ -149,7 +155,10 @@ it("accepts more work after application expansion exceeds memory and retains eve
         }),
       })
       .parse(itemResponse.structuredContent).normalized_result.item;
-    expect(item.identity.sha256).toBe(digest);
+    expect(JSON.parse(item.identity.key)).toEqual([
+      expect.stringMatching(/^[0-9a-f]{64}$/u),
+      "main.js",
+    ]);
     const facts = item.observations.find(
       (observation) => observation.properties.static_analysis !== undefined,
     )?.properties.static_analysis;
@@ -390,8 +399,10 @@ const verifyRepeatedSourcePaths = async (
             node_id: z.string(),
             observation_id: z.string(),
             identity: z.object({
-              strategy: z.literal("content-digest"),
-              sha256: z.literal(digest),
+              strategy: z.literal("artifact-local-key"),
+              namespace: z.literal(APPLICATION_FILE_OCCURRENCE),
+              artifact_sha256: z.literal(digest),
+              key: z.string(),
             }),
             properties: z.strictObject({}),
             evidence: z.object({
@@ -415,7 +426,20 @@ const verifyRepeatedSourcePaths = async (
     })
     .parse(response.structuredContent).normalized_result;
   expect(facts.rows).toHaveLength(repeatedSourceCount);
-  expect(new Set(facts.rows.map(({ node_id }) => node_id)).size).toBe(1);
+  expect(new Set(facts.rows.map(({ node_id }) => node_id)).size).toBe(
+    repeatedSourceCount,
+  );
+  const containers = new Set<string>();
+  const occurrenceKey = z.tuple([
+    z.string().regex(/^[0-9a-f]{64}$/u),
+    z.string(),
+  ]);
+  for (const row of facts.rows) {
+    const [container, path] = occurrenceKey.parse(JSON.parse(row.identity.key));
+    containers.add(container);
+    expect(path).toBe(row.evidence.location.value.path);
+  }
+  expect(containers.size).toBe(1);
   expect(
     new Set(facts.rows.map(({ observation_id }) => observation_id)).size,
   ).toBe(repeatedSourceCount);

@@ -2,6 +2,7 @@ import {
   addArtifactContainsEdge,
   addStaticInferenceEdge,
   artifactLocalIdentity,
+  fileOccurrenceIdentity,
   createElectronRoleNode,
   linkElectronRoleToAsset,
   type JavaScriptArtifactGraphContext,
@@ -132,12 +133,17 @@ export const addJavaScriptSourceMapOriginals = (
             ? artifactLocalIdentity(
                 mapFile.sha256,
                 "source-map-unnamed-declaration",
-                String(original.declaration_index),
+                JSON.stringify([
+                  mapFile.container_sha256,
+                  mapFile.path,
+                  original.declaration_index,
+                ]),
               )
             : {
                 strategy: "source-map-original",
                 stability: "source-map-exact",
                 source_map_sha256: mapFile.sha256,
+                map_occurrence: fileOccurrenceIdentity(mapFile),
                 original_source: reference.source_name,
                 source_root: reference.source_root,
                 source_sha256: original.content_sha256,
@@ -147,6 +153,7 @@ export const addJavaScriptSourceMapOriginals = (
             label: reference?.source_name || null,
             source_map_reference: reference,
             properties: {
+              map_file_occurrence: fileOccurrenceIdentity(mapFile),
               section_path: [...original.section_path],
               source_index: original.source_index,
               declaration_index: original.declaration_index,

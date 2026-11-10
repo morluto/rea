@@ -1,10 +1,10 @@
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptBundlerRegistration } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import {
   addAstContainsEdge,
   artifactLocalIdentity,
+  artifactOccurrenceKey,
   chunkLookupKey,
   javascriptAnalysisCoverage,
   moduleLookupKey,
@@ -84,7 +84,10 @@ const createBundlerChunkNode = (
     identity: artifactLocalIdentity(
       file.sha256,
       "bundler-chunk",
-      compositeKey([registration.runtime, registration.chunk_keys]),
+      artifactOccurrenceKey(file, [
+        registration.runtime,
+        registration.chunk_keys,
+      ]),
     ),
     observations: [
       {
@@ -127,7 +130,7 @@ const addBundlerModuleNodes = (
       identity: artifactLocalIdentity(
         file.sha256,
         `${registration.runtime}:module`,
-        moduleValue.module_key,
+        artifactOccurrenceKey(file, moduleValue.module_key),
       ),
       observations: [
         {
@@ -263,7 +266,7 @@ const unresolvedBundlerModuleNode = (
     identity: artifactLocalIdentity(
       record.file.sha256,
       `${record.registration.runtime}:unresolved-entry-module`,
-      moduleKey,
+      artifactOccurrenceKey(record.file, moduleKey),
     ),
     observations: [
       {
@@ -297,7 +300,7 @@ const unresolvedBundlerChunkNode = (
     identity: artifactLocalIdentity(
       record.file.sha256,
       `${record.registration.runtime}:unresolved-async-chunk`,
-      chunkKey,
+      artifactOccurrenceKey(record.file, chunkKey),
     ),
     observations: [
       {

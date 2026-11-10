@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 
 const boundedTextSchema = z.string().min(1);
 const boundedKeySchema = z.string().min(1);
@@ -405,6 +406,7 @@ export const applicationNodeIdentitySchema = z.discriminatedUnion("strategy", [
     strategy: z.literal("source-map-original"),
     stability: z.literal("source-map-exact"),
     source_map_sha256: digestSchema,
+    map_occurrence: javaScriptFileOccurrenceSchema.exactOptional(),
     // The exact `sources` entry; `""` is a legal relative reference.
     original_source: z.string(),
     // Exact leaf-local root; null means omitted or explicitly null.

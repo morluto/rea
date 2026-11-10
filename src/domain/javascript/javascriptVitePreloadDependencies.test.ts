@@ -13,7 +13,7 @@ describe("Vite preload dependency recovery", () => {
     `;
     const analysis = analyzeJavaScriptStaticSource(source);
     const references = analysis.references.filter(
-      ({ kind }) => kind === "dynamic-import",
+      ({ kind }) => kind === "vite-table-candidate",
     );
 
     expect(references.map(({ specifier }) => specifier).sort()).toEqual([
@@ -41,7 +41,7 @@ describe("Vite preload dependency recovery", () => {
     `);
 
     expect(
-      analysis.references.filter(({ kind }) => kind === "dynamic-import"),
+      analysis.references.filter(({ kind }) => kind === "vite-table-candidate"),
     ).toEqual([]);
   });
 
@@ -59,7 +59,7 @@ describe("Vite preload dependency recovery", () => {
     `);
     expect(
       escaped.references
-        .filter(({ kind }) => kind === "dynamic-import")
+        .filter(({ kind }) => kind === "vite-table-candidate")
         .map(({ specifier }) => specifier),
     ).toEqual([null]);
 
@@ -69,7 +69,7 @@ describe("Vite preload dependency recovery", () => {
     `);
     expect(
       overridden.references
-        .filter(({ kind }) => kind === "dynamic-import")
+        .filter(({ kind }) => kind === "vite-table-candidate")
         .map(({ specifier }) => specifier),
     ).toEqual([null]);
 
@@ -79,7 +79,7 @@ describe("Vite preload dependency recovery", () => {
     `);
     expect(
       defaulted.references
-        .filter(({ kind }) => kind === "dynamic-import")
+        .filter(({ kind }) => kind === "vite-table-candidate")
         .map(({ specifier }) => specifier),
     ).toEqual(["./original.js"]);
   });
@@ -88,9 +88,11 @@ describe("Vite preload dependency recovery", () => {
     ["type DependencyHelper = typeof __vite__mapDeps;", "./original.js"],
     ["const labels = { __vite__mapDeps() {} };", "./original.js"],
     ["const labels = { [__vite__mapDeps]: true };", null],
-    ["const dependencyTable = __vite__mapDeps.f;", null],
+    ["const dependencyTable = __vite__mapDeps.f;", "./original.js"],
+    ["export const dependencyTable = __vite__mapDeps.f;", null],
+    ["opaque(__vite__mapDeps.f);", null],
   ])(
-    "distinguishes an erased type query from a runtime helper escape: %s",
+    "distinguishes erased syntax and inert reads from runtime helper escapes: %s",
     (read, expected) => {
       const analysis = analyzeJavaScriptStaticSource(`
       const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
@@ -101,7 +103,7 @@ describe("Vite preload dependency recovery", () => {
     `);
       expect(
         analysis.references
-          .filter(({ kind }) => kind === "dynamic-import")
+          .filter(({ kind }) => kind === "vite-table-candidate")
           .map(({ specifier }) => specifier),
       ).toEqual([expected]);
     },
@@ -117,12 +119,12 @@ describe("Vite preload dependency recovery", () => {
 
     expect(
       analysis.references
-        .filter(({ kind }) => kind === "dynamic-import")
+        .filter(({ kind }) => kind === "vite-table-candidate")
         .map(({ specifier }) => specifier),
     ).toEqual(["./first.js", null]);
   });
 
-  it("marks build-output paths apart from importer-relative module URLs", () => {
+  it("retains table value spelling without asserting the runtime URL base", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
         (map.f || (map.f = ["assets/lazy.js", "./near.js", "https://cdn.example/x.js", "/abs.js"]))) =>
@@ -132,14 +134,14 @@ describe("Vite preload dependency recovery", () => {
 
     expect(
       analysis.references
-        .filter(({ kind }) => kind === "dynamic-import")
+        .filter(({ kind }) => kind === "vite-table-candidate")
         .map(({ specifier }) => specifier)
         .sort(),
     ).toEqual([
       "./near.js",
       "/abs.js",
+      "assets/lazy.js",
       "https://cdn.example/x.js",
-      "vite-output:assets/lazy.js",
     ]);
   });
 });

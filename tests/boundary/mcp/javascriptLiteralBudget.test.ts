@@ -5,6 +5,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect } from "vitest";
 
+import { APPLICATION_FILE_OCCURRENCE } from "../../../src/domain/javascript/javascriptApplicationFileIdentity.js";
+
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -125,10 +127,20 @@ for (const scenario of [
             }),
           );
         }
+        const container = analysis.graph.nodes.find(
+          (node) => node.kind === "artifact",
+        );
+        if (container?.identity.strategy !== "content-digest")
+          throw new Error("expected the fixture container digest");
         expect(
           analysis.graph.nodes.find((node) => node.kind === "javascript-asset")
             ?.identity,
-        ).toMatchObject({ sha256: digest });
+        ).toMatchObject({
+          strategy: "artifact-local-key",
+          namespace: APPLICATION_FILE_OCCURRENCE,
+          artifact_sha256: digest,
+          key: JSON.stringify([container.identity.sha256, "main.js"]),
+        });
       }
       expect(await readFile(path, "utf8")).toBe(source);
       await client.ping();

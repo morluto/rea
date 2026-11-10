@@ -190,7 +190,6 @@ it.each([
     const context = {
       source,
       accumulator,
-      vitePreloadDependencyTable: null,
       openReceiverFacts: index.receivers.openReceivers,
       rpcScan: createJavaScriptRpcScan(
         source,
@@ -206,7 +205,7 @@ it.each([
           t.isOptionalCallExpression(node) ||
           t.isNewExpression(node)
         )
-          inspectCall(source, node, context, index.bindings);
+          inspectCall(node, context, index.bindings);
       },
     });
     expect(accumulator.pendingNetworkCalls).toHaveLength(pending);

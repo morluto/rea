@@ -375,7 +375,7 @@ it.each([
   },
 );
 
-it("retains every map location when identical map artifacts merge", async () => {
+it("retains separate originals for identical maps at different paths", async () => {
   const root = await createTestTempDirectory("rea-source-map-merged-");
   const previous = join(root, "previous");
   const current = join(root, "current");
@@ -400,27 +400,33 @@ it("retains every map location when identical map artifacts merge", async () => 
   const originals = application.graph.nodes.filter(
     ({ kind }) => kind === "source-module",
   );
-  expect(originals).toHaveLength(1);
-  expect(
-    originals[0]?.observations.map(
-      ({ source_map_reference }) => source_map_reference,
-    ),
-  ).toEqual(
-    expect.arrayContaining(
-      ["a", "b"].map((prefix) => ({
+  expect(originals).toHaveLength(2);
+  expect(new Set(originals.map(({ node_id }) => node_id)).size).toBe(2);
+  for (const prefix of ["a", "b"]) {
+    const path = `${prefix}/src/x.js`;
+    const original = originals.find(({ observations }) =>
+      observations.some(
+        ({ source_map_reference }) =>
+          source_map_reference?.map_path === `${prefix}/maps/main.js.map`,
+      ),
+    );
+    expect(
+      original?.observations.map(
+        ({ source_map_reference }) => source_map_reference,
+      ),
+    ).toEqual([
+      {
         source_name: "../src/x.js",
         source_root: null,
         map_path: `${prefix}/maps/main.js.map`,
-        resolution: { kind: "artifact-relative", path: `${prefix}/src/x.js` },
-      })),
-    ),
-  );
-  for (const prefix of ["a", "b"]) {
-    const path = `${prefix}/src/x.js`;
+        resolution: { kind: "artifact-relative", path },
+      },
+    ]);
     const item = comparison.items.find(
       ({ source_path }) => source_path === path,
     );
     expect(item?.current_node_ids).toHaveLength(1);
+    expect(item?.current_node_ids).toEqual([original?.node_id]);
     expect(item?.candidates).toContainEqual(
       expect.objectContaining({
         confidence: "high",

@@ -1,4 +1,5 @@
 import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
+import { applicationNodeContentDigest } from "./javascriptApplicationFileIdentity.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { Evidence } from "../evidence.js";
@@ -506,8 +507,8 @@ const changedDimensions = (
 };
 
 const contentIdentity = (node: ApplicationNode): string | null => {
-  if (node.identity.strategy === "content-digest")
-    return `content:${node.identity.sha256}`;
+  const digest = applicationNodeContentDigest(node);
+  if (digest !== null) return `content:${digest}`;
   if (node.kind === "javascript-module")
     return stringProperty(node, "source_sha256");
   if (
@@ -589,21 +590,21 @@ const comparisonPropertyValues = (
           ),
         )
       : values;
-  const occurrence = javaScriptFileOccurrenceSchema.safeParse(
-    comparable.file_occurrence,
-  );
-  if (!occurrence.success) return comparable;
-  // A containing artifact's digest locates this occurrence in one version;
-  // sibling changes do not establish a change to this file's own facts.
-  // Keep the occurrence's path and content digest comparable, and retain the
-  // complete provenance record on the original observation.
-  return {
-    ...comparable,
-    file_occurrence: {
-      path: occurrence.data.path,
-      sha256: occurrence.data.sha256,
-    },
-  };
+  // container digests locate observations within each version. compare the
+  // path and file bytes for both ordinary files and source-map provenance.
+  let normalized = comparable;
+  for (const key of ["file_occurrence", "map_file_occurrence"] as const) {
+    if (comparable[key] === undefined) continue;
+    const occurrence = javaScriptFileOccurrenceSchema.safeParse(
+      comparable[key],
+    );
+    if (!occurrence.success) continue;
+    normalized = {
+      ...normalized,
+      [key]: { path: occurrence.data.path, sha256: occurrence.data.sha256 },
+    };
+  }
+  return normalized;
 };
 
 const indexRelationships = (

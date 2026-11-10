@@ -9,7 +9,10 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
+import {
+  isUnshadowedGlobal,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import {
   childNodes,
@@ -81,7 +84,8 @@ interface InteropHelper {
 export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
-    readonly intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+    readonly intrinsicPath?: (node: t.Node) => readonly string[] | undefined;
+    readonly includeCrossScopeWrites?: boolean;
   },
 ) => {
   const nativeArrayIteration = (array: t.ArrayExpression) =>
@@ -96,6 +100,7 @@ export const createSemanticModuleInterop = (
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes: {
+    readonly node: t.Node;
     readonly scope: string;
     readonly offset: number;
     readonly coverage: SemanticPropertyPathCoverage;
@@ -135,7 +140,7 @@ export const createSemanticModuleInterop = (
         const { root, members } = electronMemberPath(current);
         if (members.some((member) => member === null)) return finish(undefined);
         suffix = [...(members as readonly string[]), ...suffix];
-        for (const global of ["Object", "Function", "Reflect"])
+        for (const global of ["Object", "Function", "Reflect", "Array"])
           if (isUnshadowedGlobal(root, state, global))
             return finish(["intrinsic", global, ...suffix]);
         for (const global of ["globalThis", "global", "window", "self"])
@@ -226,25 +231,43 @@ export const createSemanticModuleInterop = (
   const intrinsicReadChanged = (
     node: t.Node,
     path: readonly string[],
+    readKind: "callable" | "wrapper" = "callable",
   ): boolean => {
     const capture = capturedIntrinsic(node)?.capturedAt ?? node;
-    const scope = opaqueMutationPath(capture).join(".");
+    const read = readKind === "wrapper" ? node : capture;
+    const scope = opaqueMutationPath(read).join(".");
     const method = path.at(-1);
     const invocationMethod =
-      method === "bind" || method === "call" || method === "apply";
-    return writes.some(
-      (write) =>
-        (write.scope === scope || write.scope === "intrinsic") &&
-        write.offset < (capture.start ?? -1) &&
-        (write.coverage.covers(path) ||
-          (invocationMethod &&
-            write.coverage.covers([
-              "intrinsic",
-              "Function",
-              "prototype",
-              method,
-            ]))),
-    );
+      path.length > 3 &&
+      (method === "bind" || method === "call" || method === "apply");
+    return writes.some((write) => {
+      const crossScope = write.scope !== scope;
+      const checkTiming =
+        crossScope && options?.includeCrossScopeWrites === true;
+      if (
+        !checkTiming &&
+        ((crossScope && write.scope !== "intrinsic") ||
+          write.offset >= (read.start ?? -1))
+      )
+        return false;
+      const matches =
+        (invocationMethod &&
+          write.coverage.covers([
+            "intrinsic",
+            "Function",
+            "prototype",
+            method,
+          ])) ||
+        (write.coverage.covers(path) &&
+          (readKind !== "wrapper" ||
+            !invocationMethod ||
+            !write.coverage.covers(path.slice(0, -1))));
+      return (
+        matches &&
+        (!checkTiming ||
+          semanticEffectTiming(read, write.node, state) !== "after")
+      );
+    });
   };
 
   const resolveBoundIntrinsic = (
@@ -736,6 +759,7 @@ export const createSemanticModuleInterop = (
       const coverage = new SemanticPropertyPathCoverage();
       coverage.retain(path[0] === "opaque-intrinsic" ? ["intrinsic"] : path);
       writes.push({
+        node,
         scope: opaqueMutationPath(node).join("."),
         offset: node.start ?? Infinity,
         coverage,

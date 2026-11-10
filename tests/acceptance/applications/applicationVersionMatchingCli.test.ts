@@ -261,7 +261,7 @@ cliTest(
 );
 
 cliTest(
-  "pairs repeated factory bodies by identity when application versions retain a shared bundle",
+  "pairs repeated factory bodies by source coordinates when versions retain a shared bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-version-matching-");
     const factoryCount = 32;
@@ -328,18 +328,23 @@ cliTest(
     );
     expect(result.matching.ambiguous).toBe(0);
     expect(result.coverage.status).toBe("complete-within-inputs");
-    expect(factoryNodes[0]?.map(({ node_id }) => node_id)).toEqual(
+    expect(factoryNodes[0]?.map(({ node_id }) => node_id)).not.toEqual(
       factoryNodes[1]?.map(({ node_id }) => node_id),
     );
     for (const node of factoryNodes[0] ?? []) {
+      const key = node.observations[0]?.properties.module_key;
+      const paired = factoryNodes[1]?.find(
+        (candidate) => candidate.observations[0]?.properties.module_key === key,
+      );
+      expect(paired).toBeDefined();
       expect(
         result.items.find(({ left_node_id }) => left_node_id === node.node_id),
       ).toMatchObject({
         status: "unchanged",
-        right_node_id: node.node_id,
+        right_node_id: paired?.node_id,
         match: {
           status: "matched",
-          basis: "exact-node-identity",
+          basis: "exact-module-source-digest",
           candidate_left_node_ids: [],
           candidate_right_node_ids: [],
         },
@@ -548,5 +553,75 @@ cliTest(
         status: "removed",
       }),
     );
+  },
+);
+
+cliTest(
+  "matches unchanged Electron construction sites after a sibling file changes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-version-");
+    const analyze = async (name: string, version: string) => {
+      const application = join(root, name);
+      await mkdir(application);
+      await writeFile(
+        join(application, "package.json"),
+        JSON.stringify({
+          name: "electron-version-fixture",
+          version,
+          main: "electron.cjs",
+        }),
+      );
+      await writeFile(
+        join(application, "electron.cjs"),
+        'const { BrowserWindow, contextBridge, utilityProcess } = require("electron");\n' +
+          "new BrowserWindow({width: 640});\nnew BrowserWindow({width: 800});\n" +
+          'contextBridge.exposeInMainWorld("api", {ping: () => 1});\n' +
+          'utilityProcess.fork("./util.js");\n',
+      );
+      await writeFile(join(application, "util.js"), "module.exports = 1;\n");
+      const response = await cli.run({
+        arguments: ["analyze-javascript-application", application, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return parseEvidence(response.json);
+    };
+
+    const base = await analyze("base", "1.0.0");
+    const bumped = await analyze("bumped", "1.0.1");
+    const inputPath = join(root, "comparison.json");
+    await writeFile(inputPath, JSON.stringify({ left: base, right: bumped }));
+    const response = await runFileCli(cli, {
+      arguments: ["compare-application-versions", inputPath, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const unchanged = applicationVersionComparisonResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    const electronSites = javascriptApplicationAnalysisResultSchema
+      .parse(base.normalized_result)
+      .graph.nodes.filter(
+        ({ kind }) =>
+          kind === "browser-window" ||
+          kind === "context-bridge-api" ||
+          kind === "electron-utility",
+      );
+    expect(electronSites.map(({ kind }) => kind).sort()).toEqual([
+      "browser-window",
+      "browser-window",
+      "context-bridge-api",
+      "electron-utility",
+    ]);
+    for (const node of electronSites) {
+      const item = unchanged.items.find(
+        ({ left_node_id }) => left_node_id === node.node_id,
+      );
+      expect(item).toMatchObject({
+        status: "unchanged",
+        match: { basis: "exact-module-source-digest", confidence: "exact" },
+      });
+      expect(item?.right_node_id).not.toBe(node.node_id);
+    }
   },
 );

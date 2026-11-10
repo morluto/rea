@@ -8,8 +8,7 @@ import {
   writeFixtureFiles,
 } from "../../../support/javascriptApplicationFixture.js";
 
-// Vite's absolute-base build output: the helper table names files under the
-// output directory, and the real import is relative to the importing chunk.
+// The table is selected, but this helper ignores it and loads only the direct import.
 const viteBuild = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-vite-output-");
   await writeFixtureFiles(root, {
@@ -27,74 +26,69 @@ const viteBuild = async (): Promise<string> => {
   return root;
 };
 
-const preloadEdges = (
+const tableCandidates = (
   graph: Awaited<ReturnType<typeof reconstructJavaScriptFixture>>["graph"],
 ) =>
-  graph.edges
-    .filter(
-      ({ relation, properties }) =>
-        relation === "imports" &&
-        typeof properties.specifier === "string" &&
-        properties.specifier.startsWith("vite-output:"),
-    )
-    .map(({ properties }) => ({
-      specifier: properties.specifier,
-      resolution_status: properties.resolution_status,
-      resolved_path: properties.resolved_path,
-    }));
+  graph.nodes
+    .filter(({ kind }) => kind === "unknown")
+    .flatMap(({ observations }) => observations)
+    .filter(({ properties }) => properties.vite_table_candidate === true)
+    .map(({ properties }) => properties);
 
-describe("Vite build-output preload dependencies", () => {
-  it("resolves a dependency under the selected build output directory", async () => {
+describe("Vite dependency table candidates", () => {
+  it("retains table values without asserting they are imports", async () => {
     const result = await reconstructJavaScriptFixture(await viteBuild());
-
-    expect(preloadEdges(result.graph)).toContainEqual({
-      specifier: "vite-output:assets/lazy.js",
-      resolution_status: "resolved",
-      resolved_path: "assets/lazy.js",
-    });
-    const missing = result.graph.edges.find(
-      ({ properties }) =>
-        properties.specifier === "vite-output:assets/missing.js",
-    );
-    expect(missing?.evidence.limitations).toEqual(
+    expect(tableCandidates(result.graph)).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("no ancestor of the importing file holds it"),
+        expect.objectContaining({
+          specifier: "assets/lazy.js",
+          resolution_status: "unavailable",
+          candidate_path: "assets/lazy.js",
+        }),
+        expect.objectContaining({
+          specifier: "assets/missing.js",
+          resolution_status: "unavailable",
+        }),
       ]),
     );
+    expect(result.graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "imports",
+          properties: expect.objectContaining({
+            specifier: "./lazy.js",
+            resolution_status: "resolved",
+            resolved_path: "assets/lazy.js",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      result.graph.edges.some(
+        ({ relation, properties }) =>
+          relation === "imports" && properties.specifier === "assets/lazy.js",
+      ),
+    ).toBe(false);
+    expect(result.graph.coverage.status).toBe("partial");
   });
 
-  it("does not report a dependency as an external package when only the assets directory is selected", async () => {
+  it("does not classify a table value as an external package when selecting the assets directory", async () => {
     const root = await viteBuild();
     const result = await reconstructJavaScriptFixture(join(root, "assets"));
-    expect(
-      result.graph.edges.map(({ properties }) => properties.resolution_status),
-    ).not.toContain("external");
-    expect(
-      result.graph.nodes.flatMap(({ observations }) =>
-        observations.map(({ properties }) => properties.resolution_status),
-      ),
-    ).not.toContain("external");
-    // Also guard nested graph metadata so the original graph-wide exclusion
-    // remains in force if a producer adds another resolution-status location.
     expect(JSON.stringify(result.graph)).not.toContain(
       '"resolution_status":"external"',
     );
-    const edges = result.graph.edges.filter(
-      ({ properties }) => properties.specifier === "vite-output:assets/lazy.js",
-    );
-    expect(edges).toHaveLength(1);
-    expect(typeof edges[0]?.properties.resolution_status).toBe("string");
-    expect(edges[0]?.properties.resolution_status).not.toBe("external");
-    expect(edges[0]?.evidence.limitations).toEqual(
+    expect(tableCandidates(result.graph)).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(
-          "A Vite preload dependency is relative to the build output directory",
-        ),
+        expect.objectContaining({
+          specifier: "assets/lazy.js",
+          resolution_status: "unavailable",
+        }),
       ]),
     );
   });
 
-  it("keeps an inventoried but unanalyzed dependency under a nested build output directory", async () => {
+  it("retains an inventoried CSS file as a candidate under a nested build output directory", async () => {
     const root = await createTestTempDirectory("rea-vite-output-css-");
     await writeFixtureFiles(root, {
       "dist/index.html":
@@ -107,20 +101,12 @@ describe("Vite build-output preload dependencies", () => {
       "dist/assets/lazy.css": ".lazy { color: green; }",
     });
     const result = await reconstructJavaScriptFixture(root);
-    const edge = result.graph.edges.find(
-      ({ properties }) =>
-        properties.specifier === "vite-output:assets/lazy.css",
-    );
-
-    expect(edge?.properties).toMatchObject({
-      resolution_status: "unavailable",
-      candidate_path: "dist/assets/lazy.css",
-    });
-    expect(edge?.evidence.limitations).toEqual(expect.any(Array));
-    expect(edge?.evidence.limitations).not.toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("no ancestor of the importing file holds it"),
-      ]),
+    expect(tableCandidates(result.graph)).toContainEqual(
+      expect.objectContaining({
+        specifier: "assets/lazy.css",
+        resolution_status: "unavailable",
+        candidate_path: "dist/assets/lazy.css",
+      }),
     );
   });
 });

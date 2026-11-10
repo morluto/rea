@@ -1,3 +1,4 @@
+import { APPLICATION_FILE_OCCURRENCE } from "../../../src/domain/javascript/javascriptApplicationFileIdentity.js";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -366,13 +367,20 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
               : "unavailable",
       });
     }
+    const container = parsed.graph.nodes.find(
+      ({ kind }) => kind === "artifact",
+    );
+    if (container?.identity.strategy !== "content-digest")
+      throw new Error("expected the fixture container digest");
     expect(parsed.graph.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           identity: {
-            strategy: "content-digest",
-            stability: "global-exact",
-            sha256: createHash("sha256").update(body).digest("hex"),
+            strategy: "artifact-local-key",
+            stability: "artifact-version",
+            namespace: APPLICATION_FILE_OCCURRENCE,
+            artifact_sha256: createHash("sha256").update(body).digest("hex"),
+            key: JSON.stringify([container.identity.sha256, `${literal}/b.js`]),
           },
           observations: expect.arrayContaining([
             expect.objectContaining({
