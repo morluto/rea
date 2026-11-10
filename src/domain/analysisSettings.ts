@@ -27,6 +27,13 @@ export interface AnalysisSettingsSnapshot {
 /** Injected by the runtime owner; reads the accepted operation's immutable snapshot. */
 export type AnalysisSettingsReader = () => AnalysisSettingsSnapshot;
 
+/**
+ * Whether `update_analysis_settings` can change the active value.
+ * `runtime` applies inside this process. `restart` stays at the value this
+ * process already started with.
+ */
+export type AnalysisSettingUpdateMode = "runtime" | "restart";
+
 /** Limit facts supplied by the failing owner, never inferred from error prose. */
 export interface AnalysisSettingLimit {
   readonly setting: AnalysisSettingId;
@@ -38,7 +45,12 @@ export interface AnalysisSettingLimit {
   readonly applies_at: "next_operation" | "next_worker" | "next_startup";
   readonly agent_editable: true;
   readonly scope: "rea-runtime";
-  readonly rea_restart_required: false;
+  readonly update_mode: AnalysisSettingUpdateMode;
+  /**
+   * True only when a configured value is not the one this process is using.
+   * The reported effective value is active, so limit errors leave this false.
+   */
+  readonly pending_restart: false;
   readonly required_value?: number;
   readonly parameter?: string;
 }

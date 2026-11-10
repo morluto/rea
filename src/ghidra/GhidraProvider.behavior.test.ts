@@ -1868,7 +1868,8 @@ describe("Ghidra decompiler failure projection", () => {
             applies_at: "next_operation",
             agent_editable: true,
             scope: "rea-runtime",
-            rea_restart_required: false,
+            update_mode: "runtime",
+            pending_restart: false,
           },
         },
       });
@@ -1983,7 +1984,8 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
         minimum: 1,
         maximum: 2_147_483,
         agent_editable: true,
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       };
       expect(invocation.details?.limit).toEqual({
         ...enforced,
@@ -4365,7 +4367,8 @@ describe("Ghidra startup deadline for a finished invocation", () => {
     setting: "ghidra.startup_timeout_ms",
     effective_value: 250,
     agent_editable: true,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   };
   const invocationLimit = {
     ...startupLimit,
