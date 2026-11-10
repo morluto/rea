@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -193,4 +194,10 @@ if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);
 }
+const numericLimits = spawnSync(
+  process.execPath,
+  [fileURLToPath(new URL("./rea-numeric-limits.mjs", import.meta.url))],
+  { stdio: "inherit" },
+);
+if (numericLimits.status !== 0) process.exit(numericLimits.status ?? 1);
 console.log(`Architecture guards passed across ${files.length} source files.`);
