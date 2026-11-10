@@ -57,7 +57,11 @@ export const registerBinaryDiagnosticsCommands = (
     description:
       "Inspect binary file/linked layout without executing the selected object",
     args: z.object({
-      path: z.string().describe("Local ELF binary or relocatable object"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Local ELF binary or relocatable object"),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
