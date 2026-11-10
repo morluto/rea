@@ -447,8 +447,20 @@ const registerSearchCommand = (
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "search", () =>
-        runDirectAnalysis(
+      logCliCommand(logger, "search", () => {
+        if (args.pattern === undefined && options.pattern === undefined)
+          throw new AnalysisInputError(
+            options.kind === "strings" ? "search_strings" : "search_procedures",
+            undefined,
+            [
+              {
+                path: ["pattern"],
+                reason: "missing",
+                message: "Provide a pattern or --pattern.",
+              },
+            ],
+          );
+        return runDirectAnalysis(
           args.path,
           options.kind === "strings" ? "search_strings" : "search_procedures",
           {
@@ -464,7 +476,7 @@ const registerSearchCommand = (
             case_sensitive: options.caseSensitive,
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        );
+      }),
   });
 };
