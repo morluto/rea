@@ -1,3 +1,4 @@
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -2245,7 +2246,7 @@ it("retains completed function sources when cancellation arrives as execution re
   await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it("retains function sources when completed parent admission fails", async () => {
+it("publishes captured function sources when completed parent admission fails", async () => {
   const fixture = await createSnapshotReplayFixture(
     "rea-direct-parent-admission-",
   );
@@ -2276,17 +2277,21 @@ it("retains function sources when completed parent admission fails", async () =>
     detail: "complete",
     evidenceOutput: outputPath,
   });
-  const failure = output as {
-    details: {
-      partial_observation: Evidence;
-      source_closure: { records: Evidence[]; complete: boolean };
-    };
-  };
-  expect(failure.details.source_closure.complete).toBe(true);
-  expect(
-    failure.details.source_closure.records.map((record) => record.evidence_id),
-  ).toEqual(failure.details.partial_observation.evidence_links);
-  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(output).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { diagnostics: { evidence_bundle: { path: outputPath } } },
+  });
+  expect(output).not.toHaveProperty("details.source_closure");
+  const bundle = parseEvidenceBundle(
+    JSON.parse(await readFile(outputPath, "utf8")),
+  );
+  const parent = bundle.records.find(
+    (record) => record.operation === "analyze_function",
+  );
+  expect(parent).toBeDefined();
+  expect(bundle.records.map((record) => record.evidence_id).sort()).toEqual(
+    [parent!.evidence_id, ...parent!.evidence_links].sort(),
+  );
 });
 
 it("runs decompile export against the provider after loading a pseudocode snapshot", async () => {
