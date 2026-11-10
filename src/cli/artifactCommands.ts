@@ -144,7 +144,11 @@ const registerInterfaceBuilderCommand = (
     description:
       "Decode compiled storyboard and nib archives from an app bundle",
     args: z.object({
-      path: z.string().describe("Apple .app bundle path"),
+      path: z
+        .string()
+        .min(1)
+        .regex(/^[^\x00]*$/u, "Local path cannot contain NUL")
+        .describe("Apple .app bundle path"),
     }),
     options: z.object({
       maxDocuments: z
