@@ -35,47 +35,56 @@ const evaluatePolicy = (
   );
 
 const assertRetentionPolicy = (expression: string): void => {
-  for (const conclusion of [
-    "success",
-    "failure",
-    "timed_out",
-    "cancelled",
-    "skipped",
-    "action_required",
+  for (const [currentRepository, defaultBranch] of [
+    ["owner/repo", "main"],
+    ["another/project", "stable"],
   ]) {
-    for (const event of [
-      "push",
-      "schedule",
-      "workflow_dispatch",
-      "pull_request",
+    for (const conclusion of [
+      "success",
+      "failure",
+      "timed_out",
+      "cancelled",
+      "skipped",
+      "action_required",
     ]) {
-      for (const [repositoryName, branch] of [
-        ["owner/repo", "main"],
-        ["untrusted/fork", "main"],
-        ["owner/repo", "feature"],
+      for (const event of [
+        "push",
+        "schedule",
+        "workflow_dispatch",
+        "pull_request",
+        "workflow_call",
+        "deployment",
       ]) {
-        const permitted =
-          repositoryName === "owner/repo" &&
-          branch === "main" &&
-          event !== "pull_request" &&
-          ["success", "failure", "timed_out", "cancelled"].includes(conclusion);
-        expect(
-          evaluatePolicy(expression, {
-            github: {
-              repository: "owner/repo",
-              event: {
-                repository: { default_branch: "main" },
-                workflow_run: {
-                  conclusion,
-                  event,
-                  head_repository: { full_name: repositoryName },
-                  head_branch: branch,
+        for (const [repositoryName, branch] of [
+          [currentRepository, defaultBranch],
+          ["untrusted/fork", defaultBranch],
+          [currentRepository, "feature"],
+        ]) {
+          const permitted =
+            repositoryName === currentRepository &&
+            branch === defaultBranch &&
+            ["push", "schedule", "workflow_dispatch"].includes(event) &&
+            ["success", "failure", "timed_out", "cancelled"].includes(
+              conclusion,
+            );
+          expect(
+            evaluatePolicy(expression, {
+              github: {
+                repository: currentRepository,
+                event: {
+                  repository: { default_branch: defaultBranch },
+                  workflow_run: {
+                    conclusion,
+                    event,
+                    head_repository: { full_name: repositoryName },
+                    head_branch: branch,
+                  },
                 },
               },
-            },
-          }),
-          `${repositoryName}:${branch}:${event}:${conclusion}`,
-        ).toBe(permitted);
+            }),
+            `${currentRepository}:${defaultBranch}:${repositoryName}:${branch}:${event}:${conclusion}`,
+          ).toBe(permitted);
+        }
       }
     }
   }
@@ -755,55 +764,61 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
         expect(token, `${file}:${name}`).not.toContain(
           "github.event_name == 'workflow_call'",
         );
-      for (const event of ["push", "schedule", "workflow_dispatch"])
-        expect(token, `${file}:${name}`).toContain(
-          `github.event_name == '${event}'`,
+      for (const defaultBranch of ["main", "stable"]) {
+        for (const event of ["push", "schedule", "workflow_dispatch"])
+          expect(token, `${file}:${name}`).toContain(
+            `github.event_name == '${event}'`,
+          );
+        expect(token, `${file}:${name}`).not.toContain(
+          "github.event_name == 'pull_request'",
         );
-      expect(token, `${file}:${name}`).not.toContain(
-        "github.event_name == 'pull_request'",
-      );
-      if (grantsReleaseWrite) {
-        expect(cache, `${file}:${name}`).toContain(
-          "inputs.remote_cache_write == true",
-        );
-        expect(cache, `${file}:${name}`).toContain("|| 'local:rw'");
-        expect(cache, `${file}:${name}`).not.toContain("local:rw,remote:r'");
-      } else expect(cache, `${file}:${name}`).toContain("local:rw,remote:r'");
-      expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
-      for (const event of [
-        "push",
-        "schedule",
-        "workflow_dispatch",
-        "pull_request",
-        "workflow_call",
-      ]) {
-        for (const ref of ["refs/heads/main", "refs/heads/feature"]) {
-          for (const grant of [false, true]) {
-            const permitted =
-              (grantsReleaseWrite && grant) ||
-              (ref === "refs/heads/main" &&
-                (["push", "schedule", "workflow_dispatch"].includes(event) ||
-                  (grantsCalledEvent && event === "workflow_call")));
-            const context = {
-              github: {
-                ref,
-                event_name: event,
-                event: { repository: { default_branch: "main" } },
-              },
-              inputs: { remote_cache_write: grant },
-              secrets: { TURBO_TOKEN: "recording-token" },
-            };
-            const label = `${file}:${name}:${event}:${ref}:${grant}`;
-            expect(evaluatePolicy(token, context), label).toBe(
-              permitted ? "recording-token" : "",
-            );
-            expect(evaluatePolicy(cache, context), label).toBe(
-              permitted
-                ? "local:rw,remote:rw"
-                : grantsReleaseWrite
-                  ? "local:rw"
-                  : "local:rw,remote:r",
-            );
+        if (grantsReleaseWrite) {
+          expect(cache, `${file}:${name}`).toContain(
+            "inputs.remote_cache_write == true",
+          );
+          expect(cache, `${file}:${name}`).toContain("|| 'local:rw'");
+          expect(cache, `${file}:${name}`).not.toContain("local:rw,remote:r'");
+        } else expect(cache, `${file}:${name}`).toContain("local:rw,remote:r'");
+        expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
+        for (const event of [
+          "push",
+          "schedule",
+          "workflow_dispatch",
+          "pull_request",
+          "workflow_call",
+          "deployment",
+        ]) {
+          for (const ref of [
+            `refs/heads/${defaultBranch}`,
+            "refs/heads/feature",
+          ]) {
+            for (const grant of [false, true]) {
+              const permitted =
+                (grantsReleaseWrite && grant) ||
+                (ref === `refs/heads/${defaultBranch}` &&
+                  (["push", "schedule", "workflow_dispatch"].includes(event) ||
+                    (grantsCalledEvent && event === "workflow_call")));
+              const context = {
+                github: {
+                  ref,
+                  event_name: event,
+                  event: { repository: { default_branch: defaultBranch } },
+                },
+                inputs: { remote_cache_write: grant },
+                secrets: { TURBO_TOKEN: "recording-token" },
+              };
+              const label = `${file}:${name}:${defaultBranch}:${event}:${ref}:${grant}`;
+              expect(evaluatePolicy(token, context), label).toBe(
+                permitted ? "recording-token" : "",
+              );
+              expect(evaluatePolicy(cache, context), label).toBe(
+                permitted
+                  ? "local:rw,remote:rw"
+                  : grantsReleaseWrite
+                    ? "local:rw"
+                    : "local:rw,remote:r",
+              );
+            }
           }
         }
       }
