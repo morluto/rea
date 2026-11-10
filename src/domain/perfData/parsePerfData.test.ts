@@ -108,6 +108,14 @@ describe("parsePerfData event attributes", () => {
     expect(archive.events[0]?.ids).toEqual([7]);
   });
 
+  it("conforms to the published schema", () => {
+    expect(perfDataSchema.safeParse(parsed(buildPerfRecording())).success).toBe(
+      true,
+    );
+  });
+});
+
+describe("parsePerfData rejection diagnostics", () => {
   it("rejects a file without the magic instead of guessing", () => {
     const archive = parsed(Buffer.from("not a perf recording"));
     expect(archive.events).toEqual([]);
@@ -237,12 +245,6 @@ describe("parsePerfData event attributes", () => {
     expect(archive.diagnostics).toEqual([
       expect.objectContaining({ code: "unsupported-attribute-size" }),
     ]);
-  });
-
-  it("conforms to the published schema", () => {
-    expect(perfDataSchema.safeParse(parsed(buildPerfRecording())).success).toBe(
-      true,
-    );
   });
 });
 
