@@ -184,7 +184,7 @@ describe("withheld files", () => {
       "/bin/sh",
       [
         "-c",
-        `${command.replace("base64 -w0", "cat")}\nprintf '%s' "$${item.variable}"`,
+        `${command.replace("base64 -w0", "cat")}\nprintf '%s' \"$${item.variable}\"`,
       ],
       {
         env: { ...process.env, HOME: home },
