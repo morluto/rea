@@ -2,9 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   createRegfDecoder,
+  DEFAULT_REGF_MAX_FILE_BYTES,
+  MAXIMUM_REGF_MAX_FILE_BYTES,
+  MINIMUM_REGF_MAX_FILE_BYTES,
   parseRegfHive,
   REGF_BASE_BLOCK_BYTES,
-  REGF_MAX_FILE_BYTES,
+  REGF_HIVE_FILE_LIMIT_CODE,
+  REGF_HIVE_MAX_FILE_SETTING,
+  regfHiveFileLimit,
+  regfHiveFileLimitMessage,
 } from "./registryHive.js";
 
 const checksumOf = (base: Uint8Array): number => {
@@ -192,12 +198,55 @@ describe("parseRegfHive", () => {
 });
 
 describe("createRegfDecoder", () => {
-  it("refuses a file above the fixed ceiling", () => {
-    const decoder = createRegfDecoder(REGF_MAX_FILE_BYTES + 1);
+  it("refuses a file above the effective ceiling and names the setting", () => {
+    const fileBytes = DEFAULT_REGF_MAX_FILE_BYTES + 1;
+    const fileLimit = regfHiveFileLimit(fileBytes, {
+      maximumBytes: DEFAULT_REGF_MAX_FILE_BYTES,
+      source: "default",
+    });
+    const decoder = createRegfDecoder(fileBytes);
     expect(decoder.ok).toBe(false);
     if (decoder.ok) return;
-    expect(decoder.error.kind).toBe("limit");
-    expect(decoder.error.boundary).toBe("file-size");
+    expect(decoder.error).toEqual({
+      kind: "limit",
+      boundary: "file-size",
+      message: regfHiveFileLimitMessage(fileLimit),
+      fileAdmission: fileLimit,
+    });
+    expect(fileLimit).toEqual({
+      code: REGF_HIVE_FILE_LIMIT_CODE,
+      setting: REGF_HIVE_MAX_FILE_SETTING,
+      fileBytes,
+      maximumBytes: DEFAULT_REGF_MAX_FILE_BYTES,
+      source: "default",
+      defaultBytes: DEFAULT_REGF_MAX_FILE_BYTES,
+      floorBytes: MINIMUM_REGF_MAX_FILE_BYTES,
+      maximumSettingBytes: MAXIMUM_REGF_MAX_FILE_BYTES,
+      restartRequired: true,
+    });
+  });
+
+  it("uses a caller-selected ceiling instead of the default", () => {
+    const admission = {
+      maximumBytes: MINIMUM_REGF_MAX_FILE_BYTES,
+      source: "setting" as const,
+    };
+    const refused = createRegfDecoder(
+      MINIMUM_REGF_MAX_FILE_BYTES + 1,
+      admission,
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error.fileAdmission).toMatchObject({
+      code: REGF_HIVE_FILE_LIMIT_CODE,
+      setting: REGF_HIVE_MAX_FILE_SETTING,
+      maximumBytes: MINIMUM_REGF_MAX_FILE_BYTES,
+      source: "setting",
+      restartRequired: true,
+    });
+    expect(createRegfDecoder(MINIMUM_REGF_MAX_FILE_BYTES, admission).ok).toBe(
+      true,
+    );
   });
 
   it("parses the same hive when fed in uneven chunks", () => {

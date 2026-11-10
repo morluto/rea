@@ -2,8 +2,11 @@ import { Readable } from "node:stream";
 
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
+import { parseRegfHiveFileAdmission } from "../config/regfHiveFileAdmission.js";
 import {
   createRegfDecoder,
+  REGF_HIVE_MAX_FILE_SETTING,
+  type RegfHiveFileAdmission,
   type RegfImage,
 } from "../domain/windows/registryHive.js";
 import {
@@ -28,17 +31,27 @@ export class RegistryHiveArtifactReader implements ArtifactReader {
   readonly format = "regf-hive" as const;
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
+  readonly #admission: RegfHiveFileAdmission;
   #prepared: Promise<void> | undefined;
   #metadata: ArtifactFormatMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    environment: Readonly<Record<string, string | undefined>> = {},
+  ) {
     this.#source = new ArtifactFileSource(
       path,
       "Windows registry hive",
       admitted,
     );
+    const parsed = parseRegfHiveFileAdmission(
+      environment[REGF_HIVE_MAX_FILE_SETTING],
+    );
+    if (!parsed.ok) throw parsed.error;
+    this.#admission = parsed.value;
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {
@@ -107,7 +120,7 @@ export class RegistryHiveArtifactReader implements ArtifactReader {
 
   async #decode(signal?: AbortSignal): Promise<RegfImage> {
     const { handle, initial } = await this.#source.read(signal);
-    const decoder = createRegfDecoder(initial.size);
+    const decoder = createRegfDecoder(initial.size, this.#admission);
     if (!decoder.ok) throw this.#failure(decoder.error);
     if (initial.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {
@@ -130,16 +143,25 @@ export class RegistryHiveArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
-          `Windows registry hive is malformed: ${failure.message}`,
-        )
-      : new ArtifactReaderFailure(
-          "limit",
-          `Windows registry hive exceeds a fixed limit: ${failure.message}`,
-          failure.boundary === undefined ? {} : { boundary: failure.boundary },
-        );
+    if (failure.kind === "format")
+      return new ArtifactReaderFailure(
+        "format",
+        `Windows registry hive is malformed: ${failure.message}`,
+      );
+    const fileLimit = failure.fileAdmission;
+    return new ArtifactReaderFailure("limit", failure.message, {
+      ...(failure.boundary === undefined ? {} : { boundary: failure.boundary }),
+      ...(fileLimit === undefined
+        ? {}
+        : {
+            admission: {
+              kind: "regf-hive-file",
+              maximumBytes: fileLimit.maximumBytes,
+              source: fileLimit.source,
+              fileLimit,
+            },
+          }),
+    });
   }
 }
 

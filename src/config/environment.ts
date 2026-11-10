@@ -39,6 +39,7 @@ import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { debuggerSessionLimitEnvironmentShape } from "./debuggerSessionLimits.js";
 import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
 import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
+import { regfHiveMaxFileBytesSchema } from "./regfHiveFileAdmission.js";
 import {
   windowsChangeTimeDriftMsSchema,
   windowsChangeTimeSettleMaxPollsSchema,
@@ -71,6 +72,7 @@ const environmentSchema = z.object({
     ghidraDecompilePayloadMiBSchema.optional(),
   REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
     captureDecoderOldGenerationMiBSchema.optional(),
+  REA_REGF_HIVE_MAX_FILE_BYTES: regfHiveMaxFileBytesSchema.optional(),
   REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema.optional(),
   REA_REGEX_WORKER_HEAP_REQUEST_MIB: regexWorkerHeapRequestMiBSchema.optional(),
   REA_WINDOWS_CHANGE_TIME_DRIFT_MS: windowsChangeTimeDriftMsSchema.optional(),

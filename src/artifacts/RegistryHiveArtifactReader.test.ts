@@ -3,7 +3,17 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { REGF_BASE_BLOCK_BYTES } from "../domain/windows/registryHive.js";
+import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  MINIMUM_REGF_MAX_FILE_BYTES,
+  REGF_BASE_BLOCK_BYTES,
+  REGF_HIVE_FILE_LIMIT_CODE,
+  REGF_HIVE_MAX_FILE_SETTING,
+  regfHiveFileLimit,
+  regfHiveFileLimitMessage,
+} from "../domain/windows/registryHive.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -61,6 +71,55 @@ it("reports a hive's base block and cell counts as the root occurrence", async (
       allocated_cell_count: 2,
     },
   });
+});
+
+it("reports the configured file ceiling as a structured limit", async () => {
+  const bytes = hiveBytes();
+  const admission = {
+    maximumBytes: MINIMUM_REGF_MAX_FILE_BYTES,
+    source: "setting" as const,
+  };
+  const fileLimit = regfHiveFileLimit(bytes.length, admission);
+  let failure: unknown;
+  try {
+    await scanCanonicalArtifactInventory(await writeHive("SYSTEM"), {
+      environment: {
+        [REGF_HIVE_MAX_FILE_SETTING]: String(MINIMUM_REGF_MAX_FILE_BYTES),
+      },
+    });
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("inventory failure was not an artifact reader failure");
+  expect(failure.admission).toEqual({
+    kind: "regf-hive-file",
+    maximumBytes: admission.maximumBytes,
+    source: admission.source,
+    fileLimit,
+  });
+  expect(
+    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+  ).toEqual(
+    expect.objectContaining({
+      code: "truncated",
+      message: regfHiveFileLimitMessage(fileLimit),
+      remediation: { action: regfHiveFileLimitMessage(fileLimit) },
+      details: expect.objectContaining({
+        reason: "limit",
+        boundary: "file-size",
+        admission: "regf-hive-file",
+        file_limit_code: REGF_HIVE_FILE_LIMIT_CODE,
+        setting: REGF_HIVE_MAX_FILE_SETTING,
+        file_bytes: bytes.length,
+        maximum_bytes: MINIMUM_REGF_MAX_FILE_BYTES,
+        maximum_bytes_source: "setting",
+        floor_bytes: MINIMUM_REGF_MAX_FILE_BYTES,
+        restart_required: true,
+      }),
+    }),
+  );
 });
 
 it("names a dirty hive's sequence mismatch in the limitations", async () => {

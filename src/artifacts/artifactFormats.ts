@@ -470,9 +470,13 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "Registry hive inventory reports the base block's versions, sequence numbers, checksum status and hive-bin and cell spans. Key nodes, values, security descriptors and transaction logs are not decoded, so no key path or value is established.",
+      "Registry hive inventory reports the base block's versions, sequence numbers, checksum status and hive-bin and cell spans. The whole file is bounded by REA_REGF_HIVE_MAX_FILE_BYTES (default 512 MiB; restart REA after changing it). Key nodes, values, security descriptors and transaction logs are not decoded, so no key path or value is established.",
     createReader: (path, options) =>
-      new RegistryHiveArtifactReader(path, sourceOf(options)),
+      new RegistryHiveArtifactReader(
+        path,
+        sourceOf(options),
+        options.environment,
+      ),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

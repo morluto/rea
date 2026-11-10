@@ -1,6 +1,7 @@
 import { err, ok, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,
+  RegionFileAdmissionLimit,
   RegionDecoder,
 } from "../firmware/regionDecoder.js";
 
@@ -21,11 +22,61 @@ export const REGF_HBIN_ALIGNMENT = 4096;
 /** One cell's stored size is a signed 32-bit count of 8-byte units. */
 const REGF_CELL_ALIGNMENT = 8;
 /**
- * Fixed whole-file ceiling. A hive is read whole only to validate its bins and
- * cell spans; values are not decoded, so this is deliberately smaller than the
- * firmware decoders' ceiling.
+ * Whole-file ceiling used when `REA_REGF_HIVE_MAX_FILE_BYTES` is unset.
+ * Bins and cell spans are validated without value decoding, so the default
+ * stays below a large hive until an operator raises it.
  */
-export const REGF_MAX_FILE_BYTES = 512 * 1024 * 1024;
+export const REGF_HIVE_MAX_FILE_SETTING = "REA_REGF_HIVE_MAX_FILE_BYTES";
+export const DEFAULT_REGF_MAX_FILE_BYTES = 512 * 1024 * 1024;
+/** A lower ceiling cannot admit one base block. */
+export const MINIMUM_REGF_MAX_FILE_BYTES = REGF_BASE_BLOCK_BYTES;
+/**
+ * Largest configurable whole-file admission. The reader copies the admitted
+ * file into one buffer. 8 GiB is an REA policy ceiling, not a measurement of
+ * host memory.
+ */
+export const MAXIMUM_REGF_MAX_FILE_BYTES = 8 * 1024 * 1024 * 1024;
+
+/** Effective whole-file ceiling and whether it came from the default or the setting. */
+export interface RegfHiveFileAdmission {
+  readonly maximumBytes: number;
+  readonly source: "default" | "setting";
+}
+
+export const REGF_HIVE_FILE_LIMIT_CODE = "regf_hive_file_size";
+
+/** Structured refusal when a hive is outside the effective whole-file ceiling. */
+export interface RegfHiveFileLimit extends RegionFileAdmissionLimit {
+  readonly code: typeof REGF_HIVE_FILE_LIMIT_CODE;
+  readonly setting: typeof REGF_HIVE_MAX_FILE_SETTING;
+  readonly restartRequired: true;
+}
+
+export const regfHiveFileLimit = (
+  fileBytes: number,
+  admission: RegfHiveFileAdmission,
+): RegfHiveFileLimit => ({
+  code: REGF_HIVE_FILE_LIMIT_CODE,
+  setting: REGF_HIVE_MAX_FILE_SETTING,
+  fileBytes: Number.isSafeInteger(fileBytes) ? fileBytes : null,
+  maximumBytes: admission.maximumBytes,
+  source: admission.source,
+  defaultBytes: DEFAULT_REGF_MAX_FILE_BYTES,
+  floorBytes: MINIMUM_REGF_MAX_FILE_BYTES,
+  maximumSettingBytes: MAXIMUM_REGF_MAX_FILE_BYTES,
+  restartRequired: true,
+});
+
+/** Name the effective ceiling, its source, the allowed range, and the required restart. */
+export const regfHiveFileLimitMessage = (limit: RegfHiveFileLimit): string =>
+  [
+    `The effective ${limit.setting} value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(limit.defaultBytes)} bytes, floor ${String(limit.floorBytes)} bytes, maximum ${String(limit.maximumSettingBytes)} bytes).`,
+    limit.fileBytes === null
+      ? "The supplied length is not a safe integer."
+      : `The file is ${String(limit.fileBytes)} bytes.`,
+    `Set ${limit.setting} in the environment that starts REA to a positive decimal integer from ${String(limit.floorBytes)} to ${String(limit.maximumSettingBytes)}, then restart REA.`,
+    "There is no runtime override.",
+  ].join(" ");
 /** Header fields retained from the base block; offsets are from the file start. */
 const REGF_HEADER = {
   primarySequence: 4,
@@ -121,10 +172,12 @@ const failure = (
 const limit = (
   message: string,
   boundary?: RegionDecodeFailure["boundary"],
+  fileAdmission?: RegionDecodeFailure["fileAdmission"],
 ): RegionDecodeFailure => ({
   kind: "limit",
   message,
   ...(boundary === undefined ? {} : { boundary }),
+  ...(fileAdmission === undefined ? {} : { fileAdmission }),
 });
 
 /**
@@ -308,14 +361,19 @@ class StreamingRegfDecoder implements RegionDecoder<RegfImage> {
 
 export const createRegfDecoder = (
   fileBytes: number,
-): Result<RegionDecoder<RegfImage>, RegionDecodeFailure> =>
-  Number.isSafeInteger(fileBytes) &&
-  fileBytes >= 0 &&
-  fileBytes <= REGF_MAX_FILE_BYTES
-    ? ok(new StreamingRegfDecoder(fileBytes))
-    : err(
-        limit(
-          `file is ${String(fileBytes)} bytes, exceeding the fixed ${String(REGF_MAX_FILE_BYTES)}-byte (512 MiB) ceiling`,
-          "file-size",
-        ),
-      );
+  admission: RegfHiveFileAdmission = {
+    maximumBytes: DEFAULT_REGF_MAX_FILE_BYTES,
+    source: "default",
+  },
+): Result<RegionDecoder<RegfImage>, RegionDecodeFailure> => {
+  if (
+    Number.isSafeInteger(fileBytes) &&
+    fileBytes >= 0 &&
+    fileBytes <= admission.maximumBytes
+  )
+    return ok(new StreamingRegfDecoder(fileBytes));
+  const fileLimit = regfHiveFileLimit(fileBytes, admission);
+  return err(
+    limit(regfHiveFileLimitMessage(fileLimit), "file-size", fileLimit),
+  );
+};
