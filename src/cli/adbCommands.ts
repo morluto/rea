@@ -365,11 +365,7 @@ export const registerAdbCommands = (
           );
         extras.push({
           type: entry.slice(0, first) as
-            | "string"
-            | "boolean"
-            | "int"
-            | "long"
-            | "float",
+            "string" | "boolean" | "int" | "long" | "float",
           key: entry.slice(first + 1, second),
           value: entry.slice(second + 1),
         });
