@@ -1,5 +1,6 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
+import * as javascriptSemanticTraversal from "./javascript/javascriptSemanticTraversal.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import {
   DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
@@ -215,4 +216,62 @@ const object = { "/property-key": "/property-value" };`);
       .map(({ value }) => value),
   ).toEqual(["/array-path"]);
   expect(result.observations.endpoints).toEqual([]);
+});
+
+it("snapshots ancestors only for URL-shaped variable initializers", () => {
+  const ancestry = { inspectionNodes: 0, snapshots: 0 };
+  const traverse = javascriptSemanticTraversal.traverseJavaScriptAst;
+  const spy = vi
+    .spyOn(javascriptSemanticTraversal, "traverseJavaScriptAst")
+    .mockImplementation((root, visitor) => {
+      const track = visitor.enter
+        .toString()
+        .includes("inspectEndpointLiterals");
+      return traverse(root, {
+        ...visitor,
+        enter(node, parent, readAncestors) {
+          if (track) ancestry.inspectionNodes += 1;
+          visitor.enter(node, parent, () => {
+            if (track) ancestry.snapshots += 1;
+            return readAncestors();
+          });
+        },
+      });
+    });
+  const source = `function noise(value) {
+  const unused = { a: value, b: [1, 2, 3], c: value + 1 };
+  return unused.a + unused.b.length;
+}
+const routes = [["/api/nested"], "/api/nested"];
+const BASE = "https://api.example.test";
+let other = "https://other.example.test";`;
+  let result: ReturnType<typeof analyze>;
+  try {
+    result = analyze(source);
+  } finally {
+    spy.mockRestore();
+  }
+  const candidates = result.inferences.filter(
+    ({ kind }) => kind === "endpoint_candidate",
+  );
+  const nestedAt = source.indexOf('"/api/nested"');
+  const laterAt = source.indexOf('"/api/nested"', nestedAt + 1);
+  const lineStart = source.lastIndexOf("\n", nestedAt - 1) + 1;
+  expect(nestedAt).toBeLessThan(laterAt);
+  expect(candidates.map(({ value }) => value)).toEqual([
+    "/api/nested",
+    "https://api.example.test",
+  ]);
+  expect(candidates[0]?.basis).toEqual([
+    expect.objectContaining({
+      detector: "literal:path-shaped",
+      line: source.slice(0, nestedAt).split("\n").length,
+      column: nestedAt - lineStart,
+    }),
+  ]);
+  expect(candidates[1]?.basis).toEqual([
+    expect.objectContaining({ detector: "literal:url-shaped" }),
+  ]);
+  expect(ancestry.inspectionNodes).toBeGreaterThan(ancestry.snapshots);
+  expect(ancestry.snapshots).toBe(2);
 });

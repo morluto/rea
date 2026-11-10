@@ -15,10 +15,7 @@ import type { JavaScriptRouteSourceFacts } from "./javascript/javascriptRouteFac
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
-import {
-  traverseJavaScriptAst,
-  completeSemanticSteps,
-} from "./javascript/javascriptSemanticTraversal.js";
+import * as javascriptSemanticTraversal from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
@@ -67,16 +64,18 @@ export const analyzeScript = (
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
-  const index = completeSemanticSteps(
+  const index = javascriptSemanticTraversal.completeSemanticSteps(
     indexJavaScriptBindingsWithReceiversSteps(
       file.program,
       undefined,
       precision,
     ),
   );
-  completeSemanticSteps(index.indexAmbientWritesSteps());
+  javascriptSemanticTraversal.completeSemanticSteps(
+    index.indexAmbientWritesSteps(),
+  );
   const { receivers } = index;
-  const routeScan = completeSemanticSteps(
+  const routeScan = javascriptSemanticTraversal.completeSemanticSteps(
     JavaScriptRouteScan.createSteps(file, index, ({ node, value, mechanism }) =>
       addFinding({
         collection: accumulator.routes,
@@ -96,7 +95,9 @@ export const analyzeScript = (
     const proof = isIntrinsicMapLookup(node, index.bindings);
     if (proof !== undefined) return proof;
     if (!mutationFactsIndexed) {
-      completeSemanticSteps(index.indexMemberMutationFactsSteps());
+      javascriptSemanticTraversal.completeSemanticSteps(
+        index.indexMemberMutationFactsSteps(),
+      );
       mutationFactsIndexed = true;
     }
     return isIntrinsicMapLookup(node, index.bindings, index) === true;
@@ -107,11 +108,11 @@ export const analyzeScript = (
     receivers.rpcClientRoots,
     index,
   );
-  traverseJavaScriptAst(file, {
+  javascriptSemanticTraversal.traverseJavaScriptAst(file, {
     enter: (node, parent, readAncestors) => {
       accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
-      inspectEndpointLiterals(script, node, readAncestors, accumulator);
+      inspectEndpointLiterals(script, node, parent, readAncestors, accumulator);
       inspectNode(
         script,
         node,
@@ -145,7 +146,9 @@ export const analyzeScript = (
       });
   if (index.bindings.returnedReferenceWidenings.size > 0)
     accumulator.widenedScripts.push(script.script_key);
-  return completeSemanticSteps(routeScan.finishSteps());
+  return javascriptSemanticTraversal.completeSemanticSteps(
+    routeScan.finishSteps(),
+  );
 };
 
 const inspectNode = (
@@ -293,23 +296,28 @@ const inspectCall = (
 const inspectEndpointLiterals = (
   script: IncludedScript,
   node: t.Node,
+  parent: t.Node | null,
   readAncestors: () => readonly t.Node[],
   accumulator: AnalysisAccumulator,
 ): void => {
-  const ancestors = readAncestors();
-  const parent = ancestors.at(-1) ?? null;
-  const grandparent = ancestors.at(-2) ?? null;
   // Record the node being entered, not its later siblings. Source-tree order
   // then keeps a nested literal ahead of the same value in a following element.
+  // The traversal parent is the immediate ancestor. Copy the ancestor list only
+  // after this node is a URL-shaped initializer that still needs its grandparent.
   const inArray = t.isArrayExpression(parent);
-  const inConstInitializer =
-    t.isVariableDeclarator(parent) &&
-    node === parent.init &&
-    t.isVariableDeclaration(grandparent, { kind: "const" });
-  if (!inArray && !inConstInitializer) return;
+  const initializer =
+    parent !== null && t.isVariableDeclarator(parent) && node === parent.init;
+  if (!inArray && !initializer) return;
   const literal = webBundleEndpointLiteral(node);
   if (literal === undefined) return;
   if (!inArray && literal.detector !== "literal:url-shaped") return;
+  if (
+    initializer &&
+    !t.isVariableDeclaration(readAncestors().at(-2) ?? null, {
+      kind: "const",
+    })
+  )
+    return;
   addEndpointCandidate(
     script,
     node,
