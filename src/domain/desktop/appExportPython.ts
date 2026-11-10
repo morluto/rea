@@ -156,16 +156,22 @@ def _ensure_state_aliases(home: Path) -> None:
     for alias, target, kind in aliases:
         link = home / alias
         destination = home / target
-        directory = kind == "directory" or any(Path(alias) in Path(child).parents for child, _, _ in aliases)
+        # A recorded directory is created. A legacy alias with no kind is
+        # created only when another alias is inside it, which proves it is a
+        # directory. A legacy leaf stays unclassified so a missing file is not
+        # turned into a directory.
+        has_children = any(Path(alias) in Path(child).parents for child, *_ in aliases)
+        if kind == "directory" or (kind == "unknown" and has_children):
+            destination.mkdir(parents=True, exist_ok=True)
+        elif kind == "file":
+            # The file itself stays absent so the app can create it. Its parent
+            # has to exist or that write fails with ENOENT.
+            destination.parent.mkdir(parents=True, exist_ok=True)
         if link.is_symlink() and link.resolve() == destination.resolve():
-            if directory:
-                destination.mkdir(parents=True, exist_ok=True)
             continue
         if os.path.lexists(link):
             raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
         link.parent.mkdir(parents=True, exist_ok=True)
-        if directory:
-            destination.mkdir(parents=True, exist_ok=True)
         link.symlink_to(destination)
 
 
@@ -436,6 +442,7 @@ export const ownlessBody = (
   title: string,
   dconf: boolean,
   relaunch: boolean,
+  aliases = false,
 ): string => {
   const reset = relaunch
     ? `
@@ -447,14 +454,22 @@ export const ownlessBody = (
   const serves = relaunch
     ? "and keeps its task's state on screen, so its reset only relaunches it"
     : "so it serves no data operations";
+  const restore = aliases ? "\n        _ensure_state_aliases(Path.home())" : "";
   if (dconf)
     return `    """${title}, launched at boot with its captured settings. It owns no files, ${serves}."""
 
     def __init__(self) -> None:
         super().__init__()
-        _load_dconf(Path.home())
+        _load_dconf(Path.home())${restore}
 ${reset}${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+  if (!aliases)
+    return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+  return `    """${title}, launched at boot. No state was observed, ${serves}."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        _ensure_state_aliases(Path.home())
+${reset}${PYTHON_READY_CHECK}`;
 };
 
 /** The data hooks of an app whose withheld files no get serves: neither as parts nor in the views. */
