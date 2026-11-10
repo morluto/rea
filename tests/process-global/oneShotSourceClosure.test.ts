@@ -58,7 +58,10 @@ afterEach(() => {
 });
 
 type FinalClose =
-  "control" | "interrupt" | "cleanup-failure" | "interrupt-cleanup-failure";
+  | "control"
+  | "interrupt"
+  | "cleanup-failure"
+  | "interrupt-cleanup-failure";
 
 const fixture = async (dependencyText = "Synthetic dependency") => {
   const root = await createTestTempDirectory("rea-source-closure-");
@@ -182,7 +185,8 @@ const DATA_SIZED_LINKS = 200_000;
 const closureOf = (stdout: string) => {
   const failure = analysisErrorProjectionSchema.parse(JSON.parse(stdout));
   const closure = failure.details?.source_closure as unknown as
-    UndeliveredSourceClosure | undefined;
+    | UndeliveredSourceClosure
+    | undefined;
   if (closure === undefined) throw new Error(`No source closure: ${stdout}`);
   return { failure, closure };
 };
