@@ -125,3 +125,18 @@ await test("missing Markdown keeps HTML, and asset redirects and missing routes 
     assert.equal(response.status, status);
   }
 });
+
+await test("missing Markdown honors the HTML validator", async () => {
+  for (const method of ["GET", "HEAD"]) {
+    const response = await worker.fetch(
+      new Request("https://rea.tools/guide/", {
+        method,
+        headers: { Accept: "text/markdown", "If-None-Match": '"html"' },
+      }),
+      assets({ markdownStatus: 404 }),
+    );
+    assert.equal(response.status, 304, method);
+    assert.equal(response.headers.get("ETag"), '"html"');
+    assert.equal(await response.text(), "");
+  }
+});

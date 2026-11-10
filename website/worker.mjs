@@ -52,6 +52,7 @@ export default {
     // HTML validators describe a different representation. Probe the route first,
     // then let the asset service evaluate validators/ranges against the Markdown.
     const probe = new Request(request);
+    let strippedHeaders = false;
     if (useMarkdown) {
       for (const name of [
         "If-None-Match",
@@ -60,8 +61,11 @@ export default {
         "If-Unmodified-Since",
         "If-Range",
         "Range",
-      ])
+      ]) {
+        if (!probe.headers.has(name)) continue;
         probe.headers.delete(name);
+        strippedHeaders = true;
+      }
     }
     const original = await env.ASSETS.fetch(probe);
     if (
@@ -85,6 +89,10 @@ export default {
     );
     if (!candidate.ok && ![304, 412, 416].includes(candidate.status)) {
       await candidate.body?.cancel();
+      if (strippedHeaders) {
+        await original.body?.cancel();
+        return env.ASSETS.fetch(request);
+      }
       return original;
     }
     const response = new Response(
