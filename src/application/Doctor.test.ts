@@ -750,6 +750,7 @@ describe("doctor installation identity", () => {
     const result = await runDoctor(
       undefined,
       host({
+        platform: "win32",
         installationPaths: () =>
           Promise.resolve([
             "C:\\Users\\user\\AppData\\Roaming\\npm\\rea",
@@ -767,6 +768,22 @@ describe("doctor installation identity", () => {
       ],
       state: "single",
     });
+  });
+
+  it("does not case-fold POSIX paths that contain backslashes", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        installationPaths: () =>
+          Promise.resolve([
+            "/opt/tools\\a/rea",
+            "/opt/tools\\A/rea",
+          ]),
+      }),
+    );
+
+    expect(result.identity?.installations.state).toBe("multiple");
   });
   it("reports a missing installed skill as unhealthy", async () => {
     const result = await runDoctor(

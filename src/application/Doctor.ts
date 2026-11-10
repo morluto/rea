@@ -530,7 +530,7 @@ const collectDoctorIdentity = async (
       },
       installations: {
         paths: installationPaths,
-        state: installationState(installationPaths),
+        state: installationState(installationPaths, host.platform),
       },
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
@@ -627,17 +627,23 @@ const registrationCheck = (
   remediation: registration.remediation,
 });
 
-const installationDirectoryKey = (path: string): string => {
-  const isWindows = /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\");
+const installationDirectoryKey = (
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): string => {
+  const isWindows = platform === "win32";
   const dir = isWindows ? win32.dirname(path) : posix.dirname(path);
   return isWindows ? dir.toLowerCase() : dir;
 };
 
 const installationState = (
   paths: readonly string[],
+  platform: NodeJS.Platform = process.platform,
 ): DoctorIdentity["installations"]["state"] => {
   if (paths.length === 0) return "unknown";
-  const directories = new Set(paths.map(installationDirectoryKey));
+  const directories = new Set(
+    paths.map((path) => installationDirectoryKey(path, platform)),
+  );
   return directories.size <= 1 ? "single" : "multiple";
 };
 
