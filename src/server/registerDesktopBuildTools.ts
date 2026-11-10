@@ -173,7 +173,7 @@ export const registerDesktopBuildTools = (
   server: EvidenceMcpServer,
   computers: Pick<
     DesktopBuildComputers,
-    "start" | "act" | "close" | "steps" | "redaction"
+    "start" | "act" | "close" | "steps" | "measure" | "redaction"
   >,
   logger: Logger,
 ): void => {
@@ -218,6 +218,12 @@ export const registerDesktopBuildTools = (
   registerPlain(tool("check_build_task"), (input, context) =>
     withHeartbeat(context, "check_build_task", (progress) =>
       steps.checkTask(input, context.mcpReq.signal, progress),
+    ),
+  );
+  // Solves run one at a time for minutes each, so progress keeps the client waiting.
+  registerPlain(tool("measure_build_task"), (input, context) =>
+    withHeartbeat(context, "measure_build_task", (progress) =>
+      computers.measure(input, context.mcpReq.signal, progress),
     ),
   );
   registerPlain(tool("record_build_consent"), (input, context) =>

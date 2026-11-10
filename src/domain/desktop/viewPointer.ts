@@ -133,7 +133,12 @@ const holdsInside = (
 ) => {
   const steps = insideSteps(key) ?? [];
   if (format === "xml")
-    return isXmlElement(member) && elementHolds(member, steps, value);
+    return (
+      isXmlElement(member) &&
+      (steps.length === 1 && steps[0] === "text()"
+        ? collapseWhitespace(elementText(member)) === value
+        : elementHolds(member, steps, value))
+    );
   let found: JsonValue | undefined = member;
   for (const step of steps)
     found = isRecord(found) ? own(found, step) : undefined;
