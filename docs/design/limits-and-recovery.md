@@ -5,7 +5,9 @@ who owns each value, when an update takes effect, how providers enforce it, and
 how to extend the system. The public tool contract is in
 [MCP contracts](../reference/mcp-contracts.md#editable-analysis-settings); recorded runtime
 checks and their limitations are in the
-[verification report](../verification/runtime-analysis-settings.md).
+[verification report](../verification/runtime-analysis-settings.md). The
+[limit inventory](rea-limit-inventory.md) lists every numeric `REA_` limit, which
+of them are runtime settings, and which stay restart-only.
 
 ## Problem and design boundary
 
@@ -276,7 +278,10 @@ that argument; raising a runtime default cannot override it.
 
 The resource owner constructs `details.limit` from the registry plus the budget
 it actually enforced. Metadata includes `agent_editable: true`,
-`scope: "rea-runtime"`, and `rea_restart_required: false`. Optional
+`scope: "rea-runtime"`, `update_mode`, and `pending_restart`. `update_mode:
+"runtime"` means `update_analysis_settings` can change the active value.
+`pending_restart` is false when that reported value is the one this process is
+using. Optional
 `required_value`, `source`, and `parameter` fields are supplied only where known
 or applicable. Do not infer a source because a value happens to equal a default.
 Error copying, attribution, redaction, and delivery must preserve these facts.
@@ -291,8 +296,9 @@ so its adapter projects with an explicit `"invocation"` caller lifetime.
 `scope: "rea-invocation"`, `applies_at: "next_invocation"` and the launch
 `environment` seed when one exists. `agent_editable: true` still holds, because
 the caller chooses that environment value or per-call `parameter` for the new
-invocation; `rea_restart_required: false` means no running REA process needs a
-restart. A producer keeps guidance that holds only while its caller retains the
+invocation; `update_mode: "runtime"` and `pending_restart: false` mean the
+reported value is active in this process. `update_mode: "restart"` means
+`update_analysis_settings` does not change it. A producer keeps guidance that holds only while its caller retains the
 session, such as "the Ghidra session remains usable" or a same-session runtime
 update, in `continuingCallerGuidance`; the shared presentation adds it only for
 a continuing caller. The producer's own message and remediation must stay true

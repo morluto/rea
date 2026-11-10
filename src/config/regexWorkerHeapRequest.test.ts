@@ -56,7 +56,8 @@ it("keeps the 128 MiB request when the setting is unset", () => {
         applies_at: "next_worker",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       reported_limits: {
         requested_worker_heap_mib: DEFAULT_REGEX_WORKER_HEAP_REQUEST.heapMiB,
