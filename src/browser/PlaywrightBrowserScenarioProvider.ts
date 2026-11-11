@@ -212,13 +212,17 @@ const executeStep = async (input: {
       await session.perform(action, signal);
     } catch (cause: unknown) {
       outcome = {
-        status: requestCancelled() ? "cancelled" : "failed",
+        status:
+          cause instanceof AnalysisCancelledError ||
+          (cause instanceof AnalysisError && cause.userCategory === "cancelled")
+            ? "cancelled"
+            : "failed",
         error: session.redactError(cause),
       };
     }
   }
   const artifacts =
-    outcome.status === "cancelled"
+    outcome.status === "cancelled" || requestCancelled()
       ? unavailableArtifacts(requested, "scenario request cancelled")
       : await session.capture(requested, signal);
   return createStep({

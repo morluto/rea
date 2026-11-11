@@ -1,3 +1,5 @@
+import { retainProcessInspectionCleanup } from "./ProcessInspectionCleanup.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { WorkerFrameSignal } from "../process/WorkerFrameSignal.js";
@@ -55,7 +57,10 @@ import {
 } from "../process/RuntimeControlUnavailableError.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
-import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
+import {
+  isProcessOwnershipInspectionCancellation,
+  prepareProcessOwnershipInspection,
+} from "../process/ProcessOwnershipObservation.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import {
   DEFAULT_WEB_BUNDLE_HEAP_MB,
@@ -283,6 +288,7 @@ export class WebBundleAnalysisWorker {
     this.#activeJob = undefined;
     this.#activeTerminalResponseObserved = false;
     let result: Result<WebBundleScriptAnalysis, AnalysisError>;
+    let ownershipInspectionFailure: AnalysisError | undefined;
     let completed: WebBundleScriptAnalysis | null = null;
     let continuation: "result_capacity_exhausted" | undefined;
     let resultDescriptor: WebBundleResultDescriptor | undefined;
@@ -309,7 +315,41 @@ export class WebBundleAnalysisWorker {
         throw admitted.error;
       }
       const resultBudget = admitted.bytes;
-      await prepareProcessOwnershipInspection(signal);
+      try {
+        await prepareProcessOwnershipInspection(signal);
+      } catch (cause: unknown) {
+        if (cause instanceof DarwinProcessOwnershipInspectionError) {
+          const primary =
+            cause.cancellation === undefined
+              ? new AnalysisOutputError(
+                  OPERATION,
+                  "Process ownership inspection failed",
+                  { cause },
+                )
+              : new AnalysisCancelledError(OPERATION, {
+                  cause: cause.cancellation.reason,
+                });
+          ownershipInspectionFailure = retainProcessInspectionCleanup(
+            cause,
+            primary,
+            this.#files,
+            OPERATION,
+          );
+        } else if (
+          (cause instanceof AnalysisError && cause.cleanupIncomplete) ||
+          !isProcessOwnershipInspectionCancellation(cause, signal)
+        ) {
+          ownershipInspectionFailure =
+            cause instanceof AnalysisError
+              ? cause
+              : new AnalysisOutputError(
+                  OPERATION,
+                  "Process ownership inspection failed",
+                  { cause },
+                );
+        }
+        throw cause;
+      }
       deadline = new ProviderStartupDeadline(timeoutMs, signal);
       this.#activeDeadline = deadline;
       await this.#start(deadline);
@@ -458,25 +498,31 @@ export class WebBundleAnalysisWorker {
               : undefined;
       const observedFailure =
         this.#observedFailure === undefined
-          ? undefined
+          ? ownershipInspectionFailure
           : this.#projectObservedFailure();
       if (observedFailure !== undefined && interrupted !== undefined)
         observedFailure.retainSecondaryFailure(interrupted);
       const primaryCause =
         artifactPrimary === undefined ? cause : artifactPrimary.cause;
       const primary =
-        interrupted !== undefined && observedFailure !== undefined
-          ? observedFailure
-          : (interrupted ??
-            (primaryCause instanceof RuntimeControlUnavailableError
-              ? runtimeControlCapabilityError(PROVIDER, OPERATION, primaryCause)
-              : primaryCause instanceof AnalysisError
-                ? primaryCause
-                : new AnalysisOutputError(
+        ownershipInspectionFailure !== undefined
+          ? ownershipInspectionFailure
+          : interrupted !== undefined && observedFailure !== undefined
+            ? observedFailure
+            : (interrupted ??
+              (primaryCause instanceof RuntimeControlUnavailableError
+                ? runtimeControlCapabilityError(
+                    PROVIDER,
                     OPERATION,
-                    "Owned web-script analysis failed",
-                    { cause: primaryCause },
-                  )));
+                    primaryCause,
+                  )
+                : primaryCause instanceof AnalysisError
+                  ? primaryCause
+                  : new AnalysisOutputError(
+                      OPERATION,
+                      "Owned web-script analysis failed",
+                      { cause: primaryCause },
+                    )));
       const failure =
         cause instanceof ArtifactFileCleanupFailure
           ? this.#cleanupFailure(
