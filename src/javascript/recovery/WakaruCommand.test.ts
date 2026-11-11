@@ -6,6 +6,7 @@ import {
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   resolveWakaruCommand,
   runWakaruCommand,
@@ -169,11 +170,66 @@ it("checks the diagnostic byte limit against output delivered after exit", async
       producer.emit("close", 0, null);
     });
   });
-  await expect(runWakaruCommand(context)).rejects.toMatchObject({
+  const failure = await runWakaruCommand(context).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
     _tag: "AnalysisOutputError",
     operation: "recover_javascript_sources",
+    capturedOutput: {
+      truncated: true,
+      exit_code: 0,
+    },
   });
+  expect(
+    (failure as { capturedOutput: { stderr: string } }).capturedOutput.stderr
+      .length,
+  ).toBe(RECOVERY_LIMITS.reportBytes);
 });
+
+it.each([false, true])(
+  "retains output and exact cancellation during final cleanup (cleanup fails: %s)",
+  async (cleanupFails) => {
+    const reason = { caller: "cancel during final cleanup" };
+    const controller = new AbortController();
+    const { context } = commandFixture((producer) => {
+      producer.stdout.end("finished output");
+      producer.stderr.end("finished diagnostic");
+      producer.emit("exit", 0, null);
+      producer.emit("close", 0, null);
+    });
+    const launcher = context.launcher;
+    const failure = await runWakaruCommand({
+      ...context,
+      signal: controller.signal,
+      launcher: async (options) => ({
+        ...(await launcher(options)),
+        cleanup: async () => {
+          controller.abort(reason);
+          return cleanupFails
+            ? { cleaned: false as const, reason: "owned cleanup refused" }
+            : { cleaned: true as const, signaled: false };
+        },
+      }),
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      cleanupIncomplete: cleanupFails,
+      capturedOutput: {
+        stdout: "finished output",
+        stderr: "finished diagnostic",
+        exit_code: 0,
+      },
+    });
+    const primary = primaryAnalysisError(
+      failure as Parameters<typeof primaryAnalysisError>[0],
+    );
+    expect(primary).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+    expect(primary.cause).toBe(reason);
+  },
+);
 
 it("enforces the shared deadline while exited output streams remain open", async () => {
   const { context, producer } = commandFixture((process) => {

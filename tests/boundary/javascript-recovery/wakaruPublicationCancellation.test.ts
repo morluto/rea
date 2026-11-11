@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, PassThrough } from "node:stream";
+import { EventEmitter } from "node:events";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -10,6 +11,11 @@ const publicationCancellation = vi.hoisted(() => ({
   directorySyncs: 0,
   reportCleanup: false,
   allowCleanup: false,
+  commandFailure: undefined as
+    | "cancelled"
+    | "timeout"
+    | "output-limit"
+    | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -74,6 +80,69 @@ vi.mock(
       prepareWakaruExecution: async (
         context: Parameters<typeof actual.prepareWakaruExecution>[0],
       ) => {
+        if (publicationCancellation.commandFailure !== undefined) {
+          const { runWakaruCommand } =
+            await import("../../../src/javascript/recovery/WakaruCommand.js");
+          const { RECOVERY_LIMITS } =
+            await import("../../../src/javascript/recovery/WakaruRelease.js");
+          const kind = publicationCancellation.commandFailure;
+          return runWakaruCommand({
+            command: "/unused/wakaru",
+            limiter: "/unused/prlimit",
+            arguments: [],
+            cwd: context.root,
+            environment: {},
+            deadline: performance.now() + (kind === "timeout" ? 10 : 5000),
+            ...(context.options?.signal === undefined
+              ? {}
+              : { signal: context.options.signal }),
+            launcher: async (options) => {
+              const child = Object.assign(new EventEmitter(), {
+                stdout: new PassThrough(),
+                stderr: new PassThrough(),
+                exitCode: null,
+                signalCode: null,
+                kill: () => false,
+              });
+              setTimeout(
+                () => {
+                  child.stdout.end("finished command output");
+                  child.stderr.end(
+                    kind === "output-limit"
+                      ? Buffer.alloc(RECOVERY_LIMITS.reportBytes + 1, 97)
+                      : "finished diagnostic",
+                  );
+                  child.emit("exit", 0, null);
+                  child.emit("close", 0, null);
+                },
+                kind === "timeout" ? 25 : 0,
+              );
+              return {
+                process: child,
+                ownership: {
+                  runId: options.runId,
+                  leaderPid: 12345,
+                  processGroupId: 12345,
+                  expectedParentPid: process.pid,
+                },
+                cleanup: async () => {
+                  if (kind === "cancelled")
+                    publicationCancellation.controller?.abort({
+                      caller: "stop at owned command cleanup",
+                    });
+                  return publicationCancellation.allowCleanup
+                    ? { cleaned: true as const, signaled: false }
+                    : {
+                        cleaned: false as const,
+                        reason: "controlled command cleanup failure",
+                      };
+                },
+              };
+            },
+          }).then(() => {
+            throw new Error("Expected controlled command failure");
+          });
+        }
         if (publicationCancellation.reportCleanup) {
           const cleanup = await context.resources.release({
             kind: "lease",
@@ -126,6 +195,88 @@ vi.mock(
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { WakaruProvider } from "../../../src/javascript/recovery/WakaruProvider.js";
+import { JavaScriptRecoveryService } from "../../../src/application/javascript/JavaScriptRecoveryService.js";
+import {
+  primaryAnalysisError,
+  resolvedAnalysisError,
+} from "../../../src/domain/analysisErrorBase.js";
+
+it.each(["queued at close", "after clean close"])(
+  "refuses Wakaru recovery %s without claiming cleanup ownership",
+  async (stage) => {
+    const provider = new WakaruProvider({});
+    const input = {
+      path: "/unused/source.js",
+      output_directory: "/unused/output",
+      extraction_mode: "structural" as const,
+      rewrite_level: "standard" as const,
+    };
+    const queued =
+      stage === "queued at close" ? provider.recover(input) : undefined;
+    await provider.close();
+    const result = await (queued ?? provider.recover(input));
+    if (result.ok) throw new Error("Expected closed-provider refusal");
+    expect(projectAnalysisError(result.error).code).toBe(
+      "capability_unavailable",
+    );
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  },
+);
+
+it.each(["cancelled", "timeout", "output-limit"] as const)(
+  "preserves %s command output and cleanup primary through service retry",
+  async (kind) => {
+    const root = await createTestTempDirectory(
+      "rea-wakaru-command-composition-",
+    );
+    const source = join(root, "source.js");
+    await writeFile(source, "module.exports = 42;");
+    publicationCancellation.commandFailure = kind;
+    publicationCancellation.allowCleanup = false;
+    const controller = new AbortController();
+    publicationCancellation.controller = controller;
+    const service = new JavaScriptRecoveryService(new WakaruProvider({}));
+    try {
+      const result = await service.recover(
+        {
+          path: source,
+          output_directory: join(root, "output"),
+          extraction_mode: "structural",
+          rewrite_level: "standard",
+        },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected command cleanup failure");
+      expect(result.error.capturedOutput?.stdout).toBe(
+        "finished command output",
+      );
+      expect(result.error.cleanupIncomplete).toBe(true);
+      const primary = primaryAnalysisError(result.error);
+      expect(primary._tag).toBe(
+        kind === "cancelled"
+          ? "AnalysisCancelledError"
+          : kind === "timeout"
+            ? "AnalysisTimeoutError"
+            : "AnalysisOutputError",
+      );
+      if (kind === "cancelled")
+        expect(primary.cause).toBe(controller.signal.reason);
+      publicationCancellation.allowCleanup = true;
+      await service.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(resolvedAnalysisError(result.error)).toBe(primary);
+      expect(result.error.capturedOutput?.stdout).toBe(
+        "finished command output",
+      );
+    } finally {
+      publicationCancellation.allowCleanup = true;
+      publicationCancellation.commandFailure = undefined;
+      publicationCancellation.controller = undefined;
+      await service.close();
+    }
+  },
+);
 
 it("retains report command output and cleanup ownership through provider retry", async () => {
   const root = await createTestTempDirectory("rea-wakaru-report-cleanup-");
@@ -149,6 +300,11 @@ it("retains report command output and cleanup ownership through provider retry",
       exit_code: 1,
       signal: null,
     });
+    await expect(provider.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain("provenance descriptor");
     publicationCancellation.allowCleanup = true;
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
