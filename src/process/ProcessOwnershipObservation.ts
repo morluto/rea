@@ -1685,10 +1685,17 @@ export const observeProcessStartIdentity = async (
     (entry) => entry.pid === pid,
   );
   let token: ProcessRunTokenObservation | undefined;
-  if (process === undefined) token = await readProcessRunToken(host, pid);
-  else
-    for await (const { observation } of readProcessRunTokens(host, [process]))
-      token = observation;
+  // Darwin's environment() admits a token only after `ps` lists the PID.
+  // The native reader already observed this live identity by PID, so an
+  // omitted row uses that reader directly instead of another process table.
+  if (process === undefined && host.runTokens !== undefined)
+    token = (await host.runTokens([{ pid }])).get(pid);
+  if (token === undefined) {
+    if (process === undefined) token = await readProcessRunToken(host, pid);
+    else
+      for await (const { observation } of readProcessRunTokens(host, [process]))
+        token = observation;
+  }
   if (token === undefined || token.state === "unavailable")
     return {
       state: "unavailable",

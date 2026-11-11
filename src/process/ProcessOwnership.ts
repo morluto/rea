@@ -190,9 +190,13 @@ export interface ProcessOwnershipHost {
     pid: number,
     signal?: AbortSignal,
   ): Promise<Readonly<Record<string, string>>>;
-  /** Read only run-token values in one host operation when the OS supports it. */
+  /**
+   * Read only run-token values in one host operation when the OS supports it.
+   * Rows carry a PID; they are not process-table facts, so a live PID omitted
+   * from `ps` can still be read by the native helper.
+   */
   runTokens?(
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>>;
   /**
