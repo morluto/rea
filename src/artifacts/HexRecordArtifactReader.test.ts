@@ -1,3 +1,6 @@
+import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -156,6 +159,72 @@ it("settles an active region stream when closed", async () => {
     ).rejects.toMatchObject({ reason: "unavailable" });
   } finally {
     await reader.close();
+  }
+});
+
+it("retries decoded-region preparation cancelled while reading", async () => {
+  const path = await writeImage("retry.hex", INTEL_HEX_I32_GAP);
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new HexRecordArtifactReader(path, "intel-hex", admitted);
+  const controller = new AbortController();
+  const reason = { stage: "decoded region read" };
+  const nativeRead = admitted.handle.read.bind(admitted.handle);
+  const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(nativeRead, admitted.handle, args);
+    controller.abort(reason);
+    return result;
+  }) as typeof admitted.handle.read);
+  try {
+    await expect(
+      reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    read.mockRestore();
+    expect(
+      (await reader.entries()[Symbol.asyncIterator]().next()).value,
+    ).toMatchObject({ kind: "file" });
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
+it("does not publish decoded regions when final source verification fails", async () => {
+  const path = await writeImage("partial.hex", INTEL_HEX_I32_GAP);
+  const control = new HexRecordArtifactReader(path, "intel-hex");
+  const reader = new HexRecordArtifactReader(path, "intel-hex");
+  const expected = (await control.entries()[Symbol.asyncIterator]().next())
+    .value!;
+  const nativeRead = ArtifactFileSource.prototype.read;
+  const physical = Object.assign(
+    new Error("final source verification failed"),
+    { code: "EIO" },
+  );
+  let calls = 0;
+  const read = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, ...args) {
+      calls += 1;
+      if (calls === 2) return Promise.reject(physical);
+      return nativeRead.apply(this, args);
+    });
+  try {
+    await expect(reader.entries()[Symbol.asyncIterator]().next()).rejects.toBe(
+      physical,
+    );
+    await expect(reader.open(expected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    read.mockRestore();
+    expect(
+      (await reader.entries()[Symbol.asyncIterator]().next()).value,
+    ).toMatchObject({ path: expected.path });
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await control.close();
   }
 });
 
@@ -336,4 +405,10 @@ it("bounds copied region chunks and isolates cached bytes across opens", async (
   } finally {
     await reader.close();
   }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => Buffer.from(INTEL_HEX_I32_GAP),
+  createReader: (path, admitted) =>
+    new HexRecordArtifactReader(path, "intel-hex", admitted),
 });

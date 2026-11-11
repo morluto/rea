@@ -81,7 +81,7 @@ export const collectJavaScriptSemanticChildProcesses = (
       !rejectsOptionsShape(candidate, context, state),
   );
   const childProcessSpawns = candidates.map((candidate) =>
-    immutableSpawn(candidate, context),
+    immutableSpawn(candidate, context, state),
   );
   return {
     childProcessSpawns,
@@ -146,6 +146,7 @@ const collectSpawns = (
 const immutableSpawn = (
   candidate: SpawnCandidate,
   context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticChildProcessSpawn => {
   const { options, argvCount } = spawnArguments(candidate, context);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
@@ -161,7 +162,7 @@ const immutableSpawn = (
     projectedResultBindings: candidate.projectedResultBindings,
     command,
     argvCount,
-    environmentSupplied: environmentSupplied(options, context),
+    environmentSupplied: environmentSupplied(options, context, state),
     stdioMode: stdioMode(options, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
@@ -443,11 +444,17 @@ const spawnArguments = (
 const environmentSupplied = (
   options: t.Node | undefined,
   context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   const lookup = staticObjectProperty(options, "env", context.isNullish);
   if (lookup.status !== "explicit") return false;
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value)) return false;
+  if (
+    t.isIdentifier(value, { name: "NaN" }) &&
+    isUnshadowedGlobal(value, state, "NaN")
+  )
+    return false;
   return staticJavaScriptTruthiness(value) !== false;
 };
 

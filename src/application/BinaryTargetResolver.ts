@@ -97,6 +97,7 @@ import {
   isDfuSeFile,
 } from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
+import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
@@ -833,6 +834,7 @@ const detectArtifactFormat = async (
     });
   if (esp === "esp-image") return "esp-image";
   if (hasFitImagesNode(magic)) return "fit";
+  if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
@@ -916,6 +918,7 @@ const isArchiveFormat = (
     "dfuse",
     "esp-flash-image",
     "fit",
+    "ntfs-mft",
   ].includes(format);
 
 /** Whether the leading bytes begin any executable header family, valid or not. */
