@@ -253,6 +253,55 @@ describe("libraryClosure unresolved candidates", () => {
     });
   });
 
+  it("continues to another matching cache candidate after foreign identity", async () => {
+    const closure = await libraryClosure(
+      app(elf(["libcore.so"])),
+      [
+        {
+          soname: "libcore.so",
+          path: "/foreign/libcore.so",
+          flags: ["AArch64"],
+        },
+        { soname: "libcore.so", path: "/valid/libcore.so", flags: ["AArch64"] },
+      ],
+      host({
+        "/foreign/libcore.so": { ...elf([]), machine: 62 },
+        "/valid/libcore.so": elf([]),
+      }),
+      10,
+    );
+    expect(closure).toMatchObject({
+      libraries: [{ soname: "libcore.so", path: "/valid/libcore.so" }],
+      missing: [],
+    });
+  });
+
+  it("keeps an unreadable first cache candidate unresolved", async () => {
+    const closure = await libraryClosure(
+      app(elf(["libcore.so"])),
+      [
+        {
+          soname: "libcore.so",
+          path: "/unknown/libcore.so",
+          flags: ["AArch64"],
+        },
+        { soname: "libcore.so", path: "/valid/libcore.so", flags: ["AArch64"] },
+      ],
+      host({
+        "/unknown/libcore.so": "cannot read header",
+        "/valid/libcore.so": elf([]),
+      }),
+      10,
+    );
+    expect(closure).toMatchObject({
+      libraries: [],
+      missing: [],
+      unreadable: [
+        { path: "/unknown/libcore.so", reason: "cannot read header" },
+      ],
+    });
+  });
+
   it("does not trust a cache architecture flag over the candidate's own ELF identity", async () => {
     const closure = await libraryClosure(
       app(elf(["libcore.so"])),

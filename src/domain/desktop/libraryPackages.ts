@@ -40,20 +40,23 @@ const CACHE_FLAGS: ReadonlyMap<number, string> = new Map([
 ]);
 const MACHINE_FLAGS = new Set(CACHE_FLAGS.values());
 
-const cachedPath = (
+const cachedPaths = (
   cache: readonly LinkerCacheEntry[],
   soname: string,
   machine: number,
-): string | undefined => {
+): readonly string[] => {
   const matching = cache.filter((entry) => entry.soname === soname);
   const flag = CACHE_FLAGS.get(machine);
-  return (
-    flag === undefined
-      ? (matching.find(
-          (entry) => !entry.flags.some((name) => MACHINE_FLAGS.has(name)),
-        ) ?? matching[0])
-      : matching.find((entry) => entry.flags.includes(flag))
-  )?.path;
+  if (flag !== undefined)
+    return matching
+      .filter((entry) => entry.flags.includes(flag))
+      .map((entry) => entry.path);
+  const unclassified = matching.filter(
+    (entry) => !entry.flags.some((name) => MACHINE_FLAGS.has(name)),
+  );
+  return (unclassified.length > 0 ? unclassified : matching).map(
+    (entry) => entry.path,
+  );
 };
 
 /** A loaded object and the object whose DT_NEEDED loaded it, as ld.so links them. */
@@ -110,8 +113,7 @@ async function* libraryCandidates(
       const candidate = posix.join(directory, soname);
       if (await host.isFile(candidate)) yield candidate;
     }
-  const cached = cachedPath(cache, soname, machine);
-  if (cached !== undefined) yield cached;
+  yield* cachedPaths(cache, soname, machine);
 }
 
 /** Host reads the closure walk needs. */
