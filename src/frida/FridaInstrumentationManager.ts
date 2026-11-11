@@ -45,15 +45,14 @@ import {
   unknownFridaSession,
 } from "../application/frida/fridaInputErrors.js";
 import {
-  MAX_BINARY_MESSAGE_BYTES,
-  MAX_CAPTURE_JSON_NODES,
-  MAX_JSON_DEPTH,
   MAX_MESSAGE_METADATA_BYTES,
-  MAX_MESSAGE_TEXT_BYTES,
-  MAX_MESSAGE_TYPE_BYTES,
-  MAX_SESSION_CAPTURE_BYTES,
   type FridaOwnedCaptureLimit,
 } from "./fridaCaptureLimits.js";
+import {
+  fridaCapturePolicySchema,
+  type FridaCapturePolicy,
+} from "../domain/fridaCapturePolicy.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -96,6 +95,7 @@ interface PendingStartupCleanup extends ManagedRemoteConnection {
 }
 
 interface ManagedSession extends ManagedRemoteConnection {
+  readonly captureLimits: FridaCapturePolicy;
   readonly id: string;
   readonly device: Device;
   readonly session: Session;
@@ -305,6 +305,20 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   async #startSession(
     input: StartFridaSessionInput,
   ): Promise<Result<FridaSessionObservation, AnalysisError>> {
+    const policy = fridaCapturePolicySchema.safeParse(
+      input.captureLimits ?? {},
+    );
+    if (!policy.success)
+      return err(
+        analysisInputErrorFromIssues(
+          "start_frida_session",
+          policy.error.issues.map((issue) => ({
+            ...issue,
+            path: ["capture_limits", ...issue.path],
+          })),
+          { capture_limits: input.captureLimits },
+        ),
+      );
     let manager: DeviceManager | undefined;
     let device: Device | undefined;
     let remoteHeld = false;
@@ -339,6 +353,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       const id = randomUUID();
       const managed: ManagedSession = {
         id,
+        captureLimits: policy.data,
         device,
         deviceManager: manager,
         remote: input.remote,
@@ -527,6 +542,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     }
     const observation: FridaScriptObservation = {
       scriptId,
+      captureLimits: managed.captureLimits,
       sourceKind: source.sourceKind,
       sourcePath: source.sourceKind === "file" ? source.path : null,
       sourceSha256,
@@ -1079,6 +1095,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     message: FridaMessage,
     data: Buffer | null,
   ): void {
+    const limits = managed.captureLimits;
     const payload = message.payload;
     const secrets = [managed.remote?.token, managed.remote?.certificate].filter(
       (value): value is string => value !== undefined && value.length > 0,
@@ -1095,8 +1112,9 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       try {
         payloadResult = boundedJsonValue(
           payload,
-          MAX_SESSION_CAPTURE_BYTES - MAX_MESSAGE_METADATA_BYTES,
+          Math.max(0, limits.session_bytes - MAX_MESSAGE_METADATA_BYTES),
           secrets,
+          limits,
         );
       } catch {
         payloadResult = {
@@ -1112,35 +1130,25 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       const payloadBytes = payloadResult?.bytes ?? 0;
       const remainingMessageBytes = Math.max(
         0,
-        MAX_SESSION_CAPTURE_BYTES -
-          MAX_MESSAGE_METADATA_BYTES -
-          payloadBytes -
-          4096,
+        limits.session_bytes - MAX_MESSAGE_METADATA_BYTES - payloadBytes - 4096,
       );
-      const messageBinaryLimit = Math.min(
-        MAX_BINARY_MESSAGE_BYTES,
-        Math.floor((remainingMessageBytes * 3) / 4),
-      );
+      const messageBinaryLimit = Math.floor((remainingMessageBytes * 3) / 4);
       if (secrets.some((secret) => data.includes(secret, 0, "utf8"))) {
         binaryResult = { data_redacted: true };
       } else if (data.byteLength > messageBinaryLimit) {
-        const sessionConstrained =
-          messageBinaryLimit < MAX_BINARY_MESSAGE_BYTES;
         binaryResult = {
           data_truncated: true,
           data_bytes: data.byteLength,
-          data_capture_limit: sessionConstrained
-            ? "session_bytes"
-            : "binary_bytes",
+          data_capture_limit: "session_bytes",
         };
-        if (sessionConstrained) markMessageTruncated(managed, scriptId);
+        markMessageTruncated(managed, scriptId);
       } else {
         binaryResult = { data_base64: data.toString("base64") };
       }
     }
     const type = boundedRedactedString(
       message.type,
-      MAX_MESSAGE_TYPE_BYTES,
+      limits.message_type_bytes,
       secrets,
     );
     const description =
@@ -1148,19 +1156,23 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         ? undefined
         : boundedRedactedString(
             message.description,
-            MAX_MESSAGE_TEXT_BYTES,
+            limits.message_text_bytes,
             secrets,
           );
     const stack =
       message.stack === undefined
         ? undefined
-        : boundedRedactedString(message.stack, MAX_MESSAGE_TEXT_BYTES, secrets);
+        : boundedRedactedString(
+            message.stack,
+            limits.message_text_bytes,
+            secrets,
+          );
     const fileName =
       message.fileName === undefined
         ? undefined
         : boundedRedactedString(
             message.fileName,
-            MAX_MESSAGE_TEXT_BYTES,
+            limits.message_text_bytes,
             secrets,
           );
     const observation: JsonValue = {
@@ -1211,13 +1223,13 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       ...binaryResult,
     };
     const charge = Buffer.byteLength(JSON.stringify(observation));
-    if (charge > MAX_SESSION_CAPTURE_BYTES) {
+    if (charge > limits.session_bytes) {
       markMessageTruncated(managed, scriptId);
       return;
     }
     while (
       managed.messages.size > 0 &&
-      managed.capturedBytes + charge > MAX_SESSION_CAPTURE_BYTES
+      managed.capturedBytes + charge > limits.session_bytes
     ) {
       const removed = managed.messages.shift();
       if (removed !== undefined) {
@@ -1451,9 +1463,10 @@ const boundedJsonValue = (
   input: unknown,
   maximumBytes: number,
   secrets: readonly string[],
+  limits: FridaCapturePolicy,
 ): BoundedJson & { readonly bytes: number } => {
   const seen = new WeakSet<object>();
-  let remainingNodes = MAX_CAPTURE_JSON_NODES;
+  let remainingNodes = limits.json_nodes;
   const visit = (
     value: unknown,
     budget: number,
@@ -1461,7 +1474,7 @@ const boundedJsonValue = (
   ): BoundedJson => {
     remainingNodes -= 1;
     if (remainingNodes < 0) return clipped("json_nodes");
-    if (depth > MAX_JSON_DEPTH) return clipped("json_depth");
+    if (depth > limits.json_depth) return clipped("json_depth");
     if (budget < 8) return clipped("payload_bytes");
     if (value === null) return { value: null, truncated: false };
     if (typeof value === "boolean" || typeof value === "number") {
@@ -1596,6 +1609,7 @@ const sessionObservation = (
   managed: ManagedSession,
 ): FridaSessionObservation => ({
   sessionId: managed.id,
+  captureLimits: managed.captureLimits,
   deviceId: managed.device.id,
   target: managed.target,
   pid: managed.pid,

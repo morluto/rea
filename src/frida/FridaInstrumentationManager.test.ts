@@ -1453,32 +1453,152 @@ it("redacts remote credentials echoed by a target script", async () => {
   await manager.closeAll();
 });
 
-it("bounds oversized Frida message metadata before retaining it", async () => {
+it.each([
+  { captureLimits: undefined, retained: 32_768, truncated: true },
+  {
+    captureLimits: { message_text_bytes: 65_536 },
+    retained: 65_536,
+    truncated: true,
+  },
+  {
+    captureLimits: { message_text_bytes: 1_048_576 },
+    retained: 1_000_000,
+    truncated: false,
+  },
+])(
+  "honors session text capture policy $captureLimits before observing messages",
+  async ({ captureLimits, retained, truncated }) => {
+    const bindings = new FakeDeviceManager();
+    bindings.device.session.nextDescription = "d".repeat(1_000_000);
+    bindings.device.session.nextStack = "s".repeat(1_000_000);
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    onTestFinished(() => manager.closeAll());
+    const started = await manager.startSession({
+      mode: "attach",
+      deviceId: "local",
+      pid: 512,
+      ...(captureLimits === undefined ? {} : { captureLimits }),
+    });
+    if (!started.ok) throw started.error;
+    const service = new FridaInstrumentationService(manager);
+    const loaded = await service.loadScript(started.value.sessionId, {
+      sourceKind: "inline",
+      source: "send('metadata');",
+    });
+    if (!loaded.ok) throw loaded.error;
+    const result = loaded.value.normalized_result as {
+      messages: {
+        description: string;
+        stack: string;
+        description_truncated?: boolean;
+        stack_truncated?: boolean;
+      }[];
+    };
+    const message = result.messages[0];
+    expect(message?.description).toHaveLength(retained);
+    expect(message?.stack).toHaveLength(retained);
+    expect(message?.description_truncated ?? false).toBe(truncated);
+    expect(message?.stack_truncated ?? false).toBe(truncated);
+    if (truncated) {
+      expect(loaded.value.limitations.join("\n")).toContain(
+        `capture_limits.message_text_bytes (${retained} bytes)`,
+      );
+      expect(loaded.value.limitations.join("\n")).toContain(
+        "Already discarded observations cannot be recovered",
+      );
+    }
+  },
+);
+
+it.each([
+  { nodes: 2, truncated: true },
+  { nodes: 4, truncated: false },
+])(
+  "captures a selected JSON payload with json_nodes=$nodes",
+  async ({ nodes, truncated }) => {
+    const bindings = new FakeDeviceManager();
+    bindings.device.session.nextPayload = [1, 2, 3];
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    onTestFinished(() => manager.closeAll());
+    const started = await manager.startSession({
+      mode: "attach",
+      pid: 512,
+      captureLimits: { json_nodes: nodes },
+    });
+    if (!started.ok) throw started.error;
+    const service = new FridaInstrumentationService(manager);
+    const loaded = await service.loadScript(started.value.sessionId, {
+      sourceKind: "inline",
+      source: "send([1,2,3])",
+    });
+    if (!loaded.ok) throw loaded.error;
+    const message = (
+      loaded.value.normalized_result as { messages: Record<string, unknown>[] }
+    ).messages[0];
+    expect(message?.payload_truncated ?? false).toBe(truncated);
+    if (truncated) {
+      expect(message?.payload_capture_limit).toBe("json_nodes");
+      expect(loaded.value.limitations.join("\n")).toContain(
+        "capture_limits.json_nodes (2 nodes)",
+      );
+    } else expect(message?.payload).toEqual([1, 2, 3]);
+  },
+);
+
+it.each([
+  { sessionBytes: 200_000, truncated: true },
+  { sessionBytes: 300_000, truncated: false },
+])(
+  "accounts base64 against selected session bytes=$sessionBytes",
+  async ({ sessionBytes, truncated }) => {
+    const bindings = new FakeDeviceManager();
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    onTestFinished(() => manager.closeAll());
+    const started = await manager.startSession({
+      mode: "attach",
+      pid: 512,
+      captureLimits: { session_bytes: sessionBytes },
+    });
+    if (!started.ok) throw started.error;
+    const loaded = await manager.loadScript(started.value.sessionId, {
+      sourceKind: "inline",
+      source: "send(null, new ArrayBuffer(65536))",
+    });
+    if (!loaded.ok) throw loaded.error;
+    bindings.device.session.scripts[0]?.message.emit(
+      { type: "send", payload: null },
+      Buffer.alloc(65_536),
+    );
+    const observed = manager.status(started.value.sessionId);
+    const message = observed?.messages.at(-1) as Record<string, unknown>;
+    expect(message.data_truncated ?? false).toBe(truncated);
+    if (truncated) {
+      expect(message.data_capture_limit).toBe("session_bytes");
+      expect(message.data_bytes).toBe(65_536);
+    } else
+      expect(Buffer.from(message.data_base64 as string, "base64")).toHaveLength(
+        65_536,
+      );
+  },
+);
+
+it("rejects invalid capture policy before attaching or spawning", async () => {
   const bindings = new FakeDeviceManager();
-  bindings.device.session.nextDescription = "d".repeat(1_000_000);
-  bindings.device.session.nextStack = "s".repeat(1_000_000);
   const manager = new FridaInstrumentationManager({ deviceManager: bindings });
   const started = await manager.startSession({
     mode: "attach",
-    deviceId: "local",
     pid: 512,
+    captureLimits: { json_nodes: 0 },
   });
-  expect(started.ok).toBe(true);
-  if (!started.ok) return;
-  const loaded = await manager.loadScript(started.value.sessionId, {
-    sourceKind: "inline",
-    source: "send('metadata');",
-  });
-  expect(loaded.ok).toBe(true);
-  if (loaded.ok) {
-    expect(loaded.value.messagesTruncated).toBe(false);
-    const message = loaded.value.messages[0];
-    expect(message).toMatchObject({
-      description_truncated: true,
-      stack_truncated: true,
-    });
-    expect(JSON.stringify(message).length).toBeLessThan(100_000);
-  }
+  expect(started.ok).toBe(false);
+  if (!started.ok) expect(started.error).toBeInstanceOf(AnalysisInputError);
+  expect(bindings.device.attachedTargets).toEqual([]);
   await manager.closeAll();
 });
 

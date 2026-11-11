@@ -15,6 +15,7 @@ import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   providerRetryAction,
@@ -400,6 +401,8 @@ export class GhidraClient {
       readonly signal?: AbortSignal;
       readonly progress?: ProgressReporter;
       readonly decompileTimeoutSeconds?: number | null;
+      readonly decompileMaxPayloadMiB?: number | null;
+      readonly valueFlowLimits?: NativeValueFlowLimits;
     } = {},
   ): Promise<Result<JsonValue, GhidraSessionError>> {
     const started = await this.start(options.signal, options.progress);
@@ -423,6 +426,8 @@ export class GhidraClient {
     options: {
       readonly signal?: AbortSignal;
       readonly decompileTimeoutSeconds?: number | null;
+      readonly decompileMaxPayloadMiB?: number | null;
+      readonly valueFlowLimits?: NativeValueFlowLimits;
     },
   ): Promise<Result<JsonValue, GhidraSessionError>> {
     const pattern =
@@ -445,6 +450,12 @@ export class GhidraClient {
         ...(options.decompileTimeoutSeconds === undefined
           ? {}
           : { decompileTimeoutSeconds: options.decompileTimeoutSeconds }),
+        ...(options.valueFlowLimits === undefined
+          ? {}
+          : { valueFlowLimits: options.valueFlowLimits }),
+        ...(options.decompileMaxPayloadMiB === undefined
+          ? {}
+          : { decompileMaxPayloadMiB: options.decompileMaxPayloadMiB }),
       },
     );
   }

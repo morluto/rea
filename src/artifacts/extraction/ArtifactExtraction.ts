@@ -1,4 +1,5 @@
 import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
+import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
 import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
 import {
@@ -64,6 +65,7 @@ import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrity
 
 /** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {
+  readonly readerLimits?: ArtifactReaderLimits;
   readonly asarHeaderAdmission?: AsarHeaderAdmission;
   /** Caller inputs when the target was explicitly selected as an ESP flash image. */
   readonly espFlashSelection?: EspFlashSelection | undefined;
@@ -84,7 +86,12 @@ export const extractArtifact = async (
   input: ArtifactExtractionInput,
   signal?: AbortSignal,
 ): Promise<ArtifactExtractionResult> =>
-  input.resourceScope.run(() => extractArtifactInScope(input, signal));
+  input.resourceScope.run(async () => {
+    const result = await extractArtifactInScope(input, signal);
+    return input.readerLimits === undefined
+      ? result
+      : { ...result, effective_limits: input.readerLimits };
+  });
 
 const extractArtifactInScope = async (
   input: ArtifactExtractionInput,
@@ -110,6 +117,7 @@ const extractArtifactInScope = async (
           resolveAsarHeaderAdmission(input.environment),
         espFlashSelection: input.espFlashSelection,
         integrity: input.integrityPolicy,
+        readerLimits: input.readerLimits,
       },
       probeFacts,
     );
@@ -627,6 +635,27 @@ const createExtractionResult = (
  * The target kind, not the host, is unsupported by extraction. The error keeps
  * the caller's spelling of the path; I/O uses the canonical path.
  */
+const hasExecutablePack = async (
+  probes: ArtifactEmbeddedFormatProbes,
+): Promise<boolean> => {
+  if (
+    (await probes.nodeSea()) !== undefined ||
+    (await probes.pyInstaller()) !== undefined
+  )
+    return true;
+  const bun = await probes.bunStandalone();
+  if (
+    bun.status === "present" ||
+    (await probes.denoStandalone()).status === "present" ||
+    (await probes.dotnetBundle()) !== undefined
+  )
+    return true;
+  if (bun.status === "limited") throw bun.failure;
+  const seaFailure = probes.completedFacts().nodeSeaRecognitionFailure;
+  if (seaFailure !== undefined) throw seaFailure;
+  return false;
+};
+
 const requireExtractableFormat = async (
   path: string,
   input: Pick<
@@ -636,6 +665,7 @@ const requireExtractableFormat = async (
     | "inputFormat"
     | "resourceScope"
     | "expectedRootSha256"
+    | "readerLimits"
   >,
   signal?: AbortSignal,
 ): Promise<ArtifactEmbeddedFormatProbeFacts | undefined> => {
@@ -650,15 +680,17 @@ const requireExtractableFormat = async (
       input.resourceScope,
       signal,
       async (source) => {
-        const probes = new ArtifactEmbeddedFormatProbes(path, source, signal);
+        const probes = new ArtifactEmbeddedFormatProbes(
+          path,
+          source,
+          signal,
+          undefined,
+          input.readerLimits,
+        );
         const pack =
           (await probes.godotPck()) !== undefined ||
           ((format === "elf" || format === "pe" || format === "mach-o") &&
-            ((await probes.nodeSea()) !== undefined ||
-              (await probes.pyInstaller()) !== undefined ||
-              (await probes.bunStandalone()).status === "present" ||
-              (await probes.denoStandalone()).status === "present" ||
-              (await probes.dotnetBundle()) !== undefined));
+            (await hasExecutablePack(probes)));
         if (pack && input.expectedRootSha256 !== undefined) {
           const digest = await hashStableRootArtifactHandle(
             path,
@@ -697,6 +729,7 @@ const createReader = async (
     | "asarHeaderAdmission"
     | "resourceScope"
     | "espFlashSelection"
+    | "readerLimits"
   >,
   manifest: ArtifactGraphManifest,
   transferredSource?: ActiveArtifactInventorySource,
@@ -757,6 +790,7 @@ const createReader = async (
           ),
           admission: transferredSource?.admission,
           espFlashSelection: input.espFlashSelection,
+          readerLimits: input.readerLimits,
           asarHeaderAdmission:
             containerFormat === "asar"
               ? (input.asarHeaderAdmission ??

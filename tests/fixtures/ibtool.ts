@@ -7,5 +7,7 @@ import { spawnSync } from "node:child_process";
  */
 export const xcodeIbtoolAvailable =
   process.platform === "darwin" &&
-  spawnSync("/usr/bin/xcrun", ["--find", "ibtool"], { stdio: "ignore" })
-    .status === 0;
+  spawnSync("/usr/bin/xcrun", ["--find", "ibtool"], {
+    stdio: "ignore",
+    timeout: 5_000,
+  }).status === 0;

@@ -1,9 +1,10 @@
-import { copyFile, cp } from "node:fs/promises";
+import { access, copyFile, cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect } from "vitest";
 
+import { unsupportedRuntimeMessage } from "../../../scripts/lib/runtime-admission.mjs";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
@@ -26,6 +27,10 @@ const installCliRuntime = async (
     copyFile(
       "scripts/lib/cli-process-environment.mjs",
       workspace.path("scripts/lib/cli-process-environment.mjs"),
+    ),
+    copyFile(
+      "scripts/lib/runtime-admission.mjs",
+      workspace.path("scripts/lib/runtime-admission.mjs"),
     ),
     workspace.write(
       "package.json",
@@ -188,6 +193,69 @@ describe("doctor configuration dispatch", () => {
   );
 });
 
+describe("runtime admission dispatch", () => {
+  workspaceCliTest(
+    "refuses an unsupported runtime before loading the compiled runtime",
+    async ({ processes, workspace }) => {
+      const marker = workspace.path("compiled-runtime-loaded");
+      const loaded = `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "loaded");\n`;
+      const range = ">=999.0.0";
+      await installCliRuntime(workspace, loaded, loaded);
+      await workspace.write(
+        "package.json",
+        JSON.stringify({
+          type: "module",
+          version: "1.0.0",
+          engines: { node: range },
+        }),
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "--version"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        `${unsupportedRuntimeMessage(range, process.versions.node)}\n`,
+      );
+      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  workspaceCliTest(
+    "admits a runtime the package engines field allows",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: () => { process.stdout.write('runtime-served\\n'); } });\n",
+      );
+      const previousMajor = Number(process.versions.node.split(".")[0]) - 1;
+      for (const range of [
+        `^${process.versions.node}`,
+        `>=${previousMajor}.0.0`,
+      ]) {
+        await workspace.write(
+          "package.json",
+          JSON.stringify({
+            type: "module",
+            version: "1.0.0",
+            engines: { node: range },
+          }),
+        );
+        const result = await processes.run(
+          process.execPath,
+          [workspace.path("scripts/rea.mjs"), "fixture"],
+          { cwd: workspace.root },
+        );
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toBe("runtime-served\n");
+        expect(result.stderr).toBe("");
+      }
+    },
+  );
+});
+
 describe("executable dispatcher", () => {
   workspaceCliTest(
     "does not append recovery output after delegated stdout has begun",
@@ -299,6 +367,10 @@ describe("executable dispatcher", () => {
         copyFile(
           "scripts/lib/cli-process-environment.mjs",
           workspace.path("scripts/lib/cli-process-environment.mjs"),
+        ),
+        copyFile(
+          "scripts/lib/runtime-admission.mjs",
+          workspace.path("scripts/lib/runtime-admission.mjs"),
         ),
         workspace.write(
           "package.json",
