@@ -2,7 +2,10 @@ import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPoli
 import { arch, hostname, userInfo } from "node:os";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { retainProcessInspectionCleanup } from "../../providers/OwnedCommandCleanup.js";
+import {
+  bindProcessInspectionCancellations,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -374,12 +377,23 @@ const runCapture = async (
     // Adopt inspection cleanup before the capture's existing store close retries it.
     const primary =
       cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
-    const failure = retainProcessInspectionCleanup(
-      primary,
-      projectFailure(primary, undefined),
-      store.resourceScope,
-      DESKTOP_OPERATION,
-    );
+    const projected = projectFailure(primary, undefined);
+    // The session's supervisor already owns the exact inspection failure in its snapshot.
+    const sessionOwnsInspection =
+      cause instanceof DesktopSessionCleanupError &&
+      cause.cleanup.inspectionCleanup?.causes.includes(primary) === true;
+    const failure = sessionOwnsInspection
+      ? bindProcessInspectionCancellations(
+          primary,
+          projected,
+          DESKTOP_OPERATION,
+        )
+      : retainProcessInspectionCleanup(
+          primary,
+          projected,
+          store.resourceScope,
+          DESKTOP_OPERATION,
+        );
     const sessionCleanup =
       cause instanceof DesktopSessionCleanupError
         ? cause.cleanup

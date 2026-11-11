@@ -254,23 +254,30 @@ const release = async (
   spawned: SpawnedOwnedProviderProcess,
   supervisor: ProviderProcessSupervisor,
 ): Promise<SessionRelease> => {
+  const inspected = await supervisor.retryInspectionCleanup();
   // One SIGTERM each, since some applications treat a second one as a forced exit.
-  const termination = await terminateTokenOwnedProcesses(
-    spawned.ownership,
-    TERMINATION_GRACE_MS,
-  );
-  const { launchGroupSignalled } = termination.ok
-    ? termination.value
-    : termination.error;
-  if (!termination.ok)
-    supervisor.retainInspectionFailure(termination.error.cause);
+  let launchGroupSignalled = false;
+  if (inspected.ok) {
+    const termination = await terminateTokenOwnedProcesses(
+      spawned.ownership,
+      TERMINATION_GRACE_MS,
+    );
+    launchGroupSignalled = termination.ok
+      ? termination.value.launchGroupSignalled
+      : termination.error.launchGroupSignalled;
+    if (!termination.ok)
+      supervisor.retainInspectionFailure(termination.error.cause);
+  }
   if (!launchGroupSignalled && supervisor.observedExit() === undefined) {
     spawned.process.kill("SIGTERM");
     await supervisor.waitForExit(TERMINATION_GRACE_MS);
   }
   let stopped = await supervisor.stop();
-  let inspectionCleanup =
-    stopped.status === "incomplete" ? stopped.inspectionCleanup : undefined;
+  let inspectionCleanup = inspected.ok
+    ? stopped.status === "incomplete"
+      ? stopped.inspectionCleanup
+      : undefined
+    : inspected.error;
   // An incomplete stop leaves the supervisor owning the processes; try once more.
   if (stopped.status === "incomplete") {
     stopped = await supervisor.stop();
@@ -400,6 +407,7 @@ export const runDesktopSession = async (
     await checkpointNow(plan, observations, "exit", "exit");
     assertProcessOwnershipInspectionActive(signal);
   } catch (cause: unknown) {
+    supervisor.retainInspectionFailure(cause);
     const cancelled =
       cause instanceof AnalysisCancelledError ||
       (cause instanceof ArtifactReaderFailure &&

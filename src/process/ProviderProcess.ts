@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "../domain/result.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
   processInspectionCleanupFailures,
@@ -699,22 +700,31 @@ export class ProviderProcessSupervisor {
     }
   }
 
-  #inspectionStopFailure(reason: string): ProviderProcessStopResult {
+  #inspectionCleanupSnapshot(): ProviderProcessInspectionCleanup {
     const retained = [...this.#inspectionCleanup.values()];
+    return {
+      causes: [...new Set(retained.map(({ origin }) => origin))],
+      failures: retained.map(({ failure, cause }) => ({ failure, cause })),
+    };
+  }
+
+  /** Retry only held inspection resources; success makes no process-cleanup claim. */
+  async retryInspectionCleanup(): Promise<
+    Result<void, ProviderProcessInspectionCleanup>
+  > {
+    await this.#retryInspectionCleanup();
+    return this.#inspectionCleanup.size === 0
+      ? ok(undefined)
+      : err(this.#inspectionCleanupSnapshot());
+  }
+
+  #inspectionStopFailure(reason: string): ProviderProcessStopResult {
     return {
       status: "incomplete",
       reason,
-      ...(retained.length === 0
+      ...(this.#inspectionCleanup.size === 0
         ? {}
-        : {
-            inspectionCleanup: {
-              causes: [...new Set(retained.map(({ origin }) => origin))],
-              failures: retained.map(({ failure, cause }) => ({
-                failure,
-                cause,
-              })),
-            },
-          }),
+        : { inspectionCleanup: this.#inspectionCleanupSnapshot() }),
     };
   }
 

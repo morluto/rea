@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { readFileSync, rmSync } from "node:fs";
 import {
   chmod,
@@ -1040,13 +1041,61 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.for([{ retrySucceeds: true }, { retrySucceeds: false }])(
-  "retains an actual optional inspection descriptor through capture cleanup (retry succeeds: $retrySucceeds)",
-  async ({ retrySucceeds }) => {
+const sessionInspectionFailure = async (cause: unknown, resource: string) => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42,
+    stdout: null,
+    stderr: null,
+    exitCode: 0,
+    signalCode: null,
+    kill: () => {
+      throw new Error("Closed recording child must not be signalled");
+    },
+  });
+  const supervisor = new providerProcess.ProviderProcessSupervisor({
+    process: child,
+    ownership: {
+      runId: "recording-session",
+      leaderPid: 42,
+      processGroupId: 42,
+      expectedParentPid: 1,
+    },
+    ownsProcessLifetime: true,
+    cleanup: async () => ({ cleaned: true, signaled: false }),
+  });
+  child.emit("exit", 0, null);
+  child.emit("close", 0, null);
+  supervisor.retainInspectionFailure(cause);
+  const stopped = await supervisor.stop();
+  if (
+    stopped.status !== "incomplete" ||
+    stopped.inspectionCleanup === undefined
+  )
+    throw new Error("Expected actual supervisor-held inspection cleanup");
+  return new desktopSession.DesktopSessionCleanupError(cause, {
+    reason: stopped.reason,
+    inspectionCleanup: stopped.inspectionCleanup,
+    leases: [
+      new AnalysisCleanupLease(async () => {
+        const retried = await supervisor.stop();
+        if (retried.status === "incomplete") throw new Error(retried.reason);
+      }, [resource]),
+    ],
+  });
+};
+
+it.for([
+  { retrySucceeds: true, sessionOwns: false },
+  { retrySucceeds: false, sessionOwns: false },
+  { retrySucceeds: false, sessionOwns: true },
+])(
+  "retains an actual optional inspection descriptor through capture cleanup (retry succeeds: $retrySucceeds, session owns: $sessionOwns)",
+  async ({ retrySucceeds, sessionOwns }) => {
     const { root, home, environment } = await fixture();
     const output = join(root, "capture-inspection-close");
     const descriptor = await failedInspectionDescriptor();
     const captured = captureFixture();
+    let sessionFailure: desktopSession.DesktopSessionCleanupError | undefined;
     const retainedStores = new Set<DesktopContentStore>();
     let projectedFailure: AnalysisError | undefined;
     vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
@@ -1077,11 +1126,20 @@ it.for([{ retrySucceeds: true }, { retrySucceeds: false }])(
           { runId: "recording-session", launchPid: process.pid },
           { names: new Set(), byPid: false },
         );
-        await trackProcess(
-          observations,
-          process.pid,
-          new AbortController().signal,
-        );
+        try {
+          await trackProcess(
+            observations,
+            process.pid,
+            new AbortController().signal,
+          );
+        } catch (cause: unknown) {
+          if (!sessionOwns) throw cause;
+          sessionFailure = await sessionInspectionFailure(
+            cause,
+            descriptor.path,
+          );
+          throw sessionFailure;
+        }
         throw new Error("The actual inspection cleanup failure was swallowed");
       });
     const close = DesktopContentStore.prototype.close;
@@ -1118,7 +1176,16 @@ it.for([{ retrySucceeds: true }, { retrySucceeds: false }])(
       expect(projectedFailure?.cleanupIncomplete).toBe(!retrySucceeds);
       const [retainedStore] = retainedStores;
       expect(retainedStore).toBeDefined();
-      if (!retrySucceeds) {
+      if (sessionOwns) {
+        expect(retainedStore?.resourceScope.cleanupResources).toEqual([]);
+        expect(sessionFailure?.cleanup.inspectionCleanup?.causes[0]).toBe(
+          descriptor.failure,
+        );
+        descriptor.allow();
+        await sessionFailure!.cleanup.leases[0]!.release();
+        expect(descriptor.handle.fd).toBe(-1);
+        expect(projectedFailure?.cleanupIncomplete).toBe(false);
+      } else if (!retrySucceeds) {
         expect(retainedStore?.resourceScope.cleanupResources).toEqual([
           descriptor.path,
         ]);
@@ -1132,6 +1199,7 @@ it.for([{ retrySucceeds: true }, { retrySucceeds: false }])(
     } finally {
       descriptor.allow();
       await Promise.all([...retainedStores].map((store) => store.close()));
+      await sessionFailure?.cleanup.leases[0]?.release();
       await descriptor.failure.owner.close();
       vi.restoreAllMocks();
     }
