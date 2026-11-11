@@ -57,6 +57,23 @@ const serviceFor = (value: NativeInitializers) =>
     inspect: () => Promise.resolve(ok(value)),
   });
 
+const selectedArm64Report = async () => {
+  const bytes = machoArm64FatInitializers();
+  const selected = await readNativeInitializers(
+    bytes,
+    { ...report.artifact, bytes: bytes.length },
+    {
+      path: report.artifact.path,
+      offset: 0,
+      limit: 64,
+      architecture: "arm64",
+    },
+  );
+  if (selected.slice === null)
+    throw new Error("Expected the authored universal slice");
+  return { ...selected, slice: selected.slice };
+};
+
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
   const service = new NativeInitializersService({
@@ -209,6 +226,75 @@ it.each([
     });
   },
 );
+
+it("refuses a slice architecture label that disagrees with the selected image", async () => {
+  const selected = await selectedArm64Report();
+  const result = await serviceFor({
+    ...selected,
+    slice: { ...selected.slice, architecture: "x86_64" },
+  }).inspect({
+    path: report.artifact.path,
+    architecture: "arm64",
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it.each([
+  { field: "slot_file_offset" as const },
+  { field: "value_file_offset" as const },
+])(
+  "refuses $field that lies in the container but outside the selected slice",
+  async ({ field }) => {
+    const selected = await selectedArm64Report();
+    const [entry] = selected.entries;
+    if (entry === undefined)
+      throw new Error("Expected an initializer in the selected slice");
+    const result = await serviceFor({
+      ...selected,
+      entries: selected.entries.map((item, index) =>
+        index === 0 ? { ...item, [field]: 0 } : item,
+      ),
+    }).inspect({
+      path: report.artifact.path,
+      architecture: "arm64",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  },
+);
+
+it("keeps an entry offset that starts at the selected slice", async () => {
+  const selected = await selectedArm64Report();
+  const [entry] = selected.entries;
+  if (entry === undefined)
+    throw new Error("Expected an initializer in the selected slice");
+  const result = await serviceFor({
+    ...selected,
+    entries: selected.entries.map((item, index) =>
+      index === 0
+        ? { ...item, value_file_offset: selected.slice.file_offset }
+        : item,
+    ),
+  }).inspect({
+    path: report.artifact.path,
+    architecture: "arm64",
+  });
+  if (!result.ok) throw result.error;
+  const observed = result.value.normalized_result as NativeInitializers;
+  expect(observed.slice).toMatchObject({
+    architecture: "arm64",
+    file_offset: selected.slice.file_offset,
+  });
+  expect(observed.entries[0]?.value_file_offset).toBe(
+    selected.slice.file_offset,
+  );
+  expect(observed.entries).toHaveLength(selected.entries.length);
+});
 
 it.each([
   { label: "ends at EOF", extraOffset: 0, extraSize: 0, accepted: true },

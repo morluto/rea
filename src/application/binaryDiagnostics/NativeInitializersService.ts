@@ -101,14 +101,21 @@ const validReport = (
       : report.format !== "mach-o" ||
         input.architecture === undefined ||
         slice.cpu_type !== MACHO_CPU_TYPES[input.architecture] ||
+        slice.architecture !== input.architecture ||
         report.machine !== slice.cpu_type ||
         report.architecture !== input.architecture
   )
     return false;
-  const inside = (offset: number | null, bytes: number): boolean =>
-    offset === null || offset <= report.artifact.bytes - bytes;
+  const insideArtifact = (offset: number, bytes: number): boolean =>
+    offset <= report.artifact.bytes - bytes;
+  // Entry file offsets name the selected image, not another slice in the container.
+  const imageStart = slice?.file_offset ?? 0;
+  const imageEnd =
+    slice === null ? report.artifact.bytes : slice.file_offset + slice.size;
+  const insideImage = (offset: number | null, bytes: number): boolean =>
+    offset === null || (offset >= imageStart && bytes <= imageEnd - offset);
   if (
-    (slice !== null && !inside(slice.file_offset, slice.size)) ||
+    (slice !== null && !insideArtifact(slice.file_offset, slice.size)) ||
     report.artifact.bytes > input.max_file_bytes ||
     coverage.offset !== input.offset ||
     coverage.limit !== input.limit ||
@@ -122,7 +129,7 @@ const validReport = (
   return report.entries.every(
     (entry, position) =>
       entry.index === coverage.offset + position &&
-      inside(entry.slot_file_offset, entry.slot_bytes) &&
-      inside(entry.value_file_offset, 1),
+      insideImage(entry.slot_file_offset, entry.slot_bytes) &&
+      insideImage(entry.value_file_offset, 1),
   );
 };
