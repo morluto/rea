@@ -301,7 +301,7 @@ const scanMft = (
 
   if (firstInvalidExtentOffset !== undefined)
     limitations.push(
-      `${String(invalidExtents)} FILE record(s) declare inconsistent used or total byte counts, beginning at offset ${String(firstInvalidExtentOffset)}`,
+      `${String(invalidExtents)} FILE record(s) declare inconsistent record extents, beginning at offset ${String(firstInvalidExtentOffset)}`,
     );
 
   const truncatedTailBytes = bytes.length % recordBytes;
@@ -359,6 +359,10 @@ const readRecord = (
   const fixups = verifyFixups(record, view, usaOffset);
   const usedBytes = view.getUint32(RECORD_HEADER.usedBytes, true);
   const totalBytes = view.getUint32(RECORD_HEADER.totalBytes, true);
+  const firstAttributeOffset = view.getUint16(
+    RECORD_HEADER.firstAttributeOffset,
+    true,
+  );
 
   return {
     index,
@@ -374,7 +378,12 @@ const readRecord = (
       totalBytes === recordBytes &&
       usedBytes >= NTFS_MFT_MIN_RECORD_BYTES &&
       usedBytes % 8 === 0 &&
-      usedBytes <= totalBytes,
+      usedBytes <= totalBytes &&
+      firstAttributeOffset % 8 === 0 &&
+      firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
+      firstAttributeOffset <= usedBytes &&
+      (fixups.malformed ||
+        firstAttributeOffset >= usaOffset + fixups.entries * 2),
     baseRecordReference:
       baseRecordReference === 0n
         ? null
@@ -386,10 +395,7 @@ const readRecord = (
     logFileSequenceNumber: view
       .getBigUint64(RECORD_HEADER.logFileSequenceNumber, true)
       .toString(),
-    firstAttributeOffset: view.getUint16(
-      RECORD_HEADER.firstAttributeOffset,
-      true,
-    ),
+    firstAttributeOffset,
     nextAttributeId: view.getUint16(RECORD_HEADER.nextAttributeId, true),
     fixups,
   };
