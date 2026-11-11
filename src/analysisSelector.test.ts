@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { resolveCliAnalysisSelector } from "./analysisSelector.js";
+import { resolveCliAnalysisSelector } from "./cli/analysisSelector.js";
 
 it.each([
   ["0x1a", "0x1A"],
