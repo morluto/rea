@@ -73,6 +73,9 @@ const SAFE_TOOL_ALLOWLIST = new Set([
   "open_jeb_project",
   "list_jeb_units",
   "decompile_jeb_item",
+  // Managed (.NET) (read-only)
+  "inspect_managed_artifact",
+  "inspect_managed_members",
   // ADB (read-only)
   "inspect_adb_client",
   "list_adb_devices",
