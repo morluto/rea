@@ -99,3 +99,98 @@ cliTest(
     ).toBeDefined();
   },
 );
+
+cliTest(
+  "mcp add applies output controls to its registration document",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-mcp-output-");
+    const environment = await registrationEnvironment(home);
+    const run = (arguments_: readonly string[]) =>
+      cli.run({
+        arguments: arguments_,
+        cwd: home,
+        environment,
+        timeoutMs: 30_000,
+      });
+    const filtered = await run([
+      "mcp",
+      "add",
+      "--agent",
+      "amp",
+      "--json",
+      "--filter-output",
+      "ok",
+    ]);
+    expect(filtered.exitCode, filtered.stderr).toBe(0);
+    expect(filtered.json).toBe(true);
+    const schema = await run([
+      "mcp",
+      "add",
+      "--schema",
+      "--json",
+      "--filter-output",
+      "outputSchema.type",
+    ]);
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    expect(schema.json).toEqual({ outputSchema: { type: "object" } });
+    const failure = await run([
+      "mcp",
+      "add",
+      "--agent",
+      "not-a-client",
+      "--json",
+      "--filter-output",
+      "message",
+    ]);
+    expect(failure.exitCode).toBe(1);
+    expect(failure.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.any(String),
+      fieldErrors: [{ path: "agent" }],
+    });
+    const path = join(home, ".config", "amp", "settings.json");
+    await writeFile(path, "{malformed");
+    const partial = await run([
+      "mcp",
+      "add",
+      "--agent",
+      "amp",
+      "--json",
+      "--filter-output",
+      "ok",
+    ]);
+    expect(partial.exitCode).toBe(1);
+    expect(partial.json).toMatchObject({
+      ok: false,
+      clients: [
+        {
+          client: "amp",
+          status: "failed",
+          error: { reason: expect.any(String) },
+        },
+      ],
+    });
+    await writeFile(path, "{}");
+    const counted = await run([
+      "mcp",
+      "add",
+      "--agent",
+      "amp",
+      "--token-count",
+    ]);
+    expect(counted.exitCode, counted.stderr).toBe(0);
+    expect(counted.stdout.trim()).toMatch(/^\d+$/u);
+    const windowed = await run([
+      "mcp",
+      "add",
+      "--agent",
+      "amp",
+      "--token-limit",
+      "2",
+    ]);
+    expect(windowed.exitCode, windowed.stderr).toBe(0);
+    expect(windowed.stdout).toMatch(
+      /\[truncated: showing tokens 0–2 of \d+\]/u,
+    );
+  },
+);

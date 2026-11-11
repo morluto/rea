@@ -1,3 +1,5 @@
+import { Writable } from "node:stream";
+
 import { Help, z } from "incur";
 
 import {
@@ -36,6 +38,7 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { createCliResultOutput } from "./cliResultOutput.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 
@@ -62,13 +65,13 @@ interface RegistrationInputIssue {
 }
 interface RegistrationPresentation {
   write(text: string): void;
-  document(value: unknown): void;
+  document(value: unknown, failure?: boolean): Promise<void>;
   validation(
     message: string,
     field: string,
     error?: AnalysisError,
     code?: RegistrationInputIssue["code"],
-  ): void;
+  ): Promise<void>;
   fail(): void;
 }
 
@@ -106,7 +109,7 @@ export const serveMcpRegistration = (
     );
     if (
       presentation === undefined ||
-      serveRegistrationDiscovery(split.flags, presentation)
+      (await serveRegistrationDiscovery(split.flags, presentation))
     )
       return Promise.resolve();
     const request = readRegistrationRequest(
@@ -114,7 +117,7 @@ export const serveMcpRegistration = (
       defaultCommand,
     );
     if (!request.ok) {
-      presentation.validation(
+      await presentation.validation(
         request.error.message,
         request.error.field,
         undefined,
@@ -156,43 +159,73 @@ const createRegistrationPresentation = (
     fail();
     return undefined;
   }
-  const document = (value: unknown) => {
-    write(
-      renderCliDocument(value, output.format, process.stdout.isTTY === true),
-    );
+  const destination =
+    options.stdout === undefined
+      ? process.stdout
+      : new Writable({
+          write(chunk: Buffer, _encoding, callback) {
+            try {
+              write(chunk.toString());
+              callback();
+            } catch (error) {
+              callback(
+                error instanceof Error ? error : new Error(String(error)),
+              );
+            }
+          },
+        });
+  const result = createCliResultOutput(output, destination);
+  const document = async (value: unknown, failure = false) => {
+    const handled = await result?.write(value, {
+      command: "mcp add",
+      duration: "0ms",
+      format: output.format,
+      forceOutput: true,
+      failure,
+    });
+    if (!handled)
+      write(
+        renderCliDocument(value, output.format, process.stdout.isTTY === true),
+      );
+    if (result?.error !== undefined) fail();
   };
   return {
     write,
     document,
     fail,
-    validation(message, field, error, code = "invalid_value") {
+    async validation(message, field, error, code = "invalid_value") {
       const retained = redactExplicitText(
         message,
         declaredSensitiveValues(command),
       );
-      document({
-        code: "VALIDATION_ERROR",
-        message: retained,
-        ...(error === undefined ? {} : { error: projectAnalysisError(error) }),
-        fieldErrors: [
-          {
-            code,
-            missing: false,
-            path: field,
-            message: retained,
-          },
-        ],
-      });
+      await document(
+        {
+          code: "VALIDATION_ERROR",
+          message: retained,
+          ...(error === undefined
+            ? {}
+            : { error: projectAnalysisError(error) }),
+          fieldErrors: [
+            {
+              code,
+              missing: false,
+              path: field,
+              message: retained,
+            },
+          ],
+        },
+        true,
+      );
       fail();
     },
   };
 };
 
 /** Discovery never resolves configuration locations or acquires resource owners. */
-const serveRegistrationDiscovery = (
+const serveRegistrationDiscovery = async (
   flags: ReadonlySet<string>,
   presentation: RegistrationPresentation,
-): boolean => {
+): Promise<boolean> => {
   if (flags.has("--help") || flags.has("-h")) {
     presentation.write(
       `${Help.formatCommand("rea mcp add", {
@@ -211,7 +244,7 @@ const serveRegistrationDiscovery = (
     return true;
   }
   if (discovery !== "schema") return false;
-  presentation.document({
+  await presentation.document({
     inputSchema: z.toJSONSchema(mcpRegistrationOptionsSchema),
     outputSchema: z.toJSONSchema(mcpRegistrationReportSchema),
   });
@@ -279,7 +312,11 @@ const executeRegistration = async (
         resources,
       );
       if (!targets.ok) {
-        presentation.validation(targets.error.message, "agent", targets.error);
+        await presentation.validation(
+          targets.error.message,
+          "agent",
+          targets.error,
+        );
         return undefined;
       }
       return registerMcpClients(
@@ -289,7 +326,7 @@ const executeRegistration = async (
         resources,
       );
     })
-    .catch((cause: unknown) => {
+    .catch(async (cause: unknown) => {
       if (!(cause instanceof ArtifactReaderFailure)) throw cause;
       const error = new ConfigurationError(
         "Registration cannot continue until retained resource cleanup completes.",
@@ -301,11 +338,11 @@ const executeRegistration = async (
           ),
         },
       );
-      presentation.validation(error.message, "registration", error);
+      await presentation.validation(error.message, "registration", error);
       return undefined;
     });
   if (outcomes !== undefined)
-    presentRegistration(outcomes, request.launcher, presentation);
+    await presentRegistration(outcomes, request.launcher, presentation);
 };
 
 const clientReport = (
@@ -344,11 +381,11 @@ const clientReport = (
       };
 };
 
-const presentRegistration = (
+const presentRegistration = async (
   outcomes: readonly McpClientRegistrationOutcome[],
   launcher: ClientRegistrationCommand,
   presentation: RegistrationPresentation,
-): void => {
+): Promise<void> => {
   const clients = outcomes.map(clientReport);
   const report: McpRegistrationReport = {
     name: "rea",
@@ -360,7 +397,7 @@ const presentRegistration = (
     ),
     clients,
   };
-  presentation.document(report);
+  await presentation.document(report, !report.ok);
   for (const outcome of outcomes)
     if (
       outcome.status === "completed" &&
