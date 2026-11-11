@@ -299,7 +299,7 @@ const metadataSourceEvidence = (
       }
     | undefined = undefined,
   previous?: AnalysisPartialObservation,
-  v108?: NonNullable<ReturnType<typeof inspectIl2cppMetadataV108>>,
+  v108?: NonNullable<Awaited<ReturnType<typeof inspectIl2cppMetadataV108>>>,
 ) =>
   createEvidence(
     {
@@ -477,7 +477,14 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const artifact = sourceArtifact(input.path, snapshot);
         observed.artifact = artifact;
         assertArtifactReadActive(options?.signal);
-        const v108 = inspectIl2cppMetadataV108(snapshot.bytes);
+        const v108 = await inspectIl2cppMetadataV108(
+          snapshot.bytes,
+          async () => {
+            await this.yieldControl();
+            assertArtifactReadActive(options?.signal);
+          },
+        );
+        assertArtifactReadActive(options?.signal);
         if (v108 !== null) {
           const failure = new AnalysisUnsupportedTargetError(
             OPERATION,

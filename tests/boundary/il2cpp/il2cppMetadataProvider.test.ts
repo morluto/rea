@@ -108,18 +108,52 @@ it("refuses a malformed v108 section instead of publishing a partial inventory",
   );
 });
 
-it("bounds v108 string samples and preserves undecodable bytes", () => {
-  const repeated = inspectIl2cppMetadataV108(
+it("bounds v108 string samples and preserves undecodable bytes and leading BOMs", async () => {
+  const repeated = await inspectIl2cppMetadataV108(
     version108Header(Buffer.from("x\0".repeat(20))),
   );
   expect(repeated?.strings.terminated_count).toBe(20);
   expect(repeated?.strings.sample).toHaveLength(16);
-  const invalid = inspectIl2cppMetadataV108(
+  const invalid = await inspectIl2cppMetadataV108(
     version108Header(Buffer.from([0xff, 0])),
   );
   expect(invalid?.strings.sample).toEqual([
     { offset: 0, value: null, value_base64: "/w==", truncated: false },
   ]);
+  const bom = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xef, 0xbb, 0xbf, 0x41, 0])),
+  );
+  expect(bom?.strings.sample).toEqual([
+    { offset: 0, value: "\uFEFFA", value_base64: null, truncated: false },
+  ]);
+});
+
+it("yields during a large v108 string scan and honors cancellation before evidence", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-cancel-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.alloc(128 * 1024, 65)));
+  const controller = new AbortController();
+  let batches = 0;
+  const provider = new Il2cppMetadataProvider(undefined, async () => {
+    batches++;
+    controller.abort("cancel v108 scan");
+    await setImmediate();
+  });
+  try {
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(batches).toBe(1);
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  } finally {
+    await provider.close();
+  }
 });
 
 /** Version 29 file whose methods all share one long name. */

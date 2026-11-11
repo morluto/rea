@@ -22,10 +22,14 @@ const SECTION_NAMES = [
 const HEADER_BYTES = 8 + SECTION_NAMES.length * 12;
 const SAMPLE_STRINGS = 16;
 const SAMPLE_BYTES = 128;
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+const SCAN_BATCH_BYTES = 64 * 1024;
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** A bounded, header-only observation; never a decoded metadata report. */
-export const inspectIl2cppMetadataV108 = (bytes: Buffer) => {
+export const inspectIl2cppMetadataV108 = async (
+  bytes: Buffer,
+  afterBatch?: () => Promise<void>,
+) => {
   const prefix = observeIl2cppMetadataHeaderPrefix(bytes);
   if (prefix.kind !== "il2cpp" || prefix.version !== 108) return null;
   if (bytes.length < HEADER_BYTES)
@@ -82,26 +86,33 @@ export const inspectIl2cppMetadataV108 = (bytes: Buffer) => {
   }> = [];
   let start = strings.offset;
   let terminatedCount = 0;
-  for (let at = start; at < end; at++) {
-    if (bytes[at] !== 0) continue;
-    terminatedCount++;
-    if (sample.length < SAMPLE_STRINGS) {
-      const length = at - start;
-      const raw = bytes.subarray(start, start + Math.min(length, SAMPLE_BYTES));
-      let value: string | null;
-      try {
-        value = utf8.decode(raw);
-      } catch {
-        value = null;
+  for (let batch = start; batch < end; batch += SCAN_BATCH_BYTES) {
+    const batchEnd = Math.min(end, batch + SCAN_BATCH_BYTES);
+    for (let at = batch; at < batchEnd; at++) {
+      if (bytes[at] !== 0) continue;
+      terminatedCount++;
+      if (sample.length < SAMPLE_STRINGS) {
+        const length = at - start;
+        const raw = bytes.subarray(
+          start,
+          start + Math.min(length, SAMPLE_BYTES),
+        );
+        let value: string | null;
+        try {
+          value = utf8.decode(raw);
+        } catch {
+          value = null;
+        }
+        sample.push({
+          offset: start - strings.offset,
+          value,
+          value_base64: value === null ? raw.toString("base64") : null,
+          truncated: length > SAMPLE_BYTES,
+        });
       }
-      sample.push({
-        offset: start - strings.offset,
-        value,
-        value_base64: value === null ? raw.toString("base64") : null,
-        truncated: length > SAMPLE_BYTES,
-      });
+      start = at + 1;
     }
-    start = at + 1;
+    await afterBatch?.();
   }
   return {
     magic: prefix.magic,
