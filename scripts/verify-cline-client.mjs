@@ -36,10 +36,17 @@ const environment = {
   ...process.env,
   HOME: home,
   USERPROFILE: home,
+  // REA gives CLINE_MCP_SETTINGS_PATH precedence over HOME, so an inherited
+  // value would make setup rewrite the caller's real Cline configuration and
+  // leave this sandbox empty. Bind it to the sandbox explicitly.
+  CLINE_MCP_SETTINGS_PATH: configPath,
   HOPPER_LAUNCHER_PATH: join(lab, "missing-hopper"),
   GHIDRA_INSTALL_DIR: join(lab, "missing-ghidra"),
   JAVA_HOME: join(lab, "missing-java"),
 };
+const isolatedOverrides = ["CLINE_MCP_SETTINGS_PATH"].filter(
+  (name) => process.env[name] !== undefined && process.env[name] !== configPath,
+);
 
 const skip = (reason) => {
   console.log(
@@ -100,63 +107,83 @@ assert.match(
 );
 
 // 3. The exact command Cline would spawn completes an MCP handshake.
+// Sequence is canonical and stdin stays open: with eager startup a premature
+// EOF reads as cancellation and would reject a healthy server.
 const tools = await new Promise((resolve, reject) => {
   const child = spawn(registration.command, registration.args, {
     env: { ...environment, ...registration.env },
     stdio: ["pipe", "pipe", "pipe"],
   });
-  let stdout = "";
+  let buffer = "";
   let stderr = "";
-  const deadline = setTimeout(() => {
-    child.kill("SIGKILL");
-    reject(
-      new Error(
-        `the registered server did not answer tools/list within 120s: ${stderr.slice(-400)}`,
+  let settled = false;
+  const deadline = setTimeout(
+    () =>
+      settle(
+        reject,
+        new Error(`no tools/list within 120s: ${stderr.slice(-400)}`),
       ),
-    );
-  }, 120_000);
+    120_000,
+  );
+  function settle(settler, value) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(deadline);
+    child.stdin.end();
+    child.kill("SIGKILL");
+    settler(value);
+  }
+  const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => (stdout += chunk));
   child.stderr.on("data", (chunk) => (stderr += chunk));
-  child.on("error", (cause) => {
-    clearTimeout(deadline);
-    reject(cause);
-  });
+  child.on("error", (cause) => settle(reject, cause));
   child.on("close", () => {
-    clearTimeout(deadline);
-    try {
-      const messages = stdout
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line));
-      const initialized = messages.find(({ id }) => id === 1);
-      assert(
-        initialized?.result?.serverInfo?.name === "rea",
-        "initialize must identify rea",
+    if (!settled)
+      settle(
+        reject,
+        new Error(`server closed before tools/list: ${stderr.slice(-400)}`),
       );
-      const listedTools = messages.find(({ id }) => id === 2);
-      resolve(listedTools?.result?.tools ?? []);
-    } catch (cause) {
-      reject(cause);
+  });
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    for (;;) {
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) break;
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line.length === 0) continue;
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (message.id === 1) {
+        assert(
+          message.result?.serverInfo?.name === "rea",
+          "initialize must identify rea",
+        );
+        send({
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+          params: {},
+        });
+        send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+      }
+      if (message.id === 2) settle(resolve, message.result?.tools ?? []);
     }
   });
-  for (const message of [
-    {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-11-25",
-        capabilities: {},
-        clientInfo: { name: "rea-cline-verifier", version: "1" },
-      },
+  send({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "rea-cline-verifier", version: "1" },
     },
-    { jsonrpc: "2.0", method: "notifications/initialized", params: {} },
-    { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
-  ])
-    child.stdin.write(`${JSON.stringify(message)}\n`);
-  child.stdin.end();
+  });
 });
 assert(tools.length > 0, "the registered server must expose tools");
 
@@ -178,6 +205,7 @@ console.log(
         "a model-driven tool call inside Cline (providers.json is versioned and auth-shaped)",
         "the IDE extension, whose settings are UI-managed",
       ],
+      isolated_overrides: isolatedOverrides,
       process_run: await completeVerifierRun(run),
     },
     null,
