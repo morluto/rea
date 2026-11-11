@@ -31,10 +31,12 @@
 ### Task 1: Filesystem identity contract
 
 **Files:**
+
 - Modify: `src/windows/WindowsNativeLoader.ts`
 - Modify: `src/windows/WindowsNativeLoader.test.ts`
 
 **Interfaces:**
+
 - Consumes: the existing `WindowsNativeLoadHost` inspection fixture and `loadWindowsNativeAuthority`.
 - Produces: `windowsFileIdentitySchema.filesystem` accepting exactly `"NTFS" | "ReFS"`; unsupported values produce `failureStage: "inspection"`.
 
@@ -56,8 +58,9 @@ it.each(["NTFS", "ReFS"])("admits %s filesystem identities", (filesystem) => {
 });
 
 it("rejects an unsupported filesystem identity", () => {
-  expect(loadWindowsNativeAuthority(fixture({ filesystem: "exFAT" }).host))
-    .toMatchObject({ available: false, failureStage: "inspection" });
+  expect(
+    loadWindowsNativeAuthority(fixture({ filesystem: "exFAT" }).host),
+  ).toMatchObject({ available: false, failureStage: "inspection" });
 });
 ```
 
@@ -82,6 +85,7 @@ git commit -m "feat(native): admit ReFS filesystem identities"
 ### Task 2: Native admission, owned identity and real-volume verification
 
 **Files:**
+
 - Modify: `native/windows/src/authority.hpp`
 - Modify: `native/windows/src/filesystem.cc`
 - Modify: `native/windows/src/process.cc`
@@ -89,6 +93,7 @@ git commit -m "feat(native): admit ReFS filesystem identities"
 - Modify: `scripts/verify-windows-native.mjs`
 
 **Interfaces:**
+
 - Produces: `File.filesystem: std::wstring` and `Runtime.filesystem: std::wstring`, assigned at admission and inherited by handle-relative children.
 - Produces: `napi_value identity(napi_env env, HANDLE handle, const std::wstring& path, const std::wstring& filesystem)`.
 - Produces: `process-boundary.exe volume-semantics <volume-root>` returning `{"filesystem":"NTFS|ReFS|OTHER","persistentAcls":boolean}` through an independent `GetVolumeInformationByHandleW` observation.
@@ -134,6 +139,7 @@ git commit -m "feat(native): support ReFS filesystem authority"
 ### Task 3: Capability declarations, diagnostics and documentation
 
 **Files:**
+
 - Modify: `src/windows/WindowsNativeLoader.ts`
 - Modify: `src/windows/WindowsNativeLoader.test.ts`
 - Modify: `src/ghidra/GhidraProviderCapabilities.ts`
@@ -150,6 +156,7 @@ git commit -m "feat(native): support ReFS filesystem authority"
 - Modify: `docs/testing-lanes.md`
 
 **Interfaces:**
+
 - Produces: user-facing capability and recovery text limited to fixed local NTFS/ReFS, with no remaining NTFS-only claim in the touched Windows native/Ghidra workflows.
 - Produces: the real Ghidra verifier limitation `windows-x64-local-ntfs-refs-only`.
 
@@ -186,10 +193,12 @@ git commit -m "feat(native): advertise ReFS Windows support"
 ### Task 4: Final verification and Draft PR
 
 **Files:**
+
 - Modify: `docs/specs/native/windows-refs/tasks.md`
 - Create locally, never commit: `.cache/windows-refs-pr.md` and verification reports under `.cache/`.
 
 **Interfaces:**
+
 - Produces: one reviewed feature branch, a linked Draft PR, and reproducible NTFS/ReFS verification evidence. No generated binaries enter Git.
 
 - [ ] **Step 1: Run source, documentation and package checks on the final revision**
