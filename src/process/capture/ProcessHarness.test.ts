@@ -1,3 +1,4 @@
+import { assertProcessOwnershipInspectionActive } from "../ProcessInspectionCancellation.js";
 import { expect, it, vi } from "vitest";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
@@ -66,7 +67,7 @@ it("retains cancellation and cleanup facts when ownership baseline inspection ab
         createTemporaryRoot: async () => "/fixture/allocated-root",
         captureOwnershipBaseline: async () => {
           controller.abort(reason);
-          controller.signal.throwIfAborted();
+          assertProcessOwnershipInspectionActive(controller.signal);
           return [];
         },
         cleanup: async () => undefined,
@@ -247,7 +248,6 @@ it("preserves the actionable Darwin ownership compiler prerequisite", () => {
     new DarwinProcessOwnershipInspectionError(
       "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
     ),
-    undefined,
   );
 
   expect(normalized).toBeInstanceOf(ProcessCaptureError);

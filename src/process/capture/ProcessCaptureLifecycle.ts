@@ -47,6 +47,7 @@ import {
   normalizeCaptureFailure,
   processCaptureCancelled,
   ProcessCaptureError,
+  ProcessCaptureInspectionFailure,
 } from "./ProcessCaptureError.js";
 import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
@@ -641,7 +642,7 @@ export const observeSelectedExecutable = async (
       const reason = filesystemFailure(cause.outcome.cause);
       if (reason !== undefined) return { sha256: null, identity: null, reason };
     }
-    const failure = normalizeCaptureFailure(cause, signal);
+    const failure = normalizeCaptureFailure(cause);
     if (failure instanceof ProcessCaptureError) throw failure;
     const reason = filesystemFailure(failure);
     if (reason !== undefined) return { sha256: null, identity: null, reason };
@@ -1345,6 +1346,17 @@ export class ProcessCaptureResourceScope {
     if (!lease.released) this.#pending.add(lease);
   }
 
+  /** Adopt only the inspection owner's exact leases into this capture lifetime. */
+  retainInspectionFailure(
+    cause: unknown,
+  ): ProcessCaptureInspectionFailure | undefined {
+    const normalized = normalizeCaptureFailure(cause);
+    if (!(normalized instanceof ProcessCaptureInspectionFailure))
+      return undefined;
+    for (const lease of normalized.cleanupLeases) this.retain(lease);
+    return normalized;
+  }
+
   async release(
     options: ProcessCaptureResourceCleanupOptions,
   ): Promise<ProcessCaptureCleanupOutcome> {
@@ -1777,12 +1789,12 @@ export const prepareProcessCapture = async (
   readonly before: ProcessFilesystemSnapshot;
 }> => {
   assertNotCancelled(signal);
-  await host.prepareOwnershipInspector?.(signal);
-  assertNotCancelled(signal);
   let before: ProcessFilesystemSnapshot | undefined;
   let temporaryRoot: string | undefined;
   const runId = randomUUID();
   try {
+    await host.prepareOwnershipInspector?.(signal);
+    assertNotCancelled(signal);
     temporaryRoot = await host.createTemporaryRoot();
     before = await captureSnapshot(scenario, signal, undefined, {
       ...(resourceScope === undefined ? {} : { cleanup: resourceScope }),
@@ -1800,6 +1812,8 @@ export const prepareProcessCapture = async (
       for (const lease of cause.cleanupLeases) resourceScope?.retain(lease);
       failure = cause.failureForCaller();
     }
+    const normalized = normalizeCaptureFailure(failure);
+    resourceScope?.retainInspectionFailure(normalized);
     const cleanupOptions =
       temporaryRoot === undefined
         ? undefined
@@ -1829,7 +1843,7 @@ export const prepareProcessCapture = async (
           : await resourceScope.release(cleanupOptions);
     resolveProcessResult(
       undefined,
-      normalizeCaptureFailure(failure, signal),
+      normalized,
       cleanup,
       createProcessCaptureObservationBuffer({
         frames: [],

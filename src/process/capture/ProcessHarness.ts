@@ -767,7 +767,7 @@ const runProcessScenario = async (
       phase: "cleanup",
       counts: progressCounts(),
       terminal: true,
-      disposition: signal?.aborted === true ? "cancelled" : "failed",
+      disposition: captureProgressDisposition(undefined, cause),
       ...(cause instanceof ProcessCaptureError &&
       cause.cleanupReport !== undefined
         ? { cleanup: cause.cleanupReport }
@@ -879,7 +879,8 @@ const runProcessScenario = async (
       ...(progress === undefined ? {} : { onLiveProgress: reportSettling }),
     });
   } catch (cause: unknown) {
-    executionFailure = normalizeCaptureFailure(cause, signal);
+    executionFailure = normalizeCaptureFailure(cause);
+    resourceScope?.retainInspectionFailure(executionFailure);
   }
   return finishProcessRun({
     runtime,
@@ -948,7 +949,8 @@ export const captureProcessScenario = async (
       );
       return ok(capture);
     } catch (cause: unknown) {
-      const failure = normalizeCaptureFailure(cause, signal);
+      const failure = normalizeCaptureFailure(cause);
+      runResourceScope.retainInspectionFailure(failure);
       const executionFailureReason =
         describeProcessCaptureExecutionFailure(cause);
       return err(
@@ -967,7 +969,8 @@ export const captureProcessScenario = async (
     try {
       return await resourceScope.run(execute);
     } catch (cause: unknown) {
-      const failure = normalizeCaptureFailure(cause, signal);
+      const failure = normalizeCaptureFailure(cause);
+      runResourceScope.retainInspectionFailure(failure);
       const executionFailure = describeProcessCaptureExecutionFailure(cause);
       return err(
         failure instanceof AnalysisError
