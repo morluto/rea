@@ -41,11 +41,10 @@ export const composeNtfsJournalTimeline = (
   const correlate = createUsnMftCorrelator(mft.records);
   let nextFileOffset: number | null = null;
 
-  for (const result of readUsnJournal(journal)) {
+  for (const result of readUsnJournal(journal, window.startFileOffset)) {
     const fileOffset = result.ok
       ? result.value.fileOffset
       : result.error.fileOffset;
-    if (fileOffset < window.startFileOffset) continue;
     if (rows.length >= window.maxRows) {
       nextFileOffset = fileOffset;
       break;
