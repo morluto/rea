@@ -597,6 +597,23 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   },
   {
+    // Cline's CLI delegates skill management to the open skills CLI with
+    // `--agent cline`, which writes the shared `~/.agents/skills`; declaring a
+    // skillPath here would create a second, unmanaged copy.
+    name: "cline",
+    displayName: "Cline",
+    configPath: ({ home, env, platform }: ClientPathContext) =>
+      env.CLINE_MCP_SETTINGS_PATH ||
+      appendCallerPath(
+        home,
+        ".cline/data/settings/cline_mcp_settings.json",
+        platform,
+      ),
+    markerPath: ({ home, platform }: ClientPathContext) =>
+      appendCallerPath(home, ".cline", platform),
+    format: "json",
+  },
+  {
     name: "gemini_cli",
     displayName: "Gemini CLI",
     geminiSettings,
