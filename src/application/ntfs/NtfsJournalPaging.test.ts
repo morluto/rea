@@ -56,7 +56,7 @@ it("walks source-order pages with one physical acquisition and one MFT interpret
   const fixture = await acquisitions(),
     resources = new ArtifactResourceScope();
   const reads = vi.spyOn(stableArtifact, "readStableArtifact");
-  const parses = vi.spyOn(mftDecoder, "parseMftImage");
+  const parses = vi.spyOn(mftDecoder, "parseMftIndex");
   try {
     const values: string[] = [];
     for (const offset of [0, 64, 128]) {
