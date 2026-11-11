@@ -31,7 +31,7 @@ otherwise.
 `banner` is the first printable string that starts with `Linux version `
 followed by a version token beginning with a digit and ends at a NUL or
 newline within 512 bytes. `version` is that token. `builder` is the first
-parenthesized group (`user@host`). `compiler` is the second group up to the
+parenthesized group (`user@host`), or null when that group is empty. `compiler` is the second group up to the
 last `) #`, so nested parentheses in compiler strings are kept. Since Linux
 6.1, kbuild also leaves the weak banner of `init/version.o`. It is compiled
 before the build number and timestamp exist, so unless `KBUILD_BUILD_VERSION`

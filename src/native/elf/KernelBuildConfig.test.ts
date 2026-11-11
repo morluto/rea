@@ -511,6 +511,29 @@ it("finds a banner after overlapping unterminated repeats in one linear scan", a
   });
 });
 
+it("keeps the compiler group after an empty builder group", async () => {
+  for (const [builderGroup, builder] of [
+    ["()", null],
+    ["(build@host)", "build@host"],
+  ] as const) {
+    const text = `Linux version 6.1.0 ${builderGroup} (gcc 12.2.0) #1 SMP`;
+    expect((await parse(Buffer.from(`${text}\0`))).banner).toMatchObject({
+      status: "present",
+      text,
+      version: "6.1.0",
+      builder,
+      compiler: "gcc 12.2.0",
+    });
+  }
+  // Nested compiler parentheses are still kept after an empty builder group.
+  const nested =
+    "Linux version 6.1.0 () (gcc (Debian 12.2.0-14) 12.2.0) #1 SMP";
+  expect((await parse(Buffer.from(`${nested}\0`))).banner).toMatchObject({
+    builder: null,
+    compiler: "gcc (Debian 12.2.0-14) 12.2.0",
+  });
+});
+
 it("reports the link-time banner after the kbuild placeholder banner", async () => {
   // Linux 6.1+ keeps init/version.o's weak banner, built before the build
   // number and timestamp exist, ahead of the banner the kernel prints.
