@@ -1,3 +1,4 @@
+import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
 import { expect, it } from "vitest";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
@@ -75,6 +76,7 @@ it.each(["EACCES", "EPERM"] as const)(
           cleanedRoots.push(path);
         },
       },
+      createTestProcessCaptureResourceScope(),
     ).catch((cause: unknown) => cause);
     if (!(failure instanceof AnalysisError))
       throw new Error("Expected a canonical retained admission failure", {
