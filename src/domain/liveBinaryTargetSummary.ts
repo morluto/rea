@@ -83,6 +83,7 @@ export const liveBinaryTargetSummaryVariants = [
       "uf2",
       "dfuse",
       "fit",
+      "compound-file",
     ]),
     architecture: z.null(),
   }),

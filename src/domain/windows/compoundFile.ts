@@ -38,6 +38,13 @@ const SECTOR_MARKERS = new Set([
   CFB_DIFAT_SECTOR,
 ]);
 
+/**
+ * Deepest storage nesting the directory walk follows. Every level embeds its
+ * ancestors in each descendant's path, so an unbounded acyclic chain of
+ * storages would let a small admitted file demand quadratic path work.
+ */
+const MAX_TREE_DEPTH = 64;
+
 /** Header field offsets; all are relative to the start of the file. */
 const HEADER = {
   majorVersion: 0x1a,
@@ -98,6 +105,11 @@ export interface CompoundFileDirectoryEntry {
   readonly startingSector: number | null;
   /** Declared stream length. A storage's own stream is the mini stream. */
   readonly streamSize: number;
+  /**
+   * False when a version-4 entry declares more bytes than a JavaScript number
+   * carries exactly; `streamSize` then holds the largest safe integer.
+   */
+  readonly streamSizeRepresentable: boolean;
   /**
    * Where the bytes live: the FAT chain, the mini FAT inside the root storage's
    * stream, or nowhere when the entry declares no bytes.
@@ -275,11 +287,19 @@ export const parseCompoundFile = (
     );
   const sectorBytes = 1 << sectorShift;
   const miniSectorShift = header.getUint16(HEADER.miniSectorShift, true);
-  if (miniSectorShift !== 6)
+  if (miniSectorShift !== 6) {
     limitations.push(
       `header declares a mini sector shift of ${String(miniSectorShift)} rather than 6, so mini stream offsets are not 64 bytes and are not resolved`,
     );
-  const miniSectorBytes = 1 << miniSectorShift;
+  }
+  // JavaScript's `<<` is a signed 32-bit operation and masks its count, so a
+  // declared shift of 31 would publish a negative offset that the metadata
+  // schema rejects. The value is reported as-is and only a shift the schema can
+  // carry is computed.
+  const miniSectorBytes =
+    miniSectorShift >= 0 && miniSectorShift <= 30
+      ? Math.pow(2, miniSectorShift)
+      : 0;
 
   const declaredFatSectors = header.getUint32(HEADER.fatSectorCount, true);
   const declaredDifatSectors = header.getUint32(HEADER.difatSectorCount, true);
@@ -288,6 +308,14 @@ export const parseCompoundFile = (
     true,
   );
   const miniStreamCutoff = header.getUint32(HEADER.miniStreamCutoff, true);
+  // CFB fixes this field at 4096. A declared value below it would classify
+  // small streams as FAT-backed, so their mini-sector indexes could be read as
+  // ordinary sector numbers and resolve to unrelated bytes.
+  const cutoffValid = miniStreamCutoff === 4096;
+  if (!cutoffValid)
+    limitations.push(
+      `header declares a mini stream cutoff of ${String(miniStreamCutoff)} rather than the fixed 4096; stream allocation is left unresolved`,
+    );
   const firstMiniFatSector = header.getUint32(HEADER.firstMiniFatSector, true);
   const declaredMiniFatSectors = header.getUint32(
     HEADER.miniFatSectorCount,
@@ -301,6 +329,10 @@ export const parseCompoundFile = (
   if (majorVersion === 3 && directorySectorCount !== 0)
     limitations.push(
       `header declares ${String(directorySectorCount)} directory sectors, a field version 3 does not define; it was ignored`,
+    );
+  if (majorVersion === 4 && directorySectorCount === 0)
+    limitations.push(
+      "header declares no directory sector, a field version 4 requires",
     );
 
   const sectorCount = Math.floor(bytes.length / sectorBytes) - 1;
@@ -363,27 +395,29 @@ export const parseCompoundFile = (
       ),
     );
   const fat = new Uint32Array(fatSectorIds.length * entriesPerSector);
+  // DIFAT order defines which FAT indexes each sector supplies, so a block is
+  // kept at its declared ordinal: a repeated or out-of-file id leaves its cells
+  // as markers instead of letting a later block shift one position early.
   let fatCells = 0;
   let unlistedFatSectors = 0;
   const seenFatSectors = new Set<number>();
   for (const sector of fatSectorIds) {
-    if (sector >= sectorCount || isMarker(sector)) {
+    const usable =
+      sector < sectorCount && !isMarker(sector) && !seenFatSectors.has(sector);
+    if (usable) {
+      seenFatSectors.add(sector);
+      const offset = sectorOf(sector, sectorBytes);
+      const sectorView = new DataView(
+        bytes.buffer,
+        bytes.byteOffset + offset,
+        sectorBytes,
+      );
+      for (let index = 0; index < entriesPerSector; index += 1) {
+        fat[fatCells + index] = sectorView.getUint32(index * 4, true);
+      }
+    } else {
       unlistedFatSectors += 1;
-      continue;
-    }
-    if (seenFatSectors.has(sector)) {
-      unlistedFatSectors += 1;
-      continue;
-    }
-    seenFatSectors.add(sector);
-    const offset = sectorOf(sector, sectorBytes);
-    const sectorView = new DataView(
-      bytes.buffer,
-      bytes.byteOffset + offset,
-      sectorBytes,
-    );
-    for (let index = 0; index < entriesPerSector; index += 1) {
-      fat[fatCells + index] = sectorView.getUint32(index * 4, true);
+      fat.fill(CFB_FREE_SECTOR, fatCells, fatCells + entriesPerSector);
     }
     fatCells += entriesPerSector;
   }
@@ -415,6 +449,7 @@ export const parseCompoundFile = (
   if (directoryChain.sectors.length === 0)
     return err(failure("the directory stream holds no sector"));
   if (
+    majorVersion === 4 &&
     directorySectorCount !== 0 &&
     directoryChain.sectors.length !== directorySectorCount
   )
@@ -440,7 +475,7 @@ export const parseCompoundFile = (
   );
   const entryCount = Math.floor(directoryBytes.length / DIRECTORY_ENTRY_BYTES);
   const raw = Array.from({ length: entryCount }, (_, index) =>
-    readEntry(directoryBytes, directory, index),
+    readEntry(directoryBytes, directory, index, majorVersion),
   );
   for (const problem of new Set(
     raw.map((entry) => entry.nameProblem).filter((text) => text !== null),
@@ -462,17 +497,22 @@ export const parseCompoundFile = (
   const paths = new Map<number, string>();
   const visited = new Set<number>();
   let cycleCount = 0;
+  let depthLimited = 0;
   const visit = (index: number, parent: number, prefix: string): void => {
     // An explicit stack keeps a long sibling chain from nesting one call per
     // entry; a malformed tree can hold far more than the call stack allows.
-    const pending: { index: number; parent: number; prefix: string }[] = [
-      { index, parent, prefix },
-    ];
+    const pending: {
+      index: number;
+      parent: number;
+      prefix: string;
+      depth: number;
+    }[] = [{ index, parent, prefix, depth: 0 }];
     while (pending.length > 0) {
       const next = pending.pop() as {
         index: number;
         parent: number;
         prefix: string;
+        depth: number;
       };
       const entryIndex = next.index;
       if (entryIndex >= entryCount) {
@@ -500,17 +540,31 @@ export const parseCompoundFile = (
       if (entry.leftSibling !== null)
         pending.push({
           index: entry.leftSibling,
-          parent: entryIndex,
+          parent: next.parent,
           prefix: next.prefix,
+          depth: next.depth,
         });
       if (entry.rightSibling !== null)
         pending.push({
           index: entry.rightSibling,
-          parent: entryIndex,
+          parent: next.parent,
           prefix: next.prefix,
+          depth: next.depth,
         });
-      if (path !== null && entry.type !== "stream" && entry.child !== null)
-        pending.push({ index: entry.child, parent: entryIndex, prefix: path });
+      // An unnamed storage still owns its children, so they are walked with the
+      // parent's prefix rather than dropped as unreachable.
+      if (entry.type !== "stream" && entry.child !== null) {
+        if (next.depth >= MAX_TREE_DEPTH) {
+          depthLimited += 1;
+          continue;
+        }
+        pending.push({
+          index: entry.child,
+          parent: entryIndex,
+          prefix: path ?? next.prefix,
+          depth: next.depth + 1,
+        });
+      }
     }
   };
   const visitTree = (
@@ -530,6 +584,10 @@ export const parseCompoundFile = (
     limitations.push(
       `${String(cycleCount)} directory tree link(s) lead back to an entry already listed; those entries keep their first path and the repeating link was not followed`,
     );
+  if (depthLimited !== 0)
+    limitations.push(
+      `${String(depthLimited)} storage(s) nest deeper than ${String(MAX_TREE_DEPTH)} levels; their descendant paths are not resolved`,
+    );
   const orphanCount = raw.filter(
     (entry, index) =>
       index !== rootIndex && entry.type !== "unknown" && !visited.has(index),
@@ -539,6 +597,10 @@ export const parseCompoundFile = (
       `${String(orphanCount)} directory entr(ies) are not reachable from the root storage and have no path`,
     );
 
+  // Only streams and the root storage's mini stream have stream allocation
+  // semantics; an ordinary storage's size and start fields are stale.
+  const allocationBearing = (entry: RawEntry): boolean =>
+    entry.type === "stream" || entry.type === "root-storage";
   let brokenChains = 0;
   const entries: CompoundFileDirectoryEntry[] = raw.map((entry, index) => {
     const parent = parents.get(index) ?? null;
@@ -546,12 +608,21 @@ export const parseCompoundFile = (
     const startingSector = isMarker(entry.startingSector)
       ? null
       : entry.startingSector;
-    const empty = entry.streamSize === 0 || startingSector === null;
-    const storage: CompoundFileDirectoryEntry["storage"] = empty
-      ? "empty"
-      : entry.type !== "root-storage" && entry.streamSize < miniStreamCutoff
-        ? "mini"
-        : "fat";
+    // A stream is empty only when it declares no bytes. A stream that declares
+    // bytes but starts at a marker reaches none of them, which is a broken
+    // chain rather than an empty stream.
+    const markerStartWithBytes =
+      isMarker(entry.startingSector) && entry.streamSize > 0;
+    const empty = entry.streamSize === 0;
+    const storage: CompoundFileDirectoryEntry["storage"] =
+      !allocationBearing(entry) || !cutoffValid
+        ? "empty"
+        : empty
+          ? "empty"
+          : entry.type !== "root-storage" && entry.streamSize < 4096
+            ? "mini"
+            : "fat";
+    if (markerStartWithBytes) brokenChains += 1;
     if (storage !== "fat" || startingSector === null)
       return {
         index,
@@ -564,19 +635,23 @@ export const parseCompoundFile = (
         child: entry.child,
         startingSector,
         streamSize: entry.streamSize,
+        streamSizeRepresentable: !entry.streamSizeUnrepresentable,
         storage,
         contiguous: null,
         byteOffset: null,
       };
     const chain = chainOf(table, startingSector, sectorBytes, bytes.length);
     const needed = Math.ceil(entry.streamSize / sectorBytes);
+    // A chain is complete when it did not break and reaches the declared size.
+    // Contiguity is a separate fact: a short chain whose reached sectors happen
+    // to be consecutive is still incomplete.
     const complete = !chain.broken && chain.sectors.length >= needed;
-    if (!complete) brokenChains += 1;
     const contiguous =
-      complete &&
+      !chain.broken &&
       chain.sectors.every(
         (sector, position) => sector === startingSector + position,
       );
+    if (!complete && !markerStartWithBytes) brokenChains += 1;
     return {
       index,
       path,
@@ -588,9 +663,11 @@ export const parseCompoundFile = (
       child: entry.child,
       startingSector,
       streamSize: entry.streamSize,
+      streamSizeRepresentable: !entry.streamSizeUnrepresentable,
       storage,
       contiguous,
-      byteOffset: contiguous ? sectorOf(startingSector, sectorBytes) : null,
+      byteOffset:
+        contiguous && complete ? sectorOf(startingSector, sectorBytes) : null,
     };
   });
 
@@ -615,7 +692,9 @@ export const parseCompoundFile = (
     storage_count: entries.filter((entry) => entry.type === "storage").length,
     root_storage_count: entries.filter((entry) => entry.type === "root-storage")
       .length,
-    unallocated_entry_count: entries.filter((entry) => entry.type === "unknown")
+    // Only a declared type 0 is unallocated; a type the format does not define
+    // is counted once, in `unreadable_entry_count`.
+    unallocated_entry_count: raw.filter((entry) => entry.declaredType === 0)
       .length,
     orphan_entry_count: orphanCount,
     unreadable_entry_count: raw.filter((entry) => !entry.definedType).length,
@@ -631,17 +710,25 @@ interface RawEntry {
   readonly nameProblem: string | null;
   readonly type: CompoundFileEntryType;
   readonly definedType: boolean;
+  /** The type byte exactly as declared, before it is mapped or rejected. */
+  readonly declaredType: number;
   readonly leftSibling: number | null;
   readonly rightSibling: number | null;
   readonly child: number | null;
   readonly startingSector: number;
   readonly streamSize: number;
+  /**
+   * Set when a version-4 entry declares more bytes than a JavaScript number
+   * carries exactly; the value is reported as unresolved rather than truncated.
+   */
+  readonly streamSizeUnrepresentable: boolean;
 }
 
 const readEntry = (
   directoryBytes: Uint8Array,
   directory: DataView,
   index: number,
+  majorVersion: number,
 ): RawEntry => {
   const base = index * DIRECTORY_ENTRY_BYTES;
   const entry = directoryBytes.subarray(base, base + DIRECTORY_ENTRY_BYTES);
@@ -650,10 +737,15 @@ const readEntry = (
   const rawType = directory.getUint8(base + ENTRY.objectType);
   const type = entryTypeOf(rawType);
   // Version 3 entries only carry the low 32 bits of the stream size; the high
-  // 32 bits are reserved and may be stale.
-  const streamSize = Number(
-    view.getBigUint64(ENTRY.streamSize, true) & 0xffff_ffffn,
-  );
+  // 32 bits are reserved and may be stale. Version 4 uses the whole 64-bit
+  // field, so masking it there would turn 0x1_00000001 into a one-byte stream.
+  const rawSize = view.getBigUint64(ENTRY.streamSize, true);
+  const declaredSize = majorVersion === 3 ? rawSize & 0xffff_ffffn : rawSize;
+  const streamSizeUnrepresentable =
+    declaredSize > BigInt(Number.MAX_SAFE_INTEGER);
+  const streamSize = streamSizeUnrepresentable
+    ? Number.MAX_SAFE_INTEGER
+    : Number(declaredSize);
   const linkOf = (offset: number): number | null => {
     const value = view.getUint32(offset, true);
     return value === CFB_FREE_SECTOR ? null : value;
@@ -663,11 +755,13 @@ const readEntry = (
     nameProblem: problem,
     type: type ?? "unknown",
     definedType: type !== null,
+    declaredType: rawType,
     leftSibling: linkOf(ENTRY.leftSibling),
     rightSibling: linkOf(ENTRY.rightSibling),
     child: linkOf(ENTRY.child),
     startingSector: view.getUint32(ENTRY.startingSector, true),
     streamSize,
+    streamSizeUnrepresentable,
   };
 };
 
@@ -685,12 +779,15 @@ class StreamingCompoundFileDecoder implements RegionDecoder<CompoundFileImage> {
   }
 
   finish(): Result<CompoundFileImage, RegionDecodeFailure> {
+    // The chunks are copied into one image once; the chunk list is released
+    // before parsing so a file near the ceiling does not retain two copies.
     const bytes = new Uint8Array(this.#length);
     let written = 0;
     for (const chunk of this.#chunks) {
       bytes.set(chunk, written);
       written += chunk.length;
     }
+    this.#chunks.length = 0;
     return parseCompoundFile(bytes);
   }
 }

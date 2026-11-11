@@ -165,8 +165,27 @@ it("reports a chain that is contiguous but shorter than the declared size", () =
     }),
   );
   expect(image.metadata.broken_chain_count).toBe(1);
+  // The three sectors the chain does reach are consecutive, so contiguity is
+  // reported as a fact separate from the chain being too short; the stream has
+  // no complete byte range, so no offset is published.
   expect(image.entries.find((entry) => entry.name === "short")).toMatchObject({
-    contiguous: false,
+    contiguous: true,
+    byteOffset: null,
+  });
+});
+
+it("classifies a stream that starts at a marker with bytes as a broken chain", () => {
+  const image = parse(
+    compoundFile({
+      entries: root(1, [{ name: "marker", type: 2, start: FREE, size: 8192 }]),
+    }),
+  );
+  expect(image.metadata.broken_chain_count).toBe(1);
+  expect(image.entries.find((entry) => entry.name === "marker")).toMatchObject({
+    storage: "fat",
+    startingSector: null,
+    contiguous: null,
+    byteOffset: null,
   });
 });
 

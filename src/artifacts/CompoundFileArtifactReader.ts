@@ -31,6 +31,8 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
   readonly #entries = new Map<string, ArtifactEntry>();
+  /** Logical path to source ordinal, so `open` finds the entry it was given. */
+  readonly #byPath = new Map<string, string>();
   #prepared: Promise<void> | undefined;
   #metadata: CompoundFileMetadata | undefined;
   #limitations: readonly string[] = [];
@@ -80,18 +82,21 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
-      const stored = this.#entries.get(entry.path);
+      const key = this.#byPath.get(entry.path);
+      const stored = key === undefined ? undefined : this.#entries.get(key);
       if (stored === undefined || !sameRange(entry, stored))
         throw new ArtifactReaderFailure(
           "integrity",
           `compound file entry does not match its owning inventory: ${entry.path}`,
         );
+      // A zero-byte stream has no sector range and opens as an empty stream;
+      // requiring a byte offset here would make every empty file unreadable.
+      if (stored.declaredSize === 0) return Readable.from([]);
       if (stored.byteOffset === null || stored.declaredSize === null)
         throw new ArtifactReaderFailure(
           "format",
           `compound file stream has no contiguous byte range: ${stored.path}`,
         );
-      if (stored.declaredSize === 0) return Readable.from([]);
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
       return readFileHandleChunks(handle, {
@@ -107,6 +112,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
+    this.#byPath.clear();
     this.#metadata = undefined;
   }
 
@@ -127,9 +133,17 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     const image = await this.#decode(signal);
     this.#metadata = image.metadata;
     this.#limitations = image.limitations;
+    // Directory entries are keyed by their source ordinal, not by path: a
+    // damaged tree can hold two entries with the same logical path, and one
+    // must not silently replace the other.
+    const claimed = new Set<string>();
     for (const entry of image.entries) {
       const artifact = toArtifactEntry(entry);
-      if (artifact !== null) this.#entries.set(artifact.path, artifact);
+      if (artifact === null) continue;
+      const key = String(entry.index);
+      const placed = claimPath(artifact, claimed, entry.index);
+      this.#entries.set(key, placed);
+      this.#byPath.set(placed.path, key);
     }
     await this.#source.read(signal);
   }
@@ -177,19 +191,46 @@ const sameRange = (entry: ArtifactEntry, stored: ArtifactEntry): boolean =>
   entry.byteOffset === stored.byteOffset &&
   entry.declaredSize === stored.declaredSize;
 
+/**
+ * The root storage has no name of its own and two entries can share a logical
+ * path, so an entry whose path is already claimed by another is listed under
+ * its source ordinal instead. The original name is kept in `sourcePath`.
+ */
+const claimPath = (
+  entry: ArtifactEntry,
+  claimed: Set<string>,
+  index: number,
+): ArtifactEntry => {
+  const fallback = `entry-${String(index)}`;
+  const collides = entry.path === "" || claimed.has(entry.path);
+  const path = collides ? fallback : entry.path;
+  claimed.add(path);
+  if (!collides) return entry;
+  return {
+    ...entry,
+    path,
+    ...(entry.path === "" ? {} : { sourcePath: entry.path }),
+    limitations: [
+      ...entry.limitations,
+      "Another directory entry already claimed this logical path, so this entry is listed under its source ordinal; the original name, when it has one, is retained in sourcePath.",
+    ],
+  };
+};
+
 const toArtifactEntry = (
   entry: CompoundFileDirectoryEntry,
 ): ArtifactEntry | null => {
   const path = entry.path;
-  // An unnamed entry, or one outside the root's tree, has no logical path; the
-  // parse's limitations already count those.
-  if (path === null || path === "") return null;
-  if (entry.type === "storage" || entry.type === "root-storage") {
-    const declaredSize = entry.type === "root-storage" ? entry.streamSize : 0;
+  // The root storage is the container itself, not a member of it. An unnamed
+  // entry has no name to list. An entry outside the root's tree keeps its
+  // declared facts under its source ordinal; the parse counts orphans.
+  if (entry.type === "root-storage") return null;
+  if (path === null && entry.name === null) return null;
+  if (entry.type === "storage") {
     return {
-      path,
+      path: path ?? "",
       kind: "directory",
-      declaredSize,
+      declaredSize: 0,
       compressedSize: null,
       executable: false,
       encrypted: false,
@@ -197,9 +238,9 @@ const toArtifactEntry = (
       declaredIntegrity: null,
       unpacked: false,
       limitations:
-        entry.type === "root-storage"
+        path === null
           ? [
-              "The root storage's own stream holds the mini stream; resolvable for entries whose storage is 'mini' only through the mini FAT, which this step does not walk.",
+              "This entry is not reachable from the root storage, so it has no logical path; its declared name and facts are kept.",
             ]
           : [],
       adapterKey: `compound-file/${String(entry.index)}`,
@@ -207,6 +248,10 @@ const toArtifactEntry = (
   }
   if (entry.type !== "stream") return null;
   const limitations: string[] = [];
+  if (path === null)
+    limitations.push(
+      "This entry is not reachable from the root storage, so it has no logical path; its declared name and facts are kept.",
+    );
   // A mini stream needs the root storage's chain and the mini FAT walked; a
   // split chain has no single range. Both are listed as declarations rather
   // than as content this step claims to reproduce.
@@ -214,19 +259,27 @@ const toArtifactEntry = (
     limitations.push(
       "This stream is smaller than the mini stream cutoff and lives in the root storage's mini stream; its byte range is not resolved in this step.",
     );
+  if (entry.storage === "empty" && entry.streamSize > 0)
+    limitations.push(
+      "This stream declares bytes but its allocation is unresolved, so it has no byte range in this step.",
+    );
   if (entry.storage !== "mini" && entry.contiguous === false)
     limitations.push(
       "This stream's FAT chain is not contiguous, so it has no single byte range in this step.",
     );
-  const resolvable = entry.storage === "fat" && entry.byteOffset !== null;
+  // A zero-byte stream is a file: it has content (none) and opens as empty,
+  // rather than being reported as metadata that carries no bytes.
+  const resolvable =
+    (entry.storage === "fat" && entry.byteOffset !== null) ||
+    (entry.storage === "empty" && entry.streamSize === 0);
   return {
-    path,
+    path: path ?? "",
     kind: resolvable ? "file" : "metadata",
     declaredSize: entry.streamSize,
     compressedSize: null,
     executable: false,
     encrypted: false,
-    byteOffset: resolvable ? entry.byteOffset : null,
+    byteOffset: resolvable && entry.streamSize > 0 ? entry.byteOffset : null,
     declaredIntegrity: null,
     unpacked: false,
     limitations,

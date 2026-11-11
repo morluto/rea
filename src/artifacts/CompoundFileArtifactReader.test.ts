@@ -143,6 +143,15 @@ it("names an entry outside the root tree as an orphan with no path", async () =>
   expect(inventory.limitations).toContainEqual(
     expect.stringMatching(/not reachable from the root storage/u),
   );
+  // The orphan keeps its declared facts; it is listed under a derived path
+  // because the tree gives it none.
+  const listed = inventory.occurrences.find(
+    (row) => row.logical_path === "entry-1",
+  );
+  expect(listed).toMatchObject({ logical_path: "entry-1" });
+  expect(listed?.limitations).toContainEqual(
+    expect.stringMatching(/not reachable from the root storage/u),
+  );
 });
 
 it("reports a stream whose FAT chain leaves the file", async () => {
