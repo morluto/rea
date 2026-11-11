@@ -17,6 +17,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -323,6 +324,16 @@ const captureReadFailure = (
           "Capture read and file-handle close both failed",
           { cause },
         );
+  if (cause instanceof ConfigurationError) {
+    if (closeFailure === undefined) return cause;
+    return new ConfigurationError(cause.message, {
+      cause: causeWithClose,
+      settings: cause.settings,
+      ...(cause.remediationAction === undefined
+        ? {}
+        : { remediationAction: cause.remediationAction }),
+    });
+  }
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
   if (code === "EACCES" || code === "EPERM")
