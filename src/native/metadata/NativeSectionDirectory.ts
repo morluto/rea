@@ -311,7 +311,7 @@ export function* readElfSectionDirectory(
         alignment: section.alignment,
         file_backed:
           type !== 8 && declaredFileRange(fileSize, offset, size).file_backed,
-        compressed: (section.flags & 0x800n) !== 0n,
+        compressed: section.compressed,
       });
     }
   }
