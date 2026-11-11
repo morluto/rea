@@ -102,7 +102,7 @@ it("reports incomplete coverage when FILE extents contradict the record slots", 
   });
 });
 
-it("does not publish metadata when final source verification fails", async () => {
+it("retries after final source verification fails without publishing its metadata", async () => {
   const reader = new NtfsMftArtifactReader(
     await writeMft("$MFT", recordBytes({})),
   );
@@ -118,6 +118,13 @@ it("does not publish metadata when final source verification fails", async () =>
       "final source verification failed",
     );
     expect(reader.formatMetadata()).toBeUndefined();
+    await expect(reader.entries().next()).resolves.toMatchObject({
+      done: true,
+    });
+    expect(reader.formatMetadata()).toMatchObject({
+      kind: "ntfs-mft",
+      record_count: 1,
+    });
   } finally {
     spy.mockRestore();
     await reader.close();
