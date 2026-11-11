@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -29,8 +30,44 @@ const CENTRALIZED_CONSTRUCTOR_OWNER =
 const repositoryPath = (root, path) =>
   relative(root, path).replaceAll("\\", "/");
 
-const sourceTarget = (file, specifier) => {
+const packageImports = new Map();
+
+/** Read the package map once per repository root. */
+const readPackageImports = (root) => {
+  if (!packageImports.has(root)) {
+    try {
+      const manifest = JSON.parse(
+        readFileSync(resolve(root, "package.json"), "utf8"),
+      );
+      packageImports.set(root, manifest.imports ?? {});
+    } catch {
+      packageImports.set(root, {});
+    }
+  }
+  return packageImports.get(root);
+};
+
+/**
+ * The own source file a package-map specifier names.
+ *
+ * The map points at built output under `dist/`, so the same ownership rule is
+ * applied to the source file that produces it. Without this the gate silently
+ * accepts every `#`-prefixed import, which is the spelling the package map exists
+ * to encourage.
+ */
+const packageMapTarget = (root, specifier) => {
+  const target = readPackageImports(root)[specifier];
+  if (typeof target !== "string") return undefined;
+  const source = target
+    .replace(/^\.\//u, "")
+    .replace(/^dist\//u, "src/")
+    .replace(/\.(?:js|mjs|cjs)$/u, ".ts");
+  return source.startsWith("src/") ? resolve(root, source) : undefined;
+};
+
+const sourceTarget = (root, file, specifier) => {
   if (specifier.startsWith("file:")) return fileURLToPath(specifier);
+  if (specifier.startsWith("#")) return packageMapTarget(root, specifier);
   if (isAbsolute(specifier)) return resolve(specifier);
   return specifier.startsWith(".")
     ? fileURLToPath(new URL(specifier, pathToFileURL(file)))
@@ -101,7 +138,7 @@ export const inspectModuleBoundaries = (file, source, root) => {
   const importer = repositoryPath(root, absoluteFile);
   const violations = [];
   for (const { specifier, line, typeOnly } of readImportSpecifiers(source)) {
-    const resolved = sourceTarget(absoluteFile, specifier);
+    const resolved = sourceTarget(root, absoluteFile, specifier);
     if (resolved === undefined) continue;
     const target = repositoryPath(root, resolved);
     const boundary = failedBoundary(importer, target, typeOnly);
