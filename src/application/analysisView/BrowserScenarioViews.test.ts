@@ -83,6 +83,57 @@ const view = async (
   return projected.value.normalized_result as Record<string, unknown>;
 };
 
+it("summarizes every three-digit status bucket within the advertised output contract", async () => {
+  const contract = ANALYSIS_VIEW_TOOL_CONTRACTS.find(
+    ({ name }) => name === "inspect_analysis_view",
+  );
+  if (contract === undefined)
+    throw new Error("Missing inspect_analysis_view contract");
+  const validateOutput = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  }).compile(z.toJSONSchema(contract.outputSchema));
+  for (const [status, statusClass] of [
+    [100, "1xx"],
+    [200, "2xx"],
+    [300, "3xx"],
+    [400, "4xx"],
+    [599, "5xx"],
+    [600, "6xx"],
+    [700, "7xx"],
+    [800, "8xx"],
+    [999, "9xx"],
+  ] as const) {
+    const capture = scenarioCaptureFixture([
+      { method: "GET", url: "/status", status },
+    ]);
+    const original = JSON.stringify(capture);
+    const result = await inspectAnalysisView({
+      source: { kind: "inline", evidence: scenarioCaptureEvidence(capture) },
+      view: { kind: "summary" },
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      summary: {
+        network: {
+          by_status_class: [{ status_class: statusClass, transactions: 1 }],
+        },
+      },
+    });
+    expect(contract.outputSchema.safeParse(result.value).success).toBe(true);
+    expect(
+      validateOutput(result.value),
+      JSON.stringify(validateOutput.errors),
+    ).toBe(true);
+    expect(JSON.stringify(capture)).toBe(original);
+    expect(capture.events.items).toContainEqual(
+      expect.objectContaining({ kind: "response", status }),
+    );
+  }
+});
+
 describe("browser scenario analysis views", () => {
   it("counts inherited Evidence limitations alongside capture-local caveats", async () => {
     const capture = scenarioCaptureFixture();
@@ -558,55 +609,4 @@ describe("browser scenario text and selection boundaries", () => {
       coverage: { status: "empty", exhausted: true },
     });
   });
-});
-
-it("summarizes every three-digit status bucket within the advertised output contract", async () => {
-  const contract = ANALYSIS_VIEW_TOOL_CONTRACTS.find(
-    ({ name }) => name === "inspect_analysis_view",
-  );
-  if (contract === undefined)
-    throw new Error("Missing inspect_analysis_view contract");
-  const validateOutput = new Ajv2020({
-    strict: false,
-    validateFormats: false,
-    inlineRefs: false,
-    code: { optimize: false },
-  }).compile(z.toJSONSchema(contract.outputSchema));
-  for (const [status, statusClass] of [
-    [100, "1xx"],
-    [200, "2xx"],
-    [300, "3xx"],
-    [400, "4xx"],
-    [599, "5xx"],
-    [600, "6xx"],
-    [700, "7xx"],
-    [800, "8xx"],
-    [999, "9xx"],
-  ] as const) {
-    const capture = scenarioCaptureFixture([
-      { method: "GET", url: "/status", status },
-    ]);
-    const original = JSON.stringify(capture);
-    const result = await inspectAnalysisView({
-      source: { kind: "inline", evidence: scenarioCaptureEvidence(capture) },
-      view: { kind: "summary" },
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.normalized_result).toMatchObject({
-      summary: {
-        network: {
-          by_status_class: [{ status_class: statusClass, transactions: 1 }],
-        },
-      },
-    });
-    expect(contract.outputSchema.safeParse(result.value).success).toBe(true);
-    expect(
-      validateOutput(result.value),
-      JSON.stringify(validateOutput.errors),
-    ).toBe(true);
-    expect(JSON.stringify(capture)).toBe(original);
-    expect(capture.events.items).toContainEqual(
-      expect.objectContaining({ kind: "response", status }),
-    );
-  }
 });
