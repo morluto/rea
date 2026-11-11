@@ -423,11 +423,7 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
     if (known.format) dimensions.push("format");
     if (known.executable) dimensions.push("executable");
     if (input.relations === "changed") dimensions.push("relations");
-    if (
-      known.metadata ||
-      declaredDigestsDiffer(input) ||
-      integrityClaimNoteDiffers(input)
-    )
+    if (known.metadata || declaredDigestsDiffer(input))
       dimensions.push("metadata");
     dimensions.push("availability");
     return {
@@ -665,21 +661,6 @@ const declaredDigestsDiffer = (input: OccurrencePair): boolean => {
   const right = input.rightOccurrence?.declared_integrity;
   if (left === undefined || right === undefined) return left !== right;
   return left.algorithm === right.algorithm && left.digest !== right.digest;
-};
-
-/**
- * An all-zero Godot MD5 is not a digest, so the reader records a limitation
- * instead. That note is the metadata difference from a side that does claim one.
- * A caveat that is not paired with a one-sided integrity claim is not a change.
- */
-const integrityClaimNoteDiffers = (input: OccurrencePair): boolean => {
-  const leftClaim = input.leftOccurrence?.declared_integrity !== undefined;
-  const rightClaim = input.rightOccurrence?.declared_integrity !== undefined;
-  if (leftClaim === rightClaim) return false;
-  return (
-    JSON.stringify(input.leftOccurrence?.limitations ?? []) !==
-    JSON.stringify(input.rightOccurrence?.limitations ?? [])
-  );
 };
 
 const changedDimensions = (input: {

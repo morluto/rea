@@ -451,6 +451,25 @@ it("compares declared digests without using limitation prose", () => {
   const equal = changes(unavailable(claim), unavailable(claim));
   const oneSided = changes(unavailable(claim), unavailable());
   const different = changes(unavailable(claim), unavailable(edited));
+  const noted = (
+    integrity:
+      | { readonly algorithm: "md5"; readonly digest: string }
+      | undefined,
+    limitations: readonly string[],
+  ) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: [...limitations],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const sameClaimDifferentNotes = changes(
+    noted(claim, ["reader caveat"]),
+    noted(claim, ["different caveat"]),
+  );
+  const absentDifferentNotes = changes(
+    noted(undefined, ["unread container suffix"]),
+    noted(undefined, ["content access failed"]),
+  );
   expect(equal.length).toBeGreaterThan(0);
   expect(oneSided).toHaveLength(equal.length);
   expect(different).toHaveLength(equal.length);
@@ -460,6 +479,8 @@ it("compares declared digests without using limitation prose", () => {
       dimensions: ["availability"],
     })),
   );
+  expect(sameClaimDifferentNotes).toEqual(equal);
+  expect(absentDifferentNotes).toEqual(equal);
   for (const result of [oneSided, different])
     expect(result).toEqual(
       result.map(() => ({
