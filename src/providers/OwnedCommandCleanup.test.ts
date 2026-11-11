@@ -1,6 +1,7 @@
+import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import {
   processInspectionCancellationError,
@@ -12,7 +13,10 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import {
+  OwnedCommandFailure,
+  prepareOwnedCommand,
+} from "../process/OwnedCommand.js";
 import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,
@@ -196,8 +200,8 @@ it.each([undefined, NaN, false])(
     expect(error?.inspectionFailure).toBe(batch);
     expect(error?.cause).toBe(reason);
     expect(error?.diagnostics).toEqual({
-      completed_identity_count: 1,
-      failed_identity_count: 1,
+      retained_observation_count: 1,
+      rejected_request_count: 1,
     });
     expect(
       processInspectionCancellationError(
@@ -240,10 +244,11 @@ it("retains only explicit mixed cancellations once without an ambient abort", as
   const primary = new AnalysisOutputError("inspect", "physical", {
     cause: batch,
   });
+  const resources = new ArtifactResourceScope();
   const projected = retainProcessInspectionCleanup(
     batch,
     primary,
-    undefined,
+    resources,
     "inspect",
   );
   expect(primaryAnalysisError(projected)).toBe(primary);
@@ -260,7 +265,9 @@ it("retains only explicit mixed cancellations once without an ambient abort", as
   expect(projected.cleanupResources).toEqual([file.path]);
   expect(projected.cleanupIncomplete).toBe(true);
   file.allow();
-  await file.failure.owner.close();
+  await resources.close();
+  expect(projected.cleanupIncomplete).toBe(false);
+  expect(file.handle.fd).toBe(-1);
 });
 
 it("preserves Darwin cancellation output and does not invent cleanup authority", () => {
@@ -291,4 +298,57 @@ it("preserves Darwin cancellation output and does not invent cleanup authority",
   ).toEqual([cleanup]);
   expect(retained).toEqual([]);
   expect(cleanup.cleanupIncomplete).toBe(true);
+});
+
+it("keeps executed-command cancellation outside the inspection factory and binder", () => {
+  const command = new OwnedCommandFailure(
+    "cancelled",
+    "execution stopped",
+    null,
+    null,
+    {
+      cancellation: { reason: false },
+      cause: new ProcessOwnershipInspectionCancelled(false),
+    },
+  );
+  expect(
+    processInspectionCancellationError(command, "inspect"),
+  ).toBeUndefined();
+  const primary = new AnalysisOutputError("inspect", "physical execution");
+  const error = retainProcessInspectionCleanup(
+    command,
+    primary,
+    new ArtifactResourceScope(),
+    "inspect",
+  );
+  expect(error).toBe(primary);
+  expect(primary.secondaryFailures).toEqual([]);
+});
+
+it("preserves the actual plain preparation fact through the command and adapter owners", async () => {
+  const platform = Object.getOwnPropertyDescriptor(
+    systemProcessOwnershipHost,
+    "platform",
+  )!;
+  Object.defineProperty(systemProcessOwnershipHost, "platform", {
+    value: "darwin",
+    configurable: true,
+  });
+  const fact = new ProcessOwnershipInspectionCancelled(false);
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(fact);
+  onTestFinished(() => {
+    prepare.mockRestore();
+    Object.defineProperty(systemProcessOwnershipHost, "platform", platform);
+  });
+  const command: unknown = await prepareOwnedCommand().catch(
+    (failure: unknown) => failure,
+  );
+  expect(command).toBeInstanceOf(OwnedCommandFailure);
+  if (!(command instanceof OwnedCommandFailure)) throw command;
+  expect(command.preparationFailure).toBe(fact);
+  const error = processInspectionCancellationError(command, "inspect");
+  expect(error?.inspectionFailure).toBe(fact);
+  expect(error?.cause).toBe(false);
 });

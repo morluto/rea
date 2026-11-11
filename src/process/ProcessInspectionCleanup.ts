@@ -9,6 +9,12 @@ import {
   ProcessOwnershipIdentityBatchFailure,
 } from "./ProcessInspectionCancellation.js";
 
+export type ProcessInspectionFailure =
+  | ProcessOwnershipInspectionCancelled
+  | ProcessOwnershipIdentityBatchFailure
+  | RegularFileCleanupFailure
+  | DarwinProcessOwnershipInspectionError;
+
 export type ProcessInspectionCleanupFailure =
   | DarwinProcessOwnershipInspectionError
   | RegularFileCleanupFailure;
@@ -69,7 +75,6 @@ export const processInspectionCancellations = (
     if (visited.has(failure)) return;
     visited.add(failure);
     if (failure instanceof OwnedCommandFailure) {
-      add(failure.cancellation);
       visit(failure.preparationFailure);
     } else if (failure instanceof ProcessOwnershipIdentityBatchFailure) {
       for (const entry of failure.cancellations) visit(entry.cancellation);
@@ -78,7 +83,8 @@ export const processInspectionCancellations = (
       add(failure.cancellation);
     else if (failure instanceof RegularFileCleanupFailure)
       add(regularFileCancellation(failure));
-    else add(ProcessOwnershipInspectionCancelled.from(failure));
+    else if (failure instanceof ProcessOwnershipInspectionCancelled)
+      add(failure);
   };
   visit(cause);
   return facts;

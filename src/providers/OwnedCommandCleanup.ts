@@ -1,3 +1,4 @@
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
@@ -7,6 +8,7 @@ import {
 import {
   processInspectionCleanupFailures,
   processInspectionCancellations,
+  type ProcessInspectionFailure,
 } from "../process/ProcessInspectionCleanup.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -21,7 +23,7 @@ import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 /** Transfer exact helper and command cleanup capabilities to the caller's scope. */
 const retainCommandCleanup = (
   cause: unknown,
-  resourceOwner: RetainedResourceScope | undefined,
+  resourceOwner: RetainedResourceScope,
   providerId: string,
   operation: string,
 ): readonly AnalysisError[] => {
@@ -55,7 +57,7 @@ const retainCommandCleanup = (
     if (owner === undefined) continue;
     const lease = new AnalysisCleanupLease(() => owner.close(), cleanup);
     lease.bindCleanupError(cleanup);
-    resourceOwner?.retain(
+    resourceOwner.retain(
       {
         close: () => lease.release(),
         get cleanupResources() {
@@ -106,7 +108,7 @@ const retainCommandCleanup = (
     }, commandFailure.resources);
     cleanup.bindCleanupResourceOwner(lease);
     lease.bindCleanupError(cleanup);
-    resourceOwner?.retain(
+    resourceOwner.retain(
       {
         close: () => lease.release(),
         get cleanupResources() {
@@ -132,7 +134,7 @@ export const retainOwnedCommandCleanup = (
 export class ProcessInspectionAnalysisCancelledError extends AnalysisCancelledError {
   constructor(
     operation: string,
-    readonly inspectionFailure: object,
+    readonly inspectionFailure: ProcessInspectionFailure,
     reason: unknown,
   ) {
     super(operation, {
@@ -144,8 +146,8 @@ export class ProcessInspectionAnalysisCancelledError extends AnalysisCancelledEr
       ...(inspectionFailure instanceof ProcessOwnershipIdentityBatchFailure
         ? {
             diagnostics: {
-              completed_identity_count: inspectionFailure.observations.size,
-              failed_identity_count: inspectionFailure.failures.length,
+              retained_observation_count: inspectionFailure.observations.size,
+              rejected_request_count: inspectionFailure.failures.length,
             },
           }
         : {}),
@@ -153,57 +155,63 @@ export class ProcessInspectionAnalysisCancelledError extends AnalysisCancelledEr
   }
 }
 
+const inspectionFailure = (
+  cause: unknown,
+): ProcessInspectionFailure | undefined => {
+  const failure =
+    cause instanceof OwnedCommandFailure ? cause.preparationFailure : cause;
+  return failure instanceof ProcessOwnershipInspectionCancelled ||
+    failure instanceof ProcessOwnershipIdentityBatchFailure ||
+    failure instanceof DarwinProcessOwnershipInspectionError ||
+    failure instanceof RegularFileCleanupFailure
+    ? failure
+    : undefined;
+};
+
 export const processInspectionCancellationError = (
   cause: unknown,
   operation: string,
 ): ProcessInspectionAnalysisCancelledError | undefined => {
-  if (cause instanceof OwnedCommandFailure) {
-    if (cause.reason !== "cancelled" || cause.cancellation === undefined)
-      return undefined;
-    return new ProcessInspectionAnalysisCancelledError(
-      operation,
-      cause.preparationFailure ?? cause.cancellation,
-      cause.cancellation.reason,
-    );
-  }
-  if (cause instanceof DarwinProcessOwnershipInspectionError)
-    return cause.cancellation === undefined
+  const failure = inspectionFailure(cause);
+  if (failure instanceof DarwinProcessOwnershipInspectionError)
+    return failure.cancellation === undefined
       ? undefined
       : new ProcessInspectionAnalysisCancelledError(
           operation,
-          cause,
-          cause.cancellation.reason,
+          failure,
+          failure.cancellation.reason,
         );
-  const cancellation = ProcessOwnershipInspectionCancelled.from(cause);
-  return cancellation === undefined
-    ? undefined
-    : new ProcessInspectionAnalysisCancelledError(
-        operation,
-        cancellation,
-        cancellation.reason,
-      );
+  if (
+    failure instanceof ProcessOwnershipInspectionCancelled ||
+    (failure instanceof ProcessOwnershipIdentityBatchFailure &&
+      failure.origin === "cancelled")
+  )
+    return new ProcessInspectionAnalysisCancelledError(
+      operation,
+      failure,
+      failure.reason,
+    );
+  return undefined;
 };
 
 /** Bind explicit inspection owners to an artifact scope while preserving the caller's primary. */
 export const retainProcessInspectionCleanup = (
   cause: unknown,
   primary: AnalysisError,
-  resources: ArtifactResourceScope | undefined,
+  resources: ArtifactResourceScope,
   operation: string,
 ): AnalysisError => {
   const failures = retainCommandCleanup(
     cause,
-    resources === undefined
-      ? undefined
-      : {
-          retain: (owner, resource) =>
-            resources.retain({
-              kind: "lease",
-              resource,
-              lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-            }),
-          run: (work) => work(),
-        },
+    {
+      retain: (owner, resource) =>
+        resources.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+      run: (work) => work(),
+    },
     "process-ownership",
     operation,
   );
@@ -222,19 +230,19 @@ export const bindProcessInspectionCancellations = (
   primary: AnalysisError,
   operation: string,
 ): AnalysisError => {
-  const preparation =
-    cause instanceof OwnedCommandFailure ? cause.preparationFailure : cause;
+  const preparation = inspectionFailure(cause);
   if (
     preparation instanceof DarwinProcessOwnershipInspectionError &&
     preparation.capturedOutput !== undefined
   )
     primary.retainCapturedOutput(preparation.capturedOutput);
-  for (const cancellation of processInspectionCancellations(cause))
+  if (preparation === undefined) return primary;
+  for (const cancellation of processInspectionCancellations(preparation))
     primary = analysisErrorWithCancellation(
       primary,
       new ProcessInspectionAnalysisCancelledError(
         operation,
-        cause instanceof Error ? cause : cancellation,
+        preparation,
         cancellation.reason,
       ),
     );
