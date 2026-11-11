@@ -467,6 +467,7 @@ export const readMachoCommandNames = async (
       };
     }
     let linkerOptions: Uint8Array[] | undefined;
+    let linkerOptionsByteLength = 0;
     if (frame.command === 0x2d) {
       if (frame.size < 12)
         throw new MachoBinaryFormatError(
@@ -497,6 +498,7 @@ export const readMachoCommandNames = async (
         for (const byte of bytes) {
           if (byte === 0) {
             linkerOptions.push(retain(current.subarray(0, currentLength)));
+            linkerOptionsByteLength += currentLength + 1;
             current = new Uint8Array(0);
             currentLength = 0;
             if (linkerOptions.length === count) break;
@@ -651,6 +653,11 @@ export const readMachoCommandNames = async (
       (uuid !== undefined && frame.size === 24) ||
       (entrypoint !== undefined && frame.size === 24) ||
       (legacyBuild !== undefined && frame.size === 16) ||
+      (note !== undefined && frame.size === 40) ||
+      (fileset !== undefined &&
+        frame.size === 32 + (fileset.entryId.byteLength + 1)) ||
+      (linkerOptions !== undefined &&
+        frame.size === 12 + linkerOptionsByteLength) ||
       (segmentWide !== null &&
         sections !== undefined &&
         frame.size ===
