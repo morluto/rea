@@ -673,12 +673,25 @@ const fetchOne = async (
         fetchedUrl,
       );
     }
-    checkOperation(
-      undefined,
-      signal,
-      budget.deadlineAt,
-      budget.deadlineLimitation,
-    );
+    try {
+      checkOperation(
+        undefined,
+        signal,
+        budget.deadlineAt,
+        budget.deadlineLimitation,
+      );
+    } catch (cause: unknown) {
+      // The response is already admitted even if the timer callback has not
+      // run yet; keep its unread body owned through the interrupted boundary.
+      await cancelUnreadResponse(
+        response,
+        fetchedUrl,
+        cause,
+        signal,
+        sourceMapCallerReason(cause),
+      );
+      throw cause;
+    }
     const body = await readBoundedText(
       response,
       budget,

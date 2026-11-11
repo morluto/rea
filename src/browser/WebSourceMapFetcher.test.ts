@@ -711,6 +711,39 @@ it.each([302, 503])(
   },
 );
 
+it("retains an admitted response when the deadline expires before body reading", async () => {
+  const [body, sibling] = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1]));
+    },
+  }).tee();
+  const pending = fetchWebSourceMaps(
+    [request],
+    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
+    undefined,
+    {
+      fetch: async () => {
+        // Keep the timer callback queued while synchronous delivery crosses the deadline.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+        return new Response(body);
+      },
+      timeoutMs: 50,
+    },
+  );
+  try {
+    const result = await pending;
+    if (result.ok) throw new Error("Expected owned response cleanup");
+    expect(result.error).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: [request.fetchUrl],
+    });
+    await sibling.cancel();
+    await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await Promise.allSettled([body.cancel(), sibling.cancel()]);
+  }
+});
+
 it("retains an oversized redirect identity's pending response cleanup", async () => {
   const [body, sibling] = new ReadableStream<Uint8Array>({
     start(controller) {
