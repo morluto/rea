@@ -381,7 +381,7 @@ const readRecord = (
       usedBytes <= totalBytes &&
       firstAttributeOffset % 8 === 0 &&
       firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
-      firstAttributeOffset <= usedBytes &&
+      firstAttributeOffset + 4 <= usedBytes &&
       (fixups.malformed ||
         firstAttributeOffset >= usaOffset + fixups.entries * 2),
     baseRecordReference:
