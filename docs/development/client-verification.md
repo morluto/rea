@@ -43,8 +43,6 @@ does not establish broader Pi compatibility. See the pinned upstream
 [`declarations.ts`](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/src/declarations.ts)
 and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/README.md#declarations-for-the-model).
 
-<a id="llamacpp"></a>
-
 ## Cline
 
 Verified 2026-11-11 on Linux (Fedora 45) against Cline CLI 3.0.74 and REA `main` at
@@ -62,6 +60,8 @@ configuration (`providers.json`) is versioned and auth-shaped, and the CLI ignor
 on that private schema. The IDE extension is not covered either: its MCP settings are
 UI-managed and live under editor-specific `globalStorage` roots, which `rea setup`
 does not write in this release.
+
+<a id="llamacpp"></a>
 
 ## llama.cpp
 

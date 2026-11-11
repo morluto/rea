@@ -1,11 +1,15 @@
 import {
   mkdir,
+  lstat as fsLstat,
   open as fsOpen,
   opendir as fsOpendir,
+  realpath as fsRealpath,
   stat as fsStat,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { constants } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
@@ -19,15 +23,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    lstat: vi.fn(actual.lstat),
     open: vi.fn(actual.open),
     stat: vi.fn(actual.stat),
+    realpath: vi.fn(actual.realpath),
     opendir: vi.fn(actual.opendir),
   };
 });
 
+const lstatMock = vi.mocked(fsLstat);
 const openMock = vi.mocked(fsOpen);
 const opendirMock = vi.mocked(fsOpendir);
 const statMock = vi.mocked(fsStat);
+const realpathMock = vi.mocked(fsRealpath);
 let actual: typeof import("node:fs/promises");
 
 beforeEach(async () => {
@@ -35,15 +43,19 @@ beforeEach(async () => {
     await vi.importActual<typeof import("node:fs/promises")>(
       "node:fs/promises",
     );
+  lstatMock.mockImplementation((...args) => actual.lstat(...args));
   openMock.mockImplementation((...args) => actual.open(...args));
   opendirMock.mockImplementation((...args) => actual.opendir(...args));
   statMock.mockImplementation((...args) => actual.stat(...args));
+  realpathMock.mockImplementation((...args) => actual.realpath(...args));
 });
 
 afterEach(() => {
+  lstatMock.mockReset();
   openMock.mockReset();
   opendirMock.mockReset();
   statMock.mockReset();
+  realpathMock.mockReset();
 });
 
 const failCloseUntilAllowed = (
@@ -335,45 +347,65 @@ it("keeps a later packed-ref read error primary over earlier loose-ref cleanup",
   );
 });
 
-it("preserves a physical root admission failure when cancellation arrives during stat", async () => {
-  const root = await createTestTempDirectory("rea-reference-root-eio-");
-  const resources = new ArtifactResourceScope();
-  const controller = new AbortController();
-  const reason = { source: "caller" };
-  const physical = Object.assign(new Error("root stat failed"), {
-    code: "EIO",
-  });
-  statMock.mockImplementation(async (...args) => {
-    if (String(args[0]) !== root) return actual.stat(...args);
-    controller.abort(reason);
-    throw physical;
-  });
-  try {
-    const result = await importReferenceSource(
-      {
-        root,
-        caller: "test",
-        policy: { secretPatterns: [] },
-        signal: controller.signal,
-      },
-      resources,
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: "io",
-        cause: physical,
-        secondaryCancellation: { cause: reason },
-      },
+it.each([
+  ["stat", false],
+  ["stat", true],
+  ["realpath", false],
+  ["realpath", true],
+] as const)(
+  "preserves a physical root %s failure when cancellation arrives (same reason: %s)",
+  async (stage, sameReason) => {
+    const root = await createTestTempDirectory("rea-reference-root-eio-");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const physical = Object.assign(new Error(`root ${stage} failed`), {
+      code: "EIO",
     });
-  } finally {
-    await resources.close();
-  }
-});
+    const reason = sameReason ? physical : { source: "caller" };
+    const reject = (): never => {
+      controller.abort(reason);
+      throw physical;
+    };
+    if (stage === "stat") {
+      statMock.mockImplementation(async (...args) => {
+        if (String(args[0]) === root) return reject();
+        return actual.stat(...args);
+      });
+    } else {
+      realpathMock.mockImplementation(async (...args) => {
+        if (String(args[0]) === root) return reject();
+        return actual.realpath(...args);
+      });
+    }
+    try {
+      const result = await importReferenceSource(
+        {
+          root,
+          caller: "test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      if (result.ok)
+        throw new Error("Expected physical root admission failure");
+      expect(result.error.code).toBe("io");
+      expect(result.error.cause).toBe(physical);
+      expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
-it.each([false, true])(
-  "retains a physical Git metadata read failure and late cancellation through cleanup (close fails: %s)",
-  async (closeFails) => {
+it.each([
+  { closeFails: false, sameReason: false },
+  { closeFails: false, sameReason: true },
+  { closeFails: true, sameReason: false },
+  { closeFails: true, sameReason: true },
+])(
+  "retains physical Git read failure through late cancellation (close fails: $closeFails, same reason: $sameReason)",
+  async ({ closeFails, sameReason }) => {
     const root = await createTestTempDirectory("rea-reference-vcs-eio-");
     const gitdir = join(root, ".git");
     await mkdir(gitdir);
@@ -382,19 +414,34 @@ it.each([false, true])(
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
     const reason = { source: "caller" };
-    const physical = Object.assign(new Error("metadata read failed"), {
-      code: "EIO",
-    });
+    let physical: unknown;
+    const handles: FileHandle[] = [];
     let allowClose = false;
     openMock.mockImplementation(async (...args) => {
-      const handle = await actual.open(...args);
-      if (resolve(String(args[0])) !== resolve(head)) return handle;
-      vi.spyOn(handle, "read").mockImplementation(async () => {
-        throw physical;
+      if (resolve(String(args[0])) !== resolve(head))
+        return actual.open(...args);
+      const flags = args[1];
+      if (typeof flags !== "number")
+        throw new Error("Expected numeric regular-file admission flags");
+      // Preserve admission flags; neither O_TRUNC nor a write is used.
+      const handle = await actual.open(
+        args[0],
+        flags | constants.O_WRONLY,
+        args[2],
+      );
+      handles.push(handle);
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+        try {
+          return await read(...readArgs);
+        } catch (cause: unknown) {
+          physical = cause;
+          throw cause;
+        }
       });
       const close = handle.close.bind(handle);
       vi.spyOn(handle, "close").mockImplementation(async () => {
-        controller.abort(reason);
+        controller.abort(sameReason ? physical : reason);
         if (closeFails && !allowClose) throw new Error("close failed");
         await close();
       });
@@ -406,14 +453,37 @@ it.each([false, true])(
         resources,
         controller.signal,
       );
+      expect(physical).toMatchObject({ code: "EBADF" });
+      const cancellation = sameReason ? physical : reason;
+      expect(controller.signal.reason).toBe(cancellation);
       expect(result).toMatchObject({
         ok: false,
         error: {
           code: "io",
-          secondaryCancellation: { cause: reason },
+          secondaryCancellation: { cause: cancellation },
           ...(closeFails ? { cleanup: { resources: [head] } } : {}),
         },
       });
+      if (result.ok) throw new Error("Physical metadata failure was ignored");
+      expect(result.error.secondaryCancellation?.cause).toBe(cancellation);
+      expect(resources.cleanupResources).toEqual(closeFails ? [head] : []);
+      let retained: unknown = result.error.cause;
+      while (
+        retained !== physical &&
+        retained instanceof Error &&
+        retained.cause !== undefined
+      )
+        retained = retained.cause;
+      expect(retained).toBe(physical);
+      expect(
+        handles.every((handle) =>
+          closeFails ? handle.fd >= 0 : handle.fd === -1,
+        ),
+      ).toBe(true);
+      allowClose = true;
+      await resources.close();
+      expect(handles.every((handle) => handle.fd === -1)).toBe(true);
+      expect(resources.hasPending).toBe(false);
     } finally {
       allowClose = true;
       await resources.close();
@@ -584,3 +654,124 @@ it.each(["metadata", "import"] as const)(
     }
   },
 );
+
+it.each([
+  ["lstat", false],
+  ["lstat", true],
+  ["stat", false],
+  ["stat", true],
+  ["realpath", false],
+  ["realpath", true],
+] as const)(
+  "retains physical git directory %s with late abort (same reason: %s)",
+  async (stage, sameReason) => {
+    const root = await createTestTempDirectory("rea-git-physical-");
+    await mkdir(join(root, ".git"));
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("git lookup failed"), {
+      code: "EIO",
+    });
+    const reason = sameReason ? physical : { caller: "stopped" };
+    const reject = (): never => {
+      controller.abort(reason);
+      throw physical;
+    };
+    if (stage === "lstat")
+      lstatMock.mockImplementation(async (...args) => {
+        if (resolve(String(args[0])) === resolve(root, ".git")) return reject();
+        return actual.lstat(...args);
+      });
+    else if (stage === "stat")
+      statMock.mockImplementation(async (...args) => {
+        if (resolve(String(args[0])) === resolve(root, ".git")) return reject();
+        return actual.stat(...args);
+      });
+    else
+      realpathMock.mockImplementation(async (...args) => {
+        if (resolve(String(args[0])) === resolve(root, ".git")) return reject();
+        return actual.realpath(...args);
+      });
+    try {
+      const result = await importReferenceSource(
+        {
+          root,
+          caller: "test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "io",
+          cause: physical,
+          secondaryCancellation: { cause: reason },
+        },
+      });
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
+it("preserves real cancellation between Git directory lookup checkpoints", async () => {
+  const root = await createTestTempDirectory("rea-git-checkpoint-");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "stopped" };
+  lstatMock.mockImplementation(async (...args) => {
+    if (resolve(String(args[0])) === resolve(root, ".git")) {
+      controller.abort(reason);
+      throw Object.assign(new Error("absent"), { code: "ENOENT" });
+    }
+    return actual.lstat(...args);
+  });
+  try {
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "test",
+        policy: { secretPatterns: [] },
+        signal: controller.signal,
+      },
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "cancelled", cause: reason },
+    });
+  } finally {
+    await resources.close();
+  }
+});
+
+it("retains physical Git discovery lstat failure with late abort through VCS", async () => {
+  const root = await createTestTempDirectory("rea-git-vcs-physical-");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const physical = Object.assign(new Error("git discovery failed"), {
+    code: "EIO",
+  });
+  lstatMock.mockImplementation(async (...args) => {
+    if (resolve(String(args[0])) === resolve(root, ".git")) {
+      controller.abort(physical);
+      throw physical;
+    }
+    return actual.lstat(...args);
+  });
+  try {
+    const result = await readReferenceSourceVcs(
+      root,
+      resources,
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "io", secondaryCancellation: { cause: physical } },
+    });
+  } finally {
+    await resources.close();
+  }
+});

@@ -45,6 +45,11 @@ policy can leave ownership established. Setup uses that recorded observation for
 its default client selection, then inspects selected configuration again before
 planning writes; a missing or unreadable launcher remains unknown.
 
+A retained command does not prove the client selects it. Doctor also checks
+that client's native transport selectors; a higher-priority remote selector can
+leave the command owned while alignment remains unknown. Metadata that is not a
+native connection selector is preserved rather than interpreted as a transport.
+
 `rea mcp doctor --json` tests the production MCP adapter using the runtime
 executable and environment of the terminal running doctor. It does not launch
 the client's configured command or reproduce the client's environment. If doctor
@@ -731,9 +736,17 @@ bundled skill, and real REA tool calls through CodeBuddy are verified.
 
 ## Cline
 
+MCP registration already supports both clients: `rea mcp add --agent cline`
+(or `cline-vscode`) configures the VS Code extension, while
+`rea mcp add --agent cline-cli` configures the CLI. The setup lifecycle uses
+`rea setup --client cline` and `rea doctor --client cline` for the CLI.
+`rea uninstall` also removes its REA-owned Cline CLI entry.
+
 For Cline's CLI, setup writes `mcpServers.rea` into
 `~/.cline/data/settings/cline_mcp_settings.json`; set `CLINE_MCP_SETTINGS_PATH`
-to select another file, the same variable Cline's CLI honors. Entries carry
+to select another file. Otherwise `CLINE_DATA_DIR` selects the data directory,
+then `CLINE_DIR` selects the root containing `data`; blank overrides are ignored.
+Setup and `mcp add --agent cline-cli` share this native path selection. Entries carry
 `command`, `args`, and `env`; stdio is the default transport. Setup preserves
 every other server and top-level key when it upserts `rea`, and refuses a
 `rea` entry it did not write rather than adopting or overwriting it.
@@ -744,15 +757,14 @@ registration that points at a different install path is reported as `foreign`
 and left unchanged. Rename or remove that entry, then rerun setup; doctor's
 remediation names the file and the entry to change.
 
-Cline manages skills through the open skills CLI with `--agent cline`, which
-writes the shared `~/.agents/skills`. Setup installs the bundled skill there,
+Cline discovers skills in the shared `~/.agents/skills` directory. Setup
+installs the bundled skill there,
 and `--skill-client cline` resolves to that shared directory; setup does not
 write a second copy under `~/.cline/skills`.
 
 The IDE extension keeps its own MCP settings, reached from the Cline panel's
-**Configure MCP Servers** action, so `rea setup` configures the CLI only. To
-use one registration for both, point `CLINE_MCP_SETTINGS_PATH` at the file the
-panel opens, or add the `rea` entry there manually.
+**Configure MCP Servers** action. Use `rea mcp add --agent cline` for that
+registration; `rea setup --client cline` configures the CLI only.
 
 Restart Cline after setup so the client reloads `mcpServers`. Cline's default
 MCP tool-call timeout is 120 seconds; native provider work that spends longer
@@ -776,6 +788,13 @@ and top-level key when it upserts `rea`. WorkBuddy also reads a project-level
 `<project>/.workbuddy/mcp.json`, which setup does not touch: it registers the
 user-level file only. Loading this registration and real REA tool calls
 through WorkBuddy are verified.
+
+For CodeBuddy and WorkBuddy, REA's write checks cover their documented stdio
+entries. If an existing `rea` row contains fields whose native interpretation is
+unclassified, setup preserves it and reports unknown write applicability before
+changing the file. Doctor retains any established launcher ownership while
+reporting alignment as unknown. This does not prevent safe removal of a row
+whose REA ownership is established.
 
 ## ZCode
 

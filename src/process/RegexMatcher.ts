@@ -1,3 +1,4 @@
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
@@ -441,12 +442,18 @@ export const regexMatchingLimitation = (
 export const launchRegexMatchingLimitation = (
   deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   request: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
-): string =>
-  regexMatchingLimitation(
-    resolveLaunchRegexWorkerHeap(launchExecArgv, launchNodeOptions, request),
-    deadline,
-    request,
-  );
+): string => {
+  try {
+    return regexMatchingLimitation(
+      resolveLaunchRegexWorkerHeap(launchExecArgv, launchNodeOptions, request),
+      deadline,
+      request,
+    );
+  } catch (cause: unknown) {
+    if (!(cause instanceof ConfigurationError)) throw cause;
+    return "Regex mode is unavailable until its invalid launch configuration is corrected with update_analysis_settings or by restarting REA. Inspect analysis settings for the affected value.";
+  }
+};
 
 /**
  * Capability text for the default deadline on this process's launch heap.
@@ -571,6 +578,33 @@ if (expression !== undefined) {
 })();
 `;
 
+export interface RegexConfigurationSnapshot {
+  readonly deadline: RegexMatchingDeadline;
+  readonly heapRequest: RegexWorkerHeapRequest;
+}
+
+/** Capture the operation's admitted regex values without starting work. */
+export const snapshotRegexConfiguration = (
+  selectedDeadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+  selectedHeap: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+): Result<RegexConfigurationSnapshot, ConfigurationError> => {
+  try {
+    return ok({
+      deadline: {
+        deadlineMs: selectedDeadline.deadlineMs,
+        source: selectedDeadline.source,
+      },
+      heapRequest: {
+        heapMiB: selectedHeap.heapMiB,
+        source: selectedHeap.source,
+      },
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError) return err(cause);
+    throw cause;
+  }
+};
+
 /** Match an inventory off the service thread, and prove worker exit before returning. */
 export const matchRegexValues = async (input: {
   readonly operation: string;
@@ -583,14 +617,18 @@ export const matchRegexValues = async (input: {
   /** Resolved heap request. Omitted means the 128 MiB default, not ambient `process.env`. */
   readonly heapRequest?: RegexWorkerHeapRequest | undefined;
 }): Promise<Result<readonly number[], AnalysisError>> => {
-  const deadline = input.deadline ?? DEFAULT_REGEX_MATCHING_DEADLINE;
-  const heapRequest = input.heapRequest ?? DEFAULT_REGEX_WORKER_HEAP_REQUEST;
   if (input.signal?.aborted)
     return err(
       new AnalysisCancelledError(input.operation, {
         cause: input.signal.reason,
       }),
     );
+  const admitted = snapshotRegexConfiguration(
+    input.deadline,
+    input.heapRequest,
+  );
+  if (!admitted.ok) return admitted;
+  const { deadline, heapRequest } = admitted.value;
   let worker: Worker;
   try {
     worker = new Worker(WORKER_SOURCE, {

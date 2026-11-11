@@ -67,6 +67,16 @@ export class SourceMapFormatFailure extends Error {
   }
 }
 
+/** Report schema rejection through the one failure type consumers classify. */
+const parseStructure = <Schema extends z.ZodType>(
+  schema: Schema,
+  value: unknown,
+): z.output<Schema> => {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new SourceMapFormatFailure("format", parsed.error.message);
+};
+
 /** Raw declaration identity, separate from flattened engine URL identity. */
 export interface SourceMapSourceDeclaration {
   readonly sectionPath: readonly number[];
@@ -153,7 +163,7 @@ const addSections = ({
   const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
   options.check?.();
   consumeRecords(budget, limits, rawSections.length);
-  const sections = z.array(sectionSchema).parse(rawSections);
+  const sections = parseStructure(z.array(sectionSchema), rawSections);
   const embeddedMaps: Extract<
     SourceMapSection,
     { readonly kind: "embedded" }
@@ -279,7 +289,7 @@ const inspectLeaf = (
     node.value === null ||
     Array.isArray(node.value)
   )
-    return leafSchema.parse(node.value);
+    return parseStructure(leafSchema, node.value);
   const rawMap = node.value as Readonly<Record<string, unknown>>;
   const rawSources = rawMap.sources;
   const rawNames = rawMap.names;
@@ -296,7 +306,7 @@ const inspectLeaf = (
     Array.isArray(rawContents) ? rawContents.length : 0,
   );
   options.check?.();
-  const leaf = leafSchema.parse(node.value);
+  const leaf = parseStructure(leafSchema, node.value);
   const layout = inspectMappingLayout(leaf.mappings, limits, options.check);
   consumeRecords(budget, limits, layout.segments + layout.lines);
   if (
@@ -332,7 +342,7 @@ export const inspectSourceMapValue = (
 } => {
   const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
   options.check?.();
-  const root = mapHeaderSchema.parse(value);
+  const root = parseStructure(mapHeaderSchema, value);
   const declarations: SourceMapSourceDeclaration[] = [];
   const leaves: SourceMapLeaf[] = [];
   const pending: PendingMap[] = [
@@ -389,4 +399,98 @@ export const inspectSourceMapValue = (
     declarations,
     leaves,
   };
+};
+
+/**
+ * Leaf maps reachable within the decoder's section depth and record budgets.
+ * Deeper or excess sections are dropped rather than expanded, so a map the
+ * decoder refused for its limits cannot allocate past them here.
+ */
+const boundedSourceMapLeaves = (
+  root: unknown,
+  options: Pick<SourceMapStructureOptions, "limits" | "check">,
+): Record<string, unknown>[] => {
+  const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
+  const leaves: Record<string, unknown>[] = [];
+  if (
+    typeof root !== "object" ||
+    root === null ||
+    Array.isArray(root) ||
+    (root as { version?: unknown }).version !== 3
+  )
+    return leaves;
+  const pending: { map: unknown; depth: number }[] = [{ map: root, depth: 0 }];
+  let records = 0;
+  while (pending.length > 0) {
+    options.check?.();
+    const current = pending.pop();
+    if (current === undefined) break;
+    const sections = classifySourceMapSections(current.map);
+    if (sections.kind === "invalid") continue;
+    if (sections.kind === "regular") {
+      leaves.push(current.map as Record<string, unknown>);
+      continue;
+    }
+    if (current.depth >= limits.sectionDepth) continue;
+    records += sections.sections.length;
+    if (records > limits.decodedRecords) break;
+    for (let index = sections.sections.length - 1; index >= 0; index -= 1) {
+      const section = classifySourceMapSection(sections.sections[index]);
+      if (section.kind === "embedded")
+        pending.push({ map: section.map, depth: current.depth + 1 });
+    }
+  }
+  return leaves;
+};
+
+/** Recover observed source content without treating incomplete maps as absent. */
+export const inspectSourceMapSourceContent = (
+  text: string,
+  options: Pick<SourceMapStructureOptions, "limits" | "check"> = {},
+):
+  | { readonly embedded: boolean; readonly complete: true }
+  | {
+      readonly embedded: boolean;
+      readonly complete: false;
+      readonly failure: SourceMapFormatFailure;
+    } => {
+  options.check?.();
+  let value: unknown;
+  try {
+    value = JSON.parse(sourceMapJsonText(text));
+  } catch (cause) {
+    if (!(cause instanceof SyntaxError)) throw cause;
+    return {
+      embedded: false,
+      complete: false,
+      failure: new SourceMapFormatFailure("format", cause.message),
+    };
+  }
+  const hasContent = (
+    inspection: ReturnType<typeof inspectSourceMapValue>,
+  ): boolean =>
+    inspection.declarations.some(
+      (declaration) =>
+        declaration.content !== null && declaration.content.length > 0,
+    );
+  try {
+    return {
+      embedded: hasContent(inspectSourceMapValue(value, options)),
+      complete: true,
+    };
+  } catch (failure) {
+    if (!(failure instanceof SourceMapFormatFailure)) throw failure;
+    const budget = { records: 0 };
+    let embedded = false;
+    for (const leaf of boundedSourceMapLeaves(value, options)) {
+      try {
+        const inspected = inspectSourceMapValue(leaf, { ...options, budget });
+        embedded ||= hasContent(inspected);
+      } catch (cause) {
+        if (!(cause instanceof SourceMapFormatFailure)) throw cause;
+        // An unresolved leaf cannot discard content observed in valid siblings.
+      }
+    }
+    return { embedded, complete: false, failure };
+  }
 };

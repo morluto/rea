@@ -1,8 +1,16 @@
 import {
+  inspectAnalysisSettingSeeds,
+  launchAnalysisSetting,
+} from "../config/analysisSettings.js";
+import {
   parseEnvironment,
   parseEnvironmentValues,
   type Environment,
 } from "../config/environment.js";
+import {
+  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+  DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+} from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -315,7 +323,67 @@ const validatedDetails = (
       ? parseEnvironmentValues(runtimeEnvironment, unresolved)
       : parseEnvironment(runtimeEnvironment, unresolved);
   if (!validated.ok) return validated;
+  const seedIssues = inspectAnalysisSettingSeeds(
+    runtimeEnvironment,
+    unresolved,
+  );
+  if (seedIssues.length > 0)
+    return err(
+      new ConfigurationError("Invalid REA environment configuration", {
+        settings: seedIssues,
+      }),
+    );
   return ok(environmentDetails(environment, validated.value, unresolved));
+};
+
+const admittedTimeout = (
+  id: Parameters<typeof launchAnalysisSetting>[0],
+  environment: Readonly<Record<string, string | undefined>>,
+  fallback: number,
+): number => {
+  const parsed = launchAnalysisSetting(id, environment);
+  return parsed.ok && parsed.value.value !== null
+    ? parsed.value.value
+    : fallback;
+};
+
+const registrationTimeoutInputs = (
+  environment: Readonly<Record<string, string>>,
+): Pick<
+  McpToolTimeoutInputs,
+  | "ghidraStartupTimeoutMs"
+  | "hopperStartupTimeoutMs"
+  | "ghidraDecompileTimeoutMs"
+  | "jebMcpTimeoutMs"
+> => {
+  const decompile = launchAnalysisSetting(
+    "ghidra.decompile_timeout_seconds",
+    environment,
+  );
+  const jeb = launchAnalysisSetting("jeb.mcp_timeout_ms", environment);
+  return {
+    ghidraStartupTimeoutMs: admittedTimeout(
+      "ghidra.startup_timeout_ms",
+      environment,
+      DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+    ),
+    hopperStartupTimeoutMs: admittedTimeout(
+      "hopper.startup_timeout_ms",
+      environment,
+      DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+    ),
+    ...(decompile.ok &&
+    decompile.value.source === "setting" &&
+    decompile.value.value !== null
+      ? { ghidraDecompileTimeoutMs: decompile.value.value * 1000 }
+      : {}),
+    ...(jeb.ok &&
+    jeb.value.source === "setting" &&
+    jeb.value.value !== null &&
+    environment.REA_JEB_MCP_TIMEOUT_MS !== undefined
+      ? { jebMcpTimeoutMs: jeb.value.value }
+      : {}),
+  };
 };
 
 const environmentDetails = (
@@ -335,17 +403,7 @@ const environmentDetails = (
     ? undefined
     : {
         analysisProvider: configuration.REA_ANALYSIS_PROVIDER,
-        ghidraStartupTimeoutMs: configuration.REA_GHIDRA_STARTUP_TIMEOUT_MS,
-        ...(configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS === undefined
-          ? {}
-          : {
-              ghidraDecompileTimeoutMs:
-                configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS * 1000,
-            }),
-        hopperStartupTimeoutMs: configuration.REA_HOPPER_STARTUP_TIMEOUT_MS,
-        ...(configuration.REA_JEB_MCP_TIMEOUT_MS === undefined
-          ? {}
-          : { jebMcpTimeoutMs: configuration.REA_JEB_MCP_TIMEOUT_MS }),
+        ...registrationTimeoutInputs(environment),
       },
 });
 

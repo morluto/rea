@@ -39,22 +39,14 @@ it("gives every numeric exception a reason and a matching inventory row", () => 
   for (const entry of NUMERIC_LIMIT_REGISTRY) {
     expect(entry.update_mode).toBe("restart");
     expect(entry.reason.trim().length).toBeGreaterThanOrEqual(40);
-    if (entry.policy === "restart-only")
-      expect(["startup", "construction"]).toContain(entry.read);
-    expect(entry.read).not.toBe(
-      entry.policy === "per-call" ? "startup" : "per-call",
-    );
+    expect(entry.policy).toBe("restart-only");
+    expect(["startup", "construction"]).toContain(entry.read);
     expect(runtimeEnvironments.has(entry.name)).toBe(false);
     const row = exceptionRow(entry.name);
     expect(row.length).toBeGreaterThanOrEqual(5);
     expect(row[1]?.length ?? 0).toBeGreaterThan(0);
   }
-  expect(
-    NUMERIC_LIMIT_REGISTRY.filter((entry) => entry.policy === "restart-only"),
-  ).toHaveLength(15);
-  expect(
-    NUMERIC_LIMIT_REGISTRY.filter((entry) => entry.policy === "per-call"),
-  ).toHaveLength(11);
+  expect(NUMERIC_LIMIT_REGISTRY).toHaveLength(15);
   for (const definition of Object.values(ANALYSIS_SETTINGS)) {
     if (!("environment" in definition) || definition.environment === undefined)
       continue;

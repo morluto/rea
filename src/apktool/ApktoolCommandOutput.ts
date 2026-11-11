@@ -23,7 +23,10 @@ export const capturedApktoolFailureOutput = (
 ): AnalysisCapturedOutput | undefined => {
   if (cause instanceof OwnedCommandFailure)
     return cause.snapshot === null
-      ? cause.preparationFailure?.capturedOutput
+      ? cause.preparationFailure instanceof
+        DarwinProcessOwnershipInspectionError
+        ? cause.preparationFailure.capturedOutput
+        : undefined
       : capturedApktoolCommandOutput(cause.snapshot);
   return cause instanceof DarwinProcessOwnershipInspectionError
     ? cause.capturedOutput

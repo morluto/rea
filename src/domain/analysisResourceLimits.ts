@@ -191,3 +191,28 @@ export const MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES = Math.floor(
  * a caller cap below this budget must not truncate those required replies.
  */
 export const DEBUGGER_CONTROL_REPLY_BYTES = 16 * 1024 * 1024;
+
+/** Hopper, Ghidra, and Cutter request payload ceiling. Same bound as the bridge owner. */
+export const DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
+export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
+export const MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536_870_888 - 1;
+
+/** MCP client SDK default request timeout. JEB uses it when the setting is unset. */
+export const DEFAULT_JEB_MCP_TIMEOUT_MS = 60_000;
+
+/** Kuna project export and whole-program scans. */
+export const DEFAULT_KUNA_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
+/** One Kuna function decompile. */
+export const DEFAULT_KUNA_FUNCTION_TIMEOUT_MS = 120_000;
+
+/** Pwntools artifact admission when producer_limits.input_bytes is omitted. */
+export const DEFAULT_PWNTOOLS_MAX_INPUT_BYTES = 32 * 1024 * 1024;
+export const MAXIMUM_PWNTOOLS_MAX_INPUT_BYTES = 1024 * 1024 * 1024;
+
+/** Windows ChangeTime settle window, poll, and poll count. */
+export const DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS = 2_000;
+export const MAXIMUM_WINDOWS_CHANGE_TIME_DRIFT_MS = 60_000;
+export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = 25;
+export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = 1_000;
+export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 40;
+export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 1_000;

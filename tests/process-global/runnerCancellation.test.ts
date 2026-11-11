@@ -7,18 +7,13 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-
-const supervisorPath = fileURLToPath(
-  new URL("../../scripts/run-exclusive-command.mjs", import.meta.url),
-);
 
 const runnerPath = fileURLToPath(
   new URL("../../scripts/run-exclusive.mjs", import.meta.url),
@@ -654,39 +649,10 @@ it.runIf(process.platform !== "win32")(
     const readyPath = join(directory, "command-ready");
     const gatePath = join(directory, "allow-command-exit");
     const closedPath = join(directory, "command-closed");
-    const source = await readFile(supervisorPath, "utf8");
-    const crossSpawn = pathToFileURL(
-      createRequire(import.meta.url).resolve("cross-spawn"),
+    const preload = new URL(
+      "../fixtures/runnerPostSpawnError.mjs",
+      import.meta.url,
     ).href;
-    const spawnCall =
-      /child = spawn\(command\[0\], command\.slice\(1\), \{\n\s+cwd: process\.cwd\(\),\n\s+env: process\.env,\n\s+stdio: "inherit",\n\s+\}\);/u;
-    const postSpawnInjection = `child.once("spawn", () => {
-  const waitForReady = setInterval(() => {
-    if (!existsSync(${JSON.stringify(readyPath)})) return;
-    clearInterval(waitForReady);
-    process.stdout.write("controlled-post-spawn-error\\n");
-    child.emit("error", new Error("controlled post-spawn child error"));
-    child.emit("error", new Error("controlled secondary child error"));
-  }, 5);
-});`;
-    expect(source).toMatch(spawnCall);
-    const injectedSource = source
-      .replace(
-        'import spawn from "cross-spawn";',
-        `import spawn from ${JSON.stringify(crossSpawn)};\nimport { existsSync } from "node:fs";`,
-      )
-      .replace(spawnCall, (call) => `${call}\n    ${postSpawnInjection}`);
-    expect(injectedSource).toContain(postSpawnInjection);
-    expect(injectedSource).toContain("controlled post-spawn child error");
-    const copiedSupervisor = join(directory, "run-exclusive-command.mjs");
-    const copiedHelperDirectory = join(directory, "lib");
-    await mkdir(copiedHelperDirectory, { recursive: true });
-    await copyFile(
-      join(process.cwd(), "scripts/lib/windows-owned-command.mjs"),
-      join(copiedHelperDirectory, "windows-owned-command.mjs"),
-    );
-    await writeFile(copiedSupervisor, injectedSource);
-
     const gatedCommand = `
     const fs = require("node:fs");
     fs.writeFileSync(${JSON.stringify(readyPath)}, "ready");
@@ -698,17 +664,34 @@ it.runIf(process.platform !== "win32")(
       process.stdout.write("command-closed\\n");
     }, 5);
   `;
-    const supervisor = spawn(
+    const runner = spawn(
       process.execPath,
-      [copiedSupervisor, "test", process.execPath, "-e", gatedCommand],
-      { cwd: directory, stdio: ["ignore", "pipe", "pipe", "ipc"] },
+      [
+        runnerPath,
+        "test",
+        process.execPath,
+        "-e",
+        gatedCommand,
+        "rea-runner-post-spawn-error",
+      ],
+      {
+        cwd: directory,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${preload}`]
+            .filter(Boolean)
+            .join(" "),
+          REA_TEST_RUNNER_READY_PATH: readyPath,
+        },
+      },
     );
-    if (supervisor.stdout === null || supervisor.stderr === null) {
-      supervisor.kill("SIGKILL");
-      throw new Error("supervisor output pipes were not created");
+    if (runner.stdout === null || runner.stderr === null) {
+      runner.kill("SIGKILL");
+      throw new Error("runner output pipes were not created");
     }
-    const stdoutStream = supervisor.stdout;
-    const stderrStream = supervisor.stderr;
+    const stdoutStream = runner.stdout;
+    const stderrStream = runner.stderr;
     let stdout = "";
     let stderr = "";
     const outputWaiters = new Map<string, (() => void)[]>();
@@ -730,19 +713,17 @@ it.runIf(process.platform !== "win32")(
             resolveOutput,
           ]);
         }),
-        `supervisor did not write ${marker}`,
+        `runner did not write ${marker}`,
       );
     };
-    const exited = withTimeout(
+    const closed = withTimeout(
       new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
         (resolveExit, reject) => {
-          supervisor.once("error", reject);
-          supervisor.once("exit", (code, signal) =>
-            resolveExit({ code, signal }),
-          );
+          runner.once("error", reject);
+          runner.once("close", (code, signal) => resolveExit({ code, signal }));
         },
       ),
-      "supervisor did not exit",
+      "runner did not exit",
     );
     try {
       await waitForOutput("controlled-post-spawn-error");
@@ -759,7 +740,7 @@ it.runIf(process.platform !== "win32")(
 
       await writeFile(gatePath, "open");
       await waitForOutput("command-closed");
-      expect(await exited).toEqual({ code: 1, signal: null });
+      expect(await closed).toEqual({ code: 1, signal: null });
       expect(stderr).toContain("controlled post-spawn child error");
       expect(stderr).not.toContain("controlled secondary child error");
       expect(
@@ -771,7 +752,7 @@ it.runIf(process.platform !== "win32")(
     } finally {
       await writeFile(gatePath, "open");
       await waitForOutput("command-closed").catch(() => undefined);
-      await exited.catch(() => undefined);
+      await closed.catch(() => undefined);
     }
   },
 );

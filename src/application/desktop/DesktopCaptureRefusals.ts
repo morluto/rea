@@ -7,6 +7,7 @@ import {
   bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -23,6 +24,7 @@ import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInve
 import { resolveProgram } from "../../desktop/ProgramLookup.js";
 import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
+import { processInspectionCancellationError } from "../../providers/OwnedCommandCleanup.js";
 
 export const DESKTOP_OPERATION = "capture_desktop_application";
 
@@ -211,8 +213,15 @@ export const desktopOperationFailure = (
   operation: string,
   label: string,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof RetainedRegularFileCleanupFailure) {
+  let failure: AnalysisError;
+  const inspectionCancellation = processInspectionCancellationError(
+    cause,
+    operation,
+  );
+  if (cause instanceof AnalysisError) failure = cause;
+  else if (inspectionCancellation !== undefined)
+    failure = inspectionCancellation;
+  else if (cause instanceof RetainedRegularFileCleanupFailure) {
     const cancellation = regularFileCancellation(cause);
     const primary =
       cause.outcome.kind === "failed" &&
@@ -233,10 +242,13 @@ export const desktopOperationFailure = (
       userMessage: `${label} could not close an input file.`,
     });
     bindRegularFileCleanup(cause, error);
-    return error;
+    failure = error;
   }
   // A resource that could not be released stays reported, with its owner.
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+  else if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.cleanup !== undefined
+  ) {
     const primary =
       cause.reason === "cancelled"
         ? new AnalysisCancelledError(operation, {
@@ -251,13 +263,24 @@ export const desktopOperationFailure = (
       userMessage: `${label} could not release a resource it used: ${describeValidationFailure(cause)}`,
     });
     bindArtifactFileCleanup(cause, error);
-    return error;
-  }
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(operation, { cause: signal.reason });
-  return new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
-    cause,
-    diagnostics: { phase: operation },
-    userMessage: `${label} could not complete: ${describeValidationFailure(cause)}`,
-  });
+    failure = error;
+  } else if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  ) {
+    failure = new AnalysisCancelledError(operation, {
+      cause: artifactFileCancellationCause(cause),
+    });
+  } else
+    failure = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
+      cause,
+      diagnostics: { phase: operation },
+      userMessage: `${label} could not complete: ${describeValidationFailure(cause)}`,
+    });
+  return signal?.aborted === true
+    ? analysisErrorWithCancellation(
+        failure,
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      )
+    : failure;
 };

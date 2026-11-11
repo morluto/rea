@@ -12,6 +12,10 @@ import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { RetainedContent } from "./DesktopRetainedContent.js";
 import {
@@ -1584,14 +1588,20 @@ it("bounds download-install input and preserves cancellation", async () => {
     issues: [expect.objectContaining({ path: ["download_install"] })],
   });
   const controller = new AbortController();
-  const reason = new Error("cancelled input read");
+  const reason = new AnalysisInputError("caller", {
+    userMessage: "cancelled input read",
+  });
   controller.abort(reason);
   await expect(
     readDownloadInstall(
       join(await createTestTempDirectory("download-input-"), "file"),
       controller.signal,
     ),
-  ).rejects.toBe(reason);
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCancelledError",
+    operation: "export_desktop_application",
+    cause: reason,
+  } satisfies Partial<AnalysisCancelledError>);
 });
 
 describe("exportDesktopApplication from a download", () => {
@@ -2330,17 +2340,116 @@ describe("exportDesktopApplication retained input finalization", () => {
   );
 });
 
-describe("exportDesktopApplication bundle writes", () => {
-  it.each(["cancelled", "out of space"])(
-    "removes the unpublished bundle when its write fails (%s)",
-    async (failure) => {
+describe("exportDesktopApplication published close cancellation", () => {
+  it.skipIf(process.platform === "win32").each([false, true])(
+    "retains cancellation after publication and physical close (close fails: %s)",
+    async (closeFails) => {
       const controller = new AbortController();
+      const reason = new Error("cancel during published output close");
+      const closeFailure = new Error(
+        "published output descriptor close failed",
+      );
+      const leases: AnalysisCleanupLease[] = [];
+      let isPublished = () => false;
+      let publishedCloseAttempts = 0;
+      let physicalCloses = 0;
+      const commit = unspied("commit");
+      vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
+        async function (this: SafeOutputTree, ...args) {
+          isPublished = () => this.published;
+          return commit.apply(this, args);
+        },
+      );
+      const close = OwnedFileHandle.prototype.close;
+      const closing = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockImplementation(async function (this: OwnedFileHandle) {
+          if (!isPublished()) return close.call(this);
+          publishedCloseAttempts += 1;
+          if (closeFails) {
+            controller.abort(reason);
+            throw closeFailure;
+          }
+          await close.call(this);
+          physicalCloses += 1;
+          controller.abort(reason);
+        });
+      const release = ArtifactResourceScope.prototype.release;
+      vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+        async function (this: ArtifactResourceScope, owner) {
+          const result = await release.call(this, owner);
+          if (result.kind === "failed") leases.push(result.lease);
+          return result;
+        },
+      );
+      try {
+        const { result, directory } = await exportCapture(
+          capture(),
+          controller.signal,
+        );
+        expect(isPublished()).toBe(true);
+        expect(publishedCloseAttempts).toBeGreaterThan(0);
+        expect(physicalCloses).toBe(closeFails ? 0 : 1);
+        expect(
+          (await readFile(join(directory, "README.md"), "utf8")).length,
+        ).toBeGreaterThan(0);
+        expect(result).toBeInstanceOf(AnalysisError);
+        if (!(result instanceof AnalysisError))
+          throw new Error("expected published completion cancellation");
+        expect(result.partialObservation).toMatchObject({
+          operation: "export_desktop_application",
+        });
+        if (closeFails) {
+          expect(result).toMatchObject({ _tag: "ProviderAdapterError" });
+          expect(result.cause).toBeInstanceOf(AggregateError);
+          if (!(result.cause instanceof AggregateError))
+            throw new Error("expected actual descriptor cleanup failure");
+          expect(result.cause.errors).toContain(closeFailure);
+          expect(result.secondaryFailures).toContainEqual(
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          );
+          expect(result.cleanupResources).toEqual([directory]);
+          expect(leases).toHaveLength(1);
+          closing.mockRestore();
+          await leases[0]!.release();
+          expect(result.cleanupIncomplete).toBe(false);
+          expect(await exists(join(directory, "README.md"))).toBe(true);
+        } else {
+          expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+          expect(result.cause).toBe(reason);
+          expect(leases).toHaveLength(0);
+        }
+      } finally {
+        closing.mockRestore();
+        for (const lease of leases) await lease.release();
+      }
+    },
+  );
+});
+
+describe("exportDesktopApplication bundle writes", () => {
+  it.each([
+    { abort: false, physical: true },
+    { abort: true, physical: true },
+    { abort: true, physical: false },
+  ])(
+    "retains the write outcome and removes the unpublished bundle (physical: $physical, abort: $abort)",
+    async ({ abort, physical }) => {
+      const controller = new AbortController();
+      const reason = { source: "caller" };
+      const failure = Object.assign(new Error("out of space"), {
+        code: "ENOSPC",
+      });
       const original = unspied("write");
       vi.spyOn(SafeOutputTree.prototype, "write").mockImplementation(
         async function (this: SafeOutputTree, ...args) {
           if (!args[0].includes("/seed/")) return original.apply(this, args);
-          if (failure === "cancelled") controller.abort();
-          throw Object.assign(new Error(failure), { code: "ENOSPC" });
+          if (abort) controller.abort(reason);
+          if (!physical) return original.apply(this, args);
+          throw failure;
         },
       );
 
@@ -2349,9 +2458,27 @@ describe("exportDesktopApplication bundle writes", () => {
         controller.signal,
       );
 
-      expect(result).toBeInstanceOf(Error);
-      if (failure === "cancelled")
-        expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError)) throw result;
+      if (physical) {
+        expect(result).toMatchObject({ _tag: "ProviderAdapterError" });
+        expect(result.cause).toBe(failure);
+        if (abort)
+          expect(result.secondaryFailures).toContainEqual(
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          );
+        else expect(result.secondaryFailures).toEqual([]);
+      } else {
+        expect(result).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          operation: "export_desktop_application",
+        });
+        expect(result.cause).toBe(reason);
+      }
+      expect(result.cleanupResources).toEqual([]);
       expect(await exists(directory)).toBe(false);
     },
   );

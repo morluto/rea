@@ -363,12 +363,10 @@ it("refuses invalid settings at startup validation and at each owner", async () 
       },
     ]);
     const startup = parseEnvironment({ REA_ASAR_MAX_HEADER_BYTES: value });
-    if (startup.ok)
-      throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-    expect(startup.error.settings).toContainEqual({
-      setting: "REA_ASAR_MAX_HEADER_BYTES",
-      constraint: parsed.error.message,
-    });
+    if (!startup.ok)
+      throw new Error(
+        `Startup rejected a runtime seed ${JSON.stringify(value)}`,
+      );
   }
 
   // Owners refuse rather than falling back to the default.

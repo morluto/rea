@@ -39,3 +39,16 @@ it("injects a caller-selected ceiling before the bridge is executed", () => {
   expect(injected).toBeGreaterThanOrEqual(0);
   expect(injected).toBeLessThan(source.indexOf("exec(compile"));
 });
+
+it("injects a runtime ceiling before the bridge is executed", () => {
+  const source = bridgeBootstrapSource(
+    session,
+    {
+      ...options,
+      bridgeMaxRequestBytes: { maximumBytes: 65_536, source: "runtime" },
+    },
+    true,
+    "/target",
+  );
+  expect(source).toContain("REA_BRIDGE_MAX_REQUEST_BYTES = 65536");
+});

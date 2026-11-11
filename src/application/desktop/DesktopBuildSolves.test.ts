@@ -299,7 +299,7 @@ it.each([
       .mockImplementation(async (path, ...rest) => {
         if (path.endsWith(suffix) && ++reads === occurrence) {
           if (cancel) controller.abort(reason);
-          throw hostFiles.hostCloseFailure(
+          throw hostFiles.hostReadFailure(
             new RegularFileCleanupFailure({
               path,
               owner: {
@@ -356,7 +356,7 @@ it("keeps an input read failure primary when cancellation also arrives during cl
     .mockImplementation(async (path, ...rest) => {
       if (!path.endsWith("tasks/add-eggs.json")) return original(path, ...rest);
       controller.abort(new Error("cancel"));
-      throw hostFiles.hostCloseFailure(
+      throw hostFiles.hostReadFailure(
         new RegularFileCleanupFailure({
           path,
           owner: { close: async () => {} } as never,

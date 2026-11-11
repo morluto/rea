@@ -677,6 +677,7 @@ const workflowAvailabilityFor = (
     name === "inspect_kernel_module" ||
     name === "inspect_kernel_build_config" ||
     name === "inspect_pe_load_config" ||
+    name === "audit_release_exposure" ||
     name === "inspect_binary_hardening"
   )
     return { reason: "available", remediation: null };

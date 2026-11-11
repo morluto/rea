@@ -1,3 +1,4 @@
+import { createTestProcessCaptureResourceScope } from "../fixtures/processCaptureResourceScope.js";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -199,6 +200,7 @@ it.skipIf(process.platform === "win32")(
     };
 
     stopSampler = startProcessSampler({
+      resourceScope: createTestProcessCaptureResourceScope(),
       rootPid: 100,
       runId: "fixture-run-token",
       started: 0,

@@ -8,9 +8,12 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   parseRegexMatchingDeadline,
+  resolveRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
   regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
@@ -153,19 +156,35 @@ it.each([
     },
   ]);
   const startup = parseEnvironment({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: REGEX_MATCHING_DEADLINE_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
   const config = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (config.ok)
-    throw new Error(`parseConfig accepted ${JSON.stringify(value)}`);
-  expect(projectAnalysisError(config.error)).toMatchObject({
-    code: "configuration_invalid",
-    message: expect.stringContaining("REA_REGEX_MATCHING_DEADLINE_MS"),
-  });
+  if (!config.ok)
+    throw new Error(
+      `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
+    );
   expect(
-    () => new KunaProvider({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
+    config.value.invalidRuntimeSeeds?.["regex.matching_deadline_ms"]?.settings,
+  ).toEqual([
+    expect.objectContaining({ setting: REGEX_MATCHING_DEADLINE_SETTING }),
+  ]);
+  const live = runtimeAnalysisConfig(config.value);
+  expect(() => live.regexMatchingDeadline.deadlineMs).toThrow(
+    ConfigurationError,
+  );
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "regex.matching_deadline_ms": 250 },
+      },
+      () => ({
+        deadlineMs: live.regexMatchingDeadline.deadlineMs,
+        source: live.regexMatchingDeadline.source,
+      }),
+    ),
+  ).toEqual({ deadlineMs: 250, source: "runtime" });
+  expect(() =>
+    resolveRegexMatchingDeadline({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
   ).toThrow(ConfigurationError);
 });
