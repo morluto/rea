@@ -87,6 +87,37 @@ it("uses a runtime bridge ceiling for a Cutter client built from the launch valu
   });
 });
 
+it("retains the runtime limit when an authenticated status response is oversized", async () => {
+  const directory = await privateDirectory();
+  const server = authenticatedServer(
+    TOKEN,
+    SESSION,
+    (_request, respond) => respond({ ok: true, padding: "x".repeat(8192) }),
+    true,
+  );
+  const port = await listen(server);
+  await writeDescriptor(directory, SESSION, port, TOKEN, {
+    maxRequestBytes: 8192,
+  });
+  const client = clientFor(directory, "8192");
+  await expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "bridge.max_request_bytes": 8192 } },
+      () => client.listSessions(),
+    ),
+  ).rejects.toSatisfy((error: unknown) => {
+    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(error instanceof AnalysisResourceConstraintError)) return false;
+    expect(error.operation).toBe("list_cutter_sessions");
+    expect(error.limit).toMatchObject({
+      setting: "bridge.max_request_bytes",
+      effective_value: 8192,
+      source: "runtime",
+    });
+    return true;
+  });
+});
+
 it("rejects a bridge ceiling below the floor when the call has no override", async () => {
   const client = new CutterBridgeClient({
     REA_BRIDGE_MAX_REQUEST_BYTES: "7463",

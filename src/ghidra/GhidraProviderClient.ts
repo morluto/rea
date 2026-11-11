@@ -1319,7 +1319,11 @@ const projectPrimarySessionError = (
       physicalCause.resource,
       physicalCause.reason,
       physicalCause.reportedLimits,
-      { ...context, ...resourceConstraintRecovery(physicalCause) },
+      {
+        ...context,
+        ...resourceConstraintRecovery(physicalCause),
+        limit: physicalCause.limit,
+      },
     );
   if (
     origin === "owned-or-classified" &&
