@@ -380,6 +380,37 @@ describe("Apple IPS family and subtype agreement", () => {
       );
     },
   );
+
+  it("keeps an exact recorded subtype from claiming a same-family slice", async () => {
+    const root = await createTestTempDirectory("rea-ips-family-exact-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+      { arch: "arm64v8" },
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+  });
+
+  it("joins an exact recorded subtype beside an unrelated unknown-UUID slice", async () => {
+    const root = await createTestTempDirectory("rea-ips-family-exact-fat-");
+    const report = await inspectWithJoin(
+      root,
+      fatImage([
+        { cpu: ARM64_V8, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+        { cpu: ARM64, uuid: null, textVmaddr: 0x200000000n },
+      ]),
+      { arch: "arm64v8" },
+    );
+    expect(report.join.image_matches).toEqual([
+      expect.objectContaining({
+        recorded_arch: "arm64v8",
+        slice_index: 0,
+        slice_arch: "arm64v8",
+      }),
+    ]);
+    expect(report.join.frames[0]).toMatchObject({ status: "joined" });
+  });
 });
 
 describe("Apple IPS rejected joins", () => {

@@ -178,8 +178,9 @@ const comparableArch = (value: string): string =>
 
 /**
  * Report spellings the join accepts, including the exact subtype names a
- * crash producer may record. The shared family owner normalizes both sides of
- * the comparison, so a family name also agrees with its known subtype.
+ * crash producer may record. An exact subtype name only agrees with the same
+ * subtype; a family name also agrees with its known subtypes, because the
+ * report cannot tell them apart.
  */
 const REPORTED_FAMILIES: ReadonlyMap<string, string> = new Map([
   ["arm64", "arm64"],
@@ -203,6 +204,8 @@ const architectureRelation = (
 ): "match" | "mismatch" | "unknown" => {
   const left = REPORTED_FAMILIES.get(comparableArch(recorded));
   if (left === undefined) return "unknown";
+  const leftFamily = machoArchitectureFamily(left);
+  const exact = left === leftFamily ? undefined : left;
   if (
     slice.cpuType === 0x0100000c &&
     machoKnownArm64Subtype(slice.cpuSubtype) === undefined
@@ -215,12 +218,13 @@ const architectureRelation = (
     machoKnownX86_64Subtype(slice.cpuSubtype) === undefined
   )
     return left.startsWith("x86_64") ? "unknown" : "mismatch";
-  const right = REPORTED_FAMILIES.get(
-    comparableArch(machoArchitectureFamily(slice.arch)),
-  );
-  return right === undefined
-    ? "unknown"
-    : machoArchitectureFamily(left) === machoArchitectureFamily(right)
+  const right = REPORTED_FAMILIES.get(comparableArch(slice.arch));
+  if (right === undefined) return "unknown";
+  return exact === undefined
+    ? machoArchitectureFamily(right) === left
+      ? "match"
+      : "mismatch"
+    : right === exact
       ? "match"
       : "mismatch";
 };
