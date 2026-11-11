@@ -48,6 +48,7 @@ export const traceNativeValues = async (
   const sourceLimitations: SourceLimitation[] = [];
   const callBindings: NativeValueTraceCall[] = [];
   const procedureAddresses = new Map<string, string>();
+  const completeParameterProcedures = new Set<string>();
   const pending = [{ procedure: input.procedure, depth: 0 }];
   const attempted = new Set<string>();
   const visited = new Set<string>();
@@ -151,11 +152,6 @@ export const traceNativeValues = async (
       );
     const dossier = parsed.data;
     const address = dossier.procedure.address;
-    procedureAddresses.set(next.procedure, address);
-    procedureAddresses.set(address, address);
-    if (visited.has(address)) continue;
-    visited.add(next.procedure);
-    visited.add(address);
     targetSha256 ??= execution.value.subject.sha256;
     if (execution.value.subject.sha256 !== targetSha256)
       return err(
@@ -164,6 +160,11 @@ export const traceNativeValues = async (
           "Cross-function target digest mismatch",
         ).retainPartialObservation(partialEvidence()),
       );
+    procedureAddresses.set(next.procedure, address);
+    procedureAddresses.set(address, address);
+    if (visited.has(address)) continue;
+    visited.add(next.procedure);
+    visited.add(address);
     const evidenceId = execution.value.evidenceId;
     if (evidenceId === undefined)
       return err(
@@ -245,6 +246,12 @@ export const traceNativeValues = async (
         break;
       parameterIds.set(parameter.ordinal, id);
     }
+    if (
+      !flow.truncated &&
+      parameterIds.size === flow.parameters.length &&
+      !budget.exhausted()
+    )
+      completeParameterProcedures.add(address);
     for (const use of flow.parameter_uses) {
       const source = parameterIds.get(use.ordinal);
       if (!ids.has(use.use) || source === undefined) continue;
@@ -414,6 +421,7 @@ export const traceNativeValues = async (
     budget,
     calls: callBindings,
     procedureAddresses,
+    completeParameterProcedures,
     unknowns,
   });
   const page = nodes.slice(input.offset, input.offset + input.limit);
