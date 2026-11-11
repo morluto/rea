@@ -92,8 +92,9 @@ project. Installation and recovery details are in the setup guide below.
 
 Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/getting-started/installation.md#supported-agents). See
-[installation and setup](docs/getting-started/installation.md) for provider configuration and
-manual MCP registration and Claude Code/Codex plugin installation.
+[installation and setup](docs/getting-started/installation.md) for provider configuration,
+manual MCP registration, Claude Code/Codex plugins, and the Cursor Marketplace
+plugin.
 
 MCP uses compact input schemas by default to reduce context overhead. Set
 `REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
