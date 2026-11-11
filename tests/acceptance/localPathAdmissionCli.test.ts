@@ -16,6 +16,7 @@ const fileCommands = [
   "decode-signal-recording",
   "inspect-model-artifact",
   "inspect-elf-notes",
+  "inspect-elf-debug-link",
   "inspect-native-initializers",
   "inspect-elf-unwind-ranges",
   "inspect-kernel-module",
@@ -75,6 +76,10 @@ cliTest(
   async ({ cli }) => {
     const cwd = await createTestTempDirectory("rea-empty-auxiliary-path-");
     const selections = [
+      {
+        arguments: ["inspect-elf-debug-link", "unread", "--candidate-path", ""],
+        field: "candidatePath",
+      },
       {
         arguments: ["inspect-il2cpp-metadata", "unread", "--binary", ""],
         field: "binary",

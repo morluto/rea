@@ -60,6 +60,13 @@ export const ELF_NOTES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free ELF separate-debug linkage. */
+export const ELF_DEBUG_LINK_PROVIDER = Object.freeze({
+  id: "rea-elf-debug-link",
+  name: "REA ELF debug-link parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF unwind-table decoding. */
 export const ELF_UNWIND_RANGES_PROVIDER = Object.freeze({
   id: "rea-elf-unwind-ranges",

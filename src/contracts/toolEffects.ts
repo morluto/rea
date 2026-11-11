@@ -293,6 +293,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_windows_shortcut: evidence,
   inspect_native_exports: evidence,
   inspect_elf_notes: evidence,
+  inspect_elf_debug_link: evidence,
   inspect_native_initializers: evidence,
   inspect_elf_unwind_ranges: evidence,
   inspect_apple_ips: evidence,

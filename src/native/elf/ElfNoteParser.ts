@@ -29,7 +29,11 @@ import {
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { readElfTableDeclarationsFromBuffer } from "../metadata/NativeSectionDirectory.js";
+import {
+  decodeElfSectionNameTable,
+  readElfSectionNameTableHeader,
+} from "../metadata/ElfSectionNameTable.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -48,6 +52,8 @@ interface TextBudget {
   scanned: number;
   readonly hashes: Map<string, string>;
   readonly scans: Map<string, number>;
+  /** GNU build-id descriptors above this many bytes are not hex-encoded. */
+  readonly maxGnuBuildIdBytes?: number | undefined;
 }
 
 /** Caller can raise max_file_bytes to admit the decoded section-name table. */
@@ -64,6 +70,52 @@ export class ElfNoteSectionNameBudgetFailure extends Error {
     this.name = "ElfNoteSectionNameBudgetFailure";
   }
 }
+
+/**
+ * Refuse a compressed section-name table whose declared decoded size does not
+ * fit the source-plus-decoded-names budget, before any decoder inflates it.
+ * Only a compression header the owning decoder admits is charged; structural
+ * problems and unsupported compression are left to the decoders that own them.
+ */
+export const assertElfSectionNameBudget = (
+  bytes: Buffer,
+  maxFileBytes: number,
+): void => {
+  // The image directory's own declarations, so extended section counts and
+  // name indexes in section zero are charged exactly as the decoder sees them.
+  const declarations = readElfTableDeclarationsFromBuffer(bytes);
+  if (!declarations.ok) return;
+  const { header, sections } = declarations.value;
+  const little = header.byteOrder === "little";
+  const { offset, width, count, namesIndex } = sections;
+  if (count === 0 || namesIndex === 0) return;
+  const at = offset + BigInt(namesIndex) * BigInt(width);
+  if (at > BigInt(bytes.length - width)) return;
+  const parsed = readElfSectionHeader(
+    bytes.subarray(Number(at), Number(at) + width),
+    header.elfClass,
+    little,
+  );
+  if (!parsed.ok || parsed.value.offset > BigInt(bytes.length)) return;
+  const start = Number(parsed.value.offset);
+  const names = readElfSectionNameTableHeader(
+    bytes.subarray(
+      start,
+      parsed.value.size > BigInt(bytes.length - start)
+        ? bytes.length
+        : start + Number(parsed.value.size),
+    ),
+    parsed.value.flags,
+    header.elfClass,
+    little,
+  );
+  if (names.state !== "compressed") return;
+  if (names.declaredSize > BigInt(Math.max(0, maxFileBytes - bytes.length)))
+    throw new ElfNoteSectionNameBudgetFailure(
+      BigInt(bytes.length) + names.declaredSize,
+      maxFileBytes,
+    );
+};
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -253,6 +305,11 @@ const decodeGnu = (
 ): ElfNotes["entries"][number]["gnu"] => {
   if (owner !== "GNU") return null;
   if (type === 3 && descriptor.length > 0) {
+    if (
+      text.maxGnuBuildIdBytes !== undefined &&
+      descriptor.length > text.maxGnuBuildIdBytes
+    )
+      return { build_id_hex: null, abi_tag: null, gold_version: null };
     chargeText(text, descriptor.length * 2);
     return {
       build_id_hex: descriptor.toString("hex"),
@@ -617,6 +674,12 @@ const decodeCore = (
   return null;
 };
 
+/** Optional decoding bounds for consumers that retain only part of a note. */
+export interface ElfNoteParseOptions {
+  /** Leave larger GNU build-ids undecoded; `descsz` still reports their size. */
+  readonly maxGnuBuildIdBytes?: number;
+}
+
 const ANDROID_IDENT_SLOT_BYTES = 64;
 const ANDROID_IDENT_MODERN_MIN_BYTES = 4 + ANDROID_IDENT_SLOT_BYTES * 2;
 
@@ -693,6 +756,7 @@ export const parseElfNotes = (
   bytes: Buffer,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
+  options: ElfNoteParseOptions = {},
 ): ElfNotes => {
   const fixed = readElfFixedHeader(bytes);
   if (!fixed.ok) return fail(fixed.error);
@@ -744,6 +808,7 @@ export const parseElfNotes = (
     scanned: 0,
     hashes: new Map(),
     scans: new Map(),
+    maxGnuBuildIdBytes: options.maxGnuBuildIdBytes,
   };
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();

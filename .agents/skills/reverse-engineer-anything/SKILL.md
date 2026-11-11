@@ -313,6 +313,17 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- Separate ELF debug files: `inspect_elf_debug_link` with the explicit local
+  ELF32/ELF64 file. This built-in target-free inspection requires no
+  disassembler and does not search for debug files. Preserve the
+  `.gnu_debuglink` name and CRC32, `.gnu_debugaltlink` build-id, GNU build-id,
+  and lookup path strings. Those paths are not opened. Pass `candidate_path`
+  only for one file you already selected; the verdict is matches,
+  does_not_match, or cannot_verify. A missing section is observed absence only
+  when section names are complete. The `.gnu_debugdata` xz payload is not
+  decoded. See the
+  [ELF debug files guide](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-debug-link.md).
+
 - Code that runs before `main` or at exit in ELF or Mach-O:
   `inspect_native_initializers` with the explicit local file (and
   `architecture` for a universal Mach-O). This built-in inspection requires no

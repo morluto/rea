@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF separate debug files",
+        source: "guides/native/elf-debug-link.md",
+        route: "/elf-debug-link",
+      },
+      {
         text: "ELF and Mach-O initializer functions",
         source: "guides/native/native-initializers.md",
         route: "/native-initializers",

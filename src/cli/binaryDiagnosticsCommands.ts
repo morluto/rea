@@ -12,6 +12,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createElfDebugLinkService,
   createNativeInitializersService,
   createElfUnwindRangesService,
   createAppleIpsService,
@@ -39,6 +40,7 @@ import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectWindowsShortcutInputSchema } from "../domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
+import { inspectElfDebugLinkInputSchema } from "../domain/native/elfDebugLink.js";
 import { inspectNativeInitializersInputSchema } from "../domain/native/nativeInitializers.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 import { inspectElfUnwindRangesInputSchema } from "../domain/native/elfUnwindRanges.js";
@@ -99,6 +101,62 @@ export const registerBinaryDiagnosticsCommands = (
         );
       }),
   });
+
+  cli.command(CLI_COMMANDS.inspectElfDebugLink, {
+    description:
+      "Inspect ELF separate debug-file linkage without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local ELF32/ELF64 image"),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectElfDebugLinkInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectElfDebugLinkInputSchema.shape.max_entries,
+      ),
+      candidatePath: localPathStringSchema
+        .optional()
+        .describe("One caller-selected debug file to verify"),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const elf = createElfDebugLinkService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectElfDebugLink,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                elf.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                    ...(options.candidatePath === undefined
+                      ? {}
+                      : {
+                          candidate_path: absoluteCallerPath(
+                            options.candidatePath,
+                          ),
+                        }),
+                  },
+                  { signal },
+                ),
+              elf,
+              "rea-elf-debug-link",
+              "inspect_elf_debug_link",
+              signal,
+              // The candidate keeps its CLI spelling beside the image's.
+              options.candidatePath === undefined
+                ? undefined
+                : { candidate_path: options.candidatePath },
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+
   cli.command(CLI_COMMANDS.inspectNativeInitializers, {
     description:
       "List ELF and Mach-O initializer and finalizer functions without executing the image",
