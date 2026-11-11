@@ -160,11 +160,6 @@ export const traceNativeValues = async (
           "Cross-function target digest mismatch",
         ).retainPartialObservation(partialEvidence()),
       );
-    procedureAddresses.set(next.procedure, address);
-    procedureAddresses.set(address, address);
-    if (visited.has(address)) continue;
-    visited.add(next.procedure);
-    visited.add(address);
     const evidenceId = execution.value.evidenceId;
     if (evidenceId === undefined)
       return err(
@@ -174,6 +169,13 @@ export const traceNativeValues = async (
           "The function observation has no Evidence retention owner.",
         ).retainPartialObservation(partialEvidence()),
       );
+    // An alias still needs its own retained observation before it can
+    // establish identity, even when the canonical procedure was already seen.
+    procedureAddresses.set(next.procedure, address);
+    procedureAddresses.set(address, address);
+    if (visited.has(address)) continue;
+    visited.add(next.procedure);
+    visited.add(address);
     procedures.push({
       address,
       depth: next.depth,
