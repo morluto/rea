@@ -1098,11 +1098,13 @@ const GO_FLAG_PATH =
 /**
  * Settings read by a C compiler, where the flags below take a directory or file.
  * Go's own tools reuse those letters: `-ldflags` takes `-B gobuildid` and
- * `-T 0x1000`, so their relative arguments are not paths.
+ * `-T 0x1000`, so their relative arguments are not paths. The exact field
+ * `-I-` is GCC's include barrier, the same as `--include-barrier`, and names
+ * no directory.
  */
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
-  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*|--sysroot(?:=|\s+|$))(.*)$/su;
+  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFLT]|I(?!-$))=?\s*|--sysroot(?:=|\s+|$))(.*)$/su;
 /**
  * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
  * linker reads its own letters: `-L`, `-T` and `-I` (the ELF interpreter) take

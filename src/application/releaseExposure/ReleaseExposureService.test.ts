@@ -2367,6 +2367,19 @@ it("preserves a quoted linker path containing a flag-like suffix", async () => {
   ).toEqual(["/tmp/private -sdk"]);
 });
 
+it("reads GCC's -I- include barrier as an option, not a path", async () => {
+  expect(await goStatus(goModule([{ key: "CGO_CFLAGS", value: "-I-" }]))).toBe(
+    "not_observed",
+  );
+  const report = await goReport(
+    goModule([{ key: "CGO_CFLAGS", value: "-Iprivate-sdk -I- -I vendor/sdk" }]),
+  );
+  expect(
+    report.checks.find((item) => item.id === "go.build_paths")?.observation
+      .samples,
+  ).toEqual(["private-sdk", "vendor/sdk"]);
+});
+
 describe("ReleaseExposureService Go relative flag paths", () => {
   it("keeps relative paths given to compiler path flags, attached or not", async () => {
     const report = await goReport(
