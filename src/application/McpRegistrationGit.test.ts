@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
+import {
+  ProcessOwnershipIdentityBatchFailure,
+  ProcessOwnershipInspectionCancelled,
+} from "../process/ProcessInspectionCancellation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -196,4 +201,70 @@ it("preserves a native location access failure and late cancellation through sel
   } finally {
     present.mockRestore();
   }
+});
+
+it.each(["descriptor", "batch"] as const)(
+  "retains actual %s inspection cleanup through Git discovery and retry",
+  async (kind) => {
+    const descriptor = await failedInspectionDescriptor();
+    const reason = { operator: "cancel during Git preparation" };
+    const controller = new AbortController();
+    const failure =
+      kind === "descriptor"
+        ? descriptor.failure
+        : new ProcessOwnershipIdentityBatchFailure(
+            [
+              { pid: process.pid, requestIndex: 0, cause: descriptor.failure },
+              {
+                pid: process.pid,
+                requestIndex: 1,
+                cause: new ProcessOwnershipInspectionCancelled(reason),
+              },
+            ],
+            new Map(),
+          );
+    vi.mocked(owned.prepareOwnedCommand).mockImplementation(async () => {
+      controller.abort(reason);
+      throw failure;
+    });
+    const observed: unknown = await resolveKiloRegistrationWorktree(
+      await context(controller.signal),
+    ).catch((cause: unknown) => cause);
+    expect(observed).toBeInstanceOf(ConfigurationError);
+    if (!(observed instanceof ConfigurationError))
+      throw new Error("Physical inspection failure lost configuration context");
+    expect(observed.cause).toBe(failure);
+    expect(observed.cleanupIncomplete).toBe(true);
+    expect(observed.cleanupResources).toContain(descriptor.path);
+    expect(observed.secondaryFailures).toEqual([
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    ]);
+    expect(resources.hasPending).toBe(true);
+    await expect(resources.close()).rejects.toBeDefined();
+    expect(observed.cleanupIncomplete).toBe(true);
+    expect(descriptor.handle.fd).toBeGreaterThanOrEqual(0);
+    descriptor.allow();
+    await resources.close();
+    expect(descriptor.handle.fd).toBe(-1);
+    expect(resources.hasPending).toBe(false);
+    expect(observed.cleanupIncomplete).toBe(false);
+  },
+);
+
+it("keeps plain producer-owned inspection cancellation primary during Git preparation", async () => {
+  const reason = { operator: "cancel Git inspection" };
+  vi.mocked(owned.prepareOwnedCommand).mockRejectedValue(
+    new ProcessOwnershipInspectionCancelled(reason),
+  );
+  const observed: unknown = await resolveKiloRegistrationWorktree(
+    await context(),
+  ).catch((cause: unknown) => cause);
+  expect(observed).toBeInstanceOf(AnalysisCancelledError);
+  if (!(observed instanceof AnalysisCancelledError))
+    throw new Error("Inspection cancellation lost its producer origin");
+  expect(observed.cause).toBe(reason);
+  expect(resources.hasPending).toBe(false);
 });

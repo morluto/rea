@@ -839,7 +839,14 @@ it("retains the preparation owner alongside an independent command deadline", as
     throw new Error("Expected command deadline failure");
   expect(failure.reason).toBe("timeout");
   expect(failure.preparationFailure).toBe(preparation);
-  expect(failure.preparationFailure?.cleanupFailure).toBe(marker);
+  if (
+    !(
+      failure.preparationFailure instanceof
+      DarwinProcessOwnershipInspectionError
+    )
+  )
+    throw new Error("Expected the actual Darwin preparation failure");
+  expect(failure.preparationFailure.cleanupFailure).toBe(marker);
 });
 
 it("keeps a caller-supplied preparation error opaque when it is the exact abort reason", async () => {
