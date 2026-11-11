@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { selectEvmWorkerLimits } from "./EvmWorkerLimits.js";
+import { selectedEvmProducerLimits } from "../domain/evm/evmInterface.js";
 
 const limits = (
   soft = "unlimited",
@@ -84,3 +85,33 @@ it.each([
     expect(selectEvmWorkerLimits(input)).toEqual({ ok: false, error });
   },
 );
+
+it("applies requested producer budgets and retains narrower inherited limits", () => {
+  const requested = selectedEvmProducerLimits({
+    output_bytes: 64,
+    address_space_bytes: 4096,
+    cpu_seconds: 2,
+  });
+  expect(selectEvmWorkerLimits(limits(), requested)).toEqual({
+    ok: true,
+    value: {
+      addressSpaceBytes: 4096,
+      cpuSeconds: 2,
+      fileSizeBytes: 64,
+    },
+  });
+  const tighter = limits("1024", "2048")
+    .replace("time unlimited unlimited", "time 1 1")
+    .replace("size unlimited unlimited", "size 32 32");
+  expect(selectEvmWorkerLimits(tighter, requested)).toEqual({
+    ok: true,
+    value: {
+      addressSpaceBytes: 1024,
+      cpuSeconds: 1,
+      fileSizeBytes: 32,
+    },
+  });
+  expect(
+    selectedEvmProducerLimits({ output_bytes: 64, file_bytes: 128 }).file_bytes,
+  ).toBe(128);
+});

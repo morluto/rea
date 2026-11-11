@@ -84,6 +84,7 @@ export const liveBinaryTargetSummaryVariants = [
       "dfuse",
       "fit",
       "windows-prefetch",
+      "ntfs-mft",
     ]),
     architecture: z.null(),
   }),

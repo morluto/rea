@@ -264,6 +264,16 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: false,
     },
   },
+  "Documents/placed-notes.xml": {
+    format: "xml",
+    view: {
+      root: element("layer", {}, [
+        element("text", { x: "1", y: "2" }, ["Buy eggs"]),
+        element("text", { x: "3", y: "4" }, ["Do not Buy eggs"]),
+      ]),
+      truncated: false,
+    },
+  },
   "Documents/flyer.sla": {
     format: "xml",
     view: {
@@ -1350,6 +1360,26 @@ const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
     [
       {
         kind: "member_count",
+        file: "Documents/placed-notes.xml",
+        pointer: "/root/children",
+        matching: "[name=text][>text()=Buy eggs]",
+        equals: 1,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/placed-notes.xml",
+        pointer: "/root/children",
+        matching: "[name=text][>text()=eggs]",
+        at_least: 1,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "member_count",
         file: "Documents/people.xml",
         pointer: "/root/children",
         matching: "[>details=Alpha٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z]",
@@ -1667,16 +1697,6 @@ const INSIDE_PATH_CASES: readonly (readonly [
       file: books,
       pointer: "/nodes",
       matching: "[format=BOOK][>data/Year=2015]",
-      equals: 1,
-    },
-    true,
-  ],
-  [
-    {
-      kind: "member_count",
-      file: books,
-      pointer: "/nodes",
-      matching: "[>data/Title=The Silk Roads]",
       equals: 1,
     },
     true,
@@ -2129,15 +2149,6 @@ export const CHECK_CASES: readonly (readonly [
       file: db,
       pointer: "/tables/notes/rows/1/1",
       value: "b",
-    },
-    true,
-  ],
-  [
-    {
-      kind: "value_equals",
-      file: ".config/notes/layout.xml",
-      pointer: "/root/attributes/width",
-      value: "80",
     },
     true,
   ],

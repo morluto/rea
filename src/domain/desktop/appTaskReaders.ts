@@ -36,6 +36,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -175,7 +176,13 @@ def _run(arguments: dict, source: str, work: str) -> dict:
 def main(arguments: dict) -> int:
     home = os.path.expanduser("~")
     source = arguments["path"] if os.path.isabs(arguments["path"]) else os.path.join(home, arguments["path"])
-    if not os.path.isfile(source):
+    try:
+        mode = os.stat(source).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return _say({"absent": True})
+    except OSError as error:
+        return _say({"error": f"could not inspect the reader's file: {error.strerror or error}"})
+    if not stat.S_ISREG(mode):
         return _say({"absent": True})
     # A remote caller owns this exact folder before starting the command, and
     # removes it only after the command has settled.

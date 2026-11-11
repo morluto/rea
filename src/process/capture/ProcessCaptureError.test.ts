@@ -76,6 +76,33 @@ it("preserves the compiler output and live cleanup owner at capture normalizatio
   expect(error.capturedOutput?.exit_code).toBe(7);
 });
 
+it("marks a timed-out Darwin compiler inspection as retryable", () => {
+  const compiler = new DarwinProcessOwnershipInspectionError(
+    "compiler timed out",
+    {
+      compilerOutcome: {
+        outcome: "timed_out",
+        code: "ETIMEDOUT",
+        signal: null,
+        stderr: "compiler deadline exceeded",
+        stderrTruncated: false,
+        outputTruncated: false,
+        killed: true,
+        timeoutMs: 5_000,
+      },
+    },
+  );
+
+  const normalized = normalizeCaptureFailure(compiler, undefined);
+  expect(normalized).toMatchObject({
+    retryable: true,
+    capturedOutput: undefined,
+  });
+  if (!(normalized instanceof ProcessCaptureError))
+    throw new Error("Expected normalized capture failure");
+  expect(projectAnalysisError(normalized)).toMatchObject({ retryable: true });
+});
+
 it("retains compiler facts and cleanup dependency through capture finalization", () => {
   const { cleanup, error } = fixture();
   let finalized: unknown;

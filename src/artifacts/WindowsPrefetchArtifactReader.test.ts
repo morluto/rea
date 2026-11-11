@@ -1,8 +1,10 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { prefetchMetadataSchema } from "../domain/artifactFormatMetadata.js";
 import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { prefetchFixture, writePrefetch } from "./windows/Prefetch.fixture.js";
 
@@ -208,4 +210,72 @@ it("rejects a name hash that is not eight lowercase hex digits", async () => {
     expect(() =>
       prefetchMetadataSchema.parse({ ...facts, executable_path_hash: invalid }),
     ).toThrow();
+});
+
+it("retries a shared preparation cancelled by another traversal", async () => {
+  const reader = await readerFor(prefetchFixture({ version: "23" }));
+  const controller = new AbortController();
+  let entered: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      entered();
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      assertArtifactReadActive(signal);
+      return read.call(this, signal);
+    });
+  try {
+    const cancelled = reader
+      .entries(controller.signal)
+      [Symbol.asyncIterator]()
+      .next();
+    const cancelledResult = expect(cancelled).rejects.toMatchObject({
+      reason: "cancelled",
+    });
+    await started;
+    const other = reader.entries()[Symbol.asyncIterator]().next();
+    controller.abort("cancelled first traversal");
+    await cancelledResult;
+    await expect(other).resolves.toMatchObject({ done: true });
+    expect(reader.formatMetadata()).toMatchObject({
+      executable_name: "GOOGLE.EXE",
+    });
+  } finally {
+    controller.abort();
+    spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("verifies the source before publishing header facts", async () => {
+  const reader = await readerFor(prefetchFixture({ version: "23" }));
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(function (this: ArtifactFileSource, signal) {
+      return read.call(this, signal);
+    })
+    .mockRejectedValueOnce(new Error("final source verification failed"));
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toThrow("final source verification failed");
+    expect(reader.formatMetadata()).toBeUndefined();
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).resolves.toMatchObject({ done: true });
+    expect(reader.formatMetadata()).toMatchObject({
+      kind: "windows-prefetch",
+      executable_name: "GOOGLE.EXE",
+    });
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+  }
 });

@@ -1,11 +1,11 @@
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { binaryKeyedArchiveUidShapes } from "../../fixtures/keyedArchiveUidShapes.js";
-import { execFile } from "node:child_process";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { buildBinary } from "plist";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
@@ -27,7 +27,21 @@ import {
 } from "../../fixtures/interfaceBuilderEncoding.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const compile = promisify(execFile);
+const compile = async (
+  command: string,
+  arguments_: readonly string[],
+  options: { readonly timeout?: number } = {},
+): Promise<void> => {
+  const commands = await createVerifierCommands();
+  onTestFinished(() => commands.close());
+  await withVerifierCleanup(
+    () =>
+      commands.exec(command, arguments_, {
+        timeout: options.timeout ?? 90_000,
+      }),
+    [() => commands.close()],
+  );
+};
 
 type PlistValue =
   | string

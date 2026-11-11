@@ -136,6 +136,7 @@ const TARGETS: TargetFixtures = {
   },
   fit: { ...archive, format: "fit" },
   "windows-prefetch": { ...archive, format: "windows-prefetch" },
+  "ntfs-mft": { ...archive, format: "ntfs-mft" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },

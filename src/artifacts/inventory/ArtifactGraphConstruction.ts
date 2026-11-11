@@ -15,6 +15,7 @@ import {
   hasPrefetchSignature,
   isMamContainer,
 } from "../../domain/windows/prefetchFormat.js";
+import { hasMftFileRecordHeader } from "../../domain/windows/ntfsMft.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -630,6 +631,7 @@ export const classifyArtifactBytes = (
   // MAM container has no generation at offset 0, so it is probed separately.
   if (hasPrefetchSignature(prefix) || isMamContainer(prefix))
     return "windows-prefetch";
+  if (hasMftFileRecordHeader(prefix)) return "ntfs-mft";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);
