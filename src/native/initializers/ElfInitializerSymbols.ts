@@ -499,6 +499,29 @@ export const sectionRelocations = async (
   // Slot visits grow with each COPY span, so the spans together are limited to
   // the file size, as in the dynamic walk.
   let copyAllowance = input.bytes.length;
+  /**
+   * Bytes a linked image's COPY record writes, taken from its symbol. Null when
+   * that size is not established: the word assumed instead is no proof of what
+   * else the record reaches, so its table counts as not fully read.
+   */
+  const copySpan = (
+    section: NativeSection,
+    symbols: readonly ElfInitializerSymbol[] | undefined,
+    symbolIndex: number,
+  ): number | null => {
+    const size = copySize(symbols, symbolIndex);
+    if (size !== undefined && size <= BigInt(copyAllowance)) {
+      copyAllowance -= Number(size);
+      return Number(size);
+    }
+    input.notes.add(
+      size === undefined
+        ? "A section COPY relocation's write size is not established; slots without a relocation are unresolved."
+        : "Section COPY relocation sizes exceed the file byte count allowance; slots without a relocation are unresolved.",
+    );
+    skip(section);
+    return null;
+  };
   for (const [position, section] of input.sections.entries()) {
     const encoding = applicable(input, section);
     if (encoding === null) continue;
@@ -554,38 +577,28 @@ export const sectionRelocations = async (
         skip(section);
         break;
       }
-      const fixed =
-        parsed.value.type === relative
+      const copied =
+        !input.relocatable && parsed.value.type === copy
+          ? copySpan(section, symbols, parsed.value.symbolIndex)
+          : null;
+      // Bytes the record is known to write: a sized COPY's symbol, one word
+      // for RELATIVE, or the fixed width of another decoded kind.
+      const extent =
+        copied ??
+        (parsed.value.type === relative
           ? word
-          : elfRelocationWidth(input.machine, parsed.value.type);
+          : elfRelocationWidth(input.machine, parsed.value.type));
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
-      let span = fixed ?? word;
-      let established = fixed !== undefined;
-      if (!input.relocatable && parsed.value.type === copy) {
-        const size = copySize(symbols, parsed.value.symbolIndex);
-        if (size !== undefined && size <= BigInt(copyAllowance)) {
-          span = Number(size);
-          copyAllowance -= span;
-          established = true;
-        } else {
-          // The assumed word below is no proof of what else this record reaches.
-          input.notes.add(
-            size === undefined
-              ? "A section COPY relocation's write size is not established; slots without a relocation are unresolved."
-              : "Section COPY relocation sizes exceed the file byte count allowance; slots without a relocation are unresolved.",
-          );
-          skip(section);
-        }
-      }
+      const span = extent ?? word;
       if (span === 0) continue;
       const written = parsed.value.offset + (target?.address ?? 0n);
       if (recordTarget(input, target, parsed.value.offset, 1) === null) {
         // A linked image's write to memory without file bytes, such as COPY
-        // into .bss, cannot change a slot outside its established span.
+        // into .bss, cannot change a slot outside its known extent.
         const reached = wanted[firstOverlap(wanted, written, word)];
         if (
           input.relocatable ||
-          !established ||
+          extent === undefined ||
           (reached !== undefined && reached.va < written + BigInt(span))
         )
           skip(section);

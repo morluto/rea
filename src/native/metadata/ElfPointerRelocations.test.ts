@@ -223,14 +223,14 @@ const walk = walker(true);
 const walkPointers = walker(false);
 
 it.each([
-  ["an x86-64 COPY", symbolicImage(5n, 8n), 62, 64, 5],
-  ["an x86-64 TLS descriptor", symbolicImage(36n, 0n), 62, 64, 36],
-  ["an AArch64 TLS descriptor", symbolicImage(1031n, 0n), 183, 64, 1031],
-  ["an i386 TLS descriptor", symbolicImage32(41, 0), 3, 32, 41],
-  ["an ARM TLS descriptor", symbolicImage32(13, 0), 40, 32, 13],
+  ["an x86-64 COPY", symbolicImage(5n, 8n), [62, 64, 5]],
+  ["an x86-64 TLS descriptor", symbolicImage(36n, 0n), [62, 64, 36]],
+  ["an AArch64 TLS descriptor", symbolicImage(1031n, 0n), [183, 64, 1031]],
+  ["an i386 TLS descriptor", symbolicImage32(41, 0), [3, 32, 41]],
+  ["an ARM TLS descriptor", symbolicImage32(13, 0), [40, 32, 13]],
 ] as const)(
   "leaves %s undecoded for a consumer that did not ask for whole extents",
-  (_name, bytes, machine, bits, kind) => {
+  (_name, bytes, [machine, bits, kind]) => {
     const { writes, result } = walkPointers(bytes, "record", machine, bits);
     expect(writes).toEqual([]);
     expect(result).toMatchObject({

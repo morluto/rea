@@ -562,6 +562,26 @@ export const createLargeElfRelativeFixture = (
  * base: every pointer slot into the image is zeroed on disk and restored by
  * an R_AARCH64_RELATIVE entry, as a position-independent libil2cpp.so stores it.
  */
+/** The null symbol, then symbol 1 with only its size set; empty when no size is asked for. */
+const dynamicSymbols = (size: bigint | undefined): Buffer => {
+  if (size === undefined) return Buffer.alloc(0);
+  const symbols = Buffer.alloc(48);
+  symbols.writeBigUInt64LE(size, 24 + 16);
+  return symbols;
+};
+
+/** DT_SYMTAB and DT_SYMENT for a symbol table at `address`; none for an empty table. */
+const symbolTableTags = (
+  symbols: Buffer,
+  address: bigint,
+): [bigint, bigint][] =>
+  symbols.length === 0
+    ? []
+    : [
+        [6n, address],
+        [11n, 24n],
+      ];
+
 export const createElfFixture = (
   image: Buffer,
   options: ElfFixtureOptions = {},
@@ -585,15 +605,12 @@ export const createElfFixture = (
       0n,
       relocation.kind,
     ]);
-  // The null symbol, then symbol 1 with only its size set.
-  const symbols = Buffer.alloc(options.symbolSize === undefined ? 0 : 48);
-  if (options.symbolSize !== undefined)
-    symbols.writeBigUInt64LE(options.symbolSize, 24 + 16);
+  const symbols = dynamicSymbols(options.symbolSize);
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +
     (options.androidPacked === true ? 1 : 0) +
-    (options.symbolSize === undefined ? 0 : 2);
+    symbolTableTags(symbols, 0n).length;
   const fileSize =
     SIZE + relocations.length * 24 + tagCount * 16 + symbols.length;
   if (options.zeroFilledTable === true) {
@@ -623,12 +640,10 @@ export const createElfFixture = (
     ...(options.androidPacked === true
       ? [[0x60000011n, 0n] as [bigint, bigint]]
       : []),
-    ...(options.symbolSize === undefined
-      ? []
-      : ([
-          [6n, FIXTURE_BINARY_BASE + BigInt(fileSize - symbols.length)],
-          [11n, 24n],
-        ] as [bigint, bigint][])),
+    ...symbolTableTags(
+      symbols,
+      FIXTURE_BINARY_BASE + BigInt(fileSize - symbols.length),
+    ),
     [0n, 0n],
   ];
   const dynamic = Buffer.alloc(tags.length * 16);

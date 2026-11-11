@@ -1469,21 +1469,41 @@ describe("ELF COPY relocations read as section records", () => {
   );
 
   it("limits section COPY sizes together to the file byte count", async () => {
-    const sized = (size: bigint) => {
+    // One or two section-only COPY records of dynamic symbol 1 write zero-fill
+    // memory far above every slot of this 0xc00-byte file.
+    const sized = (size: bigint, records: 1 | 2) => {
       const bytes = sectionOnlyRecord(0xc10n, COPY_OF_SYMBOL_1);
-      bytes.writeBigUInt64LE(0x2000n, 64 + 40);
+      bytes.writeBigUInt64LE(0x4000n, 64 + 40);
       bytes.writeBigUInt64LE(size, SYMBOL_1_SIZE);
+      if (records === 2) {
+        // DT_RELA starts at the third record, so the second one is read only
+        // as a section record too.
+        bytes.writeBigUInt64LE(0x4b0n, 0x300 + 8 * 16 + 8);
+        bytes.writeBigUInt64LE(48n, 0x300 + 9 * 16 + 8);
+        bytes.writeBigUInt64LE(0x2000n, 0x498);
+        bytes.writeBigUInt64LE(COPY_OF_SYMBOL_1, 0x4a0);
+      }
       return read(bytes);
     };
-    const within = await sized(0xc00n);
-    expect(within.entries[0]?.resolution).toBe("raw");
-    expect(within.status).toBe("parsed");
-    const beyond = await sized(0xc01n);
-    expect(beyond.entries[0]?.resolution).toBe("unresolved");
-    expect(beyond.status).toBe("incomplete");
-    expect(beyond.limitations).toContain(
-      "Section COPY relocation sizes exceed the file byte count allowance; slots without a relocation are unresolved.",
-    );
+    for (const [size, records] of [
+      [0xc00n, 1],
+      [0x600n, 2],
+    ] as const) {
+      const within = await sized(size, records);
+      expect(within.entries[0]?.resolution).toBe("raw");
+      expect(within.status).toBe("parsed");
+    }
+    for (const [size, records] of [
+      [0xc01n, 1],
+      [0x601n, 2],
+    ] as const) {
+      const beyond = await sized(size, records);
+      expect(beyond.entries[0]?.resolution).toBe("unresolved");
+      expect(beyond.status).toBe("incomplete");
+      expect(beyond.limitations).toContain(
+        "Section COPY relocation sizes exceed the file byte count allowance; slots without a relocation are unresolved.",
+      );
+    }
   });
 
   it("takes the one word of a RELATIVE record as an established extent", async () => {
