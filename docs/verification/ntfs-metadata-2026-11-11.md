@@ -195,7 +195,7 @@ resident attribute-list graphs into acquired extension metadata. Physical facts
 and their aggregate counts stay separate from bounded linked facts. Journal
 and extension joins share the producer-owned record identity verdict.
 
-The [source-built extension fixture](../../tests/fixtures/ntfsMftExtension.ts)
+The [source-built extension fixture](https://github.com/morluto/rea/blob/b76b9716192db1f2bbfdcbb093bb01c29a7e8d10/tests/fixtures/ntfsMftExtension.ts)
 contains base slot 0 / sequence 2 and extension slot 1 / sequence 7. The base
 list refers to the extension's FILE_NAME attribute ID 3; the extension declares
 base reference `(0, 2)`. Dissect 3.16 independently verified both physical
