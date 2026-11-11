@@ -167,6 +167,23 @@ describe("MFT header facts", () => {
 });
 
 describe("MFT fixup coverage", () => {
+  it.each([0, 0xffff])(
+    "leaves reserved USA sequence %i unverified",
+    (sequenceNumber) => {
+      const parsed = parseMftImage(recordOf({ sequenceNumber }));
+      if (!parsed.ok) throw new Error(parsed.error.message);
+      expect(parsed.value.records[0]?.fixups).toMatchObject({
+        sequenceNumber,
+        verifiedSectors: 0,
+        malformed: true,
+      });
+      expect(parsed.value.metadata.fixup_unverified_record_count).toBe(1);
+      expect(parsed.value.limitations.join(" ")).toContain(
+        "invalid or incomplete",
+      );
+    },
+  );
+
   it("keeps a record whose sector trailer is not the sequence number, and reports it", () => {
     const parsed = parseMftImage(
       streamOf(recordOf(), recordOf({ sequenceNumber: 9, corruptSector: 1 })),
@@ -196,7 +213,7 @@ describe("MFT fixup coverage", () => {
     expect(parsed.value.metadata.fixup_mismatch_count).toBe(0);
     expect(parsed.value.metadata.fixup_unverified_record_count).toBe(1);
     expect(parsed.value.limitations.join(" ")).toMatch(
-      /update sequence array that does not cover every sector/u,
+      /invalid or incomplete update sequence array/u,
     );
   });
 
