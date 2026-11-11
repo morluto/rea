@@ -197,6 +197,7 @@ the exact commit messages and references from the release they describe.
 - [Python packaged applications](python-packaged-applications.md)
 - [CPython pyc inspection](python-pyc.md)
 - [Reconstruction coverage](reconstruction-coverage.md)
+- [Release exposure](release-exposure.md)
 - [Reverse-engineering tool integrations](reverse-engineering-tools.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [U-Boot legacy uImage containers](uimage.md)
