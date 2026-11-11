@@ -105,6 +105,26 @@ it("refuses a MAM container without calling it corrupt", async () => {
   }
 });
 
+it.each([
+  ["17", 0x78],
+  ["23", 0x80],
+] as const)(
+  "keeps the last-run timestamp unknown when a v%s capture ends before 0x%i",
+  async (version, offset) => {
+    // The file-information block is reached, but the generation's own FILETIME
+    // is not, so presence cannot be claimed from the metrics array alone.
+    const reader = await readerFor(
+      prefetchFixture({ version }).subarray(0, offset + 4),
+    );
+    try {
+      await inventory(reader);
+      expect(reader.formatMetadata()).toMatchObject({ run_time_slots: null });
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
 it("reports a truncated header as a format failure", async () => {
   const reader = await readerFor(
     prefetchFixture({ version: "23" }).subarray(0, 40),

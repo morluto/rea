@@ -14,11 +14,12 @@ summary keeps the complete Evidence; use `parent_evidence_id` with
 
 ## Recognition
 
-A Prefetch file starts with a four-byte ASCII version tag and a signature byte
-`S`. Recognition reads that prefix only, so the file name does not matter. A file
-whose tag is followed by the `MSCF` marker is a compressed Prefetch file: it is
-recognized as `windows-prefetch` and then refused with an explicit
-"does not decode that container" failure rather than being reported as corrupt.
+An uncompressed Prefetch file starts with a little-endian version DWORD and the
+four-byte `SCCA` signature. Recognition reads that prefix only, so the file name
+does not matter. A compressed container replaces the whole header with `MAM` at
+offset 0; it is recognized as `windows-prefetch` and then refused with an
+explicit "does not decode that container" failure rather than being reported as
+corrupt.
 
 ## What the header reports
 
@@ -27,7 +28,8 @@ For the v17 and v23 generations this reader reports:
 - the recorded executable name and the four-byte name-hash, as lowercase
   hexadecimal;
 - the recorded run count, which both generations keep at the same offset, and
-  whether a last-run timestamp is present;
+  whether a last-run timestamp is present, which requires the eight FILETIME
+  bytes at the generation's own offset (0x78 for v17, 0x80 for v23);
 - the declared file size, kept beside the observed size so a truncated or padded
   capture is visible.
 

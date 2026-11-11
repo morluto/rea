@@ -3,7 +3,7 @@
 ## Boundary and contract
 
 `src/domain/windows/prefetchFormat.ts` owns recognition and header parsing: the
-version tag, the `S`/`MSCF` distinction, the field offsets it reads, and a
+generation DWORD, the `SCCA`/`MAM` distinction, the field offsets it reads, and a
 `Result` failure of kind `format`, `limit` or `unsupported`. It never guesses a
 field it cannot read; a missing value stays `null` and adds a limitation.
 
@@ -26,12 +26,14 @@ refuses, and extraction has nothing to materialize.
 - The format registry entry is a container with `roleContainer`, so the root
   occurrence is reported as a container and `inventoryCoverage` reports
   `container-entries` with the reader's limitation.
-- `classifyArtifactBytes` matches the prefix after the FIT probe, so a tag-only
-  prefix without the signature stays a plain file.
+- `classifyArtifactBytes` and `BinaryTargetResolver` both match the prefix after
+  the FIT probe, so a generation DWORD without the signature stays a plain file
+  and a `MAM` container routes to the format's own refusal instead of
+  executable parsing.
 
 ## Later increments
 
-- MAM (MSCF) decoding needs an LZ77-style decompressor; no dependency provides it
+- MAM decoding needs an LZ77-style decompressor; no dependency provides it
   today and adding one is a separate decision.
 - After decompression, the Win10+ filename-string and read-ahead sections become
   decodable, along with volumes and last-run times for all generations.

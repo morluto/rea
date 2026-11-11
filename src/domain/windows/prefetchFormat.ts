@@ -25,11 +25,15 @@ const EXECUTABLE_NAME_BYTES = 60;
 const EXECUTABLE_HASH_OFFSET = 0x4c;
 
 /**
- * File information follows the common header: a 12-byte metrics array, the
- * FILETIME of the last run, then the run count. Version 23 appends a directory
- * strings array; that does not move these fields.
+ * File information follows the common header: a 12-byte metrics array at 0x54,
+ * the FILETIME of the last run, then the run count. Version 23 appends a
+ * directory strings array, which moves its FILETIME eight bytes later than
+ * version 17's; the run count stays put.
  */
-const FILE_INFORMATION_OFFSET = 0x54;
+const RUN_TIME_OFFSETS: Readonly<Record<ParsedPrefetchVersion, number>> = {
+  "17": 0x78,
+  "23": 0x80,
+};
 const RUN_COUNT_OFFSET = 0x98;
 
 /** One FILETIME slot occupies eight bytes; its value is not decoded. */
@@ -159,8 +163,10 @@ export const parsePrefetchFile = (
       `The header declares ${String(declaredFileBytes)} bytes but the file holds ${String(bytes.length)}.`,
     );
   let runCount: number | null = null;
+  // The last-run FILETIME sits at a generation-specific offset, so a capture
+  // that ends inside the metrics array has no run time to report yet.
   const runTimeSlots: number | null =
-    end >= FILE_INFORMATION_OFFSET + RUN_TIME_SLOT_BYTES ? 1 : null;
+    end >= RUN_TIME_OFFSETS[version] + RUN_TIME_SLOT_BYTES ? 1 : null;
   // The run count sits at the same offset in both generations; only its
   // presence depends on the file reaching the end of the file-information
   // block.

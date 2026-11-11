@@ -97,7 +97,10 @@ import {
   isDfuSeFile,
 } from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
-import { hasPrefetchSignature } from "../domain/windows/prefetchFormat.js";
+import {
+  hasPrefetchSignature,
+  isMamContainer,
+} from "../domain/windows/prefetchFormat.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
@@ -817,7 +820,10 @@ const detectArtifactFormat = async (
     });
   if (esp === "esp-image") return "esp-image";
   if (hasFitImagesNode(magic)) return "fit";
-  if (hasPrefetchSignature(magic)) return "windows-prefetch";
+  // A MAM container carries no generation at offset 0, so the signature probe
+  // alone would route it to executable parsing instead of the refusal.
+  if (hasPrefetchSignature(magic) || isMamContainer(magic))
+    return "windows-prefetch";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
