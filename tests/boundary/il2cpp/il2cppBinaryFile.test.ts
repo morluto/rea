@@ -2012,3 +2012,109 @@ it("does not treat a repeated possible module as a competing array", () => {
   );
   expect(link(bytes).code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
 });
+
+it("does not claim a unique module array when an ELF unresolved relocation may form a second code-referenced array", () => {
+  const image = createIl2cppBinaryFixture({
+    codeRegistration: false,
+    codeReference: true,
+  });
+  image.writeBigUInt64LE(0n, 0x700);
+  image.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x440n, 0x708);
+  image.set([0x48, 0x8d, 0x05], 0xc20);
+  image.writeInt32LE(0x700 - (0xc20 + 7), 0xc23);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim a unique module when an ELF unresolved relocation may name a second record", () => {
+  const image = createIl2cppBinaryFixture({ duplicateModule: true });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim unique registration when competing ELF count has unresolved relocation", () => {
+  const image = createIl2cppBinaryFixture({ duplicateCodeRegistration: true });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x680, kind: 10 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim unique metadata registration when competing ELF count is unresolved", () => {
+  const image = createIl2cppBinaryFixture({
+    duplicateMetadataRegistration: true,
+  });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 10 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it.each([
+  [0x708, 10],
+  [0x710, 1],
+])(
+  "does not claim unique module with unresolved competing field %s",
+  (offset, kind) => {
+    const image = createIl2cppBinaryFixture({ duplicateModule: true });
+    const bytes = createElfFixture(image, {
+      machine: 62,
+      unresolvedRelocations: [{ offset, kind }],
+    });
+    expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("rejects a possible ELF module when its known count disproves the record", () => {
+  const image = createIl2cppBinaryFixture({ duplicateModule: true });
+  image.writeUInt32LE(123, 0x708);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("rejects a possible ELF code registration when its known array is invalid", () => {
+  const image = createIl2cppBinaryFixture({ duplicateCodeRegistration: true });
+  image.writeBigUInt64LE(0n, 0x688);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x680, kind: 10 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("rejects a possible ELF metadata registration when its known type pointer is invalid", () => {
+  const image = createIl2cppBinaryFixture({
+    duplicateMetadataRegistration: true,
+  });
+  image.writeBigUInt64LE(0n, 0x8b8);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 10 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("still uses the ELF type-table fallback when an uncertain metadata candidate is disproven", () => {
+  const image = createIl2cppBinaryFixture({
+    metadataRegistration: false,
+    adrpAdd: [[0xc20, 0x900]],
+  });
+  image.writeUInt32LE(4, 0x8e0);
+  image.writeBigUInt64LE(0n, 0x8b8);
+  const bytes = createElfFixture(image, {
+    machine: 183,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 258 }],
+  });
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});

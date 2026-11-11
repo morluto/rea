@@ -164,6 +164,11 @@ export function* findModules(
     metadata.images.map((entry) => entry.name),
   );
   const counts = yield* imageMethodCounts(metadata);
+  const countSet = new Set(counts);
+  const minimumCount = counts.reduce(
+    (minimum, count) => Math.min(minimum, count),
+    Number.POSITIVE_INFINITY,
+  );
   const candidates = new Map<number, Il2cppCodeGenModule[]>();
   const unresolvedName = unresolvedPointerMatcher(image, names.keys());
   for (const mapping of image.container.mappings) {
@@ -173,19 +178,24 @@ export function* findModules(
       const offset = mapping.offset + at;
       const address = mapping.address + BigInt(at);
       const raw = image.bytes.readBigUInt64LE(offset);
-      if (unresolvedName(address, raw)) {
+      const elfSlot =
+        image.elfPointerOverlay === undefined
+          ? undefined
+          : readSlot(image, address);
+      if (elfSlot === "unknown" || unresolvedName(address, raw)) {
         const count = readUInt32(image, address + 8n);
-        const plausibleCounts = counts.filter(
-          (expected) => count === "unknown" || count === expected,
-        );
-        if (plausibleCounts.length > 0) {
+        const plausibleCount =
+          count === "unknown"
+            ? minimumCount
+            : count !== null && countSet.has(count)
+              ? count
+              : Number.POSITIVE_INFINITY;
+        if (Number.isFinite(plausibleCount)) {
           const pointers = readSlot(image, address + 16n);
           if (
             pointers === "unknown" ||
             (typeof pointers === "bigint" &&
-              plausibleCounts.some((expected) =>
-                hasPointerArrayCoverage(image, pointers, expected),
-              ))
+              hasPointerArrayCoverage(image, pointers, plausibleCount))
           )
             throw new Il2cppBinaryFormatFailure(
               "code-gen-modules-not-found",
@@ -196,7 +206,12 @@ export function* findModules(
       // Non-ELF images retain their stored bytes. Nominate before decoding so
       // unrelated partial fixups do not invalidate the module search.
       if (image.elfPointerOverlay === undefined && !names.has(raw)) continue;
-      const target = readPointer(image, address);
+      const target =
+        elfSlot === undefined
+          ? readPointer(image, address)
+          : typeof elfSlot === "bigint"
+            ? elfSlot
+            : null;
       if (target === null) continue;
       const indices = names.get(target);
       if (indices === undefined) continue;
@@ -225,10 +240,20 @@ export function* findModules(
       for (const index of indices) {
         if (++work % 256 === 0) yield;
         const count = readUInt32(image, address + 8n);
-        if (count !== counts[index]) continue;
-        const pointers = readPointer(image, address + 16n);
+        if (count !== "unknown" && count !== counts[index]) continue;
+        const pointers = readSlot(image, address + 16n);
+        if (pointers === "unknown")
+          throw new Il2cppBinaryFormatFailure(
+            "code-gen-modules-not-found",
+            "A matching module record has an unresolved method pointer array",
+          );
         if (pointers === null) continue;
-        if (!hasPointerArrayCoverage(image, pointers, count)) continue;
+        if (!hasPointerArrayCoverage(image, pointers, counts[index]!)) continue;
+        if (count === "unknown")
+          throw new Il2cppBinaryFormatFailure(
+            "code-gen-modules-not-found",
+            "A matching module record has an unresolved method count",
+          );
         const list = candidates.get(index) ?? [];
         if (list.some((candidate) => candidate.address === address)) continue;
         if (list.length !== 0)
@@ -280,18 +305,39 @@ export function* findCodeRegistration(
       if ((at & 0xffff) < 8) yield;
       // The count owns four bytes; the following four only align its pointer.
       const field = mapping.address + BigInt(at);
-      if (readUInt32(image, field) !== modules.length) continue;
-      const array = readPointer(image, field + 8n);
+      const count = readUInt32(image, field);
+      if (count !== "unknown" && count !== modules.length) continue;
+      const arraySlot = readSlot(image, field + 8n);
+      if (arraySlot === "unknown")
+        throw new Il2cppBinaryFormatFailure(
+          "code-registration-not-found",
+          "A possible CodeRegistration has an unresolved module array",
+        );
+      const array = arraySlot;
       if (array === null || !isMapped(image, array, modules.length * 8))
         continue;
       const seen = new Set<bigint>();
+      let uncertain = count === "unknown";
+      let viable = true;
       for (let slot = 0; slot < modules.length; slot++) {
         if (slot % 256 === 0) yield;
-        const pointer = readPointer(image, array + BigInt(slot * 8));
-        if (pointer === null || !expected.has(pointer)) break;
+        const pointer = readSlot(image, array + BigInt(slot * 8));
+        if (pointer === "unknown") {
+          uncertain = true;
+          continue;
+        }
+        if (pointer === null || !expected.has(pointer) || seen.has(pointer)) {
+          viable = false;
+          break;
+        }
         seen.add(pointer);
       }
-      if (seen.size === modules.length) {
+      if (viable && uncertain)
+        throw new Il2cppBinaryFormatFailure(
+          "code-registration-not-found",
+          "A possible CodeRegistration has unresolved candidate fields",
+        );
+      if (viable && seen.size === modules.length) {
         // Exact load aliases can visit one virtual registration field twice.
         if (matchedFields.has(field)) continue;
         matchedFields.add(field);
@@ -339,34 +385,47 @@ function* findModuleArrayByCode(
   expected: ReadonlySet<bigint>,
 ): Generator<void, bigint | null> {
   const arrays = new Set<bigint>();
-  let unresolvedCandidate = false;
   const unresolvedModule = unresolvedPointerMatcher(image, expected);
+  let expectedXor = 0n;
+  for (const candidate of expected) expectedXor ^= candidate;
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     let runStart = start;
     const lastPosition = new Map<bigint, number>();
     const possible = new Map<number, bigint | null>();
     const occurrences = new Map<bigint, number>();
-    let possibleUnknown = 0;
+    const unknownPositions = new Set<number>();
+    let possibleXor = 0n;
     let duplicateValues = 0;
     for (let at = start; at + 8 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
-      const unknown = unresolvedModule(mapping.address + BigInt(at), raw);
+      const address = mapping.address + BigInt(at);
+      const elfSlot =
+        image.elfPointerOverlay === undefined
+          ? undefined
+          : readSlot(image, address);
+      const unknown = elfSlot === "unknown" || unresolvedModule(address, raw);
       const value =
         !unknown && (image.elfPointerOverlay !== undefined || expected.has(raw))
-          ? readPointer(image, mapping.address + BigInt(at))
+          ? elfSlot === undefined
+            ? readPointer(image, address)
+            : typeof elfSlot === "bigint"
+              ? elfSlot
+              : null
           : null;
       if (!unknown && (value === null || !expected.has(value))) {
         possible.clear();
         occurrences.clear();
-        possibleUnknown = 0;
+        unknownPositions.clear();
+        possibleXor = 0n;
         duplicateValues = 0;
       } else {
         const candidate = unknown ? null : value;
         possible.set(at, candidate);
-        if (candidate === null) possibleUnknown++;
+        if (candidate === null) unknownPositions.add(at);
         else {
+          possibleXor ^= candidate;
           const count = (occurrences.get(candidate) ?? 0) + 1;
           occurrences.set(candidate, count);
           if (count === 2) duplicateValues++;
@@ -375,8 +434,9 @@ function* findModuleArrayByCode(
         if (possible.has(expired)) {
           const previous = possible.get(expired)!;
           possible.delete(expired);
-          if (previous === null) possibleUnknown--;
+          if (previous === null) unknownPositions.delete(expired);
           else {
+            possibleXor ^= previous;
             const count = occurrences.get(previous)!;
             if (count === 2) duplicateValues--;
             if (count === 1) occurrences.delete(previous);
@@ -385,24 +445,20 @@ function* findModuleArrayByCode(
         }
         if (
           possible.size === expected.size &&
-          possibleUnknown > 0 &&
+          unknownPositions.size > 0 &&
           duplicateValues === 0
         ) {
-          if (possibleUnknown === 1) {
-            const missing = [...expected].find(
-              (candidate) => !occurrences.has(candidate),
-            );
-            const unknownAt = [...possible].find(
-              ([, item]) => item === null,
-            )?.[0];
-            if (missing !== undefined && unknownAt !== undefined)
-              unresolvedCandidate ||= unresolvedPointerMatcher(image, [
-                missing,
-              ])(
+          if (unknownPositions.size === 1) {
+            const unknownAt = unknownPositions.values().next().value!;
+            if (
+              image.elfPointerOverlay !== undefined ||
+              unresolvedPointerMatcher(image, [expectedXor ^ possibleXor])(
                 mapping.address + BigInt(unknownAt),
                 image.bytes.readBigUInt64LE(mapping.offset + unknownAt),
-              );
-          } else unresolvedCandidate = true;
+              )
+            )
+              return null;
+          } else return null;
         }
       }
       if (value === null || !expected.has(value)) {
@@ -425,7 +481,7 @@ function* findModuleArrayByCode(
       }
     }
   }
-  if (unresolvedCandidate || arrays.size === 0) return null;
+  if (arrays.size === 0) return null;
   const referenced =
     image.container.architecture === "arm64"
       ? yield* arm64PageReferences(image, arrays)
@@ -547,26 +603,42 @@ export function* findMetadataRegistration(
     for (let at = start; at + 112 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const address = mapping.address + BigInt(at);
-      if (readUInt32(image, address + 80n) !== typeDefinitions) continue;
-      if (readUInt32(image, address + 96n) !== typeDefinitions) continue;
+      const fieldCount = readUInt32(image, address + 80n);
+      if (fieldCount !== "unknown" && fieldCount !== typeDefinitions) continue;
+      const sizeCount = readUInt32(image, address + 96n);
+      if (sizeCount !== "unknown" && sizeCount !== typeDefinitions) continue;
       if (!hasPointerArrayCoverage(image, address, 16)) continue;
-      countsMatched = true;
+      if (fieldCount !== "unknown" && sizeCount !== "unknown")
+        countsMatched = true;
       const count = readUInt32(image, address + 48n);
-      const types = readPointer(image, address + 56n);
-      const fieldOffsets = readPointer(image, address + 88n);
-      const typeSizes = readPointer(image, address + 104n);
+      const types = readSlot(image, address + 56n);
+      const fieldOffsets = readSlot(image, address + 88n);
+      const typeSizes = readSlot(image, address + 104n);
       if (
-        typeof count !== "number" ||
-        count === 0 ||
-        count > 0x7fffffff ||
+        count === null ||
+        (typeof count === "number" && (count === 0 || count > 0x7fffffff)) ||
         types === null ||
         fieldOffsets === null ||
         typeSizes === null ||
-        !isMapped(image, fieldOffsets, 8) ||
-        !isMapped(image, typeSizes, 8) ||
-        !isMapped(image, types, count * 8)
+        (typeof fieldOffsets === "bigint" &&
+          !isMapped(image, fieldOffsets, 8)) ||
+        (typeof typeSizes === "bigint" && !isMapped(image, typeSizes, 8)) ||
+        (typeof types === "bigint" &&
+          !isMapped(image, types, typeof count === "number" ? count * 8 : 8))
       )
         continue;
+      if (
+        fieldCount === "unknown" ||
+        sizeCount === "unknown" ||
+        count === "unknown" ||
+        types === "unknown" ||
+        fieldOffsets === "unknown" ||
+        typeSizes === "unknown"
+      )
+        throw new Il2cppBinaryFormatFailure(
+          "metadata-registration-not-found",
+          "A possible MetadataRegistration has unresolved candidate fields",
+        );
       const field = mapping.address + BigInt(at + 48);
       // Exact load aliases can visit one virtual registration field twice.
       if (matchedFields.has(field)) continue;
