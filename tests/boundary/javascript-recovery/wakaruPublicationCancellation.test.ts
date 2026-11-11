@@ -137,6 +137,7 @@ vi.mock(
             await import("../../../src/javascript/recovery/WakaruRelease.js");
           const kind = publicationCancellation.commandFailure;
           return runWakaruCommand({
+            resources: context.resources,
             command: "/unused/wakaru",
             limiter: "/unused/prlimit",
             arguments: [],

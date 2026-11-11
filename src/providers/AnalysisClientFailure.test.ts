@@ -1,6 +1,11 @@
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { expect, it } from "vitest";
 import {
   AnalysisCapabilityUnavailableError,
+  AnalysisCancelledError,
+  AnalysisOutputError,
+  AnalysisTimeoutError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
@@ -169,4 +174,40 @@ it("keeps the structured limit when a resource refusal changes operation", () =>
       },
     },
   });
+});
+
+it.each([
+  new ProviderAdapterError("fixture", "open_binary"),
+  new AnalysisOutputError("open_binary", "physical parse failure"),
+  new AnalysisTimeoutError("open_binary", 123),
+])("preserves recorded secondary failures when rebinding $_tag", (physical) => {
+  const reason = { caller: "stop after physical outcome" };
+  const cancelled = new AnalysisCancelledError("open_binary", {
+    cause: reason,
+  });
+  const sibling = new AnalysisOutputError(
+    "read-sibling",
+    "independent physical sibling",
+  );
+  physical.retainSecondaryFailure(sibling);
+  analysisErrorWithCancellation(physical, cancelled);
+  const attributed = analysisClientFailureForOperation(
+    physical,
+    "fixture",
+    "health",
+  );
+  expect(attributed).toMatchObject({ operation: "health" });
+  expect(attributed.secondaryFailures).toEqual([sibling, cancelled]);
+  expect(attributed.secondaryFailures[0]).toBe(sibling);
+  expect(attributed.secondaryFailures[1]).toBe(cancelled);
+  expect(cancelled.cause).toBe(reason);
+  const again = analysisClientFailureForOperation(
+    attributed,
+    "fixture",
+    "binary_overview",
+  );
+  expect(again.secondaryFailures).toEqual([sibling, cancelled]);
+  expect(projectAnalysisError(again).details?.secondary_failures).toHaveLength(
+    2,
+  );
 });
