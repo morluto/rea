@@ -17,11 +17,21 @@ it("reads only actual settings environment properties", () => {
     // environment: "REA_COMMENT_MAX_BYTES"
     const text = 'environment: "REA_STRING_MAX_BYTES"';
     export const ANALYSIS_SETTINGS = {
-      first: { environment: "REA_REAL_MAX_BYTES" },
-      parameter: { defaultValue: 1 },
+      first: { updateMode: "runtime", environment: "REA_REAL_MAX_BYTES" },
+      parameter: { updateMode: "runtime", defaultValue: 1 },
     } as const;
   `),
   ]).toEqual(["REA_REAL_MAX_BYTES"]);
+  expect(() =>
+    parseRuntimeSettingEnvironments(
+      'export const ANALYSIS_SETTINGS = { a: { environment: "REA_REAL_MAX_BYTES" } };',
+    ),
+  ).toThrow(/updateMode/);
+  expect(() =>
+    parseRuntimeSettingEnvironments(
+      'export const ANALYSIS_SETTINGS = { a: { updateMode: "parameter" } };',
+    ),
+  ).toThrow(/updateMode/);
   expect(() =>
     parseRuntimeSettingEnvironments(
       "export const ANALYSIS_SETTINGS = { a: { environment: value } };",
@@ -49,12 +59,13 @@ it("reads only actual settings environment properties", () => {
 it("parses declared external provenance rather than inferring it from prose", () => {
   const source = `export const NUMERIC_LIMIT_REGISTRY = [{
     read: "startup", name: "REA_HOPPER_TIMEOUT_MS", reason: "external reader",
-    policy: "restart-only",
+    update_mode: "restart", policy: "restart-only",
     provenance: { kind: "external-reader", source: "scripts/helper.py", witness: "tests/helper.test.ts" },
   }] as const;`;
   expect(parseNumericLimitRegistry(source)).toEqual([
     {
       name: "REA_HOPPER_TIMEOUT_MS",
+      update_mode: "restart",
       policy: "restart-only",
       read: "startup",
       reason: "external reader",
@@ -65,6 +76,14 @@ it("parses declared external provenance rather than inferring it from prose", ()
       },
     },
   ]);
+  expect(() =>
+    parseNumericLimitRegistry(source.replace('update_mode: "restart", ', "")),
+  ).toThrow(/update_mode/);
+  expect(() =>
+    parseNumericLimitRegistry(
+      source.replace('update_mode: "restart"', 'update_mode: "runtime"'),
+    ),
+  ).toThrow(/Invalid numeric limit registry entry/);
   expect(() =>
     parseNumericLimitRegistry(
       source.replace('source: "scripts/helper.py"', "source: dynamicPath"),

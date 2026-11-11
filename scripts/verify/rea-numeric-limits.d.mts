@@ -23,6 +23,7 @@ export function perCallLimitFailures(
 /** Parse static registry declarations, including external-reader provenance. */
 export function parseNumericLimitRegistry(source: string): Array<{
   name: string;
+  update_mode: "restart";
   policy: "restart-only" | "per-call";
   read: "startup" | "per-call" | "construction";
   reason: string;
