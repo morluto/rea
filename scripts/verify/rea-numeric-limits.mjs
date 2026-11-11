@@ -109,6 +109,53 @@ const boundLimitName = (node, bindings) => {
   return undefined;
 };
 
+const isPropertyAccess = (node) =>
+  ts.isPropertyAccessExpression(node) ||
+  ts.isPropertyAccessChain?.(node) === true;
+
+const isElementAccess = (node) =>
+  ts.isElementAccessExpression(node) ||
+  ts.isElementAccessChain?.(node) === true;
+
+/**
+ * Number(), parseInt(), and schema parse() read the value they are given.
+ * The accessed property or element is that read, through parentheses and
+ * other wrappers, so a suffixless name is still classified.
+ */
+const rememberNumericArgument = (discovered, path, node, bindings) => {
+  const expression = unwrapExpression(node);
+  if (isPropertyAccess(expression))
+    remember(discovered, path, expression.name.text, expression, true);
+  else if (isElementAccess(expression))
+    remember(
+      discovered,
+      path,
+      boundLimitName(expression.argumentExpression, bindings),
+      expression,
+      true,
+    );
+  else
+    remember(
+      discovered,
+      path,
+      boundLimitName(expression, bindings),
+      expression,
+      true,
+    );
+  ts.forEachChild(expression, (child) =>
+    rememberNumericArgument(discovered, path, child, bindings),
+  );
+};
+
+/**
+ * Generated source assigns a limit (`REA_NAME = ...`). A name mentioned in
+ * template prose is not a producer, matching an ordinary string.
+ */
+const assignedTemplateLimits = (chunk) =>
+  [...chunk.matchAll(/(?:^|[^A-Za-z0-9_])(REA_[A-Z0-9_]+)\s*=(?!=)/gu)].map(
+    (match) => match[1],
+  );
+
 export const isNumericLimit = (name) =>
   REQUIRED_RUNTIME_LIMITS.includes(name) ||
   /(?:_BYTES|_MS|_MIB|_SECONDS|_POLLS|_JOBS|_ELEMENTS|_COUNT|_SESSIONS|_COMMANDS)$/u.test(
@@ -131,7 +178,12 @@ const numericSchemaText = (node) =>
     node.getText(),
   );
 
-const numericParse = (node) => {
+const isParseAccess = (expression) =>
+  isPropertyAccess(expression) &&
+  (expression.name.text === "safeParse" || expression.name.text === "parse");
+
+/** Number() and a numeric schema read their argument. Other parsers do not. */
+const parsesNumericArgument = (node) => {
   if (!ts.isCallExpression(node)) return false;
   const expression = unwrapExpression(node.expression);
   if (
@@ -141,10 +193,13 @@ const numericParse = (node) => {
       expression.text === "parseFloat")
   )
     return true;
-  return (
-    ts.isPropertyAccessExpression(expression) &&
-    (expression.name.text === "safeParse" || expression.name.text === "parse")
-  );
+  return isParseAccess(expression) && numericSchemaText(expression.expression);
+};
+
+const numericParse = (node) => {
+  if (!ts.isCallExpression(node)) return false;
+  const expression = unwrapExpression(node.expression);
+  return parsesNumericArgument(node) || isParseAccess(expression);
 };
 
 const readLifecycle = (node) => {
@@ -172,7 +227,9 @@ const remember = (discovered, path, name, node, force = false) => {
  * Producers are syntax, not text. A read is a property or element access,
  * including a const string used as the element, a string argument to a call,
  * an object-binding key (rename and default included), an `in` check, or an
- * object key that a spread can copy. Comments and array literals are not reads.
+ * object key that a spread can copy. A numeric parser also reads a property or
+ * element access inside its argument. Comments, array literals, and template
+ * prose are not reads. A template is a producer only when it assigns the name.
  */
 export const discoverNumericLimitUses = (files) => {
   const discovered = new Map();
@@ -201,15 +258,24 @@ export const discoverNumericLimitUses = (files) => {
           node,
         );
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-        const force = numericParse(node);
-        for (const argument of node.arguments ?? [])
-          remember(
-            discovered,
-            relativePath,
-            boundLimitName(argument, bindings),
-            node,
-            force,
-          );
+        const parsesNumber = parsesNumericArgument(node);
+        for (const argument of node.arguments ?? []) {
+          if (parsesNumber)
+            rememberNumericArgument(
+              discovered,
+              relativePath,
+              argument,
+              bindings,
+            );
+          else
+            remember(
+              discovered,
+              relativePath,
+              boundLimitName(argument, bindings),
+              node,
+              numericParse(node),
+            );
+        }
       }
       if (
         ts.isBinaryExpression(node) &&
@@ -273,7 +339,7 @@ export const discoverNumericLimitUses = (files) => {
               ...node.templateSpans.map((span) => span.literal.text),
             ];
         for (const chunk of chunks)
-          for (const token of chunk.match(/REA_[A-Z0-9_]+/gu) ?? [])
+          for (const token of assignedTemplateLimits(chunk))
             remember(discovered, relativePath, token, node);
       }
       ts.forEachChild(node, visit);

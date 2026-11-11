@@ -92,16 +92,73 @@ it("records a constructor read separately from a per-call read", () => {
   });
 });
 
-it("treats a count parsed from the environment as numeric without a suffix", () => {
+it("treats a count parsed from a property access as numeric without a suffix", () => {
   const name = "REA_ARCHIVE_ENTRY_LIMIT";
   expect(isNumericLimit(name)).toBe(false);
   const discovered = discoverNumericLimitUses([
     {
       path: "src/config/archiveLimit.ts",
-      source: `const limit = Number(process.env.${name});\nconst schema = { ${name}: z.number().int() };`,
+      source: `const limit = Number(process.env.${name});\nconst indexed = parseInt(environment["${name}"], 10);`,
     },
   ]);
-  expect(discovered.get(name)?.path).toBe("src/config/archiveLimit.ts");
+  expect(discovered.get(name)).toEqual({
+    path: "src/config/archiveLimit.ts",
+    read: "call",
+  });
+  expect(
+    discoverNumericLimitUses([
+      {
+        path: "src/config/indexedArchiveLimit.ts",
+        source: `const indexed = Number(environment["${name}"]);`,
+      },
+    ]).get(name),
+  ).toEqual({ path: "src/config/indexedArchiveLimit.ts", read: "call" });
+  expect(
+    discoverNumericLimitUses([
+      {
+        path: "src/config/schemaArchiveLimit.ts",
+        source: `const indexed = z.number().int().parse(process.env.${name});`,
+      },
+    ]).get(name),
+  ).toEqual({ path: "src/config/schemaArchiveLimit.ts", read: "call" });
+  expect(
+    discoverNumericLimitUses([
+      {
+        path: "src/application/SetupHost.ts",
+        source:
+          "const requested = analysisProviderSelectorSchema.safeParse(environment.REA_ANALYSIS_PROVIDER);",
+      },
+    ]).has("REA_ANALYSIS_PROVIDER"),
+  ).toBe(false);
+});
+
+it("does not let diagnostic template prose stand in for a removed producer", () => {
+  const name = "REA_NEW_MAX_BYTES";
+  const prose = discoverNumericLimitUses([
+    {
+      path: "src/config/mcpResponseBudget.ts",
+      source: `const guidance = \`The effective ${name} value is \${String(effective)} bytes. A change requires restarting.\`;`,
+    },
+    {
+      path: "src/gdb/GdbSessionManager.ts",
+      source: `return \`This release has no runtime override; ${name} does not raise it.\`;`,
+    },
+    {
+      path: "src/config/comparedLimit.ts",
+      source: `const same = \`${name} === \${limit}\`;`,
+    },
+  ]);
+  expect(prose.has(name)).toBe(false);
+  const assigned = discoverNumericLimitUses([
+    {
+      path: "src/hopper/BridgeLauncher.ts",
+      source: `const line = \`${name} = \${timeout / 1_000}\`;`,
+    },
+  ]);
+  expect(assigned.get(name)).toEqual({
+    path: "src/hopper/BridgeLauncher.ts",
+    read: "call",
+  });
 });
 
 it("does not invent a limit from a spread of the environment object", () => {
