@@ -120,3 +120,48 @@ it("charges the group key before building it so an oversized request method fail
   });
   expect(finished(accumulator).tools).toHaveLength(0);
 });
+
+it("counts only admitted scenario transactions and refreshes their snapshot limitations", () => {
+  const accumulator = new EnvironmentManifestAccumulator(32 * 1024);
+  expect(finished(accumulator).origin).toBe("");
+  expect(accumulator.add(sample(0, "/api/items"), "absent").ok).toBe(true);
+  const before = finished(accumulator);
+  expect(before.limitations.join(" ")).not.toContain("no primary origin");
+  expect(
+    accumulator.add(
+      {
+        ...sample(1, "/api/items", `{"name":"${"x".repeat(2_000)}"}`),
+        limitations: ["rejected-only limitation"],
+      },
+      "redacted",
+    ).ok,
+  ).toBe(false);
+  expect(finished(accumulator)).toEqual(before);
+  expect(
+    accumulator.add({
+      ...sample(1, "/api/items"),
+      limitations: ["uncommitted limitation", "x".repeat(100_000)],
+    }).ok,
+  ).toBe(false);
+  expect(finished(accumulator)).toEqual(before);
+  expect(
+    accumulator.add(
+      {
+        ...sample(2, "/api/items", '{"name":"n"}'),
+        limitations: ["accepted record limitation"],
+      },
+      "redacted",
+    ).ok,
+  ).toBe(true);
+  const after = finished(accumulator);
+  expect(after.limitations).toContain("accepted record limitation");
+  expect(after.records.map((record) => record.ordinal)).toEqual([0, 2]);
+  expect(
+    after.limitations.filter((limitation) =>
+      limitation.includes("scenario transactions with a usable request line"),
+    ),
+  ).toEqual([
+    "1 of 2 scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.",
+    "1 of 2 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
+  ]);
+});
