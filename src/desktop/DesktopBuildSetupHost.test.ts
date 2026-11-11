@@ -137,7 +137,7 @@ it.skipIf(process.platform === "win32").each([
     await mkdir(home);
     await mkdir(owned, { recursive: true });
     await program(join(bin, "docker"), "exit 0");
-    await program(join(bin, "agent-env"), 'echo "agent-env 0.9.1464"');
+    await program(join(bin, "agent-env"), 'echo "agent-env 0.9.1485"');
     await program(
       join(bin, "uv"),
       `[ "$1 $2 $3" = "tool dir --bin" ] && echo ${join(home, ".local/bin")}`,
@@ -186,7 +186,7 @@ it.skipIf(process.platform === "win32").each([
           ),
         },
         archivePacked: false,
-        agentEnvVersion: "0.9.1464",
+        agentEnvVersion: "0.9.1485",
         uv: {
           path: join(bin, "uv"),
           agentEnv: join(home, ".local/bin/agent-env"),

@@ -554,7 +554,10 @@ describe("artifact-local graph identity", () => {
 
     expect(applicationNodeIdentitySchema.parse(first)).toEqual(first);
     expect(applicationNodeIdentitySchema.parse(second)).toEqual(second);
-    expect(first).not.toEqual(second);
+    expect(first.namespace).toBe(`${namespacePrefix}a`);
+    expect(first.key).toBe(`${keyPrefix}a`);
+    expect(second.namespace).toBe(`${namespacePrefix}b`);
+    expect(second.key).toBe(`${keyPrefix}b`);
   });
 });
 

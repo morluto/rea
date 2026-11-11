@@ -234,7 +234,7 @@ it("refuses to write a bundle that holds a handle's value, naming the files but 
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const refused = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   const { error } = parseMcpToolError(refused as CallToolResult);
   expect(error.code).toBe("invalid_request");
@@ -258,7 +258,7 @@ it("refuses export if a declared handle cannot be checked", async () => {
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const result = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   const { error } = parseMcpToolError(result);
   expect(error.code).toBe("invalid_request");
@@ -290,7 +290,7 @@ it("refuses a bundle containing a declared form-encoded secret", async () => {
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const result = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   const { error } = parseMcpToolError(result as CallToolResult);
   expect(error.message).toContain("master");
@@ -331,7 +331,7 @@ it.each(["utf8", "utf16le", "utf16be"] as const)(
     );
     const result = await client.callTool({
       name: "export_build_environment",
-      arguments: { computer_id: id, task: TASK, directory },
+      arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
     });
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("invalid_request");
@@ -359,7 +359,7 @@ it("preserves unmarked token-shaped data in seeded UTF-16 and gzip files", async
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const refused = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   expect(refused.isError, JSON.stringify(refused)).not.toBe(true);
   const plain = await readFile(
@@ -400,7 +400,7 @@ it("refuses a gzip file that expands past what REA checks for known secrets", as
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const refused = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   const { error } = parseMcpToolError(refused as CallToolResult);
   expect(error.code).toBe("invalid_request");
@@ -451,7 +451,7 @@ it("withholds the automatic draft before running it after a declared secret", as
   );
   const exported = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
 });

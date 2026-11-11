@@ -20,6 +20,7 @@ import {
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { jsonByteLength } from "../../../src/domain/jsonSerialization.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -208,7 +209,7 @@ const wideSource = (links: readonly string[]) =>
     evidenceLinks: links,
   });
 
-it.each(["final-close cancellation", "refused publication"] as const)(
+it.each(["final-close cancellation", "missing sources"] as const)(
   "keeps the original failure when a captured source has a data-sized link set: %s",
   async (failure) => {
     const root = await createTestTempDirectory("rea-closure-wide-");
@@ -218,17 +219,18 @@ it.each(["final-close cancellation", "refused publication"] as const)(
     const wide = wideSource(links);
     const observation = observed([wide.evidence_id]);
     const requested = delivery(root, [wide]);
-    if (failure === "refused publication")
-      await writeFile(requested.evidenceOutput, "original");
     const output = await publishCliAnalysisEvidence(
-      failure === "refused publication"
+      failure === "missing sources"
         ? ok(observation)
         : err(cancelledWith(observation)),
       requested,
     );
     expect(output).toMatchObject(
-      failure === "refused publication"
-        ? { details: { reason: "exists" } }
+      failure === "missing sources"
+        ? {
+            code: "evidence_integrity_mismatch",
+            details: { reason: "missing" },
+          }
         : { code: "cancelled" },
     );
     const closure = closureOf(output);
@@ -593,7 +595,7 @@ it.each(["interrupt", "cleanup-failure", "interrupt-cleanup-failure"] as const)(
 );
 
 it.each(["interrupt", "cleanup-failure"] as const)(
-  "retains captured source closure when direct finalization fails: %s",
+  "preserves captured sources when direct finalization fails: %s",
   async (scenario) => {
     const workflow = await composedWorkflowFixture();
     const controller = new AbortController();
@@ -635,6 +637,23 @@ it.each(["interrupt", "cleanup-failure"] as const)(
       failure.details.partial_observation,
     ).evidence_links;
     expect(links.length).toBeGreaterThan(0);
+    if (scenario === "cleanup-failure") {
+      const path = join(root, "evidence.json");
+      expect(output).toMatchObject({
+        details: { diagnostics: { evidence_bundle: { path } } },
+      });
+      expect(output).not.toHaveProperty("details.source_closure");
+      const bundle = parseEvidenceBundle(
+        JSON.parse(await readFile(path, "utf8")),
+      );
+      expect(bundle.records.map((record) => record.evidence_id).sort()).toEqual(
+        [
+          parseEvidence(failure.details.partial_observation).evidence_id,
+          ...links,
+        ].sort(),
+      );
+      return;
+    }
     expect(closureOf(output)).toMatchObject({
       publication: "not_published",
       complete: true,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createHistoricalSourceSummary } from "../../../src/domain/referenceSourceSummary.js";
 import fs from "node:fs";
 import {
@@ -743,6 +744,7 @@ describe("reference source import behavior", () => {
           kind: "file",
           size,
           content_state: "hashed",
+          sha256: createHash("sha256").update("a".repeat(size)).digest("hex"),
         }),
       );
     }

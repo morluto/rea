@@ -76,11 +76,6 @@ and pass its Evidence. Other capture formats are refused, as the manifest view
 refuses them, and a HAR document saved as `.json` is refused with a hint to
 name it `.har`.
 
-For a HAR input, the exported Evidence keeps the capture path exactly as
-supplied in `caller_input_path`, separately from the resolved path used to read
-the file. Building from existing capture Evidence preserves that record's
-original caller path instead of replacing it with the Evidence JSON file's path.
-
 - `--template-rule <rule>`, repeated, replaces the default opt-in rules
   `after-uid-literal`, `opaque-token`, `sibling-variance` and
   `prefix-variance`, the rules the published capture-built environments use;

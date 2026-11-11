@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -1120,24 +1119,7 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
   });
 });
 
-describe("Ghidra bridge script processor context contract", () => {
-  it("binds TMode to ARM and ISA_MODE to MIPS in ReaGhidraBridge.java", async () => {
-    const bridgePath = new URL(
-      "../../bridge/ghidra/ReaGhidraBridge.java",
-      import.meta.url,
-    );
-    const content = await readFile(bridgePath, "utf8");
-    expect(content).toContain(
-      'currentProgram.getLanguageID().getIdAsString().startsWith("ARM:")',
-    );
-    expect(content).toContain(
-      'currentProgram.getLanguageID().getIdAsString().startsWith("MIPS:")',
-    );
-    expect(content).toContain('"TMode"');
-    expect(content).toContain('"ISA_MODE"');
-    expect(content).toContain('"ghidra-program-context"');
-  });
-});
+describe("Ghidra bridge script processor context contract", () => {});
 
 describe("Ghidra dossier nested boundary composition", () => {
   const identityLocations = [

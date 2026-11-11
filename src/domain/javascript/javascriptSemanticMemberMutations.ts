@@ -67,7 +67,6 @@ import {
   semanticScopeExitEffect,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
@@ -148,7 +147,7 @@ const localAccessorMethods = (
     if (paths.has(key)) continue;
     paths.add(key);
     examined.set(node, paths);
-    if (++selections > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (++selections > state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return undefined;
     }
@@ -407,7 +406,7 @@ export function* collectSemanticMemberMutationsSteps(
       ]);
       if (examined.has(identity)) continue;
       examined.add(identity);
-      if (examined.size > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      if (examined.size > state.precision.alias_selections) {
         state.valueResourceLimits.add("alias-selections");
         return [{ node: root, path: [] }];
       }
@@ -810,7 +809,7 @@ export function* collectSemanticMemberMutationsSteps(
         if (exact.has(selection)) return;
         if (
           exact.size > 0 &&
-          ++additionalAlternatives > SEMANTIC_ALIAS_SELECTION_LIMIT
+          ++additionalAlternatives > state.precision.alias_selections
         ) {
           projectionsWidened = true;
           state.valueResourceLimits.add("alias-selections");

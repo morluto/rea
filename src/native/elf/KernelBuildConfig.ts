@@ -557,10 +557,57 @@ const absentBanner = (status: "absent" | "unknown"): Report["banner"] => ({
 const isPrintable = (value: number): boolean => value >= 0x20 && value <= 0x7e;
 
 /**
+ * Text up to and including `#` when the banner's `UTS_VERSION` lacks a build
+ * number or a timestamp, otherwise null. Since Linux 6.1, kbuild compiles
+ * `init/version.o` with a temporary `UTS_VERSION` that leaves both empty
+ * unless `KBUILD_BUILD_VERSION` or `KBUILD_BUILD_TIMESTAMP` is set, so that
+ * object's weak `linux_banner` has a space right after `#` or at its end. The
+ * banner the kernel prints comes from `init/version-timestamp.o` in the final
+ * link: the same text up to `#`, then the build number and timestamp.
+ */
+const kbuildPlaceholderPrefix = (text: string): string | null => {
+  const marked = text.lastIndexOf(") #");
+  if (marked < 0) return null;
+  return text.startsWith(" ", marked + 3) || text.endsWith(" ")
+    ? text.slice(0, marked + 3)
+    : null;
+};
+
+/**
+ * First `Linux version <digit>...` banner in the printable run that ends at
+ * `end`. Only hits within BANNER_TEXT_BYTES of the terminator fit the window.
+ */
+const bannerInRun = (
+  bytes: Buffer,
+  at: number,
+  end: number,
+): {
+  readonly hit: number;
+  readonly text: string;
+  readonly parsed: NonNullable<ReturnType<typeof parseBannerText>>;
+} | null => {
+  const run = bytes.subarray(0, end);
+  for (
+    let hit = run.indexOf(BANNER_PREFIX, Math.max(at, end - BANNER_TEXT_BYTES));
+    hit >= 0;
+    hit = run.indexOf(BANNER_PREFIX, hit + 1)
+  ) {
+    const first = bytes[hit + BANNER_PREFIX.length] ?? 0;
+    if (first < 0x30 || first > 0x39) continue;
+    const text = bytes.toString("latin1", hit, end);
+    const parsed = parseBannerText(text);
+    if (parsed !== null) return { hit, text, parsed };
+  }
+  return null;
+};
+
+/**
  * First printable, NUL- or newline-terminated `Linux version <digit>...`
- * string of at most BANNER_TEXT_BYTES. Every hit inside one printable run
- * shares that run's terminator, so each run is scanned once and the search
- * resumes after it: the scan is linear in the searched bytes.
+ * string of at most BANNER_TEXT_BYTES. A kbuild placeholder banner is
+ * replaced by a later banner that repeats its text up to `#` and is not a
+ * placeholder itself; without one, the placeholder is reported. Every hit inside one
+ * printable run shares that run's terminator, so each run is scanned once and
+ * the search resumes after it: the scan is linear in the searched bytes.
  */
 const findBanner = async (
   bytes: Buffer,
@@ -569,10 +616,14 @@ const findBanner = async (
 ): Promise<Report["banner"]> => {
   let from = 0;
   let turnAt = TURN_STRIDE;
+  let placeholder: {
+    readonly banner: Report["banner"];
+    readonly prefix: string;
+  } | null = null;
   for (;;) {
     assertArtifactReadActive(signal);
     const at = await findNext(bytes, BANNER_PREFIX, from, signal);
-    if (at < 0) return absentBanner("absent");
+    if (at < 0) return placeholder?.banner ?? absentBanner("absent");
     let end = at + BANNER_PREFIX.length;
     while (end < bytes.length && isPrintable(bytes[end] ?? 0)) {
       end += 1;
@@ -585,31 +636,23 @@ const findBanner = async (
     from = end + 1;
     if (end >= bytes.length || (bytes[end] !== 0 && bytes[end] !== 0x0a))
       continue;
-    // Only hits within BANNER_TEXT_BYTES of the terminator fit the window.
-    const run = bytes.subarray(0, end);
-    for (
-      let hit = run.indexOf(
-        BANNER_PREFIX,
-        Math.max(at, end - BANNER_TEXT_BYTES),
-      );
-      hit >= 0;
-      hit = run.indexOf(BANNER_PREFIX, hit + 1)
-    ) {
-      const first = bytes[hit + BANNER_PREFIX.length] ?? 0;
-      if (first < 0x30 || first > 0x39) continue;
-      const text = bytes.toString("latin1", hit, end);
-      const parsed = parseBannerText(text);
-      if (parsed === null) continue;
-      return {
-        status: "present",
-        text,
-        version: parsed.version,
-        builder: parsed.builder,
-        compiler: parsed.compiler,
-        location: located(space, hit, end - hit),
-        trust: UNTRUSTED,
-      };
-    }
+    const found = bannerInRun(bytes, at, end);
+    if (found === null) continue;
+    const banner: Report["banner"] = {
+      status: "present",
+      text: found.text,
+      version: found.parsed.version,
+      builder: found.parsed.builder,
+      compiler: found.parsed.compiler,
+      location: located(space, found.hit, end - found.hit),
+      trust: UNTRUSTED,
+    };
+    const prefix = kbuildPlaceholderPrefix(found.text);
+    if (placeholder === null) {
+      if (prefix === null) return banner;
+      placeholder = { banner, prefix };
+    } else if (prefix === null && found.text.startsWith(placeholder.prefix))
+      return banner;
   }
 };
 

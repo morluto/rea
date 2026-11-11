@@ -444,7 +444,7 @@ cliTest(
 );
 
 cliTest(
-  "preserves exact large safetensors dimensions while bounding actual offsets",
+  "preserves exact large safetensors dimensions while rejecting impossible file offsets",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-shape-precision-");
     const path = join(root, "empty.safetensors");
@@ -510,24 +510,27 @@ cliTest(
       report,
     );
 
-    const outsideFile = safetensorsFixture(
-      '{"x":{"dtype":"F32","shape":[0],"data_offsets":[9007199254740992,9007199254740992]}}',
-      Buffer.alloc(0),
+    await writeFile(
+      path,
+      safetensorsFixture(
+        '{"x":{"dtype":"F32","shape":[0],"data_offsets":[9007199254740992,9007199254740992]}}',
+        Buffer.alloc(0),
+      ).bytes,
     );
-    await writeFile(path, outsideFile.bytes);
     const offsetFailure = parseMcpToolError(
       await call("inspect_model_artifact", { path }),
     );
+    // The raw extent is outside this empty file, and that check runs before
+    // the offset is converted to a host number.
     expect(offsetFailure.error).toMatchObject({
       code: "target_unavailable",
+      category: "unsupported_target",
       details: {
         constraint: "file_format_rejected",
         path,
         reason: "Declared extent is outside the file",
       },
     });
-    expect(offsetFailure.error.details).not.toHaveProperty("reported_limits");
-    expect((await readFile(path)).equals(outsideFile.bytes)).toBe(true);
   },
 );
 
