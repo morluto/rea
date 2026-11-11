@@ -814,9 +814,8 @@ retained graph capacity, worker memory and deadlines. Both
 `primitive_bytes` charges six estimated JSON bytes per UTF-16 code unit plus
 quotes before creating concatenated strings. Ordinary ASCII can exhaust that
 conservative estimate before its actual JSON encoding reaches the selected
-byte count. The [calibration record](../../verification/javascript-precision-calibration.md)
-keeps existing defaults for its measured literal-value tasks; it does not
-establish optimal candidate, getter or alias budgets for larger applications.
+byte count. Candidate, getter and alias budgets can be adjusted for larger
+applications.
 
 All fields accept positive safe integers; worker memory, execution and JSON
 representation bounds remain independently enforced. Omission keeps the defaults;
