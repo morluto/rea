@@ -1897,3 +1897,20 @@ it("refuses a declared DOS relocation header that is not present in the file", a
     error: { reason: "truncated DOS MZ load module" },
   });
 });
+
+it("does not resolve malformed Unicode paths to a replacement-character sibling", async () => {
+  const directory = await createTestTempDirectory("rea-target-unicode-");
+  const actual = join(directory, "target-�");
+  const selected = join(directory, "target-\ud800");
+  await writeFile(actual, pe(0xaa64));
+  const refused = await parseBinaryTarget(selected);
+  expect(refused).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      path: selected,
+      reason: "Local filesystem paths must contain well-formed Unicode",
+    },
+  });
+  expect(await parseBinaryTarget(actual)).toMatchObject({ ok: true });
+});
