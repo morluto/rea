@@ -2,6 +2,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, vi } from "vitest";
+import { z } from "zod";
+import { linkedMftFixture } from "../../fixtures/ntfsMftExtension.js";
 import * as stableArtifact from "../../../src/artifacts/readStableArtifact.js";
 import * as mftDecoder from "../../../src/domain/windows/ntfsMft.js";
 
@@ -157,7 +159,8 @@ mcpTest(
     if (!config.ok) throw config.error;
     const session = createBinarySession(config.value, silentLogger, {});
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const client = await mcp.connect(
       createServer({ kind: "session", session }),
@@ -198,14 +201,9 @@ mcpTest(
     });
     expect(refused.isError).toBe(true);
     const { error } = parseMcpToolError(refused);
-    const reference = error.details?.partial_observation;
-    if (
-      typeof reference !== "object" ||
-      reference === null ||
-      !("evidence_id" in reference) ||
-      typeof reference.evidence_id !== "string"
-    )
-      throw new Error("Missing retained MFT observation");
+    const reference = z
+      .object({ evidence_id: z.string() })
+      .parse(error.details?.partial_observation);
     const partial = parseEvidence(session.evidenceById(reference.evidence_id));
     expect(partial.normalized_result).toMatchObject({
       kind: "ntfs-journal-partial",
@@ -217,5 +215,104 @@ mcpTest(
       },
       journal_observation: null,
     });
+  },
+);
+
+mcpTest(
+  "CLI/MCP retain extension facts through independent detail pages and later journal failure",
+  async ({ mcp, onTestFinished }) => {
+    const directory = await createTestTempDirectory("rea-ntfs-linked-");
+    const mftPath = join(directory, "mft"),
+      journalPath = join(directory, "journal");
+    const journal = Buffer.alloc(64);
+    journal.writeUInt32LE(64);
+    journal.writeUInt16LE(2, 4);
+    journal.writeBigUInt64LE(2n << 48n, 8);
+    journal.writeUInt16LE(60, 58);
+    await writeFile(mftPath, linkedMftFixture());
+    await writeFile(journalPath, journal);
+    const cli = await serveCli([
+      "inspect-ntfs-journal",
+      mftPath,
+      journalPath,
+      "--mftRecordLimit=1",
+      "--json",
+    ]);
+    expect(cli.exitCode, cli.stdout).toBe(0);
+    const expected = ntfsJournalResultSchema.parse(
+      parseEvidence(JSON.parse(cli.stdout)).normalized_result,
+    );
+    expect(expected.mftMetadata).toMatchObject({
+      record_count: 2,
+      file_name_count: 2,
+      next_record_header_index: 1,
+      record_headers: [
+        {
+          fileNames: [{ name: "local" }],
+          attributeListResolution: {
+            coverage: "complete",
+            linkedFileNames: [{ name: "linked", fileOffset: 1104 }],
+          },
+        },
+      ],
+    });
+    const config = parseConfig({});
+    if (!config.ok) throw config.error;
+    const session = createBinarySession(config.value, silentLogger, {});
+    onTestFinished(async () => {
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
+    });
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+    );
+    const reads = vi.spyOn(stableArtifact, "readStableArtifact"),
+      parses = vi.spyOn(mftDecoder, "parseMftIndex");
+    onTestFinished(() => {
+      reads.mockRestore();
+      parses.mockRestore();
+    });
+    const input = {
+      mft_path: mftPath,
+      journal_path: journalPath,
+      mft_record_limit: 1,
+    };
+    const reply = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: input,
+    });
+    expect(reply.isError).not.toBe(true);
+    expect(parseEvidence(reply.structuredContent).normalized_result).toEqual(
+      expected,
+    );
+    const next = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: { ...input, mft_record_start: 1, start_file_offset: 64 },
+    });
+    expect(next.isError).not.toBe(true);
+    expect(
+      parseEvidence(next.structuredContent).normalized_result,
+    ).toMatchObject({
+      rows: [],
+      mftMetadata: {
+        record_headers: [{ index: 1, fileNames: [{ name: "linked" }] }],
+        next_record_header_index: null,
+      },
+    });
+    expect(reads).toHaveBeenCalledTimes(2);
+    expect(parses).toHaveBeenCalledTimes(1);
+    const refused = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: { ...input, journal_path: join(directory, "missing") },
+    });
+    expect(refused.isError).toBe(true);
+    const { error } = parseMcpToolError(refused);
+    const reference = z
+      .object({ evidence_id: z.string() })
+      .parse(error.details?.partial_observation);
+    expect(
+      parseEvidence(session.evidenceById(reference.evidence_id))
+        .normalized_result,
+    ).toMatchObject({ mft: { metadata: expected.mftMetadata } });
   },
 );

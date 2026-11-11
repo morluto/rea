@@ -27,36 +27,49 @@ export const registerIl2cppCommands = (
         "Local global-metadata.dat (version 24, 27, 29, 31 or 39)",
       ),
     }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      binary: localPathStringSchema
-        .optional()
-        .describe(
-          "Matching native binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so) to link method addresses; read only",
-        ),
-      architecture: z
-        .enum(["arm64", "amd64"])
-        .optional()
-        .describe("Slice of a universal Mach-O binary"),
-      genericInstances: z
-        .boolean()
-        .optional()
-        .describe(
-          "Also link generic method instances (Type<Args>$$Method<Args>) and include them in --ghidra-seeds; needs --binary",
-        ),
-      ghidraSeeds: localPathStringSchema
-        .optional()
-        .describe(
-          "Also write REA_GHIDRA_SEED_FILE function seeds named Type$$Method for every linked method; needs --binary",
-        ),
-      seedBase: z
-        .string()
-        .regex(/^0x[0-9a-fA-F]{1,16}$/u)
-        .optional()
-        .describe(
-          "Address Ghidra loads the binary at; seeds are seed-base + RVA (default: Ghidra's loader default, 0x100000 for an ELF linked at 0, else the link base)",
-        ),
-    }),
+    options: z
+      .object({
+        ...analysisEvidenceDeliveryOptions,
+        binary: localPathStringSchema
+          .optional()
+          .describe(
+            "Matching native binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so) to link method addresses; read only",
+          ),
+        architecture: z
+          .enum(["arm64", "amd64"])
+          .optional()
+          .describe("Slice of a universal Mach-O binary"),
+        genericInstances: z
+          .boolean()
+          .optional()
+          .describe(
+            "Also link generic method instances (Type<Args>$$Method<Args>) and include them in --ghidra-seeds; needs --binary",
+          ),
+        ghidraSeeds: localPathStringSchema
+          .optional()
+          .describe(
+            "Also write REA_GHIDRA_SEED_FILE function seeds named Type$$Method for every linked method; needs --binary",
+          ),
+        seedBase: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]{1,16}$/u)
+          .optional()
+          .describe(
+            "Address Ghidra loads the binary at; seeds are seed-base + RVA (default: Ghidra's loader default, 0x100000 for an ELF linked at 0, else the link base)",
+          ),
+      })
+      .meta({
+        dependentRequired: {
+          architecture: ["binary"],
+          ghidraSeeds: ["binary"],
+          seedBase: ["ghidraSeeds"],
+        },
+        if: {
+          properties: { genericInstances: { const: true } },
+          required: ["genericInstances"],
+        },
+        then: { required: ["binary"] },
+      }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectIl2cppMetadata, async () => {
