@@ -76,6 +76,8 @@ export const ntfsJournalResultSchema = z.strictObject({
       z.strictObject({
         kind: z.literal("event"),
         event: z.strictObject({
+          majorVersion: z.union([z.literal(2), z.literal(3)]),
+          referenceBytes: z.union([z.literal(8), z.literal(16)]),
           fileOffset: offset,
           recordBytes: offset,
           fileReference: unsignedDecimal,

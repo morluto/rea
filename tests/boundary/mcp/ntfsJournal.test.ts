@@ -39,8 +39,16 @@ mcpTest(
     journal.writeUInt16LE(2, 4);
     journal.writeBigUInt64LE(0x0002_0000_0000_0000n, 8);
     journal.writeUInt16LE(60, 58);
+    const v3 = Buffer.alloc(80);
+    v3.writeUInt32LE(80);
+    v3.writeUInt16LE(3, 4);
+    v3.writeBigUInt64LE(0x0002_0000_0000_0000n, 8);
+    v3.writeBigInt64LE(9007199254740993n, 40);
+    v3.writeUInt16LE(4, 72);
+    v3.writeUInt16LE(76, 74);
+    v3.write("v3", 76, "utf16le");
     await writeFile(mftPath, record);
-    await writeFile(journalPath, journal);
+    await writeFile(journalPath, Buffer.concat([journal, v3]));
 
     const cli = await serveCli([
       "inspect-ntfs-journal",
@@ -53,12 +61,25 @@ mcpTest(
     const expected = ntfsJournalResultSchema.parse(fromCli.normalized_result);
     expect(expected).toMatchObject({
       mft: { path: mftPath, bytes: 1024 },
-      journal: { path: journalPath, bytes: 64 },
+      journal: { path: journalPath, bytes: 144 },
       rows: [
         {
           kind: "event",
           event: {
             mft: { file: { kind: "matched", record: { sequenceNumber: 2 } } },
+          },
+        },
+        {
+          kind: "event",
+          event: {
+            majorVersion: 3,
+            referenceBytes: 16,
+            name: "v3",
+            usn: "9007199254740993",
+            mft: {
+              file: { kind: "unresolved" },
+              parent: { kind: "unresolved" },
+            },
           },
         },
       ],
