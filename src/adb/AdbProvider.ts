@@ -3363,6 +3363,13 @@ export class AdbProvider {
         ),
       );
     }
+    if (collectedResult.ok && signal?.aborted === true)
+      return err(
+        new AnalysisCancelledError(operation, {
+          cause: signal.reason,
+          partialObservation: retainedObservation,
+        }),
+      );
     return collectedResult;
   }
 }
