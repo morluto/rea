@@ -3,7 +3,11 @@ import { posix } from "node:path";
 import type { Result } from "../result.js";
 import { fromUbuntuNobleArchive } from "./appExportInstall.js";
 import { isWithinAny } from "./desktopStateDiff.js";
-import type { ElfDependencies } from "./elfDependencies.js";
+import type {
+  ElfDependencies,
+  ElfDependenciesFailure,
+  ElfLibraryIdentity,
+} from "./elfDependencies.js";
 
 /** One library `ldconfig -p` lists from the dynamic linker cache. */
 export interface LinkerCacheEntry {
@@ -89,11 +93,33 @@ const searchDirectories = (object: LoadedObject): readonly string[] => {
   ];
 };
 
+/** Search order identifies candidates; existence alone does not select a loaded object. */
+async function* libraryCandidates(
+  soname: string,
+  directories: readonly string[],
+  machine: number,
+  cache: readonly LinkerCacheEntry[],
+  host: LibraryWalkHost,
+): AsyncGenerator<string> {
+  if (soname.startsWith("/")) {
+    yield posix.normalize(soname);
+    return;
+  }
+  if (!soname.includes("/"))
+    for (const directory of directories) {
+      const candidate = posix.join(directory, soname);
+      if (await host.isFile(candidate)) yield candidate;
+    }
+  const cached = cachedPath(cache, soname, machine);
+  if (cached !== undefined) yield cached;
+}
+
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {
   readonly dependencies: (
     path: string,
-  ) => Promise<Result<ElfDependencies, string>>;
+    expected: ElfLibraryIdentity,
+  ) => Promise<Result<ElfDependencies, ElfDependenciesFailure>>;
   readonly isFile: (path: string) => Promise<boolean>;
 }
 
@@ -104,9 +130,9 @@ export interface LibraryClosure {
     readonly soname: string;
     readonly path: string;
   }[];
-  /** Sonames found neither in an RPATH or RUNPATH directory nor in the linker cache. */
+  /** Sonames without a compatible candidate in the searched directories or linker cache. */
   readonly missing: readonly string[];
-  /** Libraries whose own dependencies could not be read. */
+  /** Candidates whose selection or dependency closure could not be established. */
   readonly unreadable: readonly {
     readonly path: string;
     readonly reason: string;
@@ -144,23 +170,55 @@ export const libraryClosure = async (
       if (seen.has(soname)) continue;
       if (seen.size >= limit) return { ...closure, truncated: true };
       seen.add(soname);
-      let path = soname.startsWith("/") ? posix.normalize(soname) : undefined;
-      for (const directory of soname.includes("/") ? [] : directories) {
-        const candidate = posix.join(directory, soname);
-        if (path === undefined && (await host.isFile(candidate)))
-          path = candidate;
+      let selected:
+        | {
+            path: string;
+            dependencies: Result<ElfDependencies, ElfDependenciesFailure>;
+          }
+        | undefined;
+      let unresolved = false;
+      for await (const path of libraryCandidates(
+        soname,
+        directories,
+        object.dependencies.machine,
+        cache,
+        host,
+      )) {
+        const dependencies = await host.dependencies(path, object.dependencies);
+        if (!dependencies.ok && dependencies.error.identity === null) {
+          // A failed identity read does not prove this candidate can be skipped,
+          // or that its package belongs to the executable's loaded closure.
+          closure.unreadable.push({
+            path,
+            reason: dependencies.error.reason,
+          });
+          unresolved = true;
+          break;
+        }
+        if (!dependencies.ok && dependencies.error.kind === "incompatible") {
+          if (soname.startsWith("/")) {
+            closure.unreadable.push({
+              path,
+              reason: dependencies.error.reason,
+            });
+            unresolved = true;
+            break;
+          }
+          continue;
+        }
+        selected = { path, dependencies };
+        break;
       }
-      path ??= cachedPath(cache, soname, object.dependencies.machine);
-      if (path === undefined) {
-        closure.missing.push(soname);
+      if (selected === undefined) {
+        if (!unresolved) closure.missing.push(soname);
         continue;
       }
+      const { path, dependencies } = selected;
       if (!isWithinAny(path, [ownFolder]))
         closure.libraries.push({ soname, path });
-      const dependencies = await host.dependencies(path);
       if (dependencies.ok)
         queue.push({ path, dependencies: dependencies.value, loader: object });
-      else closure.unreadable.push({ path, reason: dependencies.error });
+      else closure.unreadable.push({ path, reason: dependencies.error.reason });
     }
   }
   return closure;

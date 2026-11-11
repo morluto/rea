@@ -356,6 +356,27 @@ const inspected = async (options: FixtureOptions = {}) => {
   };
 };
 
+it.skipIf(process.platform === "win32")(
+  "carries compatible library ownership through application inventory into the export install plan",
+  async () => {
+    const { root, inspect } = await vendorFixture();
+    // A foreign same-name library in $ORIGIN must not shadow the native cache entry.
+    await writeFile(
+      join(root, "bin/libnss3.so"),
+      elfImage({ machine: 62, needed: ["libdecoy.so"] }),
+    );
+    const result = await inspect();
+    if (!result.ok) throw new Error(result.error.reason);
+    const installed = result.value.inventory.package;
+    expect(installed.library_packages).toEqual(["libnspr4", "libnss3"]);
+    expect(installed.missing_libraries).not.toContain("libdecoy.so");
+    expect(installed.library_packages_reason).toBeUndefined();
+    const plan = exportInstall(installed, "typora", "arm64");
+    if (!plan.ok) throw new Error(plan.error.reason);
+    expect(plan.value.libraryPackages).toEqual(["libnspr4", "libnss3"]);
+  },
+);
+
 describe.skipIf(process.platform === "win32")("vendor repositories", () => {
   it("records the repository apt names with the key gpgv verified, though another signature fails gpgv", async () => {
     const {
