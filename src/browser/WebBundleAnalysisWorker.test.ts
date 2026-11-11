@@ -26,7 +26,10 @@ import {
   spawnOwnedProviderProcess,
   type ProviderProcessHandle,
 } from "../process/ProviderProcess.js";
-import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
+import {
+  WebBundleAnalysisWorker,
+  WebBundleWorkerCleanup,
+} from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
 
 const makeScript = (text: string): IncludedScript => ({
@@ -268,7 +271,7 @@ const launcherFor = (
   };
 };
 
-const failureOf = <Value>(
+const failureOf = (
   result: Awaited<ReturnType<WebBundleAnalysisWorker["analyze"]>>,
 ): AnalysisError => {
   if (result.ok) throw new Error("Expected web worker failure");
@@ -1033,4 +1036,67 @@ it("preserves literal replacement characters in valid UTF-8 worker facts", async
     code: "ENOENT",
     path: root,
   });
+});
+
+it("retries independent browser workers once while an earlier exact owner remains stuck", async () => {
+  const cleanup = new WebBundleWorkerCleanup();
+  const failures = [true, true];
+  const attempts = [0, 0];
+  const roots: string[] = [];
+  let spawning = 0;
+  let releaseSpawns: () => void = () => {};
+  const bothSpawning = new Promise<void>((resolve) => {
+    releaseSpawns = resolve;
+  });
+  const workers = [0, 1].map((index) => {
+    const launch = launcherFor({ kind: "protocol", failure: "malformed" });
+    return new WebBundleAnalysisWorker(
+      128,
+      async (request) => {
+        const child = await launch(request);
+        roots[index] = request.cwd!;
+        if (++spawning === 2) releaseSpawns();
+        await bothSpawning;
+        return {
+          ...child,
+          cleanup: async () => {
+            attempts[index]! += 1;
+            return failures[index]
+              ? {
+                  cleaned: false,
+                  reason: `exact worker ${index} cleanup blocked`,
+                }
+              : child.cleanup!();
+          },
+        };
+      },
+      cleanup,
+    );
+  });
+  try {
+    const results = await Promise.all(
+      workers.map((worker) =>
+        worker.analyze(makeScript("fetch('/mixed-cleanup');"), 10_000),
+      ),
+    );
+    const errors = results.map(failureOf);
+    expect(errors.every((error) => error.cleanupIncomplete)).toBe(true);
+    expect(attempts).toEqual([1, 1]);
+    failures[1] = false;
+    await expect(cleanup.retry()).rejects.toThrow();
+    expect(attempts).toEqual([2, 2]);
+    expect(errors[0]?.cleanupIncomplete).toBe(true);
+    expect(errors[1]?.cleanupIncomplete).toBe(false);
+    await access(roots[0]!);
+    await expect(access(roots[1]!)).rejects.toMatchObject({ code: "ENOENT" });
+    failures[0] = false;
+    await cleanup.retry();
+    expect(attempts).toEqual([3, 2]);
+    expect(errors[0]?.cleanupIncomplete).toBe(false);
+    await expect(access(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    failures.fill(false);
+    await Promise.all(workers.map((worker) => worker.close()));
+    await cleanup.retry();
+  }
 });
