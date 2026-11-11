@@ -82,3 +82,31 @@ than the original 57,946 bytes. An additional validation call with
 `--mftRecordLimit=32` reproduced the entire baseline normalized result exactly.
 That full-detail workflow, including its schema query, uses 24,662 proxy tokens;
 its CPU and memory were not measured separately.
+
+
+## Integration with scoped acquisition reuse
+
+The metadata increment now uses the shared resource-scoped pair introduced by
+#9914. Its canonical MFT index retains headers, aggregate coverage and the
+reference lookup. A requested detail page locates its first source slot in that
+ordered index and decodes only the selected records from the validated retained
+acquisition. It does not rescan all MFT attributes or rebuild the lookup. The
+superseded full-attribute `MftImage` representation has no remaining consumers
+and was removed.
+
+The focused 100-test run covers MFT/attribute and V2/V3/V4 decoding, correlation,
+reader/source identity, lifecycle failures and public CLI/MCP workflows. The
+public MCP regression changes the MFT detail selection within the same session
+and verifies two physical file acquisitions and one index parse in total, with
+CLI/MCP result equality. Domain cases cover omitted sparse slots, independent
+continuations, page ends and unchanged source bytes. This is correctness and
+reuse verification; the earlier CLI measurements above remain observations at
+their stated revisions, not new measurements of this integration.
+
+Automated review also identified an obsolete format-descriptor limitation that
+said names and attributes were not decoded. The owning `ntfs-mft` descriptor
+now describes the delivered metadata and the remaining nonresident-payload,
+extension-assembly and full-path limitations. The canonical inventory
+regression verifies actual names/attributes alongside the limitation text;
+reader coverage still reports corrupt fixups independently. No consumer-side
+wording override was introduced.
