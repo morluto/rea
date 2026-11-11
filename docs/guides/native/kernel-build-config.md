@@ -32,9 +32,14 @@ otherwise.
 followed by a version token beginning with a digit and ends at a NUL or
 newline within 512 bytes. `version` is that token. `builder` is the first
 parenthesized group (`user@host`). `compiler` is the second group up to the
-last `) #`, so nested parentheses in compiler strings are kept. The banner is
-`absent` when no such string was found in the searched bytes and `unknown`
-when the bytes were not searched.
+last `) #`, so nested parentheses in compiler strings are kept. Since Linux
+6.1, kbuild also leaves the weak banner of `init/version.o`. It is compiled
+before the build number and timestamp exist, so unless `KBUILD_BUILD_VERSION`
+and `KBUILD_BUILD_TIMESTAMP` are both set, it has a space right after `#` or at
+its end. When a later banner repeats that text up to `#` without that gap, the
+later banner is reported; otherwise the first one is. The banner is `absent`
+when no such string was found in the searched bytes and `unknown` when the
+bytes were not searched.
 
 `config` is `present` only when all of the following hold:
 

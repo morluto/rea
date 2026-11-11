@@ -1,3 +1,4 @@
+import { createGdbFixtureOwner } from "./gdbTestHelpers.js";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,17 +9,15 @@ import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 
 describe("persistent debugger session managers", () => {
   let directory: string | undefined;
+  const fixtureOwner = createGdbFixtureOwner();
   const managers: Array<{ closeAll(): Promise<void> }> = [];
 
   afterEach(async () => {
-    await Promise.all(
-      managers
-        .splice(0)
-        .map((manager) => manager.closeAll().catch(() => undefined)),
-    );
-    if (directory !== undefined)
-      await rm(directory, { recursive: true, force: true });
-    directory = undefined;
+    await fixtureOwner.cleanup(managers, async () => {
+      if (directory !== undefined)
+        await rm(directory, { recursive: true, force: true });
+      directory = undefined;
+    });
   });
 
   it("runs a correlated GDB MI command, reports status, and closes its owned process", async () => {
@@ -47,6 +46,7 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const manager = new GdbSessionManager({
+      spawnProcess: fixtureOwner.spawnProcess,
       platform: "linux",
       environment: { REA_GDB_COMMAND: provider },
     });
@@ -93,6 +93,7 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const manager = new GdbSessionManager({
+      spawnProcess: fixtureOwner.spawnProcess,
       platform: "linux",
       environment: { REA_GDB_COMMAND: provider },
     });

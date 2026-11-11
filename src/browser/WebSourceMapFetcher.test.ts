@@ -169,3 +169,41 @@ it.each([
     });
   },
 );
+
+it("recovers a fetched map by raising its exact structural admission on the next call", async () => {
+  const text = JSON.stringify({
+    version: 3,
+    sources: ["a.ts"],
+    sourcesContent: ["export const a = 1;"],
+    names: [],
+    mappings: "AAAA",
+  });
+  const selected = {
+    ...input,
+    allowed_origins: [new URL(request.fetchUrl).origin],
+  };
+  const host = { fetch: async () => new Response(text) };
+  const refused = await fetchWebSourceMapsOk(
+    [request],
+    { ...selected, source_map_limits: { decoded_records: 4 } },
+    undefined,
+    host,
+  );
+  expect(refused.items[0]).toMatchObject({
+    status: "fetch_failed",
+    limitation: expect.stringContaining(
+      "source_map_limits.decoded_records is 4",
+    ),
+  });
+  const recovered = await fetchWebSourceMapsOk(
+    [request],
+    { ...selected, source_map_limits: { decoded_records: 5 } },
+    undefined,
+    host,
+  );
+  expect(recovered.items[0]).toMatchObject({
+    status: "included",
+    original_sources: [{ source: "https://app.example.test/a.ts" }],
+    mappings: [{ generated_line: 1, generated_column: 0 }],
+  });
+});

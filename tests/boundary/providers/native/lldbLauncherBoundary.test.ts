@@ -186,6 +186,7 @@ setTimeout(() => process.exit(0), 10000);
         cause: reason,
         cleanupIncomplete: false,
       });
+      expect(result.error.cause).toBe(reason);
       expect(await observeProcessStartIdentity(started.pid)).toBeUndefined();
       await expect(access(dirname(started.config_path))).rejects.toMatchObject({
         code: "ENOENT",

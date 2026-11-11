@@ -82,7 +82,7 @@ export const observeNativeUi = async (
     new NativeUiInterruptionControl(
       options.signal,
       runtime.signal,
-      runtime.deadlineMs ?? DEFAULT_NATIVE_UI_DEADLINE_MS,
+      runtime.deadlineMs,
     );
   const ownsInterruption = options.interruption === undefined;
   let result: Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>;

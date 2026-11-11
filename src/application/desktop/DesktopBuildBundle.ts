@@ -30,7 +30,7 @@ const reaPayload = async (
 ): Promise<ReaPayload> => {
   const path = environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
   const reason =
-    "A build computer from a request needs REA_BUILD_COMPUTER_REA_ARCHIVE, the absolute path of a tar archive of a runnable REA whose one top folder holds scripts/rea.mjs.";
+    "A build computer from a request needs REA_BUILD_COMPUTER_REA_ARCHIVE, the absolute path of a tar archive of a runnable REA whose one top folder holds scripts/rea.mjs, or the archive rea setup --desktop-build packs for this REA version.";
   if (
     path === undefined ||
     !isAbsolute(path) ||
@@ -46,7 +46,7 @@ const reaPayload = async (
       {
         userMessage: reason,
         remediationAction:
-          "Pack a built REA with its production dependencies, set REA_BUILD_COMPUTER_REA_ARCHIVE to the archive and restart REA, or start from an exported bundle folder.",
+          "Run rea setup --client <client> --desktop-build, or pack a built REA with its production dependencies, set REA_BUILD_COMPUTER_REA_ARCHIVE to the archive and restart REA, or start from an exported bundle folder.",
       },
     );
   return { kind: "file", path };
@@ -120,7 +120,8 @@ export const writeRequestBundle = async (
 /**
  * The lock files in a bundle folder's seeds, as `envs/<name>/seed/<home
  * path>`; none when it has no seed. A bundle records no state directories, so
- * only a profile lock's name or LibreOffice's document lock counts here.
+ * only a profile lock's name, LibreOffice's document lock or a `<file>.lck`
+ * beside a seeded file counts here.
  */
 export const seededLockFiles = async (
   bundle: string,
@@ -134,13 +135,17 @@ export const seededLockFiles = async (
       recursive: true,
       withFileTypes: true,
     }).catch(() => []);
-    for (const entry of entries) {
-      const home = relative(seed, join(entry.parentPath, entry.name))
-        .split(sep)
-        .join("/");
-      if (entry.isFile() && isLockFile(home, []))
-        locks.push(`envs/${name}/seed/${home}`);
-    }
+    const homes = new Set(
+      entries
+        .filter((entry) => entry.isFile())
+        .map((entry) =>
+          relative(seed, join(entry.parentPath, entry.name))
+            .split(sep)
+            .join("/"),
+        ),
+    );
+    for (const home of homes)
+      if (isLockFile(home, [], homes)) locks.push(`envs/${name}/seed/${home}`);
   }
   return locks.sort();
 };

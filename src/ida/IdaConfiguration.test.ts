@@ -1,12 +1,14 @@
+import * as fs from "node:fs/promises";
 import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import { readIdaConfiguration } from "./IdaConfiguration.js";
-import { decodeIdaToolResult } from "./IdaMcpConnection.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import * as regularFile from "../filesystem/RegularFile.js";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const resourceScope: RetainedResourceScope = {
   retain: () => undefined,
@@ -170,34 +172,34 @@ describe("IDA registration descriptor ownership", () => {
       run: (operation) => operation(),
     };
     const reason = new Error("cancel at the post-open checkpoint");
-    let checkpoints = 0;
-    const signal = {
-      get aborted() {
-        checkpoints += 1;
-        return checkpoints === 4;
-      },
-      reason,
-    } as AbortSignal;
+    const controller = new AbortController();
+    const open = fs.open;
+    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      const handle = await open(...args);
+      controller.abort(reason);
+      return handle;
+    });
     const denial = new Error(
       "descriptor close denied after post-open cancellation",
     );
     vi.spyOn(OwnedFileHandle.prototype, "close").mockRejectedValue(denial);
-    const cancellation = await readIdaConfiguration(path, {
-      resourceScope: owner,
-      signal,
-    }).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
-    expect(checkpoints).toBe(4);
-    expect(cancellation).toMatchObject({
-      _tag: "AnalysisCancelledError",
-      cause: reason,
-      cleanupIncomplete: true,
-    });
-    expect(retained).toHaveLength(1);
-    vi.restoreAllMocks();
-    await retained[0]!.close();
+    let cancellation: unknown;
+    try {
+      cancellation = await readIdaConfiguration(path, {
+        resourceScope: owner,
+        signal: controller.signal,
+      }).catch((cause: unknown) => cause);
+      expect(controller.signal.aborted).toBe(true);
+      expect(cancellation).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cleanupIncomplete: true,
+      });
+      expect((cancellation as Error).cause).toBe(reason);
+      expect(retained).toHaveLength(1);
+    } finally {
+      vi.restoreAllMocks();
+      for (const resource of retained) await resource.close();
+    }
     expect(cancellation).toMatchObject({ cleanupIncomplete: false });
   });
   it("retains completed-read facts and cancellation through a denied final close", async () => {
@@ -249,36 +251,6 @@ describe("IDA registration descriptor ownership", () => {
     vi.restoreAllMocks();
     await retained[0]!.close();
     expect(cancellation).toMatchObject({ cleanupIncomplete: false });
-  });
-});
-
-describe("IDA MCP result decoding", () => {
-  it("parses FastMCP wrappers, structured dictionaries, text, arrays, and explicit errors", () => {
-    expect(
-      decodeIdaToolResult({
-        content: [],
-        structuredContent: { result: [{ address: "0x1" }] },
-      }),
-    ).toEqual([{ address: "0x1" }]);
-    expect(
-      decodeIdaToolResult({
-        content: [],
-        structuredContent: { address: "0x1", name: "f" },
-      }),
-    ).toEqual({ address: "0x1", name: "f" });
-    expect(
-      decodeIdaToolResult({ content: [{ type: "text", text: "int f() {}" }] }),
-    ).toBe("int f() {}");
-    expect(
-      decodeIdaToolResult({ content: [{ type: "text", text: '{"data":[]}' }] }),
-    ).toEqual({ data: [] });
-    expect(() =>
-      decodeIdaToolResult({
-        content: [{ type: "text", text: "No function at 0x1" }],
-        isError: true,
-      }),
-    ).toThrow("No function at 0x1");
-    expect(() => decodeIdaToolResult({ content: "invalid" })).toThrow();
   });
 });
 

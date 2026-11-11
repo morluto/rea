@@ -216,6 +216,9 @@ it("publishes a remote module with a port to a Windows destination", async () =>
       sha256: createHash("sha256").update(body).digest("hex"),
       bytes: body.length,
     });
+    expect(
+      (await readFile(join(tree.outputRoot, remote.logical_path))).equals(body),
+    ).toBe(true);
   } finally {
     await tree.rollback();
   }
