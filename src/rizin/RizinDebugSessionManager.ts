@@ -746,6 +746,8 @@ export class RizinDebugSessionManager {
         ),
       );
     session.pendingCommandCount += 1;
+    const acceptedDeadline = this.#commandDeadline;
+    const acceptedOutput = this.#commandOutput;
     let release: (() => void) | undefined;
     let acquired = false;
     let commandSent = false;
@@ -832,8 +834,8 @@ export class RizinDebugSessionManager {
       const received = await waitForCommandFrames(
         session,
         marker,
-        this.#frameTimeoutMs,
-        this.#commandOutput,
+        acceptedDeadline.value,
+        acceptedOutput,
         signal,
       );
       commandCapture = received.ok ? received.value : received.error.capture;
@@ -869,7 +871,7 @@ export class RizinDebugSessionManager {
             ? [
                 rizinCaptureStoppedSentence(
                   captured.outputLimit,
-                  this.#commandOutput,
+                  acceptedOutput,
                   cleanupFailure,
                 ),
               ]
@@ -963,7 +965,7 @@ export class RizinDebugSessionManager {
         );
       }
       if (interruption?.kind === "timeout") {
-        session.protocolError = `Rizin command timed out before its completion marker at ${String(this.#commandDeadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(this.#commandDeadline)} Output correlation is no longer safe.`;
+        session.protocolError = `Rizin command timed out before its completion marker at ${String(acceptedDeadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Output correlation is no longer safe.`;
         const stopped = await this.#stopDebuggerOnly(session, true);
         const result = {
           ...commandResult(interruption.capture, "unknown"),
@@ -974,7 +976,7 @@ export class RizinDebugSessionManager {
           command,
           result,
           inferiorTty: session.inferiorTty,
-          deadline: this.#commandDeadline,
+          deadline: acceptedDeadline,
           cleanupFailure:
             stopped.status === "incomplete" ? stopped.reason : undefined,
           launchProvenance: session.launchProvenance,
@@ -1025,7 +1027,7 @@ export class RizinDebugSessionManager {
           ...errorOptions,
           ...configurableDeadlineGuidance(
             "The Rizin debug command",
-            this.#commandDeadline,
+            acceptedDeadline,
           ),
         },
       );

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { launchAnalysisSetting } from "./config/analysisSettings.js";
+import { runtimeAnalysisConfig } from "./config/runtimeAnalysisSettings.js";
+import { runWithAnalysisOperationSnapshot } from "./domain/analysisOperationSnapshot.js";
+import { ConfigurationError } from "./domain/configurationErrors.js";
 import {
   defaultHopperLauncherPath,
   inspectNativeAnalysisConfiguration,
@@ -49,6 +52,19 @@ it.each([
     expect(boundary.error.settings).toContainEqual(
       expect.objectContaining({ setting }),
     );
+    const live = runtimeAnalysisConfig(parsed.value);
+    const read = (): unknown => {
+      if (id === "asar.max_listing_bytes") return live;
+      if (id === "ghidra.value_flow_max_operations")
+        return live.ghidraValueFlowMaxOperations;
+      if (id === "ghidra.value_flow_max_inputs_per_operation")
+        return live.ghidraValueFlowMaxInputsPerOperation;
+      if (id === "ghidra.value_flow_max_edges")
+        return live.ghidraValueFlowMaxEdges;
+      return live.ghidraDecompileMaxPayloadMiB;
+    };
+    if (id !== "asar.max_listing_bytes")
+      expect(read).toThrow(ConfigurationError);
   },
 );
 
@@ -374,6 +390,20 @@ describe("runtime collection configuration", () => {
   );
 });
 
+const expectInvalidStartupSeed = (
+  setting: "REA_HOPPER_STARTUP_TIMEOUT_MS" | "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  id: "hopper.startup_timeout_ms" | "ghidra.startup_timeout_ms",
+  value: string,
+  read: (config: ReturnType<typeof runtimeAnalysisConfig>) => number,
+): void => {
+  const result = parseConfig({ [setting]: value });
+  if (!result.ok) throw new Error("runtime seed rejected startup");
+  const live = runtimeAnalysisConfig(result.value);
+  expect(() => read(live)).toThrow(ConfigurationError);
+  const boundary = launchAnalysisSetting(id, { [setting]: value });
+  if (boundary.ok) throw new Error("invalid startup seed was admitted");
+};
+
 describe("configuration failure diagnostics", () => {
   it.each(["1", "900000", "2147483647"])(
     "accepts Hopper startup deadline %s without changing Ghidra's deadline",
@@ -393,14 +423,24 @@ describe("configuration failure diagnostics", () => {
   it.each(["", "0", "-1", "1.5", "1e3", "invalid", "2147483648"])(
     "defers a malformed Hopper startup deadline %j until the operation reads it",
     (value) => {
-      const result = parseConfig({ REA_HOPPER_STARTUP_TIMEOUT_MS: value });
-      if (!result.ok) throw new Error("runtime seed rejected startup");
-      expect(result.value.hopperStartupTimeoutMs).toBe(120_000);
-      expect(result.value.hopperStartupTimeoutSource).toBe("default");
-      const boundary = launchAnalysisSetting("hopper.startup_timeout_ms", {
-        REA_HOPPER_STARTUP_TIMEOUT_MS: value,
-      });
-      if (boundary.ok) throw new Error("invalid Hopper deadline was admitted");
+      expectInvalidStartupSeed(
+        "REA_HOPPER_STARTUP_TIMEOUT_MS",
+        "hopper.startup_timeout_ms",
+        value,
+        (live) => live.hopperStartupTimeoutMs,
+      );
+      const parsed = parseConfig({ REA_HOPPER_STARTUP_TIMEOUT_MS: value });
+      if (!parsed.ok) throw parsed.error;
+      const live = runtimeAnalysisConfig(parsed.value);
+      expect(
+        runWithAnalysisOperationSnapshot(
+          {
+            revision: 1,
+            overrides: { "hopper.startup_timeout_ms": 8000 },
+          },
+          () => live.hopperStartupTimeoutMs,
+        ),
+      ).toBe(8000);
     },
   );
 
@@ -418,13 +458,12 @@ describe("configuration failure diagnostics", () => {
   ])(
     "rejects malformed Ghidra startup deadline %j with its setting and constraint",
     (value) => {
-      const result = parseConfig({ REA_GHIDRA_STARTUP_TIMEOUT_MS: value });
-      if (!result.ok) throw new Error("runtime seed rejected startup");
-      expect(result.value.ghidraStartupTimeoutMs).toBe(330_000);
-      const boundary = launchAnalysisSetting("ghidra.startup_timeout_ms", {
-        REA_GHIDRA_STARTUP_TIMEOUT_MS: value,
-      });
-      if (boundary.ok) throw new Error("invalid Ghidra deadline was admitted");
+      expectInvalidStartupSeed(
+        "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+        "ghidra.startup_timeout_ms",
+        value,
+        (live) => live.ghidraStartupTimeoutMs,
+      );
     },
   );
 
@@ -643,7 +682,19 @@ describe("Ghidra decompile limit configuration", () => {
         REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: value,
       });
       if (!result.ok) throw new Error("runtime seed rejected startup");
-      expect(result.value.ghidraDecompileTimeoutSeconds).toBeUndefined();
+      const live = runtimeAnalysisConfig(result.value);
+      expect(() => live.ghidraDecompileTimeoutSeconds).toThrow(
+        ConfigurationError,
+      );
+      expect(
+        runWithAnalysisOperationSnapshot(
+          {
+            revision: 1,
+            overrides: { "ghidra.decompile_timeout_seconds": null },
+          },
+          () => live.ghidraDecompileTimeoutSeconds,
+        ),
+      ).toBeUndefined();
       const boundary = launchAnalysisSetting(
         "ghidra.decompile_timeout_seconds",
         { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: value },

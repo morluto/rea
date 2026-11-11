@@ -583,8 +583,18 @@ export const matchRegexValues = async (input: {
   /** Resolved heap request. Omitted means the 128 MiB default, not ambient `process.env`. */
   readonly heapRequest?: RegexWorkerHeapRequest | undefined;
 }): Promise<Result<readonly number[], AnalysisError>> => {
-  const deadline = input.deadline ?? DEFAULT_REGEX_MATCHING_DEADLINE;
-  const heapRequest = input.heapRequest ?? DEFAULT_REGEX_WORKER_HEAP_REQUEST;
+  const selectedDeadline = input.deadline ?? DEFAULT_REGEX_MATCHING_DEADLINE;
+  const selectedHeap = input.heapRequest ?? DEFAULT_REGEX_WORKER_HEAP_REQUEST;
+  // Copy the values this match accepted. A later override reset must not
+  // rewrite the deadline or heap reported if the match fails.
+  const deadline: RegexMatchingDeadline = {
+    deadlineMs: selectedDeadline.deadlineMs,
+    source: selectedDeadline.source,
+  };
+  const heapRequest: RegexWorkerHeapRequest = {
+    heapMiB: selectedHeap.heapMiB,
+    source: selectedHeap.source,
+  };
   if (input.signal?.aborted)
     return err(
       new AnalysisCancelledError(input.operation, {

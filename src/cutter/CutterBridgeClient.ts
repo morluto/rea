@@ -18,7 +18,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  resourceConstraintRecovery,
+  reattributedResourceConstraint,
 } from "../domain/analysisErrorCore.js";
 import {
   randomUUID,
@@ -424,15 +424,9 @@ export class CutterBridgeClient {
                 cause: cause.cancellation.reason,
               });
             if (cause.limit !== undefined)
-              throw new AnalysisResourceConstraintError(
+              throw reattributedResourceConstraint(
                 "list_cutter_sessions",
-                cause.limit.resource,
-                cause.limit.reason,
-                cause.limit.reportedLimits,
-                {
-                  ...resourceConstraintRecovery(cause.limit),
-                  limit: cause.limit.limit,
-                },
+                cause.limit,
               );
           }
           return undefined;

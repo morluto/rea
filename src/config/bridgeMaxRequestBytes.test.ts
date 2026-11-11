@@ -6,6 +6,9 @@ import { GHIDRA_OPERATIONS } from "../ghidra/GhidraProviderMetadata.js";
 import { HOPPER_OPERATIONS } from "../hopper/HopperProviderMetadata.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
   DEFAULT_BRIDGE_MAX_REQUEST,
@@ -155,9 +158,40 @@ it.each([
   });
   if (!startup.ok)
     throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
-  expect(startup.value.bridgeMaxRequestBytes).toEqual(
-    DEFAULT_BRIDGE_MAX_REQUEST,
+  expect(
+    startup.value.invalidRuntimeSeeds?.["bridge.max_request_bytes"]?.settings,
+  ).toEqual([
+    expect.objectContaining({ setting: BRIDGE_MAX_REQUEST_BYTES_SETTING }),
+  ]);
+  const live = runtimeAnalysisConfig(startup.value);
+  expect(() => live.bridgeMaxRequestBytes.maximumBytes).toThrow(
+    ConfigurationError,
   );
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "bridge.max_request_bytes": 8192 },
+      },
+      () => ({
+        maximumBytes: live.bridgeMaxRequestBytes.maximumBytes,
+        source: live.bridgeMaxRequestBytes.source,
+      }),
+    ),
+  ).toEqual({ maximumBytes: 8192, source: "runtime" });
+  try {
+    void live.bridgeMaxRequestBytes.maximumBytes;
+    throw new Error("reset override activated the built-in default");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ConfigurationError);
+    if (cause instanceof ConfigurationError)
+      expect(projectAnalysisError(cause)).toMatchObject({
+        code: "configuration_invalid",
+        details: {
+          settings: [{ setting: BRIDGE_MAX_REQUEST_BYTES_SETTING }],
+        },
+      });
+  }
   if (!doctor.ok)
     throw new Error(`Doctor rejected a runtime seed ${JSON.stringify(value)}`);
   expect(() => parseBridgeMaxRequestBytes(value)).not.toThrow();

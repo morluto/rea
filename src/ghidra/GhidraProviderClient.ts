@@ -70,7 +70,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
-  resourceConstraintRecovery,
+  reattributedResourceConstraint,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -1314,17 +1314,7 @@ const projectPrimarySessionError = (
   // operation so callers see a typed resource constraint rather than a generic
   // session failure, matching how Hopper and Cutter report the same ceiling.
   if (physicalCause instanceof AnalysisResourceConstraintError)
-    return new AnalysisResourceConstraintError(
-      operation,
-      physicalCause.resource,
-      physicalCause.reason,
-      physicalCause.reportedLimits,
-      {
-        ...context,
-        ...resourceConstraintRecovery(physicalCause),
-        limit: physicalCause.limit,
-      },
-    );
+    return reattributedResourceConstraint(operation, physicalCause, context);
   if (
     origin === "owned-or-classified" &&
     physicalCause instanceof AnalysisAccessDeniedError
