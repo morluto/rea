@@ -371,6 +371,14 @@ const registerReferenceSourceCommand = (
             "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
           ),
       })
+      .superRefine((options, context) => {
+        if (options.outlineDepth !== undefined && options.detail !== "summary")
+          context.addIssue({
+            code: "custom",
+            path: ["outlineDepth"],
+            message: "--outline-depth requires --detail summary",
+          });
+      })
       .meta({
         if: { required: ["outlineDepth"] },
         then: {
@@ -387,26 +395,6 @@ const registerReferenceSourceCommand = (
             options.excludePaths,
           );
           if (!excludePaths.ok) return excludePaths.failure;
-          if (
-            options.outlineDepth !== undefined &&
-            options.detail !== "summary"
-          )
-            return {
-              error: "Import failed",
-              ...projectAnalysisError(
-                new AnalysisInputError(
-                  "import-reference-source",
-                  { userMessage: "--outline-depth requires --detail summary" },
-                  [
-                    {
-                      path: ["outlineDepth"],
-                      reason: "invalid_value",
-                      message: "--outline-depth requires --detail summary",
-                    },
-                  ],
-                ),
-              ),
-            };
           const config = parseConfig(environment);
           if (!config.ok)
             return {
