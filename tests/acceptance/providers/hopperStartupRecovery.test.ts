@@ -215,6 +215,10 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
       },
     });
     expect(error.message).toContain("Automation");
+    expect(error.message).toContain(
+      "com.apple.security.automation.apple-events",
+    );
+    expect(error.remediation?.action).toContain("Grant Automation permission");
     const bootstrap = await readFile(receipt, "utf8");
     await expect(access(dirname(bootstrap))).rejects.toMatchObject({
       code: "ENOENT",

@@ -832,6 +832,28 @@ describe("analysis error projection: Hopper provider failures", () => {
     );
   });
 
+  it("projects custom remediation for an Apple Events denial during Hopper launch", () => {
+    expect(
+      projectAnalysisError(
+        new HopperStartError({
+          userMessage:
+            "macOS denied permission to send Apple Events to Hopper. Allow the application that starts REA under System Settings > Privacy & Security > Automation, or start REA from a client that can be authorized. A hardened application without the com.apple.security.automation.apple-events entitlement cannot be prompted or authorized.",
+          remediationAction:
+            "Grant Automation permission to the application that starts REA, or start REA from an authorized client such as a terminal. Retrying from an unauthorized client is not expected to succeed.",
+        }),
+      ),
+    ).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      message: expect.stringContaining(
+        "com.apple.security.automation.apple-events",
+      ),
+      remediation: {
+        action: expect.stringContaining("Grant Automation permission"),
+      },
+    });
+  });
+
   it("identifies the REA session that already owns a Hopper target", () => {
     const error = new HopperStartError({
       ownerRunId: "session-owner",

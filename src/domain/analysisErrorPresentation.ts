@@ -168,9 +168,12 @@ export const analysisErrorRemediationAction = (
   if (error instanceof HopperProcessError)
     return hopperProcessRemediation(error);
   if (error instanceof HopperStartError)
-    return error.ownerRunId === undefined
-      ? "Check the Hopper launcher and target details, then retry opening the target."
-      : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
+    return (
+      error.remediationAction ??
+      (error.ownerRunId === undefined
+        ? "Check the Hopper launcher and target details, then retry opening the target."
+        : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`)
+    );
   if (error instanceof HopperRemoteError)
     return error.diagnosticType === "invalid_request"
       ? "Correct the reported address, document, or arguments and retry."

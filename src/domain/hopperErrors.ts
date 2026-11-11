@@ -226,6 +226,7 @@ export class HopperStartError extends HopperError {
   readonly ownerRunId: string | undefined;
   readonly launcherFailure: HopperLauncherOutcome | undefined;
   readonly launchRejection: HopperLaunchRejection | undefined;
+  readonly remediationAction: string | undefined;
 
   constructor(
     options?: AnalysisErrorOptions & {
@@ -233,6 +234,7 @@ export class HopperStartError extends HopperError {
       readonly ownerRunId?: string;
       readonly launcherFailure?: HopperLauncherOutcome;
       readonly launchRejection?: HopperLaunchRejection;
+      readonly remediationAction?: string;
     },
   ) {
     super("Hopper application bridge could not be started", options);
@@ -240,5 +242,6 @@ export class HopperStartError extends HopperError {
     this.ownerRunId = options?.ownerRunId;
     this.launcherFailure = options?.launcherFailure;
     this.launchRejection = options?.launchRejection;
+    this.remediationAction = options?.remediationAction;
   }
 }

@@ -968,7 +968,12 @@ and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
 If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+**System Settings → Privacy & Security → Automation**, or start REA from a client
+that macOS can prompt and authorize. A hardened macOS application without the
+`com.apple.security.automation.apple-events` entitlement cannot be prompted or authorized
+by TCC, so commands cannot succeed from that client until authorized or launched
+from an authorized caller (for example a terminal). Check TCC attribution in `log show --predicate 'process == "tccd"'`
+if permission prompts do not appear. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
