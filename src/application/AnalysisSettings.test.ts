@@ -194,6 +194,17 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     "windows.change_time_settle_poll_ms",
     "windows.change_time_settle_max_polls",
   ]);
+  expect(
+    store
+      .inspect({ operation: "open_binary" })
+      .settings.map(({ setting }) => setting),
+  ).toEqual(
+    expect.arrayContaining([
+      "windows.change_time_drift_ms",
+      "windows.change_time_settle_poll_ms",
+      "windows.change_time_settle_max_polls",
+    ]),
+  );
   for (const operation of [
     "procedure_pseudo_code",
     "procedure_assembly",

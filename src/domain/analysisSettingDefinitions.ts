@@ -90,6 +90,17 @@ const ghidraDecompileOperations = [
   "trace_native_values",
 ] as const;
 
+// These operations use the shared owned-file baseline on Windows. Other
+// workflows may also use it; this is not a complete reader inventory.
+const windowsChangeTimeOperations = [
+  "open_binary",
+  "inventory_artifact",
+  "inspect_artifact",
+  "extract_artifact",
+  "inspect_binary_layout",
+  "inspect_recorded_crash",
+] as const;
+
 /** Metadata aggregates existing owner definitions; no environment mutation or engine discovery. */
 export const ANALYSIS_SETTINGS = {
   "ghidra.decompile_max_payload_mib": {
@@ -505,13 +516,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "ms",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: [
-      "inventory_artifact",
-      "inspect_artifact",
-      "extract_artifact",
-      "inspect_binary_layout",
-      "inspect_recorded_crash",
-    ],
+    operations: windowsChangeTimeOperations,
   },
   "windows.change_time_settle_poll_ms": {
     updateMode: "runtime",
@@ -522,13 +527,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "ms",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: [
-      "inventory_artifact",
-      "inspect_artifact",
-      "extract_artifact",
-      "inspect_binary_layout",
-      "inspect_recorded_crash",
-    ],
+    operations: windowsChangeTimeOperations,
   },
   "windows.change_time_settle_max_polls": {
     updateMode: "runtime",
@@ -539,13 +538,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "count",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: [
-      "inventory_artifact",
-      "inspect_artifact",
-      "extract_artifact",
-      "inspect_binary_layout",
-      "inspect_recorded_crash",
-    ],
+    operations: windowsChangeTimeOperations,
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 /** Launch seeds `update_analysis_settings` can replace. Startup must not reject them. */
