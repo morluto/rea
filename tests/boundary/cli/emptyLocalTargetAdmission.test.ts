@@ -131,3 +131,24 @@ it.each([
     });
   },
 );
+
+it("rejects an empty or NUL inspect-plist relative-path before opening a target", async () => {
+  const { serve, runs } = registry();
+  expect(
+    await serve(["inspect-plist", ".", "--relative-path", ""]),
+  ).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "relativePath", code: "too_small" }),
+    ],
+  });
+  expect(
+    await serve(["inspect-plist", ".", "--relative-path", "bad\x00path"]),
+  ).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "relativePath", code: "invalid_format" }),
+    ],
+  });
+  for (const run of runs) expect(run).not.toHaveBeenCalled();
+});
