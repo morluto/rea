@@ -1058,6 +1058,7 @@ export class ReverseEngineeringService {
     if (failure !== undefined && cleanupOwner !== undefined)
       failure = this.#registerCleanupFailure(failure, cleanupOwner);
     let digestAfter: string | null = null;
+    let digestAfterTimedOut = false;
     if (absolutePath === undefined) {
       digestAfter = null;
     } else if (cleanupIncomplete) {
@@ -1065,8 +1066,10 @@ export class ReverseEngineeringService {
     } else {
       try {
         digestAfter = await hash(absolutePath);
-      } catch {
-        // Preserve the provider's collected observations if the artifact vanished or became unreadable.
+      } catch (cause) {
+        // Preserve the provider's collected observations if the artifact vanished,
+        // became unreadable or its hash reached the deadline.
+        digestAfterTimedOut = commandFailureCode(cause) === "ETIMEDOUT";
       }
     }
     if (signal?.aborted && failure === undefined) {
@@ -1181,7 +1184,9 @@ export class ReverseEngineeringService {
               ? "The post-run artifact digest was not captured because owned provider cleanup was incomplete at observation time; artifact changes during the command remain unquantified."
               : signal?.aborted
                 ? "The post-run artifact digest is unknown because cancellation interrupted the digest."
-                : POST_RUN_ARTIFACT_UNREADABLE,
+                : digestAfterTimedOut
+                  ? postRunArtifactDigestDeadline(timeoutMs)
+                  : POST_RUN_ARTIFACT_UNREADABLE,
           ]
         : []),
     ];
@@ -1983,16 +1988,26 @@ const runtimeControlPreparationError = (
   return windowsNativeSpawnControlError(cause);
 };
 
+/** How a caller raises the deadline that `timeoutMs` reached, if it can. */
+const raiseCommandTimeout = (timeoutMs: number): string =>
+  timeoutMs < MAX_REVERSE_COMMAND_TIMEOUT_MS
+    ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
+    : `command_timeout_ms is already at the maximum ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)} ms; no higher deadline is supported.`;
+
 const reverseCommandTimeoutGuidance = (
   timeoutMs: number,
 ): { readonly userMessage: string; readonly remediationAction: string } => ({
   userMessage: `This objdump or rizin command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms) during target preflight, executable identification or the one-shot command (deadlineExpired). This is not a Ghidra or Hopper startup deadline and not a debugger session deadline.`,
-  remediationAction: `${
-    timeoutMs < MAX_REVERSE_COMMAND_TIMEOUT_MS
-      ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
-      : `command_timeout_ms is already at the maximum ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)} ms; no higher deadline is supported.`
-  } The new value applies on the next call; no restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes). Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+  remediationAction: `${raiseCommandTimeout(timeoutMs)} The new value applies on the next call; no restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes). Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
+
+/**
+ * The limitation for a post-run hash that reached the call's deadline, for
+ * example at a read or close that a stalled mount holds. The command's output
+ * is unaffected; only the artifact comparison is missing.
+ */
+export const postRunArtifactDigestDeadline = (timeoutMs: number): string =>
+  `The post-run artifact digest is unknown because hashing the artifact after the provider call reached the ${String(timeoutMs)} ms command_timeout_ms deadline (ETIMEDOUT), for example at a read or close that a stalled mount holds; artifact changes during the command remain unquantified. ${raiseCommandTimeout(timeoutMs)}`;
 
 /** The limitation for a post-run hash that read the artifact and failed. */
 export const POST_RUN_ARTIFACT_UNREADABLE =

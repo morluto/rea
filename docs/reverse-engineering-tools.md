@@ -219,7 +219,10 @@ or the launch failure keeps the resolved path as `provider_executable_path`. A
 lookup or hash stops waiting, at the deadline or on cancellation, for a `stat`,
 an `access`, or a file's open, read or close that a stalled mount holds, but it
 cannot cancel that work. A hash completes only after its file closes, so a
-stalled close also reaches the deadline. The call then returns and gives back
+stalled close also reaches the deadline. Before the command, that deadline ends
+the call. The artifact's post-run hash instead keeps the command's Evidence:
+`artifact_sha256_after` is `null`, and a limitation names the deadline
+(`ETIMEDOUT`) and how to raise `command_timeout_ms`. The call then returns and gives back
 its place among the eight concurrent objdump and rizin operations. The work it
 stopped waiting for keeps running, and holds a thread of Node's file pool,
 until the mount answers. REA does not track or bound that work, and a later

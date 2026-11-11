@@ -21,6 +21,8 @@ import {
 import {
   ReverseEngineeringService as CoreReverseEngineeringService,
   type FileDigestBounds,
+  POST_RUN_ARTIFACT_UNREADABLE,
+  postRunArtifactDigestDeadline,
 } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
@@ -1052,6 +1054,64 @@ it("preserves completed command Evidence while its post-run digest awaits cleanu
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it.each(["objdump", "rizin"] as const)(
+  "keeps a %s post-run digest deadline and its recovery beside complete output",
+  async (provider) => {
+    const { directory, path } = await createArtifact();
+    let digests = 0;
+    const service = new ReverseEngineeringService({
+      digest: async () => {
+        digests += 1;
+        if (digests === 1) return "a".repeat(64);
+        // The read finished, but the close a stalled mount holds did not.
+        throw Object.assign(new Error("digest close reached the deadline"), {
+          code: "ETIMEDOUT",
+        });
+      },
+      run: async () => ({ stdout: "observed", stderr: "" }),
+    });
+
+    try {
+      const result =
+        provider === "objdump"
+          ? await service.inspectWithObjdump({
+              path,
+              operation: "file_headers",
+              command_timeout_ms: 1_500,
+            })
+          : await service.executeRizinCommand({
+              path,
+              command: "iI",
+              command_timeout_ms: 1_500,
+            });
+      expect(digests).toBe(2);
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          raw_result: {
+            stdout: "observed",
+            completion_status: "complete",
+            artifact_sha256_after: null,
+            artifact_changed: null,
+          },
+        },
+      });
+      if (!result.ok) return;
+      expect(result.value.limitations).toContain(
+        postRunArtifactDigestDeadline(1_500),
+      );
+      expect(result.value.limitations).not.toContain(
+        POST_RUN_ARTIFACT_UNREADABLE,
+      );
+      expect(postRunArtifactDigestDeadline(1_500)).toContain(
+        "Increase command_timeout_ms above 1500",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("records an explicit loss marker when provider bytes are invalid UTF-8", async () => {
   const { directory, path } = await createArtifact();
