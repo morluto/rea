@@ -1119,8 +1119,6 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
   });
 });
 
-describe("Ghidra bridge script processor context contract", () => {});
-
 describe("Ghidra dossier nested boundary composition", () => {
   const identityLocations = [
     "caller",

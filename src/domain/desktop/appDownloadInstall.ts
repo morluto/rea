@@ -7,7 +7,7 @@ export const COMPUTER_ARCHITECTURES = ["amd64", "arm64"] as const;
 
 /** A URL agentenv downloads from: http or https in lowercase, without a user name or password. */
 export const downloadUrlSchema = z
-  .url({ protocol: /^https?$/u })
+  .url({ protocol: /^https?$/u, abort: true })
   .regex(/^https?:\/\//u)
   .refine(
     (url) => {

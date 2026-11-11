@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
 import {
@@ -5,8 +9,6 @@ import {
   createFileMappingIndex,
   isZeroFilledSpan,
   type ElfDynamicSegment,
-  type FileMapping,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 
 /** Shared loader interpretation; language adapters choose their public errors. */

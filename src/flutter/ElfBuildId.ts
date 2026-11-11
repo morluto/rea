@@ -123,7 +123,7 @@ export const readElfBuildIds = async (
       )
         return failure("ELF note range is not file-backed");
       if ("size" in record) {
-        if ((record.flags & 0x800n) !== 0n) {
+        if (record.compressed) {
           if (!compressedNotes) {
             failures.push({
               reason: "Compressed ELF note sections are unsupported",

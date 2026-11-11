@@ -554,9 +554,9 @@ export const draftValues = (
       .map((pointer) => entryOf(context, references, pointer, "removed")),
   ].toSorted((left, right) => rank(left) - rank(right));
   const values: DraftValue[] = [];
-  let bytes = 0;
+  let bytes = 2; // The serialized values array's brackets.
   for (const entry of entries) {
-    const size = byteLength(entry);
+    const size = byteLength(entry) + (values.length === 0 ? 0 : 1);
     if (
       values.length >= VALUE_LIMITS.entries ||
       bytes + size > VALUE_LIMITS.fileBytes
@@ -606,11 +606,12 @@ export const withinDraftBudget = <
 >(
   files: readonly File[],
 ): File[] => {
-  let left = VALUE_LIMITS.draftBytes;
+  // Reserve every file's array brackets before assigning entry bytes in file order.
+  let left = VALUE_LIMITS.draftBytes - files.length * 2;
   return files.map((file) => {
     const kept: DraftValue[] = [];
     for (const entry of file.values) {
-      const size = byteLength(entry);
+      const size = byteLength(entry) + (kept.length === 0 ? 0 : 1);
       if (size > left) break;
       kept.push(entry);
       left -= size;

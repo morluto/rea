@@ -6695,3 +6695,105 @@ describe("Windows Ghidra readiness repair", () => {
       });
   });
 });
+
+const namingReplyCases: readonly {
+  readonly label: string;
+  readonly operation: "set_address_name" | "set_addresses_names";
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly reply: {
+    readonly results: Record<string, boolean>;
+    readonly failures: Record<string, JsonValue>;
+    readonly conflicts: JsonValue[];
+  };
+  readonly accepted: boolean;
+  readonly expected?: JsonValue;
+}[] = [
+  {
+    label: "an unrelated single address",
+    operation: "set_address_name",
+    parameters: { address: "0x1000", name: "renamed" },
+    reply: { results: { "0x9000": true }, failures: {}, conflicts: [] },
+    accepted: false,
+  },
+  {
+    label: "an unrelated batch address",
+    operation: "set_addresses_names",
+    parameters: { names: { "0x1000": "renamed" } },
+    reply: { results: { "0x9000": true }, failures: {}, conflicts: [] },
+    accepted: false,
+  },
+  {
+    label: "distinct source spellings of the same address",
+    operation: "set_addresses_names",
+    parameters: { names: { "0x1000": "first", "ram:0x1000": "second" } },
+    reply: {
+      results: { "0x1000": false, "ram:0x1000": false },
+      failures: {
+        "0x1000": {
+          address: "0x1000",
+          reason: "conflicting_alias_names",
+          conflict: null,
+        },
+        "ram:0x1000": {
+          address: "0x1000",
+          reason: "conflicting_alias_names",
+          conflict: null,
+        },
+      },
+      conflicts: [],
+    },
+    accepted: true,
+    expected: { "0x1000": false, "ram:0x1000": false },
+  },
+  {
+    label: "a matching reported rename failure",
+    operation: "set_address_name",
+    parameters: { address: "0X001000", name: "renamed" },
+    reply: {
+      results: { "0X001000": false },
+      failures: {
+        "0X001000": {
+          address: "0x1000",
+          reason: "readback_mismatch",
+          conflict: null,
+        },
+      },
+      conflicts: [],
+    },
+    accepted: true,
+    expected: false,
+  },
+];
+
+it.each(namingReplyCases)(
+  "binds naming reply identity for $label through the public provider client",
+  async ({ operation, parameters, reply, accepted, expected }) => {
+    const ghidra = provider(installationHost(), () => ({
+      start: async () => ok(sessionInfo()),
+      callTool: async () => ok(reply),
+      close: async () => ok(null),
+    }));
+    const client = await createElfClient(ghidra);
+    try {
+      const result = await client.execute(operation, parameters);
+      if (!accepted) {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisOutputError",
+            diagnostics: { bridge_result: reply, mutation_outcome: "unknown" },
+          },
+        });
+        return;
+      }
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toEqual(expected);
+      expect(result.value.rawResult).toMatchObject({
+        failures: reply.failures,
+      });
+    } finally {
+      await client.close();
+      await ghidra.closeOwnedResources();
+    }
+  },
+);

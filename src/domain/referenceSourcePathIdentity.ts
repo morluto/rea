@@ -75,3 +75,12 @@ export const decodeReferenceSourceModuleUrlPath = (
     );
   }
 };
+
+/** Rebase a portable target without discarding its directory-required suffix. */
+export const rebaseReferenceSourceTarget = (
+  linkPath: string,
+  target: string,
+): string => {
+  const relative = posix.relative(posix.dirname(linkPath), target) || ".";
+  return target.endsWith("/") ? `${relative}/` : relative;
+};

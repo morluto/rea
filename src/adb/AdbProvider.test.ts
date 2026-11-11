@@ -10,12 +10,35 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 
 const adbTestHooks = vi.hoisted(() => ({
   afterScreencap: undefined as (() => void) | undefined,
+  afterBugreportCleanup: undefined as (() => void) | undefined,
+  bugreportCleanupFailure: undefined as Error | undefined,
   versionProbeFailure: undefined as Error | undefined,
   digestCheckFailure: undefined as Error | undefined,
 }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: async (...arguments_: Parameters<typeof actual.rm>) => {
+      const path = arguments_[0];
+      if (typeof path !== "string" || !path.includes("/.rea-bugreport-"))
+        return actual.rm(...arguments_);
+      const failure = adbTestHooks.bugreportCleanupFailure;
+      if (failure !== undefined) {
+        adbTestHooks.bugreportCleanupFailure = undefined;
+        adbTestHooks.afterBugreportCleanup?.();
+        throw failure;
+      }
+      await actual.rm(...arguments_);
+      adbTestHooks.afterBugreportCleanup?.();
+    },
+  };
+});
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
   const actual =
@@ -1532,6 +1555,68 @@ exit 1`,
   expect(closeAttempts).toBe(2);
 });
 
+it.each([false, true])(
+  "retains failed push and late cancellation when runtime cleanup fails: %s",
+  async (cleanupFails) => {
+    const { binary, root } = await writeAdbStub(
+      () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "test" ]; then exit 1; fi
+if [ "$1" = "-s" ] && [ "$3" = "push" ]; then printf 'error: device offline\\n' >&2; exit 1; fi
+exit 1`,
+    );
+    const localFile = join(root, "input.bin");
+    await writeFile(localFile, "payload");
+    const controller = new AbortController();
+    let closeAttempts = 0;
+    const provider = new AdbProvider({
+      environment: { REA_ADB_PATH: binary },
+      createRuntimeRoot: async (options) => {
+        const runtime = await PrivateRuntimeRoot.create(options);
+        return {
+          path: runtime.path,
+          close: async () => {
+            closeAttempts += 1;
+            controller.abort("late runtime cancellation");
+            if (cleanupFails && closeAttempts === 1)
+              throw new Error("controlled runtime cleanup refusal");
+            await runtime.close();
+          },
+        };
+      },
+    });
+    onTestFinished(async () => provider.close());
+    const result = await provider.execute(
+      {
+        operation: "push_adb_file",
+        input: {
+          serial: "emulator-5554",
+          local_path: localFile,
+          device_path: "/data/local/tmp/input.bin",
+          overwrite: false,
+        },
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected the original transport refusal");
+    const primary = primaryAnalysisError(result.error);
+    expect(projectAnalysisError(primary)).toMatchObject({
+      code: "unsupported_target",
+      details: { reason: "error: device offline" },
+    });
+    expect(primary.secondaryFailures).toEqual([
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: "late runtime cancellation",
+      }),
+    ]);
+    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+    if (cleanupFails) {
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+    }
+  },
+);
+
 it("verifies the device-side digest for a long device path", async () => {
   const { binary, root } = await writeAdbStub(
     () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
@@ -2333,28 +2418,141 @@ ${shellStub({ "am:start": "Starting: Intent { act=android.intent.action.VIEW }\n
   },
 );
 
-it("collects a device bugreport archive with its digest", async () => {
-  const { binary, root } = await writeAdbStub(
-    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+it.each([
+  { cancel: false, cleanupFails: false },
+  { cancel: true, cleanupFails: false },
+  { cancel: false, cleanupFails: true },
+  { cancel: true, cleanupFails: true },
+])(
+  "finalizes a bugreport with cancel=$cancel and cleanupFails=$cleanupFails",
+  async ({ cancel, cleanupFails }) => {
+    const { binary, root } = await writeAdbStub(
+      () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
 if [ "$1" = "-s" ] && [ "$3" = "bugreport" ]; then
   printf 'bugreport-bytes' > "$4/bugreport test.zip"
   printf 'Bug report copied to %s/bugreport test.zip\\n' "$4"
   exit 0
 fi
 exit 1`,
-  );
-  const result = await evidenceResult(providerOver(binary), {
-    operation: "collect_adb_bugreport",
-    input: { serial: "emulator-5554", output_directory: root },
-  });
-  const digest = createHash("sha256").update("bugreport-bytes").digest("hex");
-  expect(result).toMatchObject({
-    local_path: join(root, "bugreport test.zip"),
-    bytes: 15,
-    sha256: digest,
-    adb_reported_path: expect.stringContaining(".rea-bugreport-"),
-  });
-});
+    );
+    const controller = new AbortController();
+    const provider = providerOver(binary);
+    adbTestHooks.afterBugreportCleanup = () => {
+      if (cancel) controller.abort("cancelled during final bugreport cleanup");
+    };
+    adbTestHooks.bugreportCleanupFailure = cleanupFails
+      ? Object.assign(new Error("EACCES: controlled staging cleanup denial"), {
+          code: "EACCES",
+        })
+      : undefined;
+    onTestFinished(async () => {
+      adbTestHooks.afterBugreportCleanup = undefined;
+      adbTestHooks.bugreportCleanupFailure = undefined;
+      await provider.close();
+    });
+    const result = await provider.execute(
+      {
+        operation: "collect_adb_bugreport",
+        input: { serial: "emulator-5554", output_directory: root },
+      },
+      { signal: controller.signal },
+    );
+    const digest = createHash("sha256").update("bugreport-bytes").digest("hex");
+    const receipt = {
+      local_path: join(root, "bugreport test.zip"),
+      bytes: 15,
+      sha256: digest,
+      adb_reported_path: expect.stringContaining(".rea-bugreport-"),
+    };
+    expect(controller.signal.aborted).toBe(cancel);
+    if (cancel || cleanupFails) {
+      if (result.ok)
+        throw new Error("Expected finalization failure with retained receipt");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: cleanupFails ? "cleanup_incomplete" : "cancelled",
+        details: {
+          partial_observation: {
+            provider_id: "adb",
+            operation: "collect_adb_bugreport",
+            result: receipt,
+          },
+        },
+      });
+      expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      if (cleanupFails) {
+        expect(projected).toMatchObject({
+          details: {
+            execution_failure: cancel ? "cancelled" : "unreadable_output",
+          },
+        });
+        expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
+          "EACCES",
+        );
+        expect(result.error.cleanupResources).toEqual([
+          expect.stringContaining(".rea-bugreport-"),
+        ]);
+        await provider.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+    } else {
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject(receipt);
+    }
+    expect(await readFile(join(root, "bugreport test.zip"), "utf8")).toBe(
+      "bugreport-bytes",
+    );
+  },
+);
+
+it.each([false, true])(
+  "preserves a bugreport transport refusal and late cancellation when cleanup fails: %s",
+  async (cleanupFails) => {
+    const { binary, root } = await writeAdbStub(
+      () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+printf 'error: device offline\\n' >&2
+exit 1`,
+    );
+    const controller = new AbortController();
+    const provider = providerOver(binary);
+    adbTestHooks.afterBugreportCleanup = () =>
+      controller.abort("late cancellation");
+    adbTestHooks.bugreportCleanupFailure = cleanupFails
+      ? new Error("controlled cleanup refusal")
+      : undefined;
+    onTestFinished(async () => {
+      adbTestHooks.afterBugreportCleanup = undefined;
+      adbTestHooks.bugreportCleanupFailure = undefined;
+      await provider.close();
+    });
+    const result = await provider.execute(
+      {
+        operation: "collect_adb_bugreport",
+        input: { serial: "emulator-5554", output_directory: root },
+      },
+      { signal: controller.signal },
+    );
+    expect(controller.signal.aborted).toBe(true);
+    if (result.ok) throw new Error("Expected the original transport refusal");
+    const primary = primaryAnalysisError(result.error);
+    expect(projectAnalysisError(primary)).toMatchObject({
+      code: "unsupported_target",
+      details: { reason: "error: device offline" },
+    });
+    expect(primary.secondaryFailures).toEqual([
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: "late cancellation",
+      }),
+    ]);
+    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+    expect(result.error.partialObservation).toBeUndefined();
+    if (cleanupFails) {
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+    }
+  },
+);
 
 it("quotes caller text before adb joins the remote shell command", async () => {
   const { binary, root } = await writeAdbStub(

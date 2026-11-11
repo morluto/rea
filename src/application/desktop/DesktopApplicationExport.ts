@@ -403,19 +403,19 @@ const runExport = async (
   const text = bundleText(plan, admitted, dconf.holdsIdentity, held.consent);
   const { generated, readme } = text;
   let scrub = NO_SCRUB;
-  const unclosed = await withRetainedContent(
-    request.capture,
-    (content) =>
-      writeOutputTree(
-        request.directory,
-        async (tree) => {
+  const unclosed = await writeOutputTree(
+    copy.bundle,
+    (tree) =>
+      withRetainedContent(
+        request.capture,
+        async (content) => {
           const bundle = { generated, copies, identity, readme };
           scrub = await writeFiles(tree, content, bundle, signal);
         },
-        { operation: OPERATION, field: "directory" },
-        signal,
+        SEED_MAX_BYTES,
       ),
-    SEED_MAX_BYTES,
+    { operation: OPERATION, field: "directory" },
+    signal,
   );
   const limitations = exportLimitations(capture, plan, {
     install: install.limitations,
