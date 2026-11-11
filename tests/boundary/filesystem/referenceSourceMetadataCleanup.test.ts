@@ -1,6 +1,7 @@
 import {
   mkdir,
   open as fsOpen,
+  opendir as fsOpendir,
   stat as fsStat,
   writeFile,
 } from "node:fs/promises";
@@ -16,10 +17,16 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, open: vi.fn(actual.open), stat: vi.fn(actual.stat) };
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    stat: vi.fn(actual.stat),
+    opendir: vi.fn(actual.opendir),
+  };
 });
 
 const openMock = vi.mocked(fsOpen);
+const opendirMock = vi.mocked(fsOpendir);
 const statMock = vi.mocked(fsStat);
 let actual: typeof import("node:fs/promises");
 
@@ -29,11 +36,13 @@ beforeEach(async () => {
       "node:fs/promises",
     );
   openMock.mockImplementation((...args) => actual.open(...args));
+  opendirMock.mockImplementation((...args) => actual.opendir(...args));
   statMock.mockImplementation((...args) => actual.stat(...args));
 });
 
 afterEach(() => {
   openMock.mockReset();
+  opendirMock.mockReset();
   statMock.mockReset();
 });
 
@@ -464,3 +473,57 @@ it.each([false, true])(
     }
   },
 );
+
+it("preserves physical Git failure and exact cancellation across parallel traversal", async () => {
+  const root = await createTestTempDirectory("rea-reference-parallel-abort-");
+  const gitdir = join(root, ".git");
+  await mkdir(gitdir);
+  const head = join(gitdir, "HEAD");
+  await writeFile(head, "ref: refs/heads/main\n");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancel while Git metadata fails" };
+  const physical = Object.assign(new Error("HEAD read EIO"), { code: "EIO" });
+  let entered!: () => void;
+  let release!: () => void;
+  const opendirEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  opendirMock.mockImplementation(async (...args) => {
+    entered();
+    await gate;
+    return actual.opendir(...args);
+  });
+  openMock.mockImplementation(async (...args) => {
+    const handle = await actual.open(...args);
+    if (resolve(String(args[0])) === resolve(head))
+      vi.spyOn(handle, "read").mockImplementation(async () => {
+        await opendirEntered;
+        controller.abort(reason);
+        release();
+        throw physical;
+      });
+    return handle;
+  });
+  try {
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "test",
+        policy: { secretPatterns: [] },
+        signal: controller.signal,
+      },
+      resources,
+    );
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("io");
+    expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    expect(((result.error.cause as Error).cause as Error).cause).toBe(physical);
+  } finally {
+    release();
+    await resources.close();
+  }
+});
