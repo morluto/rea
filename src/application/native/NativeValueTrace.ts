@@ -22,6 +22,10 @@ import {
   renderSourceLimitations,
   type SourceLimitation,
 } from "../SourceLimitations.js";
+import {
+  bindNativeValueTraceCalls,
+  type NativeValueTraceCall,
+} from "./NativeValueTraceBindings.js";
 import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
 
 /** The located unknown where unconfirmed provider cleanup stopped a trace. */
@@ -42,14 +46,8 @@ export const traceNativeValues = async (
   const procedures: typeof nativeValueTraceSchema._output.procedures = [];
   const unknowns: typeof nativeValueTraceSchema._output.unknowns = [];
   const sourceLimitations: SourceLimitation[] = [];
-  const callBindings: {
-    caller: string;
-    callee: string;
-    call: string;
-    argument_count: number;
-    output: boolean;
-    evidence_id: string;
-  }[] = [];
+  const callBindings: NativeValueTraceCall[] = [];
+  const procedureAddresses = new Map<string, string>();
   const pending = [{ procedure: input.procedure, depth: 0 }];
   const attempted = new Set<string>();
   const visited = new Set<string>();
@@ -153,6 +151,8 @@ export const traceNativeValues = async (
       );
     const dossier = parsed.data;
     const address = dossier.procedure.address;
+    procedureAddresses.set(next.procedure, address);
+    procedureAddresses.set(address, address);
     if (visited.has(address)) continue;
     visited.add(next.procedure);
     visited.add(address);
@@ -359,6 +359,7 @@ export const traceNativeValues = async (
             caller: address,
             callee: destination,
             call: qualified(operation.id),
+            address: operation.address,
             argument_count: Math.max(0, operation.inputs.length - 1),
             output: operation.output !== null,
             evidence_id: evidenceId,
@@ -409,73 +410,12 @@ export const traceNativeValues = async (
           : "Call depth budget reached",
     });
   }
-  const parametersByProcedure = new Map<string, typeof nodes>();
-  const returnsByProcedure = new Map<string, typeof nodes>();
-  for (const node of nodes) {
-    if (node.kind === "parameter") {
-      const parameters = parametersByProcedure.get(node.procedure) ?? [];
-      parameters.push(node);
-      parametersByProcedure.set(node.procedure, parameters);
-    } else if (
-      node.operation?.opcode === "RETURN" &&
-      node.operation.inputs.length > 1
-    ) {
-      const returns = returnsByProcedure.get(node.procedure) ?? [];
-      returns.push(node);
-      returnsByProcedure.set(node.procedure, returns);
-    }
-  }
-  for (const binding of callBindings) {
-    const parameters = parametersByProcedure.get(binding.callee) ?? [];
-    if (parameters.length === 0)
-      unknowns.push({
-        procedure: binding.caller,
-        address: null,
-        reason: `Parameter bindings for ${binding.callee} are unavailable or omitted`,
-      });
-    for (const node of parameters) {
-      const ordinal = node.parameter?.ordinal;
-      if (ordinal === undefined || ordinal >= binding.argument_count) {
-        unknowns.push({
-          procedure: binding.caller,
-          address: null,
-          reason: `Argument ${ordinal ?? "unknown"} for ${binding.callee} was not recovered`,
-        });
-        continue;
-      }
-      if (
-        !budget.retainEdge(
-          {
-            source: binding.call,
-            target: node.id,
-            input_index: ordinal + 1,
-            kind: "argument-binding",
-            status: "derived",
-            evidence_id: binding.evidence_id,
-          },
-          binding.caller,
-        )
-      )
-        break;
-    }
-    if (binding.output)
-      for (const node of returnsByProcedure.get(binding.callee) ?? []) {
-        if (
-          !budget.retainEdge(
-            {
-              source: node.id,
-              target: binding.call,
-              input_index: 1,
-              kind: "return-binding",
-              status: "derived",
-              evidence_id: node.evidence_id,
-            },
-            binding.caller,
-          )
-        )
-          break;
-      }
-  }
+  bindNativeValueTraceCalls({
+    budget,
+    calls: callBindings,
+    procedureAddresses,
+    unknowns,
+  });
   const page = nodes.slice(input.offset, input.offset + input.limit);
   const pageIds = new Set(page.map(({ id }) => id));
   // Every edge source is a retained node, so a page holding every node holds
