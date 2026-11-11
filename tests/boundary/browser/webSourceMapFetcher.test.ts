@@ -1048,11 +1048,16 @@ describe("source-map operation deadline observations", () => {
     ];
     const result = await fetchWebSourceMapsOk(requests, input(), undefined, {
       timeoutMs: 100,
-      fetch: () => {
+      fetch: (_url, options) => {
         calls += 1;
         return calls === 1
           ? Promise.resolve(validMapResponse())
-          : new Promise<Response>(() => undefined);
+          : new Promise<Response>((_resolve, reject) => {
+              const signal = options?.signal;
+              signal?.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              });
+            });
       },
     });
 

@@ -1,7 +1,10 @@
 import { err, ok } from "../domain/result.js";
 import type { z } from "zod";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
-import { analysisSettingDefinition } from "../domain/analysisSettingDefinitions.js";
+import {
+  ANALYSIS_SETTINGS,
+  analysisSettingDefinition,
+} from "../domain/analysisSettingDefinitions.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
 import { asarMaxListingBytesSchema } from "./asarListingAdmission.js";
@@ -88,3 +91,20 @@ export const launchAnalysisSetting = (
     );
   return ok({ value: parsed.data, source: "setting" as const });
 };
+
+/** Inspect explicit launch seeds for diagnostics and registration without changing lazy runtime admission. */
+export const inspectAnalysisSettingSeeds = (
+  environment: Readonly<Record<string, string | undefined>>,
+  unresolvedSettings: ReadonlySet<string> = new Set(),
+) =>
+  Object.keys(ANALYSIS_SETTINGS).flatMap((key) => {
+    const id = key as AnalysisSettingId;
+    const definition = analysisSettingDefinition(id);
+    if (
+      definition.environment === undefined ||
+      unresolvedSettings.has(definition.environment)
+    )
+      return [];
+    const parsed = launchAnalysisSetting(id, environment);
+    return parsed.ok ? [] : parsed.error.settings;
+  });

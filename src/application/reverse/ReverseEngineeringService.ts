@@ -1,3 +1,14 @@
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../../process/ProcessInspectionCancellation.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionFailure,
+  processInspectionCancellationError,
+} from "../../providers/OwnedCommandCleanup.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat as statPath } from "node:fs/promises";
@@ -167,6 +178,7 @@ export class ReverseEngineeringService {
   readonly #run: ReverseEngineeringCommandRunner;
   readonly #digest: typeof digestFile;
   readonly #stat: (path: string) => Promise<Stats>;
+  readonly #inspectionResources = new ArtifactResourceScope();
   readonly #pendingCleanup = new Map<
     ProviderProcessSupervisor,
     {
@@ -210,6 +222,22 @@ export class ReverseEngineeringService {
     operation = "reverse_engineering_cleanup",
   ): Promise<Result<null, AnalysisError>> {
     let failure: AnalysisError | undefined;
+    try {
+      await this.#inspectionResources.retryCleanup();
+    } catch (cause: unknown) {
+      failure = new AnalysisOutputError(
+        operation,
+        "Process inspection cleanup remains incomplete.",
+        {
+          cause,
+          cleanup: {
+            reason: "Process inspection cleanup remains incomplete.",
+            resources: this.#inspectionResources.cleanupResources,
+          },
+        },
+      );
+      bindArtifactFileCleanup(cause, failure);
+    }
     for (const [owner, retained] of this.#pendingCleanup) {
       let stopped: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
       try {
@@ -596,6 +624,33 @@ export class ReverseEngineeringService {
       stderrInvalidUtf8 = output.stderrInvalidUtf8 === true;
       outputTruncated = output.outputTruncated === true;
     } catch (cause) {
+      const ownedCause =
+        cause instanceof OwnedOutputFailure ? cause.cause : cause;
+      const inspection = processInspectionFailure(ownedCause);
+      if (
+        inspection !== undefined &&
+        !(inspection instanceof DarwinProcessOwnershipInspectionError)
+      ) {
+        const cancellation = processInspectionCancellationError(
+          ownedCause,
+          operation,
+        );
+        earlyFailure =
+          ownedCause instanceof OwnedCommandFailure &&
+          ownedCause.reason === "timeout"
+            ? new AnalysisTimeoutError(operation, timeoutMs, {
+                cause: ownedCause,
+                ...reverseCommandTimeoutGuidance(timeoutMs),
+              })
+            : inspection instanceof ProcessOwnershipInspectionCancelled ||
+                (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
+                  inspection.origin === "cancelled")
+              ? cancellation
+              : new ProviderAdapterError("process-ownership", operation, {
+                  cause: inspection,
+                  diagnostics: { stage: "ownership_preparation" },
+                });
+      }
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       if (
@@ -732,36 +787,19 @@ export class ReverseEngineeringService {
           },
         );
       }
-      const darwinFailure = darwinPreparationError(cause);
+      const darwinFailure =
+        inspection instanceof DarwinProcessOwnershipInspectionError
+          ? inspection
+          : undefined;
       if (earlyFailure === undefined && darwinFailure !== undefined) {
-        const darwinCleanup =
-          darwinFailure.cleanupFailure !== undefined
-            ? {
-                reason: darwinFailure.cleanupFailure.message,
-                resources: darwinFailure.cleanupFailure.cleanupResources,
-              }
-            : (ownedCleanupOptions(cause).cleanup ?? undefined);
         if (code === "ETIMEDOUT") {
           earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
-            ...(darwinCleanup === undefined ? {} : { cleanup: darwinCleanup }),
-            ...(darwinFailure.cleanupOwner === undefined
-              ? {}
-              : { cleanupOwner: darwinFailure.cleanupOwner }),
             ...reverseCommandTimeoutGuidance(timeoutMs),
           });
-        } else if (
-          darwinFailure.cancellation !== undefined ||
-          commandCancelled(signal, cause, code)
-        ) {
+        } else if (darwinFailure.cancellation !== undefined) {
           earlyFailure = new AnalysisCancelledError(operation, {
-            cause:
-              callerCancellationCause(signal, cause) ??
-              darwinFailure.cancellation?.reason,
-            ...(darwinCleanup === undefined ? {} : { cleanup: darwinCleanup }),
-            ...(darwinFailure.cleanupOwner === undefined
-              ? {}
-              : { cleanupOwner: darwinFailure.cleanupOwner }),
+            cause: darwinFailure.cancellation?.reason,
           });
         } else {
           const setting =
@@ -790,19 +828,17 @@ export class ReverseEngineeringService {
               ...(darwinFailure.capturedOutput === undefined
                 ? {}
                 : { capturedOutput: darwinFailure.capturedOutput }),
-              ...(darwinCleanup === undefined
-                ? {}
-                : { cleanup: darwinCleanup }),
-              ...(darwinFailure.cleanupOwner === undefined
-                ? {}
-                : { cleanupOwner: darwinFailure.cleanupOwner }),
             },
           );
         }
-        if (darwinFailure.cleanupFailure !== undefined) {
-          earlyFailure.bindCleanupDependencies([darwinFailure.cleanupFailure]);
-        }
       }
+      if (inspection !== undefined && earlyFailure !== undefined)
+        earlyFailure = retainProcessInspectionCleanup(
+          inspection,
+          earlyFailure,
+          this.#inspectionResources,
+          operation,
+        );
       const controlFailure = runtimeControlPreparationError(cause);
       if (
         earlyFailure === undefined &&
@@ -1370,22 +1406,6 @@ const ownedCleanupOptions = (
   cause instanceof OwnedOutputFailure && cause.cleanup !== undefined
     ? { cleanup: cause.cleanup }
     : {};
-
-const darwinPreparationError = (
-  cause: unknown,
-): DarwinProcessOwnershipInspectionError | undefined => {
-  if (cause instanceof DarwinProcessOwnershipInspectionError) return cause;
-  if (
-    cause instanceof OwnedCommandFailure &&
-    cause.preparationFailure !== undefined
-  )
-    return darwinPreparationError(cause.preparationFailure);
-  if (cause instanceof OwnedOutputFailure)
-    return darwinPreparationError(cause.cause);
-  if (cause instanceof Error && "cause" in cause && cause.cause !== undefined)
-    return darwinPreparationError(cause.cause);
-  return undefined;
-};
 
 const runtimeControlPreparationError = (
   cause: unknown,
