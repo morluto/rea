@@ -117,6 +117,11 @@ export interface CompoundFileDirectoryEntry {
   readonly storage: "fat" | "mini" | "empty";
   /** True when the entry's FAT chain occupies consecutive sectors. */
   readonly contiguous: boolean | null;
+  /**
+   * True when the chain reaches a sector the FAT, the DIFAT or the directory
+   * already owns, so its bytes are container structure rather than content.
+   */
+  readonly structuralOverlap: boolean;
   /** File offset of the first sector, only when the chain is contiguous. */
   readonly byteOffset: number | null;
 }
@@ -462,6 +467,14 @@ export const parseCompoundFile = (
     );
   if (directoryChain.sectors.length === 0)
     return err(failure("the directory stream holds no sector"));
+  // The FAT, the DIFAT and the directory are container structure, not content,
+  // so a stream whose chain reaches one of those sectors is published as an
+  // unresolved range instead of as that structure's bytes.
+  const structuralSectors = new Set<number>([
+    ...seenFatSectors,
+    ...difatSectors,
+    ...directoryChain.sectors,
+  ]);
   if (
     majorVersion === 4 &&
     directorySectorCount !== 0 &&
@@ -616,6 +629,7 @@ export const parseCompoundFile = (
   const allocationBearing = (entry: RawEntry): boolean =>
     entry.type === "stream" || entry.type === "root-storage";
   let brokenChains = 0;
+  let overlappingChains = 0;
   const entries: CompoundFileDirectoryEntry[] = raw.map((entry, index) => {
     const parent = parents.get(index) ?? null;
     const path = paths.get(index) ?? null;
@@ -652,6 +666,7 @@ export const parseCompoundFile = (
         streamSizeRepresentable: !entry.streamSizeUnrepresentable,
         storage,
         contiguous: null,
+        structuralOverlap: false,
         byteOffset: null,
       };
     const chain = chainOf(table, startingSector, sectorBytes, bytes.length);
@@ -666,6 +681,10 @@ export const parseCompoundFile = (
         (sector, position) => sector === startingSector + position,
       );
     if (!complete && !markerStartWithBytes) brokenChains += 1;
+    const structuralOverlap = chain.sectors.some((sector) =>
+      structuralSectors.has(sector),
+    );
+    if (structuralOverlap) overlappingChains += 1;
     return {
       index,
       path,
@@ -680,10 +699,18 @@ export const parseCompoundFile = (
       streamSizeRepresentable: !entry.streamSizeUnrepresentable,
       storage,
       contiguous,
+      structuralOverlap,
       byteOffset:
-        contiguous && complete ? sectorOf(startingSector, sectorBytes) : null,
+        contiguous && complete && !structuralOverlap
+          ? sectorOf(startingSector, sectorBytes)
+          : null,
     };
   });
+
+  if (overlappingChains !== 0)
+    limitations.push(
+      `${String(overlappingChains)} stream(s) reach sectors the FAT, the DIFAT or the directory already owns; their byte ranges are left unresolved rather than reading container structure as content`,
+    );
 
   if (brokenChains !== 0)
     limitations.push(

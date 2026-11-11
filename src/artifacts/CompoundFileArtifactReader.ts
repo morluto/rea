@@ -233,11 +233,23 @@ const toArtifactEntry = (
   entry: CompoundFileDirectoryEntry,
 ): ArtifactEntry | null => {
   const path = entry.path;
-  // The root storage is the container itself, not a member of it. An unnamed
-  // entry has no name to list. An entry outside the root's tree keeps its
-  // declared facts under its source ordinal; the parse counts orphans.
+  // The root storage is the container itself, not a member of it. An entry
+  // outside the root's tree keeps its declared facts under its source ordinal;
+  // the parse counts orphans.
   if (entry.type === "root-storage") return null;
-  if (path === null && entry.name === null) return null;
+  if (entry.type !== "storage" && entry.type !== "stream") return null;
+  const unnamed = path === null && entry.name === null;
+  const limitation = (): string[] => {
+    if (unnamed)
+      return [
+        "This entry declares no valid name, so it is listed under its source ordinal; its type, size and allocation facts are kept.",
+      ];
+    if (path === null)
+      return [
+        "This entry is not reachable from the root storage, so it has no logical path; its declared name and facts are kept.",
+      ];
+    return [];
+  };
   if (entry.type === "storage") {
     return {
       path: path ?? "",
@@ -249,21 +261,11 @@ const toArtifactEntry = (
       byteOffset: null,
       declaredIntegrity: null,
       unpacked: false,
-      limitations:
-        path === null
-          ? [
-              "This entry is not reachable from the root storage, so it has no logical path; its declared name and facts are kept.",
-            ]
-          : [],
+      limitations: limitation(),
       adapterKey: `compound-file/${String(entry.index)}`,
     };
   }
-  if (entry.type !== "stream") return null;
-  const limitations: string[] = [];
-  if (path === null)
-    limitations.push(
-      "This entry is not reachable from the root storage, so it has no logical path; its declared name and facts are kept.",
-    );
+  const limitations: string[] = limitation();
   // A mini stream needs the root storage's chain and the mini FAT walked; a
   // split chain has no single range. Both are listed as declarations rather
   // than as content this step claims to reproduce.
@@ -279,14 +281,20 @@ const toArtifactEntry = (
     limitations.push(
       "This stream's FAT chain is not contiguous, so it has no single byte range in this step.",
     );
+  if (entry.structuralOverlap)
+    limitations.push(
+      "This stream's chain reaches sectors the FAT, the DIFAT or the directory already owns, so its byte range is not resolved in this step.",
+    );
   // A zero-byte stream is a file: it has content (none) and opens as empty,
   // rather than being reported as metadata that carries no bytes.
   const resolvable =
-    (entry.storage === "fat" && entry.byteOffset !== null) ||
-    (entry.storage === "empty" && entry.streamSize === 0);
+    entry.storage === "fat" &&
+    entry.byteOffset !== null &&
+    !entry.structuralOverlap;
+  const emptyStream = entry.storage === "empty" && entry.streamSize === 0;
   return {
     path: path ?? "",
-    kind: resolvable ? "file" : "metadata",
+    kind: resolvable || emptyStream ? "file" : "metadata",
     declaredSize: entry.streamSize,
     compressedSize: null,
     executable: false,

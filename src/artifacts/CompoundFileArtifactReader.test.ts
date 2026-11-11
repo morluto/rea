@@ -189,6 +189,53 @@ it("keeps an unsafe name as a source path instead of aborting the inventory", as
   expect(listed?.source_path).toBe("../escape");
 });
 
+it("keeps an entry that declares no usable name", async () => {
+  const bytes = compoundFile({
+    entries: rootWith(1, [
+      { name: "PLACEHOLDER", type: 2, start: 2, size: 512 },
+    ]),
+  });
+  // A zero name length is a valid declaration but names nothing; the entry
+  // still carries an ordinal, a type, a size and an allocation.
+  bytes.writeUInt16LE(0, 2 * SECTOR + 128 + 0x40);
+  const inventory = await scanCanonicalArtifactInventory(
+    await write("unnamed.automaticDestinations-ms", bytes),
+  );
+  const listed = inventory.occurrences.find(
+    (row) => row.logical_path === "entry-1",
+  );
+  expect(listed).toMatchObject({ logical_path: "entry-1" });
+  expect(listed?.limitations).toContainEqual(
+    expect.stringMatching(/declares no valid name/u),
+  );
+});
+
+it("leaves a stream whose chain reaches the directory unresolved", async () => {
+  const path = await write(
+    "overlap.automaticDestinations-ms",
+    compoundFile({
+      // Sector 1 is the directory stream itself, so these bytes are structure
+      // rather than this member's content.
+      entries: rootWith(1, [
+        { name: "Structure", type: 2, start: 1, size: 4096 },
+      ]),
+      fat: [END, 2, 3, 4, 5, 6, 7, 8, END],
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(await rootMetadata(inventory, path)).toMatchObject({
+    kind: "compound-file",
+  });
+  expect(inventory.limitations.length).toBeGreaterThan(0);
+  const listed = inventory.occurrences.find(
+    (row) => row.logical_path === "Structure",
+  );
+  expect(listed).toMatchObject({ entry_kind: "metadata" });
+  expect(listed?.limitations).toContainEqual(
+    expect.stringMatching(/already owns/u),
+  );
+});
+
 it("refuses a version the container does not define", async () => {
   const bytes = compoundFile({ entries: rootWith(undefined, []) });
   bytes.writeUInt16LE(2, 0x1a);

@@ -140,6 +140,30 @@ it("lists a storage's children by their full path and a stream's allocation", ()
   });
 });
 
+it("reports a chain that reaches the directory sector as an unresolved range", () => {
+  // Sectors 1-8 hold the directory stream, so a stream that declares 4096
+  // bytes from sector 1 has a complete, contiguous chain that is nevertheless
+  // container structure rather than its own content.
+  const image = parse(
+    compoundFile({
+      entries: root(1, [
+        { name: "directory-bytes", type: 2, start: 1, size: 4096 },
+      ]),
+      fat: [END, 2, 3, 4, 5, 6, 7, 8, END],
+    }),
+  );
+  expect(
+    image.entries.find((entry) => entry.name === "directory-bytes"),
+  ).toMatchObject({
+    contiguous: true,
+    structuralOverlap: true,
+    byteOffset: null,
+  });
+  expect(image.limitations).toContainEqual(
+    expect.stringMatching(/already owns/u),
+  );
+});
+
 it("reports a chain that revisits a sector as broken", () => {
   const image = parse(
     compoundFile({
