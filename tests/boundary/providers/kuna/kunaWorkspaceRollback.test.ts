@@ -289,14 +289,16 @@ it.each([
           rootClose = vi
             .spyOn(root, "close")
             .mockRejectedValue(new Error("controlled rollback refusal"));
-        lifetime.abort(reason);
+        if (stage === "copy") lifetime.abort(reason);
         return root;
       });
+    let inspectionCalls = 0;
     const prepare = systemProcessOwnershipHost.prepare;
     const inspection = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockImplementation(async (signal) => {
         if (stage === "inspection" && signal === lifetime.signal) {
+          inspectionCalls += 1;
           lifetime.abort(reason);
           throw new ExecFileOutputCancelledError(reason);
         }
@@ -305,6 +307,7 @@ it.each([
     try {
       const result = await commands.prepare();
       if (result.ok) throw new Error("Expected cancelled workspace admission");
+      expect(inspectionCalls).toBe(stage === "inspection" ? 1 : 0);
       const primary = result.error.cleanupPrimary ?? result.error;
       expect(primary).toMatchObject({
         _tag: "AnalysisCancelledError",
