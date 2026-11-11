@@ -1,9 +1,9 @@
+import type { FileMapping } from "../domain/virtualFileMapping.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
   mappedFileOffset,
   type BinaryContainer,
-  type FileMapping,
 } from "../native/metadata/BinaryContainer.js";
 
 export interface GoBuildInfoSearchRange extends FileMapping {

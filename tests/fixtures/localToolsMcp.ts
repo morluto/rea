@@ -7,6 +7,7 @@ import {
   StdioClientTransport,
   type StdioServerParameters,
 } from "@modelcontextprotocol/client/stdio";
+import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
@@ -45,9 +46,11 @@ export async function connectLocalToolsMcp(
     { jsonSchemaValidator: jsonSchemaValidator ?? validation },
   );
   registerCleanup(async () => {
-    await client.close();
-    await transport.close();
-    validation.clear();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+      () => validation.clear(),
+    ]);
   });
   await client.connect(transport);
   const tools = (await client.listTools()).tools;

@@ -106,7 +106,8 @@ describe("task readers", () => {
       readers: undefined,
       checks: [{ kind: "file_present", file: POSTER }],
     });
-    expect(parsed.ok && "readers" in parsed.value).toBe(false);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect("readers" in parsed.value).toBe(false);
   });
 
   it.each(REFUSALS)("refuses %j", (change, message) => {
