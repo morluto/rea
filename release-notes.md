@@ -1534,6 +1534,7 @@
 * **ntfs:** distinguish paired fixture and Windows host coverage ([faf42f8](https://github.com/morluto/rea/commit/faf42f8f1345ae7913f23f576600bfc8b22892db))
 * **ntfs:** explain acquisition paging and metadata coverage ([e5a92d1](https://github.com/morluto/rea/commit/e5a92d1848165925ef535fabb62cbb774658221b))
 * **ntfs:** explain extension ownership and bounded recovery ([04e9654](https://github.com/morluto/rea/commit/04e9654e119369b26758d1c1994f2b8143198797))
+* **ntfs:** format verification records ([#10019](https://github.com/morluto/rea/issues/10019)) ([30f96ae](https://github.com/morluto/rea/commit/30f96aef39e50e722b3bd22d5cff0a937f5de15b))
 * **ntfs:** record complete CLI delivery measurements ([09f58bf](https://github.com/morluto/rea/commit/09f58bf044c55575895177859eb2535c45526d41))
 * **ntfs:** record extension ownership and public workflow verification ([6d8c71f](https://github.com/morluto/rea/commit/6d8c71f8b35abddc785c5e222f9dabb9029452f6))
 * **ntfs:** record independent paired-volume verification ([bf671f2](https://github.com/morluto/rea/commit/bf671f20a2e4dcec087b1b2a5ac0f77dd3e0be21))
