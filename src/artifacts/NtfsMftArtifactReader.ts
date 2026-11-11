@@ -93,9 +93,9 @@ export class NtfsMftArtifactReader implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const image = await this.#decode(signal);
+    await this.#source.read(signal);
     this.#metadata = image.metadata;
     this.#limitations = image.limitations;
-    await this.#source.read(signal);
   }
 
   async #decode(signal?: AbortSignal): Promise<MftImage> {

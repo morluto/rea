@@ -1,7 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
 import { MFT_DEFAULT_RECORD_BYTES } from "../domain/windows/ntfsMft.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -97,4 +100,26 @@ it("reports incomplete coverage when FILE extents contradict the record slots", 
     fixup_mismatch_count: 0,
     fixup_unverified_record_count: 0,
   });
+});
+
+it("does not publish metadata when final source verification fails", async () => {
+  const reader = new NtfsMftArtifactReader(
+    await writeMft("$MFT", recordBytes({})),
+  );
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(function (this: ArtifactFileSource, signal) {
+      return read.call(this, signal);
+    })
+    .mockRejectedValueOnce(new Error("final source verification failed"));
+  try {
+    await expect(reader.entries().next()).rejects.toThrow(
+      "final source verification failed",
+    );
+    expect(reader.formatMetadata()).toBeUndefined();
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+  }
 });
