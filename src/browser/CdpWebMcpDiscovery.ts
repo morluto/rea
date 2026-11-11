@@ -109,6 +109,7 @@ export const discoverWebMcp = async (
       resolvedTransientFrames: frameScope.resolvedTransientFrames,
     });
   });
+  let result: ReturnType<typeof buildWebMcpResult>;
   try {
     await context.progress?.report({
       phase: "browser_observation",
@@ -135,7 +136,7 @@ export const discoverWebMcp = async (
     await assertStableAuthorizedFrame(context, initialFrame, origins);
     if (frameScope.transientFrames.size > 0)
       completeness.attachLimited("webmcp_tools");
-    return buildWebMcpResult({
+    result = buildWebMcpResult({
       context,
       frameTree,
       tools,
@@ -145,14 +146,15 @@ export const discoverWebMcp = async (
     });
   } finally {
     removeListener();
-    await context.progress?.report({
-      phase: "browser_observation",
-      completed: 2,
-      total: 2,
-      message: "WebMCP discovery complete",
-      terminal: true,
-    });
   }
+  await context.progress?.report({
+    phase: "browser_observation",
+    completed: 2,
+    total: 2,
+    message: "WebMCP discovery complete",
+    terminal: true,
+  });
+  return result;
 };
 
 interface FrameScopeState {

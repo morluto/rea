@@ -93,12 +93,14 @@ it.each(["", "h:"])(
   30_000,
 );
 
-it.each(["progress", "enable", "complete"] as const)(
+it.each(["progress", "enable", "terminal", "complete"] as const)(
   "releases WebMCP subscriptions after %s settlement",
   async (stage) => {
     const listeners = new Set<(event: CdpEvent) => void>();
     const failure = new Error("controlled discovery interruption");
+    const unexpectedTerminal = new Error("terminal progress after failure");
     let interrupted = true;
+    const progressUpdates: number[] = [];
     const connection = {
       onEvent: (listener: (event: CdpEvent) => void) => {
         listeners.add(listener);
@@ -143,7 +145,18 @@ it.each(["progress", "enable", "complete"] as const)(
       }),
       progress: {
         report: async (update) => {
-          if (stage === "progress" && update.completed === 1 && interrupted)
+          progressUpdates.push(update.completed);
+          if (
+            interrupted &&
+            update.completed === 2 &&
+            (stage === "progress" || stage === "enable")
+          )
+            throw unexpectedTerminal;
+          if (
+            interrupted &&
+            ((stage === "progress" && update.completed === 1) ||
+              (stage === "terminal" && update.completed === 2))
+          )
             throw failure;
         },
       },
@@ -153,6 +166,9 @@ it.each(["progress", "enable", "complete"] as const)(
       await expect(result).resolves.toMatchObject({ status: "available" });
     else await expect(result).rejects.toBe(failure);
     expect(listeners.size).toBe(0);
+    expect(progressUpdates).toEqual(
+      stage === "progress" || stage === "enable" ? [1] : [1, 2],
+    );
     interrupted = false;
     await expect(discoverWebMcp(context)).resolves.toMatchObject({
       status: "available",
