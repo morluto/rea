@@ -2118,3 +2118,17 @@ it("still uses the ELF type-table fallback when an uncertain metadata candidate 
   });
   expect(linkWholeTable(bytes).types_count).toBe(4);
 });
+
+it("does not treat bound data with a known invalid kind as a competing type table", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.fill(0, 0x800, 0x880);
+  for (let offset = 0x750; offset < 0x770; offset += 8)
+    bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x700n, offset);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});

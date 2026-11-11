@@ -746,17 +746,6 @@ function* findTypeTableByCode(
       throw cause;
     }
   };
-  const rawTypeCandidate = (address: bigint): boolean => {
-    if (address === 0n || (address & 7n) !== 0n) return false;
-    const offset = recordOffset(address);
-    if (offset < 0) return false;
-    const kind = il2cppTypeKind(image.bytes.readUInt32LE(offset + 8));
-    return (
-      isDefinedTypeKind(kind) &&
-      (!isDefinitionTypeKind(kind) ||
-        image.bytes.readBigUInt64LE(offset) < BigInt(typeDefinitions))
-    );
-  };
   // A run that touches either end of its mapping may continue in a
   // neighbouring one, so its length and start are unknown; it still counts as
   // a candidate but cannot be chosen.
@@ -801,17 +790,27 @@ function* findTypeTableByCode(
       if (!endUnknown) {
         const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
         let state: "type" | "other" | "unknown";
-        if (image.elfPointerOverlay === undefined && !rawTypeCandidate(raw)) {
-          const fixups = image.machoPointerFixups;
-          const possibleRecord =
-            raw !== 0n && (raw & 7n) === 0n && recordOffset(raw) >= 0;
-          state =
-            fixups?.hasUnresolvedLegacyBytes(address, 8) === true ||
-            (possibleRecord &&
-              (fixups?.hasUnresolvedLegacyBytes(raw + 8n, 4) === true ||
-                fixups?.hasUnresolvedLegacyBytes(raw, 8) === true))
-              ? "unknown"
-              : "other";
+        if (image.elfPointerOverlay === undefined) {
+          if (
+            image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, 8) ===
+            true
+          )
+            state = "unknown";
+          else {
+            const rawState = recordState(raw);
+            if (rawState !== "type") state = rawState;
+            else {
+              const slot = readSlot(image, address);
+              state =
+                slot === raw
+                  ? rawState
+                  : typeof slot === "bigint"
+                    ? recordState(slot)
+                    : slot === "unknown"
+                      ? "unknown"
+                      : "other";
+            }
+          }
         } else {
           const slot = readSlot(image, address);
           state =
