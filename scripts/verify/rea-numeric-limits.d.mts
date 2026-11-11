@@ -11,6 +11,12 @@ export const REQUIRED_RUNTIME_LIMITS: readonly [
 /** True for a numeric `REA_` limit, including the documented endpoint-candidate count. */
 export function isNumericLimit(name: string): boolean;
 
+/** Detect stale or newly introduced temporary per-call exceptions. */
+export function perCallLimitFailures(
+  listed: ReadonlyMap<string, string>,
+  temporary: ReadonlySet<string>,
+): string[];
+
 /** Producer paths for numeric limits. Registry text, comments, and allowlists are omitted. */
 export function discoverNumericLimitUses(
   files: readonly { readonly path: string; readonly source: string }[],

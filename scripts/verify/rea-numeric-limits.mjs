@@ -377,6 +377,22 @@ const TEMPORARY_PER_CALL_LIMITS = new Set([
   "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
 ]);
 
+/** Temporary exceptions must be removed from both the registry and allowlist. */
+export const perCallLimitFailures = (listed, temporary) => {
+  const failures = [];
+  for (const [name, policy] of listed)
+    if (policy === "per-call" && !temporary.has(name))
+      failures.push(
+        `${name} is a new per-call exception. Move it into ANALYSIS_SETTINGS instead of extending the temporary list.`,
+      );
+  for (const name of temporary)
+    if (listed.get(name) !== "per-call")
+      failures.push(
+        `${name} is no longer a temporary per-call exception; remove it from the allowlist`,
+      );
+  return failures;
+};
+
 const direct =
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
@@ -401,10 +417,6 @@ if (direct) {
       failures.push(
         `${name} is both a runtime setting and on the exception list`,
       );
-    if (policy === "per-call" && !TEMPORARY_PER_CALL_LIMITS.has(name))
-      failures.push(
-        `${name} is a new per-call exception. Move it into ANALYSIS_SETTINGS instead of extending the temporary list.`,
-      );
     if (policy === "restart-only" && read === "per-call")
       failures.push(
         `${name} is restart-only but is recorded as a per-call read`,
@@ -416,6 +428,12 @@ if (direct) {
     )
       failures.push(`${name} is restart-only but is not read at startup`);
   }
+  failures.push(
+    ...perCallLimitFailures(
+      new Map([...listed].map(([name, entry]) => [name, entry.policy])),
+      TEMPORARY_PER_CALL_LIMITS,
+    ),
+  );
 
   const discovered = discoverNumericLimitUses(
     await Promise.all(

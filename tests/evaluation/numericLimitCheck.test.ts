@@ -3,10 +3,40 @@ import {
   NUMERIC_LIMIT_DECLARATION,
   discoverNumericLimitUses,
   isNumericLimit,
+  perCallLimitFailures,
   requiredRuntimeLimitFailure,
 } from "../../scripts/verify/rea-numeric-limits.mjs";
 
 const ENDPOINT_CANDIDATES = "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES";
+
+it("requires the temporary per-call allowlist to match the registry", () => {
+  const temporary = new Set(["REA_OLD_TIMEOUT_MS"]);
+  expect(
+    perCallLimitFailures(
+      new Map([["REA_OLD_TIMEOUT_MS", "per-call"]]),
+      temporary,
+    ),
+  ).toEqual([]);
+  expect(perCallLimitFailures(new Map(), temporary)).toEqual([
+    expect.stringContaining(
+      "REA_OLD_TIMEOUT_MS is no longer a temporary per-call exception",
+    ),
+  ]);
+  expect(
+    perCallLimitFailures(
+      new Map([["REA_OLD_TIMEOUT_MS", "restart-only"]]),
+      temporary,
+    ),
+  ).toHaveLength(1);
+  expect(
+    perCallLimitFailures(
+      new Map([["REA_NEW_TIMEOUT_MS", "per-call"]]),
+      new Set(),
+    ),
+  ).toEqual([
+    expect.stringContaining("REA_NEW_TIMEOUT_MS is a new per-call exception"),
+  ]);
+});
 
 it("recognizes the documented endpoint-candidate limit as numeric", () => {
   expect(isNumericLimit(ENDPOINT_CANDIDATES)).toBe(true);
