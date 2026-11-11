@@ -48,9 +48,15 @@ export class OwnedCommandFailure extends Error {
   readonly processError: Error | undefined;
   readonly cleanupResult: ProcessCleanupFailure | undefined;
   readonly collectionFailure: boolean;
-  readonly preparationFailure: ProcessInspectionFailure | undefined;
+  readonly #preparationFailure: ProcessInspectionFailure | undefined;
+  get preparationFailure(): ProcessInspectionFailure | undefined {
+    return this.#preparationFailure;
+  }
   /** Failure-time inspection facts remain available after cleanup releases their owners. */
-  readonly inspectionCleanup: ProviderProcessInspectionCleanup | undefined;
+  readonly #inspectionCleanup: ProviderProcessInspectionCleanup | undefined;
+  get inspectionCleanup(): ProviderProcessInspectionCleanup | undefined {
+    return this.#inspectionCleanup;
+  }
 
   constructor(
     readonly reason: "cancelled" | "timeout" | "output-limit" | "process",
@@ -76,8 +82,8 @@ export class OwnedCommandFailure extends Error {
     this.processError = options?.processError;
     this.cleanupResult = options?.cleanupResult;
     this.collectionFailure = options?.collectionFailure ?? false;
-    this.preparationFailure = options?.preparationFailure;
-    this.inspectionCleanup = options?.inspectionCleanup;
+    this.#preparationFailure = options?.preparationFailure;
+    this.#inspectionCleanup = options?.inspectionCleanup;
   }
 }
 

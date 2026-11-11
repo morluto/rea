@@ -1,4 +1,7 @@
-import { assertProcessOwnershipInspectionActive } from "../../../src/process/ProcessInspectionCancellation.js";
+import {
+  assertProcessOwnershipInspectionActive,
+  ProcessOwnershipInspectionCancelled,
+} from "../../../src/process/ProcessInspectionCancellation.js";
 import { expect, it } from "vitest";
 import {
   OwnedCommandFailure,
@@ -45,6 +48,14 @@ it.each(
     expect(result.reason).toBe("cancelled");
     expect(result.cancellation?.reason).toBe(reason);
     expect(Object.hasOwn(result, "cancellation")).toBe(false);
+    expect(Object.hasOwn(result, "preparationFailure")).toBe(false);
+    expect(Object.hasOwn(result, "inspectionCleanup")).toBe(false);
+    if (phase === "preparation") {
+      expect(result.preparationFailure).toBeInstanceOf(
+        ProcessOwnershipInspectionCancelled,
+      );
+      expect(result.preparationFailure).toMatchObject({ reason });
+    }
     expect(JSON.stringify(result)).not.toContain("opaque caller reason");
     expect(result.cleanupFailure).toBeNull();
     expect(result.resources).toEqual([]);
