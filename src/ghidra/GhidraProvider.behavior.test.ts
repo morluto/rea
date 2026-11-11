@@ -1,3 +1,4 @@
+import { bridgeRequestOversizeError } from "../config/bridgeMaxRequestBytes.js";
 import { z } from "zod";
 import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "./GhidraLiteralSearch.js";
 import {
@@ -1884,6 +1885,36 @@ describe("Ghidra decompiler failure projection", () => {
       expect(action).not.toContain("rea doctor");
     }
   });
+});
+
+it("preserves a bridge request limit when reattributing a Ghidra session failure", async () => {
+  const refusal = bridgeRequestOversizeError(
+    "procedure_pseudo_code",
+    { maximumBytes: 8192, source: "runtime" },
+    9000,
+    "Ghidra",
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: () => Promise.resolve(ok(sessionInfo())),
+    callTool: () =>
+      Promise.resolve(
+        err(
+          new GhidraSessionError(
+            "protocol",
+            "Bridge request refused",
+            {},
+            { cause: refusal },
+          ),
+        ),
+      ),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const client = await createElfClient(ghidra);
+  const result = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  if (result.ok) throw new Error("Expected bridge limit refusal");
+  expect(result.error.limit).toEqual(refusal.limit);
 });
 
 describe("Ghidra decompile deadline for a finished invocation", () => {
