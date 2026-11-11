@@ -66,3 +66,13 @@ partial acquisition.
 
 The CLI and MCP workflow tests use synthesized acquisitions. Verification
 with real `$MFT` and journal files from a Windows host remains pending.
+
+## Page reuse lifetime
+
+Use one MCP session for multi-page traversal. Its shared acquisition scope keeps
+one successful digest-bound pair and MFT/reference lookup, validates selected
+file state before each reuse, refuses changed/unverifiable sources, and clears
+retained data at scope shutdown or pair eviction. Failed acquisitions are not
+cached. Each fresh CLI process reacquires its inputs. See the
+[completed-task comparison](../../../verification/ntfs-journal-paging-2026-11-11.md)
+for measurements, lifecycle regressions and verification limits.
