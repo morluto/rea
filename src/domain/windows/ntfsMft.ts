@@ -436,24 +436,27 @@ const resolveMftAttributeLists = (
   let scratch: Buffer | undefined;
   type ReferenceResult =
     MftAttributeListResolution["references"][number]["result"];
-  type UnresolvedReason = Extract<
-    ReferenceResult,
-    { kind: "unresolved" }
-  >["reason"];
-  const selectRecord = (index: number): Result<MftRecord, UnresolvedReason> => {
+  type UnresolvedReference = Extract<ReferenceResult, { kind: "unresolved" }>;
+  const unresolved = (
+    reason: UnresolvedReference["reason"],
+  ): UnresolvedReference => ({ kind: "unresolved", reason });
+  const selectRecord = (
+    index: number,
+  ): Result<MftRecord, UnresolvedReference> => {
     const retained = decoded.get(index);
     if (retained !== undefined) return ok(retained);
     if (index >= Math.floor(bytes.length / recordBytes))
-      return err("record-unavailable");
+      return err(unresolved("record-unavailable"));
     const offset = index * recordBytes;
     if (
       !hasMftFileRecordSignature(
         bytes.subarray(offset, offset + MFT_FILE_RECORD_MAGIC_BYTES),
       )
     )
-      return err("record-unavailable");
+      return err(unresolved("record-unavailable"));
     // At most another 32 records (2 MiB at the largest format record size), shared by this page.
-    if (additionalRecords >= MFT_INLINE_HEADER_LIMIT) return err("capacity");
+    if (additionalRecords >= MFT_INLINE_HEADER_LIMIT)
+      return err(unresolved("capacity"));
     scratch ??= Buffer.allocUnsafe(recordBytes);
     const record = readRecord(bytes, offset, scratch);
     additionalRecords += 1;
@@ -505,13 +508,9 @@ const resolveMftAttributeLists = (
     };
     for (const attribute of base.attributes) enqueueList(attribute);
     const resolveEntry = (entry: MftAttributeListEntry): ReferenceResult => {
-      const unresolved = (reason: UnresolvedReason): ReferenceResult => ({
-        kind: "unresolved",
-        reason,
-      });
       if (!baseVerified) return unresolved("unverified-base");
       const selected = selectRecord(entry.reference.recordNumber);
-      if (!selected.ok) return unresolved(selected.error);
+      if (!selected.ok) return selected.error;
       const target = selected.value;
       if (!verifiedIdentity(target)) return unresolved("unverified-record");
       if (target.sequenceNumber !== entry.reference.sequenceNumber)
