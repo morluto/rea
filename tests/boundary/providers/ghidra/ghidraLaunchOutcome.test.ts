@@ -315,7 +315,10 @@ it("retains every preparation descriptor and the exact mixed batch through parti
       throw new Error("Expected physical launch failure");
     expect(result.error.cause).toBe(batch);
     expect(batch.observations).toBe(observations);
-    expect(result.error.primaryFailure).toBeUndefined();
+    expect(result.error.primaryFailure).toMatchObject({
+      _tag: "ProviderAdapterError",
+      cause: batch,
+    });
     const cleanup = result.error.cleanupFailure;
     expect(cleanup?.cleanupIncomplete).toBe(true);
     expect(cleanup?.cleanupResources).toEqual(sources.map(({ path }) => path));

@@ -1,5 +1,6 @@
 import {
   processInspectionCancellationError,
+  processInspectionFailure,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
@@ -27,7 +28,10 @@ import {
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
 
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -619,9 +623,11 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         "Ghidra headless launch failed",
         {
           cause,
-          ...(cancellation === undefined
-            ? {}
-            : { primaryFailure: cancellation }),
+          ...(processInspectionFailure(cause) !== undefined
+            ? { primaryFailure: primaryAnalysisError(retained) }
+            : cancellation === undefined
+              ? {}
+              : { primaryFailure: cancellation }),
           ...(retained.cleanupIncomplete ? { cleanupFailure: retained } : {}),
           launchSupport,
           ...(capturedOutput === undefined ? {} : { capturedOutput }),
