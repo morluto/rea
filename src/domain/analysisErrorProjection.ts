@@ -524,6 +524,9 @@ const projectError = (
       RETRYABLE_CODES.has(code) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
+      (error._tag === "ProcessCaptureError" &&
+        "retryable" in error &&
+        error.retryable === true) ||
       (error instanceof ArtifactOperationError &&
         error.readerLimit?.can_increase === true &&
         !error.cleanupIncomplete) ||

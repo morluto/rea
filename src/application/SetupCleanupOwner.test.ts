@@ -213,8 +213,6 @@ it.each(["pending", "already recovered"] as const)(
     expect(source.cleanupIncomplete).toBe(false);
     expect(first?.cleanupIncomplete).toBe(true);
     expect(second?.cleanupIncomplete).toBe(true);
-    expect(first?.cleanupResources).toContain("/delegated");
-    expect(second?.cleanupResources).toContain("/delegated");
     expect(first?.cleanupResources).toEqual(["/delegated"]);
     expect(second?.cleanupResources).toEqual(["/delegated"]);
     expect(await owner.close()).toBeUndefined();

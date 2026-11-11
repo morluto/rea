@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -54,7 +55,7 @@ it.each([null, "requested stop", new Error("requested stop")])(
       { operation: "inspect_jeb_client", input: {} },
       { signal: caller.signal },
     );
-    try {
+    await withVerifierCleanup(async () => {
       await requested;
       caller.abort(reason);
       const result = await pending;
@@ -64,12 +65,20 @@ it.each([null, "requested stop", new Error("requested stop")])(
         operation: "inspect_jeb_client",
       });
       expect(result.error.cause).toBe(reason);
-    } finally {
-      release();
-      await pending;
-      await provider.close();
-      await fixture.close();
-    }
+    }, [
+      async () => {
+        release();
+      },
+      async () => {
+        await pending;
+      },
+      async () => {
+        await provider.close();
+      },
+      async () => {
+        await fixture.close();
+      },
+    ]);
   },
 );
 
@@ -106,7 +115,7 @@ it.each([false, true])(
     const provider = new JebProvider({
       environment: { REA_JEB_MCP_URL: fixture.endpoint },
     });
-    try {
+    await withVerifierCleanup(async () => {
       const result = await provider.execute(
         { operation: "inspect_jeb_client", input: {} },
         { signal: caller.signal },
@@ -121,12 +130,20 @@ it.each([false, true])(
       allowClose = true;
       await provider.close();
       expect(result.error.cleanupIncomplete).toBe(false);
-    } finally {
-      allowClose = true;
-      close.mockRestore();
-      await provider.close();
-      await fixture.close();
-    }
+    }, [
+      async () => {
+        allowClose = true;
+      },
+      async () => {
+        close.mockRestore();
+      },
+      async () => {
+        await provider.close();
+      },
+      async () => {
+        await fixture.close();
+      },
+    ]);
   },
 );
 
@@ -147,7 +164,7 @@ it("retains completed JEB Evidence when the caller aborts after the tool returns
   const provider = new JebProvider({
     environment: { REA_JEB_MCP_URL: fixture.endpoint },
   });
-  try {
+  await withVerifierCleanup(async () => {
     const service = new JebAnalysisService(provider);
     const result = await service.execute(
       "inspect_jeb_client",
@@ -166,10 +183,14 @@ it("retains completed JEB Evidence when the caller aborts after the tool returns
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: { engine: { version: "5.48.0", gui_client: false } },
     });
-  } finally {
-    await provider.close();
-    await fixture.close();
-  }
+  }, [
+    async () => {
+      await provider.close();
+    },
+    async () => {
+      await fixture.close();
+    },
+  ]);
 });
 
 it("preserves an SDK HTTP tool failure when the caller aborts after rejection", async () => {
@@ -194,7 +215,7 @@ it("preserves an SDK HTTP tool failure when the caller aborts after rejection", 
   const provider = new JebProvider({
     environment: { REA_JEB_MCP_URL: fixture.endpoint },
   });
-  try {
+  await withVerifierCleanup(async () => {
     const result = await provider.execute(
       { operation: "inspect_jeb_client", input: {} },
       { signal: caller.signal },
@@ -205,10 +226,14 @@ it("preserves an SDK HTTP tool failure when the caller aborts after rejection", 
       true,
     );
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
-  } finally {
-    await provider.close();
-    await fixture.close();
-  }
+  }, [
+    async () => {
+      await provider.close();
+    },
+    async () => {
+      await fixture.close();
+    },
+  ]);
 });
 
 it("validates a completed catalog page before a late handoff abort", async () => {
@@ -230,7 +255,7 @@ it("validates a completed catalog page before a late handoff abort", async () =>
   const provider = new JebProvider({
     environment: { REA_JEB_MCP_URL: fixture.endpoint },
   });
-  try {
+  await withVerifierCleanup(async () => {
     const result = await provider.execute(
       { operation: "inspect_jeb_client", input: {} },
       { signal: caller.signal },
@@ -238,10 +263,14 @@ it("validates a completed catalog page before a late handoff abort", async () =>
     if (result.ok) throw new Error("Repeated cursor passed");
     expect(result.error).toBeInstanceOf(AnalysisProtocolError);
     expect(result.error.message).toContain("repeated a tool catalog cursor");
-  } finally {
-    await provider.close();
-    await fixture.close();
-  }
+  }, [
+    async () => {
+      await provider.close();
+    },
+    async () => {
+      await fixture.close();
+    },
+  ]);
 });
 
 it.each(["client", "transport", "both"] as const)(
@@ -278,7 +307,7 @@ it.each(["client", "transport", "both"] as const)(
     const provider = new JebProvider({
       environment: { REA_JEB_MCP_URL: fixture.endpoint },
     });
-    try {
+    await withVerifierCleanup(async () => {
       const result = await provider.execute({
         operation: "list_jeb_units",
         input: { count: 2, index: 0 },
@@ -303,13 +332,23 @@ it.each(["client", "transport", "both"] as const)(
       expect(transportClose).toHaveBeenCalledTimes(
         failedStage === "client" ? 1 : failedStage === "transport" ? 5 : 3,
       );
-    } finally {
-      allowClose = true;
-      clientClose.mockRestore();
-      transportClose.mockRestore();
-      await provider.close();
-      await fixture.close();
-    }
+    }, [
+      async () => {
+        allowClose = true;
+      },
+      async () => {
+        clientClose.mockRestore();
+      },
+      async () => {
+        transportClose.mockRestore();
+      },
+      async () => {
+        await provider.close();
+      },
+      async () => {
+        await fixture.close();
+      },
+    ]);
   },
 );
 
@@ -340,7 +379,7 @@ it("coalesces concurrent close and lets the SDK close its attached transport onc
     StreamableHTTPClientTransport.prototype,
     "close",
   );
-  try {
+  await withVerifierCleanup(async () => {
     await connection.connect();
     const first = connection.close();
     await closing;
@@ -351,11 +390,17 @@ it("coalesces concurrent close and lets the SDK close its attached transport onc
     await connection.close();
     expect(clientClose).toHaveBeenCalledTimes(1);
     expect(transportClose).toHaveBeenCalledTimes(1);
-  } finally {
-    release();
-    await connection.close();
-    await fixture.close();
-  }
+  }, [
+    async () => {
+      release();
+    },
+    async () => {
+      await connection.close();
+    },
+    async () => {
+      await fixture.close();
+    },
+  ]);
 });
 
 it.each(["caller", "owner"] as const)(
@@ -397,7 +442,7 @@ it.each(["caller", "owner"] as const)(
       settled = true;
     });
     let closing: Promise<void> | undefined;
-    try {
+    await withVerifierCleanup(async () => {
       await connected;
       if (stop === "caller") caller.abort(null);
       else closing = connection.close();
@@ -410,13 +455,23 @@ it.each(["caller", "owner"] as const)(
       await connection.close();
       expect(clientClose).toHaveBeenCalledTimes(1);
       expect(transportClose).toHaveBeenCalledTimes(1);
-    } finally {
-      release();
-      await failure;
-      await closing;
-      await connection.close();
-      await fixture.close();
-    }
+    }, [
+      async () => {
+        release();
+      },
+      async () => {
+        await failure;
+      },
+      async () => {
+        await closing;
+      },
+      async () => {
+        await connection.close();
+      },
+      async () => {
+        await fixture.close();
+      },
+    ]);
   },
 );
 
@@ -450,7 +505,7 @@ it("allows one startup caller to leave while its peer completes on the same clie
     .connect(caller.signal)
     .catch((cause: unknown) => cause);
   const second = connection.connect();
-  try {
+  await withVerifierCleanup(async () => {
     await requested;
     caller.abort(null);
     expect(await first).toMatchObject({
@@ -460,13 +515,23 @@ it("allows one startup caller to leave while its peer completes on the same clie
     expect(clientClose).not.toHaveBeenCalled();
     release();
     expect(await second).toEqual(["get_client_information"]);
-  } finally {
-    release();
-    await first;
-    await second;
-    await connection.close();
-    await fixture.close();
-  }
+  }, [
+    async () => {
+      release();
+    },
+    async () => {
+      await first;
+    },
+    async () => {
+      await second;
+    },
+    async () => {
+      await connection.close();
+    },
+    async () => {
+      await fixture.close();
+    },
+  ]);
 });
 
 it.each([false, true])(
@@ -506,7 +571,7 @@ it.each([false, true])(
     void pending.then(() => {
       settled = true;
     });
-    try {
+    await withVerifierCleanup(async () => {
       await closing;
       controller.abort(null);
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -532,13 +597,25 @@ it.each([false, true])(
       allowClose = true;
       await provider.close();
       expect(result.error.cleanupIncomplete).toBe(false);
-    } finally {
-      release();
-      allowClose = true;
-      await pending;
-      close.mockRestore();
-      await provider.close();
-      await fixture.close();
-    }
+    }, [
+      async () => {
+        release();
+      },
+      async () => {
+        allowClose = true;
+      },
+      async () => {
+        await pending;
+      },
+      async () => {
+        close.mockRestore();
+      },
+      async () => {
+        await provider.close();
+      },
+      async () => {
+        await fixture.close();
+      },
+    ]);
   },
 );

@@ -90,9 +90,11 @@ it("reads deeply nested packed metadata without recursive listing or member look
   const reader = new AsarArtifactReader(path);
   try {
     let count = 0;
+    let files = 0;
     for await (const entry of reader.entries()) {
       count++;
       if (entry.kind === "file") {
+        files++;
         expect(entry.path).toBe(`${"d/".repeat(3500)}f0`);
         expect(
           Buffer.compare(
@@ -103,6 +105,7 @@ it("reads deeply nested packed metadata without recursive listing or member look
       }
     }
     expect(count).toBe(3501);
+    expect(files).toBe(1);
   } finally {
     await reader.close();
   }

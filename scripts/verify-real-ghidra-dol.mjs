@@ -115,9 +115,12 @@ async function runPass({ fixture, languageOverride, label, layout }) {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
   const call = async (name, args = {}) => {
-    const reply = await client.callTool({ name, arguments: args }, undefined, {
-      timeout: 180000,
-    });
+    const reply = await client.callTool(
+      { name, arguments: args },
+      {
+        timeout: 180000,
+      },
+    );
     return requireMcpOperationResult(reply, name);
   };
   const report = { label, language_override: languageOverride ?? null };

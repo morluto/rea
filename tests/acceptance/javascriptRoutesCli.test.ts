@@ -558,21 +558,25 @@ cliTest(
       expect(response.exitCode, response.stderr).toBe(0);
       const envelope = response.json as { summary: unknown };
       const selected = routeViewFromEvidence(envelope.summary);
-      expect(selected.items).toHaveLength(12);
-      expect(selected.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: "/reports/aliased-web" }),
-          expect.objectContaining({ path: "/checks/independent-web" }),
-          expect.objectContaining({ path: "/checks/projected-web" }),
-          expect.objectContaining({ path: "/checks/rest-web" }),
-          expect.objectContaining({ path: "/checks/inactive-default-web" }),
-          expect.objectContaining({ path: "/checks/inactive-branch-web" }),
-          expect.objectContaining({ path: "/checks/overwritten-web" }),
-          expect.objectContaining({ path: "/checks/member-web" }),
-          expect.objectContaining({ path: "/checks/config-sibling-web" }),
-          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
-        ]),
-      );
+      const expectedPaths = [
+        "/reports/settings",
+        "/reports/panel",
+        "/reports/aliased-web",
+        "/checks/independent-web",
+        "/checks/projected-web",
+        "/checks/rest-web",
+        "/checks/inactive-default-web",
+        "/checks/inactive-branch-web",
+        "/checks/overwritten-web",
+        "/checks/member-web",
+        "/checks/config-sibling-web",
+        "/checks/optional-web/:id?",
+      ].sort();
+      expect(
+        selected.items
+          .map((item) => ("path" in item ? item.path : null))
+          .sort(),
+      ).toEqual(expectedPaths);
       expect(selected.artifact).toBeNull();
       const { call } = await connectLocalToolsMcp();
       const observed = await call("analyze_web_bundle", {
@@ -585,21 +589,9 @@ cliTest(
       });
       expect(observed.isError).not.toBe(true);
       const result = routeViewFromEvidence(observed.structuredContent);
-      expect(result.items).toHaveLength(12);
-      expect(result.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: "/reports/aliased-web" }),
-          expect.objectContaining({ path: "/checks/independent-web" }),
-          expect.objectContaining({ path: "/checks/projected-web" }),
-          expect.objectContaining({ path: "/checks/rest-web" }),
-          expect.objectContaining({ path: "/checks/inactive-default-web" }),
-          expect.objectContaining({ path: "/checks/inactive-branch-web" }),
-          expect.objectContaining({ path: "/checks/overwritten-web" }),
-          expect.objectContaining({ path: "/checks/member-web" }),
-          expect.objectContaining({ path: "/checks/config-sibling-web" }),
-          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
-        ]),
-      );
+      expect(
+        result.items.map((item) => ("path" in item ? item.path : null)).sort(),
+      ).toEqual(expectedPaths);
       const retained = await call("inspect_analysis_view", {
         source: {
           kind: "retained-evidence",
