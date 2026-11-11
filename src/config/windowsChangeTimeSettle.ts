@@ -85,7 +85,7 @@ const windowsChangeTimeSettingFailure = (
   pending_restart: true,
 });
 
-/** Name the rejected value, its source, the allowed range, and the required restart. */
+/** Name the rejected value, its source, and the allowed range. */
 const windowsChangeTimeSettingMessage = (
   failure: WindowsChangeTimeSettingFailure,
 ): string =>
@@ -103,11 +103,14 @@ export const windowsChangeTimeSettingSchema = (bound: WindowsChangeTimeBound) =>
     .string()
     .superRefine((value, context) => {
       if (inRange(bound, value)) return;
+      const failure = windowsChangeTimeSettingFailure(bound, value);
       context.addIssue({
         code: "custom",
-        message: windowsChangeTimeSettingMessage(
-          windowsChangeTimeSettingFailure(bound, value),
-        ),
+        message: windowsChangeTimeSettingMessage(failure),
+        params: {
+          update_mode: failure.update_mode,
+          pending_restart: failure.pending_restart,
+        },
       });
     })
     .transform(Number);
@@ -163,6 +166,8 @@ export const resolveWindowsChangeTimeSettle = (
           settings: failures.map((failure) => ({
             setting: failure.setting,
             constraint: windowsChangeTimeSettingMessage(failure),
+            update_mode: failure.update_mode,
+            pending_restart: failure.pending_restart,
           })),
         },
       ),

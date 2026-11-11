@@ -66,7 +66,7 @@ it.each([
           required_value: needed,
           applies_at: "next_operation",
           agent_editable: true,
-          update_mode: "runtime",
+          update_mode: "parameter",
           pending_restart: false,
         },
       });

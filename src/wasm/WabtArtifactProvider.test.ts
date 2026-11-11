@@ -1066,7 +1066,15 @@ it("enforces a selected command deadline and completes a corrected retry after c
   if (timed.ok) throw new Error("Selected 20 ms deadline was not enforced");
   expect(projectAnalysisError(timed.error)).toMatchObject({
     code: "provider_timeout",
-    details: { timeout_ms: 20 },
+    details: {
+      timeout_ms: 20,
+      limit: {
+        setting: "wasm.command_timeout_ms",
+        effective_value: 20,
+        source: "request",
+        update_mode: "parameter",
+      },
+    },
     remediation: { action: expect.stringContaining("command_timeout_ms") },
   });
   expect(timed.error.cleanupIncomplete).toBe(false);
