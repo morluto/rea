@@ -114,6 +114,17 @@ export async function verifyNativeValueE2e(
     cleanupConfirmed = true;
   };
   let workspaceRemoved = false;
+  // The parent lease owns both the remaining children and workspace removal.
+  // Retrying an individual child alone cannot retire the parent directory.
+  const workspaceLease = new AnalysisCleanupLease(async () => {
+    if (independentControlsStarted && !completed)
+      throw new Error(
+        "Independent verifier control completion remains unconfirmed",
+      );
+    if (!cleanupConfirmed) await closeResources();
+    await rm(workspace, { recursive: true, force: true });
+    workspaceRemoved = true;
+  }, [workspace]);
   try {
     return await withVerifierCleanup(async () => {
       await mkdir(runtime);
@@ -159,11 +170,7 @@ export async function verifyNativeValueE2e(
       async () => {
         // Before SDK construction there are no native owners, but still require
         // the scope's positive completion before retiring this workspace.
-        if (!cleanupConfirmed && !resources.hasPending) await closeResources();
-        if (cleanupConfirmed && (!independentControlsStarted || completed)) {
-          await rm(workspace, { recursive: true, force: true });
-          workspaceRemoved = true;
-        }
+        if (!resources.hasPending) await workspaceLease.release();
       },
     ]);
   } catch (cause) {
@@ -173,7 +180,7 @@ export async function verifyNativeValueE2e(
           `Native value verifier workspace retained at ${workspace}; cleanup or independent control completion remains unconfirmed.`,
           { cause },
         ),
-        { retained_workspace: workspace },
+        { retained_workspace: workspace, cleanupLeases: [workspaceLease] },
       );
     throw cause;
   }

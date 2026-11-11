@@ -91,14 +91,16 @@ try {
         assert.ok(failures.includes(nativeCleanupState.transportFailure));
       assert.equal(failure.retained_workspace, workspace);
       const leases = new Set(
-        failures.flatMap((item) => item?.cleanupLeases ?? []),
+        failures.slice(1).flatMap((item) => item?.cleanupLeases ?? []),
       );
       assert.equal(
         leases.size,
         fault === "both" ? 2 : 1,
         "Exactly the failed owners remain retryable",
       );
-      for (const lease of leases) await lease.release();
+      assert.equal(failure.cleanupLeases.length, 1);
+      await failure.cleanupLeases[0].release();
+      await assert.rejects(fs.access(workspace), { code: "ENOENT" });
       assert.equal(
         nativeCleanupState.clientCloseCalls,
         ["client", "both"].includes(fault) ? 2 : 1,
