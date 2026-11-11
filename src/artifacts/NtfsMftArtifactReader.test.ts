@@ -192,3 +192,20 @@ it("retries a shared preparation cancelled by another traversal", async () => {
     await reader.close();
   }
 });
+
+it("revalidates the source before reusing a completed header inventory", async () => {
+  const path = await writeMft("$MFT", recordBytes({}));
+  const reader = new NtfsMftArtifactReader(path);
+  try {
+    await reader.entries()[Symbol.asyncIterator]().next();
+    await writeFile(
+      path,
+      Buffer.concat([recordBytes({}), recordBytes({ index: 1 })]),
+    );
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "integrity" });
+  } finally {
+    await reader.close();
+  }
+});
