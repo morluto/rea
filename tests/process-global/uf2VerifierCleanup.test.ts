@@ -1,9 +1,8 @@
-import { access, open, readFile } from "node:fs/promises";
+import { access, open, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createVerifierCommands } from "../../scripts/lib/verify-commands.mjs";
-import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 it.each([false, true])(
   "UF2 verifier retains its workspace until actual resource cleanup succeeds (denied: %s)",
@@ -21,7 +20,6 @@ it.each([false, true])(
     let peer: Awaited<ReturnType<typeof open>> | undefined;
     let retainedAttempts = 0;
     let peerAttempts = 0;
-    let cleanupTasks: readonly (() => void | Promise<void>)[] = [];
     const bytes = Buffer.from(
       Array.from({ length: 1000 }, (_, i) => (i * 13 + 1) & 0xff),
     );
@@ -60,15 +58,6 @@ it.each([false, true])(
     vi.doMock("../../scripts/lib/verify-commands.mjs", () => ({
       createVerifierCommands: async () => commands,
     }));
-    vi.doMock("../../scripts/lib/verifier-cleanup.mjs", () => ({
-      withVerifierCleanup: (
-        operation: () => Promise<unknown>,
-        tasks: typeof cleanupTasks,
-      ) => {
-        cleanupTasks = tasks;
-        return withVerifierCleanup(operation, tasks);
-      },
-    }));
     try {
       const entrypoint = "../../scripts/verify/firmware/uf2-esptool.mjs";
       const failure: unknown = await import(entrypoint).catch(
@@ -84,13 +73,18 @@ it.each([false, true])(
       expect(peer.fd).toBe(-1);
       expect(peerAttempts).toBe(1);
       if (deniedInitially) {
-        expect(failure).toBeInstanceOf(AggregateError);
-        if (!(failure instanceof AggregateError)) throw failure;
-        expect(failure.cause).toBe(primary);
-        expect(failure.errors[0]).toBe(primary);
-        expect(failure.errors[1]).toHaveProperty("cause.errors", [
+        expect(failure).toBeInstanceOf(Error);
+        const owned = failure as Error & {
+          cleanupLeases: { release(): Promise<void> }[];
+        };
+        expect(owned.cause).toBeInstanceOf(AggregateError);
+        const original = owned.cause as AggregateError;
+        expect(original.cause).toBe(primary);
+        expect(original.errors[0]).toBe(primary);
+        expect(original.errors[1]).toHaveProperty("cause.errors", [
           cleanupFailure,
         ]);
+        expect(owned.cleanupLeases).toHaveLength(1);
         expect(commands.cleanupResources).toEqual([
           `${workspace}/bootloader.bin`,
         ]);
@@ -99,14 +93,14 @@ it.each([false, true])(
         expect(
           (await readFile(`${workspace}/bootloader.bin`)).equals(bytes),
         ).toBe(true);
-        await expect(
-          withVerifierCleanup(() => undefined, cleanupTasks),
-        ).rejects.toBeInstanceOf(AggregateError);
+        await expect(owned.cleanupLeases[0]!.release()).rejects.toMatchObject({
+          cause: expect.objectContaining({ errors: [cleanupFailure] }),
+        });
         await access(workspace);
         expect(retainedAttempts).toBe(2);
         expect(peerAttempts).toBe(1);
         denied = false;
-        await withVerifierCleanup(() => undefined, cleanupTasks);
+        await owned.cleanupLeases[0]!.release();
         expect(retainedAttempts).toBe(3);
       } else {
         expect(failure).toBe(primary);
@@ -119,11 +113,11 @@ it.each([false, true])(
     } finally {
       denied = false;
       await commands.close();
-      for (const cleanup of cleanupTasks) await cleanup();
+      if (workspace !== undefined)
+        await rm(workspace, { recursive: true, force: true });
       await retained?.close();
       await peer?.close();
       vi.doUnmock("../../scripts/lib/verify-commands.mjs");
-      vi.doUnmock("../../scripts/lib/verifier-cleanup.mjs");
       vi.restoreAllMocks();
       vi.resetModules();
     }
