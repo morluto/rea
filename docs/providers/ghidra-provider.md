@@ -65,7 +65,8 @@ escaping, before allocating the serialized request or sending it. The framing
 newline is excluded. An oversized request returns `resource_constraint` with
 the effective setting, its source, and the exact payload byte count.
 
-Set the value in the environment that starts REA, then restart REA to apply it.
+`bridge.max_request_bytes` can be changed at runtime with
+`update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`.
 This setting is enforced by the REA client; the Java bridge has no corresponding
 request ceiling.
 

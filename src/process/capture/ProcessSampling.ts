@@ -1,3 +1,7 @@
+import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
+import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
+import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
+import type { ProcessCaptureError } from "./ProcessCaptureError.js";
 import type { ProcessSamplingCoverage } from "../../domain/process/processCaptureCoverage.js";
 import type {
   ProcessSample,
@@ -14,7 +18,9 @@ import {
   type SampledProcessRow as ProcessRow,
 } from "./LinuxProcessSampling.js";
 import {
-  isSamplingAbort,
+  settleSamplingReads,
+  samplingInspectionFailures,
+  SamplingReadBatchFailure,
   mergeSamplingDiagnostics,
   readProcSamplingSource,
   readSamplingSource,
@@ -99,7 +105,7 @@ const sampleLinux = async (
     );
     const batch = level.slice(0, batchSize);
     level = level.slice(batchSize);
-    const observations = await Promise.all(
+    const observations = await settleSamplingReads(
       batch.map(({ pid, expectedParent }) =>
         inspectLinuxProcess(pid, expectedParent, signal, identities),
       ),
@@ -196,7 +202,7 @@ const sampleLinuxFallback = async (
     );
     const candidates = batch.filter(({ pid }) => !visited.has(pid));
     for (const { pid } of candidates) visited.add(pid);
-    const observations = await Promise.all(
+    const observations = await settleSamplingReads(
       candidates.map(({ pid, expectedParent }) =>
         inspectLinuxProcessMetadata(
           pid,
@@ -363,10 +369,30 @@ const sampleProcesses = async (
   return samplingObservation(samples, rows.diagnostics);
 };
 
+/** A private stop intent qualifies only explicit pure cancellation from every rejected read. */
+const isOwnedSamplingShutdown = (cause: unknown, reason: unknown): boolean => {
+  const inspections = samplingInspectionFailures(cause);
+  return (
+    inspections.length > 0 &&
+    (!(cause instanceof SamplingReadBatchFailure) ||
+      cause.userCategory === "cancelled") &&
+    inspections.every(
+      (inspection) =>
+        isProcessOwnershipInspectionCancellation(
+          inspection.inspectionFailure,
+        ) &&
+        processInspectionCancellations(inspection.inspectionFailure).every(
+          (fact) => fact.reason === reason,
+        ),
+    )
+  );
+};
+
 /** Start bounded process-tree sampling and expose an awaited stop. */
 export const startProcessSampler = (options: {
   readonly rootPid: number;
   readonly runId: string;
+  readonly resourceScope: ProcessCaptureResourceScope;
   readonly started: number;
   readonly limit: number;
   readonly samples: ProcessSample[];
@@ -380,18 +406,21 @@ export const startProcessSampler = (options: {
   const lastObservations = new Map<number, string>();
   let pending: Promise<void> | undefined;
   let stopped = false;
+  const shutdownReason = Symbol("process sampler shutdown");
+  let stopRequested = false;
   let abortCurrent: (() => void) | undefined;
   let limitReached = false;
   let samplingFailures = 0;
   let samplingWasInterrupted = false;
   let firstSamplingFailure: string | null = null;
   let rootInitialized = false;
+  let inspectionFailure: ProcessCaptureError | undefined;
 
   const sample = (): void => {
     if (stopped || pending !== undefined) return;
 
     const controller = new AbortController();
-    abortCurrent = () => controller.abort();
+    abortCurrent = () => controller.abort(shutdownReason);
     pending = (async () => {
       let diagnostics = mergeSamplingDiagnostics();
       if (!rootInitialized) {
@@ -443,17 +472,27 @@ export const startProcessSampler = (options: {
         }
       })
       .catch((cause: unknown) => {
-        if (isSamplingAbort(cause, controller.signal)) {
-          samplingWasInterrupted = true;
-        } else {
-          samplingFailures += 1;
-          firstSamplingFailure ??=
-            cause instanceof Error
-              ? `${cause.name}: ${cause.message}`
-              : typeof cause === "string"
-                ? cause
-                : `Unexpected sampling rejection (${typeof cause})`;
+        const inspections = samplingInspectionFailures(cause);
+        for (const inspection of inspections)
+          options.resourceScope.retainInspectionFailure(inspection);
+        if (inspections.length > 0) {
+          if (stopRequested && isOwnedSamplingShutdown(cause, shutdownReason)) {
+            samplingWasInterrupted = true;
+            return;
+          }
+          inspectionFailure =
+            cause instanceof SamplingReadBatchFailure ? cause : inspections[0];
+          stopped = true;
+          clearInterval(timer);
+          return;
         }
+        samplingFailures += 1;
+        firstSamplingFailure ??=
+          cause instanceof Error
+            ? `${cause.name}: ${cause.message}`
+            : typeof cause === "string"
+              ? cause
+              : `Unexpected sampling rejection (${typeof cause})`;
       })
       .then(() => {
         abortCurrent = undefined;
@@ -465,10 +504,12 @@ export const startProcessSampler = (options: {
   sample();
 
   return async () => {
+    stopRequested = true;
     stopped = true;
     clearInterval(timer);
     abortCurrent?.();
     await pending;
+    if (inspectionFailure !== undefined) throw inspectionFailure;
     const failureCount = samplingFailures + (samplingWasInterrupted ? 1 : 0);
     const interrupted =
       "Sampler shutdown interrupted an unfinished process observation; unexamined processes remain unknown";

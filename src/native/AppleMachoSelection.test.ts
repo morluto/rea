@@ -513,6 +513,44 @@ describe("native Mach-O slice selection", () => {
   });
 });
 
+describe("admitted Mach-O capability variants", () => {
+  it("reads the admitted capability variant instead of ranking again", () => {
+    const v1 = { type: CPU.arm64.type, subtype: 0x81000002 };
+    const v0 = { type: CPU.arm64.type, subtype: 0x80000002 };
+    const images = [v1, v0].map((cpu, index) =>
+      machoImage({
+        cpu,
+        commands: [
+          dylibCommand(LC.LOAD_DYLIB, `/fixture/variant-${index}.dylib`),
+        ],
+      }),
+    );
+    const fat = Buffer.from(
+      fatImage([
+        { cpu: v1, bytes: images[0]! },
+        { cpu: v0, bytes: images[1]! },
+      ]),
+    );
+    expect(() => parseMachoLayout(fat, "arm64")).toThrow(
+      /Ambiguous FAT architecture slice/u,
+    );
+    const secondOffset = 4096 + Math.ceil(images[0]!.length / 4096) * 4096;
+    expect(
+      parseMachoLayout(fat, "arm64", {
+        offset: secondOffset,
+        size: images[1]!.length,
+      }),
+    ).toMatchObject({
+      selectedImage: {
+        container: "fat",
+        offset: secondOffset,
+        byteLength: images[1]!.length,
+      },
+      fixups: { dylibs: ["/fixture/variant-1.dylib"] },
+    });
+  });
+});
+
 describe("native Mach-O fixup load command boundaries", () => {
   const decode = (command: Uint8Array) =>
     decodeAppleDispatchMetadata(

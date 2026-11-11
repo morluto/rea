@@ -166,3 +166,34 @@ it.each([
     expect((failure as Error).cause).toBe(reason);
   },
 );
+
+it("preserves completed views and source absences when a later source read fails", async () => {
+  const sourceFailure = new Error("cannot read the third retained file");
+  const failure = await readerViewsOfBytes(
+    ["first", "absent", "third"].map((id) => ({
+      id,
+      file: `${id}.txt`,
+      argv: ["reader", "{file}"],
+      output: "json" as const,
+    })),
+    async ({ id }) => {
+      if (id === "third") throw sourceFailure;
+      return id === "absent"
+        ? { kind: "absent" }
+        : { kind: "bytes", bytes: Buffer.from("input") };
+    },
+    async () => ({
+      exit_code: 0,
+      stdout: JSON.stringify({ view: { format: "json", view: { value: 7 } } }),
+      stderr: "",
+      timed_out: false,
+    }),
+  ).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    cause: sourceFailure,
+    diagnostics: {
+      completed_reader_views: { first: { format: "json", view: { value: 7 } } },
+      completed_reader_absent: ["absent"],
+    },
+  });
+});

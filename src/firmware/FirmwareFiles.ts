@@ -57,21 +57,21 @@ const throwIfFirmwareInventoryCancelled = (
 
 /** Own all firmware reads, including rejected admission and final descriptor cleanup. */
 export class FirmwareFileAccess {
-  readonly #resources = new ArtifactResourceScope();
+  readonly resources = new ArtifactResourceScope();
 
   /** Retry retained descriptors without closing admission for future operations. */
   retryCleanup(): Promise<void> {
-    return this.#resources.retryCleanup();
+    return this.resources.retryCleanup();
   }
 
   /** Wait for admitted operations and retry every retained descriptor. */
   close(): Promise<void> {
-    return this.#resources.close();
+    return this.resources.close();
   }
 
   /** Read inherited file policy through this same retryable descriptor owner. */
   async fileSizeCeiling(signal?: AbortSignal): Promise<number> {
-    return this.#resources.run(async () => {
+    return this.resources.run(async () => {
       assertArtifactReadActive(signal);
       const limits = await readLinuxResourceLimits(
         {
@@ -79,7 +79,7 @@ export class FirmwareFileAccess {
           cpu_seconds: FIRMWARE_LIMITS.cpuSeconds,
           file_bytes: Number.MAX_SAFE_INTEGER,
         },
-        this.#resources,
+        this.resources,
       );
       assertArtifactReadActive(signal);
       return limits.file_bytes;
@@ -88,13 +88,13 @@ export class FirmwareFileAccess {
 
   /** Hash one admitted regular file without retaining its bytes in memory. */
   hash(path: string, signal?: AbortSignal): Promise<string> {
-    return this.#resources.run(() => this.#hash(path, signal));
+    return this.resources.run(() => this.#hash(path, signal));
   }
 
   async #hash(path: string, signal?: AbortSignal): Promise<string> {
     return withArtifactRegularFile(
       path,
-      this.#resources,
+      this.resources,
       signal,
       async ({ handle }) => {
         const hash = createHash("sha256");
@@ -110,7 +110,7 @@ export class FirmwareFileAccess {
 
   /** Copy and identify the exact bytes consumed by firmware providers. */
   snapshot(request: FirmwareRequest, root: string, signal: AbortSignal) {
-    return this.#resources.run(() => this.#snapshot(request, root, signal));
+    return this.resources.run(() => this.#snapshot(request, root, signal));
   }
 
   async #snapshot(request: FirmwareRequest, root: string, signal: AbortSignal) {
@@ -119,7 +119,7 @@ export class FirmwareFileAccess {
     const fullPath = join(root, "firmware.bin");
     const copied = await withArtifactRegularFile(
       sourcePath,
-      this.#resources,
+      this.resources,
       signal,
       async ({ handle, initial: stat }) => {
         sourceAdmitted = true;
@@ -173,7 +173,7 @@ export class FirmwareFileAccess {
       inputPath = join(root, "selected.bin");
       await withArtifactRegularFile(
         fullPath,
-        this.#resources,
+        this.resources,
         signal,
         async ({ handle }) => {
           await pipeline(
@@ -208,10 +208,10 @@ export class FirmwareFileAccess {
     tree: SafeOutputTree,
     signal: AbortSignal,
   ) {
-    return this.#resources.run(() =>
+    return this.resources.run(() =>
       withArtifactRegularFile(
         entry.path,
-        this.#resources,
+        this.resources,
         signal,
         ({ handle }) =>
           tree.write(
@@ -241,10 +241,10 @@ export class FirmwareFileAccess {
     operation: string,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    return this.#resources.run(() =>
+    return this.resources.run(() =>
       withArtifactRegularFile(
         path,
-        this.#resources,
+        this.resources,
         signal,
         async ({ handle }) => {
           const bytes = await readBoundedFileBytes(

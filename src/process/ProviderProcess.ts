@@ -1,3 +1,12 @@
+import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
+import {
+  processInspectionCleanupFailures,
+  type ProcessInspectionCleanupFailure,
+  type ProcessInspectionCleanupLease,
+} from "./ProcessInspectionCleanup.js";
+import { assertProcessOwnershipInspectionActive } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
@@ -226,6 +235,15 @@ export interface ProviderProcessStopOptions {
   readonly killGraceMs?: number;
 }
 
+/** Non-JSON snapshot of the exact inspection facts retained by a stop attempt. */
+export interface ProviderProcessInspectionCleanup {
+  readonly causes: readonly unknown[];
+  readonly failures: readonly {
+    readonly failure: ProcessInspectionCleanupFailure;
+    readonly cause: unknown;
+  }[];
+}
+
 /** Exact disposition of one owned process stop attempt. */
 export type ProviderProcessStopResult =
   | {
@@ -240,6 +258,8 @@ export type ProviderProcessStopResult =
       readonly status: "incomplete";
       readonly reason: string;
       readonly cleanupResult?: ProcessCleanupFailure;
+      /** Current retained capabilities and their exact originating inspection facts; never JSON diagnostics. */
+      readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
     };
 
 const incompleteCleanup = (
@@ -259,9 +279,9 @@ const incompleteCleanup = (
 export const spawnOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
 ): Promise<SpawnedOwnedProviderProcess> => {
-  options.signal?.throwIfAborted();
+  assertProcessOwnershipInspectionActive(options.signal);
   await prepareProcessOwnershipInspection(options.signal);
-  options.signal?.throwIfAborted();
+  assertProcessOwnershipInspectionActive(options.signal);
   const platform = options.platform ?? process.platform;
   const sweepTokenOwnedProcesses =
     options.sweepTokenOwnedProcesses === true && platform !== "win32";
@@ -271,7 +291,7 @@ export const spawnOwnedProviderProcess = async (
     if (capture === undefined)
       throw new ProcessAdmissionError("baseline_unavailable");
     captureBaseline = await capture(options.signal);
-    options.signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(options.signal);
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const selectedEnvironment = mergeEnvironmentOverrides(
@@ -418,6 +438,15 @@ export class ProviderProcessSupervisor {
     | Exclude<ProcessDiagnosticBudget, number>
     | undefined;
   #outputEpoch = 0;
+  readonly #inspectionCleanup = new Map<
+    object,
+    {
+      readonly failure: ProcessInspectionCleanupFailure;
+      readonly origin: unknown;
+      readonly lease?: AnalysisCleanupLease;
+      cause: unknown;
+    }
+  >();
 
   constructor(
     readonly launch: ProviderProcessLaunch,
@@ -638,11 +667,95 @@ export class ProviderProcessSupervisor {
     }
   }
 
+  /** Adopt only explicit inspection capabilities into this process owner's existing lifetime. */
+  retainInspectionFailure(cause: unknown): void {
+    for (const failure of processInspectionCleanupFailures(cause)) {
+      const owner =
+        failure instanceof DarwinProcessOwnershipInspectionError
+          ? failure.cleanupOwner
+          : failure.owner;
+      const key = owner ?? failure;
+      if (this.#inspectionCleanup.has(key)) continue;
+      this.#inspectionCleanup.set(key, {
+        failure,
+        origin: cause,
+        cause:
+          failure instanceof DarwinProcessOwnershipInspectionError
+            ? (failure.cleanupFailure ?? failure)
+            : failure.cleanupCause,
+      });
+    }
+  }
+
+  /** Adopt a normalized inspection's existing close authority, keeping its originating fact. */
+  retainInspectionCleanup(
+    origin: unknown,
+    cleanup: ProcessInspectionCleanupLease,
+  ): void {
+    const { failure, lease } = cleanup;
+    if (lease.released || this.#inspectionCleanup.has(lease)) return;
+    this.#inspectionCleanup.set(lease, {
+      failure,
+      origin,
+      lease,
+      cause:
+        failure instanceof DarwinProcessOwnershipInspectionError
+          ? (failure.cleanupFailure ?? failure)
+          : failure.cleanupCause,
+    });
+  }
+
+  async #retryInspectionCleanup(): Promise<void> {
+    for (const [key, retained] of this.#inspectionCleanup) {
+      const owner =
+        retained.failure instanceof DarwinProcessOwnershipInspectionError
+          ? retained.failure.cleanupOwner
+          : retained.failure.owner;
+      if (owner === undefined && retained.lease === undefined) continue;
+      try {
+        if (retained.lease !== undefined) await retained.lease.release();
+        else if (owner !== undefined) await owner.close();
+        this.#inspectionCleanup.delete(key);
+      } catch (cause: unknown) {
+        retained.cause = cause;
+      }
+    }
+  }
+
+  #inspectionCleanupSnapshot(): ProviderProcessInspectionCleanup {
+    const retained = [...this.#inspectionCleanup.values()];
+    return {
+      causes: [...new Set(retained.map(({ origin }) => origin))],
+      failures: retained.map(({ failure, cause }) => ({ failure, cause })),
+    };
+  }
+
+  /** Retry only held inspection resources; success makes no process-cleanup claim. */
+  async retryInspectionCleanup(): Promise<
+    Result<void, ProviderProcessInspectionCleanup>
+  > {
+    await this.#retryInspectionCleanup();
+    return this.#inspectionCleanup.size === 0
+      ? ok(undefined)
+      : err(this.#inspectionCleanupSnapshot());
+  }
+
+  #inspectionStopFailure(reason: string): ProviderProcessStopResult {
+    return {
+      status: "incomplete",
+      reason,
+      ...(this.#inspectionCleanup.size === 0
+        ? {}
+        : { inspectionCleanup: this.#inspectionCleanupSnapshot() }),
+    };
+  }
+
   /** Share each stop attempt; incomplete cleanup retains ownership and permits retry. */
   stop(
     options: ProviderProcessStopOptions = {},
   ): Promise<ProviderProcessStopResult> {
-    this.#stopRequested = true;
+    if (this.launch.ownsProcessLifetime && this.#exitObservation === undefined)
+      this.#stopRequested = true;
     this.#stopPromise ??= this.#stop(options).then((result) => {
       if (result.status === "incomplete") this.#stopPromise = undefined;
       return result;
@@ -717,6 +830,15 @@ export class ProviderProcessSupervisor {
   ): Promise<ProviderProcessStopResult> {
     try {
       if (!this.launch.ownsProcessLifetime) return { status: "not-owned" };
+      await this.#retryInspectionCleanup();
+      if (this.#inspectionCleanup.size > 0)
+        return this.#inspectionStopFailure(
+          [...this.#inspectionCleanup.values()]
+            .map(({ cause }) =>
+              cause instanceof Error ? cause.message : String(cause),
+            )
+            .join("; "),
+        );
       if (this.launch.cleanup !== undefined) {
         const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
         const exitObservedBeforeCleanup = this.#exitObservation !== undefined;
@@ -762,13 +884,12 @@ export class ProviderProcessSupervisor {
         reason: "owned provider process did not exit after SIGKILL",
       };
     } catch (cause: unknown) {
-      return {
-        status: "incomplete",
-        reason:
-          cause instanceof Error
-            ? cause.message
-            : "owned provider process cleanup failed",
-      };
+      this.retainInspectionFailure(cause);
+      return this.#inspectionStopFailure(
+        cause instanceof Error
+          ? cause.message
+          : "owned provider process cleanup failed",
+      );
     }
   }
 

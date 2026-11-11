@@ -28,6 +28,13 @@ const eventsFor = (call: string) =>
   }));
 
 it.each([
+  ["a missing on listener", `e.on("x")`],
+  ["a missing once listener", `e.once("x")`],
+  ["a missing addListener listener", `e.addListener("x")`],
+  ["a missing prependListener listener", `e.prependListener("x")`],
+  ["a missing prependOnceListener listener", `e.prependOnceListener("x")`],
+  ["a missing removeListener listener", `e.removeListener("x")`],
+  ["a missing off listener", `e.off("x")`],
   ["a numeric listener", `e.on("x", 1)`],
   ["a string listener", `e.on("x", "fn")`],
   ["a template-literal listener", 'e.on("x", `fn`)'],

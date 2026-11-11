@@ -37,7 +37,6 @@ graph TD
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
         GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & function analysis<br/>snapshot, Unix/Windows transport, bounded lifecycle"]
         IDA["src/ida/<br/>Upstream MCP contract adaptation<br/>live GUI binding or owned headless database"]
-        KUNA["src/kuna/<br/>BYO Kuna deep analysis candidate<br/>discovery reads metadata; version probe on target open"]
         IDA_MCP["External ida-pro-mcp<br/>GUI proxy or database supervisor<br/>upstream installation and engine lifecycle"]
 
         KUNA["src/kuna/<br/>BYO Kuna decompiler, a deep analysis candidate<br/>discovery reads metadata only; version probe when a target opens"]
@@ -193,10 +192,7 @@ graph TD
     APP -->|EVM interface port| EVM
     EVM --> PROCESS
     EVM --> DOMAIN
-    COMPOSITION --> KUNA
-    KUNA --> PROCESS
     KUNA --> FILESYSTEM
-    KUNA --> DOMAIN
     COMPOSITION --> ANDROID_TOOLS
     ANDROID_TOOLS --> PROCESS
     ANDROID_TOOLS --> DOMAIN
