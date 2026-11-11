@@ -1,12 +1,12 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../domain/virtualFileMapping.js";
 import {
   readElfRelocationWritesSteps,
   ElfPointerRelocationFailure,
 } from "../native/metadata/ElfPointerRelocations.js";
-import type {
-  BinaryContainer,
-  FileMapping,
-  ZeroFillMapping,
-} from "../native/metadata/BinaryContainer.js";
+import type { BinaryContainer } from "../native/metadata/BinaryContainer.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 
 /** Materialize the shared loader facts only for IL2CPP's existing private reader. */
