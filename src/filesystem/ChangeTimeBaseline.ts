@@ -28,7 +28,8 @@ export interface ChangeTimeSettleSeams {
   readonly sleep?: ((delayMs: number) => Promise<void>) | undefined;
   /** Launch environment. Omission reads `process.env`. */
   readonly environment?:
-    Readonly<Record<string, string | undefined>> | undefined;
+    | Readonly<Record<string, string | undefined>>
+    | undefined;
   /** Already resolved budget. Omission parses `environment`. */
   readonly limits?: WindowsChangeTimeSettleLimits | undefined;
   /** Cancels the wait; the last observation is not returned once aborted. */
@@ -111,10 +112,10 @@ export const settleChangeTimeBaseline = async (
   const sleep = seams.sleep ?? defaultSleep;
   let observed = await read();
   for (let poll = 0; poll < limits.maxPolls; poll += 1) {
+    throwIfAborted(seams);
     if (!changeTimeMayStillDrift(observed, settled)) return observed;
     // A settle window is bounded by driftMs, not by the poll budget, so a
     // cancelled scope must not keep an inventory waiting it out.
-    throwIfAborted(seams);
     await sleep(limits.pollMs);
     throwIfAborted(seams);
     observed = await read();

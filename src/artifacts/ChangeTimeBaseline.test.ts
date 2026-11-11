@@ -271,3 +271,17 @@ it("does not consume Windows limits on other hosts and preserves cancellation du
     ),
   ).rejects.toBe(reason);
 });
+
+it("preserves cancellation during a Windows read even when the timestamp is stable", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancelled during read");
+  await expect(
+    settleChangeTimeBaseline(
+      async () => {
+        controller.abort(reason);
+        return statsAt(1);
+      },
+      { platform: "win32", now: () => 10000, signal: controller.signal },
+    ),
+  ).rejects.toBe(reason);
+});
