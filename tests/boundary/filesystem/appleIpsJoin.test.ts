@@ -16,12 +16,79 @@ const OTHER_UUID = "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC";
 const ARM64 = { type: 0x0100000c, subtype: 0 } as const;
 const X86_64 = { type: 0x01000007, subtype: 3 } as const;
 
+interface SliceSymbolSpec {
+  readonly name: string;
+  readonly value: bigint;
+}
+
 interface SliceSpec {
   readonly cpu: { readonly type: number; readonly subtype: number };
   readonly uuid: string | null;
   readonly textVmaddr: bigint;
   readonly withText?: boolean;
+  readonly symbols?: readonly SliceSymbolSpec[];
+  readonly symtabBroken?: boolean;
 }
+
+const symtabCommand = (
+  symoff: number,
+  nsyms: number,
+  stroff: number,
+  strsize: number,
+): Buffer => {
+  const bytes = Buffer.alloc(24);
+  bytes.writeUInt32LE(0x2, 0);
+  bytes.writeUInt32LE(24, 4);
+  bytes.writeUInt32LE(symoff, 8);
+  bytes.writeUInt32LE(nsyms, 12);
+  bytes.writeUInt32LE(stroff, 16);
+  bytes.writeUInt32LE(strsize, 20);
+  return bytes;
+};
+
+const nlist64 = (strx: number, value: bigint): Buffer => {
+  const bytes = Buffer.alloc(16);
+  bytes.writeUInt32LE(strx, 0);
+  bytes.writeUInt8(0x0f, 4);
+  bytes.writeUInt8(1, 5);
+  bytes.writeUInt16LE(0, 6);
+  bytes.writeBigUInt64LE(value, 8);
+  return bytes;
+};
+
+const nlist32 = (strx: number, value: bigint): Buffer => {
+  const bytes = Buffer.alloc(12);
+  bytes.writeUInt32LE(strx, 0);
+  bytes.writeUInt8(0x0f, 4);
+  bytes.writeUInt8(1, 5);
+  bytes.writeUInt16LE(0, 6);
+  bytes.writeUInt32LE(Number(value), 8);
+  return bytes;
+};
+
+/** `LC_SYMTAB` command plus its `nlist` entries and string table. */
+const symtabParts = (
+  symbols: readonly SliceSymbolSpec[],
+  dataOffset: number,
+  entrySize: number,
+  entry: (strx: number, value: bigint) => Buffer,
+): { readonly command: Buffer; readonly data: Buffer } => {
+  const entries: Buffer[] = [];
+  const strings: Buffer[] = [Buffer.from([0])];
+  let strsize = 1;
+  for (const symbol of symbols) {
+    const name = Buffer.from(symbol.name, "utf8");
+    entries.push(entry(strsize, symbol.value));
+    strings.push(name, Buffer.from([0]));
+    strsize += name.length + 1;
+  }
+  const symoff = dataOffset;
+  const stroff = dataOffset + symbols.length * entrySize;
+  return {
+    command: symtabCommand(symoff, symbols.length, stroff, strsize),
+    data: Buffer.concat([...entries, ...strings]),
+  };
+};
 
 const commandBytes = (commands: readonly Buffer[]): Buffer => {
   const total = commands.reduce((sum, command) => sum + command.length, 0);
@@ -54,10 +121,30 @@ const segmentCommand = (vmaddr: bigint): Buffer => {
 
 /** One little-endian 64-bit slice with an LC_UUID and an optional __TEXT. */
 const machoSlice = (spec: SliceSpec): Buffer => {
-  const commands = [
+  const headerSize = 32;
+  const hasSymtab = spec.symbols !== undefined || spec.symtabBroken === true;
+  const fixed = [
     ...(spec.uuid === null ? [] : [uuidCommand(spec.uuid)]),
     ...(spec.withText === false ? [] : [segmentCommand(spec.textVmaddr)]),
   ];
+  const commandsLength =
+    fixed.reduce((sum, command) => sum + command.length, 0) +
+    (hasSymtab ? 24 : 0);
+  let symtab: Buffer | null = null;
+  let data: Buffer = Buffer.alloc(0);
+  if (spec.symbols !== undefined) {
+    const parts = symtabParts(
+      spec.symbols,
+      headerSize + commandsLength,
+      16,
+      nlist64,
+    );
+    symtab = parts.command;
+    data = parts.data;
+  } else if (spec.symtabBroken === true) {
+    symtab = symtabCommand(headerSize + commandsLength + 4096, 2, 0, 0);
+  }
+  const commands = [...fixed, ...(symtab === null ? [] : [symtab])];
   const body = commandBytes(commands);
   const header = Buffer.alloc(32);
   header.writeUInt32LE(0xfeedfacf, 0);
@@ -66,7 +153,54 @@ const machoSlice = (spec: SliceSpec): Buffer => {
   header.writeUInt32LE(2, 12);
   header.writeUInt32LE(commands.length, 16);
   header.writeUInt32LE(body.length, 20);
-  return Buffer.concat([header, body]);
+  return Buffer.concat([header, body, data]);
+};
+
+const segmentCommand32 = (vmaddr: bigint): Buffer => {
+  const bytes = Buffer.alloc(56);
+  bytes.writeUInt32LE(0x1, 0);
+  bytes.writeUInt32LE(56, 4);
+  bytes.write("__TEXT\0", 8, "latin1");
+  bytes.writeUInt32LE(Number(vmaddr), 24);
+  bytes.writeUInt32LE(0x4000, 28);
+  return bytes;
+};
+
+/** One little-endian 32-bit slice with an LC_UUID and an optional __TEXT. */
+const machoSlice32 = (spec: SliceSpec): Buffer => {
+  const headerSize = 28;
+  const hasSymtab = spec.symbols !== undefined || spec.symtabBroken === true;
+  const fixed = [
+    ...(spec.uuid === null ? [] : [uuidCommand(spec.uuid)]),
+    ...(spec.withText === false ? [] : [segmentCommand32(spec.textVmaddr)]),
+  ];
+  const commandsLength =
+    fixed.reduce((sum, command) => sum + command.length, 0) +
+    (hasSymtab ? 24 : 0);
+  let symtab: Buffer | null = null;
+  let data: Buffer = Buffer.alloc(0);
+  if (spec.symbols !== undefined) {
+    const parts = symtabParts(
+      spec.symbols,
+      headerSize + commandsLength,
+      12,
+      nlist32,
+    );
+    symtab = parts.command;
+    data = parts.data;
+  } else if (spec.symtabBroken === true) {
+    symtab = symtabCommand(headerSize + commandsLength + 4096, 2, 0, 0);
+  }
+  const commands = [...fixed, ...(symtab === null ? [] : [symtab])];
+  const body = commandBytes(commands);
+  const header = Buffer.alloc(28);
+  header.writeUInt32LE(0xfeedface, 0);
+  header.writeUInt32LE(spec.cpu.type, 4);
+  header.writeUInt32LE(spec.cpu.subtype, 8);
+  header.writeUInt32LE(2, 12);
+  header.writeUInt32LE(commands.length, 16);
+  header.writeUInt32LE(body.length, 20);
+  return Buffer.concat([header, body, data]);
 };
 
 /** A FAT container wrapping the given slices at 0x1000-byte alignment. */
@@ -132,6 +266,12 @@ const inspectWithJoin = async (
         readonly status: string;
         readonly reason: string | null;
         readonly static_address: { readonly decimal: string } | null;
+        readonly symbol: {
+          readonly name: string;
+          readonly runtime_name: string | null;
+          readonly address: { readonly decimal: string };
+          readonly offset: { readonly decimal: string };
+        } | null;
       }[];
       readonly limitations: readonly string[];
     };
@@ -171,6 +311,7 @@ describe("Apple IPS Mach-O and dSYM join", () => {
       status: "joined",
       reason: null,
       static_address: { decimal: "4294968120", hex: "0x100000338" },
+      symbol: null,
     });
     expect(report.join.frames).toHaveLength(5);
     expect(report.join.frames.every(({ status }) => status === "joined")).toBe(
@@ -517,6 +658,7 @@ it("keeps a frame without imageOffset unjoined", async () => {
   expect(joinResult.frames[0]).toMatchObject({
     status: "unjoined",
     static_address: null,
+    symbol: null,
   });
 });
 
@@ -678,3 +820,120 @@ it.each(["S", "C"])(
     }
   },
 );
+
+describe("Apple IPS join symbol resolution", () => {
+  it("resolves joined frames to containing symbol-table symbols", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-symbols-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: ARM64,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+        symbols: [
+          { name: "_rea_fixture_fault", value: 0x10000032cn },
+          { name: "_main", value: 0x10000035cn },
+        ],
+      }),
+    );
+    expect(report.join.frames[0]).toEqual({
+      thread_index: 0,
+      frame_index: 0,
+      status: "joined",
+      reason: null,
+      static_address: { decimal: "4294968120", hex: "0x100000338" },
+      symbol: {
+        name: "_rea_fixture_fault",
+        runtime_name: "rea_fixture_fault",
+        address: { decimal: "4294968108", hex: "0x10000032c" },
+        offset: { decimal: "12", hex: "0xc" },
+      },
+    });
+    expect(report.join.frames[1]).toMatchObject({
+      status: "joined",
+      symbol: {
+        name: "_main",
+        runtime_name: "main",
+        address: { decimal: "4294968156", hex: "0x10000035c" },
+        offset: { decimal: "40", hex: "0x28" },
+      },
+    });
+    // The inlined frame has no symbol-table entry of its own; it resolves
+    // to the nearest preceding symbol in the same segment.
+    expect(report.join.frames[2]).toMatchObject({
+      status: "joined",
+      symbol: {
+        name: "_main",
+        offset: { decimal: "140", hex: "0x8c" },
+      },
+    });
+    expect(report.join.frames[4]).toMatchObject({
+      status: "joined",
+      symbol: {
+        name: "_main",
+        offset: { decimal: "240", hex: "0xf0" },
+      },
+    });
+    expect(report.join.limitations.join(" ")).not.toContain("LC_SYMTAB");
+  });
+
+  it("reports no symbol and a limitation when the slice has no symbol table", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-nosym-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+    );
+    expect(report.join.frames.every((frame) => frame.symbol === null)).toBe(
+      true,
+    );
+    expect(report.join.limitations.join(" ")).toContain(
+      "carries no LC_SYMTAB, so joined frames report no symbol",
+    );
+  });
+
+  it("reports no symbol when the symbol table lies outside the slice", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-badsym-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: ARM64,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+        symtabBroken: true,
+      }),
+    );
+    expect(report.join.frames.every((frame) => frame.symbol === null)).toBe(
+      true,
+    );
+    expect(report.join.limitations.join(" ")).toContain(
+      "symbol table is unusable",
+    );
+  });
+
+  it("resolves symbols in a 32-bit slice", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-sym32-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice32({
+        cpu: { type: 7, subtype: 3 },
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x1000n,
+        symbols: [
+          { name: "_rea_fixture_fault", value: 0x132cn },
+          { name: "_main", value: 0x135cn },
+        ],
+      }),
+      { arch: "i386" },
+    );
+    expect(report.join.frames[0]).toMatchObject({
+      status: "joined",
+      static_address: { decimal: "4920", hex: "0x1338" },
+      symbol: {
+        name: "_rea_fixture_fault",
+        runtime_name: "rea_fixture_fault",
+        address: { decimal: "4908", hex: "0x132c" },
+        offset: { decimal: "12", hex: "0xc" },
+      },
+    });
+  });
+});

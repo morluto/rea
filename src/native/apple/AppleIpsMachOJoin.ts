@@ -2,6 +2,7 @@ import { readMachoContainer } from "../../artifacts/apple/MachoLoadCommandReader
 import { readUniversalMachoSlice } from "../../domain/apple/machoImageSelection.js";
 import {
   readMachoLoadCommandTableHeader,
+  type MachoLoadCommandTableHeader,
   MachoLoadCommandCursor,
 } from "../../domain/apple/machoLoadCommands.js";
 import {
@@ -9,6 +10,12 @@ import {
   admitMachoSegmentCommand,
 } from "../../domain/apple/machoSegmentHeader.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
+import {
+  type AppleIpsJoinSegment,
+  type AppleIpsJoinSymbol,
+  appleIpsJoinFrameSymbol,
+  readAppleIpsJoinSymbols,
+} from "./AppleIpsSymbolTable.js";
 import {
   machoArchitectureName,
   machoKnownArm64Subtype,
@@ -23,6 +30,7 @@ import type { AppleIps, AppleIpsJoin } from "../../domain/native/appleIps.js";
  */
 
 const LC_SEGMENT = 0x1;
+const LC_SYMTAB = 0x2;
 const LC_SEGMENT_64 = 0x19;
 const LC_UUID = 0x1b;
 const MAX_SLICES = 64;
@@ -43,6 +51,9 @@ interface SliceIdentity {
   readonly cpuSubtype: number;
   readonly uuid: string | null;
   readonly textVmaddr: bigint | null;
+  readonly segments: readonly AppleIpsJoinSegment[];
+  readonly symbols: readonly AppleIpsJoinSymbol[];
+  readonly symbolIssue: string | null;
   readonly unexamined: readonly string[];
 }
 
@@ -104,6 +115,41 @@ const readSliceIdentities = async (bytes: Buffer): Promise<SliceParse> => {
   return { kind: "slices", slices };
 };
 
+interface SliceSegment {
+  readonly address: bigint;
+  readonly size: bigint;
+  readonly isText: boolean;
+}
+
+/** Admit one segment command; null when malformed or 32/64-bit mismatched. */
+const readSliceSegment = (
+  payload: Uint8Array,
+  command: number,
+  header: Pick<MachoLoadCommandTableHeader, "wide" | "littleEndian">,
+  imageBytes: number,
+): SliceSegment | null => {
+  const wide = command === LC_SEGMENT_64;
+  if (wide !== header.wide) return null;
+  const segment = readMachoSegmentHeader(payload, wide, header.littleEndian);
+  if (
+    !segment.ok ||
+    !admitMachoSegmentCommand(
+      segment.value,
+      payload.length,
+      wide ? 64 : 32,
+      imageBytes,
+    ).ok
+  )
+    return null;
+  return {
+    address: segment.value.address,
+    size: segment.value.memorySize,
+    isText:
+      segment.value.nameBytes.toString("utf8").replace(/\0.*$/su, "") ===
+      "__TEXT",
+  };
+};
+
 const sliceAt = (
   bytes: Buffer,
   offset: bigint,
@@ -116,6 +162,9 @@ const sliceAt = (
   let uuid: string | null = null;
   let uuidSeen = false;
   let textVmaddr: bigint | null = null;
+  let symtabCommand: Uint8Array | null = null;
+  let symtabSeen = false;
+  const segments: AppleIpsJoinSegment[] = [];
   for (;;) {
     const next = cursor.nextOffset;
     if (next === null) break;
@@ -128,37 +177,38 @@ const sliceAt = (
       uuidSeen = true;
       uuid = canonicalUuidBytes(payload.subarray(8, 24));
     }
+    if (frame.value.command === LC_SYMTAB) {
+      if (symtabSeen) return null;
+      symtabSeen = true;
+      symtabCommand = payload;
+    }
     if (
       frame.value.command === LC_SEGMENT ||
       frame.value.command === LC_SEGMENT_64
     ) {
-      const wide = frame.value.command === LC_SEGMENT_64;
-      if (wide !== header.wide) return null;
-      const segment = readMachoSegmentHeader(
+      const segment = readSliceSegment(
         payload,
-        wide,
-        header.littleEndian,
+        frame.value.command,
+        header,
+        bytes.length,
       );
-      if (
-        !segment.ok ||
-        !admitMachoSegmentCommand(
-          segment.value,
-          payload.length,
-          wide ? 64 : 32,
-          bytes.length,
-        ).ok
-      )
-        return null;
-      const name = segment.value.nameBytes
-        .toString("utf8")
-        .replace(/\0.*$/su, "");
-      if (name === "__TEXT") {
+      if (segment === null) return null;
+      segments.push({ address: segment.address, size: segment.size });
+      if (segment.isText) {
         if (textVmaddr !== null) return null;
-        textVmaddr = segment.value.address;
+        textVmaddr = segment.address;
       }
     }
   }
   if (!cursor.finish().ok) return null;
+  const symbolTable = readAppleIpsJoinSymbols({
+    bytes,
+    headerSize: header.headerSize,
+    wide: header.wide,
+    littleEndian: header.littleEndian,
+    symtabCommand,
+    segments,
+  });
   const { cpuType, cpuSubtype } = header.identity;
   return {
     index,
@@ -168,6 +218,14 @@ const sliceAt = (
     arch: machoArchitectureName(cpuType, cpuSubtype),
     uuid,
     textVmaddr,
+    segments,
+    symbols: symbolTable.kind === "symbols" ? symbolTable.symbols : [],
+    symbolIssue:
+      symbolTable.kind === "absent"
+        ? `slice ${String(index)} carries no LC_SYMTAB, so joined frames report no symbol`
+        : symbolTable.kind === "unusable"
+          ? `slice ${String(index)} symbol table is unusable: ${symbolTable.reason}; joined frames report no symbol`
+          : null,
     unexamined: [],
   };
 };
@@ -311,6 +369,13 @@ export const resolveAppleIpsJoin = async (
     matches.push(digest);
     matchedImage.set(image.index, digest);
   }
+  for (const slice of parsed.slices) {
+    if (
+      slice.symbolIssue !== null &&
+      matches.some((match) => match.slice_index === slice.index)
+    )
+      limitations.push(slice.symbolIssue);
+  }
   const frames = report.threads.flatMap((thread) =>
     thread.frames.map((frame) =>
       frameJoin(frame, thread.index, {
@@ -417,12 +482,31 @@ const frameJoin = (
       "frame records no imageOffset",
     );
   const staticAddress = context.read.add(digest.text_vmaddr, offset);
+  if (staticAddress === null)
+    return unjoined(
+      threadIndex,
+      frame.frame_index,
+      "frame static address could not be derived",
+    );
+  const slice = context.slices.find(
+    (candidate) => candidate.index === digest.slice_index,
+  );
+  const staticValue = BigInt(staticAddress.decimal);
   return {
     thread_index: threadIndex,
     frame_index: frame.frame_index,
     status: "joined",
     reason: null,
     static_address: staticAddress,
+    symbol:
+      slice === undefined
+        ? null
+        : appleIpsJoinFrameSymbol(
+            slice.symbols,
+            slice.segments,
+            staticValue,
+            (value) => context.read.recordedUnsigned64(value),
+          ),
   };
 };
 
@@ -436,4 +520,5 @@ const unjoined = (
   status: "unjoined",
   reason,
   static_address: null,
+  symbol: null,
 });
