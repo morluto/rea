@@ -470,7 +470,7 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "MFT inventory reports whole-stream counts and a bounded sample of the first 32 decoded FILE record headers, with the omitted-header count. Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
+      "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
   }),

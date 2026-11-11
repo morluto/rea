@@ -275,8 +275,6 @@ export const exportKunaProject = async (
   if (!listed.ok) return listed.outcome;
   const inventory = parseKunaInventory(listed.snapshot.stdout.text);
   if (!inventory.ok) return unusable(inventory.error);
-  if (listed.snapshot.stdout.invalidUtf8 === true)
-    return unusable("the function inventory is not valid UTF-8");
   await writeFile(
     join(request.output, INVENTORY_FILE),
     listed.snapshot.stdout.text,

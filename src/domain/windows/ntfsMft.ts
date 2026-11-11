@@ -1,3 +1,14 @@
+import {
+  decodeMftFileReference,
+  readMftAttributes,
+  type MftAttributeScan,
+  type MftAttributeListResolution,
+  type MftAttributeListEntry,
+  type MftAttribute,
+  MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT,
+  type MftFileReference,
+} from "./ntfsMftAttributes.js";
+export type { MftFileReference, MftFileName } from "./ntfsMftAttributes.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,
@@ -24,8 +35,8 @@ const USA_MIN_ENTRIES = 2;
 /** NTFS fixes up one 512-byte sector at a time. */
 export const FIXUP_SECTOR_BYTES = 512;
 /**
- * Fixed whole-file ceiling. Records are inventoried from their headers only;
- * attributes and their payloads are not decoded, so this is deliberately
+ * Fixed whole-file ceiling. Records and supported resident metadata are inventoried; no volume data
+ * is fetched, so this is deliberately
  * smaller than a volume's MFT can be.
  */
 export const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
@@ -72,24 +83,9 @@ export interface MftRecordFixups {
   readonly malformed: boolean;
 }
 
-export interface MftFileReference {
-  readonly recordNumber: number;
-  readonly sequenceNumber: number;
-}
-
-const decodeMftFileReference = (reference: bigint): MftFileReference => ({
-  recordNumber: Number(reference & 0xffff_ffff_ffffn),
-  sequenceNumber: Number(reference >> 48n),
-});
-
-export interface MftFileName {
-  readonly fileOffset: number;
-  readonly parent: MftFileReference;
-  readonly namespace: number;
-  readonly name: string;
-}
-
-export interface MftRecord {
+export interface MftRecord extends MftAttributeScan {
+  /** Derived links from a base record's attribute lists into this same acquisition. */
+  readonly attributeListResolution?: MftAttributeListResolution;
   /** Zero-based ordinal of this record in the stream. */
   readonly index: number;
   /** File offset where the record starts. */
@@ -117,13 +113,26 @@ export interface MftRecord {
   readonly logFileSequenceNumber: string;
   /** Declared offset of the first attribute. */
   readonly firstAttributeOffset: number;
-  /** Declared id of the next attribute; no attribute decoding follows yet. */
+  /** Declared id of the next attribute. */
   readonly nextAttributeId: number;
   readonly fixups: MftRecordFixups;
-  readonly fileNames: readonly MftFileName[];
-  /** An incomplete scan can still retain names from the valid prefix. */
-  readonly fileNameCoverage: "complete" | "incomplete";
 }
+
+/** Producer-owned identity validity; base/extension ownership is a separate relation. */
+export const hasVerifiedMftRecordIdentity = (
+  record: Pick<
+    MftRecord,
+    | "sequenceNumber"
+    | "extentValid"
+    | "recordNumberMatchesSlot"
+    | "fixups"
+    | "totalBytes"
+  >,
+): boolean =>
+  record.sequenceNumber !== 0 &&
+  record.extentValid &&
+  record.recordNumberMatchesSlot !== false &&
+  record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES === record.totalBytes;
 
 export interface MftInventory {
   readonly metadata: MftMetadata;
@@ -132,8 +141,13 @@ export interface MftInventory {
   readonly limitations: readonly string[];
 }
 
-export interface MftImage extends MftInventory {
-  readonly records: readonly MftRecord[];
+/** Journal joins need identity headers, without retaining every attribute payload. */
+export type MftRecordHeader = Omit<
+  MftRecord,
+  keyof MftAttributeScan | "attributeListResolution"
+>;
+export interface MftIndex extends MftInventory {
+  readonly records: readonly MftRecordHeader[];
 }
 
 export interface MftMetadata {
@@ -146,13 +160,14 @@ export interface MftMetadata {
   readonly fixup_mismatch_count: number;
   readonly fixup_unverified_record_count: number;
   readonly truncated_tail_bytes: number;
-  readonly record_headers: readonly Omit<
-    MftRecord,
-    "fileNames" | "fileNameCoverage"
-  >[];
+  readonly record_headers: readonly MftRecord[];
   readonly omitted_record_headers: number;
+  readonly record_header_start_index: number;
+  readonly next_record_header_index: number | null;
+  /** These aggregate counts cover physical records, without double-counting linked attributes. */
   readonly file_name_count: number;
   readonly file_name_incomplete_record_count: number;
+  readonly attribute_incomplete_record_count: number;
 }
 
 const text = (ascii: Uint8Array): string =>
@@ -224,21 +239,72 @@ export const hasMftFileRecordHeader = (prefix: Uint8Array): boolean => {
   );
 };
 
-/**
- * Parse FILE record headers and resident file names. A record with failed
- * fixups keeps its header facts; its attributes are left unread.
- */
-export const parseMftImage = (
+/** Retain only identity/header facts outside the fixed inline detail window. */
+export const parseMftIndex = (
   bytes: Uint8Array,
-): Result<MftImage, RegionDecodeFailure> => {
-  const records: MftRecord[] = [];
-  const inventory = scanMft(bytes, records);
+  startRecord = 0,
+  recordLimit = MFT_INLINE_HEADER_LIMIT,
+): Result<MftIndex, RegionDecodeFailure> => {
+  const records: MftRecordHeader[] = [];
+  const inventory = scanMft(
+    bytes,
+    ({
+      fileNames: _names,
+      fileNameCoverage: _nameCoverage,
+      attributes: _attributes,
+      attributeCoverage: _coverage,
+      attributeIssue: _issue,
+      attributeListResolution: _resolution,
+      ...header
+    }) => records.push(header),
+    { startRecord, recordLimit },
+  );
   return inventory.ok ? ok({ ...inventory.value, records }) : inventory;
+};
+
+/** Select bounded record details from the owning index and its unchanged acquisition. */
+export const selectMftMetadata = (
+  bytes: Uint8Array,
+  index: MftIndex,
+  startRecord: number,
+  recordLimit: number,
+): MftMetadata => {
+  let low = 0;
+  let high = index.records.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (index.records[middle]!.index < startRecord) low = middle + 1;
+    else high = middle;
+  }
+  const end = Math.min(
+    index.records.length,
+    low + Math.min(recordLimit, MFT_INLINE_HEADER_LIMIT),
+  );
+  const recordHeaders: MftRecord[] = [];
+  if (end > low) {
+    const restored = Buffer.allocUnsafe(index.recordBytes);
+    for (let position = low; position < end; position += 1)
+      recordHeaders.push(
+        readRecord(bytes, index.records[position]!.fileOffset, restored),
+      );
+  }
+  return {
+    ...index.metadata,
+    record_headers: resolveMftAttributeLists(
+      recordHeaders,
+      bytes,
+      index.recordBytes,
+    ),
+    omitted_record_headers: index.metadata.record_count - recordHeaders.length,
+    record_header_start_index: startRecord,
+    next_record_header_index: index.records[end]?.index ?? null,
+  };
 };
 
 const scanMft = (
   bytes: Uint8Array,
-  retainedRecords?: MftRecord[],
+  retainRecord?: (record: MftRecord) => void,
+  window = { startRecord: 0, recordLimit: MFT_INLINE_HEADER_LIMIT },
 ): Result<MftInventory, RegionDecodeFailure> => {
   if (bytes.length < NTFS_MFT_MIN_RECORD_BYTES)
     return err(
@@ -261,6 +327,7 @@ const scanMft = (
     );
 
   const recordHeaders: MftRecord[] = [];
+  let nextRecordHeaderIndex: number | null = null;
   let recordCount = 0;
   let inUseCount = 0;
   let directoryCount = 0;
@@ -269,6 +336,7 @@ const scanMft = (
   let unverifiedCount = 0;
   const restored = Buffer.allocUnsafe(recordBytes);
   let incompleteNames = 0;
+  let incompleteAttributes = 0;
   let fileNameCount = 0;
   let invalidSlots = 0;
   let invalidExtents = 0;
@@ -291,10 +359,13 @@ const scanMft = (
       continue;
     }
     const record = readRecord(bytes, offset, restored);
-    retainedRecords?.push(record);
+    retainRecord?.(record);
     fileNameCount += record.fileNames.length;
-    if (recordHeaders.length < MFT_INLINE_HEADER_LIMIT)
-      recordHeaders.push(record);
+    if (record.attributeCoverage === "incomplete") incompleteAttributes += 1;
+    if (record.index >= window.startRecord) {
+      if (recordHeaders.length < window.recordLimit) recordHeaders.push(record);
+      else nextRecordHeaderIndex ??= record.index;
+    }
     recordCount += 1;
     if (record.inUse) inUseCount += 1;
     if (record.directory) directoryCount += 1;
@@ -345,7 +416,7 @@ const scanMft = (
 
   if (incompleteNames > 0)
     limitations.push(
-      `File name coverage is incomplete for ${String(incompleteNames)} record(s)`,
+      `Local FILE_NAME coverage is incomplete for ${String(incompleteNames)} record(s)`,
     );
 
   const metadata: MftMetadata = {
@@ -358,16 +429,172 @@ const scanMft = (
     fixup_mismatch_count: mismatchCount,
     fixup_unverified_record_count: unverifiedCount,
     truncated_tail_bytes: truncatedTailBytes,
-    record_headers: recordHeaders.map(
-      ({ fileNames: _fileNames, fileNameCoverage: _coverage, ...header }) =>
-        header,
-    ),
+    record_headers: resolveMftAttributeLists(recordHeaders, bytes, recordBytes),
     omitted_record_headers: recordCount - recordHeaders.length,
+    record_header_start_index: window.startRecord,
+    next_record_header_index: nextRecordHeaderIndex,
     file_name_count: fileNameCount,
     file_name_incomplete_record_count: incompleteNames,
+    attribute_incomplete_record_count: incompleteAttributes,
   };
 
   return ok({ metadata, recordBytes, limitations });
+};
+
+/** Resolve only acquired attributes, with one bounded decoded-record cache per detail page. */
+const resolveMftAttributeLists = (
+  records: readonly MftRecord[],
+  bytes: Uint8Array,
+  recordBytes: number,
+): readonly MftRecord[] => {
+  const decoded = new Map(records.map((record) => [record.index, record]));
+  let additionalRecords = 0;
+  let scratch: Buffer | undefined;
+  type ReferenceResult =
+    MftAttributeListResolution["references"][number]["result"];
+  type UnresolvedReference = Extract<ReferenceResult, { kind: "unresolved" }>;
+  const unresolved = (
+    reason: UnresolvedReference["reason"],
+  ): UnresolvedReference => ({ kind: "unresolved", reason });
+  const selectRecord = (
+    index: number,
+  ): Result<MftRecord, UnresolvedReference> => {
+    const retained = decoded.get(index);
+    if (retained !== undefined) return ok(retained);
+    if (index >= Math.floor(bytes.length / recordBytes))
+      return err(unresolved("record-unavailable"));
+    const offset = index * recordBytes;
+    if (
+      !hasMftFileRecordSignature(
+        bytes.subarray(offset, offset + MFT_FILE_RECORD_MAGIC_BYTES),
+      )
+    )
+      return err(unresolved("record-unavailable"));
+    // At most another 32 records (2 MiB at the largest format record size), shared by this page.
+    if (additionalRecords >= MFT_INLINE_HEADER_LIMIT)
+      return err(unresolved("capacity"));
+    scratch ??= Buffer.allocUnsafe(recordBytes);
+    const record = readRecord(bytes, offset, scratch);
+    additionalRecords += 1;
+    decoded.set(index, record);
+    return ok(record);
+  };
+
+  return records.map((base): MftRecord => {
+    if (
+      base.baseRecordReference !== null ||
+      !base.attributes.some((attribute) => attribute.type === 0x20)
+    )
+      return base;
+    const references: MftAttributeListResolution["references"] = [];
+    const linkedAttributes: MftAttribute[] = [];
+    const linkedFileNames: MftAttributeListResolution["linkedFileNames"] = [];
+    const unreadLists = new Set<number>(),
+      incompleteRecords = new Set<number>();
+    const seenLists = new Set<number>(),
+      seenEntries = new Set<number>(),
+      seenAttributes = new Set<number>();
+    const queue: MftAttributeListEntry[] = [];
+    const baseVerified = hasVerifiedMftRecordIdentity(base);
+    let complete = baseVerified && base.attributeCoverage === "complete";
+    if (!complete) incompleteRecords.add(base.index);
+    const enqueueList = (attribute: MftAttribute): void => {
+      if (attribute.type !== 0x20 || seenLists.has(attribute.fileOffset))
+        return;
+      seenLists.add(attribute.fileOffset);
+      if (
+        attribute.storage.kind !== "resident" ||
+        attribute.storage.listEntries === null
+      ) {
+        unreadLists.add(attribute.fileOffset);
+        complete = false;
+        return;
+      }
+      if (attribute.storage.listIssue !== null) complete = false;
+      for (const entry of attribute.storage.listEntries) {
+        if (seenEntries.has(entry.fileOffset)) continue;
+        seenEntries.add(entry.fileOffset);
+        queue.push(entry);
+      }
+    };
+    for (const attribute of base.attributes) enqueueList(attribute);
+    const resolveEntry = (entry: MftAttributeListEntry): ReferenceResult => {
+      if (!baseVerified) return unresolved("unverified-base");
+      const selected = selectRecord(entry.reference.recordNumber);
+      if (!selected.ok) return selected.error;
+      const target = selected.value;
+      if (!hasVerifiedMftRecordIdentity(target))
+        return unresolved("unverified-record");
+      if (target.sequenceNumber !== entry.reference.sequenceNumber)
+        return unresolved("sequence-mismatch");
+      if (
+        target.index !== base.index &&
+        (target.baseRecordReference?.recordNumber !== base.index ||
+          target.baseRecordReference.sequenceNumber !== base.sequenceNumber)
+      )
+        return unresolved("base-reference-mismatch");
+      if (target.attributeCoverage !== "complete") {
+        incompleteRecords.add(target.index);
+        complete = false;
+      }
+      const candidates = target.attributes.filter(
+        (attribute) =>
+          attribute.type === entry.type &&
+          attribute.id === entry.attributeId &&
+          attribute.name === entry.name &&
+          (attribute.storage.kind === "resident"
+            ? entry.lowestVcn === "0"
+            : attribute.storage.lowestVcn === entry.lowestVcn),
+      );
+      if (candidates.length === 0) return unresolved("attribute-unavailable");
+      if (candidates.length !== 1)
+        return { kind: "ambiguous", candidateCount: candidates.length };
+      const attribute = candidates[0]!;
+      if (
+        target.index !== base.index &&
+        !seenAttributes.has(attribute.fileOffset)
+      ) {
+        seenAttributes.add(attribute.fileOffset);
+        linkedAttributes.push(attribute);
+        if (attribute.type === 0x30 && attribute.storage.kind === "resident") {
+          const valueOffset = attribute.storage.valueFileOffset;
+          linkedFileNames.push(
+            ...target.fileNames.filter(
+              (name) => name.fileOffset === valueOffset,
+            ),
+          );
+        }
+      }
+      enqueueList(attribute);
+      return { kind: "resolved", attributeFileOffset: attribute.fileOffset };
+    };
+    for (
+      let cursor = 0;
+      cursor < queue.length &&
+      references.length < MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT;
+      cursor += 1
+    ) {
+      const entry = queue[cursor]!;
+      const result = resolveEntry(entry);
+      if (result.kind !== "resolved") complete = false;
+      references.push({ listEntryFileOffset: entry.fileOffset, result });
+    }
+    const omittedKnownEntries = queue.length - references.length;
+    return {
+      ...base,
+      attributeListResolution: {
+        coverage:
+          complete && omittedKnownEntries === 0 ? "complete" : "incomplete",
+        knownEntryCount: queue.length,
+        omittedKnownEntries,
+        unreadListAttributeOffsets: [...unreadLists],
+        incompleteRecordIndices: [...incompleteRecords],
+        references,
+        linkedAttributes,
+        linkedFileNames,
+      },
+    };
+  });
 };
 
 const readRecord = (
@@ -411,21 +638,31 @@ const readRecord = (
     firstAttributeOffset % 8 === 0 &&
     firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
     firstAttributeOffset + 4 <= usedBytes &&
-    (!usaLayoutValid ||
-      firstAttributeOffset >= usaOffset + fixups.entries * 2);
-  const fileNames: MftFileName[] = [];
-  const completeNames =
+    (!usaLayoutValid || firstAttributeOffset >= usaOffset + fixups.entries * 2);
+  let attributes: MftAttributeScan = {
+    attributeIssue: null,
+    fileNames: [],
+    attributes: [],
+    fileNameCoverage: "incomplete",
+    attributeCoverage: "incomplete",
+  };
+  if (
     fixups.verifiedSectors === recordBytes / FIXUP_SECTOR_BYTES &&
-    extentValid &&
-    readFileNames(
-      record,
-      view,
+    extentValid
+  ) {
+    restored.set(record);
+    for (let sector = 1; sector <= fixups.verifiedSectors; sector += 1)
+      restored.writeUInt16LE(
+        view.getUint16(usaOffset + sector * 2, true),
+        sector * FIXUP_SECTOR_BYTES - 2,
+      );
+    attributes = readMftAttributes(
       restored,
       firstAttributeOffset,
       usedBytes,
       fileOffset,
-      fileNames,
     );
+  }
 
   const declaredRecordNumber =
     usaLayoutValid && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
@@ -456,78 +693,8 @@ const readRecord = (
     firstAttributeOffset,
     nextAttributeId: view.getUint16(RECORD_HEADER.nextAttributeId, true),
     fixups,
-    fileNames,
-    fileNameCoverage: completeNames ? "complete" : "incomplete",
+    ...attributes,
   };
-};
-
-const ATTRIBUTE_END = 0xffff_ffff;
-const ATTRIBUTE_LIST = 0x20;
-const ATTRIBUTE_FILE_NAME = 0x30;
-const RESIDENT_HEADER_BYTES = 24;
-const FILE_NAME_HEADER_BYTES = 66;
-
-const readFileNames = (
-  record: Uint8Array,
-  raw: DataView,
-  restored: Buffer,
-  firstAttributeOffset: number,
-  usedBytes: number,
-  fileOffset: number,
-  names: MftFileName[],
-): boolean => {
-  restored.set(record.subarray(0, usedBytes));
-  const usaOffset = raw.getUint16(RECORD_HEADER.updateSequenceOffset, true);
-  for (
-    let end = FIXUP_SECTOR_BYTES;
-    end <= usedBytes + 1;
-    end += FIXUP_SECTOR_BYTES
-  )
-    restored.writeUInt16LE(
-      raw.getUint16(usaOffset + 2 * (end / FIXUP_SECTOR_BYTES), true),
-      end - 2,
-    );
-
-  let hasAttributeList = false;
-  for (let offset = firstAttributeOffset; offset + 4 <= usedBytes;) {
-    const type = restored.readUInt32LE(offset);
-    if (type === ATTRIBUTE_END) return !hasAttributeList;
-    if (offset + RESIDENT_HEADER_BYTES > usedBytes) return false;
-    const length = restored.readUInt32LE(offset + 4);
-    const form = restored.readUInt8(offset + 8);
-    const headerBytes = form === 0 ? RESIDENT_HEADER_BYTES : 64;
-    if (
-      form > 1 ||
-      length < headerBytes ||
-      length % 8 !== 0 ||
-      offset + length > usedBytes
-    )
-      return false;
-    if (type === ATTRIBUTE_LIST) hasAttributeList = true;
-    if (type === ATTRIBUTE_FILE_NAME) {
-      if (form !== 0) return false;
-      const valueLength = restored.readUInt32LE(offset + 16);
-      const valueOffset = restored.readUInt16LE(offset + 20);
-      if (
-        valueOffset < headerBytes ||
-        valueLength < FILE_NAME_HEADER_BYTES ||
-        valueOffset + valueLength > length
-      )
-        return false;
-      const value = offset + valueOffset;
-      const nameBytes = restored.readUInt8(value + 64) * 2;
-      if (FILE_NAME_HEADER_BYTES + nameBytes > valueLength) return false;
-      const nameStart = value + FILE_NAME_HEADER_BYTES;
-      names.push({
-        fileOffset: fileOffset + value,
-        parent: decodeMftFileReference(restored.readBigUInt64LE(value)),
-        namespace: restored.readUInt8(value + 65),
-        name: restored.toString("utf16le", nameStart, nameStart + nameBytes),
-      });
-    }
-    offset += length;
-  }
-  return false;
 };
 
 /**

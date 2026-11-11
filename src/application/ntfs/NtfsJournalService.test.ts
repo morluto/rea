@@ -127,6 +127,7 @@ it("retains both acquisitions through a failed journal close and cleanup retry",
       {
         mft_path: mftPath,
         journal_path: journalPath,
+        mft_record_limit: 1,
       },
       resources,
     );
@@ -137,7 +138,10 @@ it("retains both acquisitions through a failed journal close and cleanup retry",
       kind: "ntfs-journal-partial",
       mft: {
         sha256: createHash("sha256").update(mft).digest("hex"),
-        metadata: { record_count: 1 },
+        metadata: {
+          record_count: 1,
+          record_headers: [{ index: 0, attributeCoverage: "complete" }],
+        },
       },
       journal_observation: {
         kind: "file-snapshot-hash",

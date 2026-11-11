@@ -36,6 +36,12 @@ export const registerNtfsJournalCommand = (
         ntfsJournalInputSchema.shape.start_file_offset,
       ),
       maxRows: cliDecimalField(ntfsJournalInputSchema.shape.max_rows),
+      mftRecordLimit: cliDecimalField(
+        ntfsJournalInputSchema.shape.mft_record_limit,
+      ),
+      mftRecordStart: cliDecimalField(
+        ntfsJournalInputSchema.shape.mft_record_start,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -53,6 +59,8 @@ export const registerNtfsJournalCommand = (
                   journal_path: absoluteCallerPath(args.journalPath),
                   start_file_offset: options.startFileOffset,
                   max_rows: options.maxRows,
+                  mft_record_start: options.mftRecordStart,
+                  mft_record_limit: options.mftRecordLimit,
                 },
                 resources,
                 signal,
