@@ -415,7 +415,10 @@ describe("GraphQL operation recognition", () => {
     "query GetUser # prose\nparameters",
     "query Get# split name\nUser { user }",
     "query GetUser @ # missing directive name",
-    "query GetUser { # fragment\n...UserFields }",
+    "query GetUser { # missing fragment name\n... }",
+    "query GetUser { ... on }",
+    "query GetUser { ... @ }",
+    "query GetUser { ....UserFields }",
     "query\u00a0GetUser { user }",
     "query\vGetUser { user }",
   ])("keeps incomplete or unsupported header text unknown: %s", (text) => {

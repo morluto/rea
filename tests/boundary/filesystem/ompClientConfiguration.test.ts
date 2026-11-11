@@ -22,7 +22,7 @@ const ompPath = (env: Parameters<typeof supportedClients>[2]) =>
 
 describe("OMP configuration paths", () => {
   it("uses the default agent directory and OMP's environment overrides", () => {
-    expect(ompPath({})).toEqual({
+    expect(ompPath({})).toMatchObject({
       name: "omp",
       displayName: "OMP",
       configPath: "/home/a/.omp/agent/mcp.json",

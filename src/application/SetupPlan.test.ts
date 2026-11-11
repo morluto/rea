@@ -12,6 +12,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../tests/support/workspace/workspaceFixture.js";
+import { supportedClientRegistrationProfile } from "./SupportedClients.js";
 
 /** Keep a workspace child under its root before any filesystem call. */
 const pathInside = (root: string, ...parts: string[]): string => {
@@ -75,7 +76,13 @@ it.skipIf(process.platform === "win32")(
     ]);
     await rm(alias);
     const host = new FakeSetupHost();
-    host.clients = [{ name: "cursor", configPath }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath,
+      },
+    ];
     const discovery = await discoverSetupState({
       host,
       providerConfigured: true,
@@ -139,7 +146,13 @@ it.each([
       }),
     );
     const host = new FakeSetupHost();
-    host.clients = [{ name: "cursor", configPath }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath,
+      },
+    ];
     const discovery = await discoverSetupState({
       host,
       providerConfigured: true,
@@ -184,9 +197,14 @@ it("offers detected missing and manual clients without treating absent launcher 
   );
   const host = new FakeSetupHost();
   host.clients = [
-    { name: "cursor", configPath },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath,
+    },
     {
       name: "grok_bot",
+      registrationProfile: supportedClientRegistrationProfile("grok_bot"),
       configPath: grokbotPath,
       format: "unsupported",
     },
@@ -201,7 +219,7 @@ it("offers detected missing and manual clients without treating absent launcher 
   expect(discovery.defaultClientIds).toEqual([]);
   expect(discovery.clientStates).toEqual([
     expect.objectContaining({
-      client: { name: "cursor", configPath },
+      client: host.clients[0],
       status: "needs_configuration",
       configured: false,
     }),

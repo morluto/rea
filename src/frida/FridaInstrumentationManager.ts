@@ -1537,6 +1537,11 @@ const boundedJsonValue = (
           break;
         }
         const key = boundedKey.value;
+        // Redaction can collapse source names; never replace a retained fact.
+        if (Object.hasOwn(output, key)) {
+          limit ??= "unrepresentable";
+          break;
+        }
         const keyBytes = jsonStringByteLength(key) + 1;
         const remaining = budget - usedBytes - separatorBytes - keyBytes - 1;
         if (remaining < 8) {

@@ -297,6 +297,7 @@ interface Attribute {
   readonly oid: string;
   readonly oid_name: string | null;
   readonly value: string;
+  readonly rdn_index: number;
 }
 
 const decodeName = (
@@ -307,7 +308,7 @@ const decodeName = (
   readonly attributes: readonly Attribute[];
 } => {
   const attributes: Attribute[] = [];
-  for (const rdn of sequence(node, "Name")) {
+  for (const [rdnIndex, rdn] of sequence(node, "Name").entries()) {
     if (rdn.tag !== 0x31) return fail("Name RDN is not a SET.");
     if (rdn.children.length === 0) return fail("Name RDN is empty.");
     for (const attribute of rdn.children) {
@@ -327,16 +328,29 @@ const decodeName = (
         oid,
         oid_name: oidName(oid),
         value: decodeDirectoryString(valueNode, budget),
+        rdn_index: rdnIndex,
       });
     }
   }
-  const text = attributes
-    .map((attribute) => {
-      const key = attribute.oid_name ?? attribute.oid;
-      return `${key}=${attribute.value}`;
-    })
-    .join(", ");
-  return { text, attributes };
+  // RFC 4514 joins one RDN's attributes with "+" and RDNs with a comma.
+  // Keep encoded order: reversing RDNs would change every existing name.
+  const renderedRdns: string[] = [];
+  let openRdn = -1;
+  let openAttributes: string[] = [];
+  const finishRdn = (): void => {
+    if (openAttributes.length > 0) renderedRdns.push(openAttributes.join("+"));
+  };
+  for (const attribute of attributes) {
+    if (attribute.rdn_index !== openRdn) {
+      finishRdn();
+      openRdn = attribute.rdn_index;
+      openAttributes = [];
+    }
+    const key = attribute.oid_name ?? attribute.oid;
+    openAttributes.push(`${key}=${attribute.value}`);
+  }
+  finishRdn();
+  return { text: renderedRdns.join(", "), attributes };
 };
 
 // RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and

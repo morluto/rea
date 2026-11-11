@@ -1,3 +1,10 @@
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
 import {
@@ -27,12 +34,17 @@ import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
+  kunaCopyFailureFacts,
   KUNA_INVENTORY_OUTPUT_BYTES,
   kunaFileCleanupError,
   runKunaCommand,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
-import { kunaProjectDeadline } from "./KunaConfiguration.js";
+import {
+  kunaProjectDeadline,
+  type KunaConfiguration,
+  type KunaDeadline,
+} from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import { KUNA_DIAGNOSTIC_BYTES } from "./KunaLimits.js";
 import {
@@ -51,6 +63,12 @@ import {
 
 /** Operation name every export and cache failure reports. */
 export const KUNA_EXPORT_OPERATION = "kuna:decompile-project";
+
+/** The deadline an export already accepted, otherwise the current snapshot. */
+export const acceptedExportDeadline = (
+  configuration: KunaConfiguration,
+  retained?: KunaDeadline,
+): KunaDeadline => retained ?? kunaProjectDeadline(configuration);
 
 const INVENTORY_FILE = "functions.json";
 
@@ -131,12 +149,15 @@ export interface KunaExportRequest {
   /** Directory, inside the workspace, that receives the export's files. */
   readonly output: string;
   readonly signal: AbortSignal;
+  readonly copyResources: ArtifactResourceScope;
   readonly retainFailedFileClose: (
     owner: OwnedFileHandle,
     resource: string,
   ) => void;
   readonly onStatus: (status: KunaExportStatus) => void;
   readonly launcher?: KunaProcessLauncher | undefined;
+  /** Deadline accepted when the export started. Later setting changes do not rewrite it. */
+  readonly deadline?: KunaDeadline;
 }
 
 const message = (cause: unknown): string =>
@@ -152,6 +173,36 @@ export const kunaExportFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
 ): AnalysisError => {
+  if (cause instanceof ArtifactReaderFailure) {
+    const { completion } = kunaCopyFailureFacts(cause);
+    const primary =
+      cause.reason === "cancelled" || completion?.cancellation !== undefined
+        ? new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
+            cause:
+              completion?.cancellation === undefined
+                ? artifactFileCancellationCause(cause)
+                : completion.cancellation.reason,
+          })
+        : new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+            cause,
+            userMessage: `Kuna project cache failed: ${message(cause)}`,
+          });
+    if (cause.cleanup === undefined) return primary;
+    const cleanup = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      cause.cleanup.resources,
+      { reason: cause.cleanup.reason },
+      { cause, operation: KUNA_EXPORT_OPERATION },
+    );
+    bindArtifactFileCleanup(cause, cleanup);
+    if (completion !== undefined && completion.cancellation === undefined)
+      return cleanup;
+    return analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      KUNA_EXPORT_OPERATION,
+    ).bindCleanupDependencies([cleanup]);
+  }
   if (cause instanceof RegularFileCleanupFailure)
     return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
   const cancellation = regularFileCancellation(cause);
@@ -215,12 +266,19 @@ export const exportKunaProject = async (
 ): Promise<KunaExportOutcome> => {
   const { installation, signal } = request;
   const { configuration } = installation;
-  const deadline = Date.now() + configuration.projectTimeoutMs;
+  const acceptedDeadline = acceptedExportDeadline(
+    configuration,
+    request.deadline,
+  );
+  const deadline = Date.now() + acceptedDeadline.ms;
   const input = join(request.workspace, "input", basename(request.targetPath));
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
   await mkdir(request.output, { recursive: true, mode: 0o700 });
 
-  const copied = await copyAndHash(request.targetPath, input, signal);
+  const copied = await copyAndHash(request.targetPath, input, {
+    signal,
+    resources: request.copyResources,
+  });
   if (copied.sha256 !== request.targetSha256)
     return {
       kind: "done",
@@ -240,7 +298,7 @@ export const exportKunaProject = async (
       workspace: request.workspace,
       operation: KUNA_EXPORT_OPERATION,
       timeoutMs: deadline - Date.now(),
-      deadline: kunaProjectDeadline(configuration),
+      deadline: acceptedDeadline,
       outputBytes,
       signal,
       launcher: request.launcher,

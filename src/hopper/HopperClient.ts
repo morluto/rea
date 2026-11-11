@@ -22,6 +22,7 @@ import {
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
@@ -104,6 +105,12 @@ export interface HopperClientOptions {
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
+  /** Selection owner for the startup deadline. Absent when the caller did not record it. */
+  readonly readStartupTimeoutSource?: () =>
+    | "default"
+    | "setting"
+    | "runtime"
+    | undefined;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
@@ -451,14 +458,20 @@ export class HopperClient {
           new HopperProtocolError("Hopper client is already started"),
       );
     }
+    let startupTimeoutMs: number;
+    try {
+      startupTimeoutMs =
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs;
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
     this.#operationFailure = undefined;
     this.#startupFailureResult = undefined;
     this.#resources.shutdownConfirmed = false;
     this.#resources.externalApplication = undefined;
-    const deadline = new ProviderStartupDeadline(
-      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
-      signal,
-    );
+    const deadline = new ProviderStartupDeadline(startupTimeoutMs, signal);
     this.#startupOutcome = undefined;
     this.#startupSignal = deadline.signal;
     const onStartupAbort = (): void => {
@@ -980,7 +993,7 @@ export class HopperClient {
         limit: analysisSettingLimit(
           "hopper.startup_timeout_ms",
           deadline.timeoutMs,
-          undefined,
+          this.#options.readStartupTimeoutSource?.(),
         ),
       },
     );
