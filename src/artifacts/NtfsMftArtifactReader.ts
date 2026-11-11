@@ -11,7 +11,10 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  artifactReadCancelledBy,
+  assertArtifactReadActive,
+} from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -25,7 +28,9 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   readonly format = "ntfs-mft" as const;
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+  #prepared:
+    | { signal: AbortSignal | undefined; promise: Promise<void> }
+    | undefined;
   #metadata: ArtifactFormatMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
@@ -54,8 +59,28 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      for (;;) {
+        const pending = (this.#prepared ??= {
+          signal,
+          promise: this.#prepare(signal),
+        });
+        try {
+          await pending.promise;
+          break;
+        } catch (cause: unknown) {
+          if (this.#prepared === pending) this.#prepared = undefined;
+          if (
+            pending.signal !== signal &&
+            signal?.aborted !== true &&
+            artifactReadCancelledBy(cause, pending.signal)
+          ) {
+            this.#assertOpen(signal);
+            continue;
+          }
+          throw cause;
+        }
+      }
+      this.#assertOpen(signal);
     });
     // An MFT declares no members, so the root occurrence is the whole
     // inventory; the coverage callback reports what its parse did not establish.
