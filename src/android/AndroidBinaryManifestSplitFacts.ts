@@ -182,6 +182,13 @@ const walkChunks = (
     if (!visit(chunk)) return ok(null);
     start += chunk.chunkSize;
   }
+  // A trailing run shorter than a chunk header is a truncated next chunk, not
+  // the end of the document: its declarations cannot be read as absent.
+  if (start !== declared)
+    return err({
+      kind: "malformed",
+      message: "The binary XML document ends inside a chunk header.",
+    });
   return ok(null);
 };
 
@@ -209,6 +216,9 @@ const readStartElement = (
   // that advertises less than that places the name and attribute base outside
   // its own header, so its declarations can only be read as absent.
   if (headerSize < RES_XML_NODE_HEADER) return null;
+  // The name and the whole attrExt must sit inside this chunk, or the reads
+  // below reconstruct a cut-off root from the member's trailing bytes.
+  if (RES_XML_NODE_HEADER + RES_XML_ATTR_EXT > chunkSize) return null;
   const attributeStart = reader.u16(start + 24);
   const attributeSize = reader.u16(start + 26);
   const attributeCount = reader.u16(start + 28);
@@ -343,10 +353,15 @@ export const readAndroidBinaryManifestSplitFacts = (
       attribute.dataType === TYPE_STRING
         ? (strings[attribute.data] ?? null)
         : attribute.raw;
+    // A canonical resource ID identifies the framework attribute whether or not
+    // its namespace and name strings survived; only the spelling fallback needs
+    // them, so it stays restricted to the Android namespace.
+    const all = [...manifest.attributes, ...(application?.attributes ?? [])];
     const find = (resourceId: number, name: string) =>
-      android.find(
+      all.find((attribute) => attribute.resourceId === resourceId) ??
+      all.find(
         (attribute) =>
-          attribute.resourceId === resourceId || attribute.name === name,
+          attribute.namespace === ANDROID_NS && attribute.name === name,
       );
     const requiredSplitTypes = find(
       REQUIRED_SPLIT_TYPES_ID,
