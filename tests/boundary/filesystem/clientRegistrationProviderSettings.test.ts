@@ -273,6 +273,39 @@ it("folds recorded environment names on Windows", () => {
   ).toBeUndefined();
 });
 
+it("compares selected Windows aliases once using the winning caller spelling", () => {
+  const servers = { rea: { env: { JAVA_HOME: "/opt/jdk" } } };
+  const observed: [string, string][] = [];
+  const owned: [string, string][] = [];
+  expect(
+    recordedProviderSettings(
+      {
+        document: { mcpServers: servers },
+        servers,
+        serversPath: ["mcpServers"],
+        dialect: "json",
+        environmentKey: "env",
+        legacyServers: {},
+      },
+      undefined,
+      { JAVA_HOME: "/overridden", java_home: "/opt/jdk" },
+      "win32",
+      (name, value) => {
+        owned.push([name, value]);
+        return true;
+      },
+      (name, value) => observed.push([name, value]),
+    ),
+  ).toEqual({
+    unrecorded: [],
+    differing: [],
+    unresolved: [],
+    owned: ["java_home"],
+  });
+  expect(observed).toEqual([["java_home", "/opt/jdk"]]);
+  expect(owned).toEqual(observed);
+});
+
 it("does not treat a map it could not read as absent", () => {
   const servers = { rea: { env: { GHIDRA_INSTALL_DIR: 1 } } };
   expect(

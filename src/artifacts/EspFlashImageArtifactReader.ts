@@ -268,19 +268,24 @@ const regionEntry = (
   encrypted: false,
   // A partition past the end holds no bytes: its entry is the empty range
   // at the end of the file, which opens as an empty stream without a read.
-  byteOffset: Math.min(region.fileOffset, fileSize),
+  // A zero-byte partition before the selected origin also has no file bytes.
+  // Its offset is clamped to the start of the carrier so provenance stays
+  // nonnegative.
+  byteOffset: Math.min(Math.max(region.fileOffset, 0), fileSize),
   declaredIntegrity: null,
   unpacked: false,
   limitations:
-    region.available === 0
-      ? [
-          `${region.path} lies outside the dump: the file holds none of its ${String(region.length)} bytes.`,
-        ]
-      : region.available < region.length
+    region.availability === "empty"
+      ? [`${region.path} declares zero bytes.`]
+      : region.availability === "missing"
         ? [
-            `${region.path} is truncated: the dump holds ${String(region.available)} of its ${String(region.length)} bytes.`,
+            `${region.path} lies outside the dump: the file holds none of its ${String(region.length)} bytes.`,
           ]
-        : [],
+        : region.availability === "truncated"
+          ? [
+              `${region.path} is truncated: the dump holds ${String(region.available)} of its ${String(region.length)} bytes.`,
+            ]
+          : [],
   adapterKey: `esp-flash-image:${region.path}`,
   ...(region.partition === undefined
     ? {}

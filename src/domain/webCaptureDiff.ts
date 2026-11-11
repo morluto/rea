@@ -215,6 +215,8 @@ const compareWebCaptureDimensions = (
       after.resources,
       sectionsComplete(before, ["resources"]),
       sectionsComplete(after, ["resources"]),
+      resourceInventoryReadable(before),
+      resourceInventoryReadable(after),
     ),
     network: networkDimension(before, after),
     metadata: compareAggregate(
@@ -231,14 +233,24 @@ const compareWebCaptureDimensions = (
   };
 };
 
+/** An invalid or unread collection is not a truncated sample of a real inventory. */
+const resourceInventoryReadable = (inspection: WebPageInspection): boolean =>
+  !inspection.completeness.unavailable_sections.includes("resources");
+
 const compareResources = (
   before: WebPageInspection["resources"],
   after: WebPageInspection["resources"],
   beforeComplete: boolean,
   afterComplete: boolean,
+  beforeReadable: boolean,
+  afterReadable: boolean,
 ): Dimension => {
   const reason =
     "Resource inventory or content-size evidence was incomplete in at least one observation.";
+  // Retained rows from an unavailable collection cannot prove addition,
+  // removal, or equality. Truncation still uses directional coverage.
+  if (!beforeReadable || !afterReadable)
+    return { status: "unknown", total_changes: 0, changes: [], reason };
   const complete = beforeComplete && afterComplete;
   const left = resourceGroups(before);
   const right = resourceGroups(after);

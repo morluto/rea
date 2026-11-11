@@ -143,6 +143,50 @@ describe.skipIf(process.platform !== "linux")(
 describe.skipIf(process.platform === "win32")(
   "runDesktopSession stderr",
   () => {
+    it.each([
+      { fails: false, cancelAt: "cleanup" },
+      { fails: true, cancelAt: "cleanup" },
+      { fails: false, cancelAt: "exit" },
+    ])(
+      "preserves the session outcome when cancellation arrives during $cancelAt (checkpoint fails: $fails)",
+      async ({ fails, cancelAt }) => {
+        const root = await createTestTempDirectory(
+          "desktop-session-final-cancel-",
+        );
+        const controller = new AbortController();
+        const reason = new Error("cancelled during cleanup");
+        const failure = new Error("stop checkpoint failed");
+        const terminate = vi.mocked(terminateTokenOwnedProcesses);
+        terminate.mockImplementationOnce(async (...args) => {
+          if (cancelAt === "cleanup") controller.abort(reason);
+          const original = await vi.importActual<
+            typeof import("../process/TokenOwnedTermination.js")
+          >("../process/TokenOwnedTermination.js");
+          return original.terminateTokenOwnedProcesses(...args);
+        });
+        const checkpoints: string[] = [];
+        const result = await runDesktopSession({
+          ...shellPlan(root, "exit 0"),
+          signal: controller.signal,
+          nextRequest: () => ({ kind: "stop" }),
+          checkpoint: async (name) => {
+            checkpoints.push(name);
+            if (cancelAt === "exit" && name === "exit")
+              controller.abort(reason);
+            if (fails) throw failure;
+          },
+        }).catch((cause: unknown) => cause);
+        if (fails) expect(result).toBe(failure);
+        else
+          expect(result).toMatchObject({
+            session: { end_reason: "cancelled", cleanup: { verified: true } },
+          });
+        expect(checkpoints).toEqual(
+          cancelAt === "exit" ? ["stop", "exit"] : ["stop"],
+        );
+      },
+    );
+
     it("keeps the end of an app's stderr when it writes more than the session keeps", async () => {
       const root = await createTestTempDirectory("desktop-session-stderr-");
       const cause =

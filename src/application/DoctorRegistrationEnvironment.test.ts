@@ -29,6 +29,7 @@ const recordingHost = (overrides: Partial<DoctorHost>) => {
           {
             client: "cursor",
             config_path: "/home/user/.cursor/mcp.json",
+            command_identity: "owned",
             command: ["/current/rea", "mcp"],
             state: "aligned",
             remediation: null,
@@ -164,6 +165,7 @@ it("states each comparison result without a claim it did not establish", async (
           {
             client: "cursor",
             config_path: "/cursor.json",
+            command_identity: "owned",
             command: ["/current/rea", "mcp"],
             state: "aligned",
             remediation: null,

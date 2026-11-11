@@ -1289,6 +1289,50 @@ backing up client settings or starting registration. Its `--agent` and
 `--command`/`-c` options accept spaced and equals forms. Values must be nonempty; a following flag does not satisfy a spaced option's
 missing value.
 
+Registration command text is a launcher format, not a shell program. ASCII spaces
+separate words; single and double quotes delimit adjacent fragments of a word.
+Backslashes, tabs, variables and shell punctuation are literal data. Quoted empty
+arguments are preserved, including an empty argument after the executable. An
+empty executable, unfinished quote or NUL character fails before registration. For example:
+
+```sh
+rea mcp add --agent cursor --command '"/path with spaces/server" "" --mcp' --json
+```
+
+The registered executable is `/path with spaces/server`, with arguments `""` and
+`--mcp`. Windows backslashes use the same literal rules after the invoking shell
+has passed the option value. With no `--command`, REA uses its exact current
+runtime and entrypoint arguments without converting them to text and parsing them
+again. No package acquisition or server execution occurs during registration.
+`--no-global` refuses any selection requiring global storage before writing files.
+
+`rea mcp add --schema --json` returns the named input and output JSON Schemas.
+Successful and partial registration reports contain the exact `command`, `args`
+and a `clients` outcome list. `ok` is true only when every selected client is
+configured or unchanged. Failed clients retain actionable errors; cancellation
+marks remaining clients `not_started`. A failed client does not erase a successful
+sibling's receipt. Existing settings and environment overrides survive refresh;
+backups identify the original bytes, and identical repeats create no new backup.
+Client IDs are case-insensitive for the helper-compatible catalog; documented
+aliases include `droid`/`factory`, `gemini`, `grok`, `kilo`/`kilocode`, `kimi`,
+`kiro`, `mastra`, `pi-agent`, `hermes-agent`, `cline-vscode`, and
+`codeium`/`cascade`. `github-copilot` selects VS Code; use
+`github-copilot-cli` for Copilot CLI. Amp uses `--agent amp`.
+
+Kilo project registration follows its native configuration layers and requires a
+verified Git worktree. Selected `KILO_CONFIG`, `KILO_CONFIG_DIR` and
+`KILO_CONFIG_CONTENT` overrides remain authoritative. A conflicting higher-priority
+source must be updated before registration can succeed; readonly layers are never
+copied into the selected file. An unknown project root fails before writing and
+does not fall back to global settings.
+
+`rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
+executable position is refused before any settings change; configure remote MCP
+transport in the client's own settings. Earlier delegated registration could
+interpret a URL as remote transport for some clients while storing it as an
+executable for Amp. That inconsistent URL interpretation and package acquisition
+are removed. Launcher arguments that happen to contain URLs remain arguments.
+
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
 bytes as text, omitting a final UTF-8 code point if it crosses that byte limit.

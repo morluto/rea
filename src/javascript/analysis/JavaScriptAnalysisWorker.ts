@@ -401,12 +401,15 @@ export class JavaScriptAnalysisWorker {
               OPERATION,
               "JavaScript worker emitted a duplicate static checkpoint",
             );
+          const previousPhase = this.#phase;
+          this.#phase = "checkpoint-read";
           javascript = await this.#readCheckpoint(
             id,
             file.path,
             sourceIndex,
             response,
           );
+          this.#phase = previousPhase;
           const exhausted = this.#parentCapacityFailure(file.path);
           if (exhausted !== undefined) throw exhausted;
           offeredResultBudget =
@@ -948,7 +951,7 @@ export class JavaScriptAnalysisWorker {
         limit: analysisSettingLimit(
           "javascript.max_heap_mb",
           this.limits.heapMb,
-          undefined,
+          this.limits.heapSource,
         ),
         remediationAction: javaScriptWorkerHeapRemediation(this.limits.heapMb),
       },
@@ -1147,7 +1150,7 @@ export class JavaScriptAnalysisWorker {
           limit: analysisSettingLimit(
             "javascript.analysis_timeout_ms",
             this.limits.timeoutMs,
-            undefined,
+            this.limits.timeoutSource,
           ),
           capturedOutput: this.#captured(),
           userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
@@ -1182,7 +1185,7 @@ export class JavaScriptAnalysisWorker {
                 limit: analysisSettingLimit(
                   "javascript.max_heap_mb",
                   this.limits.heapMb,
-                  undefined,
+                  this.limits.heapSource,
                 ),
               }
             : {}),
@@ -1276,6 +1279,7 @@ export class JavaScriptAnalysisWorker {
     signal: AbortSignal | undefined,
   ): AnalysisError {
     if (
+      this.#phase !== "checkpoint-read" &&
       deadline?.interruption === "cancelled" &&
       cause === deadline.signal.reason
     )
@@ -1299,8 +1303,13 @@ export class JavaScriptAnalysisWorker {
       cause.bindCleanupFailure(error);
       return error;
     }
-    // Ownership preparation is abortable before the worker deadline exists.
-    if (deadline?.interruption !== undefined)
+    // Checkpoint reads do not receive an AbortSignal. A rejected physical
+    // read or validation owns its failure even if the caller cancelled later.
+    // Ownership preparation remains abortable before the deadline exists.
+    if (
+      this.#phase !== "checkpoint-read" &&
+      deadline?.interruption !== undefined
+    )
       return this.#interruptionFailure(path, deadline);
     if (
       deadline === undefined &&

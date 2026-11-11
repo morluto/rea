@@ -218,3 +218,150 @@ it.each([
     error: { _tag: "AnalysisOutputError" },
   });
 });
+
+it.each([
+  {
+    type: "SHT_PROGBITS",
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: true,
+  },
+  {
+    type: "SHT_PROGBITS",
+    backing: "none",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: "SHT_PROGBITS",
+    backing: "none",
+    offset: "0xffffffffffffffff",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: "SHT_NOBITS",
+    backing: "none",
+    offset: "0xffffffffffffffff",
+    size: "0x2000",
+    valid: true,
+  },
+  {
+    type: "SHT_NOBITS",
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: 8,
+    backing: "none",
+    offset: "0xffffffffffffffff",
+    size: "0x2000",
+    valid: true,
+  },
+  {
+    type: 8,
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: "SHT_NULL",
+    backing: "none",
+    offset: "0xffffffffffffffff",
+    size: "0x2000",
+    valid: true,
+  },
+  {
+    type: "SHT_NULL",
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: 0,
+    backing: "none",
+    offset: "0xffffffffffffffff",
+    size: "0x2000",
+    valid: true,
+  },
+  {
+    type: 0,
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: 0x70000001,
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: true,
+  },
+  {
+    type: 0x70000001,
+    backing: "none",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: "SHT_PROGBITS",
+    backing: "file",
+    offset: "0x80",
+    size: "0x0",
+    valid: true,
+  },
+] as const)(
+  "validates section $type backing=$backing offset=$offset size=$size before Evidence",
+  async ({ type, backing, offset, size, valid }) => {
+    const layout = binaryLayoutFixture();
+    layout.sections.push({
+      index: 0,
+      name: {
+        display: "data",
+        bytes_base64: "ZGF0YQ==",
+        location: null,
+        unknown_reason: null,
+      },
+      name_offset: "0x0",
+      type,
+      header_location: { offset: "0x0", bytes: "0x40" },
+      address: "0x20000000000001",
+      offset,
+      size,
+      alignment: "0x1",
+      flags: "0x3",
+      link: 0,
+      info: 0,
+      entry_size: "0x0",
+      file_backing: backing,
+    });
+    const service = new BinaryLayoutService({
+      inspectAndClose(input, options) {
+        return this.inspect(input, options);
+      },
+      identity: BINARY_LAYOUT_TEST_PROVIDER,
+      inspect: async () => ok(layout),
+    });
+    const result = await service.inspect({ path: layout.artifact.path });
+    if (valid) {
+      if (!result.ok) throw result.error;
+      expect(parseEvidence(result.value).normalized_result).toEqual(layout);
+    } else {
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          capturedOutput: layout.diagnostics,
+        },
+      });
+    }
+  },
+);

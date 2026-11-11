@@ -76,10 +76,9 @@ const readEntryObservation = async <T>(
   signal?: AbortSignal,
 ): Promise<Result<T, EntryOmission>> => {
   signal?.throwIfAborted();
+  let value: T;
   try {
-    const value = await read();
-    signal?.throwIfAborted();
-    return ok(value);
+    value = await read();
   } catch (cause: unknown) {
     const code = filesystemSystemCode(cause);
     // readlink reports EINVAL if the observed symlink was replaced by a file.
@@ -88,9 +87,10 @@ const readEntryObservation = async <T>(
       (!unavailableSystemCodes.has(code) && code !== "EINVAL")
     )
       throw cause;
-    signal?.throwIfAborted();
     return err({ reason: "entry_unavailable", system_code: code });
   }
+  signal?.throwIfAborted();
+  return ok(value);
 };
 
 const observeSymlink = async (
@@ -794,6 +794,7 @@ export const snapshotRoots = async (
       if (await visit(root, alias, root, 0, lookup.stats))
         completeRoots.push(alias);
     }
+    signal?.throwIfAborted();
     const snapshot = buildSnapshot();
     if (closeFailures.length > 0) {
       const causes = closeFailures.map(({ cleanupCause }) => cleanupCause);

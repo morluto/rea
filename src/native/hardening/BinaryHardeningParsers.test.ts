@@ -1419,13 +1419,40 @@ it("sizes an empty DT_GNU_HASH table only from an agreeing SHT_DYNSYM", () => {
     strings.readBigUInt64LE(elfSectionAt(strings, SHT_STRTAB) + 32) - 1n,
     elfSectionAt(strings, SHT_STRTAB) + 32,
   );
-  for (const bytes of [moved, offset, strings])
+  const compressedSymbols = Buffer.from(agreeing);
+  compressedSymbols.writeBigUInt64LE(0x800n, section + 8);
+  const compressedStrings = Buffer.from(agreeing);
+  compressedStrings.writeBigUInt64LE(
+    0x800n,
+    elfSectionAt(compressedStrings, SHT_STRTAB) + 8,
+  );
+  const wrongStringType = Buffer.from(agreeing);
+  wrongStringType.writeUInt32LE(
+    1,
+    elfSectionAt(wrongStringType, SHT_STRTAB) + 4,
+  );
+  for (const bytes of [
+    moved,
+    offset,
+    strings,
+    compressedSymbols,
+    compressedStrings,
+    wrongStringType,
+  ])
     expect(
       findRow(readElfHardening(bytes).rows, "stack_protector"),
     ).toMatchObject({
       state: "unknown",
       note: expect.stringContaining("DT_GNU_HASH"),
     });
+  // A loader-owned hash count needs no section fallback, so compressed section
+  // declarations cannot hide imports named by DT_SYMTAB and DT_STRTAB.
+  const hashed = elfHardeningFixture({ stackChk: true });
+  for (const type of [SHT_DYNSYM, SHT_STRTAB])
+    hashed.writeBigUInt64LE(0x800n, elfSectionAt(hashed, type) + 8);
+  expect(findRow(readElfHardening(hashed).rows, "stack_protector").state).toBe(
+    "enabled",
+  );
 });
 
 it.each([32, 64] as const)(
