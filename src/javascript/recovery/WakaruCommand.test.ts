@@ -1,3 +1,8 @@
+import { createTestArtifactResourceScope } from "../../../tests/fixtures/artifactResourceScope.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../../process/ProcessInspectionCancellation.js";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,7 +16,10 @@ import {
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
 import {
   resolveWakaruCommand,
   runWakaruCommand,
@@ -37,6 +45,7 @@ it("names the Wakaru configuration requirement when it is not configured", async
 
 it("projects the fixed Wakaru deadline without an editable setting", async () => {
   const refusal: unknown = await runWakaruCommand({
+    resources: createTestArtifactResourceScope(),
     command: "/selected/wakaru",
     limiter: "/usr/bin/prlimit",
     arguments: ["--version"],
@@ -69,6 +78,7 @@ it("projects the fixed Wakaru deadline without an editable setting", async () =>
 it("preserves caller cancellation before acquiring an expired execution budget", async () => {
   await expect(
     runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
       command: "/selected/wakaru",
       limiter: "/usr/bin/prlimit",
       arguments: ["--version"],
@@ -89,6 +99,7 @@ it.each([null, false, { request: "cancel launch" }])(
     const controller = new AbortController();
     await expect(
       runWakaruCommand({
+        resources: createTestArtifactResourceScope(),
         command: "/selected/wakaru",
         limiter: "/usr/bin/prlimit",
         arguments: ["--version"],
@@ -98,14 +109,87 @@ it.each([null, false, { request: "cancel launch" }])(
         signal: controller.signal,
         launcher: async (options) => {
           controller.abort(reason);
-          options.signal?.throwIfAborted();
-          throw new Error("Expected launcher cancellation");
+          throw new ProcessOwnershipInspectionCancelled(options.signal?.reason);
         },
       }),
     ).rejects.toMatchObject({
       _tag: "AnalysisCancelledError",
       cause: reason,
     });
+  },
+);
+
+it.each(["direct", "batch"] as const)(
+  "preserves %s ownership cancellation without requiring signal state",
+  async (kind) => {
+    const reason = { caller: "ownership cancellation" };
+    const cancelled = new ProcessOwnershipInspectionCancelled(reason);
+    const failure =
+      kind === "direct"
+        ? cancelled
+        : new ProcessOwnershipIdentityBatchFailure(
+            [{ pid: 42, requestIndex: 0, cause: cancelled }],
+            new Map([
+              [
+                44,
+                {
+                  state: "unavailable" as const,
+                  reason: "completed sibling observation",
+                },
+              ],
+            ]),
+          );
+    const projected = await runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
+      command: "/selected/wakaru",
+      limiter: "/unused/prlimit",
+      arguments: [],
+      cwd: "/unused",
+      environment: {},
+      deadline: performance.now() + 30_000,
+      launcher: async () => {
+        throw failure;
+      },
+    }).catch((cause: unknown) => cause);
+    expect(projected).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+    if (
+      !(projected instanceof AnalysisError) ||
+      !("inspectionFailure" in projected)
+    )
+      throw new Error("Missing ownership inspection origin");
+    expect(projected.inspectionFailure).toBe(failure);
+  },
+);
+
+it.each(["identity", "name"] as const)(
+  "keeps a physical launch failure despite %s cancellation resemblance",
+  async (kind) => {
+    const controller = new AbortController();
+    const physical = new Error("physical launch refusal", { cause: null });
+    physical.name = "AbortError";
+    const failure = await runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
+      command: "/selected/wakaru",
+      limiter: "/unused/prlimit",
+      arguments: [],
+      cwd: "/unused",
+      environment: {},
+      deadline: performance.now() + 30_000,
+      signal: controller.signal,
+      launcher: async () => {
+        controller.abort(kind === "identity" ? physical : null);
+        throw physical;
+      },
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "ProviderAdapterError",
+      cause: physical,
+    });
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure.cause).toBe(physical);
   },
 );
 
@@ -116,6 +200,7 @@ it("preserves cancellation reported by the ownership preparation command", async
   try {
     await expect(
       runWakaruCommand({
+        resources: createTestArtifactResourceScope(),
         command: "/selected/wakaru",
         limiter: "/unused/prlimit",
         arguments: ["--version"],
@@ -147,6 +232,7 @@ it("preserves a real launch failure when the caller cancels after it", async () 
   const reason = { caller: "cancel after launch failure" };
   const missing = join(tmpdir(), `rea-missing-wakaru-${randomUUID()}`);
   const failure: unknown = await runWakaruCommand({
+    resources: createTestArtifactResourceScope(),
     command: "/selected/wakaru",
     limiter: missing,
     arguments: ["--version"],
@@ -190,6 +276,7 @@ const commandFixture = (
   return {
     producer,
     context: {
+      resources: createTestArtifactResourceScope(),
       command: "/selected/wakaru",
       limiter: "/usr/bin/prlimit",
       arguments: ["--version"],
@@ -322,6 +409,7 @@ it("pins both Wakaru ceilings through the shared prlimit vector", async () => {
   const command = "/selected/wakaru";
   await expect(
     runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
       command,
       limiter: "/usr/bin/prlimit",
       arguments: ["--version"],
