@@ -605,6 +605,84 @@ const UNESCAPED_PATH_CHARACTER = /[^\u0021-\u00ff]/u;
  * 24.22.1, an empty path is accepted because Node treats `""` as "not given" and falls back
  * to `/`.
  */
+/**
+ * Whether a getter is copied before the last write of `member`.
+ *
+ * `Object.assign` walks a source in enumeration order, which is not source order: an
+ * ECMAScript array index comes first, ascending, and a redefined key keeps its first insertion
+ * position while its descriptor comes from the last write. A getter that enumerates before the
+ * member therefore runs before the value is copied, so the syntactic value is not the runtime
+ * one.
+ */
+const optionGetterPrecedesMember = (
+  options: t.ObjectExpression,
+  member: string,
+): boolean => {
+  const firstIndex = new Map<string, number>();
+  const lastDescriptor = new Map<
+    string,
+    { readonly node: t.ObjectProperty | t.ObjectMethod }
+  >();
+  for (const [index, property] of options.properties.entries()) {
+    if (t.isSpreadElement(property)) {
+      // A spread can supply any key at its own position; an empty literal supplies none.
+      const spread = unwrapJavaScriptExpression(property.argument).node;
+      if (t.isObjectExpression(spread) && spread.properties.length === 0)
+        continue;
+      return true;
+    }
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (
+      t.isObjectMethod(property) &&
+      property.kind !== "method" &&
+      property.computed &&
+      !t.isStringLiteral(property.key)
+    )
+      return true;
+    if (
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      (t.isIdentifier(property.key, { name: "__proto__" }) ||
+        t.isStringLiteral(property.key, { value: "__proto__" }))
+    )
+      continue;
+    if (name === null) continue;
+    if (!firstIndex.has(name)) firstIndex.set(name, index);
+    lastDescriptor.set(name, { node: property });
+  }
+  const orderOf = (name: string): readonly [number, number] => {
+    const position = firstIndex.get(name) ?? Number.MAX_SAFE_INTEGER;
+    const key = Number(name);
+    return Number.isInteger(key) &&
+      String(key) === name &&
+      key >= 0 &&
+      key < 2 ** 32 - 1
+      ? [0, key]
+      : [1, position];
+  };
+  const before = (
+    left: readonly [number, number],
+    right: readonly [number, number],
+  ): boolean =>
+    left[0] !== right[0] ? left[0] < right[0] : left[1] < right[1];
+  let memberOrder: readonly [number, number] | undefined;
+  let getterOrder: readonly [number, number] | undefined;
+  for (const [name, { node }] of lastDescriptor) {
+    const order = orderOf(name);
+    if (
+      t.isObjectMethod(node) &&
+      node.kind === "get" &&
+      (getterOrder === undefined || before(order, getterOrder))
+    )
+      getterOrder = order;
+    if (name === member) memberOrder = order;
+  }
+  return (
+    getterOrder !== undefined &&
+    (memberOrder === undefined || before(getterOrder, memberOrder))
+  );
+};
+
 const rejectsHttpPathLiteral = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   method: JavaScriptSemanticRequestOperation["method"],
@@ -648,6 +726,11 @@ const rejectsHttpPathLiteral = (
       ? firstValue
       : unwrapJavaScriptExpression(node.arguments[1] ?? first).node;
   if (!t.isObjectExpression(options)) return false;
+  // `ClientRequest` copies the options with `Object.assign`, so a getter enumerated before
+  // `path` runs first and can rewrite the value that is then validated. Measured on Node
+  // 24.22.1, `{get agent() { this.path = "/ok"; return undefined; }, path: "/a b"}` builds
+  // a request while the same getter after `path` throws `ERR_UNESCAPED_CHARACTERS`.
+  if (optionGetterPrecedesMember(options, "path")) return false;
   const lookup = staticObjectProperty(options, "path");
   if (lookup.status !== "explicit") return false;
   const literal = readExactJavaScriptLiteral(lookup.value);

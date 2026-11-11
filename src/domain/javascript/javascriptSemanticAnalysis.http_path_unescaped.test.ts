@@ -121,3 +121,25 @@ it("still reads slot 1 for the genuine URL constructor", () => {
     requestsFor(`http.request(new URL("http://h/"), { path: "/a b" })`),
   ).toEqual([]);
 });
+
+it.each([
+  // `Object.assign` runs an earlier getter before it copies `path`, so the getter's write is
+  // the value Node validates. Measured on Node 24.22.1.
+  [
+    `http.request({ get agent() { this.path = "/ok"; return undefined; }, path: "/a b" })`,
+  ],
+] as const)(
+  "keeps the request when a getter rewrites the path first: %s",
+  (call) => {
+    expect(requestsFor(call)).toHaveLength(1);
+  },
+);
+
+it("emits no request when the getter enumerates after the path", () => {
+  // The invalid value was already copied, so the getter cannot rescue it.
+  expect(
+    requestsFor(
+      `http.request({ path: "/a b", get agent() { this.path = "/ok"; } })`,
+    ),
+  ).toEqual([]);
+});
