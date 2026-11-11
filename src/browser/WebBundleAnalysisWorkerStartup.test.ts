@@ -89,7 +89,7 @@ it.for([
       return {
         process: child,
         ownership: { runId: request.runId, leaderPid: 1, processGroupId: 1 },
-        cleanup: async () => ({ cleaned: true }),
+        cleanup: async () => ({ cleaned: true, signaled: false }),
       };
     };
     const worker = new WebBundleAnalysisWorker(128, launcher);
