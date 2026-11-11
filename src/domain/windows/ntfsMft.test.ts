@@ -97,6 +97,8 @@ describe("MFT header facts", () => {
       fixup_mismatch_count: 0,
       fixup_unverified_record_count: 0,
       truncated_tail_bytes: 0,
+      file_name_count: 0,
+      file_name_incomplete_record_count: 0,
     });
     expect(parsed.value.records[0]).toMatchObject({
       index: 0,

@@ -151,6 +151,8 @@ export interface MftMetadata {
     "fileNames" | "fileNameCoverage"
   >[];
   readonly omitted_record_headers: number;
+  readonly file_name_count: number;
+  readonly file_name_incomplete_record_count: number;
 }
 
 const text = (ascii: Uint8Array): string =>
@@ -267,6 +269,7 @@ const scanMft = (
   let unverifiedCount = 0;
   const restored = Buffer.allocUnsafe(recordBytes);
   let incompleteNames = 0;
+  let fileNameCount = 0;
   let invalidSlots = 0;
   let invalidExtents = 0;
   let inconsistentRecordNumbers = 0;
@@ -289,6 +292,7 @@ const scanMft = (
     }
     const record = readRecord(bytes, offset, restored);
     retainedRecords?.push(record);
+    fileNameCount += record.fileNames.length;
     if (recordHeaders.length < MFT_INLINE_HEADER_LIMIT)
       recordHeaders.push(record);
     recordCount += 1;
@@ -359,6 +363,8 @@ const scanMft = (
         header,
     ),
     omitted_record_headers: recordCount - recordHeaders.length,
+    file_name_count: fileNameCount,
+    file_name_incomplete_record_count: incompleteNames,
   };
 
   return ok({ metadata, recordBytes, limitations });
