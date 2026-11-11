@@ -878,6 +878,7 @@ const registrationCurrent = (
   parsed: ClientConfigurationDocument,
   desired: unknown,
 ): boolean =>
+  parsed.requiresRewrite !== true &&
   (parsed.dialect !== "dsh" || dshDocument(parsed.document).ready) &&
   clientConfigurationValuesEqual(
     parsed.servers[PRODUCT_IDENTITY.mcpServerKey],

@@ -41,6 +41,7 @@ import {
   exportsOf,
   FUNCTIONS,
   unprovenCleanupLauncher,
+  awaitKunaCommand,
 } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -827,13 +828,7 @@ it.each([false, true])(
       withCallerSignal ? { signal: caller.signal } : {},
     );
     try {
-      await expect
-        .poll(async () =>
-          (await fakeKunaCalls(kuna)).filter(
-            ({ argv }) => argv[0] === "decompile",
-          ),
-        )
-        .toHaveLength(1);
+      await awaitKunaCommand(kuna, "decompile", request);
       const call = (await fakeKunaCalls(kuna)).find(
         ({ argv }) => argv[0] === "decompile",
       );
@@ -845,8 +840,8 @@ it.each([false, true])(
       });
     } finally {
       caller.abort();
-      await request;
       await client.close();
+      await request;
     }
   },
 );
@@ -900,13 +895,7 @@ it("retains an active request's workspace when close cannot prove its stop", asy
     { signal: caller.signal },
   );
   try {
-    await expect
-      .poll(async () =>
-        (await fakeKunaCalls(kuna)).filter(
-          ({ argv }) => argv[0] === "decompile",
-        ),
-      )
-      .toHaveLength(1);
+    await awaitKunaCommand(kuna, "decompile", request);
     const closed = await client.close();
     expect(closed).toMatchObject({
       ok: false,
@@ -922,9 +911,10 @@ it("retains an active request's workspace when close cannot prove its stop", asy
     expect(await readFile(input ?? "", "utf8")).toBe("program bytes");
   } finally {
     caller.abort();
-    await request;
     unproven.release();
-    expect(await client.close()).toEqual({ ok: true, value: null });
+    const closed = await client.close();
+    await request;
+    expect(closed).toEqual({ ok: true, value: null });
   }
 });
 
@@ -1042,25 +1032,34 @@ it("keeps reporting a failed close and succeeds once a retry proves the stop", a
   const { open } = await session(
     "rea-kuna-close-retry-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "300" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
     unproven.launcher,
   );
   const client = open();
 
-  expect(
-    await client.execute("procedure_pseudo_code", { procedure: "main" }),
-  ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
-  const first = await client.close();
-  expect(first).toMatchObject({
-    ok: false,
-    error: { diagnostics: { reason: "decompile stop unproven" } },
-  });
-  // A retry that still cannot prove the stop keeps failing.
-  expect((await client.close()).ok).toBe(false);
+  try {
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    expect(
+      await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "kuna.function_timeout_ms": 300 } },
+        () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+      ),
+    ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+    const first = await client.close();
+    expect(first).toMatchObject({
+      ok: false,
+      error: { diagnostics: { reason: "decompile stop unproven" } },
+    });
+    // A retry that still cannot prove the stop keeps failing.
+    expect((await client.close()).ok).toBe(false);
 
-  unproven.release();
-  expect(await client.close()).toEqual({ ok: true, value: null });
-  expect(await client.close()).toEqual({ ok: true, value: null });
+    unproven.release();
+    expect(await client.close()).toEqual({ ok: true, value: null });
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  } finally {
+    unproven.release();
+    expect((await client.close()).ok).toBe(true);
+  }
 });
 
 it("reports an abandoned export's unproven cleanup from close", async () => {
@@ -1180,10 +1179,9 @@ it.each([
     environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
     cause: "AnalysisTimeoutError",
     next: "To retry, set kuna.project_timeout_ms above 300 ms with update_analysis_settings. It can be changed at runtime. The launch seed is REA_KUNA_PROJECT_TIMEOUT_MS. Then reopen the target so the export runs again.",
-    details: {
-      timeout_ms: 300,
-      captured_output: { truncated: expect.any(Boolean) },
-    },
+    // The whole export can expire during preparation, before a child exists.
+    // Command-output presence is covered at the command owner below that boundary.
+    details: { timeout_ms: 300 },
   },
   {
     name: "Kuna failure",
