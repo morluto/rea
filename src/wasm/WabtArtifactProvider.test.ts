@@ -221,6 +221,150 @@ const createWabtArtifactFixture = async () => {
   return { selectedRoot, path, bytes, dump };
 };
 
+it.each(["stdout", "stderr"] as const)(
+  "rejects malformed UTF-8 in WABT %s while retaining literal replacement characters",
+  async (stream) => {
+    const fixture = await createWabtArtifactFixture();
+    let malformed = true;
+    const provider = new WabtArtifactProvider(
+      { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+      (input) => {
+        const version = input.arguments[0] === "--version";
+        const decoder = !version && input.command.includes("wasm2wat");
+        const stdout = version
+          ? "1.0.42\n"
+          : input.command.includes("objdump")
+            ? fixture.dump
+            : decoder
+              ? '(module (import "env" "literal\ufffd" (func)) (@custom "test" "payload"))\n'
+              : "";
+        const stderr = decoder ? "module.wasm: warning: literal\ufffd\n" : "";
+        const output = { stdout, stderr };
+        const bytes = Object.fromEntries(
+          Object.entries(output).map(([name, text]) => {
+            const encoded = Buffer.from(text);
+            const replacement = encoded.indexOf(Buffer.from("\ufffd"));
+            return [
+              name,
+              decoder && malformed && name === stream
+                ? Buffer.concat([
+                    encoded.subarray(0, replacement),
+                    Buffer.from([0xff]),
+                    encoded.subarray(replacement + 3),
+                  ])
+                : encoded,
+            ];
+          }),
+        );
+        return spawnOwnedProviderProcess({
+          ...input,
+          hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+          command: process.execPath,
+          arguments: [
+            "-e",
+            `process.stdout.write(Buffer.from(${JSON.stringify([...bytes.stdout!])})); process.stderr.write(Buffer.from(${JSON.stringify([...bytes.stderr!])}));`,
+          ],
+        });
+      },
+    );
+    try {
+      const input = { path: fixture.path, glue_paths: [], candidate_paths: [] };
+      const rejected = await provider.inspect(input);
+      expect(rejected).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          diagnostics: { tool: "wasm2wat", invalid_utf8_streams: [stream] },
+          capturedOutput: {
+            [stream]: expect.stringContaining("\ufffd"),
+            exit_code: 0,
+            signal: null,
+            truncated: false,
+          },
+          partialObservation: {
+            normalized_result: {
+              artifact: {
+                path: fixture.path,
+                sha256: createHash("sha256")
+                  .update(fixture.bytes)
+                  .digest("hex"),
+                bytes: fixture.bytes.length,
+              },
+              validation: "valid",
+            },
+          },
+        },
+      });
+      malformed = false;
+      const corrected = await provider.inspect(input);
+      if (!corrected.ok) throw corrected.error;
+      expect(wasmArtifactSchema.parse(corrected.value.result)).toMatchObject({
+        interface: { entries: [{ name: "literal\ufffd" }] },
+        custom_section_warnings: [
+          { tool: "wasm2wat", text: "module.wasm: warning: literal\ufffd\n" },
+        ],
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it("preserves physical validation rejection when its diagnostics contain malformed UTF-8", async () => {
+  const fixture = await createWabtArtifactFixture();
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+    (input) => {
+      const version = input.arguments[0] === "--version";
+      return spawnOwnedProviderProcess({
+        ...input,
+        hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+        command: process.execPath,
+        arguments: [
+          "-e",
+          version
+            ? 'process.stdout.write("1.0.42\\n")'
+            : "process.stderr.write(Buffer.from([105,110,118,97,108,105,100,32,255])); process.exitCode = 7;",
+        ],
+      });
+    },
+  );
+  try {
+    const result = await provider.inspect({
+      path: fixture.path,
+      glue_paths: [],
+      candidate_paths: [],
+    });
+    if (result.ok) throw new Error("Expected validation rejection");
+    expect(result.error.capturedOutput).toEqual({
+      stdout: "",
+      stderr: "invalid \ufffd",
+      exit_code: 7,
+      signal: null,
+      truncated: false,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        partialObservation: {
+          normalized_result: {
+            artifact: {
+              path: fixture.path,
+              sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
+              bytes: fixture.bytes.length,
+            },
+            validation: "rejected-by-selected-profile",
+            exit_code: 7,
+          },
+        },
+      },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
 it.each([
   "max_input_bytes",
   "max_tool_bytes",
