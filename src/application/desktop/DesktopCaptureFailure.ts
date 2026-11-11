@@ -1,3 +1,4 @@
+import type { ProviderProcessInspectionCleanup } from "../../process/ProviderProcess.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -65,6 +66,21 @@ const closeHandles = async (
 const closeStoreHandles = (store: ContentOwner) =>
   closeHandles(store, store.directory, HANDLES_UNCLOSED);
 
+/** Historical inspection facts only; cleanup authority remains with the existing owner leases. */
+export class DesktopCaptureInspectionCleanupContext extends AggregateError {
+  constructor(
+    readonly inspectionCleanup: readonly ProviderProcessInspectionCleanup[],
+    options?: ErrorOptions,
+  ) {
+    super(
+      inspectionCleanup.flatMap((snapshot) => snapshot.causes),
+      "Desktop process inspection cleanup facts",
+      options,
+    );
+    this.name = "DesktopCaptureInspectionCleanupContext";
+  }
+}
+
 /**
  * One cleanup error for every unresolved owner. The error stays incomplete,
  * and lists their current resources, until each owner releases.
@@ -80,11 +96,29 @@ const cleanupError = (
       ...new Set(leases.flatMap((lease) => lease.cleanupResources ?? [])),
     ],
   };
+  const errorOptions = options(cleanup.reason);
+  const inspectionCleanup = [
+    ...new Set(
+      unresolved.flatMap((entry) =>
+        entry.inspectionCleanup === undefined ? [] : [entry.inspectionCleanup],
+      ),
+    ),
+  ];
   const error = new ProviderAdapterError(
     DESKTOP_PROVIDER.id,
     DESKTOP_OPERATION,
     {
-      ...options(cleanup.reason),
+      ...errorOptions,
+      ...(inspectionCleanup.length === 0
+        ? {}
+        : {
+            cause: new DesktopCaptureInspectionCleanupContext(
+              inspectionCleanup,
+              Object.hasOwn(errorOptions, "cause")
+                ? { cause: errorOptions.cause }
+                : undefined,
+            ),
+          }),
       cleanup,
     },
   );

@@ -19,6 +19,7 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
+  type ProviderProcessInspectionCleanup,
 } from "../process/ProviderProcess.js";
 import { terminateTokenOwnedProcesses } from "../process/TokenOwnedTermination.js";
 import {
@@ -42,6 +43,8 @@ const TERMINATION_GRACE_MS = 5_000;
 export interface UnresolvedCleanup {
   readonly reason: string;
   readonly leases: readonly AnalysisCleanupLease[];
+  /** Failure-time facts remain available after the lease releases its owners. */
+  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
 }
 
 /** The session record and, when cleanup was not verified, what remains owned. */
@@ -236,6 +239,11 @@ const watch = async (
   }
 };
 
+interface SessionRelease {
+  readonly cleanup: DesktopSession["cleanup"];
+  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
+}
+
 /**
  * Ask the launched process, its process group and every process carrying the
  * run token to exit, wait up to the grace period, then remove whatever still
@@ -245,22 +253,37 @@ const watch = async (
 const release = async (
   spawned: SpawnedOwnedProviderProcess,
   supervisor: ProviderProcessSupervisor,
-): Promise<DesktopSession["cleanup"]> => {
+): Promise<SessionRelease> => {
   // One SIGTERM each, since some applications treat a second one as a forced exit.
-  const { launchGroupSignalled } = await terminateTokenOwnedProcesses(
+  const termination = await terminateTokenOwnedProcesses(
     spawned.ownership,
     TERMINATION_GRACE_MS,
   );
+  const { launchGroupSignalled } = termination.ok
+    ? termination.value
+    : termination.error;
+  if (!termination.ok)
+    supervisor.retainInspectionFailure(termination.error.cause);
   if (!launchGroupSignalled && supervisor.observedExit() === undefined) {
     spawned.process.kill("SIGTERM");
     await supervisor.waitForExit(TERMINATION_GRACE_MS);
   }
   let stopped = await supervisor.stop();
+  let inspectionCleanup =
+    stopped.status === "incomplete" ? stopped.inspectionCleanup : undefined;
   // An incomplete stop leaves the supervisor owning the processes; try once more.
-  if (stopped.status === "incomplete") stopped = await supervisor.stop();
-  return stopped.status === "incomplete"
-    ? { verified: false, reason: stopped.reason }
-    : { verified: true, reason: null };
+  if (stopped.status === "incomplete") {
+    stopped = await supervisor.stop();
+    if (inspectionCleanup === undefined && stopped.status === "incomplete")
+      inspectionCleanup = stopped.inspectionCleanup;
+  }
+  return {
+    cleanup:
+      stopped.status === "incomplete"
+        ? { verified: false, reason: stopped.reason }
+        : { verified: true, reason: null },
+    ...(inspectionCleanup === undefined ? {} : { inspectionCleanup }),
+  };
 };
 
 /**
@@ -270,12 +293,15 @@ const release = async (
 const unreleased = (
   spawned: SpawnedOwnedProviderProcess,
   supervisor: ProviderProcessSupervisor,
-  cleanup: DesktopSession["cleanup"],
+  result: SessionRelease,
 ): UnresolvedCleanup | undefined =>
-  cleanup.verified
+  result.cleanup.verified
     ? undefined
     : {
-        reason: cleanup.reason ?? "cleanup was not verified",
+        reason: result.cleanup.reason ?? "cleanup was not verified",
+        ...(result.inspectionCleanup === undefined
+          ? {}
+          : { inspectionCleanup: result.inspectionCleanup }),
         leases: [
           new AnalysisCleanupLease(async () => {
             const stopped = await supervisor.stop();
@@ -355,9 +381,9 @@ export const runDesktopSession = async (
     plan.windowMatching,
   );
   let endReason: DesktopSession["end_reason"];
-  let cleanup: DesktopSession["cleanup"];
+  let releaseResult: SessionRelease;
   // Released at most once: a second release would signal the processes again.
-  let released: Promise<DesktopSession["cleanup"]> | undefined;
+  let released: Promise<SessionRelease> | undefined;
   const releaseOnce = () => (released ??= release(spawned, supervisor));
   try {
     await trackProcess(observations, spawned.ownership.leaderPid, signal);
@@ -369,7 +395,7 @@ export const runDesktopSession = async (
         endReason === "stop_requested" ? "stop" : "time-limit",
         "stop",
       );
-    cleanup = await releaseOnce();
+    releaseResult = await releaseOnce();
     assertProcessOwnershipInspectionActive(signal);
     await checkpointNow(plan, observations, "exit", "exit");
     assertProcessOwnershipInspectionActive(signal);
@@ -379,9 +405,9 @@ export const runDesktopSession = async (
       (cause instanceof ArtifactReaderFailure &&
         cause.reason === "cancelled") ||
       isProcessOwnershipInspectionCancellation(cause);
-    cleanup = await releaseOnce();
+    releaseResult = await releaseOnce();
     if (!cancelled) {
-      const left = unreleased(spawned, supervisor, cleanup);
+      const left = unreleased(spawned, supervisor, releaseResult);
       if (left === undefined) throw cause;
       throw new DesktopSessionCleanupError(cause, left);
     }
@@ -398,11 +424,11 @@ export const runDesktopSession = async (
     ...observedSession(observations),
     stderr: snapshot.stderr.text,
     stderr_truncated: snapshot.stderr.bytes < snapshot.stderr.observedBytes,
-    cleanup,
+    cleanup: releaseResult.cleanup,
   };
   return {
     session,
-    unreleased: unreleased(spawned, supervisor, cleanup),
+    unreleased: unreleased(spawned, supervisor, releaseResult),
     unreadableWindowSamples: observations.unreadableWindowSamples,
   };
 };

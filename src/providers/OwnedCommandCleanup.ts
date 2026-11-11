@@ -30,7 +30,9 @@ export const retainOwnedCommandCleanup = (
   const commandFailure =
     cause instanceof OwnedCommandFailure ? cause : undefined;
   const cleanups: AnalysisError[] = [];
-  for (const preparation of processInspectionCleanupFailures(cause)) {
+  for (const preparation of processInspectionCleanupFailures(
+    processInspectionFailure(cause),
+  )) {
     const darwin = preparation instanceof DarwinProcessOwnershipInspectionError;
     const owner = darwin ? preparation.cleanupOwner : preparation.owner;
     const cleanup = darwin
