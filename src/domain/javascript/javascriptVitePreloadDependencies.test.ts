@@ -215,6 +215,21 @@ it.each([
   },
 );
 
+it("keeps a preload call that precedes a later helper reassignment", () => {
+  const specifiers = (source: string) =>
+    analyzeJavaScriptStaticSource(source)
+      .references.filter(({ kind }) => kind === "dynamic-import")
+      .map(({ specifier }) => specifier);
+  const helper = `let __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
+      (map.f || (map.f = ["./canonical.js"]))) => indexes.map((index) => dependencies[index]);`;
+  expect(
+    specifiers(`${helper} __vite__mapDeps([0]); __vite__mapDeps = () => [];`),
+  ).toEqual(["./canonical.js"]);
+  expect(
+    specifiers(`${helper} __vite__mapDeps = () => []; __vite__mapDeps([0]);`),
+  ).toEqual([]);
+});
+
 it("retains the identity of a function-declared preload helper", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     function __vite__mapDeps(indexes, map = __vite__mapDeps, dependencies =

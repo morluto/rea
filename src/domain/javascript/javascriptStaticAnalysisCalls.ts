@@ -56,7 +56,10 @@ import {
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
-import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
@@ -423,10 +426,15 @@ const vitePreloadDependencySpecifiers = (
     return [];
   const callee = unwrapJavaScriptExpression(node.callee).node;
   const lookup = semanticBindingLookupAt(bindings, callee, name);
-  if (
-    (lookup.kind !== "binding" && lookup.kind !== "uncertain-binding") ||
-    semanticStableInitializer(lookup.binding, bindings)?.node !== table.helper
-  )
+  if (lookup.kind !== "binding" && lookup.kind !== "uncertain-binding")
+    return [];
+  const projected = semanticBindingAtRead(lookup.binding, callee, bindings);
+  // An ordered read drops assignments that have not happened yet. An
+  // unresolved read keeps the single stable initializer, which is how a
+  // captured call still names the helper when nothing else writes it.
+  const visible =
+    projected.status === "ordered" ? projected.binding : lookup.binding;
+  if (semanticStableInitializer(visible, bindings)?.node !== table.helper)
     return [];
   const indexes = node.arguments[0].elements;
   // Explicit cache overrides change which table the helper reads. Retain the
