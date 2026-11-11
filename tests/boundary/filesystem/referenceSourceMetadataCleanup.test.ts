@@ -1,5 +1,6 @@
 import {
   mkdir,
+  lstat as fsLstat,
   open as fsOpen,
   opendir as fsOpendir,
   realpath as fsRealpath,
@@ -22,6 +23,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    lstat: vi.fn(actual.lstat),
     open: vi.fn(actual.open),
     stat: vi.fn(actual.stat),
     realpath: vi.fn(actual.realpath),
@@ -29,6 +31,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
+const lstatMock = vi.mocked(fsLstat);
 const openMock = vi.mocked(fsOpen);
 const opendirMock = vi.mocked(fsOpendir);
 const statMock = vi.mocked(fsStat);
@@ -40,6 +43,7 @@ beforeEach(async () => {
     await vi.importActual<typeof import("node:fs/promises")>(
       "node:fs/promises",
     );
+  lstatMock.mockImplementation((...args) => actual.lstat(...args));
   openMock.mockImplementation((...args) => actual.open(...args));
   opendirMock.mockImplementation((...args) => actual.opendir(...args));
   statMock.mockImplementation((...args) => actual.stat(...args));
@@ -47,6 +51,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  lstatMock.mockReset();
   openMock.mockReset();
   opendirMock.mockReset();
   statMock.mockReset();
@@ -649,3 +654,124 @@ it.each(["metadata", "import"] as const)(
     }
   },
 );
+
+it.each([
+  ["lstat", false],
+  ["lstat", true],
+  ["stat", false],
+  ["stat", true],
+  ["realpath", false],
+  ["realpath", true],
+] as const)(
+  "retains physical git directory %s with late abort (same reason: %s)",
+  async (stage, sameReason) => {
+    const root = await createTestTempDirectory("rea-git-physical-");
+    await mkdir(join(root, ".git"));
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("git lookup failed"), {
+      code: "EIO",
+    });
+    const reason = sameReason ? physical : { caller: "stopped" };
+    const reject = (): never => {
+      controller.abort(reason);
+      throw physical;
+    };
+    if (stage === "lstat")
+      lstatMock.mockImplementation(async (...args) => {
+        if (resolve(String(args[0])) === resolve(root, ".git")) return reject();
+        return actual.lstat(...args);
+      });
+    else if (stage === "stat")
+      statMock.mockImplementation(async (...args) => {
+        if (resolve(String(args[0])) === resolve(root, ".git")) return reject();
+        return actual.stat(...args);
+      });
+    else
+      realpathMock.mockImplementation(async (...args) => {
+        if (resolve(String(args[0])) === resolve(root, ".git")) return reject();
+        return actual.realpath(...args);
+      });
+    try {
+      const result = await importReferenceSource(
+        {
+          root,
+          caller: "test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "io",
+          cause: physical,
+          secondaryCancellation: { cause: reason },
+        },
+      });
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
+it("preserves real cancellation between Git directory lookup checkpoints", async () => {
+  const root = await createTestTempDirectory("rea-git-checkpoint-");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "stopped" };
+  lstatMock.mockImplementation(async (...args) => {
+    if (resolve(String(args[0])) === resolve(root, ".git")) {
+      controller.abort(reason);
+      throw Object.assign(new Error("absent"), { code: "ENOENT" });
+    }
+    return actual.lstat(...args);
+  });
+  try {
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "test",
+        policy: { secretPatterns: [] },
+        signal: controller.signal,
+      },
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "cancelled", cause: reason },
+    });
+  } finally {
+    await resources.close();
+  }
+});
+
+it("retains physical Git discovery lstat failure with late abort through VCS", async () => {
+  const root = await createTestTempDirectory("rea-git-vcs-physical-");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const physical = Object.assign(new Error("git discovery failed"), {
+    code: "EIO",
+  });
+  lstatMock.mockImplementation(async (...args) => {
+    if (resolve(String(args[0])) === resolve(root, ".git")) {
+      controller.abort(physical);
+      throw physical;
+    }
+    return actual.lstat(...args);
+  });
+  try {
+    const result = await readReferenceSourceVcs(
+      root,
+      resources,
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "io", secondaryCancellation: { cause: physical } },
+    });
+  } finally {
+    await resources.close();
+  }
+});

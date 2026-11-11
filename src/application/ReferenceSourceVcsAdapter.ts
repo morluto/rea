@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import { join } from "node:path";
-import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory.js";
+import {
+  locateReferenceSourceGitDirectory,
+  ReferenceSourceGitDirectoryCancelled,
+} from "./ReferenceSourceGitDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -228,11 +231,26 @@ const resolveSourceVcs = async (
     if (failedRead !== undefined) throw failedRead.cause;
     return head;
   };
-  const locations = await locateReferenceSourceGitDirectory(
-    root,
-    readMetadataText,
-    signal,
-  );
+  let locations;
+  try {
+    locations = await locateReferenceSourceGitDirectory(
+      root,
+      readMetadataText,
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (
+      signal?.aborted === true &&
+      !(cause instanceof ReferenceSourceGitDirectoryCancelled) &&
+      !(cause instanceof ArtifactReaderFailure)
+    )
+      throw new ArtifactReaderFailure(
+        "io",
+        `Git directory could not be resolved: ${errorMessage(cause)}`,
+        { cause },
+      );
+    throw cause;
+  }
   if (locations === undefined) return { kind: "none", head: null, dirty: null };
   if (isAborted(signal)) return unknownVcs();
   const { gitDirectory, commonDirectory } = locations;
