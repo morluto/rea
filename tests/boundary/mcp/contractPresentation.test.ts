@@ -36,7 +36,9 @@ it("preserves full advertised schemas and handler meaning when presentation orde
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     },
-    timeout: 20_000,
+    // The child advertises the full catalog and calls every browser, Electron,
+    // and JavaScript example. A busy runner exceeded 20s and was killed.
+    timeout: 60_000,
     maxBuffer: 16 * 1024 * 1024,
   });
   const result = resultSchema.parse(JSON.parse(stdout));
