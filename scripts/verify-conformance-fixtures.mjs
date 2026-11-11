@@ -10,6 +10,7 @@ import {
   sha256,
   sourceDigest,
   parseConformanceFixtureManifest,
+  splitNmSymbolRecords,
 } from "./lib/conformance-fixtures.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -91,13 +92,13 @@ async function verifyFixture(fixture) {
   const fileOutput = (await exec("file", [artifactPath])).stdout;
   if (!fileOutput.includes(fileMarker))
     throw new Error(`${fixture.name}: not ${fileMarker}`);
-  const symbols = (
-    await exec("nm", [...nmArguments, artifactPath], {
-      maxBuffer: 20 * 1024 * 1024,
-    })
-  ).stdout
-    .split(/\r?\n/u)
-    .filter(Boolean);
+  const symbols = splitNmSymbolRecords(
+    (
+      await exec("nm", [...nmArguments, artifactPath], {
+        maxBuffer: 20 * 1024 * 1024,
+      })
+    ).stdout,
+  );
   const strings = (
     await exec("strings", [artifactPath], { maxBuffer: 20 * 1024 * 1024 })
   ).stdout

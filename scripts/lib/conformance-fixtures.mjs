@@ -48,6 +48,10 @@ export const HOPPER_C_ORACLE = Object.freeze({
 export const sha256 = (value) =>
   createHash("sha256").update(value).digest("hex");
 
+/** `nm -j` ends each name with LF. A carriage return before that LF belongs to the name. */
+export const splitNmSymbolRecords = (output) =>
+  output.split("\n").filter((record) => record.length > 0);
+
 export const generateLargeFixture = () => {
   const declarations = Array.from(
     { length: LARGE_FIXTURE_COUNT },

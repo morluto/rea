@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
+import { splitNmSymbolRecords } from "../../../scripts/lib/conformance-fixtures.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -161,4 +162,12 @@ it.each([
         : "Unsupported conformance manifest",
     ),
   });
+});
+
+it("preserves a carriage return that belongs to an nm symbol name", () => {
+  expect(splitNmSymbolRecords("rea_entry\r\nrea_inventory_0000\n")).toEqual([
+    "rea_entry\r",
+    "rea_inventory_0000",
+  ]);
+  expect(splitNmSymbolRecords("rea_entry\r\n")).toEqual(["rea_entry\r"]);
 });
