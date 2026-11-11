@@ -146,7 +146,7 @@ export class ProcessInspectionAnalysisCancelledError extends AnalysisCancelledEr
   }
 }
 
-const inspectionFailure = (
+export const processInspectionFailure = (
   cause: unknown,
 ): ProcessInspectionFailure | undefined => {
   const failure =
@@ -163,7 +163,9 @@ export const processInspectionCancellationError = (
   cause: unknown,
   operation: string,
 ): ProcessInspectionAnalysisCancelledError | undefined => {
-  const failure = inspectionFailure(cause);
+  if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
+    return undefined;
+  const failure = processInspectionFailure(cause);
   if (failure instanceof DarwinProcessOwnershipInspectionError)
     return failure.cancellation === undefined
       ? undefined
