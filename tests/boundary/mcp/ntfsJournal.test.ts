@@ -47,8 +47,16 @@ mcpTest(
     v3.writeUInt16LE(4, 72);
     v3.writeUInt16LE(76, 74);
     v3.write("v3", 76, "utf16le");
+    const v4 = Buffer.alloc(80);
+    v4.writeUInt32LE(80);
+    v4.writeUInt16LE(4, 4);
+    v4.writeUInt32LE(2, 56);
+    v4.writeUInt16LE(1, 60);
+    v4.writeUInt16LE(16, 62);
+    v4.writeBigInt64LE(9007199254740993n, 64);
+    v4.writeBigInt64LE(4096n, 72);
     await writeFile(mftPath, record);
-    await writeFile(journalPath, Buffer.concat([journal, v3]));
+    await writeFile(journalPath, Buffer.concat([journal, v3, v4]));
 
     const cli = await serveCli([
       "inspect-ntfs-journal",
@@ -61,7 +69,7 @@ mcpTest(
     const expected = ntfsJournalResultSchema.parse(fromCli.normalized_result);
     expect(expected).toMatchObject({
       mft: { path: mftPath, bytes: 1024 },
-      journal: { path: journalPath, bytes: 144 },
+      journal: { path: journalPath, bytes: 224 },
       rows: [
         {
           kind: "event",
@@ -82,7 +90,21 @@ mcpTest(
             },
           },
         },
+        {
+          kind: "event",
+          event: {
+            majorVersion: 4,
+            name: null,
+            timestampFileTime: null,
+            remainingExtents: 2,
+            extentSample: [
+              { fileOffset: 208, offset: "9007199254740993", length: "4096" },
+            ],
+            omittedExtents: 0,
+          },
+        },
       ],
+      historyCompleteness: "unknown",
       nextFileOffset: null,
     });
 

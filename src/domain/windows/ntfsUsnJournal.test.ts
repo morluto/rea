@@ -46,7 +46,7 @@ it("preserves full references, flags, offsets and UTF-16 names after sparse padd
 
 it("uses a validated record length to skip unsupported and malformed records", () => {
   const unsupported = journalRecord();
-  unsupported.writeUInt16LE(4, 4);
+  unsupported.writeUInt16LE(9, 4);
   const malformed = journalRecord();
   malformed.writeUInt16LE(12, 56);
   const results = [
@@ -55,7 +55,7 @@ it("uses a validated record length to skip unsupported and malformed records", (
   expect(results).toMatchObject([
     {
       ok: false,
-      error: { kind: "unsupported", fileOffset: 0, major: 4, minor: 0 },
+      error: { kind: "unsupported", fileOffset: 0, major: 9, minor: 0 },
     },
     { ok: false, error: { kind: "malformed", fileOffset: 72 } },
     { ok: true, value: { fileOffset: 144 } },
@@ -99,3 +99,50 @@ it("decodes V3 opaque 128-bit identifiers without narrowing to MFT references", 
     { ok: false, error: { kind: "malformed", fileOffset: 0 } },
   ]);
 });
+
+it("bounds V4 extent delivery while retaining full coverage counts and continuation state", () => {
+  const bytes = Buffer.alloc(64 + 17 * 24);
+  bytes.writeUInt32LE(bytes.length);
+  bytes.writeUInt16LE(4, 4);
+  bytes.writeUInt32LE(40, 56);
+  bytes.writeUInt16LE(17, 60);
+  bytes.writeUInt16LE(24, 62);
+  bytes.writeBigInt64LE(9007199254740993n, 64);
+  bytes.writeBigInt64LE(-1n, 72);
+  const [result] = readUsnJournal(bytes);
+  if (!result?.ok) throw new Error("Invalid V4 fixture");
+  expect(result.value).toMatchObject({
+    majorVersion: 4,
+    referenceBytes: 16,
+    name: null,
+    timestampFileTime: null,
+    extentCount: 17,
+    extentSize: 24,
+    remainingExtents: 40,
+    omittedExtents: 1,
+  });
+  expect(result.value.extentSample).toHaveLength(16);
+  expect(result.value.extentSample?.[0]).toEqual({
+    fileOffset: 64,
+    offset: 9007199254740993n,
+    length: -1n,
+  });
+  expect(result.value.extentSample?.[15]?.fileOffset).toBe(424);
+});
+
+it.each([
+  [15, 1],
+  [16, 65535],
+])(
+  "refuses V4 stride %i / count %i before extent allocation",
+  (stride, count) => {
+    const bytes = Buffer.alloc(80);
+    bytes.writeUInt32LE(80);
+    bytes.writeUInt16LE(4, 4);
+    bytes.writeUInt16LE(count, 60);
+    bytes.writeUInt16LE(stride, 62);
+    expect([...readUsnJournal(bytes)]).toEqual([
+      { ok: false, error: { kind: "malformed", fileOffset: 0 } },
+    ]);
+  },
+);

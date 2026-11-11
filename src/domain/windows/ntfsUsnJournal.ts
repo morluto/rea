@@ -1,21 +1,32 @@
 import { err, ok, type Result } from "../result.js";
 
 const COMMON_HEADER_BYTES = 8;
+/** Bound extent objects in each inline event independently of source record length. */
+export const USN_INLINE_EXTENT_LIMIT = 16;
 
 export interface UsnRecord {
-  readonly majorVersion: 2 | 3;
+  readonly majorVersion: 2 | 3 | 4;
   readonly referenceBytes: 8 | 16;
   readonly fileOffset: number;
   readonly recordBytes: number;
   readonly fileReference: bigint;
   readonly parentReference: bigint;
   readonly usn: bigint;
-  readonly timestampFileTime: bigint;
+  readonly timestampFileTime: bigint | null;
   readonly reasonFlags: number;
   readonly sourceFlags: number;
-  readonly securityId: number;
-  readonly fileAttributes: number;
-  readonly name: string;
+  readonly securityId: number | null;
+  readonly fileAttributes: number | null;
+  readonly name: string | null;
+  readonly remainingExtents?: number;
+  readonly extentSize?: number;
+  readonly extentCount?: number;
+  readonly omittedExtents?: number;
+  readonly extentSample?: readonly {
+    readonly fileOffset: number;
+    readonly offset: bigint;
+    readonly length: bigint;
+  }[];
 }
 
 export type UsnRecordIssue =
@@ -66,8 +77,13 @@ export function* readUsnJournal(
 
     const major = bytes.readUInt16LE(fileOffset + 4);
     const minor = bytes.readUInt16LE(fileOffset + 6);
-    if ((major !== 2 && major !== 3) || minor !== 0) {
+    if ((major !== 2 && major !== 3 && major !== 4) || minor !== 0) {
       yield err({ kind: "unsupported", fileOffset, major, minor });
+    } else if (major === 4) {
+      yield readExtentRecord(
+        bytes.subarray(fileOffset, fileOffset + length),
+        fileOffset,
+      );
     } else {
       yield readNamedRecord(
         bytes.subarray(fileOffset, fileOffset + length),
@@ -118,5 +134,54 @@ const readNamedRecord = (
     securityId: record.readUInt32LE(body + 24),
     fileAttributes: record.readUInt32LE(body + 28),
     name: record.toString("utf16le", nameOffset, nameOffset + nameBytes),
+  });
+};
+
+const readExtentRecord = (
+  record: Buffer,
+  fileOffset: number,
+): Result<UsnRecord, UsnRecordIssue> => {
+  if (record.length < 64) return err({ kind: "malformed", fileOffset });
+  const extentCount = record.readUInt16LE(60),
+    extentSize = record.readUInt16LE(62);
+  // Validate the complete declared array before allocating the fixed-size sample.
+  if (
+    extentSize < 16 ||
+    extentCount > Math.floor((record.length - 64) / extentSize)
+  )
+    return err({ kind: "malformed", fileOffset });
+  const extentSample: { fileOffset: number; offset: bigint; length: bigint }[] =
+    [];
+  for (
+    let index = 0;
+    index < Math.min(extentCount, USN_INLINE_EXTENT_LIMIT);
+    index++
+  ) {
+    const cursor = 64 + index * extentSize;
+    extentSample.push({
+      fileOffset: fileOffset + cursor,
+      offset: record.readBigInt64LE(cursor),
+      length: record.readBigInt64LE(cursor + 8),
+    });
+  }
+  return ok({
+    majorVersion: 4,
+    referenceBytes: 16,
+    fileOffset,
+    recordBytes: record.length,
+    fileReference: readReference(record, 8, 16),
+    parentReference: readReference(record, 24, 16),
+    usn: record.readBigInt64LE(40),
+    reasonFlags: record.readUInt32LE(48),
+    sourceFlags: record.readUInt32LE(52),
+    timestampFileTime: null,
+    securityId: null,
+    fileAttributes: null,
+    name: null,
+    remainingExtents: record.readUInt32LE(56),
+    extentCount,
+    extentSize,
+    omittedExtents: extentCount - extentSample.length,
+    extentSample,
   });
 };

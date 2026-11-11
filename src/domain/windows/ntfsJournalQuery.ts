@@ -1,3 +1,4 @@
+import { USN_INLINE_EXTENT_LIMIT } from "./ntfsUsnJournal.js";
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
@@ -76,25 +77,44 @@ export const ntfsJournalResultSchema = z.strictObject({
       z.strictObject({
         kind: z.literal("event"),
         event: z.strictObject({
-          majorVersion: z.union([z.literal(2), z.literal(3)]),
+          majorVersion: z.union([z.literal(2), z.literal(3), z.literal(4)]),
           referenceBytes: z.union([z.literal(8), z.literal(16)]),
           fileOffset: offset,
           recordBytes: offset,
           fileReference: unsignedDecimal,
           parentReference: unsignedDecimal,
           usn: signedDecimal,
-          timestampFileTime: unsignedDecimal,
+          timestampFileTime: unsignedDecimal.nullable(),
           reasonFlags: offset,
           sourceFlags: offset,
-          securityId: offset,
-          fileAttributes: offset,
-          name: z.string(),
+          securityId: offset.nullable(),
+          fileAttributes: offset.nullable(),
+          name: z.string().nullable(),
+          remainingExtents: offset.exactOptional(),
+          extentSize: offset.exactOptional(),
+          extentCount: offset.exactOptional(),
+          omittedExtents: offset.exactOptional(),
+          extentSample: z
+            .array(
+              z.strictObject({
+                fileOffset: offset,
+                offset: signedDecimal,
+                length: signedDecimal,
+              }),
+            )
+            .max(USN_INLINE_EXTENT_LIMIT)
+            .exactOptional(),
           mft: z.strictObject({ file: matchSchema, parent: matchSchema }),
         }),
       }),
       z.strictObject({ kind: z.literal("coverage"), issue: issueSchema }),
     ]),
   ),
+  historyCompleteness: z
+    .literal("unknown")
+    .describe(
+      "Acquired bytes alone do not establish absent history, journal wrap, or missing captures.",
+    ),
   nextFileOffset: offset.nullable(),
   mftLimitations: z.array(z.string()),
 });
