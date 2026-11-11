@@ -806,3 +806,388 @@ it.each(["plan", "invalid"] as const)(
     }
   },
 );
+
+it("retains both prior process and input cleanup authority", async () => {
+  const { AnalysisCleanupLease } =
+    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+  const { ProcessCaptureError } =
+    await import("../../../src/process/capture/ProcessCaptureError.js");
+  const root = await createTestTempDirectory("rea-process-cli-mixed-owners-");
+  const path = join(root, "scenario.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      executable: process.execPath,
+      working_directory: root,
+      dry_run: true,
+    }),
+  );
+  const owner = new OwnedFileHandle(await open(path, "r"));
+  const processLease = new AnalysisCleanupLease(async () => {}, [
+    "owned process",
+  ]);
+  const primary = new ProcessCaptureError("process cleanup incomplete", {
+    reason: "cleanup_incomplete",
+    cleanup: { reason: "process alive", resources: ["owned process"] },
+  });
+  processLease.bindCleanupError(primary);
+  const preparing = vi
+    .spyOn(scenarioPreparation, "prepareProcessScenarioPlan")
+    .mockResolvedValue(err(primary));
+  const realClose = OwnedFileHandle.prototype.close;
+  const fileClose = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (this === owner) throw new Error("descriptor retained");
+      return realClose.call(this);
+    });
+  const realScopeClose = ArtifactResourceScope.prototype.close;
+  const scopeClose = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+      this.retain({ kind: "file-handle", resource: path, handle: owner });
+      await realScopeClose.call(this);
+    });
+  let failure: unknown;
+  try {
+    try {
+      await captureProcessScenarioFile(path);
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(failure instanceof ArtifactReaderFailure))
+      throw new Error("missing failure");
+    expect(failure.cleanup?.resources).toContain("owned process");
+    expect(failure.cleanupLeases).toBeUndefined();
+  } finally {
+    preparing.mockRestore();
+    fileClose.mockRestore();
+    scopeClose.mockRestore();
+    if (failure instanceof ArtifactReaderFailure)
+      for (const lease of failure.cleanupLeases ?? []) await lease.release();
+    await owner.close();
+    await processLease.release();
+  }
+});
+
+it("retains prior error and late cancellation with successful cleanup", async () => {
+  const root = await createTestTempDirectory("rea-process-cli-late-success-");
+  const path = join(root, "scenario.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      executable: process.execPath,
+      working_directory: join(root, "missing"),
+      dry_run: true,
+    }),
+  );
+  const controller = new AbortController();
+  const reason = { caller: "stop during final cleanup" };
+  let primary: AnalysisError | undefined;
+  const prepare = scenarioPreparation.prepareProcessScenarioPlan;
+  const preparing = vi
+    .spyOn(scenarioPreparation, "prepareProcessScenarioPlan")
+    .mockImplementation(async (...args) => {
+      const result = await prepare(...args);
+      if (!result.ok) primary = result.error;
+      return result;
+    });
+  const close = ArtifactResourceScope.prototype.close;
+  const closing = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+      controller.abort(reason);
+      await close.call(this);
+    });
+  try {
+    const result = await captureProcessScenarioFile(
+      path,
+      process.env,
+      controller.signal,
+    );
+    expect(result).toMatchObject({ code: "invalid_request" });
+    expect(primary).toBeDefined();
+    expect(
+      primary?.secondaryFailures.some(
+        (failure) =>
+          failure._tag === "AnalysisCancelledError" && failure.cause === reason,
+      ),
+    ).toBe(true);
+  } finally {
+    preparing.mockRestore();
+    closing.mockRestore();
+  }
+});
+
+it("retains independent process and input owners after mixed cleanup failure", async () => {
+  const { AnalysisCleanupLease } =
+    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+  const { ProcessCaptureError } =
+    await import("../../../src/process/capture/ProcessCaptureError.js");
+  const harness =
+    await import("../../../src/process/capture/ProcessHarness.js");
+  const root = await createTestTempDirectory("rea-process-cli-mixed-owners-");
+  const path = join(root, "scenario.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      executable: process.execPath,
+      working_directory: root,
+      dry_run: false,
+    }),
+  );
+  const owner = new OwnedFileHandle(await open(path, "r"));
+  let failProcess = true;
+  const processLease = new AnalysisCleanupLease(async () => {
+    if (failProcess) throw new Error("process cleanup failed");
+  }, ["owned process"]);
+  const primary = new ProcessCaptureError("capture refused");
+  const capturing = vi
+    .spyOn(harness, "captureProcessScenario")
+    .mockImplementation(async (...args) => {
+      const scope = args[7];
+      if (!scope) throw new Error("missing process scope");
+      scope.retain(processLease);
+      return err(primary);
+    });
+  const realClose = OwnedFileHandle.prototype.close;
+  const fileClose = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (this === owner) throw new Error("descriptor retained");
+      return realClose.call(this);
+    });
+  const realScopeClose = ArtifactResourceScope.prototype.close;
+  const scopeClose = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+      this.retain({ kind: "file-handle", resource: path, handle: owner });
+      await realScopeClose.call(this);
+    });
+  let failure: unknown;
+  try {
+    try {
+      await captureProcessScenarioFile(path);
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(failure instanceof ArtifactReaderFailure))
+      throw new Error("missing failure");
+    expect(failure.cleanup?.resources).toEqual(
+      expect.arrayContaining(["owned process", path]),
+    );
+    expect(failure.cleanupLeases).toHaveLength(2);
+    failProcess = false;
+    fileClose.mockRestore();
+    for (const lease of failure.cleanupLeases ?? []) await lease.release();
+    expect(processLease.released).toBe(true);
+    expect(owner.handle.fd).toBe(-1);
+  } finally {
+    failProcess = false;
+    capturing.mockRestore();
+    fileClose.mockRestore();
+    scopeClose.mockRestore();
+    await owner.close();
+    await processLease.release();
+  }
+});
+
+it.each(["completed", "failed"] as const)(
+  "retries transient process cleanup after %s capture",
+  async (outcome) => {
+    const { AnalysisCleanupLease } =
+      await import("../../../src/artifacts/AnalysisCleanupLease.js");
+    const { ProcessCaptureError } =
+      await import("../../../src/process/capture/ProcessCaptureError.js");
+    const { ok } = await import("../../../src/domain/result.js");
+    const harness =
+      await import("../../../src/process/capture/ProcessHarness.js");
+    const root = await createTestTempDirectory(
+      "rea-process-cli-transient-close-",
+    );
+    const path = join(root, "scenario.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        executable: process.execPath,
+        working_directory: root,
+        dry_run: false,
+      }),
+    );
+    let attempts = 0;
+    const processLease = new AnalysisCleanupLease(async () => {
+      if (++attempts === 1) throw new Error("transient process cleanup");
+    }, ["owned process"]);
+    const primary = new ProcessCaptureError("capture refused");
+    const capturing = vi
+      .spyOn(harness, "captureProcessScenario")
+      .mockImplementation(async (...args) => {
+        const scope = args[7];
+        if (!scope) throw new Error("missing process scope");
+        scope.retain(processLease);
+        return outcome === "completed"
+          ? ok(EMPTY_PROCESS_CAPTURE_EXAMPLE as never)
+          : err(primary);
+      });
+    try {
+      const result = await captureProcessScenarioFile(path);
+      expect(attempts).toBe(2);
+      expect(processLease.released).toBe(true);
+      if (outcome === "completed")
+        expect(result).toMatchObject({ predicate_type: "rea.process-capture" });
+      else expect(result).toMatchObject({ message: "capture refused" });
+    } finally {
+      capturing.mockRestore();
+      await processLease.release();
+    }
+  },
+);
+
+it("closes the actual process owner when capture Evidence assembly throws", async () => {
+  const { AnalysisCleanupLease } =
+    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+  const { ok } = await import("../../../src/domain/result.js");
+  const harness =
+    await import("../../../src/process/capture/ProcessHarness.js");
+  const processEvidence =
+    await import("../../../src/application/process/ProcessEvidence.js");
+  const root = await createTestTempDirectory("rea-process-evidence-finalize-");
+  const path = join(root, "scenario.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      executable: process.execPath,
+      working_directory: root,
+      dry_run: false,
+    }),
+  );
+  let closes = 0;
+  const owner = new AnalysisCleanupLease(async () => {
+    closes += 1;
+  }, ["owned process"]);
+  const physical = new Error("Evidence assembly failed");
+  const capturing = vi
+    .spyOn(harness, "captureProcessScenario")
+    .mockImplementation(async (...args) => {
+      if (args[7] === undefined) throw new Error("missing process scope");
+      args[7].retain(owner);
+      return ok(EMPTY_PROCESS_CAPTURE_EXAMPLE as never);
+    });
+  const projecting = vi
+    .spyOn(processEvidence, "createProcessCaptureEvidence")
+    .mockImplementation(() => {
+      throw physical;
+    });
+  try {
+    const result = await captureProcessScenarioFile(path);
+    expect(result).toMatchObject({
+      code: "execution_failure",
+      message: expect.stringContaining(physical.message),
+    });
+    expect(closes).toBe(1);
+    expect(owner.released).toBe(true);
+  } finally {
+    projecting.mockRestore();
+    capturing.mockRestore();
+    await owner.release();
+  }
+});
+
+it("keeps unknown primary cleanup coverage when late cancellation wraps mixed owners", async () => {
+  const { AnalysisCleanupLease } =
+    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+  const { ProcessCaptureError } =
+    await import("../../../src/process/capture/ProcessCaptureError.js");
+  const harness =
+    await import("../../../src/process/capture/ProcessHarness.js");
+  const root = await createTestTempDirectory("rea-process-cli-three-owners-");
+  const path = join(root, "scenario.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      executable: process.execPath,
+      working_directory: root,
+      dry_run: false,
+    }),
+  );
+  const owner = new OwnedFileHandle(await open(path, "r"));
+  const controller = new AbortController();
+  const reason = { caller: "late cancellation" };
+  let failing = true;
+  const priorLease = new AnalysisCleanupLease(async () => {}, [
+    "prior process",
+  ]);
+  const scopeLease = new AnalysisCleanupLease(async () => {
+    if (failing) throw new Error("scope close failed");
+  }, ["other process"]);
+  const primary = new ProcessCaptureError("capture refused", {
+    reason: "cleanup_incomplete",
+    cleanup: { reason: "prior pending", resources: ["prior process"] },
+  });
+  priorLease.bindCleanupError(primary);
+  const capturing = vi
+    .spyOn(harness, "captureProcessScenario")
+    .mockImplementation(async (...args) => {
+      const scope = args[7];
+      if (!scope) throw new Error("missing scope");
+      scope.retain(scopeLease);
+      return err(primary);
+    });
+  const realClose = OwnedFileHandle.prototype.close;
+  const fileClose = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (this === owner && failing) {
+        controller.abort(reason);
+        throw new Error("descriptor retained");
+      }
+      return realClose.call(this);
+    });
+  const realScopeClose = ArtifactResourceScope.prototype.close;
+  const scopeClose = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+      this.retain({ kind: "file-handle", resource: path, handle: owner });
+      await realScopeClose.call(this);
+    });
+  let failure: unknown;
+  try {
+    try {
+      await captureProcessScenarioFile(path, process.env, controller.signal);
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(failure instanceof ArtifactReaderFailure))
+      throw new Error("missing failure");
+    expect(controller.signal.reason).toBe(reason);
+    expect(failure.cleanup?.resources).toContain("prior process");
+    expect(failure.cleanupLeases).toBeUndefined();
+    expect(failure.cause).toBeInstanceOf(AggregateError);
+    const local = (failure.cause as AggregateError).errors.find(
+      (error) =>
+        error instanceof ArtifactReaderFailure &&
+        error.cleanupLeases?.length === 2,
+    );
+    expect(local).toBeInstanceOf(ArtifactReaderFailure);
+    failing = false;
+    fileClose.mockRestore();
+    for (const lease of (local as ArtifactReaderFailure).cleanupLeases ?? [])
+      await lease.release();
+    expect(scopeLease.released).toBe(true);
+    expect(owner.handle.fd).toBe(-1);
+    expect(primary.cleanupIncomplete).toBe(true);
+  } finally {
+    failing = false;
+    capturing.mockRestore();
+    fileClose.mockRestore();
+    scopeClose.mockRestore();
+    if (failure instanceof ArtifactReaderFailure)
+      for (const lease of failure.cleanupLeases ?? []) await lease.release();
+    await owner.close();
+    await scopeLease.release();
+    await priorLease.release();
+  }
+});

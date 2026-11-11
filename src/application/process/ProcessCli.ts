@@ -31,11 +31,60 @@ import {
   type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
 import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
-import { readJsonFile } from "../JsonFiles.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { readJsonFile, jsonFileReadCleanupLeases } from "../JsonFiles.js";
+import {
+  ArtifactReaderFailure,
+  artifactPrimaryCleanupLeases,
+} from "../../artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+
+/** Preserve the owning reader's facts when retaining a different cause. */
+const artifactFailureFacts = (failure: ArtifactReaderFailure) => ({
+  ...(failure.userMessage === undefined
+    ? {}
+    : { userMessage: failure.userMessage }),
+  ...(failure.resolvedPath === undefined
+    ? {}
+    : { resolvedPath: failure.resolvedPath }),
+  ...(failure.boundary === undefined ? {} : { boundary: failure.boundary }),
+  ...(failure.admission === undefined ? {} : { admission: failure.admission }),
+  ...(failure.readerLimit === undefined
+    ? {}
+    : { readerLimit: failure.readerLimit }),
+  ...(failure.cleanup === undefined ? {} : { cleanup: failure.cleanup }),
+  ...(failure.partialObservation === undefined
+    ? {}
+    : { partialObservation: failure.partialObservation }),
+  ...(failure.cancellation === undefined
+    ? {}
+    : { cancellation: failure.cancellation }),
+});
+
+/** Keep the completed capture or primary failure while its exact owner retries. */
+class RetainedProcessCaptureFailure extends ArtifactReaderFailure {
+  constructor(
+    failure: ArtifactReaderFailure,
+    readonly outcome: Result<Evidence, unknown>,
+    readonly owner: AnalysisCleanupLease,
+  ) {
+    super(
+      failure.reason,
+      failure.message,
+      {
+        cause: failure,
+        ...artifactFailureFacts(failure),
+        ...(failure.cleanupLeases === undefined
+          ? {}
+          : { cleanupLeases: failure.cleanupLeases }),
+      },
+      failure.details,
+    );
+  }
+}
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput extends AnalysisErrorProjection {
@@ -86,31 +135,70 @@ export const captureProcessScenarioFile = async (
         { minimumIntervalMs: 100 },
       );
       const resourceScope = new ProcessCaptureResourceScope();
-      const captured = await captureProcessScenario(
-        parsed.data,
-        signal,
-        process.platform,
-        environment,
-        undefined,
-        undefined,
-        progress,
-        resourceScope,
-      );
+      let captureOutcome: Result<Evidence, unknown>;
+      try {
+        const captured = await captureProcessScenario(
+          parsed.data,
+          signal,
+          process.platform,
+          environment,
+          undefined,
+          undefined,
+          progress,
+          resourceScope,
+        );
+        captureOutcome = captured.ok
+          ? ok(createProcessCaptureEvidence(parsed.data, captured.value))
+          : err(captured.error);
+      } catch (cause: unknown) {
+        captureOutcome = err(cause);
+      }
       try {
         await resourceScope.close();
       } catch (cause: unknown) {
-        if (!captured.ok && cause instanceof AnalysisError)
-          throw captured.error instanceof ProcessCaptureError
-            ? captured.error.withFinalization({ cleanupFailure: cause })
-            : analysisErrorWithCleanupFailure(
-                captured.error,
-                cause,
-                "capture_process_scenario",
-              ).bindCleanupDependencies([captured.error, cause]);
-        throw cause;
+        const owner = new AnalysisCleanupLease(() => resourceScope.close(), {
+          get cleanupResources() {
+            return cause instanceof AnalysisError
+              ? cause.cleanupResources
+              : undefined;
+          },
+        });
+        resources.retain({
+          kind: "lease",
+          resource: "process capture resources",
+          lease: owner,
+        });
+        const original = captureOutcome.ok ? undefined : captureOutcome.error;
+        const priorIncomplete =
+          original instanceof AnalysisError && original.cleanupIncomplete;
+        const primary = captureOutcome.ok
+          ? cause
+          : original instanceof AnalysisError && cause instanceof AnalysisError
+            ? original instanceof ProcessCaptureError
+              ? original.withFinalization({ cleanupFailure: cause })
+              : analysisErrorWithCleanupFailure(
+                  original,
+                  cause,
+                  "capture_process_scenario",
+                ).bindCleanupDependencies([original, cause])
+            : new AggregateError(
+                [original, cause],
+                "Process capture and cleanup failed",
+                { cause: original },
+              );
+        const failure = ArtifactReaderFailure.withCleanup(
+          primary,
+          ArtifactReaderFailure.cleanupObservation(
+            cause,
+            "process capture resources",
+          ),
+          captureOutcome.ok ? captureOutcome.value : undefined,
+          priorIncomplete ? undefined : [owner],
+        );
+        throw new RetainedProcessCaptureFailure(failure, captureOutcome, owner);
       }
-      if (!captured.ok) throw captured.error;
-      return createProcessCaptureEvidence(parsed.data, captured.value);
+      if (!captureOutcome.ok) throw captureOutcome.error;
+      return captureOutcome.value;
     },
   );
 
@@ -283,17 +371,48 @@ const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
 const projectProcessCliError = (
   cause: unknown,
   operation: "capture_process_scenario" | "compare_process_captures",
+  signal?: AbortSignal,
 ): ProcessCliErrorOutput => {
-  if (cause instanceof AnalysisError) return cliAnalysisError(cause);
+  const failure =
+    cause instanceof AnalysisError
+      ? cause
+      : new ProviderAdapterError(PROCESS_PROVIDER.id, operation, {
+          cause,
+          diagnostics: { phase: "process_cli" },
+          userMessage: `Process command could not complete: ${describeValidationFailure(cause)}`,
+          remediationAction: PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
+        });
   return cliAnalysisError(
-    new ProviderAdapterError(PROCESS_PROVIDER.id, operation, {
-      cause,
-      diagnostics: { phase: "process_cli" },
-      userMessage: `Process command could not complete: ${describeValidationFailure(cause)}`,
-      remediationAction: PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
-    }),
+    signal?.aborted
+      ? analysisErrorWithCancellation(
+          failure,
+          new AnalysisCancelledError(operation, { cause: signal.reason }),
+        )
+      : failure,
   );
 };
+
+/** Retain a reader failure's exact cleanup proof while recording later cancellation. */
+const artifactFailureWithCancellation = (
+  failure: ArtifactReaderFailure,
+  cancellation: AnalysisCancelledError,
+): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(
+    failure.reason,
+    failure.message,
+    {
+      cause: new AggregateError(
+        [failure, cancellation],
+        "Process input failed and was cancelled",
+        { cause: failure },
+      ),
+      ...artifactFailureFacts(failure),
+      ...(failure.cleanupLeases === undefined
+        ? {}
+        : { cleanupLeases: failure.cleanupLeases }),
+    },
+    failure.details,
+  );
 
 /** One invocation owns every input descriptor through final cleanup and retry. */
 const withProcessInputResources = async (
@@ -337,19 +456,57 @@ const withProcessInputResources = async (
         ? outcome.error
         : outcome.error instanceof AnalysisError
           ? analysisErrorWithCancellation(outcome.error, cancellation)
-          : new AggregateError(
-              [outcome.error, cancellation],
-              "Process input failed and was cancelled",
-              { cause: outcome.error },
-            );
-    throw ArtifactReaderFailure.withCleanup(
+          : outcome.error instanceof ArtifactReaderFailure
+            ? artifactFailureWithCancellation(outcome.error, cancellation)
+            : new AggregateError(
+                [outcome.error, cancellation],
+                "Process input failed and was cancelled",
+                { cause: outcome.error },
+              );
+    // JSON input owns the exact artifact failure used to bind this error's
+    // cleanup group. Other AnalysisErrors may own independent resources.
+    const inherited =
+      primary instanceof EvidenceFileError
+        ? (jsonFileReadCleanupLeases(primary) ??
+          artifactPrimaryCleanupLeases(primary))
+        : artifactPrimaryCleanupLeases(primary);
+    const local =
+      cause instanceof ArtifactReaderFailure ? cause.cleanupLeases : undefined;
+    const leases =
+      inherited === undefined || local === undefined
+        ? undefined
+        : [...new Set([...inherited, ...local])];
+    const failure = ArtifactReaderFailure.withCleanup(
       primary,
       cleanup,
       outcome.ok ? outcome.value : undefined,
-      cause instanceof ArtifactReaderFailure ? cause.cleanupLeases : undefined,
+      leases,
+    );
+    if (leases !== undefined || !(cause instanceof ArtifactReaderFailure))
+      throw failure;
+    // Preserve the independently owned local leases even when the primary's
+    // full retry authority is unknown. Do not claim they cover both failures.
+    throw new ArtifactReaderFailure(
+      failure.reason,
+      failure.message,
+      {
+        cause: new AggregateError(
+          [failure, cause],
+          "Process and input cleanup remain incomplete",
+        ),
+        ...artifactFailureFacts(failure),
+      },
+      failure.details,
     );
   }
-  if (!outcome.ok) return projectProcessCliError(outcome.error, operation);
+  if (
+    !outcome.ok &&
+    outcome.error instanceof RetainedProcessCaptureFailure &&
+    outcome.error.owner.released
+  )
+    outcome = outcome.error.outcome;
+  if (!outcome.ok)
+    return projectProcessCliError(outcome.error, operation, signal);
   const completed = completeProviderEvidence(outcome.value, signal);
   return completed.ok ? completed.value : cliAnalysisError(completed.error);
 };
