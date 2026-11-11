@@ -194,9 +194,26 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     "windows.change_time_settle_poll_ms",
     "windows.change_time_settle_max_polls",
   ]);
+  for (const operation of [
+    "open_binary",
+    "export_web_scripts",
+    "inspect_analysis_view",
+    "inspect_android_package",
+    "capture_process_scenario",
+  ]) {
+    expect(
+      store.inspect({ operation }).settings.map(({ setting }) => setting),
+    ).toEqual(
+      expect.arrayContaining([
+        "windows.change_time_drift_ms",
+        "windows.change_time_settle_poll_ms",
+        "windows.change_time_settle_max_polls",
+      ]),
+    );
+  }
   expect(
     store
-      .inspect({ operation: "open_binary" })
+      .inspect({ provider: "jadx", operation: "inspect_android_package" })
       .settings.map(({ setting }) => setting),
   ).toEqual(
     expect.arrayContaining([
