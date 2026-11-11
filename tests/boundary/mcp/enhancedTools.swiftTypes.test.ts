@@ -236,3 +236,81 @@ describe("Swift category uncertainty through MCP", () => {
     }
   });
 });
+
+describe("private nested Swift nominal types through MCP", () => {
+  it("uses the nested nominal category rather than its file discriminator", async () => {
+    const cases = [
+      {
+        address: "0x1",
+        value:
+          "_$s4main8EnvelopeV5State33_BB24877EF3DBC90D8F8601519D2F330CLLO8describeSiyF",
+        category: "enums",
+      },
+      {
+        address: "0x2",
+        value:
+          "_$s4main6HolderC4Item33_BB24877EF3DBC90D8F8601519D2F330CLLV7doubledSiyF",
+        category: "structs",
+      },
+      {
+        address: "0x3",
+        value:
+          "_$s4main8EnvelopeV6Hidden33_BB24877EF3DBC90D8F8601519D2F330CLLC5valueSiyF",
+        category: "classes",
+      },
+    ] as const;
+    const control = {
+      address: "0x4",
+      value: "_$s4main6HolderC6secret33_BB24877EF3DBC90D8F8601519D2F330CLLSiyF",
+    } as const;
+    const client = await connect({
+      execute: async (operation) =>
+        ok(
+          operation === "list_procedures"
+            ? [...cases, control].map(({ address, value }) => ({
+                address,
+                value,
+              }))
+            : [],
+        ),
+    });
+
+    const all = jsonResult(
+      await client.callTool({ name: "analyze_swift_types", arguments: {} }),
+    );
+    expect(all).toMatchObject({
+      total: 4,
+      categories: {
+        classes: {
+          count: 2,
+          items: [{ address: "0x3" }, { address: "0x4" }],
+        },
+        enums: { count: 1, items: [{ address: "0x1" }] },
+        structs: { count: 1, items: [{ address: "0x2" }] },
+      },
+      unclassified: [],
+    });
+
+    for (const category of new Set(cases.map(({ category }) => category))) {
+      const filtered = jsonResult(
+        await client.callTool({
+          name: "analyze_swift_types",
+          arguments: { category },
+        }),
+      );
+      const addresses =
+        category === "classes"
+          ? ["0x3", "0x4"]
+          : cases
+              .filter((entry) => entry.category === category)
+              .map(({ address }) => address);
+      expect(filtered).toMatchObject({
+        total: addresses.length,
+        categories: {
+          [category]: { items: addresses.map((address) => ({ address })) },
+        },
+        unclassified: [],
+      });
+    }
+  });
+});

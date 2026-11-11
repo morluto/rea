@@ -150,6 +150,37 @@ describe("modern Swift category evidence", () => {
   });
 });
 
+it("uses the nominal kind after a private nested-type discriminator", () => {
+  const names = [
+    [
+      "_$s4main8EnvelopeV5State33_BB24877EF3DBC90D8F8601519D2F330CLLO8describeSiyF",
+      "enums",
+    ],
+    [
+      "_$s4main6HolderC4Item33_BB24877EF3DBC90D8F8601519D2F330CLLV7doubledSiyF",
+      "structs",
+    ],
+    [
+      "_$s4main8EnvelopeV6Hidden33_BB24877EF3DBC90D8F8601519D2F330CLLC5valueSiyF",
+      "classes",
+    ],
+    [
+      "_$s4main6HolderC6secret33_BB24877EF3DBC90D8F8601519D2F330CLLSiyF",
+      "classes",
+    ],
+  ] as const;
+
+  for (const [name, category] of names) {
+    expect(
+      categorizeSwiftTypes([{ address: "0x1", name }], { category }),
+    ).toMatchObject({
+      total: 1,
+      categories: { [category]: { count: 1 } },
+      unclassified: [],
+    });
+  }
+});
+
 describe("Swift alias ambiguity", () => {
   it("reports conflicting aliases rather than choosing a category", () => {
     expect(

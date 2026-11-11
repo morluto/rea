@@ -63,20 +63,28 @@ export const classifySwiftSymbol = (
         category = null;
       break;
     }
-    const kind = mangling.charAt(end);
+    // Private nested declarations place a file discriminator before the
+    // nominal marker, so decode the kind after its two identifiers and `LL`.
+    const discriminatorEnd = identifierEnd(mangling, end);
+    const kindOffset =
+      discriminatorEnd !== undefined &&
+      mangling.startsWith("LL", discriminatorEnd)
+        ? discriminatorEnd + 2
+        : end;
+    const kind = mangling.charAt(kindOffset);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {
       // Current swiftc emits protocol descriptors as `…<Nominal>Mp` without
       // the nominal `P` marker (e.g. `_$s4main7ScoringMp`). Decode that exact
       // suffix; unknown substitution encodings stay unclassified, never guessed.
-      if (mangling.slice(end) === "Mp") {
+      if (mangling.slice(kindOffset) === "Mp") {
         category = "protocols";
         protocolIdentity = true;
       } else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
-    offset = end + 1;
+    offset = kindOffset + 1;
   }
   return { category, protocolIdentity };
 };
