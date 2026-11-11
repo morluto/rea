@@ -977,6 +977,8 @@ jobs:
           UV_THREADPOOL_SIZE: "2"
         run: npm run verify:inspector
       - run: npm run verify:package:windows
+      - name: Run the Windows quick tools launcher behavior tests
+        run: python scripts/run-python-tests.py --windows-tools
       - name: Verify native directory identity on Node 24
         run: >-
           npx vitest run --coverage.enabled=false

@@ -100,9 +100,11 @@ class LauncherStructureTests(unittest.TestCase):
         content = BAT_PATH.read_text(encoding="utf-8")
         # A .cmd shim fallback would re-expand analyst text through CALL.
         self.assertNotIn("REA_CMD", content)
-        # The dispatch runs after endlocal with %NEX% %REN%: paths containing !
-        # survive because delayed expansion is no longer active on that line.
-        self.assertIn('"%NEX%" "%REN%" %RARGS%', content)
+        # Install paths containing ! are refused before delayed expansion
+        # starts, and the dispatch runs inside that scope with !RARGS! so
+        # operator characters stay data without any endlocal in the flow.
+        self.assertIn('"%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!', content)
+        self.assertIn("NO_BANG", content)
 
     def test_leading_dash_terms_use_the_pattern_selector(self):
         content = BAT_PATH.read_text(encoding="utf-8")

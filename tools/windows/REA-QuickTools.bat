@@ -33,6 +33,20 @@ pause
 exit /b 1
 
 :HAVE_REA
+:: Delayed expansion consumes ! in values it expands, so an install location
+:: containing ! cannot be dispatched reliably; fail closed with guidance.
+set "BANG_CHECK=%NODE_EXE%%REA_ENTRY%"
+if not "%BANG_CHECK%"=="%BANG_CHECK:!=%" goto NO_BANG
+goto CAPTURE
+
+:NO_BANG
+echo [ERROR] ตำแหน่งติดตั้งมีอักขระ ! ซึ่ง launcher ของ Windows รองรับไม่ได้
+echo ติดตั้ง REA ในโฟลเดอร์ที่ไม่มีอักขระ ! แล้วลองใหม่
+echo.
+pause
+exit /b 1
+
+:CAPTURE
 
 :: Capture a dragged-and-dropped target BEFORE enabling delayed expansion so
 :: the raw argument is stored literally (no percent or exclamation re-expansion).
@@ -224,17 +238,11 @@ goto MENU
 :: once here keeps operator and percent characters inside the value literal;
 :: analyst input never travels through the parse-time %* expansion.
 :RUN_REA
-:: REA_ARGS is built with delayed expansion at the action sites: operator and
-:: percent characters stay inside the value literal and analyst input never
-:: travels through the parse-time %* expansion. NODE_EXE and REA_ENTRY were
-:: captured before delayed expansion was enabled, so their ! characters
-:: survive; the exec line runs after endlocal, where ! has no special
-:: meaning again. The argument line crosses the endlocal boundary through a
-:: temp file, because %-bridges would re-parse & inside the value.
-set "REA_ARGS_FILE=%TEMP%\rea_quicktools_args_%RANDOM%.tmp"
-> "!REA_ARGS_FILE!" echo(!REA_ARGS!
-endlocal & set "NEX=%NODE_EXE%" & set "REN=%REA_ENTRY%" & set "ARGS_FILE=%REA_ARGS_FILE%"
-set /p RARGS=<"%ARGS_FILE%"
-del "%ARGS_FILE%" >nul 2>&1
-"%NEX%" "%REN%" %RARGS%
+:: REA_ARGS is built with delayed expansion at the action sites and is
+:: dispatched with !RARGS! on a delayed line: operator characters stay data
+:: and analyst input never travels through the parse-time %* expansion.
+:: NODE_EXE and REA_ENTRY contain no ! (pre-flight above), so their
+:: parse-time expansion is safe inside this delayed scope. No endlocal here:
+:: the menus after an action keep their delayed expansion.
+"%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!
 goto :eof

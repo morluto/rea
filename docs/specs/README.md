@@ -6,6 +6,12 @@ directory owns one `spec.md`, one `plan.md` and one `tasks.md`.
 Follow [documentation ownership and authoring](../development/documentation.md#feature-lifecycle)
 for the specification lifecycle, roadmap granularity and producer-owned contracts.
 
+## Windows
+
+- [Windows quick tools launcher](windows-quicktools-launcher/spec.md)
+  ([plan](windows-quicktools-launcher/plan.md),
+  [tasks](windows-quicktools-launcher/tasks.md))
+
 ## Documentation
 
 - [Organization](documentation/organization/spec.md)
