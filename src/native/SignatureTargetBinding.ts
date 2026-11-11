@@ -174,6 +174,7 @@ export const withSignatureTarget = async (
           [root.path],
           cleanup.cause,
           "cleanup",
+          result.ok ? result.value : undefined,
         );
         new AnalysisCleanupLeaseGroup(failure, [owner.lease]);
         return combineCleanupFailure(result, failure);
@@ -222,6 +223,7 @@ const signatureCleanupFailure = (
   resources: readonly string[],
   cause: unknown,
   phase: string,
+  completed?: InspectSignature,
 ): AnalysisError =>
   new ProviderCleanupError(
     NATIVE_MACOS_PROVIDER_IDENTITY.id,
@@ -231,7 +233,13 @@ const signatureCleanupFailure = (
       phase: `signature-snapshot-${phase}`,
       path: target.path,
     },
-    { operation: "inspect_signature", cause },
+    {
+      operation: "inspect_signature",
+      cause,
+      ...(completed === undefined
+        ? {}
+        : { partialObservation: completed, completedObservation: completed }),
+    },
   );
 
 const snapshotFailure = (
