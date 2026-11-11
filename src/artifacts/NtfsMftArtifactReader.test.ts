@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
 import { MFT_DEFAULT_RECORD_BYTES } from "../domain/windows/ntfsMft.js";
@@ -128,6 +129,47 @@ it("retries after final source verification fails without publishing its metadat
       record_count: 1,
     });
   } finally {
+    spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("retries a shared preparation cancelled by another traversal", async () => {
+  const reader = new NtfsMftArtifactReader(
+    await writeMft("$MFT", recordBytes({})),
+  );
+  const controller = new AbortController();
+  let entered: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      entered();
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      assertArtifactReadActive(signal);
+      return read.call(this, signal);
+    });
+  try {
+    const cancelled = reader
+      .entries(controller.signal)
+      [Symbol.asyncIterator]()
+      .next();
+    const cancelledResult = expect(cancelled).rejects.toMatchObject({
+      reason: "cancelled",
+    });
+    await started;
+    const other = reader.entries()[Symbol.asyncIterator]().next();
+    controller.abort("cancelled first traversal");
+    await cancelledResult;
+    await expect(other).resolves.toMatchObject({ done: true });
+    expect(reader.formatMetadata()).toMatchObject({ record_count: 1 });
+  } finally {
+    controller.abort();
     spy.mockRestore();
     await reader.close();
   }
