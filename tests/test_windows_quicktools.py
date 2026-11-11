@@ -108,8 +108,16 @@ class LauncherStructureTests(unittest.TestCase):
 
     def test_leading_dash_terms_use_the_pattern_selector(self):
         content = BAT_PATH.read_text(encoding="utf-8")
+        # Options-shaped terms route through the documented selector, quoting
+        # the value inside our own quotes for the CLI's --pattern=<value> form.
         self.assertIn("--pattern=!SEARCH_TERM!", content)
         self.assertIn("--pattern=!PROC_TERM!", content)
+        self.assertIn("--procedure=!FUNC_NAME!", content)
+        # Ampersand-free values are dispatched inside our own quotes (one argv
+        # entry for multiword needles); &-bearing values dispatch raw because
+        # they cannot cross a cmd boundary intact.
+        self.assertIn('set "PATTERN_FLAG="!PATTERN_CLEAN!""', content)
+        self.assertIn('set "FUNC_FLAG="!FUNC_CLEAN!""', content)
 
 
 class LauncherBehaviorTests(unittest.TestCase):
