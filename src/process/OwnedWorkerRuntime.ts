@@ -152,6 +152,7 @@ export class OwnedWorkerRuntime {
   #lastRunId: string | undefined;
   #terminalCloseRequested = false;
   #inputFailure: Error | undefined;
+  #launchFailure: { readonly cause: unknown } | undefined;
   #stdinGeneration = 0;
   readonly #stdoutListeners = new Set<{
     readonly stream: Readable;
@@ -189,6 +190,11 @@ export class OwnedWorkerRuntime {
   /** First error observed on the current child's request stream, if any. */
   get inputFailure(): Error | undefined {
     return this.#inputFailure;
+  }
+
+  /** Failure observed at the current launcher call, without reclassifying its cause. */
+  get launchFailure(): { readonly cause: unknown } | undefined {
+    return this.#launchFailure;
   }
 
   /** Keep a returned typed cleanup error live until this exact owner releases. */
@@ -243,6 +249,7 @@ export class OwnedWorkerRuntime {
     const ownRetry = this.#registry.has(this)
       ? this.#retryPending()
       : Promise.resolve();
+    this.#launchFailure = undefined;
     const acquisition = ownRetry.then(async () => {
       if (this.#closed) this.#closed = false;
       await this.#start(spawnOptions, initialize);
@@ -356,10 +363,16 @@ export class OwnedWorkerRuntime {
     this.#cleanupEpoch ??= new OwnedWorkerRuntimeCleanupEpoch(this.#root.path);
     if (this.#closing) throw new ProcessAdmissionError("runtime_closing");
     this.#lastRunId = spawnOptions.runId;
-    const spawned = await (this.options.launcher ?? spawnOwnedProviderProcess)({
-      ...spawnOptions,
-      cwd: this.#root.path,
-    });
+    let spawned: Awaited<ReturnType<typeof spawnOwnedProviderProcess>>;
+    try {
+      spawned = await (this.options.launcher ?? spawnOwnedProviderProcess)({
+        ...spawnOptions,
+        cwd: this.#root.path,
+      });
+    } catch (cause: unknown) {
+      this.#launchFailure = { cause };
+      throw cause;
+    }
     this.#inputFailure = undefined;
     this.#observeStdin(spawned.process.stdin);
     this.#cleanupEpoch.setRunId(spawned.ownership?.runId ?? spawnOptions.runId);
