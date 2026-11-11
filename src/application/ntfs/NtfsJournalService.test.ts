@@ -36,3 +36,32 @@ it.each([
     }
   },
 );
+
+it("preserves the completed file identity when MFT interpretation fails", async () => {
+  const resources = new ArtifactResourceScope();
+  const bytes = Buffer.from("not an MFT");
+  const sha256 = "a".repeat(64);
+  const spy = vi
+    .spyOn(stableArtifact, "readStableArtifact")
+    .mockResolvedValueOnce({ bytes, sha256 });
+  try {
+    const result = await inspectNtfsJournalEvidence(
+      {
+        mft_path: "/fixture/mft",
+        journal_path: "/fixture/journal",
+      },
+      resources,
+    );
+    if (result.ok) throw new Error("expected format failure");
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: "/fixture/mft",
+      sha256,
+      bytes: bytes.length,
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+  } finally {
+    spy.mockRestore();
+    await resources.close();
+  }
+});
