@@ -345,6 +345,9 @@ export const traceNativeValues = async (
           address: operation.address,
           reason: `Call target ${targets.data.status}`,
         });
+      // Preserve resolution rows, but finalize each exact call/destination
+      // binding once so repeated targets cannot multiply recovered-input groups.
+      const bindingDestinations = new Set<string>();
       for (const target of targets.data.targets) {
         const destination = target.procedure ?? target.address;
         if (
@@ -361,7 +364,11 @@ export const traceNativeValues = async (
           )
         )
           break;
-        if (target.status !== "candidate")
+        if (
+          target.status !== "candidate" &&
+          !bindingDestinations.has(destination)
+        ) {
+          bindingDestinations.add(destination);
           callBindings.push({
             caller: address,
             callee: destination,
@@ -371,6 +378,7 @@ export const traceNativeValues = async (
             output: operation.output !== null,
             evidence_id: evidenceId,
           });
+        }
         if (next.depth < input.max_depth && target.status !== "candidate")
           pending.push({ procedure: destination, depth: next.depth + 1 });
         else
