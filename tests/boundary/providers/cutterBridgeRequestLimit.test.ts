@@ -10,7 +10,10 @@ import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
-import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../../../src/domain/analysisErrorCore.js";
 import {
   authenticatedServer,
   writeDescriptor,
@@ -52,6 +55,32 @@ const clientFor = (directory: string, ceiling: string): CutterBridgeClient => {
   onTestFinished(() => client.close());
   return client;
 };
+
+it("preserves pre-aborted cancellation before admitting a malformed bridge limit", async () => {
+  const client = new CutterBridgeClient({
+    REA_BRIDGE_MAX_REQUEST_BYTES: "invalid",
+  });
+  const reason = new Error("stop before discovery");
+  const signal = AbortSignal.abort(reason);
+  for (const operation of [
+    () => client.listSessions({ signal }),
+    () =>
+      client.execute({
+        sessionId: SESSION,
+        expectedGeneration: 0,
+        command: "ij",
+        json: false,
+        signal,
+      }),
+  ]) {
+    await expect(operation()).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(AnalysisCancelledError);
+      expect(error).toHaveProperty("cause", reason);
+      return true;
+    });
+  }
+  await client.close();
+});
 
 it("uses a runtime bridge ceiling for a Cutter client built from the launch value", async () => {
   const directory = await privateDirectory();
