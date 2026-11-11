@@ -11,12 +11,21 @@ import {
 
 type JournalEvent = Omit<
   UsnRecord,
-  "fileReference" | "parentReference" | "usn" | "timestampFileTime"
+  | "fileReference"
+  | "parentReference"
+  | "usn"
+  | "timestampFileTime"
+  | "extentSample"
 > & {
   readonly fileReference: string;
   readonly parentReference: string;
   readonly usn: string;
-  readonly timestampFileTime: string;
+  readonly timestampFileTime: string | null;
+  readonly extentSample?: readonly {
+    readonly fileOffset: number;
+    readonly offset: string;
+    readonly length: string;
+  }[];
   readonly mft: UsnMftMatches;
 };
 
@@ -26,6 +35,7 @@ type TimelineRow =
 
 export interface NtfsJournalTimeline {
   readonly rows: readonly TimelineRow[];
+  readonly historyCompleteness: "unknown";
   /** First source offset left out of the delivery window. */
   readonly nextFileOffset: number | null;
   readonly mftLimitations: readonly string[];
@@ -55,18 +65,33 @@ export const composeNtfsJournalTimeline = (
     }
 
     const entry = result.value;
+    const { extentSample, ...fields } = entry;
     rows.push({
       kind: "event",
       event: {
-        ...entry,
+        ...fields,
         fileReference: entry.fileReference.toString(),
         parentReference: entry.parentReference.toString(),
         usn: entry.usn.toString(),
-        timestampFileTime: entry.timestampFileTime.toString(),
+        timestampFileTime: entry.timestampFileTime?.toString() ?? null,
+        ...(extentSample === undefined
+          ? {}
+          : {
+              extentSample: extentSample.map((extent) => ({
+                fileOffset: extent.fileOffset,
+                offset: extent.offset.toString(),
+                length: extent.length.toString(),
+              })),
+            }),
         mft: correlate(entry),
       },
     });
   }
 
-  return { rows, nextFileOffset, mftLimitations: mft.limitations };
+  return {
+    rows,
+    historyCompleteness: "unknown",
+    nextFileOffset,
+    mftLimitations: mft.limitations,
+  };
 };
