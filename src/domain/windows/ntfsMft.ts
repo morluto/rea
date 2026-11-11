@@ -22,7 +22,7 @@ const MFT_MAX_RECORD_BYTES = 65536;
 /** An update sequence array holds at least the sequence number and one fixup word. */
 const USA_MIN_ENTRIES = 2;
 /** NTFS fixes up one 512-byte sector at a time. */
-const FIXUP_SECTOR_BYTES = 512;
+export const FIXUP_SECTOR_BYTES = 512;
 /**
  * Fixed whole-file ceiling. Records are inventoried from their headers only;
  * attributes and their payloads are not decoded, so this is deliberately
