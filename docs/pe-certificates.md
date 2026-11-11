@@ -40,6 +40,10 @@ signer identifier facts. A signer identified by subject key identifier reports
 that value as `subject_key_identifier_hex`. Other certificate types keep
 `pkcs7` null.
 
+Each name attribute reports `rdn_index`, the zero-based position of its relative
+distinguished name (RDN) in the encoded name. Attributes in the same RDN share
+an index. Older retained Evidence may omit the index.
+
 Each signer reports `unsigned_attribute_oids`: null means the field was absent,
 and an array lists the types when present. Older retained Evidence may omit the
 field. Unsigned attribute contents, including nested signatures and timestamp

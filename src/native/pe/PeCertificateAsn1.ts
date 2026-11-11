@@ -293,6 +293,7 @@ interface Attribute {
   readonly oid: string;
   readonly oid_name: string | null;
   readonly value: string;
+  readonly rdn_index: number;
 }
 
 const decodeName = (
@@ -303,7 +304,7 @@ const decodeName = (
   readonly attributes: readonly Attribute[];
 } => {
   const attributes: Attribute[] = [];
-  for (const rdn of sequence(node, "Name")) {
+  for (const [rdnIndex, rdn] of sequence(node, "Name").entries()) {
     if (rdn.tag !== 0x31) return fail("Name RDN is not a SET.");
     if (rdn.children.length === 0) return fail("Name RDN is empty.");
     for (const attribute of rdn.children) {
@@ -323,6 +324,7 @@ const decodeName = (
         oid,
         oid_name: oidName(oid),
         value: decodeDirectoryString(valueNode, budget),
+        rdn_index: rdnIndex,
       });
     }
   }
