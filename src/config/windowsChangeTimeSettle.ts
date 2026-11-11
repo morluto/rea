@@ -56,8 +56,6 @@ export interface WindowsChangeTimeSettingFailure {
   readonly maximum: number;
   readonly unit: "ms" | "polls";
   readonly update_mode: "restart";
-  /** The rejected environment value is not the value this process is using. */
-  readonly pending_restart: true;
 }
 
 /** Effective settle budget and whether each part came from the default or a setting. */
@@ -82,14 +80,13 @@ const windowsChangeTimeSettingFailure = (
   maximum: bound.maximum,
   unit: bound.unit,
   update_mode: "restart",
-  pending_restart: true,
 });
 
 /** Name the rejected value, its source, and the allowed range. */
 const windowsChangeTimeSettingMessage = (
   failure: WindowsChangeTimeSettingFailure,
 ): string =>
-  `The effective ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). Set ${failure.setting} in the environment that starts REA to a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}, then restart REA.`;
+  `The supplied ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). Set ${failure.setting} in the environment that starts REA to a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}, then start a new REA invocation.`;
 
 const inRange = (bound: WindowsChangeTimeBound, value: string): boolean => {
   if (!decimalInteger.test(value)) return false;
@@ -109,7 +106,6 @@ export const windowsChangeTimeSettingSchema = (bound: WindowsChangeTimeBound) =>
         message: windowsChangeTimeSettingMessage(failure),
         params: {
           update_mode: failure.update_mode,
-          pending_restart: failure.pending_restart,
         },
       });
     })
@@ -167,7 +163,6 @@ export const resolveWindowsChangeTimeSettle = (
             setting: failure.setting,
             constraint: windowsChangeTimeSettingMessage(failure),
             update_mode: failure.update_mode,
-            pending_restart: failure.pending_restart,
           })),
         },
       ),

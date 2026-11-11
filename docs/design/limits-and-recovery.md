@@ -292,8 +292,9 @@ This output is breaking. Results and errors no longer carry the previous
 restart boolean or a single effect field, and there is no compatibility alias.
 Read `update_mode` to see whether the setter can change the active value, and
 `pending_restart` to see whether a configured value is waiting. A configuration
-error for a Windows ChangeTime setting carries those two fields on
-`details.settings`, not only in the constraint sentence. The removed field names
+error for a Windows ChangeTime setting carries `update_mode` on
+`details.settings`. Its rejected value does not establish an accepted pending
+configuration, so `pending_restart` is omitted. The removed field names
 are listed in the changelog.
 
 `scope` and `applies_at` describe a continuing caller, such as an MCP
