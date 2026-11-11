@@ -247,6 +247,26 @@ it("preserves TShark canonical output for a caller-selected field alias", async 
   expect(report.tool.arguments).toContain("bootp.type");
 });
 
+it("refuses producer frames outside the selected input read scope before paging", async () => {
+  const f = await fixture("many");
+  const request = { path: f.path, fields: ["ip.addr"], match_limit: 1 };
+  expect(
+    await f.service.inspect({ ...request, packet_limit: 10 }),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError", operation: "inspect_packet_capture" },
+  });
+  const admitted = await f.service.inspect({ ...request, packet_limit: 90 });
+  if (!admitted.ok) throw admitted.error;
+  const report = packetCaptureSchema.parse(admitted.value.normalized_result);
+  expect(report.output_window).toEqual({
+    matching_packets: 90,
+    returned_packets: 1,
+    has_more: true,
+  });
+  expect(report.packets[0]?.["frame.number"]).toEqual(["1"]);
+});
+
 it("returns canonical alias output through the public packet-capture CLI", async () => {
   const f = await fixture("alias-canonical");
   const cli = Cli.create("capture-alias-test", { sync: false });

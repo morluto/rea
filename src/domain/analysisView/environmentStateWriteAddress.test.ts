@@ -195,6 +195,34 @@ describe("item actions", () => {
     });
   });
 
+  it("locates an action's entity by its known id field before response metadata", () => {
+    const response = { request_id: 1, data: ARCHIVED };
+    expect(
+      planOf(
+        [
+          [
+            "GET",
+            "/api/books",
+            [shelved(FIRST_BOOK, false), shelved(SECOND_BOOK, false)],
+          ],
+          ["GET", "/api/books/1", { data: shelved(FIRST_BOOK, false) }],
+          ["GET", "/api/books/2", { data: shelved(SECOND_BOOK, false) }],
+          ["POST", "/api/books/1/archive", response],
+          ["GET", "/api/books/1", { data: ARCHIVED }],
+          ["POST", "/api/books/1/archive", response],
+          ["GET", "/api/books/1", { data: ARCHIVED }],
+        ],
+        "post_books_archive_by_id",
+      ),
+    ).toMatchObject({
+      effect: "update",
+      served: true,
+      address: { by: "action", segment: "archive" },
+      response: { shape: "entity", pointer: "/data" },
+      rules: [{ field: "archived", rule: "set", value: true }],
+    });
+  });
+
   it("serves no action seen changing its field only once, which may toggle it", () => {
     expect(
       planOf(
