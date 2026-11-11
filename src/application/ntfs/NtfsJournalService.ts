@@ -1,10 +1,19 @@
+import type { BigIntStats } from "node:fs";
+import {
+  ntfsJournalCacheFor,
+  type NtfsJournalCache,
+  type NtfsAcquisition,
+} from "./NtfsJournalCache.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  readStableArtifact,
+  assertStableArtifactState,
+} from "../../artifacts/readStableArtifact.js";
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
@@ -32,7 +41,7 @@ import {
   ntfsJournalResultSchema,
 } from "../../domain/windows/ntfsJournalQuery.js";
 import { composeNtfsJournalTimeline } from "../../domain/windows/ntfsJournalTimeline.js";
-import { parseMftImage } from "../../domain/windows/ntfsMft.js";
+import { parseMftImage, type MftImage } from "../../domain/windows/ntfsMft.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -110,19 +119,30 @@ const readAcquisition = async (
   parameter: PathParameter,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
-) => {
+  cached?: NtfsAcquisition,
+): Promise<Result<NtfsAcquisition, AnalysisError>> => {
   try {
-    return ok(
-      await resources.run(() =>
-        readStableArtifact(
-          path,
-          NTFS_JOURNAL_FILE_BYTES,
-          signal,
-          undefined,
-          resources,
-        ),
-      ),
+    if (cached !== undefined) {
+      await assertStableArtifactState(path, cached.state, signal);
+      return ok(cached);
+    }
+    let state: BigIntStats | undefined;
+    const snapshot = await readStableArtifact(
+      path,
+      NTFS_JOURNAL_FILE_BYTES,
+      signal,
+      undefined,
+      resources,
+      (observed) => {
+        state = observed;
+      },
     );
+    if (state === undefined)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "NTFS acquisition source state was not retained",
+      );
+    return ok({ path, snapshot, state });
   } catch (cause) {
     return err(
       projectStableArtifactFailure(
@@ -131,9 +151,57 @@ const readAcquisition = async (
         path,
         NTFS_JOURNAL_PROVIDER.id,
         operation,
+        cached?.snapshot,
       ),
     );
   }
+};
+type NtfsInput = ReturnType<typeof ntfsJournalInputSchema.parse>;
+
+const retainCompletedMft = (
+  input: NtfsInput,
+  mft: NtfsAcquisition,
+  image: MftImage,
+  failure: AnalysisError,
+) => {
+  const prior =
+    failure.partialObservation ??
+    primaryAnalysisError(failure).partialObservation;
+  const observation = createEvidence(
+    { path: input.mft_path, format: "ntfs-mft", sha256: mft.snapshot.sha256 },
+    NTFS_JOURNAL_PROVIDER,
+    {
+      operation,
+      predicateType: "rea.ntfs-journal-partial",
+      parameters: input,
+      result: {
+        kind: "ntfs-journal-partial",
+        mft: {
+          path: input.mft_path,
+          sha256: mft.snapshot.sha256,
+          bytes: mft.snapshot.bytes.length,
+          metadata: image.metadata,
+        },
+        journal_observation: prior ?? null,
+      },
+      confidence: "derived",
+      limitations: [
+        ...image.limitations,
+        "Journal acquisition did not complete.",
+      ],
+      locations: [{ kind: "artifact-path", path: input.mft_path }],
+    },
+  );
+  let current: AnalysisError | undefined = failure;
+  while (current !== undefined) {
+    if (
+      current.partialObservation === prior ||
+      current.partialObservation === undefined
+    )
+      current.partialObservation = observation;
+    current = current.cleanupPrimary;
+  }
+  return err(failure);
 };
 
 export const inspectNtfsJournalEvidence = async (
@@ -149,21 +217,65 @@ export const inspectNtfsJournalEvidence = async (
   );
   if (!admitted.ok) return admitted;
   const input = admitted.value;
+  const cache = ntfsJournalCacheFor(resources);
+  if (!cache.begin())
+    return err(
+      new AnalysisResourceConstraintError(
+        operation,
+        "capacity",
+        "One NTFS inspection is already active in this scope; retry after it completes.",
+        { maximum_concurrent_inspections: 1 },
+        { retryable: true },
+      ),
+    );
+  try {
+    return await resources.run(() =>
+      inspectAdmittedJournal(input, resources, cache, signal),
+    );
+  } catch (cause) {
+    return err(
+      projectStableArtifactFailure(
+        cause,
+        readFailure(cause, input.mft_path, "mft_path"),
+        input.mft_path,
+        NTFS_JOURNAL_PROVIDER.id,
+        operation,
+      ),
+    );
+  } finally {
+    cache.end();
+  }
+};
+
+const inspectAdmittedJournal = async (
+  input: NtfsInput,
+  resources: ArtifactResourceScope,
+  cache: NtfsJournalCache,
+  signal?: AbortSignal,
+): Promise<Result<Evidence, AnalysisError>> => {
+  const retained = cache.select(input.mft_path, input.journal_path);
   const mft = await readAcquisition(
     input.mft_path,
     "mft_path",
     resources,
     signal,
+    retained?.mft,
   );
-  if (!mft.ok) return mft;
-  const parsed = parseMftImage(mft.value.bytes);
+  if (!mft.ok) {
+    if (!(mft.error instanceof AnalysisCancelledError)) cache.clear();
+    return mft;
+  }
+  const parsed =
+    retained === undefined
+      ? parseMftImage(mft.value.snapshot.bytes)
+      : ok(retained.image);
   if (!parsed.ok)
     return err(
       inputFailure("mft_path", parsed.error.message).retainPartialObservation({
         kind: "file-snapshot-hash",
         path: input.mft_path,
-        sha256: mft.value.sha256,
-        bytes: mft.value.bytes.length,
+        sha256: mft.value.snapshot.sha256,
+        bytes: mft.value.snapshot.bytes.length,
       }),
     );
 
@@ -172,70 +284,41 @@ export const inspectNtfsJournalEvidence = async (
     "journal_path",
     resources,
     signal,
+    retained?.journal,
   );
   if (!journal.ok) {
-    const failure = journal.error;
-    const prior =
-      failure.partialObservation ??
-      primaryAnalysisError(failure).partialObservation;
-    const observation = createEvidence(
-      { path: input.mft_path, format: "ntfs-mft", sha256: mft.value.sha256 },
-      NTFS_JOURNAL_PROVIDER,
-      {
-        operation,
-        predicateType: "rea.ntfs-journal-partial",
-        parameters: input,
-        result: {
-          kind: "ntfs-journal-partial",
-          mft: {
-            path: input.mft_path,
-            sha256: mft.value.sha256,
-            bytes: mft.value.bytes.length,
-            metadata: parsed.value.metadata,
-          },
-          journal_observation: prior ?? null,
-        },
-        confidence: "derived",
-        limitations: [
-          ...parsed.value.limitations,
-          "Journal acquisition did not complete.",
-        ],
-        locations: [{ kind: "artifact-path", path: input.mft_path }],
-      },
-    );
-    let current: AnalysisError | undefined = failure;
-    while (current !== undefined) {
-      if (
-        current.partialObservation === prior ||
-        current.partialObservation === undefined
-      )
-        current.partialObservation = observation;
-      current = current.cleanupPrimary;
-    }
-    return journal;
+    if (!(journal.error instanceof AnalysisCancelledError)) cache.clear();
+    return retainCompletedMft(input, mft.value, parsed.value, journal.error);
   }
+  const prepared =
+    retained ?? cache.retain(mft.value, journal.value, parsed.value);
   const result = ntfsJournalResultSchema.parse({
     mft: {
       path: input.mft_path,
-      bytes: mft.value.bytes.length,
-      sha256: mft.value.sha256,
+      bytes: mft.value.snapshot.bytes.length,
+      sha256: mft.value.snapshot.sha256,
     },
     journal: {
       path: input.journal_path,
-      bytes: journal.value.bytes.length,
-      sha256: journal.value.sha256,
+      bytes: journal.value.snapshot.bytes.length,
+      sha256: journal.value.snapshot.sha256,
     },
-    ...composeNtfsJournalTimeline(parsed.value, journal.value.bytes, {
-      startFileOffset: input.start_file_offset,
-      maxRows: input.max_rows,
-    }),
+    ...composeNtfsJournalTimeline(
+      prepared.image,
+      journal.value.snapshot.bytes,
+      {
+        startFileOffset: input.start_file_offset,
+        maxRows: input.max_rows,
+      },
+      prepared.correlate,
+    ),
   });
   return completeProviderEvidence(
     createEvidence(
       {
         path: input.journal_path,
         format: "file",
-        sha256: journal.value.sha256,
+        sha256: journal.value.snapshot.sha256,
       },
       NTFS_JOURNAL_PROVIDER,
       {

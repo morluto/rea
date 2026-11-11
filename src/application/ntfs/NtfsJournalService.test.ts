@@ -46,14 +46,15 @@ it.each([
 it("preserves the completed file identity when MFT interpretation fails", async () => {
   const resources = new ArtifactResourceScope();
   const bytes = Buffer.from("not an MFT");
-  const sha256 = "a".repeat(64);
-  const spy = vi
-    .spyOn(stableArtifact, "readStableArtifact")
-    .mockResolvedValueOnce({ bytes, sha256 });
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const directory = await createTestTempDirectory("rea-ntfs-format-refusal-");
+  const mftPath = join(directory, "mft");
+  await writeFile(mftPath, bytes);
+  const spy = vi.spyOn(stableArtifact, "readStableArtifact");
   try {
     const result = await inspectNtfsJournalEvidence(
       {
-        mft_path: "/fixture/mft",
+        mft_path: mftPath,
         journal_path: "/fixture/journal",
       },
       resources,
@@ -61,7 +62,7 @@ it("preserves the completed file identity when MFT interpretation fails", async 
     if (result.ok) throw new Error("expected format failure");
     expect(result.error.partialObservation).toEqual({
       kind: "file-snapshot-hash",
-      path: "/fixture/mft",
+      path: mftPath,
       sha256,
       bytes: bytes.length,
     });
@@ -91,29 +92,35 @@ it("retains both acquisitions through a failed journal close and cleanup retry",
   const resources = new ArtifactResourceScope();
   const read = stableArtifact.readStableArtifact;
   let restoreClose: (() => void) | undefined;
+  let failNextClose = true;
   const spy = vi
     .spyOn(stableArtifact, "readStableArtifact")
-    .mockImplementation((path, maximumBytes, signal, fileSystem, scope) =>
-      read(
-        path,
-        maximumBytes,
-        signal,
-        path === journalPath
-          ? {
-              lstat: (selected) => lstat(selected, { bigint: true }),
-              realpath,
-              open: async (selected, flags) => {
-                const handle = await open(selected, flags);
-                const close = vi
-                  .spyOn(handle, "close")
-                  .mockRejectedValueOnce(new Error("close failed"));
-                restoreClose = () => close.mockRestore();
-                return handle;
-              },
-            }
-          : fileSystem,
-        scope,
-      ),
+    .mockImplementation(
+      (path, maximumBytes, signal, fileSystem, scope, observed) =>
+        read(
+          path,
+          maximumBytes,
+          signal,
+          path === journalPath
+            ? {
+                lstat: (selected) => lstat(selected, { bigint: true }),
+                realpath,
+                open: async (selected, flags) => {
+                  const handle = await open(selected, flags);
+                  if (failNextClose) {
+                    failNextClose = false;
+                    const close = vi
+                      .spyOn(handle, "close")
+                      .mockRejectedValueOnce(new Error("close failed"));
+                    restoreClose = () => close.mockRestore();
+                  }
+                  return handle;
+                },
+              }
+            : fileSystem,
+          scope,
+          observed,
+        ),
     );
   try {
     const result = await inspectNtfsJournalEvidence(
@@ -139,6 +146,12 @@ it("retains both acquisitions through a failed journal close and cleanup retry",
         bytes: journal.length,
       },
     });
+    const retry = await inspectNtfsJournalEvidence(
+      { mft_path: mftPath, journal_path: journalPath },
+      resources,
+    );
+    if (!retry.ok) throw retry.error;
+    expect(spy).toHaveBeenCalledTimes(4);
     await resources.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(

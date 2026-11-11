@@ -1,7 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
+import * as stableArtifact from "../../../src/artifacts/readStableArtifact.js";
+import * as mftDecoder from "../../../src/domain/windows/ntfsMft.js";
 
 import { createBinarySession } from "../../../src/composition/binary.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
@@ -63,6 +65,12 @@ mcpTest(
       nextFileOffset: null,
     });
 
+    const reads = vi.spyOn(stableArtifact, "readStableArtifact");
+    const parses = vi.spyOn(mftDecoder, "parseMftImage");
+    onTestFinished(() => {
+      reads.mockRestore();
+      parses.mockRestore();
+    });
     const config = parseConfig({});
     if (!config.ok) throw config.error;
     const session = createBinarySession(config.value, silentLogger, {});
@@ -80,6 +88,25 @@ mcpTest(
     expect(parseEvidence(reply.structuredContent).normalized_result).toEqual(
       expected,
     );
+
+    const warm = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: {
+        mft_path: mftPath,
+        journal_path: journalPath,
+        start_file_offset: 64,
+      },
+    });
+    expect(warm.isError).not.toBe(true);
+    expect(
+      parseEvidence(warm.structuredContent).normalized_result,
+    ).toMatchObject({
+      mft: { sha256: expected.mft.sha256 },
+      journal: { sha256: expected.journal.sha256 },
+      rows: [],
+    });
+    expect(reads).toHaveBeenCalledTimes(2);
+    expect(parses).toHaveBeenCalledTimes(1);
 
     const refused = await client.callTool({
       name: "inspect_ntfs_journal",
