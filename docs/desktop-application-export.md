@@ -57,7 +57,11 @@ bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
-Evidence; the bundle itself is complete.
+Evidence; the bundle itself is complete. Cancellation during final output
+handle cleanup also preserves the complete bundle and returns its Evidence
+as a partial observation. If closing the handles fails too, the cleanup
+failure remains primary and cancellation is retained separately. The complete
+bundle remains usable.
 
 ## The bundle
 

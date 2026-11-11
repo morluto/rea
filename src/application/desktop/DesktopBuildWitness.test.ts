@@ -1,12 +1,14 @@
-import { access, mkdir, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
+import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import { parseDesktopTask } from "../../domain/desktop/appTask.js";
 import {
@@ -186,4 +188,117 @@ describe("bundle task reads", () => {
     if (result.ok) return;
     expect(result.error.userMessage).toContain("could not start its recording");
   });
+});
+
+describe("published witness cancellation recovery", () => {
+  it.skipIf(process.platform === "win32").each([false, true])(
+    "keeps the saved record and retries only real cleanup (close fails: %s)",
+    async (closeFails) => {
+      const directory = await createTestTempDirectory("witness-close-");
+      const controller = new AbortController();
+      const reason = new Error("cancel at published witness close");
+      const endRecording = vi.fn(async () => ({
+        recording_id: "rec",
+        segments: [],
+      }));
+      const witnessed = new DesktopBuildWitness(
+        {
+          ...computer,
+          appData: async () => [
+            {
+              kind: "data",
+              data: {
+                state: {
+                  "Documents/today.txt": {
+                    format: "text",
+                    view: { lines: ["eggs"], line_count: 1, truncated: false },
+                    error: null,
+                  },
+                },
+              },
+            },
+          ],
+          startRecording: async () => ({
+            recording_id: "rec",
+            started_at: "2026-11-10T00:00:00.000Z",
+          }),
+          endRecording,
+          recordingSegments: async () => [],
+        },
+        new BuildComputerActionLog(),
+        { ...SETTLE_TIMING, windowMs: 0 },
+      );
+      let isPublished = () => false;
+      let publishedCloses = 0;
+      const commit = SafeOutputTree.prototype.commit;
+      const committing = vi
+        .spyOn(SafeOutputTree.prototype, "commit")
+        .mockImplementation(async function (this: SafeOutputTree, ...args) {
+          isPublished = () => this.published;
+          return commit.apply(this, args);
+        });
+      const close = OwnedFileHandle.prototype.close;
+      const closing = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockImplementation(async function (this: OwnedFileHandle) {
+          if (!isPublished()) return close.call(this);
+          publishedCloses += 1;
+          if (closeFails) {
+            controller.abort(reason);
+            throw new Error("published witness close failed");
+          }
+          await close.call(this);
+          controller.abort(reason);
+        });
+      try {
+        const result = await witnessed.check(
+          { task, stage: "seed", directory },
+          controller.signal,
+        );
+        expect(publishedCloses).toBeGreaterThan(0);
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error("expected finalization cancellation");
+        expect(result.error.partialObservation).toMatchObject({
+          operation: "check_build_task",
+        });
+        if (closeFails) {
+          expect(result.error.cleanupResources).toEqual([directory]);
+          expect(result.error.secondaryFailures).toContainEqual(
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          );
+        } else {
+          expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+          expect(result.error.cause).toBe(reason);
+          expect(result.error.cleanupIncomplete).toBe(false);
+        }
+        const bytes = await readFile(join(directory, "witness.json"));
+        closing.mockRestore();
+        const again = await witnessed.check(
+          { task, stage: "seed", directory },
+          new AbortController().signal,
+        );
+        expect(again.ok).toBe(true);
+        if (!again.ok) throw again.error;
+        expect(again.value.witness?.record?.path).toBe(
+          join(directory, "witness.json"),
+        );
+        expect(
+          (await readFile(join(directory, "witness.json"))).equals(bytes),
+        ).toBe(true);
+        expect(endRecording).toHaveBeenCalledTimes(1);
+        expect(result.error.cleanupIncomplete).toBe(false);
+      } finally {
+        closing.mockRestore();
+        committing.mockRestore();
+        // Retry any real retained witness owner even when an assertion fails.
+        await witnessed.check(
+          { task, stage: "seed", directory },
+          new AbortController().signal,
+        );
+      }
+    },
+  );
 });
