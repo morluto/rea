@@ -19,6 +19,7 @@ import {
 } from "../../artifacts/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import type { Evidence } from "../../domain/evidence.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
@@ -250,6 +251,87 @@ it("retains the bundle cleanup owner when a later withheld copy fails", async ()
     normalized_result: { directory },
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps published bundle close failure primary when the withheld copy is cancelled before acquisition",
+  async () => {
+    const root = await createTestTempDirectory("desktop-copy-cancel-");
+    const directory = join(root, "bundle");
+    const withheldCopy = join(root, "withheld");
+    const controller = new AbortController();
+    const reason = new Error("cancel after bundle publication");
+    const closeFailure = new Error("bundle descriptor cannot close");
+    let isPublished = () => false;
+    const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
+    const commit = SafeOutputTree.prototype.commit;
+    vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
+      async function (this: SafeOutputTree, ...args) {
+        isPublished = () => this.published;
+        return commit.apply(this, args);
+      },
+    );
+    const close = OwnedFileHandle.prototype.close;
+    const closing = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (!isPublished()) return close.call(this);
+        controller.abort(reason);
+        throw closeFailure;
+      });
+    const release = ArtifactResourceScope.prototype.release;
+    vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+      async function (this: ArtifactResourceScope, owner) {
+        const result = await release.call(this, owner);
+        if (result.kind === "failed") failures.push(result);
+        return result;
+      },
+    );
+    try {
+      const result = await exportDesktopApplication(
+        {
+          capture: await writeCaptureFolder(capture()),
+          directory,
+          withheldCopy,
+          name: undefined,
+          tasks: [],
+          withhold: { paths: [SETTINGS] },
+        },
+        readers,
+        controller.signal,
+      );
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError))
+        throw new Error("expected output failure");
+      expect(result).toMatchObject({ _tag: "ProviderAdapterError" });
+      expect(result.cause).toBeInstanceOf(AggregateError);
+      if (!(result.cause instanceof AggregateError))
+        throw new Error("expected exact close cause");
+      expect(result.cause.errors).toContain(closeFailure);
+      expect(result.cleanupPrimary).toBeUndefined();
+      expect(result.secondaryFailures).toEqual([
+        expect.objectContaining({
+          _tag: "AnalysisCancelledError",
+          cause: reason,
+        }),
+      ]);
+      expect(result.partialObservation).toMatchObject({
+        normalized_result: { directory },
+      });
+      expect(result.cleanupResources).toEqual([directory]);
+      expect(await exists(join(directory, "README.md"))).toBe(true);
+      expect(await exists(withheldCopy)).toBe(false);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.owner.resource).toBe(directory);
+      closing.mockRestore();
+      await failures[0]!.lease.release();
+      expect(result.cleanupIncomplete).toBe(false);
+      expect(await exists(join(directory, "README.md"))).toBe(true);
+    } finally {
+      closing.mockRestore();
+      for (const failure of failures) await failure.lease.release();
+    }
+  },
+);
 
 it.each(["bundle", "copy"] as const)(
   "retains both published output owners when %s closes first",
