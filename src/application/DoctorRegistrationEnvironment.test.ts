@@ -4,12 +4,7 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
-import {
-  registrationEnvironmentDetail,
-  runDoctor,
-  systemDoctorHost,
-  type DoctorHost,
-} from "./Doctor.js";
+import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 
 const inspection = (
   id: string,
@@ -186,11 +181,12 @@ it("states each comparison result without a claim it did not establish", async (
     classification: "unknown",
     details: { effective_environment: "unknown" },
   });
-  expect(check?.detail).toBe(
-    registrationEnvironmentDetail("cursor", {
-      unrecorded: [],
-      differing: ["JAVA_HOME"],
-      unresolved: ["GHIDRA_INSTALL_DIR"],
-    }),
+  expect(check?.detail).toContain(
+    "what the server cursor starts receives is unknown",
   );
+  expect(check?.detail).toContain("It records other values for JAVA_HOME.");
+  expect(check?.detail).toContain(
+    "REA could not resolve its GHIDRA_INSTALL_DIR.",
+  );
+  expect(check?.detail).not.toContain("does not record");
 });
