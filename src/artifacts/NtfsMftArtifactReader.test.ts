@@ -28,7 +28,8 @@ const recordBytes = (options: {
   record.writeUInt16LE(1, 18);
   record.writeUInt16LE(56, 20);
   record.writeUInt16LE(options.flags ?? 0x0001, 22);
-  record.writeUInt32LE(56, 24);
+  record.writeUInt32LE(64, 24);
+  record.writeUInt32LE(0xffff_ffff, 56);
   record.writeUInt32LE(MFT_DEFAULT_RECORD_BYTES, 28);
   record.writeUInt16LE(sequenceNumber, 510);
   record.writeUInt16LE(sequenceNumber, 1022);

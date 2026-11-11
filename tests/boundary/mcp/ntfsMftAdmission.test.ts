@@ -47,7 +47,9 @@ mcpTest(
     record.writeUInt16LE(42, 4);
     record.writeUInt16LE(3, 6);
     record.writeUInt16LE(1, 16);
-    record.writeUInt32LE(56, 24);
+    record.writeUInt16LE(56, 20);
+    record.writeUInt32LE(64, 24);
+    record.writeUInt32LE(0xffff_ffff, 56);
     record.writeUInt32LE(1024, 28);
     record.writeUInt16LE(5, 42);
     record.writeUInt16LE(5, 510);

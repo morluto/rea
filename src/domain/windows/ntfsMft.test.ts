@@ -60,7 +60,8 @@ const recordOf = (options: RecordOptions = {}): Uint8Array => {
     Math.ceil((48 + Math.max(0, usaEntries) * 2) / 8) * 8;
   view.setUint16(20, firstAttributeOffset, true);
   view.setUint16(22, options.flags ?? 0x0001, true);
-  view.setUint32(24, firstAttributeOffset, true);
+  view.setUint32(24, firstAttributeOffset + 8, true);
+  view.setUint32(firstAttributeOffset, 0xffff_ffff, true);
   view.setUint32(28, recordBytes, true);
   view.setBigUint64(32, options.baseRecordReference ?? 0n, true);
   view.setUint16(40, 0, true);
@@ -123,7 +124,7 @@ describe("MFT header facts", () => {
     });
   });
 
-  it.each([0, 49, 64])(
+  it.each([0, 49, 64, 72])(
     "reports an invalid first attribute offset %i",
     (offset) => {
       const record = recordOf();
