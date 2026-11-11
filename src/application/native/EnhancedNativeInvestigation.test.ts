@@ -974,12 +974,15 @@ it.each([
       "coverage",
       expect.arrayContaining([coverage]),
     );
-    expect(result.value).toHaveProperty(
-      "limitations",
-      expect.arrayContaining([
+    const trace = nativeInvestigationTraceSchema.parse(result.value);
+    if (truncated)
+      expect(trace.limitations).toContain(
         "The supplied graph was truncated; relationships omitted from that source remain unknown.",
-      ]),
-    );
+      );
+    else
+      expect(trace.limitations).not.toContain(
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      );
   },
 );
 
@@ -993,8 +996,11 @@ it("retains measured UI output bounds without guessing a source truncation cause
   const trace = nativeInvestigationTraceSchema.parse(result.value);
   expect(trace).toMatchObject({
     truncated: true,
-    reason: "source_graph_truncated",
+    reason: "native_trace_output_bound_reached",
   });
+  expect(trace.limitations).not.toContain(
+    "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+  );
   expect(trace.coverage).toContainEqual(
     expect.objectContaining({
       facet: "interface_builder_graph",
