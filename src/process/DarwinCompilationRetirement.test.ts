@@ -1,7 +1,9 @@
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { expect, it, onTestFinished, vi } from "vitest";
+
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 const fixture = vi.hoisted(() => {
   let start!: () => void;
@@ -10,14 +12,16 @@ const fixture = vi.hoisted(() => {
   let started: Promise<void>;
   let stopped: Promise<void>;
   let gate: Promise<void>;
-  let mode: "failure" | "abort" | "cleanup";
+  let mode: "failure" | "abort" | "cleanup" | "retained-root";
   let failRemoval = false;
+  let failRemovals = 0;
   let calls = 0;
   const compilerFailure = new Error("controlled compiler failure");
   return {
     compilerFailure,
-    configure(selected: "failure" | "abort" | "cleanup") {
+    configure(selected: "failure" | "abort" | "cleanup" | "retained-root") {
       failRemoval = selected === "cleanup";
+      failRemovals = selected === "retained-root" ? 2 : 0;
       mode = selected;
       calls = 0;
       started = new Promise((resolve) => {
@@ -35,6 +39,14 @@ const fixture = vi.hoisted(() => {
         failRemoval = false;
         throw new Error("controlled cleanup failure");
       }
+      if (failRemovals > 0) {
+        failRemovals -= 1;
+        throw new Error("controlled cleanup failure");
+      }
+    },
+    allowRemoval() {
+      failRemoval = false;
+      failRemovals = 0;
     },
     get started() {
       return started;
@@ -56,6 +68,7 @@ const fixture = vi.hoisted(() => {
       if (basename(path) !== "fixture-swiftc")
         throw new Error("unexpected helper");
       calls++;
+      if (mode === "retained-root" && calls === 1) throw compilerFailure;
       if (calls === 1) {
         options.signal?.addEventListener("abort", aborted, { once: true });
         start();
@@ -141,3 +154,49 @@ it.each(["failure", "abort", "cleanup"] as const)(
     }
   },
 );
+
+it("keeps a leftover helper root owned when preparation retries removal", async () => {
+  fixture.configure("retained-root");
+  const reader = createDarwinProcessRunTokenReader({
+    compiler: {
+      kind: "swiftc",
+      executable: join(tmpdir(), "fixture-swiftc"),
+      sdkRoot: tmpdir(),
+    },
+    environment: {},
+  });
+  onTestFinished(async () => {
+    fixture.allowRemoval();
+    await reader.close();
+  });
+
+  const first = await reader.prepare().then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(first).toBeInstanceOf(DarwinProcessOwnershipInspectionError);
+  expect(fixture.calls).toBe(1);
+
+  const second = await reader.prepare().then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(second).toBeInstanceOf(DarwinProcessOwnershipInspectionError);
+  if (!(second instanceof DarwinProcessOwnershipInspectionError))
+    throw new Error("expected cleanup owner");
+  expect(second.cleanupFailure).toBeInstanceOf(ProviderCleanupError);
+  expect(second.cleanupFailure?.cleanupIncomplete).toBe(true);
+  expect(second.cleanupOwner).toBeDefined();
+  expect(fixture.calls).toBe(1);
+  const [retainedRoot] = second.cleanupFailure?.cleanupResources ?? [];
+  if (retainedRoot === undefined)
+    throw new Error("expected retained helper root");
+  await expect(access(retainedRoot)).resolves.toBeUndefined();
+
+  await second.cleanupOwner?.close();
+  expect(second.cleanupFailure?.cleanupIncomplete).toBe(false);
+  await expect(access(retainedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+  await expect(reader.prepare()).resolves.toMatch(/reader$/);
+  expect(fixture.calls).toBe(2);
+});

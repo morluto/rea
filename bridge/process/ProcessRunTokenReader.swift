@@ -306,24 +306,66 @@ private func readRunToken(pid: Int32, pointerSize: Int) -> RunTokenObservation {
   )
 }
 
+/**
+ * Take one process-table snapshot, and one replacement when that read fails.
+ * A failure is not an empty table: only a successful snapshot can show that a
+ * PID is absent.
+ */
+func readBracketSnapshot(
+  read: () -> ProcessSnapshot = { readProcessSnapshot() }
+) -> ProcessSnapshot {
+  let first = read()
+  if first.failure == nil { return first }
+  return read()
+}
+
+/**
+ * Return the token when both snapshots name the same process.
+ * A failed snapshot stays unavailable. `process_not_in_snapshot` is only for a
+ * PID missing from a successful table, which callers treat as absence.
+ */
+func attributedRunToken(
+  pid: Int32,
+  observation: RunTokenObservation,
+  before: ProcessSnapshot,
+  after: ProcessSnapshot
+) -> RunTokenObservation {
+  if let failure = before.failure {
+    return unavailable(pid: pid, reason: failure)
+  }
+  if let failure = after.failure {
+    return unavailable(pid: pid, reason: failure)
+  }
+  guard let initial = before.metadata[pid], let current = after.metadata[pid] else {
+    return unavailable(pid: pid, reason: "process_not_in_snapshot")
+  }
+  guard initial.identity == current.identity,
+        initial.pointerSize == current.pointerSize else {
+    return unavailable(pid: pid, reason: "process_identity_changed_during_token_read")
+  }
+  return observation
+}
+
+/** Bracket each token by start identity. A failed table is reread once and stays a snapshot failure. */
 func readRunTokens(pids: [Int32]) -> [RunTokenObservation] {
-  let before = readProcessSnapshot()
+  let before = readBracketSnapshot()
+  if let failure = before.failure {
+    return pids.map { unavailable(pid: $0, reason: failure) }
+  }
   let observations = pids.map { pid -> RunTokenObservation in
     guard let metadata = before.metadata[pid] else {
-      return unavailable(pid: pid, reason: before.failure ?? "process_not_in_snapshot")
+      return unavailable(pid: pid, reason: "process_not_in_snapshot")
     }
     return readRunToken(pid: pid, pointerSize: metadata.pointerSize)
   }
-  let after = readProcessSnapshot()
+  let after = readBracketSnapshot()
   return zip(pids, observations).map { pid, observation in
-    guard let initial = before.metadata[pid], let current = after.metadata[pid] else {
-      return unavailable(pid: pid, reason: after.failure ?? "process_not_in_snapshot")
-    }
-    guard initial.identity == current.identity,
-          initial.pointerSize == current.pointerSize else {
-      return unavailable(pid: pid, reason: "process_identity_changed_during_token_read")
-    }
-    return observation
+    attributedRunToken(
+      pid: pid,
+      observation: observation,
+      before: before,
+      after: after
+    )
   }
 }
 
