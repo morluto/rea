@@ -29,6 +29,8 @@ registerHooks({
       specifier.endsWith("/analysisProfile.js") ||
       specifier.endsWith("/nativeValueTrace.js") ||
       specifier.endsWith("/mcp-verifier-results.mjs") ||
+      specifier.endsWith("/owned-mcp-stdio.mjs") ||
+      specifier.endsWith("/verify-commands.mjs") ||
       specifier.endsWith("/real-ghidra-boundaries.mjs") ||
       specifier.endsWith("/ghidra-value-scope-snapshot-e2e.mjs") ||
       specifier.endsWith("/real-ghidra-project-identity.mjs") ||

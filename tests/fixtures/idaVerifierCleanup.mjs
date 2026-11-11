@@ -19,6 +19,8 @@ registerHooks({
       specifier === "@modelcontextprotocol/client/stdio" ||
       specifier.endsWith("/ida-feature-trace.mjs") ||
       specifier.endsWith("/mcp-verifier-results.mjs") ||
+      specifier.endsWith("/owned-mcp-stdio.mjs") ||
+      specifier.endsWith("/verify-commands.mjs") ||
       specifier.endsWith("/verifier-file-resources.mjs") ||
       specifier.includes("/dist/")
     )

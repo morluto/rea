@@ -8,15 +8,15 @@ import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -134,24 +134,33 @@ const observe = (input) => {
 };
 const cli = async () => {
   phase = "production CLI function analysis";
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    [
-      entry,
-      "function",
-      target,
-      values.procedure,
-      "--provider",
-      "ida",
-      "--json",
-    ],
-    {
-      env: environment,
-      timeout: config.timeoutMs * 3,
-      maxBuffer: 16 * 1024 * 1024,
-    },
+  const commands = await createVerifierCommands();
+  const { stdout } = await withVerifierCleanup(
+    () =>
+      commands.exec(
+        process.execPath,
+        [
+          entry,
+          "function",
+          target,
+          values.procedure,
+          "--provider",
+          "ida",
+          "--json",
+        ],
+        {
+          env: environment,
+          timeout: config.timeoutMs * 3,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+      ),
+    [() => commands.close()],
   ).catch((cause) => {
-    report.failed_cli = { stdout: cause.stdout, stderr: cause.stderr };
+    const primary = cause instanceof AggregateError ? cause.cause : cause;
+    report.failed_cli = {
+      stdout: primary?.stdout ?? primary?.snapshot?.stdout?.text,
+      stderr: primary?.stderr ?? primary?.snapshot?.stderr?.text,
+    };
     throw cause;
   });
   const dossier = functionDossierSchema.parse(observe(JSON.parse(stdout)));
@@ -163,13 +172,14 @@ const cli = async () => {
 };
 const mcp = async (cliDossier) => {
   const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
-  const transport = new StdioClientTransport({
+  const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
-    args: [entry, "mcp"],
-    env: environment,
-    stderr: "pipe",
+    arguments: [entry, "mcp"],
+    hostEnvironment: environment,
+    cwd: process.cwd(),
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
   });
-  transport.stderr?.on("data", () => undefined);
   const call = async (name, args) => {
     phase = `production MCP ${name}`;
     const result = await client.callTool(

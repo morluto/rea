@@ -137,3 +137,13 @@ export function verifyGhidraBoundaries() {}
 export function verifyLegacyValueScopeSnapshot() {}
 export function verifyGhidraProjectIdentity() {}
 export function verifyGhidraSocketBoundary() {}
+
+export async function createOwnedMcpStdioTransport() {
+  return new StdioClientTransport();
+}
+export async function createVerifierCommands() {
+  return {
+    exec: (...args) => promisify(execFile)(...args),
+    close: async () => {},
+  };
+}

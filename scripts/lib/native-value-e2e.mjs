@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
+import { createVerifierCommands } from "./verify-commands.mjs";
 
 import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
@@ -119,6 +118,12 @@ export async function verifyNativeValueE2e(
     return await withVerifierCleanup(async () => {
       await mkdir(runtime);
       const env = { ...environment(), TMPDIR: runtime };
+      const commands = await createVerifierCommands();
+      resources.retain({
+        kind: "lease",
+        resource: "native value CLI",
+        lease: AnalysisCleanupLease.forCloseOwner(commands, "native value CLI"),
+      });
       const result = await withVerifierCleanup(
         () =>
           verifyNativeValueAdapters(
@@ -128,6 +133,7 @@ export async function verifyNativeValueE2e(
             entrypoint,
             env,
             resources,
+            commands,
           ),
         [closeResources],
       );
@@ -180,8 +186,9 @@ async function verifyNativeValueAdapters(
   entrypoint,
   env,
   resources,
+  commands,
 ) {
-  const { stdout } = await promisify(execFile)(
+  const { stdout } = await commands.exec(
     process.execPath,
     [
       entrypoint,
@@ -219,11 +226,13 @@ async function verifyNativeValueAdapters(
   );
   for (const procedure of cliGraph.procedures)
     assert.equal(procedure.analysis_profile_digest, upstreamProfile.digest);
-  const transport = new StdioClientTransport({
+  const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
-    args: [entrypoint, "mcp"],
-    env,
-    stderr: "pipe",
+    arguments: [entrypoint, "mcp"],
+    hostEnvironment: env,
+    cwd: process.cwd(),
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
   });
   const client = new Client({ name: "native-values-real-e2e", version: "1" });
   for (const [resource, owner] of [

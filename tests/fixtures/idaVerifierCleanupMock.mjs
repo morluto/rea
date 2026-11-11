@@ -90,3 +90,13 @@ export function createIdaMcpConnection() {
   throw new Error("upstream never reached");
 }
 export const idaAddressSchema = { parse: (value) => value };
+
+export async function createOwnedMcpStdioTransport() {
+  return new StdioClientTransport();
+}
+export async function createVerifierCommands() {
+  return {
+    exec: (...args) => promisify(execFile)(...args),
+    close: async () => {},
+  };
+}
