@@ -66,7 +66,8 @@ it.each([
           required_value: needed,
           applies_at: "next_operation",
           agent_editable: true,
-          rea_restart_required: false,
+          update_mode: "parameter",
+          pending_restart: false,
         },
       });
       const recovered = await readDotnetBundle(

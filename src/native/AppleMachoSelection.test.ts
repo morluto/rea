@@ -234,6 +234,7 @@ describe("Mach-O metadata span mapping", () => {
     const opcodes = Buffer.from([
       0x40,
       ...Buffer.from("_local\0"),
+      0x51,
       0x72,
       8,
       0x90,
@@ -338,6 +339,19 @@ describe("Mach-O metadata span mapping", () => {
       ]),
     );
   });
+});
+
+it("rejects a segment command of the wrong width before claiming metadata absence", () => {
+  const segment = Buffer.alloc(56);
+  segment.writeUInt32LE(1, 0);
+  segment.writeUInt32LE(segment.length, 4);
+  const bytes = Buffer.from(machoImage({ commands: [segment] }));
+  expect(() => readMachoMetadataImage(bytes)).toThrow(
+    "Mach-O segment command does not match the header width",
+  );
+  expect(() => parseMachoLayout(bytes, "arm64")).toThrow(
+    "Mach-O segment command does not match the header width",
+  );
 });
 
 describe("native Mach-O slice selection", () => {
@@ -496,6 +510,44 @@ describe("native Mach-O slice selection", () => {
     expect(() => parseMachoLayout(Buffer.from(fat), "arm64")).toThrow(
       /Ambiguous FAT architecture slice/u,
     );
+  });
+});
+
+describe("admitted Mach-O capability variants", () => {
+  it("reads the admitted capability variant instead of ranking again", () => {
+    const v1 = { type: CPU.arm64.type, subtype: 0x81000002 };
+    const v0 = { type: CPU.arm64.type, subtype: 0x80000002 };
+    const images = [v1, v0].map((cpu, index) =>
+      machoImage({
+        cpu,
+        commands: [
+          dylibCommand(LC.LOAD_DYLIB, `/fixture/variant-${index}.dylib`),
+        ],
+      }),
+    );
+    const fat = Buffer.from(
+      fatImage([
+        { cpu: v1, bytes: images[0]! },
+        { cpu: v0, bytes: images[1]! },
+      ]),
+    );
+    expect(() => parseMachoLayout(fat, "arm64")).toThrow(
+      /Ambiguous FAT architecture slice/u,
+    );
+    const secondOffset = 4096 + Math.ceil(images[0]!.length / 4096) * 4096;
+    expect(
+      parseMachoLayout(fat, "arm64", {
+        offset: secondOffset,
+        size: images[1]!.length,
+      }),
+    ).toMatchObject({
+      selectedImage: {
+        container: "fat",
+        offset: secondOffset,
+        byteLength: images[1]!.length,
+      },
+      fixups: { dylibs: ["/fixture/variant-1.dylib"] },
+    });
   });
 });
 

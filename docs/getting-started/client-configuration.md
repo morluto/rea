@@ -39,6 +39,17 @@ path and supported version of the runtime you intend to use, then update only
 the runtime command, preserving the REA script arguments and other settings.
 Rerun setup to review the registration and restart the client.
 
+Doctor JSON records each registration's `command_identity` as `owned`, `foreign`,
+or `unknown`, separately from its readiness `state`. An invalid timeout or client
+policy can leave ownership established. Setup uses that recorded observation for
+its default client selection, then inspects selected configuration again before
+planning writes; a missing or unreadable launcher remains unknown.
+
+A retained command does not prove the client selects it. Doctor also checks
+that client's native transport selectors; a higher-priority remote selector can
+leave the command owned while alignment remains unknown. Metadata that is not a
+native connection selector is preserved rather than interpreted as a transport.
+
 `rea mcp doctor --json` tests the production MCP adapter using the runtime
 executable and environment of the terminal running doctor. It does not launch
 the client's configured command or reproduce the client's environment. If doctor
@@ -737,6 +748,13 @@ and top-level key when it upserts `rea`. WorkBuddy also reads a project-level
 `<project>/.workbuddy/mcp.json`, which setup does not touch: it registers the
 user-level file only. Loading this registration and real REA tool calls
 through WorkBuddy are verified.
+
+For CodeBuddy and WorkBuddy, REA's write checks cover their documented stdio
+entries. If an existing `rea` row contains fields whose native interpretation is
+unclassified, setup preserves it and reports unknown write applicability before
+changing the file. Doctor retains any established launcher ownership while
+reporting alignment as unknown. This does not prevent safe removal of a row
+whose REA ownership is established.
 
 ## ZCode
 

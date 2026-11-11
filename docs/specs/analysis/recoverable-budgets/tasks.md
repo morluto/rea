@@ -58,15 +58,9 @@ that initially failed to reserve complete Evidence wrapper depth.
 
 The subsequent review fixes passed all 50 tests across six compiled acceptance,
 CLI, MCP and emitted-Python boundary files. Typecheck and lint also passed after
-those fixes. Default calibration records its separate measurements and
-limitations in the [Flutter](../../../verification/flutter-budget-calibration.md)
-and [source-map](../../../verification/source-map-budget-calibration.md) reports;
-those measurements are not native-provider verification.
-The calibrated source-map default and explicit smaller-budget recovery passed
+those fixes. The source-map default and explicit smaller-budget recovery passed
 all six compiled source-location CLI tests. The final formatting, type/lint,
-generated-documentation and README consistency checks passed. The observer's
-completed, timeout, surviving-child and signal-refusal controls retained
-receipts and confirmed empty process groups.
+generated-documentation and README consistency checks passed.
 
 The final follow-up adds per-call artifact admission, limited recognition,
 shipped-seed policy agreement, bounded SQLite views and retained source-location
@@ -78,12 +72,7 @@ and compact schema profiles with same-session lower/raise/lower admission.
 The final SQLite worker/emitted-reader checks passed all four scenarios. These
 are separate executed runs, not an aggregate unique-test count.
 
-The [source-location delivery qualification](../../../verification/source-location-delivery.md)
-retains 18 successful public MCP measurements with matching parent IDs, exact
-mapping/snippet oracles and process-tree samples. The
-[JavaScript precision calibration](../../../verification/javascript-precision-calibration.md)
-retains 12 real CLI runs supporting unchanged numeric defaults for that narrow
-corpus. Native capture qualification and the live same-Program Ghidra receipt
+Native capture qualification and the live same-Program Ghidra receipt
 are linked from the [runtime verification report](../../../verification/runtime-analysis-settings.md).
 The Python gate passed all 102 tests; architecture guards passed across 2,571
 source files. Formatting, type/lint, generated docs, README consistency and

@@ -3,6 +3,10 @@ import { arch, hostname, userInfo } from "node:os";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
+  bindProcessInspectionCancellations,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
+import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
@@ -19,11 +23,13 @@ import {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
+  DesktopSessionCleanupError,
   runDesktopSession,
   runningApplicationWindows,
   type SessionRequest,
 } from "../../desktop/DesktopApplicationSession.js";
 import { inspectLinuxApplication } from "../../desktop/LinuxApplicationInventory.js";
+import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import {
   discardFailedCapture,
@@ -31,11 +37,7 @@ import {
   projectFailure,
   publishedCaptureCleanup,
 } from "./DesktopCaptureFailure.js";
-import {
-  CaptureFile,
-  canonicalPath,
-  prepareOutputDirectory,
-} from "./DesktopCaptureOutput.js";
+import { CaptureFile, prepareOutputDirectory } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
@@ -226,13 +228,16 @@ const admit = async (
       request.desktopEntry === undefined ? "executable" : "desktop_entry",
       running.windows,
     );
-  signal?.throwIfAborted();
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
+      cause: signal.reason,
+    });
   const prepared = await prepareOutputDirectory(request.output);
   if ("refusal" in prepared)
     throw outputRefusal(request.output, prepared.refusal);
   return {
     display,
-    home: await canonicalPath(home),
+    home: await canonicalCallerPath(home),
     output: prepared.path,
     inventory,
     limitations,
@@ -244,7 +249,7 @@ const admit = async (
 
 type Admitted = Awaited<ReturnType<typeof admit>>;
 
-/** Record the baseline, run the session and publish `capture.json`. */
+/** Record the baseline, run the session and assemble its Evidence. */
 const recordCapture = async (
   request: DesktopCaptureRequest,
   host: DesktopCaptureHost,
@@ -252,7 +257,6 @@ const recordCapture = async (
     readonly admitted: Admitted;
     readonly scope: CaptureScope;
     readonly store: DesktopContentStore;
-    readonly captureFile: CaptureFile;
   },
   signal: AbortSignal | undefined,
 ) => {
@@ -341,8 +345,7 @@ const recordCapture = async (
     ],
   };
   const evidence = captureEvidence(request, capture);
-  const published = await context.captureFile.publish(evidence);
-  return { evidence, published, session, unreleased };
+  return { evidence, session, unreleased };
 };
 
 const runCapture = async (
@@ -360,22 +363,50 @@ const runCapture = async (
   );
   await store.prepare();
   const captureFile = new CaptureFile(output);
-  let recorded: Awaited<ReturnType<typeof recordCapture>>;
+  let recorded: Awaited<ReturnType<typeof recordCapture>> | undefined;
+  let published: string;
   try {
     recorded = await recordCapture(
       request,
       host,
-      { admitted, scope, store, captureFile },
+      { admitted, scope, store },
       signal,
     );
+    published = await captureFile.publish(recorded.evidence);
   } catch (cause: unknown) {
+    // Adopt inspection cleanup before the capture's existing store close retries it.
+    const primary =
+      cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
+    const projected = projectFailure(primary, undefined);
+    // The session's supervisor already owns the exact inspection failure in its snapshot.
+    const sessionOwnsInspection =
+      cause instanceof DesktopSessionCleanupError &&
+      cause.cleanup.inspectionCleanup?.causes.includes(primary) === true;
+    const failure = sessionOwnsInspection
+      ? bindProcessInspectionCancellations(
+          primary,
+          projected,
+          DESKTOP_OPERATION,
+        )
+      : retainProcessInspectionCleanup(
+          primary,
+          projected,
+          store.resourceScope,
+          DESKTOP_OPERATION,
+        );
+    const sessionCleanup =
+      cause instanceof DesktopSessionCleanupError
+        ? cause.cleanup
+        : recorded?.unreleased;
     // Nothing was published, so a failure or cancellation removes what was written.
     throw failedCaptureError(
-      cause,
+      sessionCleanup === undefined
+        ? failure
+        : new DesktopSessionCleanupError(failure, sessionCleanup),
       await discardFailedCapture(store, captureFile),
     );
   }
-  const { evidence, published, session, unreleased } = recorded;
+  const { evidence, session, unreleased } = recorded;
   const cleanup = await publishedCaptureCleanup(published, store, unreleased);
   if (cleanup !== undefined) throw cleanup;
   // A cancellation that arrives during publication must not read as success.

@@ -18,13 +18,35 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("node:fs/promises", async (original) => ({
   ...(await original<typeof import("node:fs/promises")>()),
-  readFile: state.readFile,
+  open: async (path: unknown) => {
+    if (!String(path).startsWith("/proc/"))
+      throw new Error(`Unexpected descriptor open: ${String(path)}`);
+    let bytes: Buffer | undefined;
+    return {
+      fd: 42,
+      close: async () => {},
+      read: async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: bigint,
+      ) => {
+        bytes ??= Buffer.from(await state.readFile(path));
+        const start = Number(position);
+        const count = bytes.copy(buffer, offset, start, start + length);
+        return { bytesRead: count, buffer };
+      },
+    };
+  },
 }));
 vi.mock("node:child_process", async (original) => ({
   ...(await original<typeof import("node:child_process")>()),
   spawn: state.spawn,
 }));
-vi.mock("./ExecFileOutput.js", () => ({ execFileOutput: state.ps }));
+vi.mock("./ExecFileOutput.js", async (original) => ({
+  ...(await original<typeof import("./ExecFileOutput.js")>()),
+  execFileOutput: state.ps,
+}));
 
 import { runLinuxPrivateDisplayProbe } from "../hopper/LinuxPrivateDisplayProbe.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";

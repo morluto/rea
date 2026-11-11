@@ -191,7 +191,8 @@ export interface ArtifactReaderLimitFact {
   readonly applies_at: "next_operation";
   readonly agent_editable: true;
   readonly can_increase: boolean;
-  readonly rea_restart_required: false;
+  readonly update_mode: "parameter";
+  readonly pending_restart: false;
 }
 
 /** Runtime representation ceilings differ from aggregate plaintext-work budgets. */

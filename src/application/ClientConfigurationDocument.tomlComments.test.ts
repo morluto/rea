@@ -98,3 +98,27 @@ it("retains comments from dotted REA assignments and nested inline values", () =
     );
   }
 });
+
+it.each(["toml", "grok"] as const)(
+  "retains scalar types in an inline %s registration while refreshing its launcher",
+  (format) => {
+    const source =
+      'mcp_servers = { rea = { command = "old", large = 1e20, exact = 9007199254740992.0, limit = inf, floor = -inf, unknown = nan, zero = -0.0, date = 2026-11-10, clock = 12:34:56, local = 2026-11-10T12:34:56, offset = 2026-11-10T12:34:56-05:00 }, peer = { command = "peer" } } # retained\n';
+    const parsed = parseClientConfiguration(source, format);
+    const previous = parsed.servers.rea as Record<string, unknown>;
+    const servers = {
+      ...parsed.servers,
+      rea: { ...previous, command: "new" },
+    };
+    const result = serializeClientConfiguration(
+      withClientServers(parsed, servers),
+      format,
+      source,
+    );
+    if (!result.ok) throw new Error("TOML edit was refused");
+    expect(parseClientConfiguration(result.value, format).servers).toEqual(
+      servers,
+    );
+    expect(result.value).toContain("# retained");
+  },
+);

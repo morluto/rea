@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { deflateSync } from "node:zlib";
 
 import {
   elfExportImage,
@@ -21,6 +22,231 @@ const parse = (bytes: Buffer) =>
   nativeExportContracts.nativeExportsSchema.parse(
     parseNativeExports(bytes, artifact),
   );
+
+/** Encode real gABI compressed storage, retaining logical section links. */
+const compressExportSection = (
+  bytes: Buffer,
+  sectionIndex: number,
+  versionStrings = false,
+): Buffer => {
+  const wide = bytes[4] === 2;
+  const little = bytes[5] === 1;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const word = (at: number) =>
+    Number(wide ? view.getBigUint64(at, little) : view.getUint32(at, little));
+  const table = word(wide ? 40 : 32);
+  const width = wide ? 64 : 40;
+  const section = table + sectionIndex * width;
+  const offset = word(section + (wide ? 24 : 16));
+  const size = word(section + (wide ? 32 : 20));
+  const header = Buffer.alloc(wide ? 24 : 12);
+  const chdr = new DataView(
+    header.buffer,
+    header.byteOffset,
+    header.byteLength,
+  );
+  chdr.setUint32(0, 1, little); // ELFCOMPRESS_ZLIB
+  if (wide) {
+    chdr.setBigUint64(8, BigInt(size), little);
+    chdr.setBigUint64(16, 1n, little);
+  } else {
+    chdr.setUint32(4, size, little);
+    chdr.setUint32(8, 1, little);
+  }
+  const storage = Buffer.concat([
+    header,
+    deflateSync(bytes.subarray(offset, offset + size)),
+  ]);
+  const count = view.getUint16(wide ? 60 : 48, little);
+  const result = Buffer.concat([
+    bytes,
+    Buffer.alloc(versionStrings ? width : 0),
+    storage,
+  ]);
+  const updated = new DataView(
+    result.buffer,
+    result.byteOffset,
+    result.byteLength,
+  );
+  const setWord = (at: number, value: number) =>
+    wide
+      ? updated.setBigUint64(at, BigInt(value), little)
+      : updated.setUint32(at, value, little);
+  const target = versionStrings ? table + count * width : section;
+  if (versionStrings) {
+    bytes.copy(result, target, section, section + width);
+    updated.setUint16(wide ? 60 : 48, count + 1, little);
+    // Definitions and requirements use the copied string table; dynsym keeps
+    // its original uncompressed table and still supplies trustworthy names.
+    for (const index of [4, 5])
+      updated.setUint32(
+        table + index * width + (wide ? 40 : 24),
+        count,
+        little,
+      );
+  }
+  setWord(target + 8, 0x800); // SHF_COMPRESSED, without SHF_ALLOC
+  setWord(
+    target + (wide ? 24 : 16),
+    bytes.length + (versionStrings ? width : 0),
+  );
+  setWord(target + (wide ? 32 : 20), storage.length);
+  return result;
+};
+
+it.each(
+  ([32, 64] as const).flatMap((bits) =>
+    (
+      [
+        "symbols",
+        "strings",
+        "indices",
+        "definitions",
+        "requirements",
+        "version-strings",
+      ] as const
+    ).map((kind) => ({ bits, kind })),
+  ),
+)(
+  "keeps compressed ELF$bits $kind distinct from logical table bytes",
+  ({ bits, kind }) => {
+    for (const little of [false, true]) {
+      const bytes = elfExportImage({
+        bits,
+        little,
+        symbols: [
+          { name: "defined", version: 2 },
+          { name: "required", version: 3 },
+        ],
+        versionDefinitions: ["lib.so", "DEFINED"],
+        versionRequirements: [{ index: 3, name: "REQUIRED" }],
+      });
+      expect(parse(bytes)).toMatchObject({
+        coverage: { status: "complete", exports: 2 },
+      });
+      const index = {
+        symbols: 1,
+        strings: 2,
+        indices: 3,
+        definitions: 4,
+        requirements: 5,
+        "version-strings": 2,
+      }[kind];
+      const result = parse(
+        compressExportSection(bytes, index, kind === "version-strings"),
+      );
+      if (kind === "symbols" || kind === "strings") {
+        expect(result).toMatchObject({
+          exports: [],
+          coverage: {
+            status: "unsupported",
+            examined_entries: 0,
+            reason: expect.stringContaining("SHF_COMPRESSED"),
+          },
+        });
+      } else {
+        expect(result).toMatchObject({
+          coverage: { status: "partial", exports: 2 },
+          exports: [
+            {
+              name: "defined",
+              version:
+                kind === "indices"
+                  ? "unknown"
+                  : {
+                      index: 2,
+                      name:
+                        kind === "definitions" || kind === "version-strings"
+                          ? null
+                          : "DEFINED",
+                    },
+            },
+            {
+              name: "required",
+              version:
+                kind === "indices"
+                  ? "unknown"
+                  : {
+                      index: 3,
+                      name:
+                        kind === "definitions" ||
+                        kind === "requirements" ||
+                        kind === "version-strings"
+                          ? null
+                          : "REQUIRED",
+                    },
+            },
+          ],
+        });
+        expect(result.issues).toContainEqual(
+          expect.objectContaining({
+            code: "version_unresolved",
+            message: expect.stringContaining("SHF_COMPRESSED"),
+          }),
+        );
+      }
+    }
+  },
+);
+
+it("skips an empty compressed requirement table without a version failure", () => {
+  const bytes = elfExportImage({
+    bits: 64,
+    little: true,
+    symbols: [{ name: "defined", version: 2 }],
+    versionDefinitions: ["lib.so", "DEFINED"],
+    versionRequirements: [{ index: 3, name: "REQUIRED" }],
+  });
+  const compressed = compressExportSection(bytes, 5);
+  const view = new DataView(
+    compressed.buffer,
+    compressed.byteOffset,
+    compressed.byteLength,
+  );
+  const table = Number(view.getBigUint64(40, true));
+  view.setUint32(table + 5 * 64 + 44, 0, true);
+  const result = parse(compressed);
+  const defined = result.exports.find(({ name }) => name === "defined");
+  if (defined === undefined || !("version" in defined))
+    throw new Error("Expected the ELF definition export");
+  expect(defined.version).toMatchObject({ index: 2, name: "DEFINED" });
+  expect(result.coverage.status).toBe("complete");
+  expect(result.issues).toEqual([]);
+});
+
+it("keeps requirement names when an empty compressed definition table declares no entries", () => {
+  const bytes = elfExportImage({
+    bits: 64,
+    little: true,
+    symbols: [
+      { name: "defined", version: 2 },
+      { name: "required", version: 3 },
+    ],
+    versionDefinitions: ["lib.so", "DEFINED"],
+    versionRequirements: [{ index: 3, name: "REQUIRED" }],
+  });
+  const compressed = compressExportSection(bytes, 4);
+  const view = new DataView(
+    compressed.buffer,
+    compressed.byteOffset,
+    compressed.byteLength,
+  );
+  const table = Number(view.getBigUint64(40, true));
+  view.setUint32(table + 4 * 64 + 44, 0, true);
+  const result = parse(compressed);
+  const required = result.exports.find(({ name }) => name === "required");
+  if (required === undefined || !("version" in required))
+    throw new Error("Expected the ELF requirement export");
+  expect(required.version).toMatchObject({ index: 3, name: "REQUIRED" });
+  expect(result.issues).toEqual([
+    {
+      code: "version_unresolved",
+      location: "0x1010",
+      message:
+        "Version index 2, first used by symbol 1, has no unambiguous version name",
+    },
+  ]);
+});
 
 it.each(["requirements", "definitions"] as const)(
   "bounds aliased GNU version %s work and keeps exports with unknown versions",
@@ -706,13 +932,12 @@ describe("ELF version requirements", () => {
   });
 
   it("uses a definition name when a requirement shares its index", () => {
-    const result = parse(
-      elfExportImage({
-        symbols: [{ name: "ambiguous", version: 2 }],
-        versionDefinitions: ["libfixture.so", "DEFINITION"],
-        versionRequirements: [{ index: 2, name: "REQUIREMENT" }],
-      }),
-    );
+    const bytes = elfExportImage({
+      symbols: [{ name: "ambiguous", version: 2 }],
+      versionDefinitions: ["libfixture.so", "DEFINITION"],
+      versionRequirements: [{ index: 2, name: "REQUIREMENT" }],
+    });
+    const result = parse(bytes);
 
     expect(result.exports).toMatchObject([
       {
@@ -722,6 +947,10 @@ describe("ELF version requirements", () => {
     ]);
     expect(result.coverage.status).toBe("complete");
     expect(result.issues).toEqual([]);
+    expect(parse(compressExportSection(bytes, 4))).toMatchObject({
+      exports: [{ name: "ambiguous", version: { index: 2, name: null } }],
+      coverage: { status: "partial" },
+    });
   });
 
   it("retains exports and reports a truncated version-requirement chain", () => {
@@ -1017,3 +1246,26 @@ it("refuses formats other than PE and ELF", () => {
     BinaryFormatFailure,
   );
 });
+
+it.each(
+  ([32, 64] as const).flatMap((bits) =>
+    [false, true].map((little) => ({ bits, little })),
+  ),
+)(
+  "keeps definition names and complete coverage when empty requirements are compressed (ELF$bits, little $little)",
+  ({ bits, little }) => {
+    const bytes = elfExportImage({
+      bits,
+      little,
+      symbols: [{ name: "versioned", version: 2 }],
+      versionDefinitions: ["libfixture.so", "DEFINED"],
+    });
+    const expected = parse(bytes);
+    expect(expected).toMatchObject({
+      exports: [{ name: "versioned", version: { index: 2, name: "DEFINED" } }],
+      coverage: { status: "complete" },
+      issues: [],
+    });
+    expect(parse(compressExportSection(bytes, 5))).toEqual(expected);
+  },
+);

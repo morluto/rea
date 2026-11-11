@@ -202,8 +202,9 @@ describe("v1 signature block (PKCS#7 SignedData)", () => {
     let nested: Uint8Array = Uint8Array.from([0x05, 0x00]);
     for (let i = 0; i < 64; i += 1) nested = indefinite(0x30, nested);
     expect(errorOf(nested)).toEqual({
-      kind: "malformed-pkcs7",
-      detail: "ASN.1 nesting exceeds 32 levels.",
+      kind: "budget-exceeded",
+      resource: "asn1-depth",
+      limit: 32,
     });
   });
 });
@@ -411,3 +412,42 @@ it.each([0, 1])(
     });
   },
 );
+
+it("keeps a valid constructed CMS content depth refusal distinct from malformed input", () => {
+  let content = tlv(0x04, Uint8Array.of(1));
+  const block = () =>
+    signedDataBlock({
+      certificates: [LEAF_CERTIFICATE],
+      signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+      encapsulatedContent: content,
+    });
+  expect(decodeV1SignatureBlock(block()).ok).toBe(true);
+  for (let depth = 0; depth < 40; depth += 1)
+    content = indefinite(0x24, content);
+  expect(errorOf(block())).toEqual({
+    kind: "budget-exceeded",
+    resource: "asn1-depth",
+    limit: 32,
+  });
+});
+
+it("preserves the canonical OID byte allowance for a valid unknown digest algorithm", () => {
+  const algorithm = tlv(
+    0x06,
+    Uint8Array.from([0x2a, ...Array<number>(64).fill(0)]),
+  );
+  expect(
+    errorOf(
+      signedDataBlock({
+        certificates: [LEAF_CERTIFICATE],
+        signerInfos: [
+          signerInfo({
+            names: LEAF_CERTIFICATE,
+            digestAlgorithmOid: algorithm,
+          }),
+        ],
+        digestAlgorithmOid: algorithm,
+      }),
+    ),
+  ).toEqual({ kind: "budget-exceeded", resource: "oid-bytes", limit: 64 });
+});

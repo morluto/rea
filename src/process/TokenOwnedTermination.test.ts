@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 
 import type {
   ProcessIdentityObservation,
@@ -77,6 +78,32 @@ const row = (
 });
 
 describe("terminateTokenOwnedProcesses", () => {
+  it("preserves the already-delivered group signal and exact owner when exit polling fails", async () => {
+    const file = await failedInspectionDescriptor();
+    const { host, signalGroup, signalProcess } = fakeHost(
+      [row(100, 100, "run")],
+      new Set([100]),
+    );
+    const identities = host.ownership.processIdentities!;
+    host.ownership.processIdentities = async (...args) => {
+      if (signalGroup.mock.calls.length > 0) throw file.failure;
+      return identities(...args);
+    };
+    const result = await terminateTokenOwnedProcesses(
+      { runId: "run", processGroupId: 100 },
+      1_000,
+      host,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { launchGroupSignalled: true },
+    });
+    if (result.ok) throw new Error("Polling failure must remain explicit");
+    expect(result.error.cause).toBe(file.failure);
+    expect(signalGroup.mock.calls).toEqual([[100, "SIGTERM"]]);
+    expect(signalProcess).not.toHaveBeenCalled();
+    expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+  });
   it("sends SIGTERM to the launch group and to token carriers that left it, never to others", async () => {
     const { host, signalGroup, signalProcess } = fakeHost([
       row(100, 100, "run"),
@@ -92,7 +119,7 @@ describe("terminateTokenOwnedProcesses", () => {
         1_000,
         host,
       ),
-    ).toEqual({ launchGroupSignalled: true });
+    ).toEqual({ ok: true, value: { launchGroupSignalled: true } });
 
     expect(signalGroup.mock.calls).toEqual([[100, "SIGTERM"]]);
     expect(signalProcess.mock.calls).toEqual([[200, "SIGTERM"]]);
@@ -113,7 +140,7 @@ describe("terminateTokenOwnedProcesses", () => {
         1_000,
         host,
       ),
-    ).toEqual({ launchGroupSignalled: false });
+    ).toEqual({ ok: true, value: { launchGroupSignalled: false } });
 
     expect(signalGroup).not.toHaveBeenCalled();
     expect(signalProcess.mock.calls).toEqual([[200, "SIGTERM"]]);
@@ -132,10 +159,31 @@ describe("terminateTokenOwnedProcesses", () => {
         1_000,
         host,
       ),
-    ).toEqual({ launchGroupSignalled: false });
+    ).toEqual({ ok: true, value: { launchGroupSignalled: false } });
 
     expect(signalGroup).not.toHaveBeenCalled();
     expect(signalProcess.mock.calls).toEqual([[100, "SIGTERM"]]);
+  });
+
+  it("does not report a refused group signal as delivered and still stops other token carriers", async () => {
+    const { host, signalGroup } = fakeHost([
+      row(100, 100, "run"),
+      row(200, 200, "run"),
+    ]);
+    signalGroup.mockImplementation(() => {
+      throw Object.assign(new Error("Signal refused"), { code: "EPERM" });
+    });
+
+    expect(
+      await terminateTokenOwnedProcesses(
+        { runId: "run", processGroupId: 100 },
+        1_000,
+        host,
+      ),
+    ).toEqual({ ok: true, value: { launchGroupSignalled: false } });
+    expect(
+      (await host.ownership.listProcesses()).map(({ pid }) => pid),
+    ).toEqual([100]);
   });
 
   it("waits for the grace period when a process ignores SIGTERM", async () => {
