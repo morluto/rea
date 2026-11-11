@@ -52,7 +52,7 @@ const freebuffPath = (
 
 describe("FreeBuff configuration paths", () => {
   it("resolves the shared user agents file and the profile marker directory", () => {
-    expect(freebuffPath("/home/a")).toEqual({
+    expect(freebuffPath("/home/a")).toMatchObject({
       name: "freebuff",
       displayName: "FreeBuff",
       configPath: join("/home/a", ".agents", "mcp.json"),

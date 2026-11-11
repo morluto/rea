@@ -25,7 +25,7 @@ const installation = await inspectKunaInstallation(
 assert.equal(installation.ok, true);
 const controller = new AbortController();
 const commands = new KunaTargetCommands(fixture.target, { signal: controller.signal });
-const request = () => commands.run({ installation: installation.value, operation: "retention-probe", arguments: input => ["functions", input, "--json"], deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 2000 }, outputBytes: 16384, signal: controller.signal });
+const request = () => commands.run({ installation: installation.value, operation: "retention-probe", arguments: input => ["functions", input, "--json"], deadline: { setting: "REA_KUNA_TIMEOUT_MS", source: "setting", ms: 2000 }, outputBytes: 16384, signal: controller.signal });
 try {
   const capture = async () => {
     const result = await request();

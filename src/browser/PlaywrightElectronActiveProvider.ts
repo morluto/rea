@@ -1,5 +1,7 @@
-import { retainProcessInspectionCleanup } from "./ProcessInspectionCleanup.js";
-import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
@@ -37,7 +39,6 @@ import type {
 } from "../process/ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import {
-  isProcessOwnershipInspectionCancellation,
   observeOwnedProcessLineage,
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
@@ -128,10 +129,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     const runId = randomUUID();
     try {
       if (options.signal?.aborted === true)
-        throw new BrowserObservationError(OPERATION, "cancelled");
+        throw new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+        });
       await inspectOwnership(
         () => prepareProcessOwnershipInspection(options.signal),
-        options.signal,
         this.#resources,
       );
       const startupDeadline = performance.now() + STARTUP_TIMEOUT_MS;
@@ -164,11 +166,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       }
       const captureBaseline = await inspectOwnership(
         () => systemProcessOwnershipHost.captureBaseline?.(options.signal),
-        options.signal,
         this.#resources,
       );
       if (options.signal?.aborted)
-        throw new BrowserObservationError(OPERATION, "cancelled");
+        throw new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+        });
       const applicationArgs = [
         "-r",
         hookPath,
@@ -191,7 +194,10 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         timeout: Math.max(1, startupDeadline - performance.now()),
       };
       application = await containLaunchRejections(() => {
-        options.signal?.throwIfAborted();
+        if (options.signal?.aborted === true)
+          throw new BrowserObservationError(OPERATION, "cancelled", {
+            cause: options.signal.reason,
+          });
         return this.launch(launchOptions);
       });
       const leaderPid = application.process().pid;
@@ -250,18 +256,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         };
       }
-      const error =
-        options.signal?.aborted === true &&
-        cause instanceof AnalysisError &&
-        !cause.cleanupIncomplete &&
-        (cause instanceof AnalysisCancelledError ||
-          cause.userCategory === "cancelled")
-          ? new BrowserObservationError(OPERATION, "cancelled", {
-              cause: options.signal.reason,
-              diagnostics: cause.diagnostics,
-              capturedOutput: cause.capturedOutput,
-            })
-          : providerError(cause);
+      const error = providerError(cause);
       if (capture !== undefined)
         error.retainPartialObservation({
           kind: "electron-active-observation",
@@ -348,38 +343,18 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
   }
 }
 
-// The process inspector can reject with the signal reason or a native AbortError.
-// Normalize only its own boundary so unrelated physical errors remain primary.
+/** Normalize only explicit facts emitted by the inspection owner. */
 const inspectOwnership = async <T>(
   inspect: () => Promise<T> | undefined,
-  signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
 ): Promise<T | undefined> => {
   try {
     return await inspect();
   } catch (cause: unknown) {
-    if (cause instanceof DarwinProcessOwnershipInspectionError) {
-      const primary =
-        cause.cancellation === undefined
-          ? providerError(cause)
-          : new BrowserObservationError(OPERATION, "cancelled", {
-              cause: cause.cancellation.reason,
-            });
-      throw retainProcessInspectionCleanup(
-        cause,
-        primary,
-        resources,
-        OPERATION,
-      );
-    }
-    if (
-      isProcessOwnershipInspectionCancellation(cause, signal) &&
-      !(cause instanceof AnalysisError && cause.cleanupIncomplete)
-    )
-      throw new BrowserObservationError(OPERATION, "cancelled", {
-        cause: signal?.reason,
-      });
-    throw cause;
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    const primary =
+      cancellation === undefined ? providerError(cause) : cancellation;
+    throw retainProcessInspectionCleanup(cause, primary, resources, OPERATION);
   }
 };
 
@@ -391,7 +366,11 @@ const captureOutcomeWithCancellation = (
   if (signal?.aborted !== true) return outcome;
   if (outcome.ok) return err(cancelledCapture(outcome.value, signal.reason));
   const primary = primaryAnalysisError(outcome.error);
-  if (primary.userCategory === "cancelled" && primary.cause === signal.reason)
+  if (
+    (primary instanceof AnalysisCancelledError ||
+      primary.userCategory === "cancelled") &&
+    Object.is(primary.cause, signal.reason)
+  )
     return outcome;
   return err(
     analysisErrorWithCancellation(

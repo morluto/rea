@@ -621,7 +621,7 @@ const loadWrites = async (
         mappings: image.mappings,
         zeroFills: image.zero_fills,
       },
-      { unsupported: "record" },
+      { unsupported: "record", wholeExtents: true },
     );
     let next = steps.next();
     while (!next.done) {

@@ -107,7 +107,21 @@ mcpTest(
         name: "inspect_native_initializers",
         arguments: { path },
       });
-      expect(missing.isError).toBe(true);
+      expect(parseMcpToolError(missing).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "inspect_native_initializers",
+          issues: [
+            {
+              path: ["architecture"],
+              reason: "invalid_value",
+              message: expect.stringMatching(
+                /arm64 \(subtype 0x0\).*select one architecture/u,
+              ),
+            },
+          ],
+        },
+      });
       const selected = await client.callTool({
         name: "inspect_native_initializers",
         arguments: { path, architecture: "arm64" },
