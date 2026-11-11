@@ -1,3 +1,5 @@
+import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -25,6 +27,68 @@ const entries = async (reader: WxapkgArtifactReader) => {
   for await (const entry of reader.entries()) result.push(entry);
   return result;
 };
+
+it("retries Wxapkg preparation cancelled during file reading", async () => {
+  const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new WxapkgArtifactReader(path, admitted);
+  const controller = new AbortController();
+  const reason = { stage: "header read" };
+  const nativeRead = admitted.handle.read.bind(admitted.handle);
+  const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(nativeRead, admitted.handle, args);
+    controller.abort(reason);
+    return result;
+  }) as typeof admitted.handle.read);
+  try {
+    await expect(
+      (async () => {
+        for await (const _ of reader.entries(controller.signal)) {
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    read.mockRestore();
+    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
+it("does not publish Wxapkg entries when final source verification fails", async () => {
+  const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));
+  const control = new WxapkgArtifactReader(path);
+  const reader = new WxapkgArtifactReader(path);
+  const expected = (await entries(control))[0]!;
+  const nativeRead = ArtifactFileSource.prototype.read;
+  const physical = Object.assign(
+    new Error("final source verification failed"),
+    { code: "EIO" },
+  );
+  let calls = 0;
+  const read = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, ...args) {
+      calls += 1;
+      if (calls === 2) return Promise.reject(physical);
+      return nativeRead.apply(this, args);
+    });
+  try {
+    await expect(entries(reader)).rejects.toBe(physical);
+    await expect(reader.open(expected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    read.mockRestore();
+    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
 
 describe("wxapkg allocation and malformed-input boundaries", () => {
   it("admits the encoded table budget before reading it", async () => {
@@ -307,4 +371,9 @@ describe("wxapkg stream capacity and freshness", () => {
       await reader.close();
     }
   });
+});
+
+artifactPreparationRecoveryCases({
+  image: () => buildWxapkg([{ path: "a", data: "x" }]),
+  createReader: (path, admitted) => new WxapkgArtifactReader(path, admitted),
 });
