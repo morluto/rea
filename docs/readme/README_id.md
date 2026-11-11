@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · **Bahasa Indonesia** · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Rekayasa Balik Apa Pun
 
@@ -286,6 +286,12 @@ REA mengekspor lingkungan yang dapat dijalankan dengan uji dasar untuk memeriksa
 [Panduan membangun lingkungan](https://rea.tools/guides/rl-environments/) ·
 [Referensi lingkungan](../agent-environments.md) ·
 [Tonton demo di X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Lingkungan aplikasi desktop
+
+REA juga dapat membuat lingkungan untuk aplikasi desktop Linux yang digunakan agen melalui tangkapan layar, mouse, dan keyboard. Dari permintaan satu baris, seperti "Buatkan lingkungan Gnote tempat agen menambahkan minyak zaitun ke catatan daftar belanja", agen Anda memasang aplikasi di komputer build lokal, menulis tugas, mengekspor lingkungan, dan memeriksa tugas di komputer baru. Mesin yang membuatnya memerlukan Linux di amd64 atau arm64, Docker, dan versi framework agentenv yang ditetapkan panduan.
+
+[Siapkan lingkungan aplikasi desktop](../desktop-build-computer.md)
 
 ## FAQ
 

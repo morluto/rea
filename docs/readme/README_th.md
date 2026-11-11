@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · **ไทย** · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -278,6 +278,12 @@ REA ส่งออกสภาพแวดล้อมที่รันได�
 [คู่มือสร้างสภาพแวดล้อม](https://rea.tools/guides/rl-environments/) ·
 [เอกสารอ้างอิงสภาพแวดล้อม](../agent-environments.md) ·
 [ชมเดโมบน X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### สภาพแวดล้อมของแอปเดสก์ท็อป
+
+REA ยังสร้างสภาพแวดล้อมของแอปเดสก์ท็อปบน Linux ที่เอเจนต์ใช้งานผ่านภาพหน้าจอ เมาส์ และคีย์บอร์ดได้ด้วย จากคำขอเพียงบรรทัดเดียว เช่น "สร้างสภาพแวดล้อม Gnote ที่เอเจนต์เพิ่มน้ำมันมะกอกลงในโน้ตรายการซื้อของ" เอเจนต์ของคุณจะติดตั้งแอปบนคอมพิวเตอร์สำหรับบิลด์ในเครื่อง เขียนงาน ส่งออกสภาพแวดล้อม และตรวจสอบงานบนคอมพิวเตอร์เครื่องใหม่ เครื่องที่ใช้สร้างต้องมี Linux บน amd64 หรือ arm64, Docker และ agentenv framework เวอร์ชันที่คู่มือกำหนด
+
+[ตั้งค่าสภาพแวดล้อมของแอปเดสก์ท็อป](../desktop-build-computer.md)
 
 ## คำถามที่พบบ่อย
 
