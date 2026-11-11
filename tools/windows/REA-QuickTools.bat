@@ -12,19 +12,15 @@ if not defined GHIDRA_INSTALL_DIR if exist "C:\tools\ghidra_12.1.4_PUBLIC" set "
 if not defined JAVA_HOME if exist "C:\Program Files\Java\jdk-22" set "JAVA_HOME=C:\Program Files\Java\jdk-22"
 
 :: ---- Locate the REA CLI ------------------------------------------------------
-:: Preferred: node.exe plus the packaged rea.mjs entry, executed directly so a
-:: child process cannot replace this menu and percent signs in analyst-provided
-:: paths survive untouched. Fallback: the npm global rea.cmd shim via CALL,
-:: which keeps the original launcher behavior when the entry cannot be located.
+:: node.exe plus the packaged rea.mjs entry, executed directly: control returns
+:: to the menu, a child process cannot replace it, and percent signs in
+:: analyst-provided paths survive untouched. The npm rea.cmd shim is NOT used
+:: as a fallback because CALL would re-parse the reconstructed arguments.
 set "NODE_EXE="
 for %%I in (node.exe) do if exist "%%~$PATH:I" set "NODE_EXE=%%~$PATH:I"
 set "REA_ENTRY="
 if defined NODE_EXE for %%D in ("%APPDATA%\npm\node_modules\rea-agents" "%~dp0..\..") do if not defined REA_ENTRY if exist "%%~D\scripts\rea.mjs" set "REA_ENTRY=%%~D\scripts\rea.mjs"
-if defined REA_ENTRY goto HAVE_REA
-set "REA_CMD="
-for %%I in (rea.cmd) do if not defined REA_CMD if exist "%%~$PATH:I" set "REA_CMD=%%~$PATH:I"
-if not defined REA_CMD if exist "%APPDATA%\npm\rea.cmd" set "REA_CMD=%APPDATA%\npm\rea.cmd"
-if not defined REA_CMD goto NO_REA
+if not defined REA_ENTRY goto NO_REA
 goto HAVE_REA
 
 :NO_REA
@@ -172,9 +168,13 @@ goto FILE_DROPPED
 set "SEARCH_TERM="
 set /p SEARCH_TERM="พิมพ์คำที่ต้องการค้นหาใน Strings: "
 if not defined SEARCH_TERM goto FILE_DROPPED
+:: A leading-dash term such as --help would parse as an option; the CLI's
+:: documented selector form --pattern=<value> routes it as the pattern.
+set "PATTERN_FLAG=!SEARCH_TERM!"
+if "!SEARCH_TERM:~0,1!"=="-" set "PATTERN_FLAG=--pattern=!SEARCH_TERM!"
 cls
 echo [กำลังค้นหาข้อความใน Strings...]
-set "REA_ARGS=search "!TARGET!" "!SEARCH_TERM!" --kind strings --provider ghidra"
+set "REA_ARGS=search "!TARGET!" !PATTERN_FLAG! --kind strings --provider ghidra"
 call :RUN_REA
 pause
 goto FILE_DROPPED
@@ -183,9 +183,11 @@ goto FILE_DROPPED
 set "PROC_TERM="
 set /p PROC_TERM="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
 if not defined PROC_TERM goto FILE_DROPPED
+set "PATTERN_FLAG=!PROC_TERM!"
+if "!PROC_TERM:~0,1!"=="-" set "PATTERN_FLAG=--pattern=!PROC_TERM!"
 cls
 echo [กำลังค้นหาฟังก์ชันตามชื่อที่ระบุ...]
-set "REA_ARGS=search "!TARGET!" "!PROC_TERM!" --kind procedures --provider ghidra"
+set "REA_ARGS=search "!TARGET!" !PATTERN_FLAG! --kind procedures --provider ghidra"
 call :RUN_REA
 pause
 goto FILE_DROPPED
@@ -201,12 +203,11 @@ goto FILE_DROPPED
 :GUIDE
 :: The installed skill ships the guide; the source checkout keeps it beside the skill.
 set "GUIDE_FILE="
-if exist "%APPDATA%\npm\node_modules\rea-agents\skills\reverse-engineer-anything\references\thai-guide.md" set "GUIDE_FILE=%APPDATA%\npm\node_modules\rea-agents\skills\reverse-engineer-anything\references\thai-guide.md"
-if not defined GUIDE_FILE if exist "%LOCALAPPDATA%\hermes\skills\reverse-engineer-anything\references\thai-guide.md" set "GUIDE_FILE=%LOCALAPPDATA%\hermes\skills\reverse-engineer-anything\references\thai-guide.md"
-if not defined GUIDE_FILE if exist "%~dp0..\..\.agents\skills\reverse-engineer-anything\references\thai-guide.md" set "GUIDE_FILE=%~dp0..\..\.agents\skills\reverse-engineer-anything\references\thai-guide.md"
+if exist "%APPDATA%\npm\node_modules\rea-agents\docs\windows-quicktools.md" set "GUIDE_FILE=%APPDATA%\npm\node_modules\rea-agents\docs\windows-quicktools.md"
+if not defined GUIDE_FILE if exist "%~dp0..\..\docs\windows-quicktools.md" set "GUIDE_FILE=%~dp0..\..\docs\windows-quicktools.md"
 if defined GUIDE_FILE goto OPEN_GUIDE
 echo ไม่พบคู่มือภาษาไทยในเครื่องนี้
-echo ค้นหาได้ที่: skills\reverse-engineer-anything\references\thai-guide.md
+echo ค้นหาได้ที่: docs\windows-quicktools.md ในโฟลเดอร์ติดตั้ง
 pause
 goto MENU
 
@@ -219,10 +220,8 @@ goto MENU
 :: once here keeps operator and percent characters inside the value literal;
 :: analyst input never travels through the parse-time %* expansion.
 :RUN_REA
-if defined REA_ENTRY (
-    "%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!
-    goto :eof
-)
-:: The shim fallback re-expands percents once (inherent to npm .cmd shims).
-call "%REA_CMD%" !REA_ARGS!
+:: REA_ARGS is built with delayed expansion at the action sites. Expanding it
+:: once here keeps operator and percent characters inside the value literal;
+:: analyst input never travels through the parse-time %* expansion.
+"%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!
 goto :eof

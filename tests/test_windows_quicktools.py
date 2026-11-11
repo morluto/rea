@@ -88,7 +88,14 @@ class LauncherStructureTests(unittest.TestCase):
 
     def test_child_process_is_replaced_safely(self):
         content = BAT_PATH.read_text(encoding="utf-8")
+        # A .cmd shim fallback would re-expand analyst text through CALL.
+        self.assertNotIn("REA_CMD", content)
         self.assertIn('"%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!', content)
+
+    def test_leading_dash_terms_use_the_pattern_selector(self):
+        content = BAT_PATH.read_text(encoding="utf-8")
+        self.assertIn("--pattern=!SEARCH_TERM!", content)
+        self.assertIn("--pattern=!PROC_TERM!", content)
 
 
 class LauncherBehaviorTests(unittest.TestCase):
@@ -210,6 +217,35 @@ class LauncherBehaviorTests(unittest.TestCase):
         self.assertIn("sa mple&more.dll", payload)
         # The operator must stay inside the value, never become command syntax.
         self.assertNotIn('", "&"', payload)
+
+    @windows_only
+    def test_leading_dash_search_is_routed_through_pattern_selector(self):
+        self.clear_log()
+        target = self.tmp / "sample.dll"
+        target.write_bytes(b"MZ")
+        # Menu 3 -> path, menu 5 -> procedures search for "--help".
+        self.assertSuccess(
+            self.run_launcher(
+                [
+                    "3\r\n",
+                    f"{target}\r\n",
+                    "5\r\n",
+                    "--help\r\n",
+                    ".\r\n",
+                    "7\r\n",
+                    "5\r\n",
+                ]
+            )
+        )
+        dispatches = self.logged_dispatches()
+        self.assertEqual(len(dispatches), 1, dispatches)
+        payload = dispatches[0]
+        self.assertIn('"search"', payload)
+        self.assertIn('"procedures"', payload)
+        # The dash term must travel as the --pattern selector value, not as a
+        # positional the CLI would misparse as an option.
+        self.assertIn("--pattern=--help", payload.replace(" ", ""))
+        self.assertNotIn('"--help"', payload)
 
     @windows_only
     def test_pasted_search_term_cannot_inject_commands(self):

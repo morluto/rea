@@ -524,7 +524,7 @@ as complete while required questions remain open.
 ## Read only the relevant guide
 
 - คู่มือการใช้งานภาษาไทย (Thai Guide & Fast Reference):
-  [references/thai-guide.md](references/thai-guide.md)
+  [docs/windows-quicktools.md](../../../docs/windows-quicktools.md)
 - Native binaries, managed assemblies, archives, and extraction:
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
 - ASARs, extracted JavaScript, feature tracing, and version comparison:
