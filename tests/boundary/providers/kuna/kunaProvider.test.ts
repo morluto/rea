@@ -1032,25 +1032,34 @@ it("keeps reporting a failed close and succeeds once a retry proves the stop", a
   const { open } = await session(
     "rea-kuna-close-retry-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "300" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
     unproven.launcher,
   );
   const client = open();
 
-  expect(
-    await client.execute("procedure_pseudo_code", { procedure: "main" }),
-  ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
-  const first = await client.close();
-  expect(first).toMatchObject({
-    ok: false,
-    error: { diagnostics: { reason: "decompile stop unproven" } },
-  });
-  // A retry that still cannot prove the stop keeps failing.
-  expect((await client.close()).ok).toBe(false);
+  try {
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    expect(
+      await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "kuna.function_timeout_ms": 300 } },
+        () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+      ),
+    ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+    const first = await client.close();
+    expect(first).toMatchObject({
+      ok: false,
+      error: { diagnostics: { reason: "decompile stop unproven" } },
+    });
+    // A retry that still cannot prove the stop keeps failing.
+    expect((await client.close()).ok).toBe(false);
 
-  unproven.release();
-  expect(await client.close()).toEqual({ ok: true, value: null });
-  expect(await client.close()).toEqual({ ok: true, value: null });
+    unproven.release();
+    expect(await client.close()).toEqual({ ok: true, value: null });
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  } finally {
+    unproven.release();
+    expect((await client.close()).ok).toBe(true);
+  }
 });
 
 it("reports an abandoned export's unproven cleanup from close", async () => {
