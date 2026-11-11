@@ -138,6 +138,27 @@ describe("terminateTokenOwnedProcesses", () => {
     expect(signalProcess.mock.calls).toEqual([[100, "SIGTERM"]]);
   });
 
+  it("does not report a refused group signal as delivered and still stops other token carriers", async () => {
+    const { host, signalGroup } = fakeHost([
+      row(100, 100, "run"),
+      row(200, 200, "run"),
+    ]);
+    signalGroup.mockImplementation(() => {
+      throw Object.assign(new Error("Signal refused"), { code: "EPERM" });
+    });
+
+    expect(
+      await terminateTokenOwnedProcesses(
+        { runId: "run", processGroupId: 100 },
+        1_000,
+        host,
+      ),
+    ).toEqual({ launchGroupSignalled: false });
+    expect(
+      (await host.ownership.listProcesses()).map(({ pid }) => pid),
+    ).toEqual([100]);
+  });
+
   it("waits for the grace period when a process ignores SIGTERM", async () => {
     const { host } = fakeHost([row(100, 100, "run")], new Set([100]));
     const started = performance.now();

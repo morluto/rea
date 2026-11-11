@@ -946,13 +946,13 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   const truncatedFile = elfNote(
     "CORE",
     0x46494c45,
-    Buffer.from("00000000000000010000000000001000", "hex"), // count 1, page_size 4096, but no map entries or filenames
+    Buffer.from("01000000000000000010000000000000", "hex"), // count 1, page_size 4096, but no map entries or filenames
   );
   const truncatedSiginfo = elfNote("CORE", 0x53494749, Buffer.alloc(4)); // requires 12 bytes
   const unterminatedAuxv = elfNote(
     "CORE",
     6,
-    Buffer.from("00000000000000060000000000001000", "hex"), // AT_PAGESZ=4096 but lacks AT_NULL terminator
+    Buffer.from("06000000000000000010000000000000", "hex"), // AT_PAGESZ=4096 but lacks AT_NULL terminator
   );
   const truncatedAuxv = elfNote("CORE", 6, Buffer.alloc(7)); // not multiple of entry size
   const notes = Buffer.concat([
@@ -981,6 +981,24 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   expect(report.entries[3]?.type_name).toBe("core_auxv");
   expect(report.entries[4]?.core).toBeNull();
   expect(report.entries[4]?.type_name).toBe("core_auxv");
+  const valid = parse(
+    elfNoteFixture({
+      bits: 64,
+      ownership: "program",
+      notes: Buffer.concat([
+        coreFileNote([
+          { start: 0x1000, end: 0x2000, file_ofs: 0, path: "/bin/app" },
+        ]),
+        coreAuxvNote([[6, 4096]]),
+      ]),
+    }),
+  );
+  expect(valid.entries[0]?.core?.file?.mappings[0]?.path).toBe("/bin/app");
+  expect(valid.entries[1]?.core?.auxv).toContainEqual({
+    type: 6,
+    type_name: "AT_PAGESZ",
+    value: "0x1000",
+  });
 });
 
 it("decodes siginfo using target ABI for MIPS machines", () => {
@@ -1075,13 +1093,34 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
     0x46494c45,
     Buffer.concat([header, mappings, paths]),
   );
-  const bytes = elfNoteFixture({
+  const path = "p".repeat(128);
+  const valid = coreFileNote([
+    { start: 0x1000, end: 0x2000, file_ofs: 0, path },
+  ]);
+  const image = elfNoteFixture({
     bits: 64,
     ownership: "program",
-    notes: badFileNote,
+    notes: Buffer.concat([badFileNote, valid]),
   });
+  // Two CORE owners use 14 bytes each; one ELF64 mapping uses 54, and
+  // the retained Latin-1 path plus its hex spelling uses 3 bytes per byte.
+  const budget = 2 * 14 + 54 + 128 * 3;
+  expect(image.length).toBeLessThanOrEqual(budget);
+  const bytes = Buffer.concat([image, Buffer.alloc(budget - image.length)]);
   const report = parse(bytes);
   expect(report.entries[0]?.core).toBeNull();
+  expect(report.entries[1]?.core?.file?.mappings).toEqual([
+    {
+      start_address: "0x1000",
+      end_address: "0x2000",
+      file_offset_pages: "0x0",
+      path,
+      path_hex: Buffer.from(path).toString("hex"),
+    },
+  ]);
+  expect(() => parse(bytes.subarray(0, bytes.length - 1))).toThrow(
+    expect.objectContaining({ reason: "limit", boundary: "memory" }),
+  );
 });
 
 it.each([

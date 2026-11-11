@@ -32,6 +32,7 @@ import {
 } from "../../domain/analysisView/environmentStateWriteLinks.js";
 import {
   pathValuesOf,
+  pathParameterKeys,
   type GeneratedRule,
   type StateWritePlan,
   type WriteCall,
@@ -106,14 +107,12 @@ export const pathValues = (
   args: ReplayArguments,
 ): Map<string, string> => {
   const names = environmentToolArguments(tool).path;
-  const template = tool.path_template
-    .slice(tool.path_template.indexOf("/") + 1)
-    .split("/");
+  const keys = pathParameterKeys(tool.path_template);
   const values = new Map<string, string>();
   for (const param of tool.params) {
     const value = ownMember(args, names.get(param.name) ?? param.name);
-    const segment = template[param.index] ?? "";
-    if (typeof value === "string") values.set(segment.slice(1, -1), value);
+    const key = keys.get(param.index);
+    if (typeof value === "string" && key !== undefined) values.set(key, value);
   }
   return values;
 };

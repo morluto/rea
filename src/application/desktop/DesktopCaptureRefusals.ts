@@ -2,7 +2,10 @@ import { readdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -193,6 +196,8 @@ export const checkDesktopCaptureHost = async (
     );
   const existing = await readdir(request.output).catch((cause: unknown) => {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((cause as NodeJS.ErrnoException).code === "ENOTDIR")
+      throw outputRefusal(request.output, "not_a_directory");
     throw cause;
   });
   if (existing.length > 0) throw outputRefusal(request.output, "not_empty");
@@ -232,8 +237,15 @@ export const desktopOperationFailure = (
   }
   // A resource that could not be released stays reported, with its owner.
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+    const primary =
+      cause.reason === "cancelled"
+        ? new AnalysisCancelledError(operation, {
+            cause: artifactFileCancellationCause(cause),
+          })
+        : undefined;
     const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
       cause,
+      ...(primary === undefined ? {} : { cleanupPrimary: primary }),
       cleanup: cause.cleanup,
       diagnostics: { phase: operation },
       userMessage: `${label} could not release a resource it used: ${describeValidationFailure(cause)}`,

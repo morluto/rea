@@ -651,6 +651,9 @@ only when both identities are available and their format-specific comparison
 establishes a difference. ELF module names retain case, PE module names compare
 case-insensitively, and a case-only match for Mach-O or an unknown format stays
 unresolved because the available Evidence does not establish case behavior.
+The authenticated subject format establishes the native platform: thin and
+universal Mach-O use the same lookup rules; missing or unrecognized formats
+remain unknown. Retained source Evidence keeps its original subject format.
 For PE imports, `.dll`, `.exe`, a trailing period, and absolute paths suppress
 appending `.dll`; other names may also be tried with `.dll`. Unix loaders use
 the platform suffix (`.so` or `.dylib`) and `lib` prefix variations. A suffix

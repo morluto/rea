@@ -169,6 +169,8 @@ it.each([
   "outside-range",
   "owner-base64",
   "descriptor-base64",
+  "invalid-hex",
+  "fractional-bytes",
 ])("rejects provider evidence at the next boundary: %s", async (problem) => {
   const fixture = recordedCrashFixture();
   if (problem === "different-path") fixture.artifact.path = "/different.elf";
@@ -176,6 +178,8 @@ it.each([
   if (problem === "owner-base64") fixture.notes[0]!.owner_bytes_base64 = "A";
   if (problem === "descriptor-base64")
     fixture.notes[0]!.descriptor_bytes_base64 = "A";
+  if (problem === "invalid-hex") fixture.segments[0]!.offset = "not-hex";
+  if (problem === "fractional-bytes") fixture.artifact.bytes = 1.5;
   if (problem === "outside-range")
     fixture.segments.push({
       index: 0,

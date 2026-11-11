@@ -7,7 +7,9 @@ import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
 import { recordedNoteCoverageIssues } from "./recordedCrashNoteCoverage.js";
 
-const hex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
+const hex = z
+  .string()
+  .regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/, { abort: true });
 const index = z.int().nonnegative();
 const signed32 = z.int().min(-2147483648).max(2147483647);
 const base64 = canonicalBase64Schema;

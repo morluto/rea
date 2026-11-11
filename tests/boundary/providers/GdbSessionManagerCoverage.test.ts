@@ -31,9 +31,13 @@ import { DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES } from "../../../src/domain/a
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
-import { expectGdbSessionStarted } from "./gdbTestHelpers.js";
+import {
+  createGdbFixtureOwner,
+  expectGdbSessionStarted,
+} from "./gdbTestHelpers.js";
 
 let directory: string | undefined;
+const fixtureOwner = createGdbFixtureOwner();
 const managers: GdbSessionManager[] = [];
 
 it.each([
@@ -208,7 +212,10 @@ it("rejects an invalid caller TTY and platforms without safe GDB ownership", asy
     expect(macUnavailable.error.message).toContain("available only on Linux");
   expect(macSpawned).toBe(false);
 
-  const windows = new GdbSessionManager({ platform: "win32" });
+  const windows = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
+    platform: "win32",
+  });
   managers.push(windows);
   const unavailable = await windows.start();
   expect(unavailable).toMatchObject({
@@ -1625,6 +1632,7 @@ const managerFor = async (
   options: ConstructorParameters<typeof GdbSessionManager>[0] = {},
 ): Promise<GdbSessionManager> => {
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: await createProvider(body) },
     ...options,
@@ -1653,23 +1661,21 @@ process.stdin.on('data', (chunk) => {
 `;
 
 afterEach(async () => {
-  await Promise.all(
-    managers
-      .splice(0)
-      .map((manager) => manager.closeAll().catch(() => undefined)),
-  );
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
+  await fixtureOwner.cleanup(managers, async () => {
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    directory = undefined;
+  });
 });
 
 it("rejects a pre-cancelled GDB start and an unconfigured executable", async () => {
   const cancelled = new AbortController();
   const reason = new Error("caller cancelled before start");
   cancelled.abort(reason);
-  const startResult = await new GdbSessionManager({ platform: "linux" }).start(
-    cancelled.signal,
-  );
+  const startResult = await new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
+    platform: "linux",
+  }).start(cancelled.signal);
   expect(startResult.ok).toBe(false);
   if (!startResult.ok) {
     expect(startResult.error._tag).toBe("AnalysisCancelledError");
@@ -1679,12 +1685,14 @@ it("rejects a pre-cancelled GDB start and an unconfigured executable", async () 
   const nullReasonController = new AbortController();
   nullReasonController.abort(null);
   const nullReasonResult = await new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
   }).start(nullReasonController.signal);
   expect(nullReasonResult.ok).toBe(false);
   if (!nullReasonResult.ok) expect(nullReasonResult.error.cause).toBeNull();
 
   const missing = await new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: join(tmpdir(), "does-not-exist-gdb") },
   }).start();
@@ -1713,6 +1721,7 @@ if (process.argv.includes('--interpreter=mi3')) process.exit(0);
 ${responsiveProvider()}
 `);
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
   });
@@ -1729,6 +1738,7 @@ it("retains ownership when GDB startup fails before its prompt and stop is incom
   let retainedSessionId: string | undefined;
   const provider = await createProvider("process.exit(0);\n");
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     stopProcess: async (session, name) => {
@@ -1859,6 +1869,7 @@ it("returns startup timeout when the MI prompt never arrives", async () => {
     "process.stdin.resume(); setInterval(() => {}, 1000);\n",
   );
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     startupTimeoutMs: 20,
@@ -1939,6 +1950,7 @@ it("retains startup timeout without partial evidence when cleanup is uncertain",
     "process.stdin.resume(); setInterval(() => {}, 1000);\n",
   );
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     startupTimeoutMs: 20,
@@ -2022,6 +2034,7 @@ it("handles a start signal that becomes aborted during listener registration", a
     },
   });
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
   });
@@ -3167,6 +3180,7 @@ it("retains a session when closing cannot confirm the debugger process stopped",
   let stopCalls = 0;
   const provider = await createProvider(responsiveProvider());
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     stopProcess: async (session, name) => {
@@ -3222,6 +3236,7 @@ it.each([new Error("simulated stop failure"), "simulated stop failure"])(
   `),
     );
     const manager = new GdbSessionManager({
+      spawnProcess: fixtureOwner.spawnProcess,
       platform: "linux",
       environment: {
         REA_GDB_COMMAND: provider,
@@ -3590,6 +3605,101 @@ process.stdin.on('data', (chunk) => {
     expect(retained.endsWith("[recent record truncated]")).toBe(true);
   }
 });
+
+it.each([false, true])(
+  "retains completed MI observations before a later framing failure (coalesced=%s)",
+  async (coalesced) => {
+    const prefix = '~"completed observation"\n';
+    const oversized = "x".repeat(16 * 1024 * 1024 + 1) + "\n";
+    const fake = createFakeSpawner((child, token, command) => {
+      if (command === "-gdb-set auto-load off") {
+        child.stdout.write(`${token}^done\n`);
+        return;
+      }
+      if (coalesced) child.stdout.write(prefix + oversized);
+      else {
+        child.stdout.write(prefix);
+        child.stdout.write(oversized);
+      }
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      stopProcess: async () => {
+        for (const child of fake.children) child.exit(0, null);
+        return { status: "stopped" };
+      },
+    });
+    const started = await expectGdbSessionStarted(manager);
+    const failed = await manager.execute(
+      started.value.session_id,
+      "fixture-only",
+    );
+    expect(failed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        partialObservation: {
+          normalized_result: {
+            records: ['~"completed observation"'],
+            console: '~"completed observation"',
+            completion_status: "unknown",
+          },
+        },
+      },
+    });
+  },
+);
+
+it.each(["literal", "octal", "invalid-result", "invalid-stream"] as const)(
+  "requires valid UTF-8 for TTY facts while retaining opaque stream data (%s)",
+  async (encoding) => {
+    const tty = "/fixture/terminal-\uFFFD";
+    const fake = createFakeSpawner((child, token, command) => {
+      if (command === "-inferior-tty-show") {
+        if (encoding === "invalid-stream")
+          child.stdout.write(Buffer.from([0x7e, 0x22, 0xff, 0x22, 0x0a]));
+        const suffix =
+          encoding === "invalid-result"
+            ? Buffer.from([0xff])
+            : encoding === "octal"
+              ? Buffer.from(String.raw`\357\277\275`)
+              : Buffer.from("\uFFFD");
+        child.stdout.write(
+          Buffer.concat([
+            Buffer.from(
+              `${token}^done,inferior_tty_terminal="/fixture/terminal-`,
+            ),
+            suffix,
+            Buffer.from('"\n'),
+          ]),
+        );
+        return;
+      }
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      stopProcess: async () => {
+        for (const child of fake.children) child.exit(0, null);
+        return { status: "stopped" };
+      },
+    });
+    const started = await manager.start(undefined, { inferiorTty: tty });
+    expect(started.ok).toBe(encoding !== "invalid-result");
+    if (started.ok)
+      expect(manager.status(started.value.session_id)).toMatchObject({
+        inferior_tty: tty,
+        inferior_tty_verified: true,
+        mi_invalid_utf8: encoding === "invalid-stream",
+      });
+    else
+      expect(started.error.partialObservation).toMatchObject({
+        normalized_result: { output_invalid_utf8: true },
+      });
+  },
+);
 
 it("closes the GDB session when a complete MI record exceeds the protocol limit", async () => {
   const manager = await managerFor(`

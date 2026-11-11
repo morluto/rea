@@ -85,6 +85,49 @@ describe.skipIf(!hasGpgv)("withGpgvKeyCheck with gpgv", () => {
 });
 
 describe("withGpgvKeyCheck cleanup", () => {
+  it.each(["completed", "failed"])(
+    "observes cancellation during final keyring cleanup after %s work",
+    async (completion) => {
+      const cancel = new AbortController();
+      const reason = new Error("cancelled during keyring cleanup");
+      const primary = new Error("verification failed");
+      const create = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+      let path: string | undefined;
+      vi.spyOn(PrivateRuntimeRoot, "create").mockImplementationOnce(
+        async (options) => {
+          const root = await create(options);
+          path = root.path;
+          const close = root.close.bind(root);
+          vi.spyOn(root, "close").mockImplementationOnce(async () => {
+            cancel.abort(reason);
+            await close();
+          });
+          return root;
+        },
+      );
+      const { release, paths } = await files({ "a.gpg": VENDOR_A.key });
+      const result = withGpgvKeyCheck(
+        async () => ({ stdout: "", exitCode: 2 }),
+        cancel.signal,
+        async (check) => {
+          const verified = await check.firstVerifying(
+            [paths["a.gpg"] ?? ""],
+            [release],
+          );
+          if (completion === "failed") throw primary;
+          return verified;
+        },
+      );
+      await expect(result).rejects.toBe(
+        completion === "failed" ? primary : reason,
+      );
+      expect(path).toBeDefined();
+      await expect(access(path ?? "")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it("keeps the private keyring folder's owner when its removal fails", async () => {
     const create = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
     let owned: PrivateRuntimeRoot | undefined;

@@ -13,6 +13,7 @@ import {
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
   assertKnownAnalysisErrorTag,
+  hasAnalysisContinuingCallerGuidance,
 } from "./analysisErrorPresentation.js";
 import {
   AnalysisAccessDeniedError,
@@ -318,7 +319,7 @@ const projectionDependsOnCallerLifetime = (
     )
       if (
         node.limit !== undefined ||
-        node.continuingCallerGuidance !== undefined ||
+        hasAnalysisContinuingCallerGuidance(node) ||
         node.invocationDiagnostics !== undefined ||
         node.workflowUnknownPublication !== undefined
       )
@@ -524,6 +525,9 @@ const projectError = (
       RETRYABLE_CODES.has(code) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
+      (error._tag === "ProcessCaptureError" &&
+        "retryable" in error &&
+        error.retryable === true) ||
       (error instanceof ArtifactOperationError &&
         error.readerLimit?.can_increase === true &&
         !error.cleanupIncomplete) ||

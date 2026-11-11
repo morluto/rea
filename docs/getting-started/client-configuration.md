@@ -39,6 +39,12 @@ path and supported version of the runtime you intend to use, then update only
 the runtime command, preserving the REA script arguments and other settings.
 Rerun setup to review the registration and restart the client.
 
+Doctor JSON records each registration's `command_identity` as `owned`, `foreign`,
+or `unknown`, separately from its readiness `state`. An invalid timeout or client
+policy can leave ownership established. Setup uses that recorded observation for
+its default client selection, then inspects selected configuration again before
+planning writes; a missing or unreadable launcher remains unknown.
+
 `rea mcp doctor --json` tests the production MCP adapter using the runtime
 executable and environment of the terminal running doctor. It does not launch
 the client's configured command or reproduce the client's environment. If doctor
