@@ -3197,3 +3197,24 @@ describe("ReleaseExposureService forwarded linker path operands", () => {
     expect(check?.observation.samples).toEqual([path]);
   });
 });
+
+describe("ReleaseExposureService compiler operand ownership", () => {
+  it.each([
+    ["-I -Wl,-rpath,$ORIGIN", ["-Wl,-rpath,$ORIGIN"]],
+    ["-I -Wl,-L,/tmp/private", ["-Wl,-L,/tmp/private"]],
+    ["-I -Xlinker", ["-Xlinker"]],
+    [
+      "-I -Wl,-rpath,$ORIGIN -Wl,-L,other-sdk",
+      ["-Wl,-rpath,$ORIGIN", "other-sdk"],
+    ],
+  ])(
+    "keeps compiler operands out of forwarding in %s",
+    async (value, paths) => {
+      const report = await goReport(goModule([{ key: "CGO_CFLAGS", value }]));
+      expect(
+        report.checks.find((item) => item.id === "go.build_paths")?.observation
+          .samples,
+      ).toEqual(paths);
+    },
+  );
+});
