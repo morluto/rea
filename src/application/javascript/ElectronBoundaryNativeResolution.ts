@@ -221,6 +221,52 @@ const resolveHelperSearchRoot = (
   return findBindingsModuleRoot(state, sourceDir);
 };
 
+const NATIVE_PREBUILD_PLATFORMS = new Set([
+  "aix",
+  "android",
+  "darwin",
+  "freebsd",
+  "haiku",
+  "linux",
+  "netbsd",
+  "openbsd",
+  "sunos",
+  "win32",
+]);
+const NATIVE_PREBUILD_ARCHES = new Set([
+  "arm",
+  "arm64",
+  "ia32",
+  "loong64",
+  "mips",
+  "mipsel",
+  "ppc",
+  "ppc64",
+  "riscv64",
+  "s390",
+  "s390x",
+  "x64",
+]);
+const NATIVE_PREBUILD_LIBCS = new Set(["glibc", "musl"]);
+
+/** node-gyp-build only searches `prebuilds/<platform>-<arch>[-<libc>]`. */
+const isNodeGypBuildPrebuildTuple = (directoryName: string): boolean => {
+  const parts = directoryName.split("-");
+  const platform = parts[0];
+  const arch = parts[1];
+  if (platform === undefined || arch === undefined) return false;
+  if (
+    !NATIVE_PREBUILD_PLATFORMS.has(platform) ||
+    !NATIVE_PREBUILD_ARCHES.has(arch)
+  )
+    return false;
+  if (parts.length === 2) return true;
+  const libc = parts[2];
+  return (
+    parts.length === 3 && libc !== undefined && NATIVE_PREBUILD_LIBCS.has(libc)
+  );
+};
+
 const scanNodeGypBuildTargets = (
   state: NativeAddonResolverState,
   root: string,
@@ -237,7 +283,12 @@ const scanNodeGypBuildTargets = (
     const rel = path.slice(prefix.length);
     const segments = rel.split("/");
     if (segments.includes("node_modules")) continue;
-    const isPrebuild = segments.length === 3 && segments[0] === "prebuilds";
+    const prebuildDirectory = segments[1];
+    const isPrebuild =
+      segments.length === 3 &&
+      segments[0] === "prebuilds" &&
+      prebuildDirectory !== undefined &&
+      isNodeGypBuildPrebuildTuple(prebuildDirectory);
     const isGypBuild =
       segments.length === 3 &&
       segments[0] === "build" &&
@@ -246,6 +297,47 @@ const scanNodeGypBuildTargets = (
   }
   state.nodeGypBuildCache.set(canonicalRoot, matched);
   return matched;
+};
+
+/** Static `bindings` tries, in package order, before the runtime-specific tails. */
+const BINDINGS_STATIC_TRY_DIRECTORIES = [
+  "build",
+  "build/Debug",
+  "build/Release",
+  "out/Debug",
+  "Debug",
+  "out/Release",
+  "Release",
+  "build/default",
+] as const;
+
+/**
+ * First successful static `bindings` probe.
+ * `undefined` means every static try missed, so the runtime-specific tails still apply.
+ * An empty array means an earlier try resolved to JavaScript and later natives are not loaded.
+ */
+const bindingsStaticTryHit = (
+  state: NativeAddonResolverState,
+  root: string,
+  addonName: string,
+): readonly string[] | undefined => {
+  const prefix = root === "." ? "" : `${root}/`;
+  for (const directory of BINDINGS_STATIC_TRY_DIRECTORIES) {
+    const base = `${prefix}${directory}/${addonName}`;
+    const exact = state.input.files.get(base);
+    if (exact !== undefined) {
+      return isNativeAddonFile(base, state.input.files, exact) ? [base] : [];
+    }
+    for (const extension of [".js", ".json", ".node"] as const) {
+      const candidate = `${base}${extension}`;
+      const file = state.input.files.get(candidate);
+      if (file === undefined) continue;
+      return isNativeAddonFile(candidate, state.input.files, file)
+        ? [candidate]
+        : [];
+    }
+  }
+  return undefined;
 };
 
 const scanBindingsTargets = (
@@ -258,6 +350,15 @@ const scanBindingsTargets = (
   const cacheKey = compositeKey([canonicalRoot, canonicalAddonName]);
   const cached = state.bindingsCache.get(cacheKey);
   if (cached !== undefined) return cached;
+  const staticHit = bindingsStaticTryHit(
+    state,
+    canonicalRoot,
+    canonicalAddonName,
+  );
+  if (staticHit !== undefined) {
+    state.bindingsCache.set(cacheKey, staticHit);
+    return staticHit;
+  }
   const prefix = canonicalRoot === "." ? "" : `${canonicalRoot}/`;
   const matched: string[] = [];
   for (const path of ensureInventoryIndex(state).nativeAddonPaths) {

@@ -450,6 +450,38 @@ it("rejects global process loaders/axes after node:process alias patches and han
     unknownResolveOptions.analysis_coverage?.semantics.unknown_findings,
   ).toBeGreaterThan(0);
 
+  const defaultResolveOptions = analyzeCommonJsStaticFixture(`
+    process.dlopen(module, require.resolve("./addon.node", undefined));
+    process.dlopen(module, require.resolve("./addon.node", null));
+    process.dlopen(module, require.resolve("./addon.node", { paths: undefined }));
+  `);
+  expect(defaultResolveOptions.electron.native_addon_bindings).toMatchObject([
+    {
+      specifier: "./addon.node",
+      resolution: {
+        kind: "candidates",
+        loader: "dlopen",
+        candidates: ["./addon.node"],
+      },
+    },
+    {
+      specifier: "./addon.node",
+      resolution: {
+        kind: "candidates",
+        loader: "dlopen",
+        candidates: ["./addon.node"],
+      },
+    },
+    {
+      specifier: "./addon.node",
+      resolution: {
+        kind: "candidates",
+        loader: "dlopen",
+        candidates: ["./addon.node"],
+      },
+    },
+  ]);
+
   const absoluteUrlHelperRoot = analyzeJavaScriptStaticSource(`
     import nodeGypBuild from "node-gyp-build";
     import bindings from "bindings";

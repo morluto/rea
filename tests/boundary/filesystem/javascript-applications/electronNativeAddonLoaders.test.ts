@@ -471,6 +471,77 @@ it("indexes native addon inventory once across repeated helper resolutions", () 
   expect(fullIterations).toBe(1);
 });
 
+it("keeps bindings probe order and node-gyp-build platform tuples", () => {
+  const mkFile = (
+    path: string,
+    kind: JavaScriptArtifactFile["kind"],
+  ): JavaScriptArtifactFile => ({
+    path,
+    sha256: sha256Hex(path),
+    container_sha256: "0".repeat(64),
+    bytes: 16,
+    inventory_artifact_id: "probe-order-fixture",
+    kind,
+    unpacked: false,
+    text: { included: false, reason: "not-applicable" },
+  });
+  const files = new Map<string, JavaScriptArtifactFile>([
+    ["pkg/package.json", mkFile("pkg/package.json", "package-json")],
+    ["pkg/index.cjs", mkFile("pkg/index.cjs", "javascript")],
+    [
+      "pkg/build/addon.node.js",
+      mkFile("pkg/build/addon.node.js", "javascript"),
+    ],
+    [
+      "pkg/build/Release/addon.node",
+      mkFile("pkg/build/Release/addon.node", "native-addon"),
+    ],
+    [
+      "pkg/prebuilds/linux-x64/addon.node",
+      mkFile("pkg/prebuilds/linux-x64/addon.node", "native-addon"),
+    ],
+    [
+      "pkg/prebuilds/backup/addon.node",
+      mkFile("pkg/prebuilds/backup/addon.node", "native-addon"),
+    ],
+  ]);
+  const resolver = createElectronNativeAddonResolver({
+    files,
+    jsonDocuments: new JavaScriptJsonDocuments(),
+  });
+  const source = files.get("pkg/index.cjs")!;
+  const base = {
+    module_kind: "require" as const,
+    binding_kind: "require" as const,
+    specifier: "addon.node",
+    members: [],
+    namespace_access: true,
+    dynamic_member_access: false,
+    module_key: null,
+    location: { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+  };
+  expect(
+    resolver.resolve(source, {
+      ...base,
+      resolution: {
+        kind: "bindings",
+        addon_name: "addon.node",
+        module_root: null,
+      },
+    }),
+  ).toEqual([]);
+  expect(
+    resolver.resolve(source, {
+      ...base,
+      specifier: "node-gyp-build:.",
+      resolution: { kind: "node-gyp-build", directory: "." },
+    }),
+  ).toEqual([
+    "pkg/build/Release/addon.node",
+    "pkg/prebuilds/linux-x64/addon.node",
+  ]);
+});
+
 it("resolves dlopen require.resolve search paths without linking sibling addon.node", async () => {
   const root = await createTestTempDirectory("rea-dlopen-resolve-paths-");
   await writeFixtureFiles(root, {
@@ -1384,10 +1455,23 @@ it("charges a bounded multiple of serialized graph bytes for multi-member multi-
     }),
     "index.mjs": sourceText,
   };
-  const targetCount = 12;
-  for (let index = 0; index < targetCount; index += 1) {
-    prebuilds[`prebuilds/target-${String(index).padStart(2, "0")}/addon.node`] =
-      `binary-${String(index)}`;
+  const prebuildTuples = [
+    "linux-x64",
+    "linux-arm64",
+    "linux-ia32",
+    "linux-x64-musl",
+    "darwin-x64",
+    "darwin-arm64",
+    "win32-x64",
+    "win32-ia32",
+    "win32-arm64",
+    "freebsd-x64",
+    "openbsd-x64",
+    "android-arm64",
+  ];
+  const targetCount = prebuildTuples.length;
+  for (const [index, tuple] of prebuildTuples.entries()) {
+    prebuilds[`prebuilds/${tuple}/addon.node`] = `binary-${String(index)}`;
   }
   await writeFixtureFiles(root, prebuilds);
 

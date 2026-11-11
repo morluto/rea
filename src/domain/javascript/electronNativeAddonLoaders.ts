@@ -371,15 +371,28 @@ export const resolveRequireResolveSearchOptions = (
   if (args.length < 2) return { kind: "default" };
   if (args.length !== 2 || loader === "factory-loader")
     return { kind: "unresolved" };
-  const options = argumentNode(args[1]);
-  if (options === undefined || !t.isObjectExpression(options))
-    return { kind: "unresolved" };
+  const optionsNode = argumentNode(args[1]);
+  if (optionsNode === undefined) return { kind: "unresolved" };
+  const options = unwrapJavaScriptExpression(optionsNode).node;
+  // `null`, `undefined`, and `{ paths: undefined }` keep Node's caller-relative search.
+  if (
+    t.isNullLiteral(options) ||
+    isUnshadowedGlobal(options, bindings, "undefined")
+  )
+    return { kind: "default" };
+  if (!t.isObjectExpression(options)) return { kind: "unresolved" };
   if (options.properties.length === 0) return { kind: "default" };
   if (options.properties.length !== 1) return { kind: "unresolved" };
   const property = options.properties[0];
   if (
     !t.isObjectProperty(property) ||
-    semanticStaticPropertyKey(property.key, property.computed) !== "paths" ||
+    semanticStaticPropertyKey(property.key, property.computed) !== "paths"
+  )
+    return { kind: "unresolved" };
+  const pathsValue = unwrapJavaScriptExpression(property.value).node;
+  if (isUnshadowedGlobal(pathsValue, bindings, "undefined"))
+    return { kind: "default" };
+  if (
     !t.isArrayExpression(property.value) ||
     property.value.elements.length !== 1
   )
