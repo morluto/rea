@@ -199,7 +199,11 @@ const readHopperResponse = async (
   let bytes = 0;
   try {
     while (true) {
-      const chunk = await reader.read();
+      const chunk = await reader.read().catch((cause: unknown) => {
+        // Node replaces a falsy abort reason with a fresh body AbortError.
+        if (isSubstitutedFetchBodyAbort(cause, signal)) throw signal.reason;
+        throw cause;
+      });
       if (chunk.done) return ok(Buffer.concat(chunks, bytes));
       if (chunk.value.byteLength > maxBytes - bytes) {
         await releaseBody(reader);
@@ -229,6 +233,17 @@ const releaseBody = async (
     void cause;
   }
 };
+
+/** A body read aborted after headers, when Node did not preserve a falsy reason. */
+const isSubstitutedFetchBodyAbort = (
+  cause: unknown,
+  signal: AbortSignal,
+): boolean =>
+  signal.aborted &&
+  cause !== signal.reason &&
+  cause instanceof DOMException &&
+  cause.name === "AbortError" &&
+  cause.code === DOMException.ABORT_ERR;
 
 const networkDetail = (cause: TypeError): string => {
   const underlying = cause.cause instanceof Error ? cause.cause.message : "";

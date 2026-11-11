@@ -66,3 +66,49 @@ it.each([false, true])(
     });
   },
 );
+
+it.each([null, false, 0, ""] as const)(
+  "retains a falsy caller abort reason when the response body is cancelled (%j)",
+  async (reason) => {
+    const controller = new AbortController();
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(
+          new ReadableStream({
+            pull(stream) {
+              controller.abort(reason);
+              stream.error(
+                new DOMException("The operation was aborted", "AbortError"),
+              );
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    await expect(
+      downloadHopperPackage("https://fixture.invalid/archive", {
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(reason);
+  },
+);
+
+it("does not treat an AbortError body failure as cancellation when the caller did not abort", async () => {
+  const failure = new DOMException("The operation was aborted", "AbortError");
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(
+        new ReadableStream({
+          pull(stream) {
+            stream.error(failure);
+          },
+        }),
+        { status: 200 },
+      ),
+  );
+  await expect(
+    downloadHopperPackage("https://fixture.invalid/archive"),
+  ).rejects.toMatchObject({ name: "AbortError", code: DOMException.ABORT_ERR });
+});
