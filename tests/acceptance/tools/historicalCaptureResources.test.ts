@@ -166,15 +166,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       normalized_result: { total_records: 2 },
     });
     const controlText = JSON.stringify(control.structuredContent);
-    expect(controlText).toContain(
-      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 64 MiB (source setting; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
-    );
-    expect(controlText).toContain("source setting");
-    expect(controlText).toContain("floor 8 MiB");
-    expect(controlText).toContain("maximum 16384 MiB");
-    expect(controlText).toContain(
-      "Set REA_CAPTURE_DECODER_OLD_GENERATION_MIB in the environment that starts REA",
-    );
+    expect(controlText).toContain(captureDecoderHeapRecovery(testHeap));
     const defaultServer = await connectLocalToolsMcp();
     const defaultControl = await defaultServer.call(
       "inspect_web_network_capture",

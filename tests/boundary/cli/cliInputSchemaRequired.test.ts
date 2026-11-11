@@ -15,6 +15,7 @@ import {
   MAX_SELECTED_LOCALES,
 } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
+import { dataTypeSelectorGuidance } from "../../../src/cli/analysisSelector.js";
 
 type CliInstance = ReturnType<typeof createCli>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
@@ -81,10 +82,21 @@ const omissionRejected = (schema: z.ZodObject | undefined): string[] =>
 const acceptsOmittedKey = (key: string, field: z.ZodType): boolean =>
   z.object({ [key]: field }).safeParse({}).success;
 
-/** Whether an advertised property admits a JSON integer or number anywhere. */
-const advertisesNumber = (schema: unknown): boolean =>
-  JSON.stringify(schema).includes('"type":"integer"') ||
-  JSON.stringify(schema).includes('"type":"number"');
+/**
+ * Whether an argv field itself admits a JSON integer or number: its own type,
+ * union branches or repeated items. Object options parsed from JSON text keep
+ * numeric properties of their own and are not decimal tokens.
+ */
+const advertisesNumber = (schema: unknown): boolean => {
+  if (schema === null || typeof schema !== "object") return false;
+  const type: unknown = Reflect.get(schema, "type");
+  if (type === "integer" || type === "number") return true;
+  const branches = [
+    Reflect.get(schema, "anyOf"),
+    Reflect.get(schema, "oneOf"),
+  ].flatMap((value: unknown) => (Array.isArray(value) ? value : []));
+  return [...branches, Reflect.get(schema, "items")].some(advertisesNumber);
+};
 
 /** Every advertised `minimum`, so a probe can start inside the field's range. */
 const advertisedMinimums = (schema: unknown): number[] => {
@@ -241,10 +253,13 @@ describe("CLI advertised input schemas", () => {
               : "./selected",
           ),
         };
-        expect(validate(input)).toBe(count === 16);
+        // WASM path count is admitted by the workflow's selected
+        // max_artifact_paths budget; JavaScript recovery retains its own cap.
+        const accepted = command === "inspect-wasm-artifact" || count === 16;
+        expect(validate(input)).toBe(accepted);
         expect(
           parserSchema(cli, command, "options")?.safeParse(input).success,
-        ).toBe(count === 16);
+        ).toBe(accepted);
       }
     }
     const scenario = await advertisedSchema(cli, "capture-native-ui-scenario");
@@ -405,6 +420,36 @@ describe("web module CLI advertised input schema", () => {
     expect(options({ importMapPath: "" })).toBe(false);
     expect(options({ importMapPath: "map\u0000.json" })).toBe(false);
     expect(options({ importMapBaseUrl: "" })).toBe(false);
+  });
+});
+
+describe("web source location CLI advertised input schema", () => {
+  it("advertises the shared path and URL constraints", async () => {
+    const cli = createCli({});
+    const advertised = await advertisedSchema(cli, "trace-web-source-location");
+    const ajv = new Ajv2020({ strict: false });
+    const args = ajv.compile(advertised.args ?? {});
+    const valid = {
+      manifestPath: resolve("manifest.json"),
+      scriptIndex: 0,
+      sourceMapPath: resolve("app.js.map"),
+      sourceMapUrl: "https://example.test/app.js.map",
+      line: 1,
+      column: 0,
+    };
+
+    expect(args(valid)).toBe(true);
+    expect(args({ ...valid, manifestPath: "" })).toBe(false);
+    expect(args({ ...valid, manifestPath: "./manifest.json" })).toBe(false);
+    expect(
+      args({ ...valid, manifestPath: `${resolve("manifest.json")}\u0000` }),
+    ).toBe(false);
+    expect(args({ ...valid, sourceMapPath: "" })).toBe(false);
+    expect(args({ ...valid, sourceMapPath: "app.js.map" })).toBe(false);
+    expect(
+      args({ ...valid, sourceMapPath: `${resolve("app.js.map")}\u0000` }),
+    ).toBe(false);
+    expect(args({ ...valid, sourceMapUrl: "" })).toBe(false);
   });
 });
 
@@ -751,15 +796,27 @@ describe("reference-source outline-depth input schema", () => {
       [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
     ] as const;
     for (const [token, expected] of parsedValues) {
-      const parsed = parser?.safeParse({ outlineDepth: token });
+      const parsed = parser?.safeParse({
+        outlineDepth: token,
+        detail: "summary",
+      });
       expect(parsed?.success).toBe(true);
       if (parsed === undefined || !parsed.success)
         throw new Error(`Expected outline-depth token ${token} to parse`);
-      expect(parsed.data).toMatchObject({ outlineDepth: expected });
+      expect(parsed.data).toMatchObject({
+        detail: "summary",
+        outlineDepth: expected,
+      });
     }
     for (const token of ["", "-1", "9007199254740992"]) {
-      expect(parser?.safeParse({ outlineDepth: token }).success).toBe(false);
+      expect(
+        parser?.safeParse({ outlineDepth: token, detail: "summary" }).success,
+      ).toBe(false);
     }
+    expect(parser?.safeParse({ outlineDepth: "2" }).success).toBe(false);
+    expect(
+      parser?.safeParse({ outlineDepth: "2", detail: "full" }).success,
+    ).toBe(false);
 
     const ajv = new Ajv2020({ strict: false });
     const validate = ajv.compile({
@@ -767,16 +824,21 @@ describe("reference-source outline-depth input schema", () => {
       $schema: "https://json-schema.org/draft/2020-12/schema",
     });
     for (const [token] of parsedValues) {
-      const parsed = parser?.safeParse({ outlineDepth: token });
+      const parsed = parser?.safeParse({
+        outlineDepth: token,
+        detail: "summary",
+      });
       if (parsed === undefined || !parsed.success)
         throw new Error(`Expected outline-depth token ${token} to parse`);
       expect(validate(parsed.data)).toBe(true);
     }
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
-    expect(validate({ outlineDepth: "02" })).toBe(true);
+    expect(validate({ outlineDepth: 2 })).toBe(false);
+    expect(validate({ outlineDepth: 2, detail: "full" })).toBe(false);
+    expect(validate({ outlineDepth: "02", detail: "summary" })).toBe(true);
     for (const token of ["0x2", "2e0"])
-      expect(validate({ outlineDepth: token })).toBe(false);
+      expect(validate({ outlineDepth: token, detail: "summary" })).toBe(false);
   });
 });
 
@@ -792,6 +854,7 @@ const PATTERN_SELECTOR = atLeastOneSelector(
   "the positional pattern or --pattern",
 );
 const EXACTLY_ONE_SCRIPT = "Provide exactly one of --script or --script-file.";
+const DATA_TYPE_OPTIONS = ["--type", "--address"] as const;
 const TARGET = "target.bin";
 
 interface SelectorRequest {
@@ -1042,6 +1105,25 @@ const selectorDiscovery: readonly SelectorDiscovery[] = [
       { args: { mode: "debug", target: "71" } },
       { options: { scriptFile: "" } },
     ],
+  },
+  {
+    command: "inspect-native-data-type",
+    guidance: dataTypeSelectorGuidance,
+    choice: "exactly one",
+    fields: [
+      { group: "options", name: "type", preserved: DATA_TYPE_OPTIONS },
+      { group: "options", name: "address", preserved: DATA_TYPE_OPTIONS },
+    ],
+    representable: [
+      { args: { path: TARGET }, options: { type: "/MyStruct" } },
+      { args: { path: TARGET }, options: { address: "0x1000" } },
+      {
+        args: { path: TARGET },
+        options: { type: "/MyStruct", address: "0x1000" },
+      },
+    ],
+    omitted: { args: { path: TARGET }, options: {} },
+    rejected: [{ options: { type: 1 } }, { options: { address: 1 } }],
   },
 ];
 

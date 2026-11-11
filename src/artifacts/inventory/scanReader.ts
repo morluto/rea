@@ -37,6 +37,7 @@ import {
   noteUnreadContainerSuffix,
   indexDestinationOccurrencesByPath,
   resolveOccurrenceParents,
+  type ArtifactParentResolution,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
@@ -89,7 +90,7 @@ export const scanReader = async (
   readonly pendingContradictions: PendingIntegrityContradiction[];
   readonly caseCollisionLimitation: string | undefined;
   readonly inesRegionScan: InesRegionScan | undefined;
-  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
+  readonly parentResolution: ArtifactParentResolution;
   readonly traversal: ArtifactReaderTraversal;
   /** A recorded disagreement between the root's own checksum and its bytes. */
   readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
@@ -102,7 +103,10 @@ export const scanReader = async (
       pendingContradictions,
       caseCollisionLimitation: undefined,
       inesRegionScan: undefined,
-      unknownParentOccurrences: new Set(),
+      parentResolution: {
+        unknownParentOccurrences: new Set(),
+        limitations: [],
+      },
       traversal: { status: "complete", limitations: [] },
       rootContradiction: undefined,
     };
@@ -134,11 +138,6 @@ export const scanReader = async (
     byPath,
     context.expandedContainerIds,
   );
-  const structuralLimitations = [...parentResolution.limitations];
-  context.traversal.onCoverage({
-    status: structuralLimitations.length === 0 ? "complete" : "unknown",
-    limitations: structuralLimitations,
-  });
   return {
     nodes,
     occurrences,
@@ -152,7 +151,7 @@ export const scanReader = async (
             bytes: context.reconstruction.bytes,
             sha256: context.reconstruction.hash.digest("hex"),
           },
-    unknownParentOccurrences: parentResolution.unknownParentOccurrences,
+    parentResolution,
     traversal: context.traversal.snapshot(),
     rootContradiction,
   };
@@ -228,12 +227,14 @@ const visitArtifactEntries = async (
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      // PyInstaller rows and Bun modules are source-distinct even when their logical
-      // destinations collide. Inventory retains those observations; the
-      // extraction path registry remains the authority for materialization.
+      // PyInstaller rows, Bun modules, and Deno virtual files are
+      // source-distinct even when their logical destinations collide.
+      // Inventory retains those observations; the extraction path registry
+      // remains the authority for materialization.
       if (
         frame.reader.format !== "pyinstaller" &&
-        frame.reader.format !== "bun-standalone"
+        frame.reader.format !== "bun-standalone" &&
+        frame.reader.format !== "deno-standalone"
       )
         context.registry.add(
           logicalPath,

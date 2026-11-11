@@ -1,3 +1,4 @@
+import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
@@ -52,7 +53,7 @@ import {
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
@@ -106,6 +107,9 @@ import {
   type InspectAnalysisViewInput,
 } from "./analysisViewRequest.js";
 import {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
@@ -183,6 +187,9 @@ export {
   type AnalysisViewParent,
 };
 export {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   nativeFeatureTraceSummaryViewResultSchema,
@@ -262,7 +269,7 @@ export const sealAnalysisView = (
     view_digest: digestCanonicalValue(projection, "Analysis view"),
   });
 
-const parentDigest = (evidenceId: string): string => evidenceId.slice(3);
+const parentEvidenceIdSchema = prefixedDigestSchema("ev");
 
 const parseJavaScriptParent = (
   input: unknown,
@@ -384,6 +391,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
 /** Budgets retained across source admission and the selected grouping projection. */
@@ -465,8 +473,7 @@ export const projectAnalysisView = (
   view: AnalysisViewRequest,
   accumulators: AnalysisViewAccumulators = {},
 ): Result<AnalysisViewResult, AnalysisError> => {
-  const digest = parentDigest(parent.evidenceId);
-  if (!digestSchema.safeParse(digest).success)
+  if (!parentEvidenceIdSchema.safeParse(parent.evidenceId).success)
     return err(
       analysisViewInputError([
         {

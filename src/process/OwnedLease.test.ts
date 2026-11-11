@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
+// Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join("/tmp", prefix));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));

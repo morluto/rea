@@ -2,6 +2,9 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
+/** Fixed SQLite value/record and complete-worker-reply allowance. */
+export const SQLITE_DATABASE_OUTPUT_BYTES = 16 * 1024 * 1024;
+
 /** SQLite exposes this table as a row source but omits its own catalog entry. */
 export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
 export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
@@ -60,6 +63,13 @@ export const inspectSqliteDatabaseInputSchema = z
       .describe(
         "Selected-table sample size, default 20; subject to byte and worker resource limits",
       ),
+    row_offset: z
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Rows to skip before the retained window; default 0; requires table",
+      ),
   })
   .describe("When schema_scope is selected_table, also provide table.")
   .superRefine((input, context) => {
@@ -68,6 +78,12 @@ export const inspectSqliteDatabaseInputSchema = z
         code: "custom",
         path: ["row_limit"],
         message: "row_limit requires an explicit table selection",
+      });
+    if (input.row_offset !== undefined && input.table === undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["row_offset"],
+        message: "row_offset requires an explicit table selection",
       });
     if (input.columns !== undefined && input.table === undefined)
       context.addIssue({
@@ -83,7 +99,11 @@ export const inspectSqliteDatabaseInputSchema = z
       });
   })
   .meta({
-    dependentRequired: { row_limit: ["table"], columns: ["table"] },
+    dependentRequired: {
+      row_limit: ["table"],
+      columns: ["table"],
+      row_offset: ["table"],
+    },
     if: {
       properties: { schema_scope: { const: "selected_table" } },
       required: ["schema_scope"],
@@ -199,7 +219,19 @@ export const sqliteDatabaseSchema = z
         row_limit: z.int().min(1),
         returned_rows: nonnegative,
         truncated: z.boolean(),
-        order: z.literal("unspecified"),
+        order: z
+          .enum(["rowid", "primary_key", "unspecified"])
+          .describe(
+            "Unique order the retained window is read in; unspecified means the table shadows rowid, _rowid_ and oid and no primary key is declared",
+          ),
+        row_offset: nonnegative.describe(
+          "Rows skipped before this window; 0 for the sample taken without a selection",
+        ),
+        next_row_offset: nonnegative
+          .nullable()
+          .describe(
+            "Offset to request for the following page; null when the sampled window reaches the end or the table has no stated order. Pages compose only while artifact.sha256 and wal.sha256 match",
+          ),
       })
       .nullable(),
     limitations: z.array(z.string()),
@@ -210,13 +242,17 @@ export const sqliteDatabaseSchema = z
       rows !== null &&
       (rows.returned_rows !== rows.values.length ||
         rows.returned_rows > rows.row_limit ||
-        rows.values.some((row) => row.length !== rows.columns.length))
+        rows.values.some((row) => row.length !== rows.columns.length) ||
+        rows.next_row_offset !==
+          (rows.truncated && rows.order !== "unspecified"
+            ? rows.row_offset + rows.returned_rows
+            : null))
     )
       context.addIssue({
         code: "custom",
         path: ["rows"],
         message:
-          "Selected row counts and column dimensions must match the retained values",
+          "Selected row counts, column dimensions and the next window must match the retained values",
       });
   });
 
@@ -240,6 +276,7 @@ export const sqliteInspectionParameters = (
     ? {}
     : { schema_scope: input.schema_scope }),
   ...(input.row_limit === undefined ? {} : { row_limit: input.row_limit }),
+  ...(input.row_offset === undefined ? {} : { row_offset: input.row_offset }),
 });
 
 /** One contract owner interprets omitted scope for adapters and selection checks. */

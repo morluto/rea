@@ -100,6 +100,7 @@ it("keeps default Frida status identity and messages and refreshes every summary
     messages: [{ observed: 1 }],
     messages_truncated: false,
   });
+  expect(complete.value.normalized_result).not.toHaveProperty("capture_limits");
   expect(complete.value.limitations.join("\n")).not.toContain(
     "no runtime override",
   );
@@ -120,6 +121,7 @@ it("keeps default Frida status identity and messages and refreshes every summary
     },
   });
   expect(JSON.stringify(summary.value)).not.toContain('"messages":');
+  expect(JSON.stringify(summary.value)).not.toContain('"capture_limits":');
   expect(reads).toBe(2);
   const parent = [...records.values()][0];
   expect(parent?.normalized_result).toMatchObject({
@@ -127,8 +129,10 @@ it("keeps default Frida status identity and messages and refreshes every summary
   });
   expect(parent?.limitations).toEqual(
     expect.arrayContaining([
-      expect.stringContaining("16777216"),
-      expect.stringContaining("no runtime override"),
+      expect.stringContaining("selected value is unknown"),
+      expect.stringContaining(
+        "Already discarded observations cannot be recovered",
+      ),
     ]),
   );
   expect(parent?.authority).toBe("external-service");
@@ -160,7 +164,9 @@ it("names the Frida field cap and ignores flags inside a caller payload", () => 
   });
   if (!result.ok) throw result.error;
   const text = result.value.limitations.join("\n");
-  expect(text).toContain("32768");
+  expect(text).toContain("capture_limits.message_text_bytes");
+  expect(text).toContain("selected value is unknown");
+  expect(text).not.toContain("32768");
   expect(text).not.toContain("16777216");
   expect(text).not.toContain("4096");
 });

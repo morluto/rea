@@ -44,6 +44,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "node-sea",
   "dotnet-bundle",
   "bun-standalone",
+  "deno-standalone",
   "intel-hex",
   "srec",
   "esp-image",
@@ -51,6 +52,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "dfuse",
   "esp-flash-image",
   "fit",
+  "ntfs-mft",
 ]);
 
 /** Format-owned architecture declarations shared by Evidence and persisted executions. */

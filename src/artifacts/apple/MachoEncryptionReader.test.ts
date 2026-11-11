@@ -132,6 +132,7 @@ describe("Mach-O encryption reader: thin images", () => {
       container_file_offset: 0,
       size: expect.any(Number),
       status: "absent",
+      malformed_kind: null,
       reason: null,
       commands: [],
       range: null,
@@ -479,6 +480,27 @@ describe("Mach-O encryption reader: segment VM extent", () => {
 });
 
 describe("Mach-O encryption reader: defects are never absent", () => {
+  it.each([0, 1, 2])(
+    "keeps a structural encryption defect at index %i ahead of duplicate ambiguity",
+    async (index) => {
+      const commands = Array.from({ length: 3 }, () =>
+        encryption({ cryptoff: 0, cryptsize: 0, cryptid: 1 }),
+      );
+      commands[index] = encryption(
+        { cryptoff: 0, cryptsize: 0, cryptid: 1 },
+        true,
+        8,
+      );
+      const slice = await onlySlice(machoImage({ commands }));
+      expect(slice).toMatchObject({
+        status: "malformed",
+        malformed_kind: "structure",
+        reason: `slice has 3 encryption load commands; load command ${index} LC_ENCRYPTION_INFO_64 has cmdsize 8, expected 24`,
+        range: null,
+      });
+      expect(slice.commands.map(({ index }) => index)).toEqual([0, 1]);
+    },
+  );
   it.each([
     {
       name: "a 64-bit command in a 32-bit image",
@@ -544,6 +566,7 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     expect(slice).toMatchObject({
       status: "malformed",
       reason: "slice has 1000 encryption load commands",
+      malformed_kind: "duplicate-commands",
       range: null,
     });
     expect(slice.commands.map(({ index }) => index)).toEqual([0, 1]);

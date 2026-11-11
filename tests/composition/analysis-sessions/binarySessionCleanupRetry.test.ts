@@ -10,6 +10,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
 } from "../../../src/application/AnalysisProvider.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -327,15 +328,15 @@ it("keeps a failed candidate for cleanup and preserves its startup failure", asy
 
 it("retains cancelled startup cleanup and the cancellation reason", async () => {
   const controller = new AbortController();
+  const reason = { stage: "startup health" };
   const fixture = await retryFixture(() => {
-    controller.abort();
+    controller.abort(reason);
     return Promise.resolve(ok(null));
   });
-  expect(
-    await fixture.session.open(fixture.targets[0], {
-      signal: controller.signal,
-    }),
-  ).toMatchObject({
+  const result = await fixture.session.open(fixture.targets[0], {
+    signal: controller.signal,
+  });
+  expect(result).toMatchObject({
     ok: false,
     error: {
       cleanupIncomplete: true,
@@ -343,6 +344,9 @@ it("retains cancelled startup cleanup and the cancellation reason", async () => 
       diagnostics: { primary_error: { code: "cancelled" } },
     },
   });
+  if (result.ok) throw new Error("Expected startup cancellation");
+  expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
   expect(await fixture.session.status()).toMatchObject({
     open: false,
     cleanup_pending: true,
@@ -356,6 +360,9 @@ it("retains cancelled startup cleanup and the cancellation reason", async () => 
   await expect(access(fixture.runtime)).rejects.toMatchObject({
     code: "ENOENT",
   });
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
+  expect(projectAnalysisError(result.error).code).toBe("cancelled");
 });
 
 it("keeps cancellation as the primary when previous-client retirement fails after abort", async () => {

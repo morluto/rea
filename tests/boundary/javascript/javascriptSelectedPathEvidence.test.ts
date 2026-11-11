@@ -9,7 +9,9 @@ import {
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { createJavaScriptSemanticGraph } from "../../../src/domain/javascript/javascriptSemanticGraph.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -45,6 +47,40 @@ cliTest(
     });
     expect(cliResponse.exitCode, cliResponse.stderr).toBe(0);
     const cliEvidence = parseEvidence(cliResponse.json);
+    const parsed = javascriptApplicationAnalysisResultSchema.parse(
+      cliEvidence.normalized_result,
+    );
+    const { graph_id: _id, ...semantic } = parsed.semantic_graph;
+    const foreignSha = "f".repeat(64);
+    const forged = createEvidence(
+      { path: parsed.input_path, sha256: foreignSha, format: parsed.format },
+      cliEvidence.provider,
+      {
+        operation: cliEvidence.operation,
+        predicateType: cliEvidence.predicate_type,
+        parameters: cliEvidence.parameters,
+        confidence: "derived",
+        authority: "shipped-artifact",
+        result: {
+          ...parsed,
+          root_artifact_sha256: foreignSha,
+          semantic_graph: createJavaScriptSemanticGraph({
+            ...semantic,
+            root_artifact_sha256: foreignSha,
+          }),
+        },
+      },
+    );
+    expect(parseApplicationGraphEvidence(forged)).toMatchObject({
+      ok: false,
+      error: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["normalized_result", "root_artifact_sha256"],
+          }),
+        ]),
+      },
+    });
 
     for (const command of ["analyze", "analyze-javascript-application"]) {
       const relativeResponse = await cli.run({
@@ -142,18 +178,9 @@ cliTest(
 );
 
 // Anchoring must not turn an empty selection into the working directory.
-cliTest.for([
-  {
-    command: "analyze-javascript-application",
-    rejection: {
-      code: "invalid_request",
-      details: { issues: [expect.objectContaining({ path: ["input_path"] })] },
-    },
-  },
-  { command: "analyze", rejection: { code: "VALIDATION_ERROR" } },
-])(
-  "$command rejects an empty path instead of analyzing the working directory",
-  async ({ command, rejection }, { cli }) => {
+cliTest.for(["analyze-javascript-application", "analyze"])(
+  "%s rejects an empty path instead of analyzing the working directory",
+  async (command, { cli }) => {
     const root = await createTestTempDirectory("rea-js-empty-path-");
     await writeFile(join(root, "main.js"), "export const value = 7;\n");
     const response = await cli.run({
@@ -162,6 +189,11 @@ cliTest.for([
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(response.exitCode, response.stderr).toBe(1);
-    expect(response.json).toMatchObject(rejection);
+    expect(response.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({ path: "path", code: "too_small" }),
+      ],
+    });
   },
 );

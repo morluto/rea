@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import {
   declaredFileRange,
@@ -5,10 +9,8 @@ import {
   BinaryReader,
   type BinaryContainer,
   type ElfDynamicSegment,
-  type FileMapping,
   type ImageSection,
   type LoadRegion,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { readElfDirectoryFromBuffer } from "./NativeSectionDirectory.js";
@@ -82,6 +84,7 @@ export const readElfImage = (
       format: "elf",
       name: section.name,
       type: section.type,
+      flags: section.flags,
       address: section.address,
       declared_range: { offset: section.offset, size: section.size },
       ...range,

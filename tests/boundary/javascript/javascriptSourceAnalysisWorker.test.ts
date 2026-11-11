@@ -110,6 +110,61 @@ it("reuses one real owned analyzer while retaining distinct source identities an
   }
 });
 
+it("recovers finite primitive alternatives after changing precision on the same scope", async () => {
+  const scope = new ArtifactResourceScope();
+  const expression = Array.from(
+    { length: 9 },
+    (_, index) =>
+      `(globalThis.choice${String(index)} ? 0 : ${String(2 ** index)})`,
+  ).join(" + ");
+  const file = source(
+    "precision.mjs",
+    `export function choose() { return ${expression}; }`,
+  );
+  try {
+    for (const selected of [undefined, 512, undefined]) {
+      const worker = await createJavaScriptSourceAnalysis(
+        {
+          heapMb: 128,
+          timeoutMs: 30_000,
+          ...(selected === undefined
+            ? {}
+            : { semanticPrecision: { primitive_candidates: selected } }),
+        },
+        1,
+        { scope },
+      );
+      try {
+        const result = await worker.analyze(file, {
+          nodes: 100,
+          unknowns: 100,
+        });
+        if (!result.ok) throw result.error.error;
+        const value = result.value.module?.callables[0]?.returnSites[0]?.value;
+        if (selected === undefined) {
+          expect(value).toMatchObject({
+            status: "unknown",
+            resourceLimit: "primitive-candidates",
+          });
+        } else {
+          expect(value?.status).toBe("union");
+          if (value?.status !== "union")
+            throw new Error("Expected all finite alternatives");
+          expect(value.values).toHaveLength(512);
+          expect(value.values).toContain(511);
+          expect(result.value.module?.coverage.precision).toMatchObject({
+            primitive_candidates: 512,
+          });
+        }
+      } finally {
+        await worker.close();
+      }
+    }
+  } finally {
+    await scope.close();
+  }
+});
+
 it("reuses one owned worker across analyses on the same resource scope", async () => {
   const scope = new ArtifactResourceScope();
   const launches: number[] = [];
@@ -632,8 +687,9 @@ it("formats a real worker's declined semantic budget once", async () => {
     const { error } = result.error;
     expect(error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reason:
-        "The parent reserved its remaining result capacity for static observations; semantic analysis of main.js was not started",
+      reason: expect.stringMatching(
+        /result capacity.*static observations.*semantic analysis of main\.js was not started/i,
+      ),
       reportedLimits: { semantic_result_budget_bytes: 0 },
     });
     expect(error.message.match(/Resource constraint during/gu)).toHaveLength(1);

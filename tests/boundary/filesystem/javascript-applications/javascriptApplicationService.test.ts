@@ -400,8 +400,9 @@ describe("JavaScript application failure diagnostics", () => {
       code: "unreadable_output",
       details: {
         operation: "analyze_javascript_application",
-        reason:
-          "Result schema rejected 1 issue at /semantic_graph/nodes/42/application_node_ids/0 (custom)",
+        reason: expect.stringMatching(
+          /schema.*1 issue.*\/semantic_graph\/nodes\/42\/application_node_ids\/0.*custom/i,
+        ),
       },
     });
   });

@@ -232,8 +232,8 @@ export const runUninstall = async (
 };
 
 /**
- * Each client is reread when it is edited, so a concurrent change is never
- * overwritten. A client that fails then still stops the remaining removals.
+ * Reread each client when editing and refuse detected changes before publication.
+ * A client that fails still stops the remaining removals.
  */
 const removeAll = async (
   clients: readonly UninstallClient[],
@@ -241,20 +241,22 @@ const removeAll = async (
   host: UninstallHost,
 ): Promise<UninstallItem[]> => {
   const items: UninstallItem[] = [];
+  const stopped = (): UninstallItem[] => [
+    ...items,
+    item(
+      "uninstall",
+      "skipped",
+      "Uninstall stopped at this failure; the items above report what changed. Repair the failed removal, then rerun uninstall.",
+    ),
+  ];
   for (const client of clients) {
     const removed = await host.removeClient(client);
     items.push({ ...removed, configuration_path: client.configPath });
-    if (removed.status === "failed")
-      return [
-        ...items,
-        item(
-          "uninstall",
-          "skipped",
-          "Uninstall stopped at this failure; the items above report what changed. Repair the failed configuration, then rerun uninstall.",
-        ),
-      ];
+    if (removed.status === "failed") return stopped();
   }
-  items.push(await host.removeSkill());
+  const skill = await host.removeSkill();
+  items.push(skill);
+  if (skill.status === "failed") return stopped();
   if (purgeData) items.push(...(await host.purgeData()));
   return items;
 };

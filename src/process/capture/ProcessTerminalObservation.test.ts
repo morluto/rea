@@ -1,5 +1,4 @@
 import { expect, it, vi, onTestFinished } from "vitest";
-import type { IPty } from "@lydell/node-pty";
 import type {
   ProcessSample,
   TerminalFrame,
@@ -70,7 +69,7 @@ const createTerminalCleanupFixture = () => {
         },
       };
     },
-  } as unknown as IPty;
+  };
   const retention = captureTerminalFrames({
     terminal,
     scenario,
