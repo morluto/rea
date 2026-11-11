@@ -1,4 +1,4 @@
-import type { MftIndex } from "./ntfsMft.js";
+import type { MftIndex, MftMetadata } from "./ntfsMft.js";
 import {
   createUsnMftCorrelator,
   type UsnMftMatches,
@@ -36,6 +36,7 @@ type TimelineRow =
 export interface NtfsJournalTimeline {
   readonly rows: readonly TimelineRow[];
   readonly historyCompleteness: "unknown";
+  readonly mftMetadata: MftMetadata;
   /** First source offset left out of the delivery window. */
   readonly nextFileOffset: number | null;
   readonly mftLimitations: readonly string[];
@@ -91,6 +92,7 @@ export const composeNtfsJournalTimeline = (
   return {
     rows,
     historyCompleteness: "unknown",
+    mftMetadata: mft.metadata,
     nextFileOffset,
     mftLimitations: mft.limitations,
   };

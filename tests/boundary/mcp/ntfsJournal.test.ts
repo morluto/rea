@@ -16,47 +16,57 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { serveCli } from "../cli/cliServeHarness.js";
 
+const createAcquisitions = async (directory: string) => {
+  const mftPath = join(directory, "records");
+  const journalPath = join(directory, "journal");
+  const record = Buffer.alloc(1024);
+  record.write("FILE");
+  record.writeUInt16LE(48, 4);
+  record.writeUInt16LE(3, 6);
+  record.writeUInt16LE(1, 48);
+  record.writeUInt16LE(1, 510);
+  record.writeUInt16LE(1, 1022);
+  record.writeUInt16LE(2, 16);
+  record.writeUInt16LE(56, 20);
+  record.writeUInt32LE(64, 24);
+  record.writeUInt32LE(1024, 28);
+  record.writeUInt32LE(0xffff_ffff, 56);
+  const journal = Buffer.alloc(64);
+  journal.writeUInt32LE(64);
+  journal.writeUInt16LE(2, 4);
+  journal.writeBigUInt64LE(0x0002_0000_0000_0000n, 8);
+  journal.writeUInt16LE(60, 58);
+  const v3 = Buffer.alloc(80);
+  v3.writeUInt32LE(80);
+  v3.writeUInt16LE(3, 4);
+  v3.writeBigUInt64LE(0x0002_0000_0000_0000n, 8);
+  v3.writeBigInt64LE(9007199254740993n, 40);
+  v3.writeUInt16LE(4, 72);
+  v3.writeUInt16LE(76, 74);
+  v3.write("v3", 76, "utf16le");
+  const v4 = Buffer.alloc(80);
+  v4.writeUInt32LE(80);
+  v4.writeUInt16LE(4, 4);
+  v4.writeUInt32LE(2, 56);
+  v4.writeUInt16LE(1, 60);
+  v4.writeUInt16LE(16, 62);
+  v4.writeBigInt64LE(9007199254740993n, 64);
+  v4.writeBigInt64LE(4096n, 72);
+  const records = Array.from({ length: 33 }, (_, index) => {
+    const copy = Buffer.from(record);
+    copy.writeUInt32LE(index, 44);
+    return copy;
+  });
+  await writeFile(mftPath, Buffer.concat(records));
+  await writeFile(journalPath, Buffer.concat([journal, v3, v4]));
+  return { mftPath, journalPath };
+};
+
 mcpTest(
   "CLI and MCP inspect the same paired NTFS acquisition",
   async ({ mcp, onTestFinished }) => {
     const directory = await createTestTempDirectory("rea-ntfs-journal-");
-    const mftPath = join(directory, "records");
-    const journalPath = join(directory, "journal");
-    const record = Buffer.alloc(1024);
-    record.write("FILE");
-    record.writeUInt16LE(48, 4);
-    record.writeUInt16LE(3, 6);
-    record.writeUInt16LE(1, 48);
-    record.writeUInt16LE(1, 510);
-    record.writeUInt16LE(1, 1022);
-    record.writeUInt16LE(2, 16);
-    record.writeUInt16LE(56, 20);
-    record.writeUInt32LE(64, 24);
-    record.writeUInt32LE(1024, 28);
-    record.writeUInt32LE(0xffff_ffff, 56);
-    const journal = Buffer.alloc(64);
-    journal.writeUInt32LE(64);
-    journal.writeUInt16LE(2, 4);
-    journal.writeBigUInt64LE(0x0002_0000_0000_0000n, 8);
-    journal.writeUInt16LE(60, 58);
-    const v3 = Buffer.alloc(80);
-    v3.writeUInt32LE(80);
-    v3.writeUInt16LE(3, 4);
-    v3.writeBigUInt64LE(0x0002_0000_0000_0000n, 8);
-    v3.writeBigInt64LE(9007199254740993n, 40);
-    v3.writeUInt16LE(4, 72);
-    v3.writeUInt16LE(76, 74);
-    v3.write("v3", 76, "utf16le");
-    const v4 = Buffer.alloc(80);
-    v4.writeUInt32LE(80);
-    v4.writeUInt16LE(4, 4);
-    v4.writeUInt32LE(2, 56);
-    v4.writeUInt16LE(1, 60);
-    v4.writeUInt16LE(16, 62);
-    v4.writeBigInt64LE(9007199254740993n, 64);
-    v4.writeBigInt64LE(4096n, 72);
-    await writeFile(mftPath, record);
-    await writeFile(journalPath, Buffer.concat([journal, v3, v4]));
+    const { mftPath, journalPath } = await createAcquisitions(directory);
 
     const cli = await serveCli([
       "inspect-ntfs-journal",
@@ -68,8 +78,9 @@ mcpTest(
     const fromCli = parseEvidence(JSON.parse(cli.stdout));
     const expected = ntfsJournalResultSchema.parse(fromCli.normalized_result);
     expect(expected).toMatchObject({
-      mft: { path: mftPath, bytes: 1024 },
+      mft: { path: mftPath, bytes: 33792 },
       journal: { path: journalPath, bytes: 224 },
+      mftMetadata: { record_count: 33, next_record_header_index: 32 },
       rows: [
         {
           kind: "event",
@@ -132,22 +143,42 @@ mcpTest(
       expected,
     );
 
-    const warm = await client.callTool({
+    const pageCli = await serveCli([
+      "inspect-ntfs-journal",
+      mftPath,
+      journalPath,
+      "--mftRecordStart=32",
+      "--startFileOffset=224",
+      "--json",
+    ]);
+    expect(pageCli.exitCode, pageCli.stdout).toBe(0);
+    const page = ntfsJournalResultSchema.parse(
+      parseEvidence(JSON.parse(pageCli.stdout)).normalized_result,
+    );
+    expect(page).toMatchObject({
+      rows: [],
+      mftMetadata: {
+        record_count: 33,
+        record_header_start_index: 32,
+        next_record_header_index: null,
+        record_headers: [{ index: 32, sequenceNumber: 2 }],
+      },
+    });
+    expect(page.mft.sha256).toBe(expected.mft.sha256);
+    const pageMcp = await client.callTool({
       name: "inspect_ntfs_journal",
       arguments: {
         mft_path: mftPath,
         journal_path: journalPath,
-        start_file_offset: 64,
+        mft_record_start: 32,
+        start_file_offset: 224,
       },
     });
-    expect(warm.isError).not.toBe(true);
-    expect(
-      parseEvidence(warm.structuredContent).normalized_result,
-    ).toMatchObject({
-      mft: { sha256: expected.mft.sha256 },
-      journal: { sha256: expected.journal.sha256 },
-      rows: [],
-    });
+    expect(pageMcp.isError).not.toBe(true);
+    expect(parseEvidence(pageMcp.structuredContent).normalized_result).toEqual(
+      page,
+    );
+
     expect(reads).toHaveBeenCalledTimes(2);
     expect(parses).toHaveBeenCalledTimes(1);
 
@@ -174,8 +205,8 @@ mcpTest(
       mft: {
         path: mftPath,
         sha256: expected.mft.sha256,
-        bytes: 1024,
-        metadata: { record_count: 1, record_headers: [{ sequenceNumber: 2 }] },
+        bytes: 33792,
+        metadata: expected.mftMetadata,
       },
       journal_observation: null,
     });
