@@ -301,6 +301,16 @@ passes a type the prototype misplaces:
   lists only `c` and `f`, so the lane admits it with the float in `fa0`.
   Refusing every padded value with a float would also refuse common layouts
   such as `struct { char c; float f; }`, which takes `a0` and `fa0`.
+- a union parameter that may be a transparent union taking a float register.
+  A transparent union passes as its first member, and DWARF does not record
+  the attribute, so Ghidra sees an ordinary union in integer registers: Clang
+  19 passes `union { struct { float f; } s; unsigned u; }` with
+  `transparent_union` in `fa0`. Clang ignores the attribute when the first
+  member is a floating-point type or another member differs from it in size or
+  alignment, so `union { float f; uint32_t u; }` and unions with an integer
+  first member are admitted. GCC 14.2 ignores the attribute whenever the first
+  member would take a float register, so this also refuses some GCC images
+  whose unions are placed right. Returns are not affected.
 
 A bit-field counts by its width, not its declared type, so a `float` beside
 `unsigned long long b : 1` takes a float and an integer register. The check

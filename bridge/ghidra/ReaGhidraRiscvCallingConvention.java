@@ -123,6 +123,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   private final Map<DataType, Kind> psabiKinds = new HashMap<>();
   private final Map<DataType, Kind> parameterKinds = new HashMap<>();
   private final Map<DataType, Kind> returnKinds = new HashMap<>();
+  private final Map<DataType, Boolean> erasedUnions = new HashMap<>();
 
   @Override
   public void run() throws Exception {
@@ -357,7 +358,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       DataType returned = function.getReturn().getFormalDataType();
       if (misplaced(model, returned, true)) misplaced.add("returns " + returned.getName());
       for (Parameter parameter : function.getParameters())
-        if (misplaced(model, parameter.getFormalDataType(), false))
+        if (misplacedParameter(model, parameter.getFormalDataType()))
           misplaced.add(parameter.getFormalDataType().getName());
       if (misplaced.isEmpty()) continue;
       functions += 1;
@@ -370,7 +371,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       if (misplaced(model, definition.getReturnType(), true))
         misplaced.add("returns " + definition.getReturnType().getName());
       for (ParameterDefinition argument : definition.getArguments())
-        if (misplaced(model, argument.getDataType(), false))
+        if (misplacedParameter(model, argument.getDataType()))
           misplaced.add(argument.getDataType().getName());
       if (misplaced.isEmpty()) continue;
       definitions += 1;
@@ -391,6 +392,37 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     return example.length() <= REFUSAL_EXAMPLE_LENGTH
         ? example
         : example.substring(0, REFUSAL_EXAMPLE_LENGTH - 3) + "...";
+  }
+
+  /**
+   * Whether a parameter of this type may take storage the prototype does not give it: another
+   * class, or a union that may be a transparent union.
+   */
+  private boolean misplacedParameter(PrototypeModel model, DataType type) {
+    return misplaced(model, type, false)
+        || erasedUnions.computeIfAbsent(type, this::mayBeTransparentUnion);
+  }
+
+  /**
+   * Whether a union parameter may be a transparent union that takes a float register. A
+   * transparent union passes as its first member, but DWARF does not record the attribute, so
+   * Ghidra and the psABI class both see an ordinary union in integer registers. Clang 19 passes
+   * one whose first member is {@code struct { float f; }} in fa0. Clang ignores the attribute
+   * when the first member is a floating-point type or when another member differs from it in
+   * size or alignment; such unions are ordinary. GCC 14 ignores it whenever the first member
+   * would take a float register, so this also refuses some GCC images that are placed right.
+   */
+  private boolean mayBeTransparentUnion(DataType type) {
+    if (!(strip(type) instanceof Union union) || union.getNumComponents() == 0) return false;
+    DataType first = union.getComponent(0).getDataType();
+    if (strip(first) instanceof AbstractFloatDataType) return false;
+    for (DataTypeComponent member : union.getComponents()) {
+      DataType value = member.getDataType();
+      if (value.getLength() != first.getLength() || value.getAlignment() != first.getAlignment())
+        return false;
+    }
+    Kind passed = psabiKinds.computeIfAbsent(first, this::psabiKind);
+    return passed != Kind.INTEGER && passed != Kind.REFERENCE;
   }
 
   /** Whether the prototype gives a first argument or return of this type another class. */

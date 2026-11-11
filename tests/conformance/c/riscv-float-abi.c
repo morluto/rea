@@ -178,9 +178,40 @@ struct rea_riscv_abi_flexible {
     int tail[];
 };
 
-__attribute__((noinline)) float rea_riscv_abi_flexible(struct rea_riscv_abi_flexible value)
+/* DWARF does not record transparent_union, which passes a union as its first
+ * member: Clang puts rea_riscv_abi_erased's float in fa0, while Ghidra sees an
+ * ordinary union in a0. Clang ignores the attribute for a floating-point first
+ * member and for members of another size, and an integer first member keeps
+ * a0, so the other three pass in a0 as ordinary unions do. They share this
+ * function, so the refusal names only the transparent one. */
+struct rea_riscv_abi_single {
+    float value;
+};
+
+typedef union {
+    struct rea_riscv_abi_single single;
+    unsigned int bits;
+} rea_riscv_abi_erased __attribute__((transparent_union));
+
+typedef union {
+    float value;
+    unsigned int bits;
+} rea_riscv_abi_float_first __attribute__((transparent_union));
+
+typedef union {
+    struct rea_riscv_abi_single single;
+    unsigned long long wide;
+} rea_riscv_abi_wider __attribute__((transparent_union));
+
+typedef union {
+    unsigned int bits;
+    struct rea_riscv_abi_single single;
+} rea_riscv_abi_integer_first __attribute__((transparent_union));
+
+__attribute__((noinline)) float rea_riscv_abi_flexible(struct rea_riscv_abi_flexible value, rea_riscv_abi_erased erased,
+    rea_riscv_abi_float_first ordinary, rea_riscv_abi_wider wider, rea_riscv_abi_integer_first integer)
 {
-    return value.value;
+    return value.value + erased.single.value + ordinary.value + wider.single.value + integer.single.value;
 }
 
 /* The same, for a flexible array that starts inside the structure's padding:
