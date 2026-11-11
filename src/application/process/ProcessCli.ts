@@ -1,6 +1,7 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -314,10 +315,37 @@ const withProcessInputResources = async (
       cause,
       resources.cleanupResources,
     );
+    const cancellation = signal?.aborted
+      ? new AnalysisCancelledError(operation, {
+          cause: signal.reason,
+          ...(outcome.ok ? { partialObservation: outcome.value } : {}),
+        })
+      : undefined;
+    const primary = outcome.ok
+      ? cancellation === undefined
+        ? cause
+        : new ArtifactReaderFailure(
+            "cancelled",
+            "Process input cleanup cancelled",
+            {
+              cause: cancellation,
+              cancellation: { reason: cancellation.cause },
+              partialObservation: outcome.value,
+            },
+          )
+      : cancellation === undefined
+        ? outcome.error
+        : outcome.error instanceof AnalysisError
+          ? analysisErrorWithCancellation(outcome.error, cancellation)
+          : new AggregateError(
+              [outcome.error, cancellation],
+              "Process input failed and was cancelled",
+              { cause: outcome.error },
+            );
     throw ArtifactReaderFailure.withCleanup(
-      outcome.ok ? cause : outcome.error,
+      primary,
       cleanup,
-      undefined,
+      outcome.ok ? outcome.value : undefined,
       cause instanceof ArtifactReaderFailure ? cause.cleanupLeases : undefined,
     );
   }

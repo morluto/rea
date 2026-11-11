@@ -17,6 +17,7 @@ import {
   analysisErrorProjectionSchema,
 } from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { err } from "../../../src/domain/result.js";
 import * as jsonFiles from "../../../src/application/JsonFiles.js";
 
@@ -732,6 +733,76 @@ it.each([
         for (const lease of failure.cleanupLeases ?? []) await lease.release();
       await owner.close();
       expect(owner.handle.fd).toBe(-1);
+    }
+  },
+);
+
+it.each(["plan", "invalid"] as const)(
+  "retains %s and cancellation while final descriptor cleanup fails",
+  async (kind) => {
+    const root = await createTestTempDirectory("rea-process-mixed-final-");
+    const path = join(root, "scenario.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        executable: process.execPath,
+        working_directory: kind === "plan" ? root : join(root, "missing"),
+        dry_run: true,
+      }),
+    );
+    const owner = new OwnedFileHandle(await open(path, "r"));
+    const controller = new AbortController();
+    const reason = { caller: "late cancellation" };
+    const failureCause = new Error("descriptor close failed");
+    const realFileClose = OwnedFileHandle.prototype.close;
+    const fileClose = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this !== owner) return realFileClose.call(this);
+        controller.abort(reason);
+        throw failureCause;
+      });
+    const realScopeClose = ArtifactResourceScope.prototype.close;
+    const scopeClose = vi
+      .spyOn(ArtifactResourceScope.prototype, "close")
+      .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+        this.retain({ kind: "file-handle", resource: path, handle: owner });
+        await realScopeClose.call(this);
+      });
+    let thrown: unknown;
+    try {
+      try {
+        await captureProcessScenarioFile(path, process.env, controller.signal);
+      } catch (cause) {
+        thrown = cause;
+      }
+      expect(thrown).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(thrown instanceof ArtifactReaderFailure))
+        throw new Error("expected retained cleanup");
+      if (kind === "plan")
+        expect(thrown.partialObservation).toMatchObject({
+          operation: "capture_process_scenario",
+          predicate_type: "rea.process-scenario-plan",
+        });
+      const seen = new Set<unknown>();
+      const pending: unknown[] = [thrown];
+      while (pending.length > 0) {
+        const value = pending.pop();
+        if (seen.has(value)) continue;
+        seen.add(value);
+        if (value instanceof Error) pending.push(value.cause);
+        if (value instanceof AggregateError) pending.push(...value.errors);
+        if (value instanceof AnalysisError)
+          pending.push(...value.secondaryFailures);
+      }
+      expect(seen.has(reason)).toBe(true);
+      expect(thrown.cleanupLeases).toHaveLength(1);
+    } finally {
+      scopeClose.mockRestore();
+      fileClose.mockRestore();
+      if (thrown instanceof ArtifactReaderFailure)
+        for (const lease of thrown.cleanupLeases ?? []) await lease.release();
+      await owner.close();
     }
   },
 );
