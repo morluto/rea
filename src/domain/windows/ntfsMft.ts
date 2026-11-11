@@ -412,27 +412,27 @@ const verifyFixups = (
   };
 };
 
-/** Streaming form of the same parse: the whole admitted file is buffered once. */
+/** Buffer the admitted input once while accepting arbitrary chunk boundaries. */
 class StreamingMftDecoder implements RegionDecoder<MftImage> {
-  readonly #chunks: Uint8Array[] = [];
-  #length = 0;
+  readonly #bytes: Uint8Array;
+  #written = 0;
 
-  constructor(readonly fileBytes: number) {}
+  constructor(fileBytes: number) {
+    this.#bytes = new Uint8Array(fileBytes);
+  }
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
-    this.#chunks.push(chunk);
-    this.#length += chunk.length;
+    if (chunk.length > this.#bytes.length - this.#written)
+      return err(failure("received more bytes than the admitted file length"));
+    this.#bytes.set(chunk, this.#written);
+    this.#written += chunk.length;
     return ok(undefined);
   }
 
   finish(): Result<MftImage, RegionDecodeFailure> {
-    const bytes = new Uint8Array(this.#length);
-    let written = 0;
-    for (const chunk of this.#chunks) {
-      bytes.set(chunk, written);
-      written += chunk.length;
-    }
-    return parseMftImage(bytes);
+    if (this.#written !== this.#bytes.length)
+      return err(failure("stream ended before the admitted file length"));
+    return parseMftImage(this.#bytes);
   }
 }
 
