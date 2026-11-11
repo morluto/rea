@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
 
 import { jsonRecordSchema } from "./jsonRecord.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -297,6 +298,56 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   record_count: offset,
   first_line: offset,
   last_line: offset,
+});
+
+const ntfsFileReferenceSchema = z.strictObject({
+  recordNumber: offset,
+  sequenceNumber: offset,
+});
+const ntfsRecordHeaderSchema = z.strictObject({
+  index: offset,
+  fileOffset: offset,
+  sequenceNumber: offset,
+  hardLinkCount: offset,
+  flags: z.strictObject({
+    raw: offset,
+    names: z.array(z.string()),
+    unknownMask: offset,
+  }),
+  inUse: z.boolean(),
+  directory: z.boolean(),
+  usedBytes: offset,
+  totalBytes: offset,
+  extentValid: z.boolean(),
+  baseRecordReference: ntfsFileReferenceSchema.nullable(),
+  declaredRecordNumber: offset.nullable(),
+  recordNumberMatchesSlot: z.boolean().nullable(),
+  logFileSequenceNumber: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
+  firstAttributeOffset: offset,
+  nextAttributeId: offset,
+  fixups: z.strictObject({
+    sequenceNumber: offset,
+    entries: offset,
+    verifiedSectors: offset,
+    coveredSectors: offset,
+    mismatchSector: offset.nullable(),
+    malformed: z.boolean(),
+  }),
+});
+
+/** NTFS $MFT record-header facts; attributes, names and the USN journal are later steps. */
+export const ntfsMftMetadataSchema = z.strictObject({
+  kind: z.literal("ntfs-mft"),
+  record_bytes: offset,
+  record_count: offset,
+  in_use_record_count: offset,
+  directory_record_count: offset,
+  extension_record_count: offset,
+  fixup_mismatch_count: offset,
+  fixup_unverified_record_count: offset,
+  truncated_tail_bytes: offset,
+  record_headers: z.array(ntfsRecordHeaderSchema).max(MFT_INLINE_HEADER_LIMIT),
+  omitted_record_headers: offset,
 });
 
 /**
@@ -886,6 +937,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageSignatureBlockMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  ntfsMftMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
@@ -1035,6 +1087,10 @@ const declarationsByKind: {
   "uf2-region": {
     notCompared:
       "Its familyID and addresses are in its path, family_name is REA's label for the familyID, and its block counts and positions are layout; content comparison covers its bytes.",
+  },
+  "ntfs-mft": {
+    notCompared:
+      "Its fields come from the record headers in the file's own FILE records, which content comparison covers.",
   },
   dfuse: {
     notCompared:
