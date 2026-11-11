@@ -11,6 +11,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { serveCli } from "../cli/cliServeHarness.js";
 
 mcpTest(
@@ -79,5 +80,34 @@ mcpTest(
     expect(parseEvidence(reply.structuredContent).normalized_result).toEqual(
       expected,
     );
+
+    const refused = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: {
+        mft_path: mftPath,
+        journal_path: join(directory, "missing"),
+      },
+    });
+    expect(refused.isError).toBe(true);
+    const { error } = parseMcpToolError(refused);
+    const reference = error.details?.partial_observation;
+    if (
+      typeof reference !== "object" ||
+      reference === null ||
+      !("evidence_id" in reference) ||
+      typeof reference.evidence_id !== "string"
+    )
+      throw new Error("Missing retained MFT observation");
+    const partial = parseEvidence(session.evidenceById(reference.evidence_id));
+    expect(partial.normalized_result).toMatchObject({
+      kind: "ntfs-journal-partial",
+      mft: {
+        path: mftPath,
+        sha256: expected.mft.sha256,
+        bytes: 1024,
+        metadata: { record_count: 1, record_headers: [{ sequenceNumber: 2 }] },
+      },
+      journal_observation: null,
+    });
   },
 );

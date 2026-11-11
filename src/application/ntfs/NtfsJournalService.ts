@@ -9,7 +9,10 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
 } from "../../artifacts/StableArtifactFailure.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  primaryAnalysisError,
+  type AnalysisError,
+} from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -170,7 +173,47 @@ export const inspectNtfsJournalEvidence = async (
     resources,
     signal,
   );
-  if (!journal.ok) return journal;
+  if (!journal.ok) {
+    const failure = journal.error;
+    const prior =
+      failure.partialObservation ??
+      primaryAnalysisError(failure).partialObservation;
+    const observation = createEvidence(
+      { path: input.mft_path, format: "ntfs-mft", sha256: mft.value.sha256 },
+      NTFS_JOURNAL_PROVIDER,
+      {
+        operation,
+        predicateType: "rea.ntfs-journal-partial",
+        parameters: input,
+        result: {
+          kind: "ntfs-journal-partial",
+          mft: {
+            path: input.mft_path,
+            sha256: mft.value.sha256,
+            bytes: mft.value.bytes.length,
+            metadata: parsed.value.metadata,
+          },
+          journal_observation: prior ?? null,
+        },
+        confidence: "derived",
+        limitations: [
+          ...parsed.value.limitations,
+          "Journal acquisition did not complete.",
+        ],
+        locations: [{ kind: "artifact-path", path: input.mft_path }],
+      },
+    );
+    let current: AnalysisError | undefined = failure;
+    while (current !== undefined) {
+      if (
+        current.partialObservation === prior ||
+        current.partialObservation === undefined
+      )
+        current.partialObservation = observation;
+      current = current.cleanupPrimary;
+    }
+    return journal;
+  }
   const result = ntfsJournalResultSchema.parse({
     mft: {
       path: input.mft_path,
