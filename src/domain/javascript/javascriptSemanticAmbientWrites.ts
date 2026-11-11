@@ -963,11 +963,26 @@ const createGlobalPathRead = (
       };
       byNamespace.set(namespace, effects);
     }
+    // The call that escapes a receiver contains the callee being identified.
+    // That escape cannot have replaced the callee before the call selects it.
+    const escapePrecedesRead = effects.escapes.some((effect) => {
+      const escape = effect.node;
+      if (
+        escape !== undefined &&
+        escape !== site &&
+        typeof escape.start === "number" &&
+        typeof escape.end === "number" &&
+        typeof site.start === "number" &&
+        typeof site.end === "number" &&
+        site.start >= escape.start &&
+        site.end <= escape.end
+      )
+        return false;
+      return semanticEffectTiming(site, escape, state) !== "after";
+    });
     if (
       (escapesCovered && effects.escapes.length === 0) ||
-      effects.escapes.some(
-        (effect) => semanticEffectTiming(site, effect.node, state) !== "after",
-      ) ||
+      escapePrecedesRead ||
       (writesCovered && effects.writes.length === 0)
     )
       return { status: "unknown" };

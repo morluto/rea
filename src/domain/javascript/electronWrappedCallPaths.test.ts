@@ -650,6 +650,32 @@ it("connects exposed closures to IPC sends and text clipboard calls", () => {
   expect(ipcPath?.steps.at(-1)).toBeDefined();
   expect(ipcFinding?.location).toEqual(ipcPath?.steps.at(-1)?.location);
 });
+it("uses a defineProperty value that replaces an exported sender", () => {
+  const result = analyzeJavaScriptStaticSource(`(() => {
+      const modules = {
+        2(module) { module.exports = require("electron"); },
+        9(module,exports,load) {
+          const electron=load(2),helper=load(5);
+          electron.contextBridge.exposeInMainWorld("desktop", {copy:helper.sender("defined:copy")});
+        },
+        5(module,exports,load) {
+          const electron=load(2);
+          exports.sender=function(){return ()=>{};};
+          Object.defineProperty(exports,"sender",{value:function(channel){return (...args)=>send(channel,...args);}});
+          function send(channel,...args){electron.ipcRenderer.send(channel,...args);}
+        }
+      };
+      function load(id) { const m={exports:{}}; modules[id].call(m.exports,m,m.exports,load); return m.exports; }
+      load(9);
+    })();`);
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({
+      entry: "desktop.copy",
+      channel: "defined:copy",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  );
+});
 it("resolves a helper factory listed after its bundle consumer", () => {
   const result = analyzeJavaScriptStaticSource(`(() => {
       const modules = {
