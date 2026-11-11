@@ -37,7 +37,9 @@ describe("cancellable browser observation delays", () => {
     ).catch((error: unknown) => error);
 
     expect(beforeStart).toBeInstanceOf(AnalysisCancelledError);
-    expect(beforeStart).toMatchObject({ cause: preAbortedReason });
+    expect(
+      beforeStart instanceof AnalysisCancelledError && beforeStart.cause,
+    ).toBe(preAbortedReason);
 
     vi.useFakeTimers();
     const reason = new Error("capture wait cancelled");
@@ -51,7 +53,9 @@ describe("cancellable browser observation delays", () => {
     const duringWait = await waiting;
 
     expect(duringWait).toBeInstanceOf(AnalysisCancelledError);
-    expect(duringWait).toMatchObject({ cause: reason });
+    expect(
+      duringWait instanceof AnalysisCancelledError && duringWait.cause,
+    ).toBe(reason);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

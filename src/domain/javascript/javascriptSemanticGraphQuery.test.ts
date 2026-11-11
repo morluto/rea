@@ -491,17 +491,22 @@ it("rejects stale identities, dangling endpoints, and incomplete coverage claims
       graph_id: `jsrg_${"0".repeat(64)}`,
     }),
   ).toThrow();
+  const dangling = semanticFixtureInput();
+  const { relation_id: _relationId, ...relation } = dangling.relations[0]!;
+  const danglingRelation = createJavaScriptSemanticGraphRelation(
+    {
+      ...relation,
+      evidence: resolveJavaScriptSemanticEvidence(graph, relation.evidence),
+      target_node_id: `jsrg_node_${"f".repeat(64)}`,
+    },
+    registryForGraph(graph),
+  );
   expect(() =>
     createJavaScriptSemanticGraph({
-      ...semanticFixtureInput(),
-      relations: [
-        {
-          ...semanticFixtureInput().relations[0],
-          target_node_id: `jsrg_node_${"f".repeat(64)}`,
-        },
-      ],
+      ...dangling,
+      relations: [danglingRelation, ...dangling.relations.slice(1)],
     }),
-  ).toThrow();
+  ).toThrow(/Relation endpoints must name semantic nodes/u);
   expect(() =>
     createJavaScriptSemanticGraph({
       ...semanticFixtureInput(),

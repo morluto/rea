@@ -660,9 +660,6 @@ describe("draftTaskFiles for a drawing resized beside a rename", () => {
 
   it("checks the width the user changed when the only other edit is a name outside the drawing", () => {
     const file = xmlDraft(model("Shop", "10"), model("Store", "20"));
-    const width = file.suggested.find(
-      (check) => "pointer" in check && check.pointer.endsWith("width"),
-    );
 
     expect(file.suggested.map(pointerOf)).toContain(
       "/root/children/[name=diagram]/children/[name=widget][@width=20]/name",
@@ -713,7 +710,7 @@ describe("draftTaskFiles when a sibling lock changed", () => {
       (file) => file.file === ".config/app/settings.json",
     );
 
-    expect(settings?.suggested).not.toEqual([]);
+    expect(settings?.suggested.length ?? 0).toBeGreaterThan(0);
   });
 
   it("keeps the settings draft when the selected folder also contains the lock", () => {
@@ -753,7 +750,7 @@ describe("draftTaskFiles when a sibling lock changed", () => {
       (file) => file.file === ".config/app/settings.json",
     );
 
-    expect(settings?.suggested).not.toEqual([]);
+    expect(settings?.suggested.length ?? 0).toBeGreaterThan(0);
   });
 
   it("drafts a lock that was selected itself, beside the file it names", () => {
@@ -776,6 +773,6 @@ describe("draftTaskFiles when a sibling lock changed", () => {
     );
     const lock = files.find((file) => file.file === "Documents/plan.vym.lock");
 
-    expect(lock?.suggested).not.toEqual([]);
+    expect(lock?.suggested.length ?? 0).toBeGreaterThan(0);
   });
 });

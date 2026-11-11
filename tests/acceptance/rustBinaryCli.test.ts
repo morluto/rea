@@ -377,7 +377,7 @@ cliTest(
   },
 );
 
-cliTest("reports malformed zlib as invalid input", async ({ cli }) => {
+cliTest("rejects malformed dependency JSON", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-zlib-");
   const path = join(root, "broken.elf");
   await writeFile(

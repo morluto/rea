@@ -838,6 +838,7 @@ cliTest
             "negative_zero",
             "generated",
           ],
+          order: "rowid",
           returned_rows: 1,
           row_limit: 1,
           truncated: true,
@@ -845,7 +846,7 @@ cliTest
             [
               {
                 type: "integer",
-                value: expect.stringMatching(/^900719925474099[34]$/),
+                value: "9007199254740993",
               },
               { type: "blob", hex: "deadbeef" },
               { type: "real", value: "Infinity" },
