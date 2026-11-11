@@ -729,6 +729,33 @@ The global MCP path is a plain JSON file; setup preserves every other server
 and top-level key when it upserts `rea`. Loading this registration, the
 bundled skill, and real REA tool calls through CodeBuddy are verified.
 
+## Cline
+
+For Cline's CLI, setup writes `mcpServers.rea` into
+`~/.cline/data/settings/cline_mcp_settings.json`; set `CLINE_MCP_SETTINGS_PATH`
+to select another file, the same variable Cline's CLI honors. Entries carry
+`command`, `args`, and `env`; stdio is the default transport. Setup preserves
+every other server and top-level key when it upserts `rea`, and refuses a
+`rea` entry it did not write rather than adopting or overwriting it.
+
+Cline manages skills through the open skills CLI with `--agent cline`, which
+writes the shared `~/.agents/skills`. Setup installs the bundled skill there,
+and `--skill-client cline` resolves to that shared directory; setup does not
+write a second copy under `~/.cline/skills`.
+
+The IDE extension keeps its own MCP settings, reached from the Cline panel's
+**Configure MCP Servers** action, so `rea setup` configures the CLI only. To
+use one registration for both, point `CLINE_MCP_SETTINGS_PATH` at the file the
+panel opens, or add the `rea` entry there manually.
+
+Restart Cline after setup so the client reloads `mcpServers`. Cline's default
+MCP tool-call timeout is 120 seconds; native provider work that spends longer
+starting Hopper, Ghidra, or IDA can exceed it, so raise the timeout in Cline's
+MCP settings for long native investigations.
+
+Setup, doctor's alignment report, foreign-registration refusal, and uninstall
+removal are covered by `tests/acceptance/setup/clineClientSetup.test.ts`.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the
