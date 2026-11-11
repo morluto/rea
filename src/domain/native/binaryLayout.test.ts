@@ -141,6 +141,7 @@ it.each([
 
 it.each([
   "file-backed-outside",
+  "false-no-file-backing",
   "header-outside",
   "wrong-index",
   "noncanonical-base64",
@@ -151,6 +152,7 @@ it.each([
   const section = value.sections[0];
   if (section === undefined) throw new Error("section missing");
   if (problem === "file-backed-outside") section.file_backing = "file";
+  if (problem === "false-no-file-backing") section.type = "SHT_PROGBITS";
   if (problem === "header-outside") section.header_location.offset = "0x80";
   if (problem === "wrong-index") section.index = 1;
   if (problem === "wrong-machine") value.architecture.machine = "EM_RISCV";
