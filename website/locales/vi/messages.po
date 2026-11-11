@@ -3659,7 +3659,7 @@ msgid ""
 "Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
 msgstr ""
 "Windows x64 có hỗ trợ thử nghiệm, chỉ đọc cho các ứng dụng VÀ Dll X86 và x64"
-" pe gốc trên các ổ đĩa ntfs cục bộ cố định. Sử DỤNG Ghidra 12.1 hiện có.x "
+" pe gốc trên các ổ đĩa NTFS/ReFS cục bộ cố định. Sử DỤNG Ghidra 12.1 hiện có.x "
 "cài đặt VÀ 64-bit JDK 21 hoặc mới hơn:"
 
 #: website/public/get-started/index.html:1182

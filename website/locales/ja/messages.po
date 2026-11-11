@@ -3403,7 +3403,7 @@ msgid ""
 "applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
 "Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
 msgstr ""
-"Windows x64では、固定ローカルNTFSドライブ上のネイティブx86/x64 "
+"Windows x64では、固定ローカルNTFS/ReFSドライブ上のネイティブx86/x64 "
 "PEアプリとDLLに実験的な読み取り専用対応があります。既存のGhidra 12.1.xと64ビットのJDK 21以降を使ってください。"
 
 #: website/public/get-started/index.html:1182
