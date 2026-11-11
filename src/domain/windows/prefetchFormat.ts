@@ -144,15 +144,15 @@ export const parsePrefetchFile = (
       kind: "format",
       message: 'The Prefetch signature is not "SCCA".',
     });
-  if (version !== "17" && version !== "23")
-    return err({
-      kind: "unsupported",
-      message: `Prefetch v${version} is not one of the header generations this reader parses (17, 23).`,
-    });
   if (bytes.length < COMMON_HEADER_BYTES)
     return err({
       kind: "format",
       message: "The file ends inside the Prefetch header.",
+    });
+  if (version !== "17" && version !== "23")
+    return err({
+      kind: "unsupported",
+      message: `Prefetch v${version} is not one of the header generations this reader parses (17, 23).`,
     });
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = bytes.byteLength;

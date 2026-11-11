@@ -96,6 +96,22 @@ it("identifies a Windows 8+ generation it does not parse", async () => {
   }
 });
 
+it("calls a truncated newer-generation capture malformed, not unsupported", async () => {
+  const reader = await readerFor(
+    prefetchFixture({ version: "26" }).subarray(0, 60),
+  );
+  try {
+    await expect(inventory(reader)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(
+        "ends inside the Prefetch header",
+      ) as unknown,
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("refuses a MAM container without calling it corrupt", async () => {
   const reader = await readerFor(
     prefetchFixture({ version: "23", compressed: true }),
