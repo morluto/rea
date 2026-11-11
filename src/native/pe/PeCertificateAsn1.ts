@@ -230,11 +230,7 @@ const decodeDirectoryString = (
 // X.690 8.3.1 and 8.3.2 hold for BER as well as DER: an INTEGER has at least
 // one content octet, and its first nine bits are never all zeros or all ones.
 // Padded encodings would otherwise collapse onto the minimal serial's hex.
-const integerHex = (
-  content: Buffer,
-  budget: DecodedNameBudget,
-  label: string,
-): string => {
+const requireIntegerContent = (content: Buffer, label: string): void => {
   if (content.length === 0) return fail(`${label} INTEGER is empty.`);
   const second = content[1];
   if (
@@ -243,6 +239,14 @@ const integerHex = (
       (content[0] === 0xff && second >= 0x80))
   )
     return fail(`${label} INTEGER is not minimally encoded.`);
+};
+
+const integerHex = (
+  content: Buffer,
+  budget: DecodedNameBudget,
+  label: string,
+): string => {
+  requireIntegerContent(content, label);
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
   chargeDecodedName(budget, (content.length - start) * 2);
@@ -716,6 +720,7 @@ const parseSignedData = (
   const [version, digestSet, encapContentInfo] = children;
   if (version === undefined || version.tag !== 0x02)
     return fail("SignedData is missing version.");
+  requireIntegerContent(version.content, "SignedData version");
   if (digestSet === undefined || digestSet.tag !== 0x31)
     return fail("SignedData is missing digestAlgorithms.");
   if (
