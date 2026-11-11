@@ -19,6 +19,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -161,12 +162,15 @@ export const withSignatureTarget = async (
         result = err(signatureReadFailure(target, cause));
       }
       const cleanup = await resources.release(owner);
-      if (result.ok && signal?.aborted)
+      if (signal?.aborted)
         result = err(
-          new AnalysisCancelledError("inspect_signature", {
-            cause: signal.reason,
-            partialObservation: result.value,
-          }),
+          analysisErrorWithCancellation(
+            result.ok ? undefined : result.error,
+            new AnalysisCancelledError("inspect_signature", {
+              cause: signal.reason,
+              ...(result.ok ? { partialObservation: result.value } : {}),
+            }),
+          ),
         );
       if (cleanup.kind === "failed") {
         const failure = signatureCleanupFailure(

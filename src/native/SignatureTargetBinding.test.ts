@@ -448,6 +448,52 @@ it.each([false, true])(
   },
 );
 
+it.each([false, true])(
+  "retains late cancellation after a signature failure while root cleanup fails: %s",
+  async (cleanupFails) => {
+    const target = await createTarget("same");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { caller: "cancelled during root cleanup" };
+    const physical = new AnalysisOutputError(
+      "inspect_signature",
+      "inspection failed",
+    );
+    const root = await createRoot(cleanupFails ? 1 : 0);
+    try {
+      const result = await withSignatureTarget(
+        target,
+        resources,
+        async () => err(physical),
+        controller.signal,
+        async () => ({
+          path: root.path,
+          async close() {
+            try {
+              await root.close();
+            } finally {
+              controller.abort(reason);
+            }
+          },
+        }),
+      );
+      if (result.ok) throw new Error("Expected inspection failure");
+      expect(physical.secondaryFailures).toHaveLength(1);
+      expect(physical.secondaryFailures[0]).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      await resources.close();
+      expect(resolvedAnalysisError(result.error)).toBe(physical);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
 const opaqueReasons = [
   null,
   0,
