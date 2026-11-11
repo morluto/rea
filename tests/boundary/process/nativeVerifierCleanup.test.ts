@@ -6,7 +6,6 @@ processTest.for(["none", "client", "transport", "both", "early"])(
   "preserves native verifier failure and cleanup ownership (fault: $0)",
   async (fault, { processes }) => {
     const result = await processes.run(process.execPath, [
-      "--experimental-vm-modules",
       fileURLToPath(
         new URL(
           "../../fixtures/nativeValueVerifierCleanup.mjs",
@@ -27,7 +26,6 @@ processTest(
   "finishes IDA verifier cleanup without replacing the analysis failure",
   async ({ processes }) => {
     const result = await processes.run(process.execPath, [
-      "--experimental-vm-modules",
       fileURLToPath(
         new URL("../../fixtures/idaVerifierCleanup.mjs", import.meta.url),
       ),
