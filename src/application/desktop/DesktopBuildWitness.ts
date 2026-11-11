@@ -35,7 +35,6 @@ import type {
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import { isPortableBundleName } from "../environment/environmentBundle.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
@@ -103,6 +102,18 @@ const refused = (userMessage: string, remediationAction: string) =>
 
 const taskDigest = (task: DesktopTask) =>
   createHash("sha256").update(JSON.stringify(task)).digest("hex");
+
+/** A retry cannot redirect an ended witness to another folder. */
+const recordDirectoryRefusal = (
+  expected: string,
+  requested: string | undefined,
+): AnalysisError | undefined =>
+  requested !== undefined && requested !== expected
+    ? refused(
+        `This witness's record belongs to ${expected}, not ${requested}.`,
+        "Ask again without directory or with the original folder; another witness needs a fresh computer.",
+      )
+    : undefined;
 
 /** Whether a folder can take the record: absent, or empty. */
 const usableFolder = async (directory: string): Promise<boolean> =>
@@ -228,7 +239,7 @@ export class DesktopBuildWitness {
     signal: AbortSignal,
     progress: ProgressReporter = silentProgressReporter,
   ): Promise<Result<CheckedTask, AnalysisError>> {
-    const parsed = parseDesktopTask(input.task, isPortableBundleName);
+    const parsed = parseDesktopTask(input.task);
     if (!parsed.ok)
       return err(
         refused(
@@ -238,8 +249,15 @@ export class DesktopBuildWitness {
       );
     const task = parsed.value;
     const { stage } = input;
-    if (stage !== undefined && this.#witness?.state === "saving")
-      return this.#resave(this.#witness, task, stage, signal);
+    if (stage !== undefined && this.#witness?.state === "saving") {
+      const directoryRefusal = recordDirectoryRefusal(
+        this.#witness.directory,
+        input.directory,
+      );
+      return directoryRefusal === undefined
+        ? this.#resave(this.#witness, task, stage, signal)
+        : err(directoryRefusal);
+    }
     const saved =
       stage === undefined
         ? undefined
@@ -439,13 +457,11 @@ export class DesktopBuildWitness {
     )
       return undefined;
     // A folder the record was not saved to gets nothing written, so it is refused.
-    if (directory !== undefined && directory !== witness.directory)
-      return err(
-        refused(
-          `This witness's record was saved to ${witness.directory}, not ${directory}.`,
-          "Ask again without directory or with the folder it was saved to; another witness needs a fresh computer.",
-        ),
-      );
+    const directoryRefusal = recordDirectoryRefusal(
+      witness.directory,
+      directory,
+    );
+    if (directoryRefusal !== undefined) return err(directoryRefusal);
     return ok({
       ...counted(task, filed),
       witness: summaryOf(filed, null, witness.record),

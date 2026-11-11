@@ -294,11 +294,21 @@ const versionSectionData = (
   table: { readonly offset: number; readonly size: number };
   names: Buffer;
 } => {
+  if (section.compressed)
+    throw new BinaryFormatFailure(
+      "unsupported",
+      `${label} are SHF_COMPRESSED and were not decompressed`,
+    );
   const strings = sections[section.link];
   if (strings?.type !== SHT_STRTAB)
     throw new BinaryFormatFailure(
       "malformed",
       `${label} do not link to a string table`,
+    );
+  if (strings.compressed)
+    throw new BinaryFormatFailure(
+      "unsupported",
+      `${label} strings are SHF_COMPRESSED and were not decompressed`,
     );
   const stringRange = reader.fileRange(
     strings.offset,
@@ -407,7 +417,9 @@ function* readVersionNames(
     textBytes = nextTextBytes;
   };
   const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
-  if (verneed !== undefined) {
+  // sh_info is the requirement count. An empty region contributes no names,
+  // so its compressed storage is not a failed requirement read.
+  if (verneed !== undefined && verneed.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -485,7 +497,9 @@ function* readVersionNames(
   }
   // GNU lookup installs requirement names first, then definition names.
   const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
-  if (verdef !== undefined) {
+  // sh_info is the definition count. Zero definitions cannot replace a
+  // requirement index, so compressed storage of that empty table is unread.
+  if (verdef !== undefined && verdef.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -545,7 +559,13 @@ function* readVersionNames(
         }
       }
     } catch (cause) {
-      if (cause instanceof ElfVersionWorkFailure) namesByIndex.clear();
+      // An unread compressed definition table may replace any requirement
+      // index. Its absence cannot justify falling back to requirement names.
+      if (
+        cause instanceof ElfVersionWorkFailure ||
+        (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+      )
+        namesByIndex.clear();
       issues.push({
         code: "version_unresolved",
         location: hex(verdef.offset),
@@ -605,6 +625,32 @@ function* parseElfExports(
     };
   const width = directory.bits === 64 ? 24 : 16;
   const strings = sections[dynsym.link];
+  const compressed = dynsym.compressed
+    ? dynsym
+    : strings?.type === SHT_STRTAB && strings.compressed
+      ? strings
+      : null;
+  if (compressed !== null) {
+    const reason = `The ELF ${compressed === dynsym ? "dynamic symbol table" : "dynamic string table"} is SHF_COMPRESSED and was not decompressed; export identities remain unknown`;
+    return {
+      ...result,
+      exports: [],
+      coverage: {
+        status: "unsupported",
+        reason,
+        examined_entries: 0,
+        exports: 0,
+      },
+      issues: [
+        {
+          code: "table_unavailable",
+          location: hex(compressed.offset),
+          message: reason,
+        },
+      ],
+      limitations: ELF_LIMITATIONS,
+    };
+  }
   if (
     dynsym.entry_size !== BigInt(width) ||
     dynsym.size % BigInt(width) !== 0n ||
@@ -647,6 +693,11 @@ function* parseElfExports(
   let versions: number | null = null;
   if (versym !== undefined) {
     try {
+      if (versym.compressed)
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "ELF symbol versions are SHF_COMPRESSED and were not decompressed",
+        );
       if (versym.size !== BigInt(count * 2))
         throw new BinaryFormatFailure(
           "malformed",

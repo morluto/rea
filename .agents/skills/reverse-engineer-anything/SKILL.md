@@ -211,8 +211,10 @@ explicit path or endpoint and do not need it.
   See the [APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md).
 - Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
   `raw` or `hex` encoding. The owned worker deadline is `timeout_ms` (default
-  30000 ms, range 1..2147483647, next call). It does not raise the fixed byte,
-  address-space, or CPU allowances. Preserve carrier/decoded digests and treat selectors,
+  30000 ms, range 1..2147483647, next call). Select byte, address-space and CPU
+  allowances separately through `producer_limits`; tighter inherited OS limits
+  remain enforced, and the 256 MiB worker heap is independent. Preserve
+  carrier/decoded digests and treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
   lookup or target execution. For the complete inferred interface without hex or
   duplicate stdout, discover support and select `detail: "summary"`; complete
@@ -336,7 +338,9 @@ explicit path or endpoint and do not need it.
   exception facts, lossless integer registers, usedImages UUIDs, and
   documented classification matches. Only `bug_type` `"309"` yields a crash
   body; other types, including `"288"` stackshots, return no crash result.
-  Opened Mach-O and dSYM UUID joins remain unobserved. See the
+  Select an optional `join_path` for UUID-and-architecture matching to one
+  local Mach-O or dSYM; preserve slice identity and unjoined reasons. Joined
+  static addresses do not resolve function names or dSYM symbols. See the
   [Apple IPS guide](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 - Linux kernel module metadata: `inspect_kernel_module` with the explicit local
   ELF32/ELF64 relocatable file. This built-in target-free inspection requires

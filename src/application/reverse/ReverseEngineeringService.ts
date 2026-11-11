@@ -65,6 +65,7 @@ import {
 } from "../../windows/WindowsOwnedProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -441,11 +442,24 @@ export class ReverseEngineeringService {
       ...request,
       signal: operationSignal,
     });
-    const tracked = running.finally(() => {
-      signal?.removeEventListener("abort", relayAbort);
-      this.#activeOperations.delete(controller);
-      this.#reservedOutputBytes -= outputBudgetBytes;
-    });
+    const tracked = running
+      .then((result) =>
+        !result.ok && operationSignal?.aborted
+          ? err(
+              analysisErrorWithCancellation(
+                result.error,
+                new AnalysisCancelledError(operation, {
+                  cause: operationSignal.reason,
+                }),
+              ),
+            )
+          : result,
+      )
+      .finally(() => {
+        signal?.removeEventListener("abort", relayAbort);
+        this.#activeOperations.delete(controller);
+        this.#reservedOutputBytes -= outputBudgetBytes;
+      });
     this.#activeOperations.set(controller, tracked);
     return tracked;
   }
@@ -1499,7 +1513,14 @@ const commandCancelled = (
   signal: AbortSignal | undefined,
   cause: unknown,
   code: string | number | undefined,
-): boolean => code === "ABORT_ERR" || preflightCancelled(signal, cause, code);
+): boolean => {
+  if (
+    cause instanceof OwnedOutputFailure &&
+    cause.cause instanceof OwnedCommandFailure
+  )
+    return cause.cause.reason === "cancelled";
+  return code === "ABORT_ERR" || preflightCancelled(signal, cause, code);
+};
 
 const callerCancellationCause = (
   signal: AbortSignal | undefined,

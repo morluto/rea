@@ -67,6 +67,10 @@ export interface ElfPointerRelocationInput {
 
 // JNI sparse consumers retain per-write provenance; streaming materializers do not.
 const MAX_RELOCATION_RECORDS = 65_536;
+/** Conservative logical reservation for three Map entries, boxed coordinates and
+ * values, and finish-time tuples/ranges/reach/sort storage including growth slack.
+ * This is allocation accounting, not a measurement of a JavaScript VM's RSS. */
+const ELF_POINTER_INDEX_ENTRY_BYTES = 2 * 1024;
 const DT_RELA = 7n,
   DT_RELASZ = 8n,
   DT_RELAENT = 9n;
@@ -261,8 +265,9 @@ export interface ElfRelocationStreamResult {
   readonly issues: readonly string[];
   readonly dynamic_present: boolean;
   readonly pointer_coverage_known: boolean;
-  readonly originalPointerAt: (
+  readonly originalValueAt: (
     address: bigint,
+    width: 4 | 8,
   ) => ElfOverlayPointer | undefined;
 }
 type RelocationOptions = {
@@ -512,26 +517,199 @@ export function* readElfRelocationWritesSteps(
     issues: [...issues],
     dynamic_present: input.dynamicSegments.length !== 0,
     pointer_coverage_known: known,
-    originalPointerAt: (address) => {
-      const at = fileOffset(address, word);
+    originalValueAt: (address, width) => {
+      const at = fileOffset(address, width);
       return at === null
         ? undefined
-        : { value: rawWord(at), file_offset: at, relocation: null };
+        : {
+            value:
+              width === word
+                ? rawWord(at)
+                : BigInt(
+                    input.little
+                      ? bytes.readUInt32LE(at)
+                      : bytes.readUInt32BE(at),
+                  ),
+            file_offset: at,
+            relocation: null,
+          };
     },
   };
 }
 
-/** Retain bounded sparse pointer facts for consumers that query the original image. */
+/** Loader values and overlap ownership, independent of retained relocation provenance. */
+export interface ElfVirtualPointerWrites {
+  readonly hasWrites: (address: bigint, size: number) => boolean;
+  /** Undefined when a write leaves the selected field unresolved or partly overwritten. */
+  readonly unsignedAt: (address: bigint, width: 4 | 8) => bigint | undefined;
+}
+
+/** Both sparse consumers use virtual coordinates; physical aliases never merge writes. */
+class ElfVirtualWriteIndex {
+  readonly #values = new Map<bigint, bigint>();
+  readonly #widths = new Map<bigint, number>();
+  readonly #unresolved = new Map<bigint, number>();
+  #reservedBytes = 0;
+  constructor(
+    readonly word: 4 | 8,
+    readonly little: boolean,
+    readonly maximumBytes: number,
+  ) {}
+  add({
+    address,
+    width,
+    value,
+  }: Pick<ElfPointerWrite, "address" | "width" | "value">): void {
+    if (!this.#widths.has(address)) {
+      // Reserve retained containers and finish-time lookup expansion before
+      // the first insertion. Repeated declarations of one VA share its charge.
+      if (
+        ELF_POINTER_INDEX_ENTRY_BYTES >
+        this.maximumBytes - this.#reservedBytes
+      )
+        throw new ElfPointerRelocationFailure(
+          "native-index-capacity",
+          `ELF virtual pointer index exceeds ${this.maximumBytes} estimated representation bytes (${ELF_POINTER_INDEX_ENTRY_BYTES} reserved per virtual address, including lookup workspace)`,
+        );
+      this.#reservedBytes += ELF_POINTER_INDEX_ENTRY_BYTES;
+    }
+    this.#widths.set(address, Math.max(this.#widths.get(address) ?? 0, width));
+    if (
+      value === null ||
+      (this.#values.has(address) && this.#values.get(address) !== value)
+    )
+      this.#unresolved.set(
+        address,
+        Math.max(this.#unresolved.get(address) ?? 0, width),
+      );
+    if (value !== null) this.#values.set(address, value);
+  }
+  get unresolvedSize(): number {
+    return this.#unresolved.size;
+  }
+  finish() {
+    const ranges = [...this.#widths]
+      .map(([address, width]) => ({ address, end: address + BigInt(width) }))
+      .sort((a, b) =>
+        a.address < b.address ? -1 : a.address > b.address ? 1 : 0,
+      );
+    const reach: bigint[] = [];
+    for (const range of ranges)
+      reach.push(
+        range.end > (reach.at(-1) ?? 0n) ? range.end : (reach.at(-1) ?? 0n),
+      );
+    let previousEnd: bigint | undefined;
+    let previousBefore = 0;
+    const before = (end: bigint): number => {
+      // Sequential field scans reuse the immutable interval cursor. Large or
+      // backward jumps keep binary lookup, so random queries cannot rescan it.
+      if (
+        previousEnd !== undefined &&
+        end >= previousEnd &&
+        end - previousEnd <= 16n
+      ) {
+        while (
+          previousBefore < ranges.length &&
+          ranges[previousBefore]!.address < end
+        )
+          previousBefore++;
+        previousEnd = end;
+        return previousBefore;
+      }
+      let low = 0,
+        high = ranges.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (ranges[mid]!.address < end) low = mid + 1;
+        else high = mid;
+      }
+      previousEnd = end;
+      previousBefore = low;
+      return low;
+    };
+    const unsignedAt = (
+      address: bigint,
+      width: 4 | 8,
+      original?: bigint,
+    ): bigint | undefined => {
+      if (width > this.word) return undefined;
+      const end = address + BigInt(width);
+      const complete = (1n << BigInt(width * 8)) - 1n;
+      let covered = original === undefined ? 0n : complete;
+      let assigned = 0n;
+      let result = original ?? 0n;
+      let owner: bigint | undefined;
+      for (
+        let at = before(end) - 1;
+        at >= 0 && (reach[at] ?? 0n) > address;
+        at--
+      ) {
+        const range = ranges[at]!;
+        if (range.end <= address) continue;
+        const unknownWidth = this.#unresolved.get(range.address);
+        if (
+          unknownWidth !== undefined &&
+          range.address + BigInt(unknownWidth) > address
+        )
+          return undefined;
+        const value = this.#values.get(range.address);
+        if (
+          value === undefined ||
+          range.end - range.address !== BigInt(this.word) ||
+          (width === this.word &&
+            (range.address !== address || range.end !== end))
+        )
+          return undefined;
+        owner = range.address;
+        if (width === this.word) {
+          if (assigned !== 0n) return undefined;
+          result = value;
+          assigned = complete;
+          covered = complete;
+          continue;
+        }
+        const start = range.address > address ? range.address : address;
+        const stop = range.end < end ? range.end : end;
+        for (let byte = start; byte < stop; byte++) {
+          const sourceShift = this.little
+            ? byte - range.address
+            : range.end - byte - 1n;
+          const targetShift = this.little ? byte - address : end - byte - 1n;
+          const mask = 0xffn << (targetShift * 8n);
+          if ((assigned & mask) !== 0n) return undefined;
+          result =
+            (result & ~mask) |
+            (((value >> (sourceShift * 8n)) & 0xffn) << (targetShift * 8n));
+          assigned |= mask;
+          covered |= mask;
+        }
+      }
+      return owner !== undefined && covered === complete ? result : undefined;
+    };
+    return {
+      unsignedAt,
+      unresolved: this.#unresolved,
+      hasWrites: (address: bigint, size: number): boolean => {
+        const low = before(address + BigInt(size));
+        return low > 0 && (reach[low - 1] ?? 0n) > address;
+      },
+    };
+  }
+}
+
+/** Retain provenance-bearing facts for bounded metadata queries. */
 export function* readElfPointerRelocationsSteps(
   bytes: Buffer,
   input: ElfPointerRelocationInput,
   options: RelocationOptions = {},
 ): Generator<void, ElfPointerOverlay> {
-  const word = input.bits / 8;
   const writes: ElfPointerWrite[] = [];
-  const unresolved = new Map<bigint, number>();
   const values = new Map<bigint, ElfPointerWrite>();
-  const widths = new Map<bigint, number>();
+  const index = new ElfVirtualWriteIndex(
+    input.bits === 64 ? 8 : 4,
+    input.little,
+    MAX_RELOCATION_RECORDS * ELF_POINTER_INDEX_ENTRY_BYTES,
+  );
   const steps = readElfRelocationWritesSteps(bytes, input, options);
   let next = steps.next();
   while (!next.done) {
@@ -544,88 +722,87 @@ export function* readElfPointerRelocationsSteps(
           `ELF sparse relocation index exceeds ${MAX_RELOCATION_RECORDS} retained writes`,
         );
       writes.push(write);
-      const { address, width, value } = write;
-      widths.set(address, Math.max(widths.get(address) ?? 0, width));
-      if (value === null)
-        unresolved.set(address, Math.max(unresolved.get(address) ?? 0, width));
-      else {
-        const previous = values.get(address);
-        if (previous !== undefined && previous.value !== value)
-          unresolved.set(
-            address,
-            Math.max(unresolved.get(address) ?? 0, width),
-          );
-        values.set(address, write);
-      }
+      index.add(write);
+      if (write.value !== null) values.set(write.address, write);
     }
     next = steps.next();
   }
-  const {
-    issues,
-    dynamic_present,
-    pointer_coverage_known: known,
-    originalPointerAt,
-  } = next.value;
-  // Index one span per destination. Reads cannot mistake bytes changed by a
-  // partial or unresolved relocation for an original valid pointer.
-  const ranges = [...widths]
-    .map(([address, width]) => ({ address, end: address + BigInt(width) }))
-    .sort((a, b) =>
-      a.address < b.address ? -1 : a.address > b.address ? 1 : 0,
-    );
-  const reach: bigint[] = [];
-  for (const range of ranges)
-    reach.push(
-      range.end > (reach.at(-1) ?? 0n) ? range.end : (reach.at(-1) ?? 0n),
-    );
-  const pointerAt = (address: bigint): ElfOverlayPointer | undefined => {
-    if (!known) return undefined;
-    const end = address + BigInt(word);
-    let low = 0,
-      high = ranges.length;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      if ((ranges[mid]?.address ?? end) < end) low = mid + 1;
-      else high = mid;
-    }
-    for (let at = low - 1; at >= 0 && (reach[at] ?? 0n) > address; at--) {
-      const range = ranges[at];
-      if (
-        range !== undefined &&
-        range.end > address &&
-        (range.address !== address ||
-          unresolved.has(range.address) ||
-          range.end !== end)
-      )
-        return undefined;
-    }
-    const relocated = values.get(address);
-    if (relocated?.value !== undefined && relocated.value !== null)
-      return {
-        value: relocated.value,
-        file_offset: relocated.file_offset,
-        relocation: relocated.source,
-      };
-    return originalPointerAt(address);
-  };
-  const hasWrites = (address: bigint, size: number): boolean => {
-    const end = address + BigInt(size);
-    let low = 0,
-      high = ranges.length;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      if ((ranges[mid]?.address ?? end) < end) low = mid + 1;
-      else high = mid;
-    }
-    return low > 0 && (reach[low - 1] ?? 0n) > address;
+  const facts = index.finish();
+  const { issues, dynamic_present, pointer_coverage_known, originalValueAt } =
+    next.value;
+  const unsignedAt = (
+    address: bigint,
+    width: 4 | 8,
+  ): ElfOverlayPointer | undefined => {
+    if (!pointer_coverage_known || width > input.bits / 8) return undefined;
+    if (!facts.hasWrites(address, width))
+      return originalValueAt(address, width);
+    const resolved = facts.unsignedAt(address, width);
+    if (resolved === undefined) return undefined;
+    const source = values.get(address)!;
+    return {
+      value: resolved,
+      file_offset: source.file_offset,
+      relocation: source.source,
+    };
   };
   return {
     writes,
-    unresolved,
+    unresolved: facts.unresolved,
     issues,
     dynamic_present,
-    pointer_coverage_known: known,
-    pointerAt,
-    hasWrites,
+    pointer_coverage_known,
+    pointerAt: (address) => unsignedAt(address, input.bits === 64 ? 8 : 4),
+    hasWrites: facts.hasWrites,
+  };
+}
+
+/** Value-only consumers keep input-bounded file-backed writes without per-record
+ * provenance, with a separate allowance for unresolved and zero-fill state.
+ */
+export function* readElfPointerValuesSteps(
+  bytes: Buffer,
+  input: ElfPointerRelocationInput,
+  maximumIndexBytes: number,
+): Generator<void, ElfVirtualPointerWrites> {
+  const index = new ElfVirtualWriteIndex(
+    input.bits === 64 ? 8 : 4,
+    input.little,
+    maximumIndexBytes,
+  );
+  const zeroFill = new Set<bigint>();
+  const steps = readElfRelocationWritesSteps(bytes, input, {
+    requireDynamic: true,
+  });
+  let next = steps.next();
+  while (!next.done) {
+    const write = next.value;
+    if (write === undefined) yield;
+    else {
+      index.add(write);
+      if (write.value !== null && write.file_offset === null)
+        zeroFill.add(write.address);
+      if (index.unresolvedSize + zeroFill.size > MAX_RELOCATION_RECORDS)
+        throw new ElfPointerRelocationFailure(
+          "native-index-capacity",
+          "ELF unresolved and zero-fill overlay exceeds 65536 entries",
+        );
+    }
+    next = steps.next();
+  }
+  const facts = index.finish();
+  const { originalValueAt } = next.value;
+  return {
+    hasWrites: facts.hasWrites,
+    unsignedAt: (address, width) => {
+      if (!facts.hasWrites(address, width)) return undefined;
+      return facts.unsignedAt(
+        address,
+        width,
+        width === 4 && input.bits === 64
+          ? originalValueAt(address, width)?.value
+          : undefined,
+      );
+    },
   };
 }

@@ -1458,6 +1458,79 @@ it("redacts remote credentials echoed by a target script", async () => {
 });
 
 it.each([
+  {
+    label: "colliding redacted names",
+    declared: true,
+    secondName: "[redacted]",
+    truncated: true,
+  },
+  {
+    label: "distinct redacted names",
+    declared: true,
+    secondName: "other",
+    truncated: false,
+  },
+  {
+    label: "same marker spelling without a declared secret",
+    declared: false,
+    secondName: "[redacted]",
+    truncated: false,
+  },
+])(
+  "preserves captured object facts with $label",
+  async ({ declared, secondName, truncated }) => {
+    const token = "synthetic-key-token";
+    const bindings = new FakeDeviceManager();
+    bindings.device.session.nextPayload = {
+      [token]: "first observation",
+      [secondName]: "second observation",
+      ordinary: "third observation",
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    onTestFinished(() => manager.closeAll());
+    const started = await manager.startSession({
+      mode: "attach",
+      remote: { address: "127.0.0.1:27042", ...(declared ? { token } : {}) },
+      pid: 512,
+    });
+    if (!started.ok) throw started.error;
+    const loaded = await new FridaInstrumentationService(manager).loadScript(
+      started.value.sessionId,
+      { sourceKind: "inline", source: "send(payload)" },
+    );
+    if (!loaded.ok) throw loaded.error;
+    const result = jsonObjectSchema.parse(loaded.value.normalized_result);
+    if (!Array.isArray(result.messages))
+      throw new Error("Expected captured messages");
+    const message = jsonObjectSchema.parse(result.messages[0]);
+    expect(message.payload).toEqual(
+      truncated
+        ? { "[redacted]": "first observation" }
+        : {
+            [declared ? "[redacted]" : token]: "first observation",
+            [secondName]: "second observation",
+            ordinary: "third observation",
+          },
+    );
+    expect(message.type).toBe("send");
+    expect(message.script_id).toBe(result.script_id);
+    expect(message.payload_truncated ?? false).toBe(truncated);
+    if (truncated)
+      expect(message.payload_capture_limit).toBe("unrepresentable");
+    else expect(message).not.toHaveProperty("payload_capture_limit");
+    expect(
+      loaded.value.limitations.some((text) =>
+        text.includes("could not be represented as JSON"),
+      ),
+    ).toBe(truncated);
+    if (declared) expect(JSON.stringify(loaded.value)).not.toContain(token);
+    else expect(JSON.stringify(loaded.value)).toContain(token);
+  },
+);
+
+it.each([
   { captureLimits: undefined, retained: 32_768, truncated: true },
   {
     captureLimits: { message_text_bytes: 65_536 },

@@ -699,7 +699,15 @@ const parseNetwork = (
   const validNetType = (flags & 0x2) !== 0;
   const netNameOffset = block.readUInt32LE(8);
   const deviceNameOffset = validDevice ? block.readUInt32LE(12) : 0;
-  const unicode = netNameOffset > 0x14 && size >= 0x1c;
+  const declaresUnicode = netNameOffset > 0x14;
+  if (declaresUnicode && size < 0x1c)
+    note(
+      walk,
+      "truncated",
+      base + offset + 20,
+      "CommonNetworkRelativeLink ends before its declared Unicode offsets",
+    );
+  const unicode = declaresUnicode && size >= 0x1c;
   const netNameOffsetUnicode = unicode ? block.readUInt32LE(20) : 0;
   const deviceNameOffsetUnicode =
     unicode && validDevice ? block.readUInt32LE(24) : 0;

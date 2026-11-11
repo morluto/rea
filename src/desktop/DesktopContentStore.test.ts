@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { DesktopContentStore } from "./DesktopContentStore.js";
 import { walkHomeState } from "./HomeStateWalker.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
@@ -32,6 +34,63 @@ const store = async (root: string, maxFileBytes: number, maxBytes: number) => {
   await created.prepare();
   return created;
 };
+
+it("DesktopContentStore leaves an occupied partial filename unowned", async () => {
+  const root = await createTestTempDirectory("desktop-content-occupied-");
+  const content = await store(root, 1024, 1024);
+  const bytes = Buffer.from("new content");
+  const partial = join(content.directory, `${sha256("new content")}.partial`);
+  await writeFile(partial, "foreign content");
+  await expect(content.retainBytes(bytes)).rejects.toMatchObject({
+    code: "EEXIST",
+  });
+  await expect(content.discard()).rejects.toThrow();
+  expect(await readFile(partial, "utf8")).toBe("foreign content");
+});
+
+it("DesktopContentStore retains every unpublished file until discard", async () => {
+  const root = await createTestTempDirectory("desktop-content-unpublished-");
+  const content = await store(root, 1024, 1024);
+  const digests = [sha256("first"), sha256("second")];
+  for (const [index, text] of ["first", "second"].entries()) {
+    await mkdir(join(content.directory, digests[index]!));
+    await expect(content.retainBytes(Buffer.from(text))).rejects.toThrow();
+  }
+  await expect(content.discard()).rejects.toThrow();
+  expect((await readdir(content.directory)).sort()).toEqual(digests.sort());
+});
+
+it("DesktopContentStore retains a failed output close until cleanup retry", async () => {
+  const root = await createTestTempDirectory("desktop-content-close-");
+  const content = await store(root, 1024, 1024);
+  const closeFailure = new Error("output descriptor close failed");
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValue(closeFailure);
+  try {
+    const failure = await content
+      .retainBytes(Buffer.from("pending"))
+      .catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
+    if (!(failure instanceof RegularFileCleanupFailure))
+      throw new Error("Expected retained output close failure");
+    await expect(content.close()).rejects.toMatchObject({
+      cleanup: {
+        resources: [join(content.directory, `${sha256("pending")}.partial`)],
+      },
+    });
+    close.mockRestore();
+    await content.close();
+    await expect(failure.owner.handle.stat()).rejects.toMatchObject({
+      code: "EBADF",
+    });
+    await content.discard();
+    expect(await readdir(join(root, "capture"))).toEqual([]);
+  } finally {
+    close.mockRestore();
+    await content.close();
+  }
+});
 
 describe("DesktopContentStore", () => {
   it("stores each distinct content once and charges the budget once", async () => {

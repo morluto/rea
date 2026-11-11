@@ -1,13 +1,16 @@
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../artifacts/ArtifactResourceScope.js";
 
 /** Retain a cancelled response branch until its underlying cancellation settles. */
-export class StateResponseCleanup {
+export class ResponseBodyCleanup {
   readonly #scope = new ArtifactResourceScope();
 
-  constructor(private readonly changed: () => void = () => {}) {}
+  constructor(
+    private readonly resource: string,
+    private readonly changed: () => void = () => {},
+  ) {}
 
   get cleanupResources(): readonly string[] {
     return this.#scope.cleanupResources;
@@ -20,11 +23,11 @@ export class StateResponseCleanup {
       | { status: "failed"; cause: unknown } = { status: "pending" };
     const owner: ArtifactResourceOwner = {
       kind: "lease",
-      resource: "state response body",
+      resource: this.resource,
       lease: {
         release: async () => {
           if (state.status === "pending")
-            throw new Error("State response cancellation is still pending");
+            throw new Error(`${this.resource} cancellation is still pending`);
           if (state.status === "failed") throw state.cause;
         },
       },

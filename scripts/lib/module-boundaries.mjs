@@ -40,8 +40,11 @@ const readPackageImports = (root) => {
         readFileSync(resolve(root, "package.json"), "utf8"),
       );
       packageImports.set(root, manifest.imports ?? {});
-    } catch {
-      packageImports.set(root, {});
+    } catch (cause) {
+      throw new Error(
+        `Cannot read package imports from ${resolve(root, "package.json")}: ${cause.message}`,
+        { cause },
+      );
     }
   }
   return packageImports.get(root);
@@ -57,12 +60,19 @@ const readPackageImports = (root) => {
  */
 const packageMapTarget = (root, specifier) => {
   const target = readPackageImports(root)[specifier];
-  if (typeof target !== "string") return undefined;
+  if (typeof target !== "string")
+    throw new Error(
+      `Cannot resolve package import ${JSON.stringify(specifier)}: this boundary check supports exact string mappings only; use a relative source import for conditional, array, pattern, or undeclared mappings.`,
+    );
   const source = target
     .replace(/^\.\//u, "")
     .replace(/^dist\//u, "src/")
     .replace(/\.(?:js|mjs|cjs)$/u, ".ts");
-  return source.startsWith("src/") ? resolve(root, source) : undefined;
+  if (!target.startsWith("./") || !source.startsWith("src/"))
+    throw new Error(
+      `Cannot resolve package import ${JSON.stringify(specifier)} to a source owner from ${JSON.stringify(target)}; use a relative source import for this boundary check.`,
+    );
+  return resolve(root, source);
 };
 
 const sourceTarget = (root, file, specifier) => {

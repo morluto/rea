@@ -111,7 +111,7 @@ export const runtimeEvidence = (
   extractor: extractor("observe-passive-cdp"),
   coverage: completeCoverage,
   limitations: ["Only passive CDP metadata was observed."],
-  evidence_ids: [],
+  evidence_ids: [`ev_${"c".repeat(64)}`],
 });
 
 type FixtureNode = ReturnType<typeof createJavaScriptApplicationNode>;
@@ -255,7 +255,11 @@ const buildNativeRuntimeNodes = (): FixtureNode[] => [
       key: "openProject",
     },
     "openProject",
-    { calling_convention: "napi" },
+    {
+      calling_convention: "napi",
+      specifier: "native/synthetic.node",
+      members: ["openProject"],
+    },
     artifactEvidence(
       APPLICATION_GRAPH_DIGESTS.nativeAddon,
       "native/synthetic.node",
@@ -267,6 +271,7 @@ const buildNativeRuntimeNodes = (): FixtureNode[] => [
     {
       strategy: "runtime-instance",
       stability: "capture-only",
+      capture_evidence_id: `ev_${"c".repeat(64)}`,
       capture_sha256: APPLICATION_GRAPH_DIGESTS.capture,
       runtime_key: "script-preload",
     },

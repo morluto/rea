@@ -531,7 +531,10 @@ id the application assigns:
   start origin as the browser spells it, so a path may name `My List` or
   `My%20List` (`{*}` matches one segment, and the query is ignored), and fails
   the step unless a 2xx JSON response arrives before its `timeout_ms`; one still
-  being read when the step times out or is cancelled saves nothing. A pointer
+  being read when the step times out or is cancelled saves nothing. Saved values
+  are committed only while the step remains active, after response reading and
+  any request-route cleanup succeed. Cancellation after that commit retains
+  them; a physical request or cleanup failure keeps its original reason. A pointer
   that names no string or number fails the step, so later steps never send a
   missing value, as does a response over 4,000,000 characters: a request step
   stops reading and aborts its fetch there. A UI step reads a body only when
@@ -592,15 +595,17 @@ id the application assigns:
   partial failures without retaining an image to scrub later. Other requested
   artifacts remain available; affected screenshot/aggregate completeness is
   partial and is not eligible for equality.
-- Saved URLs and expanded request JSON are admitted before building their expanded strings or
-  serializing. Its allowance is the smaller of Node's string limit and
-  one sixteenth of current V8 available heap bytes, allowing for the expanded
-  tree, serialization, Playwright transport and browser-side copies. Size
+- Saved URLs, structured queries, and expanded request JSON are admitted before
+  building their expanded strings or serializing. Their allowance is the smaller
+  of Node's string limit and one sixteenth of current V8 available heap bytes,
+  allowing for the expanded tree, serialization, Playwright transport and
+  browser-side copies. Size
   accounting includes JSON escaping and repeated references; each distinct
   saved value's size is measured once per request. An oversized request fails
   before browser dispatch; the complete request envelope, including repeated
-  header values, is checked as well. URL encoding uses a conservative
-  nine-characters-per-UTF-16-unit allowance before encoding a saved value.
+  header values, is checked as well. URI-component and form-query sizes are
+  counted with their respective escaping rules before encoding; repeated equal
+  components reuse their measured size.
   Reduce the payload/repetitions, or raise the parent
   Node heap and restart; this is a conservative allocation estimate, not a
   measurement or guarantee of browser/process-family memory.

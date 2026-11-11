@@ -9,6 +9,11 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { RetainedContent } from "./DesktopRetainedContent.js";
 import {
   VARICAD_FILE,
   VARICAD_URL,
@@ -2215,6 +2220,114 @@ describe("exportDesktopApplication launch document beside its lock", () => {
     );
     expect(launchLimitations(result.limitations)).toEqual([]);
   });
+});
+
+describe("exportDesktopApplication retained input finalization", () => {
+  it("honors cancellation during retained input finalization before publication", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel during seed finalization");
+    let writing = false;
+    let finalized = false;
+    const write = unspied("write");
+    vi.spyOn(SafeOutputTree.prototype, "write").mockImplementation(
+      async function (this: SafeOutputTree, ...args) {
+        const written = await write.apply(this, args);
+        writing = true;
+        return written;
+      },
+    );
+    const release = RetainedContent.prototype.release;
+    vi.spyOn(RetainedContent.prototype, "release").mockImplementation(
+      async function (this: RetainedContent, resources) {
+        const result = await release.call(this, resources);
+        if (writing) {
+          finalized = true;
+          controller.abort(reason);
+        }
+        return result;
+      },
+    );
+    const { result, directory } = await exportCapture(
+      capture(),
+      controller.signal,
+    );
+    expect(finalized).toBe(true);
+    expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect((result as Error).cause).toBe(reason);
+    expect(await exists(directory)).toBe(false);
+  });
+
+  it.each([false, true])(
+    "finalizes retained seed inputs before publication and retains cleanup retry (rollback fails: %s)",
+    async (rollbackFails) => {
+      let writing = false;
+      let reading = false;
+      const blocked = new Set<OwnedFileHandle>();
+      const leases: AnalysisCleanupLease[] = [];
+      if (rollbackFails)
+        vi.spyOn(
+          SafeOutputTree.prototype,
+          "closeHandles",
+        ).mockRejectedValueOnce(new Error("output close failed"));
+      const write = unspied("write");
+      vi.spyOn(SafeOutputTree.prototype, "write").mockImplementation(
+        async function (this: SafeOutputTree, ...args) {
+          const written = await write.apply(this, args);
+          writing = true;
+          return written;
+        },
+      );
+      const read = RetainedContent.prototype.read;
+      vi.spyOn(RetainedContent.prototype, "read").mockImplementation(
+        async function (this: RetainedContent, ...args) {
+          reading = writing;
+          try {
+            return await read.apply(this, args);
+          } finally {
+            reading = false;
+          }
+        },
+      );
+      const close = OwnedFileHandle.prototype.close;
+      const closing = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockImplementation(function (this: OwnedFileHandle) {
+          if (reading && blocked.size === 0) blocked.add(this);
+          return blocked.has(this)
+            ? Promise.reject(new Error("retained seed close failed"))
+            : close.call(this);
+        });
+      const release = ArtifactResourceScope.prototype.release;
+      vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+        async function (this: ArtifactResourceScope, owner) {
+          const result = await release.call(this, owner);
+          if (result.kind === "failed") leases.push(result.lease);
+          return result;
+        },
+      );
+      try {
+        const { result, directory } = await exportCapture(capture());
+        expect(blocked.size).toBe(1);
+        expect(result).toBeInstanceOf(AnalysisError);
+        if (!(result instanceof AnalysisError))
+          throw new Error("expected cleanup failure");
+        expect(result.cleanupIncomplete).toBe(true);
+        expect(result.cleanupResources).toHaveLength(rollbackFails ? 2 : 1);
+        if (rollbackFails) expect(result.cleanupResources).toContain(directory);
+        expect(await exists(directory)).toBe(rollbackFails);
+        expect(leases).toHaveLength(rollbackFails ? 2 : 1);
+        closing.mockRestore();
+        await leases[0]!.release();
+        expect(result.cleanupIncomplete).toBe(rollbackFails);
+        for (const lease of leases.slice(1)) await lease.release();
+        expect(result.cleanupIncomplete).toBe(false);
+        expect(await exists(directory)).toBe(false);
+      } finally {
+        closing.mockRestore();
+        for (const lease of leases) await lease.release();
+      }
+    },
+  );
 });
 
 describe("exportDesktopApplication bundle writes", () => {

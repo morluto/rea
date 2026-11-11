@@ -1429,3 +1429,57 @@ it.each([false, true])(
     expect(screenshot).not.toHaveBeenCalled();
   },
 );
+
+it.each(["clean", "pending", "queued"] as const)(
+  "refuses scenario admission during %s shutdown without claiming cleanup failed",
+  async (stage) => {
+    let opened = 0;
+    let finish: () => void = () => {};
+    let started: () => void = () => {};
+    const release = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const closingStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const session = new FakeSession("launch");
+    session.close = async () => {
+      started();
+      await release;
+      return "terminated-owned-process";
+    };
+    const provider = new PlaywrightBrowserScenarioProvider(async () => {
+      opened += 1;
+      return session;
+    });
+    let running: ReturnType<typeof provider.captureScenario> | undefined;
+    let closing: Promise<void> | undefined;
+    try {
+      if (stage !== "clean") {
+        running = provider.captureScenario(scenario());
+        await closingStarted;
+      }
+      const queued =
+        stage === "queued" ? provider.captureScenario(scenario()) : undefined;
+      closing = provider.close();
+      if (stage === "clean") await closing;
+      const refusal = queued ?? provider.captureScenario(scenario());
+      if (stage === "queued") finish();
+      const result = await refusal;
+      expect(result.ok).toBe(false);
+      if (result.ok)
+        throw new Error("Expected closed provider admission refusal");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+        details: { operation: "capture_browser_scenario" },
+      });
+      expect(opened).toBe(stage === "clean" ? 0 : 1);
+    } finally {
+      finish();
+      await running;
+      await closing;
+      await provider.close();
+    }
+  },
+);

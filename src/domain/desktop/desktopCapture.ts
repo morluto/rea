@@ -11,7 +11,7 @@ export const desktopFileFactsSchema = z.strictObject({
   type: z.enum(["file", "directory", "symlink", "other"]),
   size: z.int().min(0),
   mode: z.int().min(0),
-  mtime_ns: z.string().regex(/^\d+$/u),
+  mtime_ns: z.string().regex(/^-?\d+$/u),
   sha256: sha256.nullable(),
 });
 export type DesktopFileFacts = z.infer<typeof desktopFileFactsSchema>;
@@ -271,7 +271,10 @@ export const desktopApplicationInventorySchema = z.strictObject({
   state_directories: z.array(
     z.strictObject({
       path: z.string().min(1),
-      exists_at_start: z.boolean(),
+      /** Null when the filesystem probe could not establish presence or absence. */
+      exists_at_start: z.boolean().nullable(),
+      /** The failed existence probe's reason; absent for confirmed presence or absence. */
+      existence_error: z.string().optional(),
     }),
   ),
 });
