@@ -8,7 +8,7 @@ import type {
 export const MFT_FILE_RECORD_MAGIC = "FILE";
 export const MFT_FILE_RECORD_MAGIC_BYTES = 4;
 /** The shortest header worth reading: a FILE record header ends at `nextAttributeId`. */
-export const NTFS_MFT_MIN_RECORD_BYTES = 48;
+const NTFS_MFT_MIN_RECORD_BYTES = 42;
 
 /**
  * The `FILE` signature at file offset 0. An MFT stream is a run of fixed-size
@@ -50,7 +50,7 @@ const RECORD_HEADER = {
   nextAttributeId: 40,
   recordNumber: 44,
 } as const;
-const RECORD_HEADER_BYTES = NTFS_MFT_MIN_RECORD_BYTES;
+const RECORD_HEADER_WITH_NUMBER_BYTES = 48;
 
 const FILE_RECORD_IN_USE = 0x0001;
 const FILE_RECORD_IS_DIRECTORY = 0x0002;
@@ -282,6 +282,9 @@ const readRecord = (
     true,
   );
 
+  const usaOffset = view.getUint16(RECORD_HEADER.updateSequenceOffset, true);
+  const fixups = verifyFixups(record, view, usaOffset);
+
   return {
     index,
     fileOffset,
@@ -297,7 +300,7 @@ const readRecord = (
         ? null
         : decodeMftFileReference(baseRecordReference),
     declaredRecordNumber:
-      recordBytes >= RECORD_HEADER.recordNumber + 4
+      !fixups.malformed && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
         ? view.getUint32(RECORD_HEADER.recordNumber, true)
         : null,
     logFileSequenceNumber: Number(
@@ -308,7 +311,7 @@ const readRecord = (
       true,
     ),
     nextAttributeId: view.getUint16(RECORD_HEADER.nextAttributeId, true),
-    fixups: verifyFixups(record, view),
+    fixups,
   };
 };
 
@@ -318,8 +321,11 @@ const readRecord = (
  * trailer words. A sector whose trailer is not the sequence number was not
  * cleanly written, so the record's attributes cannot be trusted.
  */
-const verifyFixups = (record: Uint8Array, view: DataView): MftRecordFixups => {
-  const usaOffset = view.getUint16(RECORD_HEADER.updateSequenceOffset, true);
+const verifyFixups = (
+  record: Uint8Array,
+  view: DataView,
+  usaOffset: number,
+): MftRecordFixups => {
   const usaCount = view.getUint16(RECORD_HEADER.updateSequenceCount, true);
   const sectors = Math.floor(record.length / FIXUP_SECTOR_BYTES);
   // Entry 0 holds the sequence number, so sector n's saved trailer is entry n+1.
@@ -328,7 +334,7 @@ const verifyFixups = (record: Uint8Array, view: DataView): MftRecordFixups => {
   if (
     usaCount < USA_MIN_ENTRIES ||
     coveredSectors > sectors ||
-    usaOffset < RECORD_HEADER_BYTES ||
+    usaOffset < NTFS_MFT_MIN_RECORD_BYTES ||
     usaOffset % 2 !== 0 ||
     usaOffset + usaCount * 2 > FIXUP_SECTOR_BYTES - 2
   )

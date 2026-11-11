@@ -17,6 +17,7 @@ interface RecordOptions {
   readonly corruptSector?: number;
   /** Truncate the update sequence array to this many entries; 0 omits it. */
   readonly usaEntries?: number;
+  readonly usaOffset?: number;
 }
 
 /** One FILE record with a zeroed body and fixups applied the way NTFS writes them. */
@@ -30,7 +31,7 @@ const recordOf = (options: RecordOptions = {}): Uint8Array => {
 
   const usaEntries = options.usaEntries ?? sectors + 1;
   if (usaEntries > 0) {
-    const usaOffset = 48;
+    const usaOffset = options.usaOffset ?? 48;
     view.setUint16(4, usaOffset, true);
     view.setUint16(6, usaEntries, true);
     view.setUint16(usaOffset, sequenceNumber, true);
@@ -107,6 +108,26 @@ describe("parseMftImage", () => {
         malformed: false,
       },
     });
+    expect(parsed.value.limitations).toEqual([]);
+  });
+
+  it("verifies the older FILE header without reading its fixup words as a record number", () => {
+    const oldRecord = recordOf({ usaOffset: 42 });
+    const newRecord = recordOf();
+    new DataView(newRecord.buffer).setUint32(44, 1, true);
+
+    const parsed = parseMftImage(streamOf(oldRecord, newRecord));
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.records).toMatchObject([
+      {
+        declaredRecordNumber: null,
+        fixups: { malformed: false, verifiedSectors: 2 },
+      },
+      {
+        declaredRecordNumber: 1,
+        fixups: { malformed: false, verifiedSectors: 2 },
+      },
+    ]);
     expect(parsed.value.limitations).toEqual([]);
   });
 
@@ -278,7 +299,7 @@ describe("parseMftImage refusals and limits", () => {
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.error.message).toMatch(
-      /shorter than one 48-byte record header/u,
+      /shorter than one 42-byte record header/u,
     );
   });
 
