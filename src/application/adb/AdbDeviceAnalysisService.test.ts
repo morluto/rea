@@ -50,6 +50,41 @@ it.each([
   });
 });
 
+it.each([
+  [{ component: "example.app" }, ["component"]],
+  [{ component: "example.app/" }, ["component"]],
+  [
+    { extras: [{ key: "count", type: "int", value: "2147483648" }] },
+    ["extras", 0, "value"],
+  ],
+  [
+    { extras: [{ key: "count", type: "int", value: "-2147483649" }] },
+    ["extras", 0, "value"],
+  ],
+  [
+    { extras: [{ key: "count", type: "long", value: "9223372036854775808" }] },
+    ["extras", 0, "value"],
+  ],
+  [
+    { extras: [{ key: "count", type: "long", value: "-9223372036854775809" }] },
+    ["extras", 0, "value"],
+  ],
+] as const)(
+  "rejects an unrepresentable activity argument before any effect: %j",
+  async (input, path) => {
+    const service = new AdbDeviceAnalysisService(refusedPort);
+    const result = await service.execute("start_adb_activity", {
+      serial: "fixture",
+      action: "example.TEST",
+      ...input,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError", issues: [{ path }] },
+    });
+  },
+);
+
 it("rejects an unknown operation before any effect", async () => {
   const service = new AdbDeviceAnalysisService(refusedPort);
   const result = await service.execute("unknown_adb_operation" as never, {});

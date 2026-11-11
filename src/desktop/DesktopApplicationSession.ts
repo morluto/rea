@@ -364,10 +364,13 @@ export const runDesktopSession = async (
         "stop",
       );
     cleanup = await releaseOnce();
+    signal.throwIfAborted();
     await checkpointNow(plan, observations, "exit", "exit");
+    signal.throwIfAborted();
   } catch (cause: unknown) {
+    const cancelled = signal.aborted;
     cleanup = await releaseOnce();
-    if (!signal.aborted) {
+    if (!cancelled) {
       const left = unreleased(spawned, supervisor, cleanup);
       if (left === undefined) throw cause;
       throw new DesktopSessionCleanupError(cause, left);

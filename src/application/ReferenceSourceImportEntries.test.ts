@@ -640,3 +640,27 @@ it("prefers a later exact filename over an earlier unique canonical candidate", 
     expect.objectContaining({ to: `${composed}.js`, resolution: "internal" }),
   ]);
 });
+
+it("retains a missing target's directory requirement when rebasing from the inventory root", () => {
+  const read: ReferenceSourceRead = {
+    root: "/selected",
+    entries: [
+      {
+        status: "read",
+        kind: "symlink",
+        path: "nested/link",
+        target: "sub/missing/",
+        targetState: "missing",
+      },
+    ],
+    bytesRead: 0,
+    limitations: [],
+  };
+  expect(parseReferenceSourceEntries(read, []).entries).toContainEqual(
+    expect.objectContaining({
+      path: "nested/link",
+      target: "../sub/missing/",
+      target_state: "missing",
+    }),
+  );
+});

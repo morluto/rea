@@ -3606,6 +3606,101 @@ process.stdin.on('data', (chunk) => {
   }
 });
 
+it.each([false, true])(
+  "retains completed MI observations before a later framing failure (coalesced=%s)",
+  async (coalesced) => {
+    const prefix = '~"completed observation"\n';
+    const oversized = "x".repeat(16 * 1024 * 1024 + 1) + "\n";
+    const fake = createFakeSpawner((child, token, command) => {
+      if (command === "-gdb-set auto-load off") {
+        child.stdout.write(`${token}^done\n`);
+        return;
+      }
+      if (coalesced) child.stdout.write(prefix + oversized);
+      else {
+        child.stdout.write(prefix);
+        child.stdout.write(oversized);
+      }
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      stopProcess: async () => {
+        for (const child of fake.children) child.exit(0, null);
+        return { status: "stopped" };
+      },
+    });
+    const started = await expectGdbSessionStarted(manager);
+    const failed = await manager.execute(
+      started.value.session_id,
+      "fixture-only",
+    );
+    expect(failed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        partialObservation: {
+          normalized_result: {
+            records: ['~"completed observation"'],
+            console: '~"completed observation"',
+            completion_status: "unknown",
+          },
+        },
+      },
+    });
+  },
+);
+
+it.each(["literal", "octal", "invalid-result", "invalid-stream"] as const)(
+  "requires valid UTF-8 for TTY facts while retaining opaque stream data (%s)",
+  async (encoding) => {
+    const tty = "/fixture/terminal-\uFFFD";
+    const fake = createFakeSpawner((child, token, command) => {
+      if (command === "-inferior-tty-show") {
+        if (encoding === "invalid-stream")
+          child.stdout.write(Buffer.from([0x7e, 0x22, 0xff, 0x22, 0x0a]));
+        const suffix =
+          encoding === "invalid-result"
+            ? Buffer.from([0xff])
+            : encoding === "octal"
+              ? Buffer.from(String.raw`\357\277\275`)
+              : Buffer.from("\uFFFD");
+        child.stdout.write(
+          Buffer.concat([
+            Buffer.from(
+              `${token}^done,inferior_tty_terminal="/fixture/terminal-`,
+            ),
+            suffix,
+            Buffer.from('"\n'),
+          ]),
+        );
+        return;
+      }
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      stopProcess: async () => {
+        for (const child of fake.children) child.exit(0, null);
+        return { status: "stopped" };
+      },
+    });
+    const started = await manager.start(undefined, { inferiorTty: tty });
+    expect(started.ok).toBe(encoding !== "invalid-result");
+    if (started.ok)
+      expect(manager.status(started.value.session_id)).toMatchObject({
+        inferior_tty: tty,
+        inferior_tty_verified: true,
+        mi_invalid_utf8: encoding === "invalid-stream",
+      });
+    else
+      expect(started.error.partialObservation).toMatchObject({
+        normalized_result: { output_invalid_utf8: true },
+      });
+  },
+);
+
 it("closes the GDB session when a complete MI record exceeds the protocol limit", async () => {
   const manager = await managerFor(`
 process.stdout.write('(gdb)\\n');

@@ -646,3 +646,69 @@ it("reports missing ldd as unresolved launcher inspection while retaining actual
     await host.close?.();
   }
 });
+
+it.each(["physical", "abort-name", "caller", "node-wrapper"] as const)(
+  "attributes a rejected archive write through cleanup (%s)",
+  async (kind) => {
+    const host = new RecordingLinuxHost();
+    const controller = new AbortController();
+    const reason = { caller: "stop during archive write" };
+    const physical = Object.assign(new Error("archive write denied"), {
+      code: "EACCES",
+      name: kind === "abort-name" ? "AbortError" : "Error",
+    });
+    const wrapped = Object.assign(
+      new Error("operation aborted", { cause: reason }),
+      {
+        name: "AbortError",
+        code: "ABORT_ERR",
+      },
+    );
+    host.writeArchive = async () => {
+      controller.abort(reason);
+      throw kind === "caller"
+        ? reason
+        : kind === "node-wrapper"
+          ? wrapped
+          : physical;
+    };
+    host.cleanupFails = true;
+    const result = await installLinuxHopper(host, {
+      signal: controller.signal,
+    });
+    const cancelled = kind === "caller" || kind === "node-wrapper";
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: cancelled ? "cancelled" : "archive_write",
+      cleanupFailure: {
+        path: "/tmp/rea test",
+        reason: "temporary path is busy",
+      },
+    });
+    if (result.status !== "failed") throw new Error("Expected failed write");
+    if (cancelled) expect(result.cancellationReason).toBe(reason);
+    else
+      expect(result.operationFailure).toMatchObject({
+        operation: "archive_write",
+        systemCode: "EACCES",
+        detail: physical.message,
+      });
+    expect(host.installed).toEqual([]);
+    expect(host.cleaned).toEqual(["/tmp/rea test"]);
+  },
+);
+
+it("preserves the package producer's cancellation when a later caller reason differs", async () => {
+  const host = new RecordingLinuxHost();
+  const controller = new AbortController();
+  const producerReason = { producer: "package operation cancelled" };
+  host.installPackage = async () => {
+    controller.abort({ caller: "later stop" });
+    return { status: "cancelled", cause: producerReason };
+  };
+  const result = await installLinuxHopper(host, { signal: controller.signal });
+  expect(result).toMatchObject({ status: "failed", reason: "cancelled" });
+  if (result.status !== "failed") throw new Error("Expected cancellation");
+  expect(result.cancellationReason).toBe(producerReason);
+  expect(host.cleaned).toEqual(["/tmp/rea test"]);
+});

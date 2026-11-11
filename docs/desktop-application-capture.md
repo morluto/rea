@@ -185,8 +185,9 @@ package that installed it. A Debian package records its name, version,
 architecture and the apt sources that list the installed version, with the
 origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
 for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
-source list means the version came from a local `.deb` or the package lists
-are missing, which `package_lists_present` tells apart. apt's lists folder,
+source list means apt reports no source for the installed version.
+`package_lists_present` reports whether the lists are present. It is `null`
+when REA cannot read the lists directory. apt's lists folder,
 and the trusted keys below, are where `apt-config` resolves
 `Dir::State::Lists`, `Dir::Etc::TrustedParts` and `Dir::Etc::Trusted` under
 `Dir`, so an `APT_CONFIG` file that moves them is followed: on a computer
@@ -214,9 +215,9 @@ does not bring it. A program link that dpkg does not own counts as owned when
 dpkg owns the file it resolves to, as an alternatives link does. An
 `--executable` launch, or an entry no package owns, such as
 one in `~/.local/share/applications`, records the executable's package. When
-`dpkg-query` does not finish or exits with an error for the executable or the
-entry, the package is `unknown` and the limitations say which path, since a
-failed lookup is not proof that no package owns it. The sources, vendor
+`dpkg-query` fails for the executable or entry, or the selected path contains
+characters `dpkg-query -S` would interpret as a pattern, package ownership is
+`unknown` and the limitations name the path. The sources, vendor
 repositories and `--package-file` match below are the recorded package's; the
 library walk still reads the executable.
 
@@ -243,7 +244,9 @@ writes it on Ubuntu 24.04, has that key as its only candidate, as apt trusts
 no other for it: REA reads the field's continuation lines as deb822 writes
 them, a `.` line standing for an empty one, from the key block's `BEGIN` line
 to its last `END` line, and records the key's path as the entry's sources
-file. A key counts when gpgv reports a valid signature by it and no bad,
+file. A fingerprint restriction in `Signed-By` leaves `signing_key` null.
+The reason names the restriction that REA could not verify. A key counts
+when gpgv reports a valid signature by it and no bad,
 expired, revoked or unverifiable signature by it, whatever gpgv's exit status:
 a release also signed by a key the host lacks makes gpgv fail. Each candidate
 is copied, an armored key decoded to a binary keyring, into a private
@@ -272,8 +275,16 @@ looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
 has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
 normalized), and then in the `ldconfig -p` cache entries for the executable's
-machine. It asks `dpkg-query -S` for each library's package. Libraries in the
-executable's own folder belong to the application: they are walked but not
+machine. Each candidate's ELF machine, class and byte order must match the
+needing image before it is selected or its dependencies are walked. A foreign
+search-path candidate is skipped in favor of later directories or the cache; a
+cache architecture flag alone does not establish compatibility. If a candidate's
+identity cannot be read, that lookup stays unresolved, without selecting its
+package or guessing that a later candidate would load. A compatible identity
+remains available if a later header or dependency-table check fails; its package
+is retained with an incompleteness reason. REA asks `dpkg-query -S` for each
+selected library's package. Libraries in the executable's own folder belong to
+the application: they are walked but not
 listed, and neither is the application's own package. One batched
 `apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
 recorded vendor repository with a verified key offers, in any component its

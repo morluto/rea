@@ -34,7 +34,10 @@ import {
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/analysisErrorCore.js";
 import {
   BrowserObservationError,
   browserCleanupObservation,
@@ -496,10 +499,11 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
   }
 
   #closedError(): AnalysisError {
-    return new BrowserObservationError(OPERATION, "cleanup_failed", {
-      detail: "Browser scenario provider is closing.",
-      cleanup: { reason: "Provider is closing", resources: [] },
-    });
+    return new AnalysisCapabilityUnavailableError(
+      PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+      OPERATION,
+      "Browser scenario provider is closing.",
+    );
   }
 
   #bindCleanup(

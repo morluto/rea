@@ -1,4 +1,5 @@
 import WebSocket, { type RawData } from "ws";
+import { isUtf8 } from "node:buffer";
 
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -295,7 +296,14 @@ class CdpTransportCore {
 
   #receive(data: RawData): void {
     if (this.#closed || this.#protocolFailed) return;
-    const parsed = safeParseJson(rawText(data));
+    const bytes = rawBytes(data);
+    // Binary WebSocket messages bypass ws's text-frame UTF-8 validation.
+    // Never replacement-decode protocol facts into a different accepted value.
+    if (!isUtf8(bytes)) {
+      this.#failPending("protocol_error");
+      return;
+    }
+    const parsed = safeParseJson(bytes.toString("utf8"));
     if (!parsed.ok) {
       this.#failPending("protocol_error");
       return;
@@ -326,7 +334,7 @@ class CdpTransportCore {
       this.#failPending("protocol_error");
       return;
     }
-    const wireBytes = rawByteLength(data);
+    const wireBytes = bytes.byteLength;
     const event: CdpTransportEvent = {
       method: message.method,
       params: "params" in message ? message.params : {},
@@ -593,17 +601,12 @@ export class CdpConnection {
 const socketIsClosed = (socket: WebSocket): boolean =>
   socket.readyState === WebSocket.CLOSED;
 
-const rawText = (data: RawData): string =>
+const rawBytes = (data: RawData): Buffer =>
   Array.isArray(data)
-    ? Buffer.concat(data).toString("utf8")
+    ? Buffer.concat(data)
     : Buffer.isBuffer(data)
-      ? data.toString("utf8")
-      : Buffer.from(data).toString("utf8");
-
-const rawByteLength = (data: RawData): number =>
-  Array.isArray(data)
-    ? data.reduce((bytes, chunk) => bytes + chunk.byteLength, 0)
-    : data.byteLength;
+      ? data
+      : Buffer.from(data);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

@@ -898,14 +898,14 @@ export const createGhidraProviderClient = (input: {
           lostProviderHealth(),
         ),
       );
-    const parsed = parseGhidraInventoryResult(operation, called.value);
+    const parsed = parseGhidraInventoryResult(operation, called.value, null);
     if (!parsed.ok) return parsed;
     const { value, ...observation } = parsed.value;
     return ok(projectExecution(operation, value, observation));
   };
   const loadImageExecution = async (raw: JsonValue, signal?: AbortSignal) => {
     const operation = "inspect_native_load_image";
-    const measured = parseGhidraInventoryResult(operation, raw);
+    const measured = parseGhidraInventoryResult(operation, raw, null);
     if (!measured.ok) return measured;
     const { value: observed, ...observation } = measured.value;
     let derived: NativeAotPeResult | undefined;
@@ -982,9 +982,12 @@ export const createGhidraProviderClient = (input: {
           }),
         );
       }
-      const input = isGhidraFunctionOperation(operation)
-        ? parseGhidraFunctionInput(operation, parameters)
-        : parseGhidraInventoryInput(operation, parameters);
+      let input: ReturnType<typeof parseGhidraInventoryInput>;
+      if (isGhidraFunctionOperation(operation)) {
+        const parsed = parseGhidraFunctionInput(operation, parameters);
+        if (!parsed.ok) return parsed;
+        input = { ...parsed, namingRequest: null };
+      } else input = parseGhidraInventoryInput(operation, parameters);
       if (!input.ok) return input;
       // A report binds before any query runs. The client shares one startup
       // attempt, so `callTool` reuses this launch; a restart is checked again.
@@ -1026,7 +1029,11 @@ export const createGhidraProviderClient = (input: {
         return loadImageExecution(called.value, options?.signal);
       const result = isGhidraFunctionOperation(operation)
         ? parseGhidraFunctionResult(operation, called.value)
-        : parseGhidraInventoryResult(operation, called.value);
+        : parseGhidraInventoryResult(
+            operation,
+            called.value,
+            input.namingRequest,
+          );
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;

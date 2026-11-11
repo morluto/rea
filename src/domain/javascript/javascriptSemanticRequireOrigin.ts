@@ -30,6 +30,8 @@ import {
 import {
   semanticStaticPropertyKey,
   semanticMemberChain,
+  semanticWriteSiteTarget,
+  semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
@@ -71,30 +73,33 @@ export type {
 const possibleCommonJsDelegateWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
 
+/** Admission and indexing share the same direct, projected and iteration leaves. */
+function* commonJsDelegateWriteTargets(
+  node: t.Node,
+): Generator<t.MemberExpression | t.OptionalMemberExpression> {
+  const write = semanticWriteSiteTarget(node);
+  if (write === null) return;
+  for (const target of semanticWriteTargets(write)) {
+    if (!t.isMemberExpression(target) && !t.isOptionalMemberExpression(target))
+      continue;
+    const key = semanticStaticPropertyKey(target.property, target.computed);
+    if (key === "require" || (key === null && target.computed)) yield target;
+  }
+}
+
 /** Source eligibility only; the shared write owner still proves receiver identity. */
 export const observePossibleCommonJsDelegateWrite = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   if (possibleCommonJsDelegateWriteStates.has(state)) return;
-  const target = t.isAssignmentExpression(node)
-    ? node.left
-    : t.isUpdateExpression(node) ||
-        t.isUnaryExpression(node, { operator: "delete" })
-      ? node.argument
-      : undefined;
   if (
     semanticIterationSources(node, state.parentsByNode.get(node) ?? null).some(
       (source) => source.kind === "reference-store",
     )
   )
     possibleCommonJsDelegateWriteStates.add(state);
-  if (
-    (t.isMemberExpression(target) || t.isOptionalMemberExpression(target)) &&
-    ["require", null].includes(
-      semanticStaticPropertyKey(target.property, target.computed),
-    )
-  )
+  if (!commonJsDelegateWriteTargets(node).next().done)
     possibleCommonJsDelegateWriteStates.add(state);
   else if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
     possibleCommonJsDelegateWriteStates.add(state);
@@ -886,6 +891,9 @@ export const semanticRequireCallAt = (
   }
   const interop = loaderInvocationInterop(state);
   if (!t.isNewExpression(node)) {
+    // Invocation normalization retains the selected path identity. Keep its
+    // filename alongside that path rather than selecting the outer call again.
+    const sourceRelativePaths = new Map<readonly string[], string>();
     const invocation = interop.intrinsicInvocation(node, (callee) => {
       const loader = requireLoaderValueAt(
         callee,
@@ -912,22 +920,21 @@ export const semanticRequireCallAt = (
         state,
         factoryBindingIds,
       );
-      if (selected !== undefined)
-        return [
+      if (selected !== undefined) {
+        const path = [
           "require-loader",
           selected.loader,
           selected.sourceRelative ? "relative" : "unknown",
           ...(selected.loaderAuthority === "candidate" ? ["candidate"] : []),
         ];
+        if (selected.sourceRelativePath !== undefined)
+          sourceRelativePaths.set(path, selected.sourceRelativePath);
+        return path;
+      }
       return interop.intrinsicPath(callee);
     });
     if (invocation?.path[0] === "require-loader") {
-      const selected = selectedRequireSourcesAt(
-        node.callee,
-        node,
-        state,
-        factoryBindingIds,
-      );
+      const sourceRelativePath = sourceRelativePaths.get(invocation.path);
       return {
         operation: "load",
         loader:
@@ -942,9 +949,9 @@ export const semanticRequireCallAt = (
           : {}),
         sourceRelative:
           invocation.kind === "known" && invocation.path[2] === "relative",
-        ...(selected?.sourceRelativePath === undefined
-          ? {}
-          : { sourceRelativePath: selected.sourceRelativePath }),
+        ...(invocation.kind === "known" && sourceRelativePath !== undefined
+          ? { sourceRelativePath }
+          : {}),
       };
     }
   }
@@ -1556,20 +1563,8 @@ const writesModuleRequire = (
   };
   traverseJavaScriptValueAst(state.program, state.erasedSyntaxNodes, {
     enter: (node) => {
-      const target = t.isAssignmentExpression(node)
-        ? node.left
-        : t.isUpdateExpression(node) ||
-            t.isUnaryExpression(node, { operator: "delete" })
-          ? node.argument
-          : undefined;
-      if (
-        t.isMemberExpression(target) ||
-        t.isOptionalMemberExpression(target)
-      ) {
-        const key = semanticStaticPropertyKey(target.property, target.computed);
-        if (key === "require" || (key === null && target.computed))
-          record(node, target.object);
-      }
+      for (const target of commonJsDelegateWriteTargets(node))
+        record(node, target.object);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = interop.intrinsicInvocation(node);
         const owner =
@@ -1583,42 +1578,21 @@ const writesModuleRequire = (
           const key = interop.staticString(args?.[1]);
           if (key === "require" || key === undefined)
             record(node, args?.[0] ?? t.nullLiteral());
+        } else if (owner === "Reflect" && method === "set") {
+          const key = interop.staticString(args?.[1]);
+          if (key === "require" || key === undefined)
+            record(node, args?.[3] ?? args?.[0] ?? t.nullLiteral());
         } else if (owner === "Object" && method === "defineProperties") {
           const descriptors = args?.[1];
-          if (
-            !t.isObjectExpression(descriptors) ||
-            descriptors.properties.some(
-              (property) =>
-                t.isSpreadElement(property) ||
-                (t.isObjectProperty(property) &&
-                  semanticStaticPropertyKey(property.key, property.computed) ===
-                    "require"),
-            )
-          )
+          if (objectMayProvideRequire(descriptors))
             record(node, args?.[0] ?? t.nullLiteral());
         } else if (owner === "Object" && method === "assign") {
           const target = args?.[0];
-          if (target !== undefined) {
-            const sourceHasRequire = args
-              ?.slice(1)
-              .some(
-                (arg) =>
-                  t.isObjectExpression(arg) &&
-                  arg.properties.some(
-                    (property) =>
-                      t.isObjectProperty(property) &&
-                      semanticStaticPropertyKey(
-                        property.key,
-                        property.computed,
-                      ) === "require",
-                  ),
-              );
-            if (
-              sourceHasRequire ||
-              args?.slice(1).some((arg) => !t.isObjectExpression(arg))
-            )
-              record(node, target);
-          }
+          if (
+            target !== undefined &&
+            args?.slice(1).some(objectMayProvideRequire)
+          )
+            record(node, target);
         }
       }
     },
@@ -1626,6 +1600,15 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, writes);
   return writes;
 };
+
+/** Methods, spreads and unknown computed keys can all supply an own delegate. */
+const objectMayProvideRequire = (node: t.Node | undefined): boolean =>
+  !t.isObjectExpression(node) ||
+  node.properties.some((property) => {
+    if (t.isSpreadElement(property)) return true;
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    return key === "require" || key === null;
+  });
 
 /** Whether the original global process object can still own effects at this source site. */
 export const semanticOriginalGlobalProcessAt = (

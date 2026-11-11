@@ -844,14 +844,19 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   project_harmony_application_graph: evidence,
   // Lifecycle transitions can retire an IDA client, including a pending
   // cleanup from an earlier provider, over its configured MCP transport.
+  // Retiring Ghidra can discard ephemeral edits or save a configured checkpoint.
   open_binary: effects({
     mutatesSession: true,
+    writesFilesystem: true,
     launchesProcess: true,
     accessesNetwork: true,
+    mayDiscardData: true,
   }),
   open_bundle_resources: effects({
     mutatesSession: true,
+    writesFilesystem: true,
     accessesNetwork: true,
+    mayDiscardData: true,
   }),
   close_binary: effects({
     mutatesSession: true,
