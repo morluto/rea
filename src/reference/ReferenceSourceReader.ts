@@ -110,6 +110,9 @@ const readSource = async (
       tag: "reference-source-reader",
       code: "io",
       message: state.rootFailure.message,
+      ...(state.rootFailureCause === undefined
+        ? {}
+        : { cause: state.rootFailureCause.value }),
       partial: read,
     });
   return traversal.ok ? ok(read) : err({ ...traversal.error, partial: read });

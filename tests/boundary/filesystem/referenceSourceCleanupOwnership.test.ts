@@ -446,6 +446,7 @@ it.each([
     });
     if (lateCancellation)
       expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    expect(result.error.cause).toBe(readFailure);
     if (
       surface === "import" &&
       result.error.tag === "reference-source-import"

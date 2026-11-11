@@ -119,6 +119,7 @@ export type TraversalState = {
   }>;
   readonly pending: PendingDirectory[];
   rootFailure?: ReferenceSourceRootFailure;
+  rootFailureCause?: { readonly value: unknown };
   bytesRead: number;
 };
 

@@ -84,6 +84,7 @@ export const traverseDirectory = async (
   if (isAborted(state.signal)) return err(cancelled(state.signal));
   const directories: PendingDirectory[] = [];
   let readFailure: FilesystemFailureDetail | undefined;
+  let readFailureCause: { readonly value: unknown } | undefined;
   const recordReadFailure = (
     detail: FilesystemFailureDetail,
   ): FilesystemFailureDetail => {
@@ -107,6 +108,8 @@ export const traverseDirectory = async (
       encoding: "buffer" as BufferEncoding,
     });
   } catch (cause: unknown) {
+    readFailureCause = { value: cause };
+    if (current.path === state.root) state.rootFailureCause = readFailureCause;
     readFailure = recordReadFailure(directoryReadFailure(cause));
   }
   if (handle !== undefined) {
@@ -128,6 +131,9 @@ export const traverseDirectory = async (
         try {
           child = await handle.read();
         } catch (cause: unknown) {
+          readFailureCause = { value: cause };
+          if (current.path === state.root)
+            state.rootFailureCause = readFailureCause;
           readFailure = recordReadFailure(directoryReadFailure(cause));
           break;
         }
@@ -161,7 +167,15 @@ export const traverseDirectory = async (
       const previous = result.ok ? undefined : result.error.cleanup;
       const primary = result.ok
         ? readFailure !== undefined
-          ? failure("io", readFailure.localDiagnostic ?? readFailure.message)
+          ? {
+              ...failure(
+                "io",
+                readFailure.localDiagnostic ?? readFailure.message,
+              ),
+              ...(readFailureCause === undefined
+                ? {}
+                : { cause: readFailureCause.value }),
+            }
           : isAborted(state.signal)
             ? cancelled(state.signal)
             : failure(
@@ -188,7 +202,12 @@ export const traverseDirectory = async (
   if (readFailure !== undefined) {
     scheduleObservedDirectories(state, directories);
     return isAborted(state.signal)
-      ? err(failure("io", readFailure.localDiagnostic ?? readFailure.message))
+      ? err({
+          ...failure("io", readFailure.localDiagnostic ?? readFailure.message),
+          ...(readFailureCause === undefined
+            ? {}
+            : { cause: readFailureCause.value }),
+        })
       : ok(undefined);
   }
   if (isAborted(state.signal)) return err(cancelled(state.signal));
