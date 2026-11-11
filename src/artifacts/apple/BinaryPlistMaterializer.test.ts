@@ -35,6 +35,20 @@ const decode = (bytes: Buffer) =>
     }),
   );
 
+it("sign-extends binary plist integers narrower than eight bytes", () => {
+  // CFBinaryPlist: 0x10/0x11/0x12 payloads are signed. 0x7f stays positive,
+  // and a one-byte UID is an unsigned object index.
+  const bytes = source([
+    Buffer.from([0xa5, 1, 2, 3, 4, 5]),
+    Buffer.from([0x10, 0xff]),
+    Buffer.from([0x11, 0xff, 0x38]),
+    Buffer.from([0x12, 0xff, 0xff, 0xff, 0xfe]),
+    Buffer.from([0x10, 0x7f]),
+    Buffer.from([0x80, 0xff]),
+  ]);
+  expect(decode(bytes)).toEqual([-1, -200, -2, 127, { UID: 255 }]);
+});
+
 it("materializes own dictionary keys and keeps the last duplicate's source UID", () => {
   const bytes = source([
     Buffer.from([0xd3, 1, 2, 1, 3, 4, 5]),

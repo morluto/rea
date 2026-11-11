@@ -57,6 +57,25 @@ const scalarArrayInput = (
   return output;
 };
 
+/**
+ * CFBinaryPlist stores marker 0x10/0x11/0x12 integers as signed big-endian.
+ * plist@5 reads those widths with unsigned getters; 8-byte integers are
+ * already sign-extended by that decoder.
+ */
+const signedBinaryPlistInteger = (
+  bytes: Uint8Array,
+  offset: number,
+): number | undefined => {
+  const marker = bytes[offset];
+  if (marker === undefined || marker >> 4 !== 1 || (marker & 0x0f) > 2)
+    return undefined;
+  const width = 1 << (marker & 0x0f);
+  if (offset + 1 + width > bytes.byteLength) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset + offset + 1, width);
+  if (width === 1) return view.getInt8(0);
+  return width === 2 ? view.getInt16(0) : view.getInt32(0);
+};
+
 /** Preserve each source reference's scalar identity while retaining upstream scalar semantics. */
 const scalarOccurrence = (
   value: unknown,
@@ -84,12 +103,20 @@ export const decodeBinaryPlistValue = (
   if (source === undefined)
     throw new TypeError("Binary plist source plan is missing");
   const compatible = decodeBinaryPlistScalars(bytes, metadata, plan);
+  const layout = readBinaryPlistLayout(bytes);
+  if (!layout.ok) throw new RangeError("binary plist trailer is truncated");
   const scalars = parseBinary(
     scalarArrayInput(
       compatible,
       source.scalars.map(({ object }) => object),
     ),
   ) as unknown[];
+  source.scalars.forEach((scalar, index) => {
+    const offset = layout.value.objectOffset(scalar.object);
+    if (offset > BigInt(Number.MAX_SAFE_INTEGER)) return;
+    const signed = signedBinaryPlistInteger(bytes, Number(offset));
+    if (signed !== undefined) scalars[index] = signed;
+  });
   const scalarIndex = new Map(
     source.scalars.map((scalar, index) => [scalar.object, index]),
   );
