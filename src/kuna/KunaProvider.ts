@@ -18,16 +18,13 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
-  DEFAULT_REGEX_MATCHING_DEADLINE,
   resolveRegexMatchingDeadline,
   type RegexMatchingDeadline,
 } from "../config/regexMatchingDeadline.js";
 import {
-  DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   resolveRegexWorkerHeapRequest,
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
-import { capabilityLimit } from "../config/runtimeAnalysisSettings.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   kunaFileCleanupError,
@@ -119,14 +116,8 @@ export class KunaProvider implements AnalysisProviderCandidate {
   capabilities() {
     return kunaCapabilities(
       this.inspectAvailability(),
-      capabilityLimit(() => {
-        void this.#deadline.deadlineMs;
-        return this.#deadline;
-      }, DEFAULT_REGEX_MATCHING_DEADLINE),
-      capabilityLimit(() => {
-        void this.#heapRequest.heapMiB;
-        return this.#heapRequest;
-      }, DEFAULT_REGEX_WORKER_HEAP_REQUEST),
+      this.#deadline,
+      this.#heapRequest,
     );
   }
 
