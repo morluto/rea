@@ -14,7 +14,7 @@ export function isNumericLimit(name: string): boolean;
 /** Producer paths for numeric limits. Registry text, comments, and allowlists are omitted. */
 export function discoverNumericLimitUses(
   files: readonly { readonly path: string; readonly source: string }[],
-): Map<string, string>;
+): Map<string, { readonly path: string; read: "construction" | "call" }>;
 
 /** Why a tracked limit is not an analysis setting, when it is present. */
 export function requiredRuntimeLimitFailure(
