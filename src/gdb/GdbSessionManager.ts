@@ -25,6 +25,7 @@ import type {
 import { DEBUGGER_CONTROL_REPLY_BYTES } from "../domain/analysisResourceLimits.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -1371,6 +1372,7 @@ export class GdbSessionManager {
             );
             return ok({ result, evidence });
           } catch (cause) {
+            if (cause instanceof ConfigurationError) return err(cause);
             if (cause instanceof AnalysisCancelledError) return err(cause);
             if (cause instanceof AnalysisCapabilityUnavailableError)
               return err(cause as AnalysisError);

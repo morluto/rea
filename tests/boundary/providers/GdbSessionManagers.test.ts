@@ -23,6 +23,12 @@ process.stdin.on("data", chunk => {
  }
 });`;
 
+const debuggerDeadlineOverride = {
+  setting: "debugger.command_deadline_ms",
+  action: "set",
+  value: 5000,
+} as const;
+
 describe("persistent debugger session managers", () => {
   let directory: string | undefined;
   const fixtureOwner = createGdbFixtureOwner();
@@ -93,7 +99,7 @@ process.stdin.on("data", (chunk) => {
       4096,
     ],
   ] as const)(
-    "honors a single override for invalid %s",
+    "restores a GDB session after resetting invalid %s",
     async (setting, environmentName, value) => {
       directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
       const provider = join(directory, "fake-gdb.mjs");
@@ -108,6 +114,10 @@ process.stdin.on("data", (chunk) => {
       const set = () =>
         settings.update({ changes: [{ setting, action: "set", value }] });
       expect(set().ok).toBe(true);
+      if (setting === "debugger.max_command_output_bytes")
+        expect(
+          settings.update({ changes: [debuggerDeadlineOverride] }).ok,
+        ).toBe(true);
       const manager = new GdbSessionManager({
         spawnProcess: fixtureOwner.spawnProcess,
         platform: "linux",
