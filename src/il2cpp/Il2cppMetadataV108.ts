@@ -34,8 +34,8 @@ export const inspectIl2cppMetadataV108 = async (
   if (prefix.kind !== "il2cpp" || prefix.version !== 108) return null;
   if (bytes.length < HEADER_BYTES)
     throw new Il2cppMetadataFormatFailure(
-      "truncated-header",
-      `the file has ${bytes.length} bytes, fewer than the ${HEADER_BYTES}-byte version 108 header`,
+      "unsupported-version",
+      `version 108 layout is unverified; the file has ${bytes.length} bytes, fewer than the assumed ${HEADER_BYTES}-byte header`,
     );
   const sections = SECTION_NAMES.map((name, index) => {
     const at = 8 + index * 12;
@@ -46,11 +46,6 @@ export const inspectIl2cppMetadataV108 = async (
       count: bytes.readInt32LE(at + 8),
     };
   });
-  if (sections[0]!.offset !== HEADER_BYTES)
-    throw new Il2cppMetadataFormatFailure(
-      "unexpected-header-size",
-      `stringLiterals starts at ${sections[0]!.offset}, not immediately after the ${HEADER_BYTES}-byte version 108 header`,
-    );
   for (const section of sections) {
     if (
       section.offset < 0 ||
@@ -60,8 +55,8 @@ export const inspectIl2cppMetadataV108 = async (
       (section.size > 0 && section.offset < HEADER_BYTES)
     )
       throw new Il2cppMetadataFormatFailure(
-        "section-out-of-bounds",
-        `section ${section.name} (offset ${section.offset}, size ${section.size}, count ${section.count}) is outside the ${bytes.length}-byte file`,
+        "unsupported-version",
+        `version 108 layout is unverified; assumed section ${section.name} (offset ${section.offset}, size ${section.size}, count ${section.count}) is invalid for the ${bytes.length}-byte file`,
       );
   }
   const occupied = sections
@@ -72,8 +67,8 @@ export const inspectIl2cppMetadataV108 = async (
     const current = occupied[index]!;
     if (previous.offset + previous.size > current.offset)
       throw new Il2cppMetadataFormatFailure(
-        "section-overlap",
-        `section ${previous.name} overlaps ${current.name} at ${current.offset}`,
+        "unsupported-version",
+        `version 108 layout is unverified; assumed sections ${previous.name} and ${current.name} overlap at ${current.offset}`,
       );
   }
   const strings = sections[2]!;

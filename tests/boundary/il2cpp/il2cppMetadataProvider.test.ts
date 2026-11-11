@@ -9,6 +9,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
@@ -93,7 +94,33 @@ it("retains a bounded v108 header and string observation without claiming decode
   );
 });
 
-it("refuses a malformed v108 section instead of publishing a partial inventory", async () => {
+it("accepts padding after the assumed v108 header", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-padding-");
+  const path = join(root, "global-metadata.dat");
+  const bytes = version108Header(Buffer.from("Name\0"));
+  const padded = Buffer.concat([
+    bytes.subarray(0, 500),
+    Buffer.alloc(16),
+    bytes.subarray(500),
+  ]);
+  for (let index = 0; index < 41; index++) {
+    padded.writeInt32LE(bytes.readInt32LE(8 + index * 12) + 16, 8 + index * 12);
+  }
+  await writeFile(path, padded);
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      version_108_partial_inventory: {
+        strings: { sample: [{ value: "Name" }] },
+      },
+    },
+  });
+});
+
+it("retains source evidence when a v108 section conflicts with the unverified layout", async () => {
   const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
   const path = join(root, "global-metadata.dat");
   const bytes = version108Header(Buffer.from("Name\0"));
@@ -102,7 +129,10 @@ it("refuses a malformed v108 section instead of publishing a partial inventory",
   const result = await inspectMetadata(path);
   expect(result.ok).toBe(false);
   if (result.ok) return;
-  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: { artifact: { path, bytes: bytes.length } },
+  });
   expect(JSON.stringify(result.error.partialObservation)).not.toContain(
     "version_108_partial_inventory",
   );
