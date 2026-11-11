@@ -24,7 +24,9 @@ export class Utf8NdjsonLineBuffer {
     if (this.#nextNewline < 0) this.#nextNewline = this.#buffer.indexOf(10);
     while (this.#nextNewline >= 0) {
       const encodedLine = this.#buffer.subarray(0, this.#nextNewline);
-      this.#buffer = this.#buffer.subarray(this.#nextNewline + 1);
+      const rest = this.#buffer.subarray(this.#nextNewline + 1);
+      // An empty view would keep the drained frame's allocation for the session.
+      this.#buffer = rest.length === 0 ? Buffer.alloc(0) : rest;
       this.#nextNewline = this.#buffer.indexOf(10);
       const line = this.#decode(encodedLine).trim();
       if (line.length > 0) yield line;
@@ -49,5 +51,22 @@ export class Utf8NdjsonLineBuffer {
     this.#buffer = Buffer.alloc(0);
     this.#fragments = [];
     this.#nextNewline = -1;
+  }
+
+  /** Bytes still held after complete lines are removed. An empty tail keeps no drained frame. */
+  retainedTail(): {
+    readonly pendingBytes: number;
+    readonly backingBytes: number;
+  } {
+    const pendingBytes =
+      this.#buffer.length +
+      this.#fragments.reduce((sum, fragment) => sum + fragment.length, 0);
+    const backingBytes =
+      this.#buffer.buffer.byteLength +
+      this.#fragments.reduce(
+        (sum, fragment) => sum + fragment.buffer.byteLength,
+        0,
+      );
+    return { pendingBytes, backingBytes };
   }
 }

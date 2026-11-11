@@ -67,4 +67,21 @@ describe("UTF-8 NDJSON line buffer", () => {
       "after reset",
     ]);
   });
+
+  it("releases the backing allocation when a frame ends at the newline", () => {
+    const lines = new Utf8NdjsonLineBuffer();
+    const frame = Buffer.alloc(64 * 1024, 0x78);
+    frame[frame.length - 1] = 0x0a;
+    expect([...lines.push(frame)]).toEqual([
+      frame.subarray(0, frame.length - 1).toString("utf8"),
+    ]);
+    expect(lines.retainedTail()).toEqual({ pendingBytes: 0, backingBytes: 0 });
+
+    const tail = Buffer.from("next");
+    expect([...lines.push(tail)]).toEqual([]);
+    expect(lines.retainedTail()).toEqual({
+      pendingBytes: tail.length,
+      backingBytes: tail.buffer.byteLength,
+    });
+  });
 });
