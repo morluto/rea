@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../domain/virtualFileMapping.js";
 import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
@@ -15,8 +19,6 @@ import { createHash } from "node:crypto";
 import {
   BinaryFormatFailure,
   createFileMappingIndex,
-  type ZeroFillMapping,
-  type FileMapping,
 } from "./metadata/BinaryContainer.js";
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
