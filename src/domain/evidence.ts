@@ -99,15 +99,27 @@ const providerSelectionProvenanceSchema = z
       "environment",
       "auto-single-candidate",
     ]),
-    candidates: z.array(
-      z.strictObject({
-        provider: providerSchema,
-        selected: z.boolean(),
-        availability: z.enum(["available", "unavailable", "unknown"]),
-        target_support: z.enum(["supported", "unsupported", "unknown"]),
-        rejection_codes: z.array(z.string().min(1)),
-      }),
-    ),
+    candidates: z
+      .array(
+        z.strictObject({
+          provider: providerSchema,
+          selected: z.boolean(),
+          availability: z.enum(["available", "unavailable", "unknown"]),
+          target_support: z.enum(["supported", "unsupported", "unknown"]),
+          rejection_codes: z.array(z.string().min(1)),
+        }),
+      )
+      // The object carries no separate selected-provider id, so a reader can
+      // only name the recording session's provider when exactly one candidate
+      // claims the selection. An imported bundle with zero or several would
+      // re-export ambiguous provenance under a stable Evidence id.
+      .refine(
+        (candidates) =>
+          candidates.filter(({ selected }) => selected).length === 1,
+        {
+          error: "provider selection must mark exactly one candidate selected",
+        },
+      ),
   })
   .describe(
     "Selected-session provider provenance; excluded from Evidence semantic identity.",

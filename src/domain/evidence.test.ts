@@ -370,6 +370,35 @@ it("retains the recording session's provider selection without changing semantic
   );
 });
 
+it("refuses provider selection provenance that names no single provider", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: {},
+    rawResult: null,
+  });
+  const candidate = (id: string, selected: boolean) => ({
+    provider: { id, name: id, version: null },
+    selected,
+    availability: "available" as const,
+    target_support: "supported" as const,
+    rejection_codes: [],
+  });
+  // Without a separate selected-provider id, a reader can only name the
+  // recording session's provider when exactly one candidate claims it.
+  for (const candidates of [
+    [candidate("ghidra", false), candidate("ida", false)],
+    [candidate("ghidra", true), candidate("ida", true)],
+    [],
+  ])
+    expect(() =>
+      withEvidenceProviderSelection(original, {
+        selection_source: "auto-single-candidate",
+        candidates,
+      }),
+    ).toThrow();
+});
+
 it("retains named auxiliary path choices without changing identity, history or shared payloads", () => {
   const original = immutableEvidence(
     createEvidence(TARGET, PROVIDER, {
