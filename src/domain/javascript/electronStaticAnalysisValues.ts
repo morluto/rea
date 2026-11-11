@@ -10,7 +10,12 @@ import {
 } from "./javascriptAstValues.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
-import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
+import type {
+  ContextBridgeMemberBudget,
+  JavaScriptFindingContext,
+} from "./javascriptStaticAnalysisState.js";
+
+export type { ContextBridgeMemberBudget };
 
 /** Resolve a callee only when its root has a proven Electron module identity. */
 export const electronCalleePath = (
@@ -102,13 +107,6 @@ export const contextBridgeMemberPathDepth = 8;
  */
 export const contextBridgeMemberVisitLimit = 4_096;
 export const contextBridgeMemberByteLimit = 131_072;
-
-export interface ContextBridgeMemberBudget {
-  remainingVisits: number;
-  remainingBytes: number;
-  truncated: boolean;
-  readonly seenNodes: WeakSet<t.Node>;
-}
 
 export const createContextBridgeMemberBudget =
   (): ContextBridgeMemberBudget => ({

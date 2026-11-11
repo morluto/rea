@@ -1678,6 +1678,15 @@ it("preserves exact defineProperty, groupBy, and Reflect.get member-write select
       );
       g2.all[1].once = () => 0;
 
+      const g3 = Object.groupBy([{}, ipcRenderer], (_item, i) => {
+        const key = "all";
+        if (i === 0) {
+          const key = "skip";
+        }
+        return key;
+      });
+      g3.all[0].sendSync = () => 0;
+
       const r1 = Reflect.get({ ipc: ipcRenderer, local: {} }, "local");
       r1.on = () => 0;
 

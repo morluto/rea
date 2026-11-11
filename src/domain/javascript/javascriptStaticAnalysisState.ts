@@ -13,7 +13,6 @@ import type {
   JavaScriptStaticReference,
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
-import type { ContextBridgeMemberBudget } from "./electronStaticAnalysisValues.js";
 import type {
   ElectronAppPathChangeFinding,
   ElectronCallPath,
@@ -36,6 +35,14 @@ export interface JavaScriptModuleRange {
   readonly key: string;
   readonly runtime: string;
   readonly requireName: string | null;
+}
+
+/** Per-file work and representation budget for contextBridge member enumeration. */
+export interface ContextBridgeMemberBudget {
+  remainingVisits: number;
+  remainingBytes: number;
+  truncated: boolean;
+  readonly seenNodes: WeakSet<t.Node>;
 }
 
 /** Static finding retained with its source offset until module attribution. */
