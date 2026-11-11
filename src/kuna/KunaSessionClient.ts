@@ -1,3 +1,7 @@
+import {
+  snapshotRegexConfiguration,
+  type RegexConfigurationSnapshot,
+} from "../process/RegexMatcher.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { basename, join } from "node:path";
 import {
@@ -32,6 +36,7 @@ import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
   matchProcedureNames,
+  type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
@@ -536,6 +541,28 @@ export class KunaSessionClient implements AnalysisClient {
           ],
         ),
       );
+    let search: AnalysisSearchQuery | undefined;
+    let regex: RegexConfigurationSnapshot | undefined;
+    if (operation === "search_strings" || operation === "search_procedures") {
+      const parsed = analysisSearchQuerySchema.safeParse(parameters);
+      if (!parsed.success)
+        return err(
+          analysisInputErrorFromIssues(
+            operation,
+            parsed.error.issues,
+            parameters,
+          ),
+        );
+      search = parsed.data;
+      if (search.mode === "regex") {
+        const admitted = snapshotRegexConfiguration(
+          this.#deadline,
+          this.#heapRequest,
+        );
+        if (!admitted.ok) return admitted;
+        regex = admitted.value;
+      }
+    }
     const installation = await this.#ensureInstallation(
       operation,
       options.signal,
@@ -570,6 +597,8 @@ export class KunaSessionClient implements AnalysisClient {
         parameters,
         installation.value,
         options,
+        search,
+        regex,
       );
       if (!answer.ok)
         return err(kunaQueryFailureForCaller(answer.error, operation));
@@ -805,6 +834,8 @@ export class KunaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     options: ExecutionOptions,
+    search: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<Result<Answer, AnalysisError>> {
     if (operation === "list_documents")
       return ok({
@@ -825,9 +856,22 @@ export class KunaSessionClient implements AnalysisClient {
         options,
       );
     if (operation === "list_strings" || operation === "search_strings")
-      return this.#stringAnswer(operation, parameters, installation, options);
+      return this.#stringAnswer(
+        operation,
+        parameters,
+        installation,
+        options,
+        search,
+        regex,
+      );
     if (operation === "list_procedures" || operation === "search_procedures")
-      return this.#procedureList(operation, parameters, installation, options);
+      return this.#procedureList(
+        operation,
+        installation,
+        options,
+        search,
+        regex,
+      );
     const index = await this.#ensureIndex(installation, options);
     if (!index.ok) return index;
     if (operation === "address_name")
@@ -945,6 +989,8 @@ export class KunaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     options: ExecutionOptions,
+    search: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<Result<Answer, AnalysisError>> {
     const answer = await this.#own(
       this.#strings.execute(
@@ -955,6 +1001,8 @@ export class KunaSessionClient implements AnalysisClient {
           this.#session.signal,
           ...(options.signal === undefined ? [] : [options.signal]),
         ]),
+        search,
+        regex,
       ),
     );
     return answer.ok
@@ -970,30 +1018,23 @@ export class KunaSessionClient implements AnalysisClient {
 
   async #procedureList(
     operation: "list_procedures" | "search_procedures",
-    parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     options: ExecutionOptions,
+    query: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<Result<Answer, AnalysisError>> {
-    const query =
-      operation === "search_procedures"
-        ? analysisSearchQuerySchema.safeParse(parameters)
-        : undefined;
-    if (query !== undefined && !query.success)
-      return err(
-        analysisInputErrorFromIssues(operation, query.error.issues, parameters),
-      );
     const index = await this.#ensureIndex(installation, options);
     if (!index.ok) return index;
     const { inventory, data, unplaced } = index.value;
     let matches: ((name: string) => boolean) | undefined;
-    if (query?.success === true) {
-      if (query.data.mode === "regex") {
+    if (query !== undefined) {
+      if (query.mode === "regex") {
         // Each distinct spelling is matched once, however many entries share it.
         let names: readonly string[] = [];
         const matched = await this.#queryWork.match({
           operation,
-          pattern: query.data.pattern,
-          caseSensitive: query.data.case_sensitive,
+          pattern: query.pattern,
+          caseSensitive: query.case_sensitive,
           values: () =>
             (names = [
               ...new Set(
@@ -1001,13 +1042,14 @@ export class KunaSessionClient implements AnalysisClient {
               ),
             ]),
           signal: options.signal,
+          ...regex,
         });
         if (!matched.ok) return matched;
         const accepted = new Set(
           matched.value.map((position) => names[position]!),
         );
         matches = (name) => accepted.has(name);
-      } else matches = analysisSearchPredicate(query.data);
+      } else matches = analysisSearchPredicate(query);
     }
     // Search matches every name exact lookup accepts: the primary name and
     // Kuna's aliases. Each entry stays one row under its primary name.
