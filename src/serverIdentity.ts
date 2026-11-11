@@ -1,9 +1,13 @@
-import { realpathSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { createCatalogIdentity } from "./catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
+import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
+import {
+  selectedFile,
+  sameEntrypointSpelling,
+} from "./process/EntrypointSpelling.js";
 
 /** Optional observations supplied by a client comparing its expected server. */
 export interface ExpectedServerIdentity {
@@ -26,23 +30,30 @@ const packageRoot = (): string => {
 };
 
 /**
+ * The file this process launched from, captured once.
+ *
+ * `CURRENT_ENTRYPOINT_PATH` keeps the spelling from `argv[1]`, which may be a manager alias.
+ * Re-reading that spelling on every comparison would follow a retargeted alias to the release
+ * it points at now, and report alignment while this process still executes the earlier one. The
+ * snapshot keeps the file that was actually launched.
+ */
+const LAUNCHED_FILE: string | undefined =
+  CURRENT_ENTRYPOINT_PATH === undefined
+    ? undefined
+    : selectedFile(CURRENT_ENTRYPOINT_PATH);
+
+/**
  * Whether two entrypoint spellings select the same file.
  *
- * A launcher records the canonical path, while a caller passes the spelling it
- * used to start REA, which can reach the same file through a symlink or a `..`
- * segment. Resolving the spelling alone does not follow links, so compare the
- * file each spelling selects and fall back to the resolved path when either
- * cannot be read.
+ * The spelling rules live in `EntrypointSpelling`; this wrapper adds the launch snapshot, so a
+ * retargeted manager alias cannot move the live side after the process started.
  */
 const sameEntrypoint = (left: string, right: string): boolean => {
-  const selected = (candidate: string): string => {
-    try {
-      return realpathSync(candidate);
-    } catch {
-      return resolve(candidate);
-    }
-  };
-  return selected(left) === selected(right);
+  if (right === CURRENT_ENTRYPOINT_PATH && LAUNCHED_FILE !== undefined)
+    return left === CURRENT_ENTRYPOINT_PATH || left === LAUNCHED_FILE
+      ? true
+      : sameEntrypointSpelling(left, LAUNCHED_FILE);
+  return sameEntrypointSpelling(left, right);
 };
 
 /** Every observation that disagrees with this runtime, in a stable order. */

@@ -266,6 +266,50 @@ describe("server registration path identity", () => {
 
     expect(identity.alignment).toMatchObject({ state: "aligned", reasons: [] });
   });
+
+  it("compares a network share spelling without reading it", () => {
+    // `absoluteLocalPathStringSchema` accepts a UNC spelling, and reading one starts SMB
+    // traffic. Two equal spellings still align because the comparison stays lexical for them.
+    const shared = "\\\\server\\share\\rea.mjs";
+    const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: shared,
+      expected: { server_path: shared },
+    });
+
+    expect(identity.alignment).toMatchObject({ state: "aligned", reasons: [] });
+  });
+
+  it("keeps a different network share a mismatch", () => {
+    const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: "\\\\server\\share\\rea.mjs",
+      expected: { server_path: "\\\\server\\share\\other.mjs" },
+    });
+
+    expect(identity.alignment.reasons).toEqual(["registration_path_mismatch"]);
+  });
+
+  it("normalizes a parent segment that reaches the same entrypoint", async () => {
+    const root = await createTestTempDirectory("server-identity-parent-");
+    const directory = join(root, "release");
+    const canonicalEntrypoint = join(directory, "rea.mjs");
+    await mkdir(directory);
+    await writeFile(canonicalEntrypoint, "");
+
+    const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: canonicalEntrypoint,
+      expected: {
+        server_path: join(root, "other", "..", "release", "rea.mjs"),
+      },
+    });
+
+    expect(identity.alignment).toMatchObject({ state: "aligned", reasons: [] });
+  });
 });
 
 describe("provider capability inventory", () => {
