@@ -1256,15 +1256,21 @@ export const createSystemProcessOwnershipHost = (
       : undefined;
   const listProcesses = async (signal?: AbortSignal) => {
     if (platform === "win32") return [];
-    const { stdout } = await runExecFileOutput(
-      "ps",
-      ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
-      {
-        env: hostEnvironment,
-        stopSignal: "SIGTERM",
-        ...(signal === undefined ? {} : { signal }),
-      },
-    );
+    let stdout: string;
+    try {
+      ({ stdout } = await runExecFileOutput(
+        "ps",
+        ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
+        {
+          env: hostEnvironment,
+          stopSignal: "SIGTERM",
+          ...(signal === undefined ? {} : { signal }),
+        },
+      ));
+    } catch (cause: unknown) {
+      rethrowInspectionFailure(cause);
+      throw cause;
+    }
     return stdout
       .split("\n")
       .map((line) =>
