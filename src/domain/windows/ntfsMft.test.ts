@@ -247,7 +247,7 @@ describe("MFT record slots", () => {
         recordNumber: 0xfedc_ba98_7654,
         sequenceNumber: 0xabcd,
       },
-      flags: { raw: 0x0005, names: ["in-use", "extension"] },
+      flags: { raw: 0x0005, names: ["in-use", "system"] },
     });
     expect(parsed.value.metadata.extension_record_count).toBe(1);
   });
