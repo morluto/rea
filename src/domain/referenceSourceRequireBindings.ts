@@ -12,6 +12,8 @@ import {
   type JavaScriptReceiverIndex,
 } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
+import { semanticEffectPathMatches } from "./javascript/javascriptSemanticEffectPathIndex.js";
+import { semanticDefiniteEffectPrecedesReference } from "./javascript/javascriptSemanticMutationInitializers.js";
 import {
   semanticRequireCallAt,
   semanticRequireLoaderAt,
@@ -83,6 +85,24 @@ export const referenceSourceRequireCalls = (
       )
         return;
       let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
+      let callFact = semanticRequireCallAt(
+        node,
+        index.bindings,
+        factoryBindings,
+        index,
+      );
+      const refreshIndexedFacts = (): void => {
+        // Definitions identify a possible factory. Its mutable member reads
+        // need the shared write index before they can prove an association.
+        completeSemanticSteps(index.indexMemberMutationFactsSteps());
+        fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
+        callFact = semanticRequireCallAt(
+          node,
+          index.bindings,
+          factoryBindings,
+          index,
+        );
+      };
       if (
         fact === "create-require" ||
         ((t.isMemberExpression(callee) ||
@@ -90,18 +110,16 @@ export const referenceSourceRequireCalls = (
           ["call", "apply", "resolve"].includes(
             semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
           ))
-      ) {
-        // Definitions identify a possible factory. Its mutable member reads
-        // need the shared write index before they can prove an association.
+      )
+        refreshIndexedFacts();
+      if (t.isCallExpression(callee) || t.isOptionalCallExpression(callee)) {
+        // Index before trusting a returned member. A definite assignment that
+        // precedes the call replaces the original initializer; an unchanged
+        // member keeps the classification made before that index, because the
+        // call itself is recorded as an escape of the value it invokes.
         completeSemanticSteps(index.indexMemberMutationFactsSteps());
-        fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
+        if (callReturnsReassignedMember(index, node)) refreshIndexedFacts();
       }
-      const callFact = semanticRequireCallAt(
-        node,
-        index.bindings,
-        factoryBindings,
-        index,
-      );
       if (callFact === undefined || callFact.loader === "local") return;
       if (
         fact !== "create-require" &&
@@ -217,6 +235,57 @@ const hasPriorMemberMutation = (
     semanticMemberChain(callee) === undefined ||
     semanticSelectedMemberMayHaveChanged(index, site, callee)
   );
+};
+
+const callReturnsReassignedMember = (
+  index: JavaScriptReceiverIndex,
+  site: ReferenceSourceRequireInvocation,
+): boolean => {
+  const member = returnedMemberExpression(site.callee);
+  if (member === undefined) return false;
+  const chain = semanticMemberChain(member);
+  if (chain === undefined || !t.isIdentifier(chain.root)) return false;
+  const binding = index.bindingForReferenceAt(member);
+  if (binding === undefined) return false;
+  return binding.memberWrites.some(
+    (write) =>
+      write.receiverIdentity === "definite" &&
+      write.node !== undefined &&
+      t.isAssignmentExpression(write.node, { operator: "=" }) &&
+      semanticEffectPathMatches(write.path, chain.members) &&
+      semanticDefiniteEffectPrecedesReference(
+        write.node,
+        site,
+        index.bindings.parentsByNode,
+      ),
+  );
+};
+
+const returnedMemberExpression = (
+  callee: t.Node,
+): t.MemberExpression | t.OptionalMemberExpression | undefined => {
+  const invoked = unwrapJavaScriptExpression(callee).node;
+  if (!t.isCallExpression(invoked) && !t.isOptionalCallExpression(invoked))
+    return undefined;
+  const owner = unwrapJavaScriptExpression(invoked.callee).node;
+  if (!t.isFunction(owner) || owner.async || owner.generator) return undefined;
+  const returned = t.isBlockStatement(owner.body)
+    ? singleReturnedExpression(owner.body)
+    : owner.body;
+  if (returned === undefined) return undefined;
+  const value = unwrapJavaScriptExpression(returned).node;
+  return t.isMemberExpression(value) || t.isOptionalMemberExpression(value)
+    ? value
+    : undefined;
+};
+
+const singleReturnedExpression = (
+  body: t.BlockStatement,
+): t.Expression | undefined => {
+  const [statement] = body.body;
+  if (body.body.length !== 1 || !t.isReturnStatement(statement))
+    return undefined;
+  return statement.argument ?? undefined;
 };
 
 const hasMemberCallee = (call: ReferenceSourceRequireInvocation): boolean => {

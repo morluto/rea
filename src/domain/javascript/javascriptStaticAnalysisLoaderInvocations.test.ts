@@ -95,6 +95,24 @@ it.each([
   },
 );
 
+it("does not keep a dependency when an immediate call returns a replaced member", () => {
+  const callsFor = (source: string) => {
+    const parsed = parseJavaScriptSource(source, "entry.cjs");
+    if (parsed === null) throw new Error("Expected CommonJS fixture");
+    return [...referenceSourceRequireCalls(parsed, "entry.cjs").values()].map(
+      ({ resolutionBase }) => resolutionBase,
+    );
+  };
+  expect(
+    callsFor(
+      'const box = { load: require }; box.load = () => {}; (() => box.load)()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor('const box = { load: require }; (() => box.load)()("./dep.cjs");'),
+  ).toEqual(["source-file"]);
+});
+
 const imported = "import {createRequire as make} from 'node:module';";
 it.each([
   ["call", 'null,"./valid.cjs"', 'null,"./invented.cjs"'],
