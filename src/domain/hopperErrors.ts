@@ -199,7 +199,12 @@ export class HopperProcessError extends HopperError {
   }
 }
 
-/** Parsed facts about rejecting an application before execution. */
+/**
+ * Parsed facts about a Hopper launch refused before the target runs.
+ * Publisher and argument failures are decided before the launcher executes.
+ * Apple Events authorization is decided after the native helper starts and
+ * before document handoff.
+ */
 export type HopperLaunchRejection =
   | {
       /** The selected application was rejected before it was executed. */
@@ -217,13 +222,30 @@ export type HopperLaunchRejection =
           /** Zero-based index in the final vendor argv, excluding the executable. */
           readonly argument_index: number;
         }
-    ));
+    ))
+  | {
+      /**
+       * macOS refused the launcher's Apple Event. The helper's stderr does not
+       * show whether the responsible client lacks an Automation grant or the
+       * hardened-runtime Apple Events entitlement. Another launch from that
+       * same client cannot succeed until authorization changes.
+       */
+      readonly boundary: "apple_events_authorization";
+      readonly reason: "not_authorized";
+    };
+
+/** Recognize the Apple Events refusal that the same client cannot retry. */
+export const hopperAppleEventsAuthorizationDenied = (
+  rejection: HopperLaunchRejection | undefined,
+): rejection is Extract<
+  HopperLaunchRejection,
+  { readonly boundary: "apple_events_authorization" }
+> => rejection?.boundary === "apple_events_authorization";
 
 /** Hopper or the repository bridge could not be started. */
 export class HopperStartError extends HopperError {
   readonly _tag = "HopperStartError";
   override readonly userMessage: string | undefined;
-  readonly remediationAction: string | undefined;
   readonly ownerRunId: string | undefined;
   readonly launcherFailure: HopperLauncherOutcome | undefined;
   readonly launchRejection: HopperLaunchRejection | undefined;
@@ -231,7 +253,6 @@ export class HopperStartError extends HopperError {
   constructor(
     options?: AnalysisErrorOptions & {
       readonly userMessage?: string;
-      readonly remediationAction?: string;
       readonly ownerRunId?: string;
       readonly launcherFailure?: HopperLauncherOutcome;
       readonly launchRejection?: HopperLaunchRejection;
@@ -239,7 +260,6 @@ export class HopperStartError extends HopperError {
   ) {
     super("Hopper application bridge could not be started", options);
     this.userMessage = options?.userMessage;
-    this.remediationAction = options?.remediationAction;
     this.ownerRunId = options?.ownerRunId;
     this.launcherFailure = options?.launcherFailure;
     this.launchRejection = options?.launchRejection;

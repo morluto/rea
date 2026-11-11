@@ -849,24 +849,62 @@ describe("analysis error projection: Hopper provider failures", () => {
     });
   });
 
-  it("projects custom remediationAction for HopperStartError", () => {
-    const error = new HopperStartError({
-      userMessage:
-        "macOS denied permission to send Apple Events to Hopper. Allow the application that starts REA under System Settings > Privacy & Security > Automation. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.",
-      remediationAction:
-        "Allow the application that starts REA under System Settings > Privacy & Security > Automation, grant the com.apple.security.automation.apple-events entitlement, or start REA from a client macOS can authorize (such as Terminal). Retrying from the same unauthorized client is not expected to succeed.",
-    });
-    expect(projectAnalysisError(error)).toMatchObject({
+  it("projects an Apple Events denial as unavailable and not retryable from the same client", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcherFailure: {
+          exit_code: 2,
+          signal: null,
+          stdout: { text: "", bytes: 0, retained_bytes: 0 },
+          stderr: {
+            text: "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n",
+            bytes: 90,
+            retained_bytes: 90,
+          },
+          output_closed: true,
+          diagnostic_truncated: false,
+        },
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
       category: "unavailable",
-      message: expect.stringContaining(
-        "com.apple.security.automation.apple-events",
-      ),
-      remediation: {
-        action: expect.stringContaining(
-          "com.apple.security.automation.apple-events",
-        ),
+      retryable: false,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "unknown",
+        launch_rejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcher: { exit_code: 2, signal: null },
       },
     });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("keeps an ordinary Hopper start failure retryable", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        userMessage: "Hopper's launcher helper failed before bridge readiness.",
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      retryable: true,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "retry",
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
   });
 
   it("retains the Hopper request and provider diagnostic on a remote failure", () => {

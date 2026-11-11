@@ -43,6 +43,7 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
+  hopperAppleEventsAuthorizationDenied,
 } from "./hopperErrors.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
@@ -521,7 +522,11 @@ const projectError = (
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
-      RETRYABLE_CODES.has(code) ||
+      (RETRYABLE_CODES.has(code) &&
+        !(
+          error instanceof HopperStartError &&
+          hopperAppleEventsAuthorizationDenied(error.launchRejection)
+        )) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
       (error._tag === "ProcessCaptureError" &&
@@ -949,7 +954,11 @@ const providerErrorDetails = (
       ...(error.launchRejection === undefined
         ? {}
         : { launch_rejection: { ...error.launchRejection } }),
-      retry_action: error.ownerRunId === undefined ? "retry" : "unknown",
+      retry_action:
+        error.ownerRunId === undefined &&
+        !hopperAppleEventsAuthorizationDenied(error.launchRejection)
+          ? "retry"
+          : "unknown",
       ...(error.ownerRunId === undefined
         ? {}
         : { owner_run_id: error.ownerRunId }),

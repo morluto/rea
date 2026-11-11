@@ -1028,10 +1028,10 @@ export class HopperClient {
     ) {
       this.#resources.shutdownConfirmed = true;
       return new HopperStartError({
-        userMessage:
-          "macOS denied permission to send Apple Events to Hopper. Allow the application that starts REA under System Settings > Privacy & Security > Automation. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.",
-        remediationAction:
-          "Allow the application that starts REA under System Settings > Privacy & Security > Automation, grant the com.apple.security.automation.apple-events entitlement, or start REA from a client macOS can authorize (such as Terminal). Retrying from the same unauthorized client is not expected to succeed.",
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
         launcherFailure,
       });
     }

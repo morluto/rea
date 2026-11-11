@@ -31,6 +31,7 @@ import {
   HopperProcessError,
   HopperStartError,
   HopperTimeoutError,
+  hopperAppleEventsAuthorizationDenied,
 } from "./hopperErrors.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
@@ -64,6 +65,12 @@ export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_ev
 /** Next step when one MCP frame cannot carry a selected page of link rows. */
 export const MCP_TRANSPORT_EVIDENCE_LINKS =
   "Request fewer rows with get_evidence_bundle detail: links, a smaller limit or an exact evidence_id filter, then follow next_offset.";
+
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE =
+  "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.";
+
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
+  "Allow the application that starts REA under System Settings > Privacy & Security > Automation, grant the com.apple.security.automation.apple-events entitlement, or start REA from a client macOS can authorize, such as Terminal.";
 
 /** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
@@ -168,7 +175,8 @@ export const analysisErrorRemediationAction = (
   if (error instanceof HopperProcessError)
     return hopperProcessRemediation(error);
   if (error instanceof HopperStartError) {
-    if (error.remediationAction !== undefined) return error.remediationAction;
+    if (hopperAppleEventsAuthorizationDenied(error.launchRejection))
+      return HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION;
     return error.ownerRunId === undefined
       ? "Check the Hopper launcher and target details, then retry opening the target."
       : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
@@ -556,11 +564,14 @@ const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
       : `Hopper timed out during ${request} before it started. Check binary_session for provider health, then retry.`;
   }
   if (error instanceof HopperProcessError) return hopperProcessMessage(error);
-  if (error instanceof HopperStartError)
+  if (error instanceof HopperStartError) {
+    if (hopperAppleEventsAuthorizationDenied(error.launchRejection))
+      return HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE;
     return (
       error.userMessage ??
       "Hopper could not start. Check the launcher and target details, then retry opening the target."
     );
+  }
   if (error instanceof HopperRemoteError)
     return `Hopper ${error.operation ?? "analysis"} failed (${String(error.code)}, ${error.diagnosticType}): ${error.safeMessage}`;
   return undefined;
