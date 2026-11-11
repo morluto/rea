@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import { composeNtfsJournalTimeline } from "./ntfsJournalTimeline.js";
-import { parseMftImage } from "./ntfsMft.js";
+import { parseMftIndex } from "./ntfsMft.js";
 
 it("keeps exact USN values and coverage rows on bounded source-order pages", () => {
   const record = Buffer.alloc(1024);
@@ -16,7 +16,7 @@ it("keeps exact USN values and coverage rows on bounded source-order pages", () 
   record.writeUInt32LE(64, 24);
   record.writeUInt32LE(1024, 28);
   record.writeUInt32LE(0xffff_ffff, 56);
-  const mft = parseMftImage(record);
+  const mft = parseMftIndex(record);
   if (!mft.ok) throw new Error(mft.error.message);
 
   const journal = Buffer.alloc(72);
@@ -36,7 +36,6 @@ it("keeps exact USN values and coverage rows on bounded source-order pages", () 
       { kind: "coverage", issue: { kind: "padding", fileOffset: 0, bytes: 8 } },
     ],
     historyCompleteness: "unknown",
-    mftMetadata: mft.value.metadata,
     nextFileOffset: 8,
     mftLimitations: [],
   });

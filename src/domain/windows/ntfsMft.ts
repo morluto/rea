@@ -124,9 +124,6 @@ export type MftRecordHeader = Omit<MftRecord, keyof MftAttributeScan>;
 export interface MftIndex extends MftInventory {
   readonly records: readonly MftRecordHeader[];
 }
-export interface MftImage extends MftIndex {
-  readonly records: readonly MftRecord[];
-}
 
 export interface MftMetadata {
   readonly kind: "ntfs-mft";
@@ -216,18 +213,6 @@ export const hasMftFileRecordHeader = (prefix: Uint8Array): boolean => {
   );
 };
 
-/**
- * Parse FILE record headers and resident file names. A record with failed
- * fixups keeps its header facts; its attributes are left unread.
- */
-export const parseMftImage = (
-  bytes: Uint8Array,
-): Result<MftImage, RegionDecodeFailure> => {
-  const records: MftRecord[] = [];
-  const inventory = scanMft(bytes, (record) => records.push(record));
-  return inventory.ok ? ok({ ...inventory.value, records }) : inventory;
-};
-
 /** Retain only identity/header facts outside the fixed inline detail window. */
 export const parseMftIndex = (
   bytes: Uint8Array,
@@ -248,6 +233,41 @@ export const parseMftIndex = (
     { startRecord, recordLimit },
   );
   return inventory.ok ? ok({ ...inventory.value, records }) : inventory;
+};
+
+/** Select bounded record details from the owning index and its unchanged acquisition. */
+export const selectMftMetadata = (
+  bytes: Uint8Array,
+  index: MftIndex,
+  startRecord: number,
+  recordLimit: number,
+): MftMetadata => {
+  let low = 0;
+  let high = index.records.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (index.records[middle]!.index < startRecord) low = middle + 1;
+    else high = middle;
+  }
+  const end = Math.min(
+    index.records.length,
+    low + Math.min(recordLimit, MFT_INLINE_HEADER_LIMIT),
+  );
+  const recordHeaders: MftRecord[] = [];
+  if (end > low) {
+    const restored = Buffer.allocUnsafe(index.recordBytes);
+    for (let position = low; position < end; position += 1)
+      recordHeaders.push(
+        readRecord(bytes, index.records[position]!.fileOffset, restored),
+      );
+  }
+  return {
+    ...index.metadata,
+    record_headers: recordHeaders,
+    omitted_record_headers: index.metadata.record_count - recordHeaders.length,
+    record_header_start_index: startRecord,
+    next_record_header_index: index.records[end]?.index ?? null,
+  };
 };
 
 const scanMft = (
@@ -431,8 +451,7 @@ const readRecord = (
     firstAttributeOffset % 8 === 0 &&
     firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
     firstAttributeOffset + 4 <= usedBytes &&
-    (!usaLayoutValid ||
-      firstAttributeOffset >= usaOffset + fixups.entries * 2);
+    (!usaLayoutValid || firstAttributeOffset >= usaOffset + fixups.entries * 2);
   let attributes: MftAttributeScan = {
     attributeIssue: null,
     fileNames: [],
