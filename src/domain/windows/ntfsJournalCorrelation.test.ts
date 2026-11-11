@@ -7,6 +7,7 @@ const baseRecord = {
   sequenceNumber: 2,
   fileOffset: 7168,
   totalBytes: 1024,
+  extentValid: true,
   baseRecordReference: null,
   declaredRecordNumber: 7,
   fixups: {
@@ -52,6 +53,15 @@ it("keeps duplicates ambiguous and skips extensions and unverified records", () 
       fixups: { ...baseRecord.fixups, verifiedSectors: 1, mismatchSector: 1 },
     },
   ]);
+  const correlateContradictory = createUsnMftCorrelator([
+    { ...baseRecord, extentValid: false },
+  ]);
+  expect(
+    correlateContradictory({
+      fileReference: 0x0002_0000_0000_0007n,
+      parentReference: 0n,
+    }).file,
+  ).toEqual({ kind: "unresolved" });
   expect(
     correlate({
       fileReference: 0x0002_0000_0000_0007n,
