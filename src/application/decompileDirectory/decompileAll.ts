@@ -1,3 +1,4 @@
+import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -119,6 +120,7 @@ export const decompileAll = async (
     input,
     bounds.value,
   );
+  const inventoryLimitations = loaded.value.limitations;
   const opened = await DecompileExport.open({
     placement: placement.value,
     identity: loaded.value.identity,
@@ -152,6 +154,7 @@ export const decompileAll = async (
       identity: loaded.value.identity,
       signal,
       limit: input.limit,
+      retryFailed: input.retry_failed,
       state,
     });
     limitations = exportLimitations(
@@ -164,6 +167,19 @@ export const decompileAll = async (
     indexed = await session.writeIndex({
       layoutStatus: layoutStatus(input.layout),
       limitations,
+      latestRun: {
+        resume: input.resume,
+        selected: selection.procedures.length,
+        excluded: selection.excluded,
+        selection: {
+          name: input.name ?? null,
+          namespace: input.namespace ?? null,
+          address_start: input.address_start ?? null,
+          address_end: input.address_end ?? null,
+          limit: input.limit ?? null,
+        },
+        inventoryLimitations,
+      },
     });
   } finally {
     closed = await session.close();
@@ -184,7 +200,17 @@ export const decompileAll = async (
     ...(closed.ok ? [] : [closed.error]),
   ];
   const primary = failures[0];
+  const publishedIndex = indexed.ok
+    ? join(session.root, DECOMPILE_DIRECTORY_INDEX_NAME)
+    : indexed.error.cause instanceof ExportPublishedCleanupFailure
+      ? indexed.error.cause.publishedPath
+      : undefined;
+  const publishedOutput =
+    publishedIndex === undefined
+      ? undefined
+      : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
+    let failure = primary;
     if (
       isAborted(signal) &&
       !(
@@ -195,22 +221,30 @@ export const decompileAll = async (
       primary.retainSecondaryFailure(cancelled(signal));
     for (const failure of failures.slice(1))
       primary.retainSecondaryFailure(failure);
-    return !closed.ok &&
+    if (
+      !closed.ok &&
       primary !== closed.error &&
       closed.error.cleanupIncomplete
-      ? err(
-          analysisErrorWithCleanupFailure(
-            primary,
-            closed.error,
-            "decompile_all",
-          ).bindCleanupDependencies([primary, closed.error]),
-        )
-      : err(primary);
+    ) {
+      failure = analysisErrorWithCleanupFailure(
+        primary,
+        closed.error,
+        "decompile_all",
+      ).bindCleanupDependencies([primary, closed.error]);
+    }
+    if (publishedOutput !== undefined)
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
+    return err(failure);
   }
   // Finalization succeeded, so committed files and the index are usable on
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
   // not a success. Report it with the caller's own reason.
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) {
+    const failure = cancelled(signal);
+    if (publishedOutput !== undefined)
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
+    return err(failure);
+  }
   const manifest = decompileDirectoryManifestSchema.safeParse(
     manifestOf({
       root: session.root,
@@ -220,6 +254,7 @@ export const decompileAll = async (
       excluded: selection.excluded,
       state,
       limitations,
+      inventoryLimitations,
     }),
   );
   return manifest.success
@@ -258,6 +293,7 @@ const loadProcedures = async (
       readonly procedures: readonly SelectedProcedure[];
       readonly identity: ExportIdentity;
       readonly unaddressed: number;
+      readonly limitations: readonly string[];
     },
     AnalysisError
   >
@@ -287,6 +323,7 @@ const loadProcedures = async (
     })),
     identity: identity.value,
     unaddressed: parsed.data.length - addressed.length,
+    limitations: observed.value.limitations,
   });
 };
 
@@ -344,6 +381,7 @@ interface PublishInput {
   readonly identity: ExportIdentity;
   readonly signal: AbortSignal | undefined;
   readonly limit: number | undefined;
+  readonly retryFailed: DecompileDirectoryInput["retry_failed"];
   readonly state: PublishState;
 }
 
@@ -393,13 +431,16 @@ const publishSelected = async (
       continue;
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
+    const externalBefore = input.state.external;
     const outcome = await attemptOne(input, procedure, existing, bodySupport);
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
-    input.state.outputIoStreak =
-      input.state.lastFailureCode === "output_io"
-        ? input.state.outputIoStreak + 1
-        : 0;
+    // An external function writes no file, so it says nothing about the directory.
+    if (input.state.external === externalBefore)
+      input.state.outputIoStreak =
+        input.state.lastFailureCode === "output_io"
+          ? input.state.outputIoStreak + 1
+          : 0;
     // Repeated write failures mean the directory has stopped accepting files,
     // for example a full disk. Stop instead of decompiling every remaining
     // function only to fail its write. Committed files and records are kept.
@@ -465,6 +506,7 @@ const publishOne = async (input: {
   readonly signal: AbortSignal | undefined;
   readonly state: PublishState;
   readonly bodySupport: "unknown" | "unavailable";
+  readonly retryFailed: DecompileDirectoryInput["retry_failed"];
 }): Promise<{
   readonly result: Result<void, AnalysisError>;
   readonly bodySupport: "unknown" | "unavailable";
@@ -495,7 +537,8 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
-  const decompiled = await input.analysis.execute(
+  let attemptedIndependent = false;
+  let decompiled = await input.analysis.execute(
     "procedure_pseudo_code",
     { procedure: input.procedure.address },
     executionOptions(input.signal),
@@ -505,6 +548,47 @@ const publishOne = async (input: {
     return { result: decompiled, bodySupport: body.support };
   if (isAborted(input.signal))
     return { result: err(cancelled(input.signal)), bodySupport: body.support };
+  if (
+    decompiled.ok &&
+    input.retryFailed === "independent_fresh" &&
+    decompiled.value.result === null &&
+    decompiled.value.pseudocodeAbsence?.kind === "provider-failure" &&
+    observationMismatch(input.identity, decompiled.value) === undefined
+  ) {
+    const original = decompiled.value;
+    const originalSource: NonNullable<
+      DecompileDirectoryFunctionRecord["provider_source"]
+    > =
+      original.sourceDescriptor === undefined
+        ? { status: "unknown", reason: "source_not_available" }
+        : { status: "reported", source: original.sourceDescriptor };
+    const recorded = await input.session.append(
+      failureRecord(input.procedure, body.fact, pseudocodeFailure(null), {
+        limitations: [...new Set([...infoCaveats, ...original.limitations])],
+        providerSource: originalSource,
+        pseudocodeAbsence: original.pseudocodeAbsence,
+      }),
+    );
+    if (!recorded.ok) return { result: recorded, bodySupport: body.support };
+    if (isAborted(input.signal))
+      return {
+        result: err(cancelled(input.signal)),
+        bodySupport: body.support,
+      };
+    attemptedIndependent = true;
+    decompiled = await input.analysis.execute(
+      "procedure_pseudo_code",
+      { procedure: input.procedure.address, analysis: "independent_fresh" },
+      executionOptions(input.signal),
+    );
+    if (!decompiled.ok && decompiled.error.cleanupIncomplete)
+      return { result: decompiled, bodySupport: body.support };
+    if (isAborted(input.signal))
+      return {
+        result: err(cancelled(input.signal)),
+        bodySupport: body.support,
+      };
+  }
   if (!decompiled.ok) {
     if (decompiled.error instanceof AnalysisCancelledError)
       return { result: decompiled, bodySupport: body.support };
@@ -533,16 +617,45 @@ const publishOne = async (input: {
     };
   }
   const caveats = [
-    ...new Set([...infoCaveats, ...decompiled.value.limitations]),
+    ...new Set([
+      ...infoCaveats,
+      ...decompiled.value.limitations,
+      ...(input.retryFailed === "independent_fresh" &&
+      !attemptedIndependent &&
+      decompiled.value.result === null
+        ? [
+            "Independent retry was not attempted because the provider did not report a function failure for this observation.",
+          ]
+        : []),
+    ]),
   ];
+  const observationSource: NonNullable<
+    DecompileDirectoryFunctionRecord["provider_source"]
+  > =
+    decompiled.value.sourceDescriptor === undefined
+      ? { status: "unknown", reason: "source_not_available" }
+      : { status: "reported", source: decompiled.value.sourceDescriptor };
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
-    const reason = pseudocodeFailure(pseudocode);
+    const reason =
+      input.retryFailed === undefined &&
+      pseudocode === null &&
+      decompiled.value.pseudocodeAbsence?.kind === "provider-failure"
+        ? {
+            code: "no_pseudocode",
+            message:
+              "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh (CLI: --resume --retry-failed independent_fresh). The retry may use different analysis context.",
+          }
+        : pseudocodeFailure(pseudocode);
     recordFailure(input.state, input.procedure, reason);
     return {
       result: await input.session.append(
         failureRecord(input.procedure, body.fact, reason, {
           limitations: caveats,
+          providerSource: observationSource,
+          ...(decompiled.value.pseudocodeAbsence === undefined
+            ? {}
+            : { pseudocodeAbsence: decompiled.value.pseudocodeAbsence }),
         }),
       ),
       bodySupport: body.support,
@@ -580,6 +693,7 @@ const publishOne = async (input: {
         failureRecord(input.procedure, body.fact, reason, {
           relativePath,
           limitations: caveats,
+          providerSource: observationSource,
         }),
       ),
       bodySupport: body.support,
@@ -591,6 +705,11 @@ const publishOne = async (input: {
     status: "written",
     relative_path: relativePath,
     sha256: committed.sha256,
+    // Matching existing bytes prove equality, not who originally wrote them.
+    provider_source:
+      committed.status === "matched"
+        ? { status: "unknown", reason: "existing_file_origin_unknown" }
+        : observationSource,
     body: bodyRecord(body.fact),
     // The header may truncate; the journal keeps the complete list.
     ...(caveats.length === 0 ? {} : { limitations: caveats }),
@@ -889,6 +1008,8 @@ const failureRecord = (
     readonly relativePath?: string;
     /** Caveats of the observations this attempt used. */
     readonly limitations?: readonly string[];
+    readonly providerSource?: DecompileDirectoryFunctionRecord["provider_source"];
+    readonly pseudocodeAbsence?: DecompileDirectoryFunctionRecord["pseudocode_absence"];
   } = {},
 ): DecompileDirectoryFunctionRecord => ({
   address: procedure.address,
@@ -896,6 +1017,12 @@ const failureRecord = (
   status: "failed",
   body: bodyRecord(body),
   failure: reason,
+  ...(options.providerSource === undefined
+    ? {}
+    : { provider_source: options.providerSource }),
+  ...(options.pseudocodeAbsence === undefined
+    ? {}
+    : { pseudocode_absence: options.pseudocodeAbsence }),
   ...(options.relativePath === undefined
     ? {}
     : { relative_path: options.relativePath }),
@@ -982,6 +1109,7 @@ const manifestOf = (input: {
   readonly excluded: number;
   readonly state: PublishState;
   readonly limitations: readonly string[];
+  readonly inventoryLimitations: readonly string[];
 }) => {
   const requested =
     input.state.written + input.state.failed + input.state.external;
@@ -1009,6 +1137,7 @@ const manifestOf = (input: {
     provider: input.identity.provider,
     analysis_profile_digest: input.identity.analysisProfileDigest,
     target_sha256: input.identity.targetSha256,
+    inventory_limitations: [...input.inventoryLimitations],
     limitations: [...input.limitations],
     resume: input.input.resume,
   };

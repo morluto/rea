@@ -15,7 +15,7 @@ import {
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
-  parsePointerFixups,
+  parsePointerFixupsSteps,
   type PointerFixups,
 } from "../native/AppleMachoFixups.js";
 import {
@@ -299,7 +299,7 @@ export function* openImageSteps(
         binaryMetadataArchitecture(container.architecture) ??
           container.architecture,
       );
-      machoPointerFixups = parsePointerFixups(
+      machoPointerFixups = yield* parsePointerFixupsSteps(
         image,
         layout.fixups,
         layout.segments,

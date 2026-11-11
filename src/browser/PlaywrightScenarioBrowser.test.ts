@@ -172,13 +172,59 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
     diagnostics: { startup_error: "launch boundary reached" },
   });
 
-  expect(launchOptions?.args).toEqual(["--no-sandbox", "--single-process"]);
+  expect(launchOptions?.chromiumSandbox).toBe(false);
+  expect(launchOptions?.args).toEqual(["--single-process"]);
   expect(launchOptions?.env).toEqual({
     LANG: "selected-language",
     LD_PRELOAD: "/data/data/com.termux/files/usr/lib/libtermux-exec.so",
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   });
 });
+
+const launchScenario = browserScenarioSchema.parse({
+  browser: { mode: "launch", executable_path: process.execPath },
+  start_url: { url: "https://example.test" },
+  actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
+});
+
+it.each([
+  { environment: {}, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "1" }, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "true" }, sandbox: false },
+])(
+  "launches Chromium with sandbox $sandbox for $environment",
+  async ({ environment, sandbox }) => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    let launchOptions: Parameters<
+      typeof import("playwright-core").chromium.launchPersistentContext
+    >[1];
+
+    await expect(
+      openPlaywrightScenarioBrowser(launchScenario, environment, {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (_profile, options) => {
+            launchOptions = options;
+            throw new Error("launch boundary reached");
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+      // Chromium's startup log, not REA, says whether the sandbox caused it.
+      remediationAction: sandbox
+        ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
+        : "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+    });
+
+    expect(launchOptions?.chromiumSandbox).toBe(sandbox);
+    expect(launchOptions?.args).toEqual([]);
+    expect(launchOptions?.env).toEqual({});
+  },
+);
 
 it("waits for bounded event finalization and owned browser teardown", async () => {
   vi.useFakeTimers();
@@ -1274,8 +1320,17 @@ it("closes a context that launches after its deadline before removing the profil
 });
 
 it("closes a browser that connects after its deadline without waiting to report the timeout", async () => {
-  let closed = false;
-  const started = performance.now();
+  vi.useFakeTimers();
+  let releaseHandshake!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHandshake = resolve;
+  });
+  let handshakeEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    handshakeEntered = resolve;
+  });
+  const closed = vi.fn(async () => undefined);
+  const leases: AnalysisCleanupLease[] = [];
   const scenario = browserScenarioSchema.parse({
     browser: {
       mode: "connect",
@@ -1287,34 +1342,54 @@ it("closes a browser that connects after its deadline without waiting to report 
     command_timeout_ms: 40,
     actions: scenarioActions,
   });
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 80));
-            return {
-              close: async () => {
-                closed = true;
-              },
-              contexts: () => [],
-              isConnected: () => true,
-              version: () => "late-connect",
-            };
-          },
-          launchPersistentContext: async () => {
-            throw new Error("Unexpected launch");
-          },
+  let settled = false;
+  const opening = openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      retainCleanup: (lease) => leases.push(lease),
+      launcher: {
+        connectOverCDP: async () => {
+          handshakeEntered();
+          await held;
+          return {
+            close: closed,
+            contexts: () => [],
+            isConnected: () => true,
+            version: () => "late-connect",
+          };
+        },
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
         },
       },
-    ),
-  ).rejects.toMatchObject({ reason: "timeout" });
-  expect(performance.now() - started).toBeLessThan(2_000);
-  for (let attempt = 0; attempt < 50 && !closed; attempt += 1)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  expect(closed).toBe(true);
+    },
+  )
+    .catch((error: unknown) => error)
+    .finally(() => {
+      settled = true;
+    });
+  try {
+    await entered;
+    await vi.advanceTimersByTimeAsync(40);
+    expect(settled).toBe(true);
+    expect(closed).not.toHaveBeenCalled();
+    expect(await opening).toMatchObject({ reason: "timeout" });
+    expect(leases).toHaveLength(1);
+    expect(leases[0]?.released).toBe(false);
+    releaseHandshake();
+    await leases[0]!.release();
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(leases[0]?.released).toBe(true);
+  } finally {
+    releaseHandshake();
+    try {
+      await opening;
+      await Promise.all(leases.map((lease) => lease.release()));
+    } finally {
+      vi.useRealTimers();
+    }
+  }
 });
 
 it.each(["media", "focus"] as const)(

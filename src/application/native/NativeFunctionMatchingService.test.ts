@@ -74,7 +74,6 @@ it("retains transitive provenance without treating dependencies as native observ
     undefined,
     (id) => (id === dependency.evidence_id ? dependency : undefined),
   );
-  expect(missing.ok).toBe(false);
   if (missing.ok) throw new Error("Missing ancestor accepted");
   expect(missing.error).toMatchObject({
     evidenceId: ancestor.evidence_id,
@@ -115,8 +114,10 @@ it("keeps symbol origin unknown when supplied metadata describes a different sam
   const member = report.matches
     .flatMap((match) => match.left)
     .find((value) => value.address === "0x10");
-  expect(member?.limitations).toContain(
-    "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+  expect(member?.limitations).toContainEqual(
+    expect.stringMatching(
+      /symbol origin unavailable.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+    ),
   );
   expect(member?.evidence_links).toContain(alias.evidence_id);
 });
@@ -172,8 +173,10 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
         withBytes ? "identical-bytes" : null,
       );
       const member = report.matches[0]!.left[0]!;
-      expect(member.limitations).toContain(
-        "Conflicting generated and named symbol-origin observations; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      expect(member.limitations).toContainEqual(
+        expect.stringMatching(
+          /conflicting generated and named symbol-origin.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+        ),
       );
       expect(member.limitations.join(" ")).not.toContain(
         "Symbol origin unavailable",
@@ -933,7 +936,6 @@ it("enforces the caller-resolved representation allowance and names its setting"
   const lowered = await matchNativeFunctions(small, {
     representationAllowance: { maximumBytes: 64 * 1024, source: "runtime" },
   });
-  expect(lowered.ok).toBe(false);
   if (lowered.ok) throw new Error("Lowered allowance admitted the request");
   expect(lowered.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
@@ -983,7 +985,7 @@ it("enforces the caller-resolved representation allowance and names its setting"
   ).toBe(15_000);
 });
 
-it("keeps duplicate candidate storage linear and emits every input occurrence exactly once", async () => {
+it("emits every occurrence of duplicate candidates exactly once on both sides", async () => {
   const entries = Array.from({ length: 1000 }, (_, i) => ({
     address: `0x${i.toString(16)}`,
     value: "same",
@@ -993,11 +995,13 @@ it("keeps duplicate candidate storage linear and emits every input occurrence ex
     right: nativeMatchingInventory("2", entries),
   });
   expect(report.matches).toHaveLength(1);
-  expect(report.matches[0]?.left).toHaveLength(1000);
-  expect(report.matches[0]?.right).toHaveLength(1000);
-  expect(new Set(report.matches[0]?.left.map((x) => x.function_id)).size).toBe(
-    1000,
-  );
+  for (const side of ["left", "right"] as const) {
+    const members = report.matches[0]?.[side];
+    expect(members).toHaveLength(1000);
+    expect(new Set(members?.map((member) => member.function_id)).size).toBe(
+      1000,
+    );
+  }
 });
 
 it("normalizes accepted body range address spaces before matching byte coverage", async () => {

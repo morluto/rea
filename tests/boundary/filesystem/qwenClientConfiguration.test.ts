@@ -114,6 +114,36 @@ describe("Qwen Code client lifecycle", () => {
     expect(removedText).toContain("// Keep this note.");
   });
 
+  it("preserves Qwen environment expressions when refreshing a registration", async () => {
+    const { client } = await qwenClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: command[0],
+            args: command.slice(1),
+            env: { PATH: "/opt/bin:${PATH}" },
+          },
+        },
+      }),
+    );
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_KUNA_JOBS: "4" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const config = JSON.parse(await readFile(client.configPath, "utf8"));
+    expect(config.mcpServers.rea.env).toMatchObject({
+      PATH: "/opt/bin:${PATH}",
+      REA_KUNA_JOBS: "4",
+    });
+  });
+
   it("reports the selected installation as aligned", async () => {
     const { home, client } = await qwenClient();
     expect(

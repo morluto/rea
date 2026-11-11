@@ -15,7 +15,12 @@ not_found_handling = "none"
 [build]
 cwd = ".."
 command = "python3 scripts/website.py check"
-watch_dir = ["./public", "./locales", "./templates", "../.agents/skills/reverse-engineer-anything"]
+watch_dir = [
+  "./public",
+  "./locales",
+  "./templates",
+  "../.agents/skills/reverse-engineer-anything",
+]
 
 # Public HTTPS depends on zone activation and certificate readiness.
 [env.production]

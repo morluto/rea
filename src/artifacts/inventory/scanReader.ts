@@ -228,12 +228,14 @@ const visitArtifactEntries = async (
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      // PyInstaller rows and Bun modules are source-distinct even when their logical
-      // destinations collide. Inventory retains those observations; the
-      // extraction path registry remains the authority for materialization.
+      // PyInstaller rows, Bun modules, and Deno virtual files are
+      // source-distinct even when their logical destinations collide.
+      // Inventory retains those observations; the extraction path registry
+      // remains the authority for materialization.
       if (
         frame.reader.format !== "pyinstaller" &&
-        frame.reader.format !== "bun-standalone"
+        frame.reader.format !== "bun-standalone" &&
+        frame.reader.format !== "deno-standalone"
       )
         context.registry.add(
           logicalPath,

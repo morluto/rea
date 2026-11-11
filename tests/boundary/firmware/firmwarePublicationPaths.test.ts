@@ -188,6 +188,7 @@ it("publishes the writer's normalized path while retaining source spelling and u
         staging,
         1024,
         10,
+        Number.MAX_SAFE_INTEGER,
         "extract_firmware",
       ),
       normalized,

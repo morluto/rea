@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "./javascriptModuleUnits.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
@@ -171,9 +172,8 @@ const isLoadStateNode = (
 ): node is ApplicationNode & {
   readonly kind: "javascript-asset" | "javascript-chunk" | "javascript-module";
 } =>
-  node.kind === "javascript-asset" ||
   node.kind === "javascript-chunk" ||
-  node.kind === "javascript-module";
+  (isJavaScriptModuleUnit(node) && node.kind !== "source-module");
 
 const state = (
   layer: ParsedStaticLayer,

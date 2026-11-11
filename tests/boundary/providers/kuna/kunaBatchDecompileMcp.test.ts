@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { batchDecompileResultSchema } from "../../../../src/domain/native/batchDecompile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -55,7 +56,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       "kuna",
     ),
   );
-  try {
+  await withVerifierCleanup(async () => {
     const client = await mcp.connect(
       createServer({ kind: "session", session }),
     );
@@ -77,10 +78,16 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     const broken = await direct("broken");
     const importSlot = await direct("puts");
     expect(broken.normalized_result).toBeNull();
+    expect(broken.raw_result).toMatchObject({
+      pseudocode_absence: { kind: "provider-failure" },
+    });
     expect(broken.limitations).toContain(
       "Kuna could not decompile this function: Flow exceeded maximum instructions",
     );
     expect(importSlot.normalized_result).toBeNull();
+    expect(importSlot.raw_result).toMatchObject({
+      pseudocode_absence: { kind: "not-in-export" },
+    });
 
     const batch = parseEvidence(
       (
@@ -93,7 +100,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     // profile commits only analysis inputs. Composed and retained views must
     // preserve the same warning for agents reading those results.
     const verificationWarning =
-      "Kuna 1.833 is not REA's verified 1.989 release";
+      "Kuna 1.833 is not REA's verified 1.990 release";
     expect(batch.limitations).toContainEqual(
       expect.stringContaining(verificationWarning),
     );
@@ -131,15 +138,8 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     expect(main).toMatchObject({ address: "main", status: "ok" });
     expect(main).not.toHaveProperty("limitations");
     const noPseudocode = {
-      status: "error",
-      error: {
-        code: "capability_unavailable",
-        retryable: false,
-        details: {
-          provider_id: "kuna",
-          operation: "procedure_pseudo_code",
-        },
-      },
+      status: "unavailable",
+      reason: "no_pseudocode",
     };
     // The item keeps exactly the facts the provider reported for its own
     // observation, as the single-function Evidence does.
@@ -184,8 +184,12 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       ({ evidence_id }) => evidence_id === batch.evidence_id,
     );
     expect(retained?.normalized_result).toEqual(batch.normalized_result);
-  } finally {
-    await mcp.close();
-    expect(await session.close()).toEqual({ ok: true, value: null });
-  }
+  }, [
+    async () => {
+      await mcp.close();
+    },
+    async () => {
+      expect(await session.close()).toEqual({ ok: true, value: null });
+    },
+  ]);
 }, 60_000);

@@ -26,7 +26,6 @@ it("shares a capture limit when browser providers use one admission", async () =
   const pending = first.analyzeBundle(input);
   const blocked = await second.analyzeBundle(input);
   try {
-    expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error("expected the shared admission to refuse");
     expect(projectAnalysisError(blocked.error)).toMatchObject({
       code: "resource_constraint",
@@ -52,7 +51,6 @@ it("does not share a capture limit across browser providers", async () => {
   const other = second.analyzeBundle(input);
   try {
     const blocked = await other;
-    expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error("expected capture to fail closed");
     expect(projectAnalysisError(blocked.error).code).not.toBe(
       "resource_constraint",

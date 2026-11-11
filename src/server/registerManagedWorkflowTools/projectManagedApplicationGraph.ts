@@ -52,6 +52,7 @@ export const registerProjectManagedApplicationGraph = (
               request.value.sources.members?.evidence,
               request.value.sources.boundaries?.evidence,
             ].filter((source): source is Evidence => source !== undefined),
+            { evidence: result.value },
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(

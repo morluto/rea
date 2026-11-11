@@ -6,6 +6,8 @@ export const commandObservationSchema = z.strictObject({
   stderr: z.string(),
   exit_code: z.union([z.string(), z.number(), z.null()]),
   signal: z.string().nullable(),
+  output_budget_bytes: z.int().positive().exactOptional(),
+  output_budget_source: z.enum(["default", "request"]).exactOptional(),
   output_truncated: z.boolean(),
   completion_status: z.enum(["complete", "unknown"]),
   artifact_sha256_after: z
@@ -14,6 +16,13 @@ export const commandObservationSchema = z.strictObject({
     .nullable(),
   artifact_changed: z.boolean().nullable(),
 });
+
+/** Exact producer admission that omitted command output; kinds define the unit. */
+export const gdbOutputLimitSchema = z.strictObject({
+  kind: z.enum(["command_bytes", "command_records", "mi_line_bytes"]),
+  maximum: z.int().positive(),
+});
+export type GdbOutputLimit = z.infer<typeof gdbOutputLimitSchema>;
 
 /** The GDB owner retains ordered records and derives its stream groupings. */
 export const gdbCommandResultSchema = z.strictObject({
@@ -31,6 +40,7 @@ export const gdbCommandResultSchema = z.strictObject({
   process_exit_code: z.number().int().nullable().exactOptional(),
   process_exit_signal: z.string().nullable().exactOptional(),
   output_truncated: z.boolean(),
+  output_limits: z.array(gdbOutputLimitSchema).min(1).exactOptional(),
   output_invalid_utf8: z.literal(true).exactOptional(),
   completion_status: z.enum(["complete", "unknown"]),
 });

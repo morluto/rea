@@ -195,7 +195,6 @@ describe("private operand command cleanup", () => {
     ).createClient((await parenthesizedTarget()).target);
     try {
       const result = await client.execute("inspect_macho", {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cleanup failure");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.partialObservation).toMatchObject({
@@ -257,7 +256,6 @@ describe("private otool operand cleanup", () => {
       ).createClient((await parenthesizedTarget()).target);
       try {
         const result = await client.execute("inspect_macho", {});
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("expected native failure");
         expect(result.error.capturedOutput?.stderr).toBe(message);
         expect(result.error.cleanupIncomplete).toBe(cleanupFails);
@@ -291,7 +289,6 @@ describe("private otool operand cleanup", () => {
     ).createClient((await parenthesizedTarget()).target);
     try {
       const result = await client.execute("inspect_macho", {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cleanup failure");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toContain(path);
@@ -326,7 +323,6 @@ describe("private otool operand cleanup", () => {
         {},
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cancellation");
       expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.partialObservation).toMatchObject({

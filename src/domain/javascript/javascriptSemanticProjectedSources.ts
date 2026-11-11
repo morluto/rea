@@ -10,7 +10,6 @@ import {
   semanticArrayPropertyReferences,
   type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
@@ -18,10 +17,10 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
-  semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import { semanticStoredSourceSelection } from "./javascriptSemanticIterationSources.js";
 import {
   semanticEffectPathCandidates,
@@ -115,7 +114,7 @@ const hasFreshProjectedReceiver = (
     if (paths.has(key)) return false;
     paths.add(key);
     examined.set(node, paths);
-    if (++selections > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (++selections > state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return false;
     }
@@ -138,7 +137,7 @@ const hasFreshProjectedReceiver = (
     if (sources.length === 0) return false;
     if (
       selections + pending.length + sources.length >
-      SEMANTIC_ALIAS_SELECTION_LIMIT
+      state.precision.alias_selections
     ) {
       state.valueResourceLimits.add("alias-selections");
       return false;
@@ -227,7 +226,7 @@ const projectedSourceFactsAtRead = (
       readonly retainsOrigin: boolean;
     }
   | undefined => {
-  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, reference, state);
   const captured = [
     ...read.binding.initializers,
     ...read.binding.referenceInitializers,

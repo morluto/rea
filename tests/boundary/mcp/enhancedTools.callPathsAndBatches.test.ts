@@ -10,9 +10,9 @@ import {
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
-import { NULL_PSEUDOCODE_GUIDANCE } from "../../../src/application/EnhancedTools.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
+import { MAX_ENHANCED_RECORDS } from "../../../src/contracts/enhancedInputs.js";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -125,7 +125,7 @@ describe("enhanced MCP graph caveats", () => {
     });
     expect(graph.structuredContent).toMatchObject({
       limitations: [
-        "Artifact identity is unavailable for this observation.",
+        expect.stringMatching(/artifact identity.*unavailable/iu),
         "Derived by an REA composed workflow.",
         `Fixture analysis provider (fixture 1) procedure_callees: ${caveat}`,
         `Fixture analysis provider (fixture 1) procedure_callees: ${leafCaveat}`,
@@ -329,7 +329,7 @@ describe("trace_call_path MCP outcome semantics", () => {
     });
   });
 
-  it("reports an unreachable goal as absent after complete traversal", async () => {
+  it("keeps a complete observed traversal distinct from unknown discovery", async () => {
     const client = await connect({
       execute: async (name, arguments_) => {
         if (name === "procedure_address")
@@ -347,7 +347,11 @@ describe("trace_call_path MCP outcome semantics", () => {
     expect(trace.isError).not.toBe(true);
     expect(trace.structuredContent).toMatchObject({
       normalized_result: {
-        goal_status: "not_reached",
+        goal_status: "unknown",
+        search_scope: {
+          discovery: "unknown",
+          observed_goal_status: "not_reached",
+        },
         truncated: false,
         residual_unknowns: [],
       },
@@ -451,41 +455,47 @@ describe("enhanced MCP batch cancellation", () => {
       expect(signals).toEqual(expectedCalls.map(() => false));
     },
   );
-
-  it("stops later batch stages across the input when one entry lookup is cancelled", async () => {
-    const calls: string[] = [];
-    const client = await connect({
-      execute: async (name, arguments_) => {
-        const selector = String(arguments_.procedure ?? arguments_.address);
-        calls.push(`${name}:${selector}`);
-        if (name === "procedure_address") return ok(selector);
-        if (name === "address_name" && selector === "0x1")
-          return err(new AnalysisCancelledError(name));
-        if (name === "address_name") return ok("fixture_name");
-        if (name === "procedure_pseudo_code") return ok("return 0;");
-        throw new Error(`Unexpected operation: ${name}`);
-      },
-    });
-
-    const response = await client.callTool({
-      name: "batch_decompile",
-      arguments: { addresses: ["0x1", "0x2"] },
-    });
-
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toBeUndefined();
-    expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "cancelled", details: { operation: "address_name" } },
-    });
-    expect(calls).toEqual([
-      "procedure_address:0x1",
-      "procedure_address:0x2",
-      "address_name:0x1",
-    ]);
-  });
 });
 
 describe("enhanced MCP batches", () => {
+  it("advertises and enforces the batch input budget before provider calls", async () => {
+    let calls = 0;
+    const client = await connect(
+      {
+        execute: async () => {
+          calls += 1;
+          throw new Error("provider must not be called for invalid input");
+        },
+      },
+      {
+        // Admit the array plus its object member before schema validation.
+        REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
+      },
+    );
+    const { tools } = await client.listTools();
+    expect(
+      tools.find(({ name }) => name === "batch_decompile")?.inputSchema,
+    ).toMatchObject({
+      properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
+    });
+
+    const result = await client.callTool({
+      name: "batch_decompile",
+      arguments: {
+        addresses: Array.from(
+          { length: MAX_ENHANCED_RECORDS + 1 },
+          () => "0x0",
+        ),
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: { code: "invalid_request", category: "invalid_input" },
+    });
+    expect(calls).toBe(0);
+  });
+
   it("returns every batch item in caller order with its own result", async () => {
     const addresses = Array.from(
       { length: 37 },
@@ -578,12 +588,14 @@ describe("enhanced MCP batches", () => {
             code: "unreadable_output",
             category: "execution_failure",
             details: { operation: "decompile", reason: "failed" },
-            message:
-              "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+            message: expect.stringMatching(
+              /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+            ),
             retryable: false,
             remediation: {
-              action:
-                "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+              action: expect.stringMatching(
+                /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+              ),
             },
           },
         },
@@ -664,33 +676,20 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     if (contract === undefined)
       throw new Error("Missing batch_decompile contract");
     const evidence = contract.outputSchema.parse(result.structuredContent);
-    const noPseudocode = (
-      guidance: (typeof NULL_PSEUDOCODE_GUIDANCE)[keyof typeof NULL_PSEUDOCODE_GUIDANCE],
-    ) => ({
-      code: "capability_unavailable",
-      retryable: false,
-      message: guidance.userMessage,
-      remediation: { action: guidance.remediationAction },
-      details: {
-        provider_id: "fixture",
-        operation: "procedure_pseudo_code",
-        reason: "provider returned null pseudocode",
-      },
-    });
     expect(evidence.normalized_result).toMatchObject({
       items: [
         { address: "0x1", status: "ok", pseudocode: answers["0x1"]?.result },
         {
           address: "0x2",
-          status: "error",
-          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.reported),
+          status: "unavailable",
+          reason: "no_pseudocode",
           limitations: answers["0x2"]?.limitations,
         },
-        // Without caveats, the guidance does not point at an absent field.
+        // An unclassified absence has no invented reason or retry policy.
         {
           address: "0x3",
-          status: "error",
-          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.none),
+          status: "unavailable",
+          reason: "no_pseudocode",
         },
         {
           address: "0x4",

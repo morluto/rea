@@ -206,6 +206,20 @@ it.runIf(process.platform !== "win32")(
   },
 );
 
+it.runIf(process.platform !== "win32")(
+  "does not offer a resolved-file retry for a derived WAL symlink",
+  async () => {
+    const { database, workspace, capture } = await fixture(true);
+    const target = workspace.path("wal-target");
+    await rename(database.walPath, target);
+    await symlink(target, database.walPath);
+    await expect(capture()).rejects.toMatchObject({
+      operationCause: { reason: "path", resolvedPath: undefined },
+      completedMembers: [{ role: "database", path: database.path }],
+    });
+  },
+);
+
 it.each(["activate", "replace", "remove"])(
   "rejects a cold journal changed during database acquisition: %s",
   async (change) => {

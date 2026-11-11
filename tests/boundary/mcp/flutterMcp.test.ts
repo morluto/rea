@@ -8,10 +8,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flutter.js";
-import {
-  ABI_SELECTOR_MESSAGE,
-  flutterResultSchemas,
-} from "../../../src/domain/flutter/flutterBuildAnalysis.js";
+import { flutterResultSchemas } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { aotFixtureImage } from "../../../src/flutter/FlutterBuild.fixture.js";
@@ -267,7 +264,9 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
           expect.objectContaining({
             path: ["abi"],
             reason,
-            message: ABI_SELECTOR_MESSAGE,
+            message: expect.stringMatching(
+              /exact lib\/ directory label.*1–1010 Unicode characters.*without '\/'/iu,
+            ),
           }),
         ],
       },

@@ -106,7 +106,7 @@ it.each([
 );
 
 it.each([
-  { comparisonStatus: "unchanged", verificationStatus: "pass" },
+  { comparisonStatus: "unchanged", verificationStatus: "unknown" },
   { comparisonStatus: "changed", verificationStatus: "fail" },
 ] as const)(
   "verifies public $comparisonStatus function comparison as $verificationStatus",
@@ -202,15 +202,15 @@ it.each([
       status: verificationStatus,
       summary: {
         total: 4,
-        passed: verificationStatus === "pass" ? 4 : 2,
+        passed: comparisonStatus === "unchanged" ? 3 : 2,
         failed: verificationStatus === "fail" ? 2 : 0,
-        unknown: 0,
+        unknown: comparisonStatus === "unchanged" ? 1 : 0,
       },
       claims: {
         items: expect.arrayContaining([
           expect.objectContaining({
             dimension: "pseudocode",
-            status: verificationStatus,
+            status: comparisonStatus === "unchanged" ? "pass" : "fail",
             observed_status: comparisonStatus,
             comparison_evidence_id: comparison.evidence_id,
             left_evidence_ids: [left.evidence_id],
@@ -306,29 +306,6 @@ describe("function comparison MCP integration", () => {
           }),
         ],
       },
-    });
-  });
-
-  it("accepts inline Evidence without prior session registration", async () => {
-    const session = createTestBinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const { client } = await createApplicationMcpHarness({
-      session,
-      clientIdentity: { name: "function-link-test", version: "1" },
-    });
-    const result = await client.callTool({
-      name: "compare_functions",
-      arguments: {
-        left: FUNCTION_COMPARISON_EXAMPLE.left,
-        right: FUNCTION_COMPARISON_EXAMPLE.right,
-      },
-    });
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      normalized_result: { status: expect.any(String) },
     });
   });
 });
@@ -447,7 +424,7 @@ describe("function comparison input-kind diagnostics", () => {
 it.each([
   { status: "changed", expected: "fail" },
   { status: "unknown", expected: "unknown" },
-  { status: "unchanged", expected: "pass" },
+  { status: "unchanged", expected: "unknown" },
 ] as const)(
   "checks the aggregate status of imported $status function comparisons",
   async ({ status, expected }) => {

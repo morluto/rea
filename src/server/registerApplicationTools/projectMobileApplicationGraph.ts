@@ -79,6 +79,7 @@ const registerProjection = (context: {
           const recordedSources = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
+            { evidence: result.value.evidence },
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(recordedSources, contract);

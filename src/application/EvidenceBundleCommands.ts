@@ -1,3 +1,4 @@
+import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
 import { analysisEvidenceSources } from "./AnalysisEvidenceSources.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -138,8 +139,14 @@ export const deliverAnalysisEvidence = async (
   // Later inspect_analysis_view requests are separate questions and do not
   // inherit the parent's selected input path.
   const selected =
-    detail === "summary" && evidence.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, evidence.caller_input_path)
+    detail === "summary" &&
+    (evidence.caller_input_path !== undefined ||
+      evidence.caller_input_paths !== undefined)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          evidence.caller_input_path,
+          evidence.caller_input_paths,
+        )
       : delivered.value;
   const published = await publishEvidenceDelivery({
     bundle,
@@ -174,6 +181,17 @@ export const publishEvidenceDelivery = async (input: {
   readonly signal?: AbortSignal | undefined;
 }): Promise<Result<PublishedEvidenceDelivery, AnalysisError>> => {
   const { signal, operation } = input;
+  // Partial analysis can hold only some of its linked sources. Both delivery
+  // adapters must establish closure before committing a complete source bundle.
+  const sources = new Map(
+    input.bundle.records.map((record) => [record.evidence_id, record]),
+  );
+  const closure = resolveInvestigationEvidenceClosure(
+    { evidenceForAnalysis: (id) => sources.get(id) },
+    [input.complete.evidence_id],
+  );
+  if (!closure.ok)
+    return err(closure.error.retainPartialObservation(input.complete));
   const written = await persistEvidenceBundleCommand(
     input.bundle,
     input.outputPath,

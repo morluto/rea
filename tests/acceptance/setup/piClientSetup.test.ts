@@ -444,6 +444,7 @@ cliTest(
   "malformed Pi overrides do not block selected Codex setup or doctor and never fall back for Pi",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-pi-invalid-cli-");
+    const moduleCache = await createTestTempDirectory("rea-pi-swift-cache-");
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: arguments_,
@@ -453,6 +454,7 @@ cliTest(
           USERPROFILE: home,
           HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "file:///agent%2fdir",
+          REA_DARWIN_MODULE_CACHE_PATH: moduleCache,
         },
         timeoutMs: 20_000,
       });

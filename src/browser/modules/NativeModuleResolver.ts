@@ -1,4 +1,8 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import {
+  chromiumLaunchRemediation,
+  chromiumSandboxEnabled,
+} from "../ChromiumSandbox.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type {
@@ -33,6 +37,7 @@ import type {
 } from "../../domain/webModuleTrace.js";
 import { webModuleResolutionSchema } from "../../domain/webModuleTrace.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
+import { importMapForTrustedResolver } from "./importMapForTrustedResolver.js";
 
 const OPERATION = "trace_web_module_imports";
 const TIMEOUT_MS = 20000;
@@ -71,6 +76,20 @@ export type ModuleResolverLauncher = (
 ) => Promise<ModuleResolverBrowser>;
 const launch: ModuleResolverLauncher = async (options) =>
   (await import("playwright-core")).chromium.launch(options);
+
+const moduleResolverFailure = (
+  cause: unknown,
+  executable: string,
+  remediationAction: string | undefined,
+): ProviderAdapterError =>
+  new ProviderAdapterError("native-module-resolver", OPERATION, {
+    cause,
+    ...(remediationAction === undefined ? {} : { remediationAction }),
+    diagnostics: {
+      executable,
+      error_message: cause instanceof Error ? cause.message : String(cause),
+    },
+  });
 
 /** Use native import.meta.resolve in an owned context with locally fulfilled requests. */
 export class NativeModuleResolver implements WebModuleResolutionPort {
@@ -131,6 +150,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           },
         ),
       );
+    const chromiumSandbox = chromiumSandboxEnabled(this.environment);
     const deadline = new ProviderStartupDeadline(TIMEOUT_MS, options?.signal);
     let activeCall:
       | { settled: boolean; interruption?: AnalysisError }
@@ -165,6 +185,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       );
     };
     let lease: AnalysisCleanupLease | undefined;
+    let launched = false;
     let cleanup: Promise<void> | undefined;
     const close = (): Promise<void> => {
       if (cleanup === undefined && lease !== undefined) {
@@ -196,17 +217,16 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           handleSIGINT: false,
           handleSIGTERM: false,
           handleSIGHUP: false,
+          chromiumSandbox,
           args: [
             "--disable-dev-shm-usage",
             "--disable-background-networking",
             "--renderer-process-limit=1",
             "--js-flags=--max-old-space-size=128",
-            ...(this.environment.REA_BROWSER_NO_SANDBOX === "true"
-              ? ["--no-sandbox"]
-              : []),
           ],
         }),
       );
+      launched = true;
       lease = new AnalysisCleanupLease(async () => {
         if (
           deadline.signal.aborted &&
@@ -238,14 +258,15 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
               cause instanceof AnalysisCapabilityUnavailableError ||
               cause instanceof BrowserObservationError
             ? cause
-            : new ProviderAdapterError("native-module-resolver", OPERATION, {
+            : moduleResolverFailure(
                 cause,
-                diagnostics: {
-                  executable,
-                  error_message:
-                    cause instanceof Error ? cause.message : String(cause),
-                },
-              }),
+                executable,
+                // Only an unresolved sandboxed launch can be a sandbox failure;
+                // later engine failures keep the default recovery guidance.
+                launched || !chromiumSandbox
+                  ? undefined
+                  : chromiumLaunchRemediation(true),
+              ),
       );
     } finally {
       deadline.signal.removeEventListener("abort", onAbort);
@@ -367,7 +388,7 @@ const resolveInBrowser = async (
         await route.fulfill({
           status: 200,
           contentType: "text/html",
-          body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(input.importMap.value)}</script>`}`,
+          body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(importMapForTrustedResolver(input.importMap.value, importerUrl, input.importMap.baseUrl))}</script>`}`,
         });
       } else if (
         !stubSent &&
