@@ -771,6 +771,56 @@ export const parseRuntimeSettingEnvironments = (source) => {
     )
       throw new Error("Analysis setting must be a static object assignment");
     const definition = unwrapExpression(setting.initializer);
+    if (
+      definition.properties.some((field) => {
+        if (ts.isPropertyAssignment(field))
+          return (
+            !ts.isIdentifier(field.name) && !ts.isStringLiteral(field.name)
+          );
+        if (!ts.isSpreadAssignment(field) || !ts.isIdentifier(field.expression))
+          return true;
+        const name = field.expression.text;
+        const binding = file.statements
+          .filter(ts.isVariableStatement)
+          .flatMap((statement) =>
+            (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+              ? [...statement.declarationList.declarations]
+              : [],
+          )
+          .find(
+            (entry) => ts.isIdentifier(entry.name) && entry.name.text === name,
+          );
+        if (binding?.initializer === undefined) return true;
+        const spread = unwrapExpression(binding.initializer);
+        if (!ts.isObjectLiteralExpression(spread)) return true;
+        let escaped = false;
+        const inspect = (node) => {
+          if (
+            ts.isIdentifier(node) &&
+            node.text === name &&
+            node !== binding.name &&
+            !(
+              ts.isSpreadAssignment(node.parent) &&
+              node.parent.expression === node
+            )
+          )
+            escaped = true;
+          ts.forEachChild(node, inspect);
+        };
+        inspect(file);
+        if (escaped) return true;
+        return spread.properties.some(
+          (property) =>
+            !ts.isPropertyAssignment(property) ||
+            (!ts.isIdentifier(property.name) &&
+              !ts.isStringLiteral(property.name)) ||
+            property.name.text === "environment",
+        );
+      })
+    )
+      throw new Error(
+        "Analysis setting fields must be static named assignments",
+      );
     const fields = definition.properties.filter(
       (field) =>
         ts.isPropertyAssignment(field) &&
