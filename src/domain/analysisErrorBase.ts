@@ -499,7 +499,6 @@ export type AnalysisPartialObservation =
     }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
-  | HistoricalSourceGraph
   | GraphqlContract
   | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
@@ -509,6 +508,7 @@ export type AnalysisPartialObservation =
   | FridaDeviceList
   | FridaProcessList
   | WebModuleResolutionObservation
+  | HistoricalSourceGraph
   | WebNetworkCapture
   | NativeLoadImagePartialObservation
   | NativeAotSnapshotObservation

@@ -374,44 +374,42 @@ const registerReferenceSourceCommand = (
         ),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          "import-reference-source",
-          async () => {
-            const excludePaths = parseReferenceSourceExcludePaths(
-              options.excludePaths,
-            );
-            if (!excludePaths.ok) return excludePaths.failure;
-            if (
-              options.outlineDepth !== undefined &&
-              options.detail !== "summary"
-            )
-              return {
-                error: "Import failed",
-                ...projectAnalysisError(
-                  new AnalysisInputError(
-                    "import-reference-source",
+      logCliCommand(
+        logger,
+        "import-reference-source",
+        async () => {
+          const excludePaths = parseReferenceSourceExcludePaths(
+            options.excludePaths,
+          );
+          if (!excludePaths.ok) return excludePaths.failure;
+          if (
+            options.outlineDepth !== undefined &&
+            options.detail !== "summary"
+          )
+            return {
+              error: "Import failed",
+              ...projectAnalysisError(
+                new AnalysisInputError(
+                  "import-reference-source",
+                  { userMessage: "--outline-depth requires --detail summary" },
+                  [
                     {
-                      userMessage: "--outline-depth requires --detail summary",
+                      path: ["outlineDepth"],
+                      reason: "invalid_value",
+                      message: "--outline-depth requires --detail summary",
                     },
-                    [
-                      {
-                        path: ["outlineDepth"],
-                        reason: "invalid_value",
-                        message: "--outline-depth requires --detail summary",
-                      },
-                    ],
-                  ),
+                  ],
                 ),
-              };
-            const config = parseConfig(environment);
-            if (!config.ok)
-              return {
-                error: "Import failed",
-                ...projectAnalysisError(config.error),
-              };
-            return runReferenceSourceImport(
+              ),
+            };
+          const config = parseConfig(environment);
+          if (!config.ok)
+            return {
+              error: "Import failed",
+              ...projectAnalysisError(config.error),
+            };
+          return withCommandCancellation((signal) =>
+            runReferenceSourceImport(
               {
                 root: args.root,
                 caller: "rea-cli",
@@ -426,10 +424,10 @@ const registerReferenceSourceCommand = (
               options.detail === "summary"
                 ? (options.outlineDepth ?? 2)
                 : undefined,
-            );
-          },
-          isCliOperationFailure,
-        ),
+            ),
+          );
+        },
+        isCliOperationFailure,
       ),
   });
 };
