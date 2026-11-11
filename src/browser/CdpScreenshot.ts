@@ -179,9 +179,26 @@ export const captureCdpScreenshot = async (
     afterFrame.frameId !== mainFrame.frameId ||
     (mainFrame.loaderId !== undefined &&
       mainFrame.loaderId !== "" &&
+      afterFrame.loaderId !== undefined &&
+      afterFrame.loaderId !== "" &&
       afterFrame.loaderId !== mainFrame.loaderId)
   )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+  if (
+    mainFrame.loaderId !== undefined &&
+    mainFrame.loaderId !== "" &&
+    (afterFrame.loaderId === undefined || afterFrame.loaderId === "")
+  )
+    throw new BrowserObservationError(
+      "capture_web_screenshot",
+      "protocol_error",
+      {
+        detail:
+          "CDP omitted the final document loader identity, so screenshot stability could not be verified.",
+        remediationAction:
+          "Retry after the selected page has finished loading.",
+      },
+    );
   await context.progress?.report({
     phase: "browser_observation",
     completed: 2,

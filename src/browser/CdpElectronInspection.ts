@@ -71,6 +71,7 @@ interface ElectronInspectionState {
   readonly scriptGenerations: WeakMap<ElectronScriptDraft, number>;
   readonly limitations: string[];
   mainFrameId: string | undefined;
+  lastProvenMainDocument: ElectronFrameDocument | undefined;
   navigationDuringCapture: boolean;
 }
 
@@ -119,6 +120,7 @@ export const inspectCdpElectronPage = async (
         : []),
     ],
     mainFrameId: undefined,
+    lastProvenMainDocument: undefined,
     navigationDuringCapture: false,
   };
   const removeListener = context.connection.onEvent((event) => {
@@ -163,6 +165,7 @@ const runElectronInspection = async (
   if (unprovenFrameIds(initialRead, state).has(main.frame_id))
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   state.mainFrameId = main.frame_id;
+  state.lastProvenMainDocument = state.frameDocuments.get(main.frame_id);
   authorizeFrameGenerations(initialRead, state);
   await enableElectronCapture(context);
   await delayWithCancellation(
@@ -348,13 +351,17 @@ const retainFrameDocument = (
   document: ElectronFrameDocument,
   state: ElectronInspectionState,
 ): void => {
-  const previous = state.frameDocuments.get(id);
+  const previous =
+    state.frameDocuments.get(id) ??
+    (id === state.mainFrameId ? state.lastProvenMainDocument : undefined);
   if (
     previous !== undefined &&
     sameFrameDocument(previous, document) &&
     previous.url === document.url
-  )
+  ) {
+    state.frameDocuments.set(id, document);
     return;
+  }
   if (
     id === state.mainFrameId &&
     previous !== undefined &&
@@ -362,6 +369,7 @@ const retainFrameDocument = (
   )
     state.navigationDuringCapture = true;
   state.frameDocuments.set(id, document);
+  if (id === state.mainFrameId) state.lastProvenMainDocument = document;
 };
 
 /** Tree and event observations invalidate the same document generation. */
@@ -437,7 +445,9 @@ const seedFrameDocuments = (
       state.frameDocuments.get(id) === documents.get(id) &&
       (generations.get(id) ?? 0) === (state.frameGenerations.get(id) ?? 0)
     ) {
-      const previous = documents.get(id);
+      const previous =
+        documents.get(id) ??
+        (id === state.mainFrameId ? state.lastProvenMainDocument : undefined);
       if (previous !== undefined && !sameFrameDocument(previous, document))
         invalidateFrameGenerations(id, state);
       retainFrameDocument(id, document, state);

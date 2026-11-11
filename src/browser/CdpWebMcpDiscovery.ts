@@ -384,9 +384,26 @@ const assertStableAuthorizedFrame = async (
     final.frameId !== initial.frameId ||
     (initial.loaderId !== undefined &&
       initial.loaderId !== "" &&
+      final.loaderId !== undefined &&
+      final.loaderId !== "" &&
       final.loaderId !== initial.loaderId)
   )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+  if (
+    initial.loaderId !== undefined &&
+    initial.loaderId !== "" &&
+    (final.loaderId === undefined || final.loaderId === "")
+  )
+    throw new BrowserObservationError(
+      "discover_webmcp_tools",
+      "protocol_error",
+      {
+        detail:
+          "CDP omitted the final document loader identity, so discovery stability could not be verified.",
+        remediationAction:
+          "Retry after the selected page has finished loading.",
+      },
+    );
 };
 
 const requiredDiscoveryFrame = (

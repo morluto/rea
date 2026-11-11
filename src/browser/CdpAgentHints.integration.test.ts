@@ -179,7 +179,14 @@ it.each(["progress", "enable", "terminal", "complete"] as const)(
 
 it.each(
   ["screenshot", "webmcp"].flatMap((operation) =>
-    ["unchanged", "unknown-loader", "frame", "loader"].map((change) => ({
+    [
+      "unchanged",
+      "unknown-loader",
+      "missing-final-loader",
+      "empty-final-loader",
+      "frame",
+      "loader",
+    ].map((change) => ({
       operation,
       change,
     })),
@@ -200,13 +207,17 @@ it.each(
                   ? "replacement-main"
                   : "frame-main",
               loaderId:
-                change === "unknown-loader"
-                  ? trees > 1
-                    ? undefined
-                    : ""
-                  : trees > 1 && change === "loader"
-                    ? "replacement-loader"
-                    : "loader-main",
+                trees > 1 && change === "missing-final-loader"
+                  ? undefined
+                  : trees > 1 && change === "empty-final-loader"
+                    ? ""
+                    : change === "unknown-loader"
+                      ? trees > 1
+                        ? undefined
+                        : ""
+                      : trees > 1 && change === "loader"
+                        ? "replacement-loader"
+                        : "loader-main",
               url: `${origin}/app`,
             },
           },
@@ -236,7 +247,13 @@ it.each(
       else
         expect(result).toMatchObject({
           ok: false,
-          error: { reason: "target_changed" },
+          error: {
+            reason:
+              change === "missing-final-loader" ||
+              change === "empty-final-loader"
+                ? "protocol_error"
+                : "target_changed",
+          },
         });
     } finally {
       await provider.close?.();

@@ -956,3 +956,50 @@ it.each([
     );
   },
 );
+
+it.each([
+  { loaders: ["loader-a", undefined, "loader-b"], changed: true },
+  { loaders: ["loader-a", undefined, "loader-a"], changed: false },
+  { loaders: [undefined, undefined, "loader-b"], changed: false },
+])(
+  "compares later root identity with the last proven loader: $loaders",
+  async ({ loaders, changed }) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-loader-history-"));
+    temporary.push(root);
+    const main = join(root, "main.html");
+    await writeFile(main, "main");
+    const mainUrl = pathToFileURL(main).href;
+    let reads = 0;
+    const connection = {
+      onEvent: () => () => {},
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          const loaderId = loaders[reads++];
+          return {
+            frameTree: {
+              frame: {
+                id: "main",
+                url: mainUrl,
+                ...(loaderId === undefined ? {} : { loaderId }),
+              },
+            },
+          };
+        }
+        if (method === "Page.getResourceTree")
+          return { frameTree: { resources: [] } };
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    const result = inspectRaceConnection(connection, mainUrl);
+    if (changed)
+      await expect(result).rejects.toMatchObject({ reason: "target_changed" });
+    else {
+      const value = await result;
+      if (loaders[0] !== undefined)
+        expect(value.completeness.attach_limited_sections).toContain("frames");
+    }
+  },
+);
