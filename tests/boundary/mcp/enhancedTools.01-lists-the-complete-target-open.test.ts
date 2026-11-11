@@ -392,9 +392,11 @@ describe("enhanced MCP tools", () => {
       unsupported_branches: [
         "structured-boundary-types",
         "jump-table-data-mapping",
+        "indirect-branch-inventory",
       ],
       residual_unknowns: expect.arrayContaining([
         expect.stringContaining("boundary types"),
+        "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
       ]),
       substeps: [
         { operation: "analyze_function", status: "completed" },

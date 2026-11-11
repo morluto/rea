@@ -358,7 +358,11 @@ it("retains unavailable Ghidra native API observations across live reobservation
           reason: residual,
           residual_unknowns: [residual],
         },
-        residual_unknowns: [residual],
+        // The provider's boundary unknown, plus the absent indirect-branch inventory.
+        residual_unknowns: [
+          residual,
+          "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
+        ],
       });
       return evidence;
     };
@@ -394,7 +398,8 @@ it("retains unavailable Ghidra native API observations across live reobservation
     const unknownPage = toolContract("list_unknowns").outputSchema.parse(
       listed.structuredContent,
     ).result;
-    expect(unknownPage.total).toBe(2);
+    // Two automatic unknowns for each of the two result Evidence records.
+    expect(unknownPage.total).toBe(4);
     expect(unknownPage.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -407,9 +412,16 @@ it("retains unavailable Ghidra native API observations across live reobservation
         }),
       ]),
     );
+    const indirectBranchQuestion =
+      "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.";
     expect(
-      unknownPage.items.every(({ question }) => question.includes(residual)),
-    ).toBe(true);
+      unknownPage.items.filter(({ question }) => question.includes(residual)),
+    ).toHaveLength(2);
+    expect(
+      unknownPage.items.filter(({ question }) =>
+        question.includes(indirectBranchQuestion),
+      ),
+    ).toHaveLength(2);
   } finally {
     await harness.close();
   }

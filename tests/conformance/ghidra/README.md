@@ -3,6 +3,19 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+The optional `ReaIndirectBranchEvidenceProbe.java` and
+`scripts/verify-real-ghidra-warning-attribution.mjs` exercise source-owned
+AArch64, AVR and MIPS warning-attribution cases: overlay-address identity,
+addressable-word coordinates, delay slots and misleading caller comments.
+On Linux x64, the corrected bridge passed this real-Ghidra 12.1.4 / JDK 21
+verification in [fork Actions run 41359355962](https://github.com/jaelliot/rea/actions/runs/41359355962).
+The corrected profile revision and snapshot admission separately passed
+216 focused tests in [run 41359939917](https://github.com/jaelliot/rea/actions/runs/41359939917);
+the extra general AArch64 workflow in that run was blocked by the unrelated
+default MCP input-element limit. These source-owned cases do not establish
+runtime PSP overlay residency, CLI/MCP end-to-end coverage for the new typed
+probe or correctness of commercial game binaries.
+
 For the one-shot function bundle handoff, run `npm run build:cached` and then
 `node scripts/verify-real-ghidra-function-bundle.mjs` with `GHIDRA_INSTALL_DIR`
 and `JAVA_HOME` set. The verifier compiles its own target, creates a project

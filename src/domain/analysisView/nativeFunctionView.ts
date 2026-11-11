@@ -83,6 +83,11 @@ const nativeRows = (
     referenced_names: dossier.referenced_names,
     swift_string_literals: dossier.swift_string_literals,
     swift_string_literal_omissions: dossier.swift_string_literal_omissions,
+    // Absent when native_api is unavailable or the provider did not inspect
+    // indirect branches; both stay unknown rather than empty.
+    unresolved_indirect_branches: dossier.native_api?.available
+      ? dossier.native_api.unresolved_indirect_branches
+      : undefined,
     value_flow_operations: flow?.operations,
     value_flow_def_use: flow?.def_use,
     value_flow_effects: flow?.effects,
@@ -297,19 +302,33 @@ export const projectNativeFunctionView = (
       : page;
   }
   const rows = nativeRows(dossier, view.facet);
+  const api = dossier.native_api;
   if (rows === undefined)
     return ok(
       singleton({
         available: false,
-        // Only value-flow facets inherit the value-flow failure reason; an
-        // older dossier simply has no unresolved_calls record, and a target
-        // whose provider does not decode Swift literals has no such record.
+        // Value-flow and indirect-branch facets inherit their owner's failure
+        // reason; an older dossier simply has no unresolved_calls record, and
+        // a target whose provider does not decode Swift literals has no such
+        // record.
         reason:
           view.facet.startsWith("value_flow_") && flow?.available === false
             ? flow.reason
-            : "not recorded",
+            : view.facet === "unresolved_indirect_branches" &&
+                api?.available === false
+              ? api.reason
+              : "not recorded",
       }),
     );
+  const omittedBranches =
+    view.facet === "unresolved_indirect_branches" && api?.available
+      ? (api.unresolved_indirect_branches_omitted ?? 0)
+      : 0;
+  if (omittedBranches > 0)
+    common.unknowns = uniqueSorted([
+      ...common.unknowns,
+      `${String(omittedBranches)} further unresolved indirect branch(es) beyond the provider's inventory bound were not reported; their sites remain unknown`,
+    ]);
   const items = rows.slice(view.offset, view.offset + view.limit);
   return ok({
     kind: "native" as const,

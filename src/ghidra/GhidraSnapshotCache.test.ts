@@ -315,6 +315,16 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "indirect_branch_inventory",
+      current: "listing-computed-jumps-typed-warning-address-v2",
+      legacy: "listing-computed-jumps-decompiler-comment-warnings-bounded-v2",
+    },
+    {
+      parameter: "indirect_branch_inventory",
+      current: "listing-computed-jumps-typed-warning-address-v2",
+      legacy: undefined,
+    },
+    {
       parameter: "value_flow_effect_scope",
       current: "pcode-load-store-explicit-v1",
       legacy: undefined,

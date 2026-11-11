@@ -18,6 +18,7 @@
     "scripts/verify-real-ghidra-noreturn.mjs",
     "scripts/verify-real-ghidra-decompiler-failure.mjs",
     "scripts/verify-real-ghidra-decompile-timeout.mjs",
+    "scripts/verify-real-ghidra-warning-attribution.mjs",
     "scripts/verify-real-ghidra-function-bundle.mjs",
     "tests/processOwnershipRunner.ts"
   ],

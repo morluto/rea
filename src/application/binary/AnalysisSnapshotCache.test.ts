@@ -1672,6 +1672,41 @@ it("revises trace workflow profiles so earlier results are not replayed", () => 
   );
 });
 
+it("revises only inspect_native_api workflow snapshots for inventory semantics", () => {
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const previous = workflowAnalysisProfile(profile);
+  const revised = workflowAnalysisProfile(profile, "inspect_native_api");
+
+  expect(revised.digest).not.toBe(previous.digest);
+  expect(revised.parameters).toMatchObject({
+    upstream_analysis_profile: profile,
+    workflow_revision: 2,
+  });
+  expect(revised.parameters.upstream_analysis_profile).toEqual(profile);
+  expect(workflowAnalysisProfile(profile, "binary_overview")).toEqual(
+    createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+      upstream_analysis_profile: profile,
+      source_limitations: "provider-operation-caveats-v1",
+      workflow_revision: 5,
+    }),
+  );
+  for (const [operation, revision] of [
+    ["trace_feature", 9],
+    ["get_call_graph", 3],
+    ["batch_decompile", 4],
+  ] as const)
+    expect(workflowAnalysisProfile(profile, operation)).toEqual(
+      createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+        upstream_analysis_profile: profile,
+        source_limitations: "provider-operation-caveats-v1",
+        workflow_revision: revision,
+      }),
+    );
+  expect(
+    workflowAnalysisProfile(profile, "inspect_native_dispatch_metadata"),
+  ).toEqual(previous);
+});
+
 it("binds native value-trace absence semantics without changing other workflows", () => {
   const profile = ANALYSIS_SNAPSHOT_PROFILE;
   const valueTrace = workflowAnalysisProfile(profile, "trace_native_values");
