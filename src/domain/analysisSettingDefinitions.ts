@@ -90,10 +90,22 @@ const ghidraDecompileOperations = [
   "trace_native_values",
 ] as const;
 
-// These operations use the shared owned-file baseline on Windows. Other
-// workflows may also use it; this is not a complete reader inventory.
+// These operations can use the shared owned-file baseline on Windows, depending
+// on their input and provider. Other workflows may also use it; this is not a
+// complete reader inventory.
 const windowsChangeTimeOperations = [
   "open_binary",
+  "export_web_scripts",
+  "capture_process_scenario",
+  "compare_process_captures",
+  "inspect_analysis_view",
+  "compare_bundles",
+  "import_evidence_bundle",
+  "inspect_android_package",
+  "search_android_classes",
+  "inspect_android_class",
+  "inspect_android_method",
+  "trace_android_references",
   "inventory_artifact",
   "inspect_artifact",
   "extract_artifact",
@@ -516,6 +528,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "ms",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
+    relatedProviders: ["jadx"],
     operations: windowsChangeTimeOperations,
   },
   "windows.change_time_settle_poll_ms": {
@@ -527,6 +540,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "ms",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
+    relatedProviders: ["jadx"],
     operations: windowsChangeTimeOperations,
   },
   "windows.change_time_settle_max_polls": {
@@ -538,6 +552,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "count",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
+    relatedProviders: ["jadx"],
     operations: windowsChangeTimeOperations,
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
