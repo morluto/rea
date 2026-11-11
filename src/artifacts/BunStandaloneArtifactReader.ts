@@ -169,16 +169,44 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
       const output = memberStream(stored);
       output.on("error", () => undefined);
       this.#streams.add(output);
-      output.once("close", () => this.#streams.delete(output));
+      let producerComplete = false;
+      const onAbort = (): void => {
+        // Preserve an active read or validation failure. Once production is
+        // complete, the caller still owns buffered readable bytes; cancellation
+        // must retire that result instead of leaving the stream open forever.
+        if (!producerComplete || output.destroyed) return;
+        output.destroy(
+          new ArtifactReaderFailure(
+            "cancelled",
+            "Bun standalone read cancelled",
+            {
+              cause: signal?.reason,
+            },
+          ),
+        );
+      };
+      const retired = new Promise<void>((resolve) => {
+        output.once("close", () => {
+          this.#streams.delete(output);
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        });
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
       void this.#scope
-        .run(
-          () =>
+        .run(async () => {
+          await Promise.all([
             new Promise<void>((resolve) => {
               pipeline(source, output, () => {
+                producerComplete = true;
+                if (signal?.aborted) onAbort();
                 resolve();
               });
             }),
-        )
+            retired,
+          ]);
+        })
         .catch((cause: unknown) =>
           output.destroy(
             cause instanceof Error
