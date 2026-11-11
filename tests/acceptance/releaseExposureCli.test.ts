@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
@@ -121,4 +121,79 @@ cliTest(
     expect(report.summary.by_status.not_assessed).toBe(3);
   },
   60_000,
+);
+
+cliTest.for(["map", "script"])(
+  "retains the distinct linker-map source across declaration owners, %s first",
+  async (firstRole, { cli, skip }) => {
+    const root = await createTestTempDirectory("rea-release-map-identity-cli-");
+    const declared = "café.map";
+    const companion = "cafe\u0301.map";
+    await writeFile(join(root, declared), "linker map\n");
+    await writeFile(join(root, companion), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      skip();
+      return;
+    }
+    await writeFile(
+      join(root, firstRole === "map" ? "z.js" : "zz.js"),
+      `//# ${"sourceMappingURL"}=${declared}\n`,
+    );
+    await writeFile(
+      join(root, firstRole === "script" ? "z.html" : "zz.html"),
+      `<script src="${declared}"></script>`,
+    );
+    const result = await cli.run({
+      arguments: ["audit-release-exposure", root, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = outputSchema.parse(result.json).normalized_result;
+    expect(
+      report.checks.find(({ id }) => id === "native.debug_companions"),
+    ).toMatchObject({
+      status: "exposed",
+      confidence: "inferred",
+      observation: {
+        counts: { companions: 1 },
+        samples: [join(root, companion)],
+      },
+    });
+  },
+);
+
+cliTest(
+  "retracts a script target guessed after its early declaration",
+  async ({ cli, skip }) => {
+    const root = await createTestTempDirectory("rea-release-late-guess-cli-");
+    const declared = "café.map";
+    const other = "cafe\u0301.map";
+    await writeFile(join(root, declared), "linker map\n");
+    await writeFile(join(root, other), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      skip();
+      return;
+    }
+    await writeFile(
+      join(root, "a.html"),
+      `<script src="${declared}"></script>`,
+    );
+    await writeFile(join(root, "b.js"), `//# ${"sourceMappingURL"}=${other}\n`);
+    await writeFile(
+      join(root, "z.js"),
+      `//# ${"sourceMappingURL"}=${declared}\n`,
+    );
+    const result = await cli.run({
+      arguments: ["audit-release-exposure", root, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = outputSchema.parse(result.json).normalized_result;
+    const check = report.checks.find(
+      ({ id }) => id === "native.debug_companions",
+    );
+    expect(check?.status).not.toBe("exposed");
+    expect(check?.observation).toMatchObject({
+      counts: { companions: 0 },
+      samples: [],
+    });
+  },
 );

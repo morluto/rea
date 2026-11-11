@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import * as artifactPaths from "../ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
@@ -90,6 +91,9 @@ it("retires buffered member bytes when cancellation arrives after production", a
     const reason = { stop: "discard buffered member" };
     controller.abort(reason);
     await vi.waitFor(() => expect(stream.destroyed).toBe(true));
+    expect(stream.errored).toBeInstanceOf(ArtifactReaderFailure);
+    expect(stream.errored).toMatchObject({ reason: "cancelled" });
+    expect(stream.errored?.cause).toBe(reason);
     expect(stream.readableEnded).toBe(false);
   } finally {
     await reader.close();
