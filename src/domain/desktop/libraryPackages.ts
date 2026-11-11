@@ -103,19 +103,24 @@ async function* libraryCandidates(
   machine: number,
   cache: readonly LinkerCacheEntry[],
   host: LibraryWalkHost,
-): AsyncGenerator<string> {
+): AsyncGenerator<{ path: string; unprobed: boolean }> {
   if (soname.startsWith("/")) {
-    yield posix.normalize(soname);
+    yield { path: posix.normalize(soname), unprobed: false };
     return;
   }
+  const unprobed: string[] = [];
   if (!soname.includes("/"))
     for (const directory of directories) {
       const candidate = posix.join(directory, soname);
-      // A probe that could not tell is a candidate that might load, not an
-      // absent one: the linker tries it before any later directory or cache hit.
-      if ((await host.isFile(candidate)) !== false) yield candidate;
+      const kind = await host.isFile(candidate);
+      if (kind === true) yield { path: candidate, unprobed: false };
+      // A denied folder cannot be searched by the linker either, so this is not
+      // the object it loads. It is only evidence that the soname may be there.
+      else if (kind === null) unprobed.push(candidate);
     }
-  yield* cachedPaths(cache, soname, machine);
+  for (const path of cachedPaths(cache, soname, machine))
+    yield { path, unprobed: false };
+  for (const path of unprobed) yield { path, unprobed: true };
 }
 
 /** Host reads the closure walk needs. */
@@ -181,7 +186,10 @@ export const libraryClosure = async (
           }
         | undefined;
       let unresolved = false;
-      for await (const path of libraryCandidates(
+      // A candidate the probe could not reach stays behind everything the walk
+      // did check, so a searchable candidate with the same soname still wins.
+      let unprobed: { path: string; reason: string } | undefined;
+      for await (const { path, unprobed: couldNotProbe } of libraryCandidates(
         soname,
         directories,
         object.dependencies.machine,
@@ -190,6 +198,10 @@ export const libraryClosure = async (
       )) {
         const dependencies = await host.dependencies(path, object.dependencies);
         if (!dependencies.ok && dependencies.error.identity === null) {
+          if (couldNotProbe) {
+            unprobed ??= { path, reason: dependencies.error.reason };
+            continue;
+          }
           // A failed identity read does not prove this candidate can be skipped,
           // or that its package belongs to the executable's loaded closure.
           closure.unreadable.push({
@@ -214,7 +226,8 @@ export const libraryClosure = async (
         break;
       }
       if (selected === undefined) {
-        if (!unresolved) closure.missing.push(soname);
+        if (unprobed !== undefined) closure.unreadable.push(unprobed);
+        else if (!unresolved) closure.missing.push(soname);
         continue;
       }
       const { path, dependencies } = selected;

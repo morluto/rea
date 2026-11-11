@@ -102,10 +102,43 @@ describe("parseLinkerCache", () => {
 });
 
 describe("libraryClosure", () => {
-  it("treats a probe that could not tell as a candidate instead of an absence", async () => {
-    // A RUNPATH candidate under a denied parent cannot be ruled out as the
-    // loaded object, so it must not be skipped in favour of a later cache hit.
-    const unprobed = await libraryClosure(
+  it("continues past a denied directory to the one the linker can search", async () => {
+    // A folder with denied search is not one the linker loads from, so a later
+    // readable directory holding the soname is the object actually in use.
+    const closure = await libraryClosure(
+      {
+        path: "/app/bin/app",
+        dependencies: elf(["libcore.so"], [], ["/denied", "/native"]),
+      },
+      [],
+      {
+        dependencies: async (path: string) =>
+          path === "/app/bin/app"
+            ? ok(elf(["libcore.so"], [], ["/denied", "/native"]))
+            : path === "/native/libcore.so"
+              ? ok(elf([]))
+              : err({
+                  kind: "unreadable" as const,
+                  identity: null,
+                  reason: "EACCES",
+                }),
+        isFile: async (path: string) =>
+          path === "/denied/libcore.so" ? null : path === "/native/libcore.so",
+      },
+      10,
+    );
+    expect(closure).toEqual({
+      libraries: [{ soname: "libcore.so", path: "/native/libcore.so" }],
+      missing: [],
+      unreadable: [],
+      truncated: false,
+    });
+  });
+
+  it("keeps an unprobeable candidate unresolved instead of reporting it missing", async () => {
+    // Nothing else provides the soname, and the denied folder may hold it, so
+    // the walk records why it could not tell rather than claiming absence.
+    const closure = await libraryClosure(
       {
         path: "/app/bin/app",
         dependencies: elf(["libcore.so"], [], ["/denied"]),
@@ -114,18 +147,22 @@ describe("libraryClosure", () => {
       {
         dependencies: async (path: string) =>
           path === "/app/bin/app"
-            ? err({ kind: "unreadable" as const, identity: null, reason: "missing" })
-            : ok(elf([], [])),
-        isFile: async (path: string) =>
-          path === "/denied/libcore.so" ? null : false,
+            ? ok(elf(["libcore.so"], [], ["/denied"]))
+            : err({
+                kind: "unreadable" as const,
+                identity: null,
+                reason: "EACCES",
+              }),
+        isFile: async () => null,
       },
       10,
     );
-    expect(unprobed.libraries).toEqual([
-      { soname: "libcore.so", path: "/denied/libcore.so" },
-    ]);
-    expect(unprobed.missing).toEqual([]);
-    expect(unprobed.unreadable).toEqual([]);
+    expect(closure).toEqual({
+      libraries: [],
+      missing: [],
+      unreadable: [{ path: "/denied/libcore.so", reason: "EACCES" }],
+      truncated: false,
+    });
   });
 
   it("walks DT_NEEDED through RPATH and the cache for the executable's machine", async () => {
