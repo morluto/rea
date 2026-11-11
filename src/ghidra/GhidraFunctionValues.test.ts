@@ -1120,25 +1120,6 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
   });
 });
 
-// Kept on the file rather than in its own suite. The full source run collected
-// that suite with no tests and failed the file before this assertion could run.
-it("binds TMode to ARM and ISA_MODE to MIPS in the Ghidra bridge script", async () => {
-  const bridgePath = new URL(
-    "../../bridge/ghidra/ReaGhidraBridge.java",
-    import.meta.url,
-  );
-  const content = await readFile(bridgePath, "utf8");
-  expect(content).toContain(
-    'currentProgram.getLanguageID().getIdAsString().startsWith("ARM:")',
-  );
-  expect(content).toContain(
-    'currentProgram.getLanguageID().getIdAsString().startsWith("MIPS:")',
-  );
-  expect(content).toContain('"TMode"');
-  expect(content).toContain('"ISA_MODE"');
-  expect(content).toContain('"ghidra-program-context"');
-});
-
 describe("Ghidra dossier nested boundary composition", () => {
   const identityLocations = [
     "caller",

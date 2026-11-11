@@ -41,6 +41,7 @@ import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { RegistryHiveArtifactReader } from "./RegistryHiveArtifactReader.js";
+import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
@@ -482,6 +483,14 @@ const NON_ZIP_FORMATS = {
         options.environment,
         options.analysisSettings,
       ),
+  }),
+  "ntfs-mft": described("ntfs-mft", {
+    ...plain,
+    retainClassifiedSource: true,
+    readerLimitation:
+      "MFT inventory reports whole-stream counts and a bounded sample of the first 32 decoded FILE record headers, with the omitted-header count. Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
+    createReader: (path, options) =>
+      new NtfsMftArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<
