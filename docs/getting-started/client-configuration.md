@@ -60,6 +60,32 @@ launcher; see [verification scope](../development/client-verification.md#launch-
 the registration's file does not carry as a
 [non-blocking unknown](installation.md#check-readiness-for-your-task).
 
+## Windows MCP registration fails with `spawn npx ENOENT`
+
+On affected Windows installations, `rea mcp add --agent opencode` returns
+`MCP_ADD_FAILED` with `spawn npx ENOENT`, even when `npx` works in the terminal.
+The [reported failure](https://github.com/morluto/rea/issues/5811) occurs during
+registration. For a supported client, use REA's setup workflow instead:
+
+```powershell
+rea setup --client opencode --skill=false --dry-run --json
+```
+
+Review the plan, then approve that selected scope and check the registration:
+
+```powershell
+rea setup --client opencode --skill=false --yes --json
+rea doctor --client opencode --json
+```
+
+Replace `opencode` with the appropriate [setup client ID](installation.md#supported-agents).
+`--skill=false` omits the bundled skill from this recovery.
+Setup manages the client's user-level registration; it does not replace
+the project-local scope of `mcp add --no-global`. It uses the installed runtime
+and entry script directly, with the [launcher and recovery rules](#launchers-and-path)
+above. Restart the client after applying the plan. Doctor checks configuration
+and prerequisites; confirm the MCP connection in the restarted client.
+
 ## Setting launch variables in PowerShell
 
 Shell examples that prefix a command with `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
