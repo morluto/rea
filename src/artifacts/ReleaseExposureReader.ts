@@ -108,16 +108,10 @@ import {
   sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import {
-  classifySourceMapSection,
-  classifySourceMapSections,
-  sourceMapJsonText,
-} from "../domain/sourceMapEnvelope.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../domain/webSourceLocation.js";
+import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
   inspectSourceMap,
-  inspectSourceMapValue,
-  SourceMapFormatFailure,
+  inspectSourceMapSourceContent,
 } from "../javascript/sourceMaps/SourceMapFormat.js";
 import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferences.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
@@ -178,6 +172,22 @@ type MemberRead =
   | { readonly kind: "over_allowance"; readonly prefix: Buffer | null }
   | { readonly kind: "unread" };
 type ReadMember = (budget: number) => Promise<MemberRead>;
+
+/** Interpretation is separate from the member's source path. */
+interface SourceMapReference {
+  readonly location: string;
+  readonly kind: "javascript-source-map" | "possible-linker-map";
+}
+
+const namedMapReference = (
+  logical: string,
+  location: string,
+): SourceMapReference => ({
+  location,
+  kind: isJavaScriptSourceMapName(logical)
+    ? "javascript-source-map"
+    : "possible-linker-map",
+});
 
 interface OpenContainer {
   readonly path: string;
@@ -1127,13 +1137,22 @@ const noteUnreadMember = (state: ScanState, member: MemberView): void => {
     !member.kindStated &&
     asNativeFormat(member.format) === null
   ) {
-    if (isDeclaredMap(state, member)) noteUnreadMap(state, member, null);
+    if (isDeclaredMap(state, member))
+      noteUnreadMap(
+        state,
+        namedMapReference(member.logical, member.location),
+        null,
+      );
     noteUnreadBinary(state, member);
     return;
   }
   if (asNativeFormat(member.format) !== null) noteUnreadBinary(state, member);
   else if (isDeclaredMap(state, member)) {
-    noteUnreadMap(state, member, null);
+    noteUnreadMap(
+      state,
+      namedMapReference(member.logical, member.location),
+      null,
+    );
     state.skippedText += 1;
   } else if (isText(member.logical, member.kind)) state.skippedText += 1;
   else noteUnreadBinary(state, member);
@@ -1189,9 +1208,12 @@ const examineMapMember = async (
   const undeclared =
     member.logical.toLowerCase().endsWith(".map") &&
     !claimMapTarget(state, member.location);
-  const declared = undeclared
-    ? member
-    : { ...member, logical: `${member.logical}.js.map` };
+  const declared: SourceMapReference & Pick<MemberView, "read"> = {
+    ...(undeclared
+      ? namedMapReference(member.logical, member.location)
+      : { location: member.location, kind: "javascript-source-map" as const }),
+    read: member.read,
+  };
   const bytesReadBefore = state.memberBytesRead;
   const read = await readMap(state, declared);
   const header = read === null ? null : headerOfRead(read.loaded);
@@ -1335,10 +1357,10 @@ interface MapRead {
 /** The bytes a map read may use, or null when no read is allowed. */
 const readMap = async (
   state: ScanState,
-  map: Pick<MemberView, "logical" | "read">,
+  map: SourceMapReference & Pick<MemberView, "read">,
 ): Promise<MapRead | null> => {
   const { hasSlot, bytes } = chargeMapRead(state);
-  if (!hasSlot && isJavaScriptSourceMapName(map.logical)) {
+  if (!hasSlot && map.kind === "javascript-source-map") {
     state.skippedMaps += 1;
     return null;
   }
@@ -1347,7 +1369,7 @@ const readMap = async (
 
 const settleMapRead = (
   state: ScanState,
-  map: Pick<MemberView, "logical" | "location">,
+  map: SourceMapReference,
   { hasSlot, loaded }: MapRead,
 ): void => {
   if (loaded.kind === "unread") noteUnreadMap(state, map, null);
@@ -1355,16 +1377,6 @@ const settleMapRead = (
     noteUnreadMap(state, map, loaded.prefix);
   else if (hasSlot) readSourceMap(state, map, loaded.bytes);
   else noteUnreadMap(state, map, loaded.bytes);
-};
-
-/** Returns the read so a caller can also scan its text, or null when nothing was read. */
-const examineMap = async (
-  state: ScanState,
-  map: Pick<MemberView, "logical" | "location" | "read">,
-): Promise<MemberRead | null> => {
-  const read = await readMap(state, map);
-  if (read !== null) settleMapRead(state, map, read);
-  return read?.loaded ?? null;
 };
 
 /**
@@ -1375,10 +1387,10 @@ const examineMap = async (
  */
 const noteUnreadMap = (
   state: ScanState,
-  map: Pick<MemberView, "logical" | "location">,
+  map: SourceMapReference,
   prefix: Buffer | null,
 ): void => {
-  if (isJavaScriptSourceMapName(map.logical)) {
+  if (map.kind === "javascript-source-map") {
     state.skippedMaps += 1;
     return;
   }
@@ -1412,46 +1424,9 @@ const mayHaveSourceMapText = (decoded: string): boolean => {
   return text.length === 0 || text.startsWith("{");
 };
 
-/**
- * Leaf maps reachable within the decoder's section depth and record budgets.
- * Deeper or excess sections are dropped rather than expanded, so a map the
- * decoder refused for its limits cannot allocate past them here.
- */
-const boundedSourceMapLeaves = (root: unknown): Record<string, unknown>[] => {
-  const leaves: Record<string, unknown>[] = [];
-  if (
-    typeof root !== "object" ||
-    root === null ||
-    Array.isArray(root) ||
-    (root as { version?: unknown }).version !== 3
-  )
-    return leaves;
-  const pending: { map: unknown; depth: number }[] = [{ map: root, depth: 0 }];
-  let records = 0;
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === undefined) break;
-    const sections = classifySourceMapSections(current.map);
-    if (sections.kind === "invalid") continue;
-    if (sections.kind === "regular") {
-      leaves.push(current.map as Record<string, unknown>);
-      continue;
-    }
-    if (current.depth >= WEB_SOURCE_MAP_LIMITS.sectionDepth) continue;
-    records += sections.sections.length;
-    if (records > WEB_SOURCE_MAP_LIMITS.decodedRecords) break;
-    for (let index = sections.sections.length - 1; index >= 0; index -= 1) {
-      const section = classifySourceMapSection(sections.sections[index]);
-      if (section.kind === "embedded")
-        pending.push({ map: section.map, depth: current.depth + 1 });
-    }
-  }
-  return leaves;
-};
-
 const readSourceMap = (
   state: ScanState,
-  map: Pick<MemberView, "logical" | "location">,
+  map: SourceMapReference,
   bytes: Buffer,
 ): void => {
   const text = mapText(bytes);
@@ -1466,62 +1441,30 @@ const readSourceMap = (
 /** Read map text already decoded by the member's owner, such as a UTF-16 script. */
 const readSourceMapText = (
   state: ScanState,
-  map: Pick<MemberView, "logical" | "location">,
+  map: SourceMapReference,
   text: string,
 ): void => {
-  try {
-    const inspected = inspectSourceMap(text);
-    const embedded = inspected.declarations.some(
-      (declaration) =>
-        declaration.content !== null && declaration.content.length > 0,
-    );
+  const inspected = inspectSourceMapSourceContent(text);
+  if (inspected.embedded) {
+    state.embedded += 1;
+    pushSample(state.embeddedPaths, map.location);
+  }
+  if (inspected.complete) {
     pushSample(state.mapSamples, map.location);
-    if (embedded) {
-      state.embedded += 1;
-      pushSample(state.embeddedPaths, map.location);
-    } else {
+    if (!inspected.embedded) {
       state.withoutSources += 1;
       pushSample(state.plainPaths, map.location);
     }
-  } catch (cause) {
-    // Any format failure may still leave independently valid indexed leaves.
-    if (cause instanceof SourceMapFormatFailure) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(sourceMapJsonText(text));
-      } catch {
-        parsed = undefined;
-      }
-      const budget = { records: 0 };
-      let embedded = false;
-      for (const leaf of boundedSourceMapLeaves(parsed)) {
-        try {
-          const inspected = inspectSourceMapValue(leaf, { budget });
-          embedded ||= inspected.declarations.some(
-            (declaration) =>
-              declaration.content !== null && declaration.content.length > 0,
-          );
-        } catch {
-          // An unresolved leaf must not discard observations from other leaves.
-        }
-      }
-      if (embedded) {
-        state.embedded += 1;
-        pushSample(state.embeddedPaths, map.location);
-      }
-    }
-    // Linker maps share the suffix but are not JavaScript source maps.
-    // JSON-looking maps remain unresolved when decoding fails or hits a limit.
-    if (
-      !isJavaScriptSourceMapName(map.logical) &&
-      !mayHaveSourceMapText(text)
-    ) {
-      noteLinkerMapGuess(state, map.location);
-      return;
-    }
-    pushSample(state.mapSamples, map.location);
-    state.unparsedMaps += 1;
+    return;
   }
+  // Linker maps share the suffix but are not JavaScript source maps.
+  // JSON-looking maps remain unresolved when decoding fails or hits a limit.
+  if (map.kind === "possible-linker-map" && !mayHaveSourceMapText(text)) {
+    noteLinkerMapGuess(state, map.location);
+    return;
+  }
+  pushSample(state.mapSamples, map.location);
+  state.unparsedMaps += 1;
 };
 
 /**
@@ -1566,7 +1509,11 @@ const readScriptAsMap = (
 ): void => {
   const { hasSlot } = chargeMapRead(state);
   if (hasSlot && bytes.length <= MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES)
-    readSourceMapText(state, member, text);
+    readSourceMapText(
+      state,
+      { location: member.location, kind: "javascript-source-map" },
+      text,
+    );
   else state.skippedMaps += 1;
 };
 
@@ -2056,7 +2003,7 @@ const examineInlineMaps = (
       // An inline declaration is a JavaScript map even if its JSON is invalid.
       readSourceMap(
         state,
-        { logical: "inline.js.map", location: member.location },
+        { kind: "javascript-source-map", location: member.location },
         decoded,
       );
     } catch {
@@ -3476,7 +3423,7 @@ const noteUnlistedEntry = (state: ScanState, entry: ArtifactEntry): void => {
   if (entry.kind !== "file") return;
   if (entry.encrypted) state.unreadable += 1;
   if (isSourceMap(entry.path, "file")) {
-    noteUnreadMap(state, { logical: entry.path, location: entry.path }, null);
+    noteUnreadMap(state, namedMapReference(entry.path, entry.path), null);
     state.skippedText += 1;
   } else if (isText(entry.path, "file")) state.skippedText += 1;
 };
