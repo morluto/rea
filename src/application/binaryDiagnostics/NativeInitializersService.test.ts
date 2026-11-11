@@ -202,3 +202,51 @@ it.each([
     });
   },
 );
+
+it.each([
+  { label: "ends at EOF", extraOffset: 0, extraSize: 0, accepted: true },
+  {
+    label: "starts one byte too late",
+    extraOffset: 1,
+    extraSize: 0,
+    accepted: false,
+  },
+  {
+    label: "extends one byte too far",
+    extraOffset: 0,
+    extraSize: 1,
+    accepted: false,
+  },
+])(
+  "binds the selected slice extent when it $label",
+  async ({ extraOffset, extraSize, accepted }) => {
+    const bytes = machoArm64FatInitializers();
+    const selected = await readNativeInitializers(
+      bytes,
+      { ...report.artifact, bytes: bytes.length },
+      {
+        path: report.artifact.path,
+        offset: 0,
+        limit: 64,
+        architecture: "arm64",
+      },
+    );
+    if (selected.slice === null)
+      throw new Error("Expected the authored universal slice");
+    const value = {
+      ...selected,
+      slice: {
+        ...selected.slice,
+        file_offset:
+          selected.artifact.bytes - selected.slice.size + extraOffset,
+        size: selected.slice.size + extraSize,
+      },
+    };
+    const result = await serviceFor(value).inspect({
+      path: report.artifact.path,
+      architecture: "arm64",
+    });
+    expect(result.ok).toBe(accepted);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  },
+);

@@ -108,6 +108,7 @@ const validReport = (
   const inside = (offset: number | null, bytes: number): boolean =>
     offset === null || offset <= report.artifact.bytes - bytes;
   if (
+    (slice !== null && !inside(slice.file_offset, slice.size)) ||
     report.artifact.bytes > input.max_file_bytes ||
     coverage.offset !== input.offset ||
     coverage.limit !== input.limit ||
