@@ -13,7 +13,14 @@ export const NTFS_JOURNAL_PROVIDER = {
 /** Working-set allowance for each in-memory acquisition, independent of page size. */
 export const NTFS_JOURNAL_FILE_BYTES = 64 * 1024 * 1024;
 const offset = z.int().nonnegative();
-export const ntfsJournalRowLimitSchema = z.int().min(1).max(200).default(50);
+export const ntfsJournalRowLimitSchema = z
+  .int()
+  .min(1)
+  .max(200)
+  .default(50)
+  .describe(
+    "Maximum journal event or coverage rows in this page (1–200; default 50).",
+  );
 export const ntfsJournalInputSchema = z.strictObject({
   mft_path: absoluteLocalPathStringSchema,
   journal_path: absoluteLocalPathStringSchema,
