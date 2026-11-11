@@ -555,8 +555,6 @@ export class EnvironmentStateWriteSimulation {
   ): void {
     const target = entityTarget(entity.type, entity.collection, entity.id);
     const writes = this.#touched.get(target) ?? new Map();
-    this.#taint.known(entity.type, entity.collection, entity.id);
-    this.#touched.delete(target);
     if (
       isAbsence(record.status) ||
       this.#input.io.withBody(record.ordinal, (body) =>
@@ -567,12 +565,16 @@ export class EnvironmentStateWriteSimulation {
         ),
       )
     ) {
+      this.#taint.known(entity.type, entity.collection, entity.id);
+      this.#touched.delete(target);
       this.#removeEntity(entity);
       return;
     }
     const object = this.#checkFields(view, record, entity, writes);
-    if (object !== undefined)
-      this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
+    if (object === undefined) return;
+    this.#taint.known(entity.type, entity.collection, entity.id);
+    this.#touched.delete(target);
+    this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
   }
 
   /** Whether an item read shows an entity an unmodelled write made, or one left unknown, again rather than checks it. */
