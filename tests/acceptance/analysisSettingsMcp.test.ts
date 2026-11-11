@@ -428,3 +428,93 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
     await invalid.client.close();
   }
 }, 30000);
+
+it("starts with invalid runtime seeds and recovers ASAR and capture work on the same connection", async () => {
+  const root = await createTestTempDirectory("rea-invalid-runtime-seeds-");
+  const archive = join(root, "small.asar");
+  const capture = join(root, "capture.har");
+  const payload = Buffer.from("answer");
+  await writeFile(
+    archive,
+    Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: { "answer.txt": { size: payload.length, offset: "0" } },
+        }),
+      ),
+      payload,
+    ]),
+  );
+  await writeFile(
+    capture,
+    JSON.stringify({
+      log: {
+        version: "1.2",
+        creator: { name: "test", version: "1" },
+        entries: [],
+      },
+    }),
+  );
+  const { client, call } = await connectLocalToolsMcp({
+    REA_ASAR_MAX_HEADER_BYTES: "invalid",
+    REA_ASAR_MAX_LISTING_BYTES: "invalid",
+    REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "invalid",
+  });
+  try {
+    const changes = [
+      { setting: "asar.max_header_bytes", action: "set", value: 8192 },
+      { setting: "asar.max_listing_bytes", action: "set", value: 4096 },
+      {
+        setting: "capture.decoder_old_generation_mib",
+        action: "set",
+        value: 64,
+      },
+    ];
+    expect(
+      (await call("update_analysis_settings", { changes })).isError,
+    ).not.toBe(true);
+    expect((await call("open_binary", { path: archive })).isError).not.toBe(
+      true,
+    );
+    expect((await call("inspect_artifact", {})).isError).not.toBe(true);
+    const inspected = await call("inspect_web_network_capture", {
+      capture_path: capture,
+      format: "har",
+    });
+    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: changes.map(({ setting }) => ({ setting, action: "reset" })),
+        })
+      ).isError,
+    ).not.toBe(true);
+    const refusedArchive = await call("inspect_artifact", {});
+    expect(refusedArchive.isError).toBe(true);
+    expect(JSON.stringify(refusedArchive)).toContain(
+      "REA_ASAR_MAX_HEADER_BYTES",
+    );
+    const refused = await call("inspect_web_network_capture", {
+      capture_path: capture,
+      format: "har",
+    });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused)).toContain(
+      "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
+    );
+    expect(
+      (await call("update_analysis_settings", { changes })).isError,
+    ).not.toBe(true);
+    expect((await call("inspect_artifact", {})).isError).not.toBe(true);
+    expect(
+      (
+        await call("inspect_web_network_capture", {
+          capture_path: capture,
+          format: "har",
+        })
+      ).isError,
+    ).not.toBe(true);
+  } finally {
+    await client.close();
+  }
+}, 30000);
