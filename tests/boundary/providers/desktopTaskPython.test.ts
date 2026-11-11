@@ -257,12 +257,15 @@ const linesPresent = (...lines: string[]): DesktopTaskCheck => ({
 const graded = ({ results }: VerifierOutput) =>
   results.map(({ result, settled, read_cut }) => [result, settled, read_cut]);
 
-it("evaluates every kind of check in the exported verifier as REA does", async () => {
+it("evaluates every kind of file check without computer-exec as REA does", async () => {
   const checks: DesktopTaskCheck[] = CHECK_CASES.map(([check], index) => ({
     ...check,
     id: `check-${String(index + 1)}`,
   }));
-  const output = await runVerifier(checks, [[0, CHECK_VIEWS]]);
+  const output = await runVerifier(checks, [[0, CHECK_VIEWS]], [], {
+    exec: false,
+  });
+  expect(output.execs).toEqual([]);
 
   const [card, ...data] = output.called;
   expect(card).toBe("http://computer:8080");

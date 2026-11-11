@@ -95,26 +95,10 @@ export const observeGhidraEndpoint = async (
         return { path: endpoint.path };
       }
       if (process.platform === "win32") {
-        let encoded: string;
-        try {
-          encoded = readWindowsPrivateRuntimeFile(
-            endpoint.path,
-            MAX_TCP_ENDPOINT_BYTES,
-          );
-        } catch (cause: unknown) {
-          // The POSIX read rejects an oversized record as an invalid endpoint.
-          // The Windows lease reports the same bound as a reader limit.
-          if (
-            cause instanceof ArtifactReaderFailure &&
-            cause.reason === "limit"
-          )
-            throw endpointFailure(
-              endpoint,
-              "Ghidra TCP endpoint is invalid",
-              cause,
-            );
-          throw cause;
-        }
+        const encoded = readWindowsPrivateRuntimeFile(
+          endpoint.path,
+          MAX_TCP_ENDPOINT_BYTES,
+        );
         assertArtifactReadActive(options.signal);
         return parseTcpEndpoint(endpoint, encoded);
       }
@@ -126,13 +110,9 @@ export const observeGhidraEndpoint = async (
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           if (initial.size > BigInt(MAX_TCP_ENDPOINT_BYTES))
-            throw endpointFailure(
-              endpoint,
-              "Ghidra TCP endpoint is invalid",
-              new ArtifactReaderFailure(
-                "limit",
-                `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
-              ),
+            throw new ArtifactReaderFailure(
+              "limit",
+              `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
             );
           const input = readArtifactFileChunks(file, {
             end: initial.size,
@@ -196,6 +176,12 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+  // Classify a bounded endpoint record without discarding its owned cleanup.
+  const invalidRecord =
+    endpoint.transport === "authenticated-loopback-tcp" &&
+    origin === "owned-or-classified" &&
+    primary instanceof ArtifactReaderFailure &&
+    primary.reason === "limit";
   let failure =
     origin === "owned-or-classified" && primary instanceof GhidraSessionError
       ? primary
@@ -208,7 +194,9 @@ const observationFailure = (
           })
         : endpointFailure(
             endpoint,
-            "Ghidra endpoint observation failed",
+            invalidRecord
+              ? "Ghidra TCP endpoint is invalid"
+              : "Ghidra endpoint observation failed",
             cause,
           );
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {

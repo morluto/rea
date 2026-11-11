@@ -53,7 +53,6 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticRequireOriginReaders,
   type JavaScriptRequireLoaderFact,
@@ -413,7 +412,7 @@ const selectedRequireSourcesAt = (
     if (paths.has(key)) continue;
     paths.add(key);
     seen.set(node, paths);
-    if (++count > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (++count > state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return { loader: "unknown", sourceRelative: false };
     }
@@ -1179,7 +1178,7 @@ const hasCommonJsModuleSource = (
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
     state.valueResourceLimits.add("alias-selections");
-  });
+  }, state.precision.alias_selections);
   const contexts = new WeakMap<
     t.Node,
     Map<
@@ -1228,10 +1227,10 @@ const hasCommonJsModuleSource = (
       // Consumption contexts must not provide an unbounded second path to
       // expansion beyond the shared selector budget.
       if (exhausted) {
-        if (++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) return "incomplete";
+        if (++drained > state.precision.alias_selections) return "incomplete";
       } else if (
         (byMode.size > 1 || context.identities.size > 0) &&
-        ++additionalStates > SEMANTIC_ALIAS_SELECTION_LIMIT
+        ++additionalStates > state.precision.alias_selections
       ) {
         state.valueResourceLimits.add("alias-selections");
         if (includeUnknown) return "possible";

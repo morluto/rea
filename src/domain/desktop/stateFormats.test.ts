@@ -1,3 +1,8 @@
+import {
+  desktopViewPolicy,
+  desktopViewPolicyInputSchema,
+} from "./desktopViewPolicy.js";
+import { jsonValueValidationIssue } from "../jsonValue.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -318,4 +323,26 @@ describe("captured data safety and fidelity", () => {
     const deep = `${"<n>".repeat(70)}${"</n>".repeat(70)}`;
     expect(xmlView(deep)).toMatchObject({ truncated: true });
   });
+});
+
+it("keeps maximum-depth views encodable inside captured ZIP-member Evidence", () => {
+  const policy = desktopViewPolicy({ xml_depth: 494, json_depth: 991 });
+  expect(desktopViewPolicyInputSchema.safeParse(policy).success).toBe(true);
+  const xml = xmlView(
+    `${'<a key="value">'.repeat(495)}${"</a>".repeat(495)}`,
+    policy,
+  );
+  const json = jsonView(`${"[".repeat(991)}0${"]".repeat(991)}`, policy);
+  if (!json.ok) throw new Error(json.error);
+  expect(xml).toMatchObject({ truncated: false });
+  for (const view of [xml, json.value]) {
+    // The real enclosing shape: complete Evidence -> captured path/version -> ZIP entry -> member view.
+    const wrapped = {
+      normalized_result: {
+        paths: [{ versions: [{ view: { entries: [{ view }] } }] }],
+      },
+    };
+    expect(jsonValueValidationIssue(wrapped)).toBeUndefined();
+    expect(() => JSON.stringify(wrapped)).not.toThrow();
+  }
 });

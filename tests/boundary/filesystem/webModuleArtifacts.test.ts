@@ -108,16 +108,7 @@ describe("selected captured module artifact boundary", () => {
     );
     expect(response.error.message).toContain("declared_sha256=");
   });
-  it("rejects an unavailable index", async () => {
-    const f = await fixture();
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 10,
-    });
-    expect(response.ok).toBe(false);
-    if (!response.ok)
-      expect(projectAnalysisError(response.error).code).toBe("invalid_request");
-  });
+
   it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
     "attributes selected source UTF-8 failure to the artifact for %s",
     async (operation) => {

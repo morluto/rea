@@ -1,12 +1,12 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { createHash } from "node:crypto";
 import { LosslessNumber } from "lossless-json";
 import { parseCaptureJson } from "./CaptureJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { isCanonicalBase64 } from "../../domain/stringPatterns.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type WebNetworkCapture,
-  type WebNetworkCaptureRecord,
+import type {
+  WebNetworkCapture,
+  WebNetworkCaptureRecord,
 } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import {
@@ -140,10 +140,10 @@ const projectHar = (
     depth: number,
     parent?: Readonly<Record<string, unknown>>,
   ): JsonValue => {
-    if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
         "input-limit",
-        "HAR exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.",
+        `HAR exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
     if (

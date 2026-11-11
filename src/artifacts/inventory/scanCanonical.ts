@@ -125,6 +125,7 @@ const scanCanonical = async (
     digest: rootDigest,
     rootSource,
     readerAdmission,
+    recognitionLimitations,
   } = await classifyAndHashRootForInventory(
     path,
     metadata.isDirectory(),
@@ -142,6 +143,7 @@ const scanCanonical = async (
       readerAdmission,
       options.asarHeaderAdmission,
       selectedPath,
+      options.readerLimits,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -187,6 +189,7 @@ const scanCanonical = async (
         unknownParentOccurrences,
         traversal,
         rootContradiction,
+        recognitionLimitations,
       }),
     };
   } catch (cause: unknown) {
@@ -406,6 +409,7 @@ const cleanupInventoryOwners = async ({
 };
 
 interface SnapshotBuildInput {
+  readonly recognitionLimitations?: readonly string[] | undefined;
   readonly resourceScope: ArtifactInventoryOptions["resourceScope"];
   readonly path: string;
   readonly metadata: Stats;
@@ -443,6 +447,7 @@ const buildInventorySnapshot = async (
     path,
     formatMetadata: reader?.formatMetadata?.(),
   });
+  rootOccurrence.limitations.push(...(input.recognitionLimitations ?? []));
   for (const occurrence of input.occurrences)
     if (
       occurrence.parent_occurrence_id === null &&
@@ -537,7 +542,11 @@ const buildInventorySnapshot = async (
     integrity_contradictions: integrityContradictions,
     coverage,
     limitations: buildLimitations(
-      [...traversal.limitations, ...edgeResult.limitations],
+      [
+        ...traversal.limitations,
+        ...edgeResult.limitations,
+        ...(input.recognitionLimitations ?? []),
+      ],
       integrityContradictions,
       input.caseCollisionLimitation,
     ),

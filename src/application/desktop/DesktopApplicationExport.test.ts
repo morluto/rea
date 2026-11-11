@@ -125,6 +125,35 @@ const exists = (path: string) =>
 
 const execute = promisify(execFile);
 
+/** Read the exported module's literal alias metadata without importing the desktop SDK. */
+const exportedAliases = async (directory: string) => {
+  const { stdout } = await execute(
+    process.platform === "win32" ? "python" : "python3",
+    [
+      "-I",
+      "-B",
+      "-c",
+      `import ast, json, sys
+from pathlib import Path
+module = ast.parse(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assignments = [node.value for node in module.body if isinstance(node, ast.Assign)
+               and any(isinstance(target, ast.Name) and target.id == "STATE_ALIASES" for target in node.targets)]
+assert len(assignments) == 1
+print(json.dumps(ast.literal_eval(assignments[0])))`,
+      join(directory, "envs/notes/notes_app.py"),
+    ],
+  );
+  return z
+    .array(
+      z.tuple([
+        z.string(),
+        z.string(),
+        z.enum(["file", "directory"]).nullable(),
+      ]),
+    )
+    .parse(JSON.parse(stdout));
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -311,11 +340,9 @@ it("seeds the app's state at its own path and retains a selected alias", async (
       "utf8",
     ),
   ).toBe("milk\n");
-  const module = await readFile(
-    join(directory, "envs/notes/notes_app.py"),
-    "utf8",
-  );
-  expect(module).toContain('("settings", ".config/notes", "directory")');
+  expect(await exportedAliases(directory)).toEqual([
+    ["settings", ".config/notes", "directory"],
+  ]);
 });
 
 it("restores a selected alias when the state directory has no files", async () => {
@@ -377,11 +404,9 @@ it.each(["settings/notes", "chosen/notes"])(
         "utf8",
       ),
     ).toBe("[ui]\nwrap=false\n");
-    const module = await readFile(
-      join(directory, "envs/notes/notes_app.py"),
-      "utf8",
-    );
-    expect(module).toContain(`("${selected}", ".config/notes", "directory")`);
+    expect(await exportedAliases(directory)).toEqual([
+      [selected, ".config/notes", "directory"],
+    ]);
   },
 );
 
@@ -426,18 +451,14 @@ it.each([true, false])(
       },
     });
     if (result instanceof Error) throw result;
-    const module = await readFile(
-      join(directory, "envs/notes/notes_app.py"),
-      "utf8",
-    );
-    expect(module).toContain('("settings", ".config/notes", "directory")');
-    expect(module).not.toContain(
-      '("settings/state/notes", ".config/notes/state/notes", "directory")',
-    );
+    const aliases = [["settings", ".config/notes", "directory"]];
     if (!redundant)
-      expect(module).toContain(
-        '("settings/state/notes", ".local/share/separate", "directory")',
-      );
+      aliases.push([
+        "settings/state/notes",
+        ".local/share/separate",
+        "directory",
+      ]);
+    expect(await exportedAliases(directory)).toEqual(aliases);
   },
 );
 

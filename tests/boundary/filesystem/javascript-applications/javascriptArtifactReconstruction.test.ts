@@ -1268,8 +1268,12 @@ it("reports semantic value resource limits in application graph coverage", async
         }),
       ]),
     );
-    expect(graph.limitations).toContain(
-      "Primitive candidate budget exceeded (maximum 256 alternatives).",
+    expect(graph.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Primitive candidate budget exceeded (maximum 256 alternatives).",
+        ),
+      ]),
     );
     expect(graph.limitations).toEqual(
       expect.arrayContaining([

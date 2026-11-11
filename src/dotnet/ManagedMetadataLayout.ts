@@ -449,6 +449,7 @@ export const readManagedMetadataLayout = (
   artifact: Buffer,
   rootOffset: number,
   size: number,
+  maxRepresentationBytes?: number,
 ): ManagedMetadataLayout => {
   if (size < 20 || rootOffset < 0 || rootOffset > artifact.length - size)
     throw managedFailure(
@@ -458,7 +459,7 @@ export const readManagedMetadataLayout = (
       rootOffset,
     );
   const bytes = artifact.subarray(rootOffset, rootOffset + size);
-  const budget = new ManagedDecodeBudget();
+  const budget = new ManagedDecodeBudget(maxRepresentationBytes);
   const { streams, version, minimalDeltaOffset } = readMetadataStreams(
     bytes,
     rootOffset,
