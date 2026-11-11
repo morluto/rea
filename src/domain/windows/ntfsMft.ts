@@ -5,17 +5,12 @@ import type {
 } from "../firmware/regionDecoder.js";
 
 /** An NTFS FILE record begins with this signature. */
-export const MFT_FILE_RECORD_MAGIC = "FILE";
-export const MFT_FILE_RECORD_MAGIC_BYTES = 4;
+const MFT_FILE_RECORD_MAGIC = "FILE";
+const MFT_FILE_RECORD_MAGIC_BYTES = 4;
 /** The shortest header worth reading: a FILE record header ends at `nextAttributeId`. */
 const NTFS_MFT_MIN_RECORD_BYTES = 42;
 
-/**
- * The `FILE` signature at file offset 0. An MFT stream is a run of fixed-size
- * FILE records, so the first record's signature is the recognition fact;
- * whether every record parses is the reader's question, not classification's.
- */
-export const hasMftFileRecordSignature = (prefix: Uint8Array): boolean =>
+const hasMftFileRecordSignature = (prefix: Uint8Array): boolean =>
   prefix.length >= MFT_FILE_RECORD_MAGIC_BYTES &&
   text(prefix.subarray(0, MFT_FILE_RECORD_MAGIC_BYTES)) ===
     MFT_FILE_RECORD_MAGIC;
@@ -165,6 +160,39 @@ const isRecordSize = (bytes: number): boolean =>
   bytes >= MFT_MIN_RECORD_BYTES &&
   bytes <= MFT_MAX_RECORD_BYTES &&
   (bytes & (bytes - 1)) === 0;
+
+const updateSequenceArrayFits = (
+  offset: number,
+  entries: number,
+  sectors: number,
+): boolean =>
+  entries >= USA_MIN_ENTRIES &&
+  entries <= sectors + 1 &&
+  offset >= NTFS_MFT_MIN_RECORD_BYTES &&
+  offset % 2 === 0 &&
+  offset + entries * 2 <= FIXUP_SECTOR_BYTES - 2;
+
+/** Recognize a FILE header without requiring its trailers or attributes to verify. */
+export const hasMftFileRecordHeader = (prefix: Uint8Array): boolean => {
+  if (
+    prefix.length < NTFS_MFT_MIN_RECORD_BYTES ||
+    !hasMftFileRecordSignature(prefix)
+  )
+    return false;
+  const view = new DataView(
+    prefix.buffer,
+    prefix.byteOffset,
+    prefix.byteLength,
+  );
+  return (
+    isRecordSize(view.getUint32(RECORD_HEADER.totalBytes, true)) ||
+    updateSequenceArrayFits(
+      view.getUint16(RECORD_HEADER.updateSequenceOffset, true),
+      view.getUint16(RECORD_HEADER.updateSequenceCount, true),
+      MFT_DEFAULT_RECORD_BYTES / FIXUP_SECTOR_BYTES,
+    )
+  );
+};
 
 /**
  * Parse FILE record headers and verify their update-sequence fixups.
@@ -350,13 +378,7 @@ const verifyFixups = (
   // Entry 0 holds the sequence number, so sector n's saved trailer is entry n+1.
   const coveredSectors = Math.max(0, usaCount - 1);
 
-  if (
-    usaCount < USA_MIN_ENTRIES ||
-    coveredSectors > sectors ||
-    usaOffset < NTFS_MFT_MIN_RECORD_BYTES ||
-    usaOffset % 2 !== 0 ||
-    usaOffset + usaCount * 2 > FIXUP_SECTOR_BYTES - 2
-  )
+  if (!updateSequenceArrayFits(usaOffset, usaCount, sectors))
     return {
       sequenceNumber: 0,
       entries: usaCount,
