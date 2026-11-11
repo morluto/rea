@@ -3,6 +3,7 @@ import { redactSensitiveFailure } from "../domain/explicitSensitiveFailure.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createHash } from "node:crypto";
+import { toUSVString } from "node:util";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type {
@@ -40,13 +41,13 @@ const normalizedSecretValues = (value: string): readonly string[] => [
   ...new Set([value.replace(/^[\t ]+|[\t ]+$/gu, ""), value]),
 ];
 
-const encodedSecretValues = (secret: string): ReadonlySet<string> => {
-  const component = encodeURIComponent(secret);
+const encodedSecretValues = (scalar: string): ReadonlySet<string> => {
+  const component = encodeURIComponent(scalar);
   return new Set([
     component,
     // Special-URL queries escape apostrophes while keeping the component's tilde.
     component.replace(/'/gu, "%27"),
-    new URLSearchParams([["value", secret]]).toString().slice("value=".length),
+    new URLSearchParams([["value", scalar]]).toString().slice("value=".length),
   ]);
 };
 
@@ -76,20 +77,30 @@ const secretPatterns = (
   spellings: SecretSpellings,
 ): readonly SecretPattern[] => {
   if (secret === "") return [];
+  // UTF-8 and Web APIs replace unpaired UTF-16 units; retain source identity
+  // while accounting for those emitted spellings only in redaction patterns.
+  const scalar = toUSVString(secret);
+  const literals = [...new Set([secret, scalar])];
   const patterns: SecretPattern[] = [
-    { text: secret, searchText: secret, percentInsensitive: false },
-    ...[...encodedSecretValues(secret)].map((text) => ({
+    ...literals.map((text) => ({
+      text,
+      searchText: text,
+      percentInsensitive: false,
+    })),
+    ...[...encodedSecretValues(scalar)].map((text) => ({
       text,
       searchText: normalizePercentEscapes(text),
       percentInsensitive: true,
     })),
   ];
   if (spellings === "text")
-    patterns.push({
-      text: JSON.stringify(secret).slice(1, -1),
-      searchText: JSON.stringify(secret).slice(1, -1),
-      percentInsensitive: false,
-    });
+    patterns.push(
+      ...literals.map((text) => ({
+        text: JSON.stringify(text).slice(1, -1),
+        searchText: JSON.stringify(text).slice(1, -1),
+        percentInsensitive: false,
+      })),
+    );
   const seen = new Set<string>();
   return patterns.filter(({ text, percentInsensitive }) => {
     if (text === "") return false;

@@ -31,6 +31,9 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 const stableIdSchema = z
   .string()
   .regex(/^[A-Za-z][A-Za-z0-9._:\x2f\x2d]{0,199}$/u);
+export const reconstructionBoundaryIdSchema = stableIdSchema.describe(
+  "Exact identifier of a boundary declared in the reconstruction coverage.",
+);
 const boundedTextSchema = z.string().trim().min(1);
 
 const authoritySchema = z.enum([
@@ -158,7 +161,7 @@ const packageProofSchema = z.strictObject({
 });
 
 const boundarySchema = z.strictObject({
-  boundary_id: stableIdSchema,
+  boundary_id: reconstructionBoundaryIdSchema,
   title: z.string().trim().min(1),
   required_surface_ids: z.array(stableIdSchema).min(1),
   required_claim_ids: z.array(stableIdSchema).min(1),
@@ -203,6 +206,10 @@ export interface ParsedReconstructionCoverage {
   readonly claims: ReadonlyMap<
     string,
     ReconstructionCoverageData["claims"][number]
+  >;
+  readonly boundaries: ReadonlyMap<
+    string,
+    ReconstructionCoverageData["boundaries"][number]
   >;
   readonly ownersBySurface: ReadonlyMap<
     string,
@@ -281,7 +288,7 @@ const closureReasonSchema = z.strictObject({
 });
 
 export const reconstructionClosureResultSchema = z.strictObject({
-  boundary_id: stableIdSchema,
+  boundary_id: reconstructionBoundaryIdSchema,
   status: z.enum(["partial", "failed", "unknown", "ready"]),
   summary: z.strictObject({
     required_surfaces: z.int().min(0),
@@ -311,9 +318,7 @@ export const evaluateParsedReconstructionClosure = (
   boundaryId: string,
   nowEpochMs: number,
 ): Result<ReconstructionClosureResult, AnalysisInputError> => {
-  const boundary = parsed.coverage.boundaries.find(
-    ({ boundary_id: id }) => id === boundaryId,
-  );
+  const boundary = parsed.boundaries.get(boundaryId);
   if (boundary === undefined)
     return err(
       coverageInputError(
@@ -388,7 +393,10 @@ const validateCoverageReferences = (
     ...path,
     "package_proofs",
   ]);
-  indexUnique(workspace.boundaries, "boundary_id", [...path, "boundaries"]);
+  const boundaries = indexUnique(workspace.boundaries, "boundary_id", [
+    ...path,
+    "boundaries",
+  ]);
   for (const [index, contract] of workspace.verifier_contracts.entries()) {
     const { contract_sha256: contractSha256, ...base } = contract;
     if (
@@ -464,7 +472,14 @@ const validateCoverageReferences = (
         ["residual_unknown_ids", index],
         `Coverage workspace residual unknown is missing: ${id}`,
       );
-  return { evidenceById, artifacts, surfaces, claims, ownersBySurface };
+  return {
+    evidenceById,
+    artifacts,
+    surfaces,
+    claims,
+    boundaries,
+    ownersBySurface,
+  };
 };
 
 const indexUnique = <Item extends Record<Key, string>, Key extends keyof Item>(

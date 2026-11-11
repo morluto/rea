@@ -1,0 +1,20 @@
+{
+  "name": "rea",
+  "version": "6.8.0",
+  "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+  "author": {
+    "name": "morluto",
+    "url": "https://github.com/morluto"
+  },
+  "homepage": "https://rea.tools/",
+  "repository": "https://github.com/morluto/rea",
+  "license": "MIT",
+  "keywords": [
+    "reverse-engineering",
+    "binary-analysis",
+    "decompiler",
+    "mcp-server"
+  ],
+  "skills": ".cursor-plugin/skills",
+  "logo": "assets/rea-plugin.png"
+}
