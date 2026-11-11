@@ -52,6 +52,7 @@ it("preserves cancellation and retained cleanup ownership through setup and retr
       client: "claude_code",
       config_path: "/fixture/config",
       command: [],
+      command_identity: "unknown",
       state: "missing",
       remediation: "Install REA.",
     },
