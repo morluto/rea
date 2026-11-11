@@ -8,6 +8,9 @@ it("keeps exact USN values and coverage rows on bounded source-order pages", () 
   record.write("FILE");
   record.writeUInt16LE(48, 4);
   record.writeUInt16LE(3, 6);
+  record.writeUInt16LE(1, 48);
+  record.writeUInt16LE(1, 510);
+  record.writeUInt16LE(1, 1022);
   record.writeUInt16LE(2, 16);
   record.writeUInt16LE(56, 20);
   record.writeUInt32LE(64, 24);
