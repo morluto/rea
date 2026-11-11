@@ -16,7 +16,7 @@ import { prependAsarJsonWhitespace } from "../../fixtures/asarHeader.js";
 import { thinFuseImage } from "../../fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-describe("release exposure filesystem boundary", () => {
+describe("release exposure Deno filesystem boundary", () => {
   it.each(["vfs", "remote"] as const)(
     "audits Deno %s source maps using their retained roles",
     async (kind) => {
@@ -80,7 +80,9 @@ describe("release exposure filesystem boundary", () => {
       }
     },
   );
+});
 
+describe("release exposure filesystem boundary", () => {
   it("retains unknown JavaScript coverage for an external-section bundle.map", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-map-");
     await writeFile(
