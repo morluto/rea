@@ -76,7 +76,7 @@ export type HopperInstallFailureReason =
 const normalizePackageOutput = (output: string): string =>
   output
     .replace(/\u001b(?:\[[0-9;?]*[ -/]*[@-~]|\([0-9A-Za-z]|[@-Z\\^_])/gu, "")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, "")
     .replace(/\s+/gu, " ")
     .trim();
 

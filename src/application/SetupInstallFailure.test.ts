@@ -147,6 +147,21 @@ describe("Linux Hopper launcher digest mismatch", () => {
     expect(result.remediation).not.toContain("\u001b");
   });
 
+  it("strips C1 controls from the rendered release version", () => {
+    // A feed row is an unrestricted string, and the remediation is written
+    // straight to stderr, so a C1 CSI (U+009B) must not reach the terminal
+    // even though the authenticated package itself is valid.
+    const forged = { ...mismatch, releaseVersion: "2.1.0\u009b2K\u009b31m" };
+    const result = setupInstallFailure("integrity", {
+      platform: "linux",
+      launcherDigestMismatch: forged,
+    });
+    if (result.status !== "failed") throw new Error("expected failure");
+    expect(result.launcherDigestMismatch).toEqual(forged);
+    expect(result.remediation).toContain("release 2.1.02K31m;");
+    expect([...result.remediation].some((c) => c >= "\u0080" && c <= "\u009f")).toBe(false);
+  });
+
   it("keeps the generic recovery for an integrity failure without package facts", () => {
     expect(setupInstallFailure("integrity", { platform: "linux" })).toEqual({
       status: "failed",
