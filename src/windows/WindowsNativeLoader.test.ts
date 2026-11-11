@@ -6,6 +6,7 @@ import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNative
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import {
   loadWindowsNativeAuthority,
+  windowsNativeFailureRemediation,
   type WindowsNativeLoadHost,
 } from "./WindowsNativeLoader.js";
 
@@ -254,6 +255,12 @@ describe("packaged Windows native artifact validation", () => {
     expect(readiness).not.toMatchObject({
       remediation: expect.stringContaining("restore native/windows/build"),
     });
+  });
+
+  it("describes NTFS and ReFS temporary volumes in self-test remediation", () => {
+    expect(windowsNativeFailureRemediation("self-test")).toContain(
+      "writable local NTFS/ReFS temporary directory",
+    );
   });
 
   it("requires every inspected native fact", () => {
