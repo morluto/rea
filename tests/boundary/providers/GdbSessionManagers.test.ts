@@ -6,6 +6,22 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
+
+const gdbSettingsFixture = `#!${process.execPath}
+process.stdout.write("(gdb)\\n");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+ input += chunk;
+ for (;;) {
+  const end = input.indexOf("\\n"); if (end < 0) break;
+  const line = input.slice(0,end); input = input.slice(end+1);
+  const match = /^(\\d+)/.exec(line);
+  if (match && line.includes("list-thread-groups")) process.stdout.write(match[1] + "^done,groups=[]\\n");
+  else if (match) process.stdout.write(match[1] + "^done\\n");
+ }
+});`;
 
 describe("persistent debugger session managers", () => {
   let directory: string | undefined;
@@ -68,6 +84,57 @@ process.stdin.on("data", (chunk) => {
     expect(closed.ok).toBe(true);
     expect(manager.status(started.value.session_id)).toBeUndefined();
   });
+
+  it.each([
+    ["debugger.command_deadline_ms", "REA_DEBUGGER_COMMAND_DEADLINE_MS", 5000],
+    [
+      "debugger.max_command_output_bytes",
+      "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+      4096,
+    ],
+  ] as const)(
+    "honors a single override for invalid %s",
+    async (setting, environmentName, value) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
+      const provider = join(directory, "fake-gdb.mjs");
+      await writeFile(provider, gdbSettingsFixture);
+      await chmod(provider, 0o700);
+      const environment = {
+        REA_GDB_COMMAND: provider,
+        [environmentName]: "invalid",
+        REA_DEBUGGER_MAX_PENDING_COMMANDS: "1",
+      };
+      const settings = new AnalysisSettings(environment);
+      const set = () =>
+        settings.update({ changes: [{ setting, action: "set", value }] });
+      expect(set().ok).toBe(true);
+      const manager = new GdbSessionManager({
+        spawnProcess: fixtureOwner.spawnProcess,
+        platform: "linux",
+        environment,
+      });
+      managers.push(manager);
+      const started = await settings.run(() => manager.start());
+      if (!started.ok) throw started.error;
+      const execute = () =>
+        settings.run(() =>
+          manager.execute(started.value.session_id, "show version"),
+        );
+      expect((await execute()).ok).toBe(true);
+      expect(
+        settings.update({ changes: [{ setting, action: "reset" }] }).ok,
+      ).toBe(true);
+      expect(await execute()).toMatchObject({
+        ok: false,
+        error: { _tag: "ConfigurationError" },
+      });
+      expect(set().ok).toBe(true);
+      expect((await execute()).ok).toBe(true);
+      expect(
+        (await settings.run(() => manager.close(started.value.session_id))).ok,
+      ).toBe(true);
+    },
+  );
 
   it("does not start GDB when it rejects the required auto-load setting", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-gdb-autoload-"));
