@@ -6,6 +6,7 @@ import {
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import type { WebSourceMapPort } from "../../application/WebSourceLocationPorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -73,7 +74,17 @@ export class SourceMapDecoder implements WebSourceMapPort {
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>> {
     const cleanupFailure = await this.#retryCleanup();
-    if (cleanupFailure !== undefined) return err(cleanupFailure);
+    if (cleanupFailure !== undefined)
+      return err(
+        options?.signal?.aborted
+          ? analysisErrorWithCancellation(
+              cleanupFailure,
+              new AnalysisCancelledError(OPERATION, {
+                cause: options.signal.reason,
+              }),
+            )
+          : cleanupFailure,
+      );
     if (options?.signal?.aborted)
       return err(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),

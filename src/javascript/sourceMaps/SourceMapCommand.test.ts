@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import { access } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -512,4 +513,29 @@ it("applies a non-default decode deadline and releases its runtime", async () =>
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("retains a physical process admission error alongside cancellation", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "during admission" };
+  const physical = new ProcessAdmissionError("reader_closed");
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    { signal: controller.signal },
+    {
+      prepareOwnership: async () => {
+        controller.abort(reason);
+        throw physical;
+      },
+    },
+    unexpectedCleanup,
+  );
+  if (result.ok) throw new Error("expected admission failure");
+  expect(result.error._tag).toBe("ProviderAdapterError");
+  expect(result.error.cause).toBe(physical);
+  expect(result.error.secondaryFailures[0]).toBeInstanceOf(
+    AnalysisCancelledError,
+  );
+  expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
 });
