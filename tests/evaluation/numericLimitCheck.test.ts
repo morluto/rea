@@ -4,11 +4,30 @@ import {
   discoverNumericLimitUses,
   isNumericLimit,
   parseNumericLimitRegistry,
+  parseRuntimeSettingEnvironments,
   perCallLimitFailures,
   requiredRuntimeLimitFailure,
 } from "../../scripts/verify/rea-numeric-limits.mjs";
 
 const ENDPOINT_CANDIDATES = "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES";
+
+it("reads only actual settings environment properties", () => {
+  expect([
+    ...parseRuntimeSettingEnvironments(`
+    // environment: "REA_COMMENT_MAX_BYTES"
+    const text = 'environment: "REA_STRING_MAX_BYTES"';
+    export const ANALYSIS_SETTINGS = {
+      first: { environment: "REA_REAL_MAX_BYTES" },
+      parameter: { defaultValue: 1 },
+    } as const;
+  `),
+  ]).toEqual(["REA_REAL_MAX_BYTES"]);
+  expect(() =>
+    parseRuntimeSettingEnvironments(
+      "export const ANALYSIS_SETTINGS = { a: { environment: value } };",
+    ),
+  ).toThrow();
+});
 
 it("parses declared external provenance rather than inferring it from prose", () => {
   const source = `export const NUMERIC_LIMIT_REGISTRY = [{

@@ -11,6 +11,9 @@ export const REQUIRED_RUNTIME_LIMITS: readonly [
 /** True for a numeric `REA_` limit, including the documented endpoint-candidate count. */
 export function isNumericLimit(name: string): boolean;
 
+/** Statically declared environment seeds owned by ANALYSIS_SETTINGS. */
+export function parseRuntimeSettingEnvironments(source: string): Set<string>;
+
 /** Detect stale or newly introduced temporary per-call exceptions. */
 export function perCallLimitFailures(
   listed: ReadonlyMap<string, string>,

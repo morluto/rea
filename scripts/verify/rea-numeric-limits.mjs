@@ -742,8 +742,53 @@ export const parseNumericLimitRegistry = (source) => {
   });
 };
 
-const namesIn = (source, pattern) =>
-  new Set([...source.matchAll(pattern)].map((match) => match[1]));
+/** Extract only environment properties owned by the settings declaration. */
+export const parseRuntimeSettingEnvironments = (source) => {
+  const file = ts.createSourceFile(
+    "analysisSettingDefinitions.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declaration = file.statements
+    .filter(ts.isVariableStatement)
+    .flatMap((statement) => [...statement.declarationList.declarations])
+    .find(
+      (entry) =>
+        ts.isIdentifier(entry.name) && entry.name.text === "ANALYSIS_SETTINGS",
+    );
+  if (declaration?.initializer === undefined)
+    throw new Error("ANALYSIS_SETTINGS declaration is missing");
+  const settings = unwrapExpression(declaration.initializer);
+  if (!ts.isObjectLiteralExpression(settings))
+    throw new Error("ANALYSIS_SETTINGS must be an object literal");
+  const names = new Set();
+  for (const setting of settings.properties) {
+    if (
+      !ts.isPropertyAssignment(setting) ||
+      !ts.isObjectLiteralExpression(unwrapExpression(setting.initializer))
+    )
+      throw new Error("Analysis setting must be a static object assignment");
+    const definition = unwrapExpression(setting.initializer);
+    const fields = definition.properties.filter(
+      (field) =>
+        ts.isPropertyAssignment(field) &&
+        (ts.isIdentifier(field.name) || ts.isStringLiteral(field.name)) &&
+        field.name.text === "environment",
+    );
+    if (fields.length > 1)
+      throw new Error("Duplicate analysis setting environment");
+    if (fields.length === 0) continue;
+    const name = literalText(unwrapExpression(fields[0].initializer));
+    if (name === undefined || !/^REA_[A-Z0-9_]+$/u.test(name))
+      throw new Error(
+        "Analysis setting environment must be a static REA_ name",
+      );
+    names.add(name);
+  }
+  return names;
+};
 
 /** Existing launch-seed migrations. A new per-call policy is rejected. */
 const TEMPORARY_PER_CALL_LIMITS = new Set([
@@ -783,7 +828,7 @@ if (direct) {
   const failures = [];
   const definitions = await readFile(definitionsPath, "utf8");
   const registry = await readFile(registryPath, "utf8");
-  const runtime = namesIn(definitions, /environment:\s*"(REA_[A-Z0-9_]+)"/gu);
+  const runtime = parseRuntimeSettingEnvironments(definitions);
   const entries = parseNumericLimitRegistry(registry);
   const listed = new Map();
   for (const entry of entries) {
