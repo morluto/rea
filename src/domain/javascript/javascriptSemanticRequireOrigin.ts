@@ -586,6 +586,9 @@ const selectedRequireSourcesAt = (
             returned.references.map((reference) => ({
               node: reference.node,
               path: reference.projection,
+              // The immediate invocation produces this value before the
+              // receiving call can apply opaque effects to it.
+              readAt: node,
             })),
           ),
         );
@@ -1087,7 +1090,7 @@ const loaderMemberSource = (
     current.readAt === undefined
       ? semanticShiftCapturedSelections(current.capturedSelections, 1)
       : semanticNormalizeCapturedSelections([
-          { at: member, depth: 1 },
+          { at: current.path.length === 0 ? current.readAt : member, depth: 1 },
           ...(semanticShiftCapturedSelections(current.capturedSelections, 1) ??
             []),
         ]),

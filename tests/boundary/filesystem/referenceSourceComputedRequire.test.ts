@@ -173,5 +173,13 @@ it("distinguishes computed require member values from literal members in source 
   ]);
   expect(graph.entries).toHaveLength(Object.keys(sources).length);
   for (const [path, source] of Object.entries(sources))
-    expect(graph.entries).toContainEqual(hashedSourceEntry(path, source));
+    expect(graph.entries).toContainEqual({
+      ...hashedSourceEntry(path, source),
+      limitations:
+        path === "unknown.cjs"
+          ? [
+              "A CommonJS module target in unknown.cjs could not be determined statically.",
+            ]
+          : [],
+    });
 });
