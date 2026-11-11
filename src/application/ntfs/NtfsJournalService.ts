@@ -11,11 +11,14 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -73,10 +76,29 @@ const readFailure = (
         { cause, retryable: false },
       );
   }
-  return inputFailure(
-    parameter,
-    `Could not read the selected acquisition at ${path}`,
-    cause,
+  if (
+    cause instanceof ArtifactReaderFailure &&
+    (cause.reason === "path" || cause.reason === "format")
+  )
+    return inputFailure(parameter, cause.message, cause);
+  if (cause instanceof Error && "code" in cause) {
+    if (cause.code === "EACCES" || cause.code === "EPERM")
+      return new AnalysisAccessDeniedError(operation, path, cause.code, {
+        cause,
+      });
+    if (isSelectedRegularFileError(cause))
+      return inputFailure(
+        parameter,
+        `Could not read the selected acquisition at ${path}`,
+        cause,
+      );
+  }
+  return new ArtifactOperationError(
+    operation,
+    "io",
+    undefined,
+    "NTFS acquisition read failed.",
+    { cause },
   );
 };
 
