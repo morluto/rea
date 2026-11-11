@@ -9,7 +9,11 @@ import { join } from "node:path";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
@@ -140,21 +144,45 @@ export const readDesktopCapture = async (
       OPERATION,
       "Desktop capture input",
     );
-    if (outcome.ok)
+    if (outcome.ok && !signal?.aborted)
       throw cleanup.retainPartialObservation(outcome.value.evidence);
-    const primary = desktopOperationFailure(
-      outcome.error,
-      signal,
-      OPERATION,
-      "Desktop capture input",
-    );
+    const primary = outcome.ok
+      ? new AnalysisCancelledError(OPERATION, {
+          cause: signal?.reason,
+        }).retainPartialObservation(outcome.value.evidence)
+      : desktopOperationFailure(
+          outcome.error,
+          undefined,
+          OPERATION,
+          "Desktop capture input",
+        );
+    if (!outcome.ok && signal?.aborted)
+      analysisErrorWithCancellation(
+        primary,
+        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+      );
     throw analysisErrorWithCleanupFailure(
       primary,
       cleanup,
       OPERATION,
     ).bindCleanupDependencies([primary, cleanup]);
   }
-  if (!outcome.ok) throw outcome.error;
+  if (!outcome.ok) {
+    if (!signal?.aborted) throw outcome.error;
+    throw analysisErrorWithCancellation(
+      desktopOperationFailure(
+        outcome.error,
+        undefined,
+        OPERATION,
+        "Desktop capture input",
+      ),
+      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+    );
+  }
+  if (signal?.aborted)
+    throw new AnalysisCancelledError(OPERATION, {
+      cause: signal.reason,
+    }).retainPartialObservation(outcome.value.evidence);
   return outcome.value;
 };
 
