@@ -1,6 +1,8 @@
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   execFileOutput,
   execFileOutputFailure,
+  ExecFileOutputCancelledError,
 } from "../process/ExecFileOutput.js";
 
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -33,7 +35,11 @@ export const runHostQuery: QueryRunner = async (
     });
     return { stdout, exitCode: 0 };
   } catch (cause: unknown) {
-    signal?.throwIfAborted();
+    if (cause instanceof ExecFileOutputCancelledError)
+      throw new ArtifactReaderFailure("cancelled", "Host query cancelled", {
+        cause: cause.cause,
+        cancellation: { reason: cause.cause },
+      });
     const failure = execFileOutputFailure(cause);
     if (failure?.code === "ENOENT") return "missing";
     return typeof failure?.code === "number" &&

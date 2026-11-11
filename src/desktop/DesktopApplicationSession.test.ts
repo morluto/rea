@@ -4,12 +4,22 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { terminateTokenOwnedProcesses } from "../process/TokenOwnedTermination.js";
+import {
+  terminateTokenOwnedProcesses,
+  type TokenOwnedTerminationHost,
+} from "../process/TokenOwnedTermination.js";
+import * as providerProcess from "../process/ProviderProcess.js";
+import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
+import * as sessionObservations from "./DesktopSessionObservations.js";
+import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
+import * as runTokenObservations from "../process/ProcessRunTokenObservations.js";
+import { isProcessOwnershipInspectionCancellation } from "../process/ProcessInspectionCancellation.js";
+import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import {
   runDesktopSession,
   type DesktopSessionPlan,
 } from "./DesktopApplicationSession.js";
-import type { X11WindowObserver } from "./X11WindowObserver.js";
+import { X11WindowObserver } from "./X11WindowObserver.js";
 
 vi.mock("../process/TokenOwnedTermination.js", async (importOriginal) => {
   const actual =
@@ -45,6 +55,90 @@ const shellPlan = (
   report: async () => {},
   signal: undefined,
 });
+
+/** Real inert child lifetime; native inspection facts are deliberately not claimed. */
+const inertSessionPorts = () => {
+  let child: providerProcess.ProviderProcessHandle | undefined;
+  let lifetime: Promise<void> | undefined;
+  let closed = false;
+  let stdoutEnded = false;
+  let stderrEnded = false;
+  let releases = 0;
+  const unexpectedSignal = () => {
+    throw new Error("inert closed child must not be signalled");
+  };
+  const host: TokenOwnedTerminationHost = {
+    ownership: {
+      platform: process.platform,
+      listProcesses: async () => {
+        expect(closed && stdoutEnded && stderrEnded).toBe(true);
+        return [];
+      },
+      environment: async () => {
+        throw new Error("no live fixture process needs a token read");
+      },
+      signalGroup: unexpectedSignal,
+    },
+    signalProcess: unexpectedSignal,
+  };
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockResolvedValue(undefined);
+  if (systemProcessOwnershipHost.captureBaseline === undefined)
+    throw new Error(
+      "inert session requires the existing capture baseline port",
+    );
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockResolvedValue([
+    { pid: process.pid, identity: null },
+  ]);
+  vi.spyOn(sessionObservations, "trackProcess").mockResolvedValue(undefined);
+  const spawn = providerProcess.spawnOwnedProviderProcess;
+  vi.spyOn(providerProcess, "spawnOwnedProviderProcess").mockImplementationOnce(
+    async (options) => {
+      const spawned = await spawn({ ...options, stdin: "pipe" });
+      child = spawned.process;
+      vi.spyOn(spawned.process, "kill").mockImplementation(unexpectedSignal);
+      spawned.process.stdout?.once("end", () => {
+        stdoutEnded = true;
+      });
+      spawned.process.stderr?.once("end", () => {
+        stderrEnded = true;
+      });
+      const drained = new Promise<void>((resolve, reject) => {
+        spawned.process.once("error", reject);
+        spawned.process.once("close", () => {
+          closed = true;
+          resolve();
+        });
+      });
+      lifetime = drained;
+      return {
+        ...spawned,
+        cleanup: async (): Promise<ProcessCleanupResult> => {
+          releases += 1;
+          if (!closed) spawned.process.stdin?.end();
+          await drained;
+          expect(closed && stdoutEnded && stderrEnded).toBe(true);
+          return { cleaned: true, signaled: false };
+        },
+      };
+    },
+  );
+  return {
+    argv: [
+      process.execPath,
+      "-e",
+      "process.stdin.resume();process.stdin.once('end',()=>process.exit(0));",
+    ],
+    host,
+    finish: async () => {
+      if (child === undefined || lifetime === undefined)
+        throw new Error("inert child was not launched");
+      if (!closed) child.stdin?.end();
+      await lifetime;
+      expect(closed && stdoutEnded && stderrEnded).toBe(true);
+    },
+    releases: () => releases,
+  };
+};
 
 describe.skipIf(process.platform !== "linux")("runDesktopSession", () => {
   it("releases the application once when the exit checkpoint fails after release", async () => {
@@ -141,12 +235,16 @@ describe.skipIf(process.platform !== "linux")(
 );
 
 describe.skipIf(process.platform === "win32")(
-  "runDesktopSession stderr",
+  "runDesktopSession finalization",
   () => {
     it.each([
       { fails: false, cancelAt: "cleanup" },
       { fails: true, cancelAt: "cleanup" },
       { fails: false, cancelAt: "exit" },
+      { fails: true, cancelAt: "checkpoint" },
+      { fails: false, cancelAt: "checkpoint" },
+      { fails: false, cancelAt: "poll" },
+      { fails: false, cancelAt: "tokens" },
     ])(
       "preserves the session outcome when cancellation arrives during $cancelAt (checkpoint fails: $fails)",
       async ({ fails, cancelAt }) => {
@@ -162,31 +260,114 @@ describe.skipIf(process.platform === "win32")(
           const original = await vi.importActual<
             typeof import("../process/TokenOwnedTermination.js")
           >("../process/TokenOwnedTermination.js");
-          return original.terminateTokenOwnedProcesses(...args);
+          if (inert !== undefined) await inert.finish();
+          return inert === undefined
+            ? original.terminateTokenOwnedProcesses(...args)
+            : original.terminateTokenOwnedProcesses(
+                args[0],
+                args[1],
+                inert.host,
+              );
         });
+        const inert =
+          cancelAt === "checkpoint" ||
+          cancelAt === "poll" ||
+          cancelAt === "tokens"
+            ? inertSessionPorts()
+            : undefined;
+        const windows = new X11WindowObserver(process.execPath, {});
+        if (cancelAt === "poll" || cancelAt === "tokens")
+          vi.spyOn(windows, "sample").mockImplementation(async () => {
+            if (cancelAt === "tokens") await inert!.finish();
+            else controller.abort(reason);
+            return { state: "listed", windows: [] };
+          });
+        let tokenFailure: unknown;
+        if (cancelAt === "tokens") {
+          vi.spyOn(
+            systemProcessOwnershipHost,
+            "listProcesses",
+          ).mockImplementation(async () => {
+            await inert!.finish();
+            controller.abort(reason);
+            return [];
+          });
+          const read = runTokenObservations.readRunTokenCarriers;
+          vi.spyOn(
+            runTokenObservations,
+            "readRunTokenCarriers",
+          ).mockImplementation(async (...args) => {
+            try {
+              return await read(...args);
+            } catch (cause: unknown) {
+              tokenFailure = cause;
+              throw cause;
+            }
+          });
+        }
         const checkpoints: string[] = [];
-        const result = await runDesktopSession({
+        const plan: DesktopSessionPlan = {
           ...shellPlan(root, "exit 0"),
+          ...(inert === undefined ? {} : { argv: inert.argv }),
+          ...(cancelAt === "poll" || cancelAt === "tokens" ? { windows } : {}),
           signal: controller.signal,
-          nextRequest: () => ({ kind: "stop" }),
-          checkpoint: async (name) => {
+          nextRequest: () =>
+            cancelAt === "poll" || cancelAt === "tokens"
+              ? undefined
+              : { kind: "stop" },
+          checkpoint: async (name: string) => {
             checkpoints.push(name);
+            if (cancelAt === "checkpoint") {
+              await inert!.finish();
+              controller.abort(reason);
+              if (!fails) assertArtifactReadActive(controller.signal);
+            }
             if (cancelAt === "exit" && name === "exit")
               controller.abort(reason);
             if (fails) throw failure;
           },
-        }).catch((cause: unknown) => cause);
-        if (fails) expect(result).toBe(failure);
-        else
-          expect(result).toMatchObject({
-            session: { end_reason: "cancelled", cleanup: { verified: true } },
-          });
-        expect(checkpoints).toEqual(
-          cancelAt === "exit" ? ["stop", "exit"] : ["stop"],
-        );
+        };
+        try {
+          const result = await runDesktopSession(plan).catch(
+            (cause: unknown) => cause,
+          );
+          if (cancelAt === "tokens") {
+            expect(isProcessOwnershipInspectionCancellation(tokenFailure)).toBe(
+              true,
+            );
+            if (!isProcessOwnershipInspectionCancellation(tokenFailure))
+              throw new Error(
+                "expected actual token observation cancellation fact",
+              );
+            expect(tokenFailure.reason).toBe(reason);
+          }
+          if (fails) expect(result).toBe(failure);
+          else
+            expect(result).toMatchObject({
+              session: { end_reason: "cancelled", cleanup: { verified: true } },
+            });
+          expect(checkpoints).toEqual(
+            cancelAt === "poll" || cancelAt === "tokens"
+              ? []
+              : cancelAt === "exit"
+                ? ["stop", "exit"]
+                : ["stop"],
+          );
+          if (inert !== undefined) expect(inert.releases()).toBe(1);
+        } finally {
+          if (inert !== undefined) {
+            await inert.finish();
+            vi.restoreAllMocks();
+          }
+        }
       },
     );
+  },
+);
 
+describe.skipIf(process.platform === "win32")(
+  "runDesktopSession diagnostics",
+  () => {
     it("keeps the end of an app's stderr when it writes more than the session keeps", async () => {
       const root = await createTestTempDirectory("desktop-session-stderr-");
       const cause =
