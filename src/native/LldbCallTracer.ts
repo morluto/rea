@@ -7,10 +7,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
+import {
+  MAX_NATIVE_CALL_CAPTURE_BYTES,
+  nativeCallCaptureLimits,
+} from "../domain/native/nativeCallCaptureLimits.js";
 
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
@@ -67,8 +72,6 @@ const OPERATION = "observe_native_calls";
 const PROVIDER = "native-macos";
 const LLDB_REQUIREMENT =
   "LLDB from Xcode or the Command Line Tools is not available";
-/** Captured target output kept per stream; the rest is counted, not stored. */
-const MAX_OUTPUT_BYTES = 1024 * 1024;
 /**
  * LLDB startup, symbol loading and teardown beyond the observation window.
  * This grace has no runtime override; duration_ms is the caller-selected window.
@@ -82,7 +85,7 @@ const lldbGraceRecovery = (
   const total = durationMs + DEADLINE_GRACE_MS;
   return {
     userMessage: `observe_native_calls reached its ${String(total)} ms server/provider deadline: duration_ms ${String(durationMs)} plus a fixed ${String(DEADLINE_GRACE_MS)} ms LLDB startup, symbol loading, and teardown grace. This is not the MCP client deadline.`,
-    remediationAction: `This release has no runtime override for the ${String(DEADLINE_GRACE_MS)} ms grace. Increase duration_ms on the next call when the observation window was too short; the grace stays added to that window. Captured output beyond ${String(MAX_OUTPUT_BYTES)} bytes per stream is counted and not kept, and that byte allowance has no runtime override. Failure diagnostics keep at most ${String(DIAGNOSTIC_BYTES)} bytes and that excerpt has no runtime override. Allow execution, cleanup, and delivery headroom in the outer MCP client deadline. Confirm the owned process was killed and cleanup finished before retrying.`,
+    remediationAction: `This release has no runtime override for the ${String(DEADLINE_GRACE_MS)} ms grace. Increase duration_ms on the next call when the observation window was too short; the grace stays added to that window. Captured output retention is selected with capture_limits.output_bytes before launch; changing it cannot recover an earlier capture. Failure diagnostics keep at most ${String(DIAGNOSTIC_BYTES)} bytes and that excerpt has no runtime override. Allow execution, cleanup, and delivery headroom in the outer MCP client deadline. Confirm the owned process was killed and cleanup finished before retrying.`,
   };
 };
 
@@ -113,6 +116,7 @@ const tracedSchema = z.strictObject({
     stable: z.boolean(),
   }),
   resource_limit_reached: z.boolean(),
+  resource_limit: z.enum(["trace_bytes", "trace_frames"]).nullable().optional(),
   breakpoint_locations_truncated: z.boolean().optional(),
   target_output: z.strictObject({
     stdout_bytes: z.int().nonnegative(),
@@ -607,6 +611,7 @@ export class LldbCallTracer implements NativeCallTracer {
     const directory = retained.root.path;
     const paths = lldbRuntimePaths(directory);
     const { input } = request;
+    const captureLimits = nativeCallCaptureLimits(input.capture_limits);
     await writeFile(
       paths.config,
       JSON.stringify({
@@ -625,7 +630,7 @@ export class LldbCallTracer implements NativeCallTracer {
         max_events: input.max_events,
         argument_registers: input.argument_registers,
         backtrace_frames: input.backtrace_frames,
-        max_output_bytes: MAX_OUTPUT_BYTES,
+        capture_limits: captureLimits,
         stdout_path: paths.stdout,
         stderr_path: paths.stderr,
         stdout_capture_path: paths.stdoutCapture,
@@ -725,6 +730,7 @@ export class LldbCallTracer implements NativeCallTracer {
         run.target_output.stdout_truncated,
         run.target_output.stdout_complete,
         retained.files,
+        captureLimits.output_bytes,
       ),
       stderr: await capturedOutput(
         paths.stderrCapture,
@@ -732,6 +738,7 @@ export class LldbCallTracer implements NativeCallTracer {
         run.target_output.stderr_truncated,
         run.target_output.stderr_complete,
         retained.files,
+        captureLimits.output_bytes,
       ),
     });
     const getPartialObservation = async (
@@ -855,6 +862,16 @@ export class LldbCallTracer implements NativeCallTracer {
             },
           ),
       );
+    const readbackFailure =
+      readback !== undefined && !readback.ok ? readback.error : undefined;
+    if (
+      output === undefined &&
+      readbackFailure instanceof AnalysisResourceConstraintError
+    )
+      return failureWithPartial((partialObservation) => {
+        readbackFailure.partialObservation = partialObservation;
+        return readbackFailure;
+      });
     if (output === undefined)
       return failureWithPartial(
         (partialObservation) =>
@@ -1056,13 +1073,29 @@ const partialNativeObservation = async (options: {
   readonly version: string | null;
   readonly reason: NativeCallPartialObservation["coverage"]["reason"];
 }): Promise<PartialNativeObservationRead> => {
+  const captureLimits = nativeCallCaptureLimits(
+    options.request.input.capture_limits,
+  );
   const [journal, pid, stdout, stderr] = await Promise.all([
-    readLldbObservationJournal(options.observationPath, options.files),
+    readLldbObservationJournal(
+      options.observationPath,
+      options.files,
+      captureLimits.trace_bytes,
+    ),
     options.files.readTargetPid(options.pidPath),
-    readPartialCapture(options.stdoutPath, options.files),
-    readPartialCapture(options.stderrPath, options.files),
+    readPartialCapture(
+      options.stdoutPath,
+      options.files,
+      captureLimits.output_bytes,
+    ),
+    readPartialCapture(
+      options.stderrPath,
+      options.files,
+      captureLimits.output_bytes,
+    ),
   ]);
   const observation = projectLldbPartialObservation({
+    captureLimits,
     target: {
       path: options.request.executable,
       sha256: options.request.expectedSha256,
@@ -1140,12 +1173,39 @@ const readTracerOutput = async (
   path: string,
   files: LldbReadbackFiles,
 ): Promise<Result<z.infer<typeof tracerOutputSchema>, unknown>> => {
-  const bytes = await files.read(path, (file) => file.readFile());
+  const bytes = await files.read(path, async (file) => {
+    const { size } = await file.stat();
+    if (size > MAX_NATIVE_CALL_CAPTURE_BYTES)
+      return err(
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          "LLDB tracer result exceeds the runtime Buffer/single-string representation ceiling",
+          {
+            maximum_result_bytes: MAX_NATIVE_CALL_CAPTURE_BYTES,
+            observed_result_bytes: size,
+          },
+          {
+            retryable: false,
+            remediationAction:
+              "The combined LLDB result cannot fit the running Node Buffer/single-string representation. Select smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints before a new authorized observation. Increasing the client receive buffer cannot raise this ceiling. Retained journal/output observations remain partial; earlier omitted facts cannot be recovered.",
+          },
+        ),
+      );
+    const read = await readBoundedPrefix(
+      size,
+      async (buffer, offset, length, position) =>
+        (await file.read(buffer, offset, length, position)).bytesRead,
+    );
+    if (read.status === "read-failure") return err(read.cause);
+    return ok(read.buffer.subarray(0, read.bytesRead));
+  });
   if (!bytes.ok) return bytes;
+  if (!bytes.value.ok) return bytes.value;
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.value,
+      bytes.value.value,
     );
   } catch (cause: unknown) {
     return err(cause);
@@ -1176,11 +1236,12 @@ const capturedOutput = async (
   truncated: boolean,
   complete: boolean,
   files: LldbReadbackFiles,
+  maximumBytes: number,
 ): Promise<CapturedOutputRead> => {
   const readback = await files.read(path, async (handle) => {
     const { size } = await handle.stat();
     const read = await readBoundedPrefix(
-      Math.min(size, MAX_OUTPUT_BYTES),
+      Math.min(size, maximumBytes),
       async (target, offset, length, position) =>
         (await handle.read(target, offset, length, position)).bytesRead,
     );
@@ -1192,13 +1253,11 @@ const capturedOutput = async (
         text: buffer.subarray(0, bytesRead).toString("utf8"),
         bytes: observedBytes,
         truncated:
-          truncated ||
-          size > MAX_OUTPUT_BYTES ||
-          read.status === "read-failure",
+          truncated || size > maximumBytes || read.status === "read-failure",
         complete:
           read.status !== "read-failure" &&
           complete &&
-          bytesRead >= Math.min(observedBytes, MAX_OUTPUT_BYTES),
+          bytesRead >= Math.min(observedBytes, maximumBytes),
       },
       ...(read.status === "read-failure" ? { readFailure: read.cause } : {}),
     };

@@ -1,8 +1,13 @@
+import { launchAnalysisSetting } from "../config/analysisSettings.js";
 import {
   parseEnvironment,
   parseEnvironmentValues,
   type Environment,
 } from "../config/environment.js";
+import {
+  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+  DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+} from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -195,7 +200,10 @@ export const recordedProviderSettings = (
   owns?: OwnedProviderSetting,
   observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
-  const names = Object.keys(selected).sort(compareUnicodeCodePoints);
+  const selection = mergeEnvironmentOverrides({}, selected, platform);
+  const names = Object.keys(selection).sort(compareUnicodeCodePoints);
+  const identity = (name: string): string =>
+    platform === "win32" ? name.toUpperCase() : name;
   if (names.length === 0) return undefined;
   const details = clientRegistrationEnvironmentDetails(
     parsed,
@@ -214,24 +222,28 @@ export const recordedProviderSettings = (
     platform,
   );
   for (const name of names) {
-    const value = recorded[name];
-    if (value !== undefined && expressions[name] === undefined)
+    const value = recorded[identity(name)];
+    if (value !== undefined && expressions[identity(name)] === undefined)
       observe?.(name, value);
   }
   const facts = {
     unrecorded: names.filter(
-      (name) => recorded[name] === undefined && expressions[name] === undefined,
+      (name) =>
+        recorded[identity(name)] === undefined &&
+        expressions[identity(name)] === undefined,
     ),
     differing: names.filter(
       (name) =>
-        expressions[name] === undefined &&
-        recorded[name] !== undefined &&
-        recorded[name] !== selected[name],
+        expressions[identity(name)] === undefined &&
+        recorded[identity(name)] !== undefined &&
+        recorded[identity(name)] !== selection[name],
     ),
-    unresolved: names.filter((name) => expressions[name] !== undefined),
+    unresolved: names.filter(
+      (name) => expressions[identity(name)] !== undefined,
+    ),
   };
   const owned = names.filter((name) => {
-    const value = recorded[name];
+    const value = recorded[identity(name)];
     return value !== undefined && owns?.(name, value) === true;
   });
   return facts.unrecorded.length +
@@ -311,6 +323,56 @@ const validatedDetails = (
   return ok(environmentDetails(environment, validated.value, unresolved));
 };
 
+const admittedTimeout = (
+  id: Parameters<typeof launchAnalysisSetting>[0],
+  environment: Readonly<Record<string, string | undefined>>,
+  fallback: number,
+): number => {
+  const parsed = launchAnalysisSetting(id, environment);
+  return parsed.ok && parsed.value.value !== null
+    ? parsed.value.value
+    : fallback;
+};
+
+const registrationTimeoutInputs = (
+  environment: Readonly<Record<string, string>>,
+): Pick<
+  McpToolTimeoutInputs,
+  | "ghidraStartupTimeoutMs"
+  | "hopperStartupTimeoutMs"
+  | "ghidraDecompileTimeoutMs"
+  | "jebMcpTimeoutMs"
+> => {
+  const decompile = launchAnalysisSetting(
+    "ghidra.decompile_timeout_seconds",
+    environment,
+  );
+  const jeb = launchAnalysisSetting("jeb.mcp_timeout_ms", environment);
+  return {
+    ghidraStartupTimeoutMs: admittedTimeout(
+      "ghidra.startup_timeout_ms",
+      environment,
+      DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+    ),
+    hopperStartupTimeoutMs: admittedTimeout(
+      "hopper.startup_timeout_ms",
+      environment,
+      DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+    ),
+    ...(decompile.ok &&
+    decompile.value.source === "setting" &&
+    decompile.value.value !== null
+      ? { ghidraDecompileTimeoutMs: decompile.value.value * 1000 }
+      : {}),
+    ...(jeb.ok &&
+    jeb.value.source === "setting" &&
+    jeb.value.value !== null &&
+    environment.REA_JEB_MCP_TIMEOUT_MS !== undefined
+      ? { jebMcpTimeoutMs: jeb.value.value }
+      : {}),
+  };
+};
+
 const environmentDetails = (
   environment: Readonly<Record<string, string>>,
   configuration: Environment,
@@ -328,17 +390,7 @@ const environmentDetails = (
     ? undefined
     : {
         analysisProvider: configuration.REA_ANALYSIS_PROVIDER,
-        ghidraStartupTimeoutMs: configuration.REA_GHIDRA_STARTUP_TIMEOUT_MS,
-        ...(configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS === undefined
-          ? {}
-          : {
-              ghidraDecompileTimeoutMs:
-                configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS * 1000,
-            }),
-        hopperStartupTimeoutMs: configuration.REA_HOPPER_STARTUP_TIMEOUT_MS,
-        ...(configuration.REA_JEB_MCP_TIMEOUT_MS === undefined
-          ? {}
-          : { jebMcpTimeoutMs: configuration.REA_JEB_MCP_TIMEOUT_MS }),
+        ...registrationTimeoutInputs(environment),
       },
 });
 

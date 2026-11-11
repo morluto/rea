@@ -1,5 +1,9 @@
+import {
+  desktopLibraryPolicy,
+  type DesktopLibraryPolicyInput,
+} from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import {
@@ -15,7 +19,12 @@ import {
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
-import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  RegularFileCleanupFailure,
+  withOwnedRegularFile,
+} from "../filesystem/OwnedRegularFile.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   RegularFileCapacityError,
   readStableFileBytes,
@@ -29,7 +38,7 @@ import {
   type DebianPackageHost,
   type InventoryContext,
 } from "./DebianPackageInventory.js";
-import { isRefusedRead } from "./HostFileRead.js";
+import { hostCloseFailure, isRefusedRead } from "./HostFileRead.js";
 import { runHostQuery } from "./HostQuery.js";
 import { resolveProgram } from "./ProgramLookup.js";
 
@@ -37,6 +46,7 @@ const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
 
 /** Which application to launch, as the caller named it. */
 export interface LinuxApplicationRequest {
+  readonly libraryPolicy?: DesktopLibraryPolicyInput;
   readonly desktopEntry: string | undefined;
   readonly executable: string | undefined;
   readonly arguments: readonly string[];
@@ -225,6 +235,8 @@ const readDesktopEntry = async (
       )
     ).toString("utf8");
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure)
+      throw hostCloseFailure(cause);
     signal?.throwIfAborted();
     if (!isRefusedRead(cause)) throw cause;
     return err({
@@ -262,6 +274,8 @@ const readHeader = async (
         (await readStableFilePrefix(handle, path, 16, options)).bytes,
     );
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure)
+      throw hostCloseFailure(cause);
     signal?.throwIfAborted();
     if (!isRefusedRead(cause)) throw cause;
     return new Uint8Array();
@@ -323,7 +337,9 @@ const electronMarkers = async (
     );
     if (image.slices.some((slice) => slice.sentinel_count > 0))
       markers.push("fuse-sentinel");
-  } catch {
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+      throw cause;
     signal?.throwIfAborted();
     // Scripts and other non-binary launchers carry no fuse wire.
   }
@@ -353,7 +369,7 @@ const launchCommand = async (
     return ok({
       argv: [
         executable.includes("/")
-          ? resolve(request.callerDirectory, executable)
+          ? absoluteCallerPath(executable, { cwd: request.callerDirectory })
           : executable,
         ...request.arguments,
       ],
@@ -428,6 +444,7 @@ export const inspectLinuxApplication = async (
   const { path } = found;
   const resolved = await realpath(path).catch(() => null);
   const context: InventoryContext = {
+    libraryPolicy: desktopLibraryPolicy(request.libraryPolicy),
     host,
     signal,
     limitations: [],

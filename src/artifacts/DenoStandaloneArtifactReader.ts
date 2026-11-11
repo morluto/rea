@@ -1,5 +1,4 @@
 import { Readable, Transform, pipeline } from "node:stream";
-import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -12,7 +11,10 @@ import type {
 } from "../domain/artifactFormatMetadata.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  artifactReadCancelledBy,
+} from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   ArtifactPathRegistry,
@@ -67,11 +69,16 @@ interface RemoteDestination {
 export class DenoStandaloneArtifactReader implements ArtifactReader {
   readonly format = "deno-standalone" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
+  #entries = new Map<string, ArtifactEntry>();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   #admission: DenoStandaloneAdmission | undefined;
-  #prepared: Promise<void> | undefined;
+  #prepared:
+    | {
+        readonly signal: AbortSignal | undefined;
+        readonly promise: Promise<void>;
+      }
+    | undefined;
   #header: DenoStandaloneMetadata | undefined;
   #closing = false;
 
@@ -110,8 +117,27 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      for (;;) {
+        const pending = (this.#prepared ??= {
+          signal,
+          promise: this.#prepare(signal),
+        });
+        try {
+          await pending.promise;
+          break;
+        } catch (cause: unknown) {
+          if (this.#prepared === pending) this.#prepared = undefined;
+          if (
+            pending.signal !== signal &&
+            signal?.aborted !== true &&
+            artifactReadCancelledBy(cause, pending.signal)
+          ) {
+            this.#assertOpen(signal);
+            continue;
+          }
+          throw cause;
+        }
+      }
       await this.#source.readSelectedPath(signal);
     });
     if (this.#header?.vfs_listing === "unsupported")
@@ -125,6 +151,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       yield copyArtifactEntry(entry);
     }
+    this.#assertOpen(signal);
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
@@ -156,19 +183,48 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
                   },
                 ),
             });
-      const output = memberStream(stored);
+      const output = this.#memberStream(stored, signal);
       output.on("error", () => undefined);
       this.#streams.add(output);
-      output.once("close", () => this.#streams.delete(output));
+      let producerComplete = false;
+      const onAbort = (): void => {
+        // Active I/O and final validation own failure precedence. Buffered
+        // readable bytes remain owned after production finishes.
+        if (!producerComplete || output.destroyed) return;
+        output.destroy(
+          new ArtifactReaderFailure(
+            "cancelled",
+            "Deno compile read cancelled",
+            {
+              cause: signal?.reason,
+            },
+          ),
+        );
+      };
+      const retired = new Promise<void>((resolve) => {
+        output.once("close", () => {
+          this.#streams.delete(output);
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        });
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
       void this.#scope
-        .run(
-          () =>
+        .run(async () => {
+          // Writable completion can leave unread bytes buffered. Join both
+          // producer work and retirement before releasing the carrier.
+          await Promise.all([
             new Promise<void>((resolve) => {
               pipeline(source, output, () => {
+                producerComplete = true;
+                if (signal?.aborted) onAbort();
                 resolve();
               });
             }),
-        )
+            retired,
+          ]);
+        })
         .catch((cause: unknown) =>
           output.destroy(
             cause instanceof Error
@@ -187,11 +243,6 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure("unavailable", "Deno compile reader closed"),
       );
     await this.#scope.close();
-    await Promise.all(
-      [...this.#streams].map((stream) =>
-        finished(stream).catch(() => undefined),
-      ),
-    );
     await this.#source.close();
     this.#entries.clear();
     this.#header = undefined;
@@ -210,6 +261,33 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
         "unavailable",
         "Deno compile reader is closed",
       );
+  }
+
+  #memberStream(entry: ArtifactEntry, signal?: AbortSignal): Transform {
+    let bytes = 0;
+    const check = async (): Promise<void> => {
+      if (bytes !== entry.declaredSize)
+        throw denoFormatFailure(`member ended early: ${entry.path}`);
+      await this.#source.readSelectedPath(signal);
+      this.#assertOpen(signal);
+    };
+    return new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bytes += chunk.length;
+        callback(null, chunk);
+      },
+      flush(callback) {
+        void check().then(
+          () => callback(),
+          (cause: unknown) =>
+            callback(
+              cause instanceof Error
+                ? cause
+                : new Error("Deno compile read failed", { cause }),
+            ),
+        );
+      },
+    });
   }
 
   async #prepare(signal?: AbortSignal): Promise<void> {
@@ -262,6 +340,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       maxParts: MAX_DENO_LOGICAL_PATH_PARTS,
       maxNodes: MAX_DENO_LOGICAL_PATH_NODES,
     });
+    const entries = new Map<string, ArtifactEntry>();
     const admit = (entry: ArtifactEntry): void => {
       if (entry.declaredSize !== null) {
         declaredPlaintext += BigInt(entry.declaredSize);
@@ -279,7 +358,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       );
       if (retainedBytes > MAX_DENO_RETAINED_BYTES)
         throw denoRetainedLimit(retainedBytes);
-      this.#entries.set(entry.adapterKey, entry);
+      entries.set(entry.adapterKey, entry);
     };
     if (section.vfs.listing === "listed") {
       for (const member of section.vfs.members) {
@@ -302,6 +381,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
     }
     await this.#source.readSelectedPath(signal);
     this.#assertOpen(signal);
+    this.#entries = entries;
     this.#header = header;
     this.#admission = undefined;
   }
@@ -640,23 +720,6 @@ const assignRemoteDestinations = (
     take(module, selected);
   }
   return assigned;
-};
-
-const memberStream = (entry: ArtifactEntry): Transform => {
-  let bytes = 0;
-  return new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      bytes += chunk.length;
-      callback(null, chunk);
-    },
-    flush(callback) {
-      callback(
-        bytes === entry.declaredSize
-          ? null
-          : denoFormatFailure(`member ended early: ${entry.path}`),
-      );
-    },
-  });
 };
 
 const denoRetainedLimit = (claimed: number): ArtifactReaderFailure => {

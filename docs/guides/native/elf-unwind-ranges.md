@@ -74,6 +74,12 @@ A record whose length word is `0xffffffff` uses the 64-bit extended length
 that follows it. In `.eh_frame` the CIE ID and CIE pointer after that length
 stay 4 bytes wide.
 
+LEB128 operands retain their signed or unsigned 64-bit value, including valid
+ten-byte sign padding. An overflowing or unterminated operand is not wrapped
+into a function address: its affected record is omitted, coverage is incomplete,
+and other decodable records remain available. A negative FDE range is likewise
+omitted rather than interpreted as a positive size.
+
 `DW_EH_PE_datarel` fields in `.eh_frame_hdr` are relative to the header
 address. In `.eh_frame` they are relative to the GOT: `DT_PLTGOT` when the
 dynamic table names it, otherwise the `.got.plt` or `.got` section address.
@@ -172,6 +178,13 @@ starts are kept, and a name is decoded only for a returned range. The names
 on one page share a fixed 16 MiB text allowance; a page that exceeds it fails
 with a resource error whose recovery is a smaller `limit`, because
 `max_ranges` and `max_file_bytes` do not raise it.
+
+Compressed symbol or name tables and symbol-table links that do not name a
+file-backed `SHT_STRTAB` section leave symbol names unknown and coverage
+incomplete; decoded FDE ranges remain available.
+
+A compressed dynamic section cannot supply `DT_PLTGOT`. Without another
+observed GOT base, affected data-relative unwind pointers remain unresolved.
 
 Malformed ELF headers fail without partial success. This workflow does not
 execute the image, evaluate CFA programs, or follow indirect pointers.

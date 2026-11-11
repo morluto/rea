@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { DevicetreeService } from "./DevicetreeService.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -72,12 +73,13 @@ it("validates caller paths before invoking the provider", async () => {
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
   expect(calls).toBe(0);
 });
-it("rejects cancellation at provider completion", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late Devicetree cancellation" };
   const service = new DevicetreeService({
     identity: DEVICETREE_PROVIDER,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report()));
     },
   });
@@ -85,8 +87,13 @@ it("rejects cancellation at provider completion", async () => {
     { path: "/board.dtb" },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_devicetree",
+    normalized_result: report(),
+  });
 });
 it("rejects provider coverage and source-range inconsistencies", async () => {
   for (const change of [

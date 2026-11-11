@@ -1297,11 +1297,13 @@ it("bounds expansion before allocation and distinguishes unsupported pickle and 
   const pickle = await provider.inspect({ path, hash: "header" });
   if (pickle.ok) throw new Error("Pickle admitted");
   expect(pickle.error._tag).toBe("AnalysisUnsupportedTargetError");
-  await writeFile(path, ggufFixture({ version: 999 }).bytes);
+  await writeFile(path, ggufFixture().bytes);
+  expect((await provider.inspect({ path, hash: "header" })).ok).toBe(true);
   const alias = join(root, "link");
   await symlink(path, alias);
   const linked = await provider.inspect({ path: alias, hash: "header" });
-  expect(linked.ok).toBe(false);
+  if (linked.ok) throw new Error("Selected symlink admitted");
+  expect(linked.error.message).toMatch(/symlink|symbolic.link/iu);
   const service = createModelArtifactService();
   onTestFinished(() => service.close());
   const invalid = await service.inspect({
@@ -1464,6 +1466,7 @@ it("yields while validating a large metadata array, preserves cancellation and r
     _tag: "AnalysisCancelledError",
     cause: reason,
   });
+  expect(result.error.cause).toBe(reason);
   await writeFile(path, ggufFixture().bytes);
   const recovered = await provider.inspect({ path, hash: "header" });
   if (!recovered.ok) throw recovered.error;

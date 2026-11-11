@@ -630,7 +630,7 @@ it("rejects overlapping ZIP member data ranges through artifact inventory", asyn
   );
 });
 
-it("preserves encrypted-member and corrupt-CRC observations", async () => {
+it("preserves encrypted-member and malformed-compression observations", async () => {
   const root = await createTestTempDirectory("rea-zip-integrity-");
   const encryptedPath = join(root, "encrypted.zip");
   const encryptedWriter = new ZipWriter(new Uint8ArrayWriter());
@@ -672,7 +672,7 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
     code: "ENOENT",
   });
 
-  const corruptPath = join(root, "corrupt-crc.zip");
+  const corruptPath = join(root, "corrupt-compression.zip");
   const corruptWriter = new ZipWriter(new Uint8ArrayWriter());
   await corruptWriter.add("data.txt", new TextReader("evidence\n"));
   await writeFile(corruptPath, await corruptWriter.close());
@@ -694,6 +694,31 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
     corruptPath,
     "format",
     "ZIP archive is malformed: Invalid compressed data",
+  );
+});
+
+it("rejects a stored ZIP member whose payload disagrees with its CRC", async () => {
+  const root = await createTestTempDirectory("rea-zip-crc-");
+  const path = join(root, "corrupt-crc.zip");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("data.txt", new TextReader("evidence\n"), { level: 0 });
+  const bytes = Buffer.from(await writer.close());
+  const localHeader = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  if (localHeader < 0) throw new Error("Expected a ZIP local-file header");
+  expect(bytes.readUInt16LE(localHeader + 8)).toBe(0);
+  const dataOffset =
+    localHeader +
+    30 +
+    bytes.readUInt16LE(localHeader + 26) +
+    bytes.readUInt16LE(localHeader + 28);
+  const firstByte = bytes[dataOffset];
+  if (firstByte === undefined) throw new Error("Expected ZIP member bytes");
+  bytes[dataOffset] = firstByte ^ 1;
+  await writeFile(path, bytes);
+  await expectInventoryFailure(
+    path,
+    "format",
+    "ZIP archive is malformed: Invalid CRC32",
   );
 });
 

@@ -138,7 +138,10 @@ describe("Qwen Code client lifecycle", () => {
       ).status,
     ).toBe("configured");
     const config = JSON.parse(await readFile(client.configPath, "utf8"));
-    expect(config.mcpServers.rea.env.PATH).toBe("/opt/bin:${PATH}");
+    expect(config.mcpServers.rea.env).toMatchObject({
+      PATH: "/opt/bin:${PATH}",
+      REA_KUNA_JOBS: "4",
+    });
   });
 
   it("reports the selected installation as aligned", async () => {

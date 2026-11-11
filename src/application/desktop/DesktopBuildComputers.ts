@@ -49,6 +49,12 @@ import {
 } from "./DesktopBuildActionLog.js";
 import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import { DesktopBuildOwnedWork } from "./DesktopBuildOwnedWork.js";
+import {
+  measureInFreshComputers,
+  type MeasuredTask,
+  type MeasureRequest,
+} from "./DesktopBuildSolves.js";
 import {
   DesktopBuildSecrets,
   settingsEnvironment,
@@ -62,6 +68,7 @@ import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
 const CLOSE = "close_build_computer";
+const MEASURE = "measure_build_task";
 
 /** A result with the driver's content blocks, delivered after REA's own. */
 export interface ForwardedResult<Value> {
@@ -99,10 +106,22 @@ interface HeldComputer {
   readonly turns: DesktopBuildTurns;
   readonly cleanup: {
     resources: readonly string[];
-    errors: Set<WeakRef<ProviderCleanupError>>;
+    errors: Set<WeakRef<AnalysisError>>;
   };
   closing: boolean;
 }
+
+/** Bind every returned teardown failure to the computer retained for retry. */
+const bindCleanupFailure = (held: HeldComputer, error: AnalysisError): void => {
+  error.bindCleanupResourceOwner({
+    get cleanupResources() {
+      return held.cleanup.resources;
+    },
+  });
+  for (const reference of held.cleanup.errors)
+    if (reference.deref() === undefined) held.cleanup.errors.delete(reference);
+  held.cleanup.errors.add(new WeakRef(error));
+};
 
 /** What the build step tools work on: a live computer, its capture, its witness and the turns they take. */
 export interface BuildComputerSteps {
@@ -110,12 +129,6 @@ export interface BuildComputerSteps {
   readonly capture: DesktopBuildCapture;
   readonly witness: DesktopBuildWitness;
   readonly turns: DesktopBuildTurns;
-}
-
-/** A start still in progress, which shutdown cancels and joins. */
-interface PendingStart {
-  readonly settled: Promise<unknown>;
-  readonly stop: AbortController;
 }
 
 const unknownComputer = (operation: string) =>
@@ -324,13 +337,21 @@ const withSeededLocks = async (
 ): Promise<unknown> => {
   if (source.kind !== "bundle" || !computerFailedOnReadiness(cause))
     return cause;
-  const locks = await seededLockFiles(source.path);
-  return locks.length === 0
+  const { locks, unreadable } = await seededLockFiles(source.path);
+  const notices = [
+    ...(locks.length === 0 ? [] : [seededLockStartNotice(locks)]),
+    ...(unreadable.length === 0
+      ? []
+      : [
+          `REA could not check these seed folders for lock files: ${unreadable.map(({ path, reason }) => `${path}: ${reason}`).join("; ")}. Other lock files remain unknown.`,
+        ]),
+  ];
+  return notices.length === 0
     ? cause
     : new ComputerStartFailure(
-        `${cause.message} ${seededLockStartNotice(locks)}`,
+        `${cause.message} ${notices.join(" ")}`,
         cause.remediation,
-        { cause: cause.cause, reason: cause.reason },
+        { cause, reason: cause.reason },
       );
 };
 
@@ -384,10 +405,9 @@ const startFailure = (
  */
 export class DesktopBuildComputers {
   readonly #computers = new Map<string, HeldComputer>();
-  readonly #starts = new Set<PendingStart>();
+  readonly #work = new DesktopBuildOwnedWork();
   readonly #secrets: DesktopBuildSecrets;
   readonly #shared: SharedSettings;
-  #closed = false;
 
   constructor(
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
@@ -422,25 +442,30 @@ export class DesktopBuildComputers {
       AnalysisError
     >
   > {
-    if (this.#closed)
-      return err(
-        new AnalysisCancelledError(START, {
-          cause: new Error("REA is closing its build computers"),
-        }),
-      );
-    const stop = new AbortController();
-    const settled = this.#start(
-      input,
-      AbortSignal.any([signal, stop.signal]),
-      progress,
+    return this.#work.run(START, signal, (stopping) =>
+      this.#start(input, stopping, progress),
     );
-    const pending = { settled, stop };
-    this.#starts.add(pending);
-    try {
-      return await settled;
-    } finally {
-      this.#starts.delete(pending);
-    }
+  }
+
+  /** Measure a bundle's task in fresh computers of its own; closing REA stops it, tearing the solve's computer down. */
+  measure(
+    input: MeasureRequest,
+    signal: AbortSignal,
+    progress?: ProgressReporter,
+  ): Promise<Result<MeasuredTask, AnalysisError>> {
+    return this.#work.run(MEASURE, signal, (stopping) =>
+      measureInFreshComputers(
+        input,
+        {
+          environment: this.environment,
+          defaults: this.defaults,
+          retainCleanup: (owner) => this.#work.retain(owner),
+          resources: this.#work.resources,
+        },
+        stopping,
+        progress,
+      ),
+    );
   }
 
   async #start(
@@ -461,7 +486,7 @@ export class DesktopBuildComputers {
       target =
         source.kind === "bundle"
           ? { bundle: source.path, name: source.path }
-          : await writeRequestBundle(source, environment);
+          : await writeRequestBundle(source, environment, this.#work.resources);
     } catch (cause: unknown) {
       return err(failure(START, cause, signal));
     }
@@ -540,9 +565,16 @@ export class DesktopBuildComputers {
       const failed = signal.aborted
         ? cause
         : await withSeededLocks(source, cause);
-      return err(
-        startFailure(failed, signal, owner?.output(), { id, release }),
-      );
+      const error = startFailure(failed, signal, owner?.output(), {
+        id,
+        release,
+      });
+      const retained = this.#computers.get(id);
+      if (!release.verified && retained !== undefined) {
+        retained.cleanup.resources = release.resources;
+        bindCleanupFailure(retained, error);
+      }
+      return err(error);
     }
   }
 
@@ -694,15 +726,7 @@ export class DesktopBuildComputers {
       { reason: release.reason },
       { operation: CLOSE, remediationAction: release.reason },
     );
-    failure.bindCleanupResourceOwner({
-      get cleanupResources() {
-        return held.cleanup.resources;
-      },
-    });
-    for (const reference of held.cleanup.errors)
-      if (reference.deref() === undefined)
-        held.cleanup.errors.delete(reference);
-    held.cleanup.errors.add(new WeakRef(failure));
+    bindCleanupFailure(held, failure);
     return err(failure);
   }
 
@@ -731,17 +755,11 @@ export class DesktopBuildComputers {
 
   /** Cancel and join the starts in progress, then bring every held computer down, as the server closes. */
   async closeAll(): Promise<void> {
-    this.#closed = true;
-    const starts = [...this.#starts];
-    for (const start of starts)
-      start.stop.abort(new Error("REA is closing its build computers"));
-    await Promise.allSettled(starts.map((start) => start.settled));
-    const results = await Promise.all(
+    const failures = await this.#work.close();
+    for (const result of await Promise.all(
       [...this.#computers.keys()].map((id) => this.close(id)),
-    );
-    const failures = results.flatMap((result) =>
-      result.ok ? [] : [result.error],
-    );
+    ))
+      if (!result.ok) failures.push(result.error);
     try {
       await this.#secrets.close();
     } catch (cause: unknown) {

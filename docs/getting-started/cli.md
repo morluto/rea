@@ -651,6 +651,13 @@ be verified. See [MCP contracts](../reference/mcp-contracts.md) for session life
 [Ghidra first-query deadlines](../reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+One-shot binary analysis validates the selected operation's input before creating
+a provider session, opening the target, or replaying a snapshot. Invalid selectors
+and option combinations report their input errors before target or provider
+availability errors. An already-cancelled request keeps its cancellation reason.
+Caller-selected paths and request parameters remain separate from parsed execution
+arguments in Evidence.
+
 A one-shot command attempts provider-session and runtime cleanup before reporting
 a failure. If cleanup remains incomplete, inspect the reported resources and
 follow the error's remediation. [Same-session cleanup retry](../reference/mcp-contracts.md#retained-cleanup-retry),
@@ -1282,6 +1289,50 @@ backing up client settings or starting registration. Its `--agent` and
 `--command`/`-c` options accept spaced and equals forms. Values must be nonempty; a following flag does not satisfy a spaced option's
 missing value.
 
+Registration command text is a launcher format, not a shell program. ASCII spaces
+separate words; single and double quotes delimit adjacent fragments of a word.
+Backslashes, tabs, variables and shell punctuation are literal data. Quoted empty
+arguments are preserved, including an empty argument after the executable. An
+empty executable, unfinished quote or NUL character fails before registration. For example:
+
+```sh
+rea mcp add --agent cursor --command '"/path with spaces/server" "" --mcp' --json
+```
+
+The registered executable is `/path with spaces/server`, with arguments `""` and
+`--mcp`. Windows backslashes use the same literal rules after the invoking shell
+has passed the option value. With no `--command`, REA uses its exact current
+runtime and entrypoint arguments without converting them to text and parsing them
+again. No package acquisition or server execution occurs during registration.
+`--no-global` refuses any selection requiring global storage before writing files.
+
+`rea mcp add --schema --json` returns the named input and output JSON Schemas.
+Successful and partial registration reports contain the exact `command`, `args`
+and a `clients` outcome list. `ok` is true only when every selected client is
+configured or unchanged. Failed clients retain actionable errors; cancellation
+marks remaining clients `not_started`. A failed client does not erase a successful
+sibling's receipt. Existing settings and environment overrides survive refresh;
+backups identify the original bytes, and identical repeats create no new backup.
+Client IDs are case-insensitive for the helper-compatible catalog; documented
+aliases include `droid`/`factory`, `gemini`, `grok`, `kilo`/`kilocode`, `kimi`,
+`kiro`, `mastra`, `pi-agent`, `hermes-agent`, `cline-vscode`, and
+`codeium`/`cascade`. `github-copilot` selects VS Code; use
+`github-copilot-cli` for Copilot CLI. Amp uses `--agent amp`.
+
+Kilo project registration follows its native configuration layers and requires a
+verified Git worktree. Selected `KILO_CONFIG`, `KILO_CONFIG_DIR` and
+`KILO_CONFIG_CONTENT` overrides remain authoritative. A conflicting higher-priority
+source must be updated before registration can succeed; readonly layers are never
+copied into the selected file. An unknown project root fails before writing and
+does not fall back to global settings.
+
+`rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
+executable position is refused before any settings change; configure remote MCP
+transport in the client's own settings. Earlier delegated registration could
+interpret a URL as remote transport for some clients while storing it as an
+executable for Amp. That inconsistent URL interpretation and package acquisition
+are removed. Launcher arguments that happen to contain URLs remain arguments.
+
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
 bytes as text, omitting a final UTF-8 code point if it crosses that byte limit.
@@ -1377,6 +1428,7 @@ the CLI result should use JSON; either argument order is accepted.
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`       | The operation completed. Its result may include partial evidence, warnings or unresolved questions.                                                                                                                                                                                                                                                                                    |
 | `1`       | The operation could not complete. Structured output identifies invalid input, permissions, cancellation, timeouts or another failure when available.                                                                                                                                                                                                                                   |
+| `3`       | `audit-release-exposure` completed with `--fail_on` and an exposed check meets that severity. Unknown and unassessed checks do not change this status.                                                                                                                                                                                                                                 |
 | `128 + N` | Signal-derived status. An unhandled signal may have ended the process, with the shell or runtime preserving the conventional status; a command may instead have handled the signal, waited for its operation and cleanup to settle, and assigned the same status (`130` for SIGINT, `143` for SIGTERM). In the handled case, it may also have printed a structured `cancelled` result. |
 
 `rea mcp --http` is long-running and prints no structured result. It exits
@@ -1412,6 +1464,28 @@ Evidence and missing source records, see
 [Evidence publication and source recovery](../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 Other outputs have their own receipt shapes; for example,
 [environment export](#export-an-environment-bundle) reports a published directory.
+
+A failure that carries partial Evidence in `details.partial_observation`, such
+as `provider_timeout` or `resource_constraint`, publishes that partial Evidence
+to `--evidence_output` under the same new-file and atomic rules, then keeps its
+error code, message and remediation when cleanup is confirmed. With `--detail summary`,
+`details.partial_observation` holds the summary view of the partial Evidence
+instead of the complete record, and `details.diagnostics.evidence_bundle`
+reports the written path and byte count. Linked source records must all be
+available before publication; missing sources leave the destination unchanged
+and are reported in `details.source_closure`. A provider cleanup failure can
+still publish its captured Evidence without clearing the cleanup error or its
+resource ownership. If publication is refused before commit, for example because
+the file already exists, the complete partial Evidence stays inline and `details.diagnostics.evidence_bundle_error` gives the
+refusal's code, message and a limitation. A refusal after commit keeps the
+receipt in `details.diagnostics.evidence_bundle` and the delivered view: when
+staging cleanup stays incomplete, the code becomes `cleanup_incomplete`, the
+original failure is retained in `details.execution_failure`, and `details` also carries `published`,
+`published_path`, `bytes`, `cleanup: "incomplete"` and `resources`, as for a
+successful run, and a later cancellation reports `cancelled` in
+`evidence_bundle_error` with the signal's exit status. Without
+`--evidence_output`, and for cancellation before publication or raw provider
+observations, the failure output is unchanged.
 
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a
@@ -1488,6 +1562,18 @@ Bun standalone executables use the existing `inspect-artifact` and
 sourcemaps and bytecode without running the executable. See
 [Bun standalone executables](../bun-standalone.md) for layout coverage and limits.
 
+### Release exposure
+
+```sh
+rea audit-release-exposure /absolute/path/to/MyApp.app --json
+rea audit-release-exposure ./dist/MyApp.app --fail_on high --json
+```
+
+Reports what static analysis of a shipped `.app`, install directory, ASAR, or
+executable recovers. `--fail_on high|medium|low` exits `3` when a completed
+audit has an exposed check at that severity. Unknown and unassessed checks stay
+in the report and do not change the exit status. See
+[Release exposure](../release-exposure.md).
 Deno compile executables use the same commands to inventory and materialize the
 embedded virtual filesystem, remote modules, and recorded options. Inventory retains
 embedded environment-file values and certificate bytes in local Evidence with their
