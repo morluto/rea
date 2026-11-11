@@ -65,8 +65,10 @@ Both the journal events and the MFT metadata have independent continuation
 positions. Padding, malformed records and truncation appear as coverage rows.
 Record order follows the acquisition, and history completeness remains unknown.
 
-The CLI and MCP workflow tests use synthesized acquisitions. Verification
-with real `$MFT` and journal files from a Windows host remains pending.
+CLI/MCP paired workflows use synthesized acquisitions. Real Windows 11 MFT
+records were inspected through the packaged Linux CLI; see the
+[verification record](../../../verification/ntfs-metadata-2026-11-11.md).
+Real paired journal captures and Windows-host execution remain pending.
 
 ## Page reuse lifetime
 
