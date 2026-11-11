@@ -1,6 +1,7 @@
 import { writeFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import {
   AnalysisInputError,
@@ -70,6 +71,8 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
   expect(result.error.reportedLimits).toEqual({
     boundary: "build-info",
     maximum_bytes: 1024 * 1024,
+    parameter: "max_build_info_bytes",
+    unit: "bytes",
   });
   const projected = projectAnalysisError(result.error);
   expect(projected.retryable).toBe(false);
@@ -225,6 +228,7 @@ it("adjusts string_literals file offsets inside a universal Mach-O slice and rec
     aggregate_bytes: 26,
     max_items: 2,
     truncated: true,
+    limits_reached: ["max_string_literals"],
     items: [
       {
         value: "ListResourceProviders",
@@ -254,3 +258,87 @@ it("adjusts string_literals file offsets inside a universal Mach-O slice and rec
   expect(limitationsText).toContain("LC_DYLD_CHAINED_FIXUPS");
   expect(limitationsText).toContain("truncated");
 });
+
+it.each([
+  ["max_input_bytes", 4095, 8192],
+  ["max_report_bytes", 1, 16384],
+  ["max_build_info_bytes", 1, 4096],
+  ["max_header_search_bytes", 1, 4096],
+] as const)(
+  "recovers the same Go artifact after increasing %s",
+  async (parameter, low, raised) => {
+    const root = await createTestTempDirectory("rea-go-budget-recovery-");
+    const path = join(root, "application.elf");
+    await writeFile(path, createGoBinaryFixture().bytes);
+    const service = new GoBinaryService(new GoBinaryProvider());
+    try {
+      const refused = await service.inspect({ path, [parameter]: low });
+      if (refused.ok)
+        throw new Error(
+          "Selected low budget must refuse this complete artifact",
+        );
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: { reported_limits: { parameter, unit: "bytes" } },
+        remediation: { action: expect.stringContaining(parameter) },
+      });
+      const recovered = await service.inspect({ path, [parameter]: raised });
+      if (!recovered.ok) throw recovered.error;
+      expect(recovered.value.normalized_result).toMatchObject({
+        artifact: { path, bytes: 4096 },
+        build_info: { go_version: "go1.26.0" },
+      });
+      expect(recovered.value.parameters).toEqual({ path, [parameter]: raised });
+    } finally {
+      await service.close();
+    }
+  },
+);
+
+it.each([
+  ["max_string_literals", 1],
+  ["max_string_literal_bytes", 3],
+  ["max_string_bytes", 5],
+  ["max_string_header_scan_bytes", 16],
+  ["max_string_candidates", 1],
+] as const)(
+  "identifies and recovers the exact inferred-string limit %s",
+  async (parameter, low) => {
+    const fixture = createGoRodataStringFixture({
+      format: "elf",
+      rodata: Buffer.from("alphabeta"),
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 5n },
+        { section: "data", offsetInSection: 16, ptr: 0x102005n, len: 4n },
+      ],
+    });
+    const root = await createTestTempDirectory(
+      "rea-go-string-budget-recovery-",
+    );
+    const path = join(root, "strings.elf");
+    await writeFile(path, fixture.bytes);
+    const service = new GoBinaryService(new GoBinaryProvider());
+    try {
+      const selected = { path, include_string_literals: true };
+      const limited = await service.inspect({ ...selected, [parameter]: low });
+      if (!limited.ok) throw limited.error;
+      expect(limited.value.normalized_result).toMatchObject({
+        string_literals: { truncated: true, limits_reached: [parameter] },
+      });
+      const recovered = await service.inspect({
+        ...selected,
+        [parameter]: 1048576,
+      });
+      if (!recovered.ok) throw recovered.error;
+      expect(recovered.value.normalized_result).toMatchObject({
+        string_literals: {
+          truncated: false,
+          items: [{ value: "alpha" }, { value: "beta" }],
+        },
+      });
+      expect(recovered.value.subject).toEqual(limited.value.subject);
+    } finally {
+      await service.close();
+    }
+  },
+);

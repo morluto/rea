@@ -1529,7 +1529,9 @@ describe("web source-map collection", () => {
       "included",
       "fetch_failed",
     ]);
-    expect(result.items[1]?.limitation).toContain("262144-record");
+    expect(result.items[1]?.limitation).toContain(
+      "source_map_limits.decoded_records is 262144",
+    );
   });
 
   it("rejects deeply nested indexed maps before recursive flattening", async () => {
@@ -1554,7 +1556,9 @@ describe("web source-map collection", () => {
       status: "fetch_failed",
       artifact: null,
     });
-    expect(result.items[0]?.limitation).toContain("64-level");
+    expect(result.items[0]?.limitation).toContain(
+      "source_map_limits.section_depth is 64",
+    );
   });
 
   it("retains every mapping from a sectioned source map", async () => {
@@ -1938,7 +1942,7 @@ describe("expanded source-map evidence budget", () => {
       original_sources: [],
     });
     expect(result.items[0]?.limitation).toContain(
-      "Resolved source-map identities exceed the 64 MiB decoder representation budget",
+      "source_map_limits.fetch_bytes is 67108864",
     );
   });
 });
@@ -1962,7 +1966,9 @@ describe("raw source-map structure preflight", () => {
       status: "fetch_failed",
       artifact: null,
     });
-    expect(result.items[0]?.limitation).toContain("262144-record");
+    expect(result.items[0]?.limitation).toContain(
+      "source_map_limits.decoded_records is 262144",
+    );
   });
 });
 

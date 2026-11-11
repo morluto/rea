@@ -1,3 +1,4 @@
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -998,13 +999,13 @@ describe("direct analysis composed snapshot replay", () => {
   }
 });
 
-describe("Ghidra composed workflow snapshot replay", () => {
+describe("Ghidra composed workflow runtime-budget admission", () => {
   it.each([
     { tool: "binary_overview", arguments: {} },
     { tool: "inspect_native_api", arguments: { procedure: "0x1000" } },
     { tool: "trace_feature", arguments: { query: "fixture" } },
   ] as const)(
-    "persists $tool with production Ghidra capability policies",
+    "recomputes $tool with production Ghidra capability policies",
     async ({ tool, arguments: parameters }) => {
       const fixture = await createSnapshotReplayFixture("rea-ghidra-workflow-");
       const profile = createAnalysisProfile(
@@ -1029,9 +1030,9 @@ describe("Ghidra composed workflow snapshot replay", () => {
       expect(first).toMatchObject({ operation: tool });
       const snapshot = await readAnalysisSnapshot(fixture.snapshotPath);
       if (!snapshot.ok) throw snapshot.error;
-      expect(snapshot.value.workflow_entries).toEqual([
-        expect.objectContaining({ operation: tool }),
-      ]);
+      // Ghidra dossiers are live: a saved composed answer must not bypass
+      // admission under the runtime budgets selected for the next invocation.
+      expect(snapshot.value.workflow_entries).toEqual([]);
       const initialCalls = [...fixture.calls];
 
       const replay = await runDirectAnalysis(
@@ -1041,14 +1042,32 @@ describe("Ghidra composed workflow snapshot replay", () => {
         parameters,
         { snapshotPath: fixture.snapshotPath },
       ).then(projectCliAnalysisResult);
-      expect(replay).toEqual(first);
-      if (process.platform === "win32") {
+      expect(parseEvidence(replay).normalized_result).toEqual(
+        parseEvidence(first).normalized_result,
+      );
+      if (tool !== "binary_overview") {
+        expect(fixture.starts).toHaveLength(2);
+        expect(fixture.calls.length).toBeGreaterThan(initialCalls.length);
+        if (tool === "inspect_native_api")
+          expect(
+            fixture.calls.filter(
+              (operation) => operation === "analyze_function",
+            ),
+          ).toHaveLength(2);
+      } else if (process.platform === "win32") {
         // The first provider call in a new CLI session admits its source.
         expect(fixture.starts).toHaveLength(2);
         expect(fixture.calls.length).toBeGreaterThan(initialCalls.length);
       } else {
         expect(fixture.starts).toHaveLength(1);
         expect(fixture.calls).toEqual(initialCalls);
+        expect(parseEvidence(replay).limitations).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining(
+              "Loaded from a local REA analysis snapshot",
+            ),
+          ]),
+        );
       }
     },
   );
@@ -2227,7 +2246,7 @@ it("retains completed function sources when cancellation arrives as execution re
   await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it("retains function sources when completed parent admission fails", async () => {
+it("publishes captured function sources when completed parent admission fails", async () => {
   const fixture = await createSnapshotReplayFixture(
     "rea-direct-parent-admission-",
   );
@@ -2258,17 +2277,21 @@ it("retains function sources when completed parent admission fails", async () =>
     detail: "complete",
     evidenceOutput: outputPath,
   });
-  const failure = output as {
-    details: {
-      partial_observation: Evidence;
-      source_closure: { records: Evidence[]; complete: boolean };
-    };
-  };
-  expect(failure.details.source_closure.complete).toBe(true);
-  expect(
-    failure.details.source_closure.records.map((record) => record.evidence_id),
-  ).toEqual(failure.details.partial_observation.evidence_links);
-  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(output).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { diagnostics: { evidence_bundle: { path: outputPath } } },
+  });
+  expect(output).not.toHaveProperty("details.source_closure");
+  const bundle = parseEvidenceBundle(
+    JSON.parse(await readFile(outputPath, "utf8")),
+  );
+  const parent = bundle.records.find(
+    (record) => record.operation === "analyze_function",
+  );
+  expect(parent).toBeDefined();
+  expect(bundle.records.map((record) => record.evidence_id).sort()).toEqual(
+    [parent!.evidence_id, ...parent!.evidence_links].sort(),
+  );
 });
 
 it("runs decompile export against the provider after loading a pseudocode snapshot", async () => {
