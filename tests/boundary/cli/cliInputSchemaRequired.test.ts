@@ -485,11 +485,14 @@ describe("ADB selector input schemas: package and activity", () => {
           undefined,
           "",
           "bad component!",
+          "example.app",
+          "example.app/",
           "com.example/.Main$Inner",
           "a".repeat(512),
-          "a".repeat(513),
+          `${"a".repeat(255)}/${"b".repeat(256)}`,
+          `${"a".repeat(256)}/${"b".repeat(256)}`,
         ],
-        valid: [true, false, false, true, true, false],
+        valid: [true, false, false, false, false, true, false, true, false],
       },
     ];
     for (const selection of selections) {
@@ -512,7 +515,7 @@ describe("ADB selector input schemas: package and activity", () => {
           const expected = selection.valid[index];
           expect(
             selection.canonical.safeParse(value).success,
-            `${command} owner`,
+            `${command} ${selection.key} owner ${String(index)}`,
           ).toBe(expected);
           const base = selection.group === "args" ? { serial: "S" } : {};
           const input =
@@ -564,6 +567,50 @@ describe("ADB selector input schemas: dispatch", () => {
         code: "VALIDATION_ERROR",
       });
     }
+    const incompleteComponents = [
+      "example.app",
+      "example.app/",
+      "a".repeat(512),
+    ];
+    for (const component of incompleteComponents) {
+      const result = await serve(cli, [
+        "start-adb-activity",
+        "S",
+        "x",
+        "--component",
+        component,
+        "--json",
+      ]);
+      expect(result.exitCode, component).not.toBe(0);
+      expect(JSON.parse(result.stdout), component).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: "component",
+            code: "invalid_format",
+          }),
+        ],
+      });
+    }
+    const overlongComponent = `${"a".repeat(256)}/${"b".repeat(256)}`;
+    const overlong = await serve(cli, [
+      "start-adb-activity",
+      "S",
+      "x",
+      "--component",
+      overlongComponent,
+      "--json",
+    ]);
+    expect(overlong.exitCode).not.toBe(0);
+    expect(JSON.parse(overlong.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          path: "component",
+          code: "too_big",
+        }),
+      ],
+    });
     expect(provider.inspectAvailability).not.toHaveBeenCalled();
     expect(provider.execute).not.toHaveBeenCalled();
   });
