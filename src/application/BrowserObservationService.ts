@@ -281,7 +281,7 @@ const requireBrowser = (
 const browserEvidence = (
   operation: Parameters<typeof createBrowserEvidence>[0],
   input: Parameters<typeof createBrowserEvidence>[1],
-  result: Parameters<typeof createBrowserEvidence>[2],
+  result: Parameters<typeof createBrowserEvidence>[2]["facts"],
   provider: Parameters<typeof createBrowserEvidence>[3],
   options: ExecutionOptions,
 ): Result<Evidence, AnalysisError> => {
@@ -307,7 +307,12 @@ const browserEvidence = (
       ),
     );
   return completeProviderEvidence(
-    createBrowserEvidence(operation, input, report.data, provider),
+    createBrowserEvidence(
+      operation,
+      input,
+      { source: json.data, facts: report.data },
+      provider,
+    ),
     options.signal,
   );
 };
@@ -366,7 +371,7 @@ const promoteBrowserObservation = (
       return createBrowserEvidence(
         "analyze_web_bundle",
         input,
-        acquisition.data,
+        { source: jsonValueSchema.parse(partial), facts: acquisition.data },
         provider.identity(),
       );
     }
@@ -382,7 +387,7 @@ const promoteBrowserObservation = (
       return createBrowserEvidence(
         "analyze_web_bundle",
         input,
-        bundle.data,
+        { source: jsonValueSchema.parse(partial), facts: bundle.data },
         provider.identity(),
       );
     }
@@ -401,7 +406,7 @@ const promoteBrowserObservation = (
       return createBrowserEvidence(
         "inspect_web_page",
         pageInput,
-        inspection.data,
+        { source: jsonValueSchema.parse(partial), facts: inspection.data },
         provider.identity(),
       );
     }

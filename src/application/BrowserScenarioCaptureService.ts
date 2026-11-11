@@ -16,6 +16,8 @@ import {
   keepIncompleteObservation,
 } from "./ProviderOperationExecution.js";
 
+import { jsonValueSchema } from "../domain/jsonValue.js";
+
 const OPERATION = "capture_browser_scenario" as const;
 const PROVIDER_ID = "rea-playwright-browser-scenario";
 
@@ -65,7 +67,10 @@ export const captureBrowserScenario = async (
             promoted.get(partial) ??
             createBrowserScenarioEvidence(
               scenario,
-              report.data,
+              {
+                source: jsonValueSchema.parse(partial.capture),
+                facts: report.data,
+              },
               provider.identity(),
             );
           promoted.set(partial, evidence);
@@ -76,7 +81,16 @@ export const captureBrowserScenario = async (
     }
     return captured;
   }
-  const report = browserScenarioCaptureSchema.safeParse(captured.value);
+  const json = jsonValueSchema.safeParse(captured.value);
+  if (!json.success)
+    return err(
+      new AnalysisOutputError(
+        OPERATION,
+        "Browser scenario provider returned non-JSON capture data.",
+        { cause: json.error },
+      ),
+    );
+  const report = browserScenarioCaptureSchema.safeParse(json.data);
   if (!report.success)
     return err(
       new AnalysisOutputError(
@@ -86,7 +100,11 @@ export const captureBrowserScenario = async (
       ),
     );
   return completeProviderEvidence(
-    createBrowserScenarioEvidence(scenario, report.data, provider.identity()),
+    createBrowserScenarioEvidence(
+      scenario,
+      { source: json.data, facts: report.data },
+      provider.identity(),
+    ),
     options.signal,
   );
 };

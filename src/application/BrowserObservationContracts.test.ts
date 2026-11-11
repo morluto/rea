@@ -14,9 +14,30 @@ import {
   captureWebScreenshotInputSchema,
   compareWebScreenshotsInputSchema,
 } from "../domain/webScreenshot.js";
-import { ok } from "../domain/result.js";
+import { ok, err } from "../domain/result.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { parseEvidence } from "../domain/evidence.js";
 import type { BrowserObservationPort } from "./BrowserObservationPort.js";
 import * as service from "./BrowserObservationService.js";
+
+const pageProvider = (
+  inspectPage: BrowserObservationPort["inspectPage"],
+): BrowserObservationPort => {
+  const unused = async (): Promise<never> => {
+    throw new Error("unexpected browser operation");
+  };
+  return {
+    identity: () => ({ id: "controlled", name: "Controlled", version: "1" }),
+    inspectPage,
+    listTargets: unused,
+    analyzeBundle: unused,
+    observeSession: unused,
+    discoverWebMcpTools: unused,
+    captureScreenshot: unused,
+    compareCaptures: unused,
+    compareScreenshots: unused,
+  };
+};
 
 const selected = { cdp_endpoint: "http://127.0.0.1:9222", target_id: "page" };
 const inspection = passiveNetworkCapture();
@@ -142,3 +163,87 @@ it.each(operations)(
     expect(accessorReads).toBe(0);
   },
 );
+
+it("retains own provider metadata separately from admitted browser facts", async () => {
+  let reads = 0;
+  const source = Object.defineProperty(
+    {
+      ...inspection,
+      provider_metadata: {
+        capture_path: "/caller/selected/capture",
+        marker: "own",
+      },
+      browser: { ...inspection.browser, provider_revision: "source-revision" },
+    },
+    "kind",
+    {
+      get: () => {
+        reads++;
+        throw new Error("hidden getter");
+      },
+    },
+  );
+  const result = await service.inspectWebPage(
+    pageProvider(async () => ok(source)),
+    inspectWebPageInputSchema.parse(selected),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).not.toHaveProperty(
+    "provider_metadata",
+  );
+  expect(result.value.raw_result).toEqual(source);
+  expect(result.value.raw_result).not.toHaveProperty("kind");
+  expect(reads).toBe(0);
+});
+
+it("retains source omission when the browser contract supplies defaults", async () => {
+  const { fingerprint_algorithm: _algorithm, ...storage } = inspection.storage;
+  const source = { ...inspection, storage };
+  const result = await service.inspectWebPage(
+    pageProvider(async () => ok(source as typeof inspection)),
+    inspectWebPageInputSchema.parse(selected),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toHaveProperty(
+    "storage.fingerprint_algorithm",
+    "sha256",
+  );
+  expect(result.value.raw_result).toEqual(source);
+  expect(result.value.raw_result).not.toHaveProperty(
+    "storage.fingerprint_algorithm",
+  );
+});
+
+it("avoids a redundant raw browser report when parsed facts retain all own JSON", async () => {
+  const { browser, ...rest } = inspection;
+  const result = await service.inspectWebPage(
+    pageProvider(async () => ok({ ...rest, browser })),
+    inspectWebPageInputSchema.parse(selected),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.raw_result).toBeNull();
+});
+
+it("retains own metadata when promoting completed facts from a provider failure", async () => {
+  const source = {
+    ...inspection,
+    provider_metadata: { capture_id: "partial-source" },
+  };
+  const failure = new BrowserObservationError(
+    "inspect_web_page",
+    "endpoint_unreachable",
+    { partialObservation: source },
+  );
+  const result = await service.inspectWebPage(
+    pageProvider(async () => err(failure)),
+    inspectWebPageInputSchema.parse(selected),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected failure");
+  const evidence = parseEvidence(result.error.partialObservation);
+  expect(evidence.raw_result).toEqual(source);
+  expect(evidence.normalized_result).not.toHaveProperty("provider_metadata");
+});
