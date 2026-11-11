@@ -12,6 +12,7 @@ import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   parseRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
+  regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
 } from "./regexMatchingDeadline.js";
 import { MAXIMUM_REGEX_MATCHING_DEADLINE_MS } from "../domain/analysisResourceLimits.js";
@@ -32,9 +33,9 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
   const recovery = regexMatchingDeadlineRecovery(
     DEFAULT_REGEX_MATCHING_DEADLINE,
   );
-  const projected = projectAnalysisError(
-    regexMatchingDeadlineError("search_procedures"),
-  );
+  const error = regexMatchingDeadlineError("search_procedures");
+  const projected = projectAnalysisError(error);
+  const invocation = projectAnalysisError(error, "invocation");
   expect(projected).toMatchObject({
     code: "resource_constraint",
     details: {
@@ -58,7 +59,13 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
       },
     },
   });
-  expect(projected.remediation.action).toContain(recovery);
+  expect(projected.remediation.action).toContain(
+    regexMatchingDeadlineContinuingRecovery(DEFAULT_REGEX_MATCHING_DEADLINE),
+  );
+  expect(invocation.remediation.action).toContain(recovery);
+  expect(invocation.remediation.action).not.toContain(
+    "update_analysis_settings",
+  );
   expect(projected.remediation.action).toContain(
     REGEX_MATCHING_DEADLINE_SETTING,
   );

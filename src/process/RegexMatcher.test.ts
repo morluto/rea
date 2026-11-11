@@ -5,6 +5,7 @@ import {
   regexMatchingDeadlineRecovery,
 } from "../config/regexMatchingDeadline.js";
 import {
+  regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
@@ -476,7 +477,7 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
     },
   });
   expect(projected.remediation.action).toContain(
-    regexWorkerHeapRequestRecovery(request),
+    regexWorkerHeapRequestContinuingRecovery(request),
   );
   expect(projected.details?.limit).toBeUndefined();
 });

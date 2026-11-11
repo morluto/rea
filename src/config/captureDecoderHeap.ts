@@ -67,11 +67,25 @@ export const resolveCaptureDecoderHeap = (
   return parsed.value;
 };
 
-/** How to read and change the effective HAR/SAZ/qlog old-generation heap. */
-export const captureDecoderHeapRecovery = (heap: CaptureDecoderHeap): string =>
+const captureDecoderHeapFacts = (heap: CaptureDecoderHeap): string =>
   [
     `The effective ${CAPTURE_DECODER_OLD_GENERATION_SETTING} value is ${String(heap.oldGenerationMiB)} MiB (source ${heap.source}; default ${String(DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB, floor ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} MiB, maximum ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB).`,
-    `capture.decoder_old_generation_mib can be changed at runtime with update_analysis_settings. The launch seed is ${CAPTURE_DECODER_OLD_GENERATION_SETTING}, a decimal integer from ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} to ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)}.`,
     `On Node.js the decoder passes --max-old-space-size=${String(heap.oldGenerationMiB)} and removes inherited NODE_OPTIONS, so additional host memory and NODE_OPTIONS do not raise this heap. The ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} MiB semi-space stays fixed.`,
     "On Bun the V8 flags are ignored. Windows limits the decoder's committed memory to this value plus a 512 MiB reserve. Other Bun hosts enforce no decoder heap limit.",
+  ].join(" ");
+
+/** Recovery after this REA process has exited. */
+export const captureDecoderHeapRecovery = (heap: CaptureDecoderHeap): string =>
+  [
+    captureDecoderHeapFacts(heap),
+    `Set ${CAPTURE_DECODER_OLD_GENERATION_SETTING} in the environment that starts the next REA invocation. It must be a decimal integer from ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} to ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)}.`,
+  ].join(" ");
+
+/** Recovery while this session can still call update_analysis_settings. */
+export const captureDecoderHeapContinuingRecovery = (
+  heap: CaptureDecoderHeap,
+): string =>
+  [
+    captureDecoderHeapFacts(heap),
+    `Call update_analysis_settings with setting capture.decoder_old_generation_mib. It applies to the next decoder in this session. The launch seed remains ${CAPTURE_DECODER_OLD_GENERATION_SETTING}.`,
   ].join(" ");

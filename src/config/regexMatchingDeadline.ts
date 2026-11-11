@@ -64,12 +64,25 @@ export const resolveRegexMatchingDeadline = (
   return parsed.value;
 };
 
-/** How to read and change the effective supervised matching deadline. */
+const regexMatchingDeadlineFacts = (deadline: RegexMatchingDeadline): string =>
+  `The effective ${REGEX_MATCHING_DEADLINE_SETTING} value is ${String(deadline.deadlineMs)} ms (source ${deadline.source}; default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms, floor 1 ms, maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms).`;
+
+/** Recovery after this REA process has exited. The next invocation reads the launch seed. */
 export const regexMatchingDeadlineRecovery = (
   deadline: RegexMatchingDeadline,
 ): string =>
   [
-    `The effective ${REGEX_MATCHING_DEADLINE_SETTING} value is ${String(deadline.deadlineMs)} ms (source ${deadline.source}; default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms, floor 1 ms, maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms).`,
-    `regex.matching_deadline_ms can be changed at runtime with update_analysis_settings. The launch seed is ${REGEX_MATCHING_DEADLINE_SETTING}, a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)}.`,
+    regexMatchingDeadlineFacts(deadline),
+    `Set ${REGEX_MATCHING_DEADLINE_SETTING} in the environment that starts the next REA invocation. It must be a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)}.`,
+    "The worker old-generation heap does not raise this deadline.",
+  ].join(" ");
+
+/** Recovery while the same REA session can still call update_analysis_settings. */
+export const regexMatchingDeadlineContinuingRecovery = (
+  deadline: RegexMatchingDeadline,
+): string =>
+  [
+    regexMatchingDeadlineFacts(deadline),
+    `Call update_analysis_settings with setting regex.matching_deadline_ms. It applies to the next match in this session. The launch seed remains ${REGEX_MATCHING_DEADLINE_SETTING}.`,
     "The worker old-generation heap does not raise this deadline.",
   ].join(" ");
