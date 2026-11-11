@@ -253,3 +253,21 @@ it("uses a Windows settle override before rejecting an invalid launch seed", asy
   );
   expect(observed.ctimeMs).toBe(1_000);
 });
+
+it("does not consume Windows limits on other hosts and preserves cancellation during the read", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancelled during baseline read");
+  await expect(
+    settleChangeTimeBaseline(
+      async () => {
+        controller.abort(reason);
+        return statsAt(1_000);
+      },
+      {
+        platform: "linux",
+        environment: { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "invalid" },
+        signal: controller.signal,
+      },
+    ),
+  ).rejects.toBe(reason);
+});

@@ -28,8 +28,7 @@ export interface ChangeTimeSettleSeams {
   readonly sleep?: ((delayMs: number) => Promise<void>) | undefined;
   /** Launch environment. Omission reads `process.env`. */
   readonly environment?:
-    | Readonly<Record<string, string | undefined>>
-    | undefined;
+    Readonly<Record<string, string | undefined>> | undefined;
   /** Already resolved budget. Omission parses `environment`. */
   readonly limits?: WindowsChangeTimeSettleLimits | undefined;
   /** Cancels the wait; the last observation is not returned once aborted. */
@@ -101,10 +100,15 @@ export const settleChangeTimeBaseline = async (
   read: () => Promise<Stats>,
   seams: ChangeTimeSettleSeams = {},
 ): Promise<Stats> => {
+  throwIfAborted(seams);
+  if ((seams.platform ?? process.platform) !== "win32") {
+    const observed = await read();
+    throwIfAborted(seams);
+    return observed;
+  }
   const limits = limitsFrom(seams);
   const settled = { ...seams, limits };
   const sleep = seams.sleep ?? defaultSleep;
-  throwIfAborted(seams);
   let observed = await read();
   for (let poll = 0; poll < limits.maxPolls; poll += 1) {
     if (!changeTimeMayStillDrift(observed, settled)) return observed;
