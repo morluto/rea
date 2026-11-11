@@ -620,3 +620,32 @@ it("reports an unreadable element name as unknown rather than absent", () => {
     value: { is_split_required: "unknown" },
   });
 });
+
+it("treats a repeated root's declarations as ambiguous instead of last-one-wins", () => {
+  // A second, attribute-less <manifest> would otherwise replace the first and
+  // the required split types would read as absent, leaving JNI coverage
+  // looking complete while the split libraries are unaccounted for.
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: "base__abi",
+        }),
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          booleanValue: true,
+        }),
+      ],
+      repeatedRootAttributes: [],
+    }),
+  );
+  expect(facts).toEqual({
+    ok: true,
+    value: {
+      required_split_types: "unknown",
+      split_name: null,
+      is_split_required: "unknown",
+    },
+  });
+});

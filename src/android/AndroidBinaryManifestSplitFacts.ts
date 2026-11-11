@@ -316,6 +316,11 @@ export const readAndroidBinaryManifestSplitFacts = (
     // still carry the split declarations, so it is remembered and reported as a
     // limitation below instead of reading as an absent declaration.
     let unreadableElement = false;
+    // A second readable root or <application> makes the declaration ambiguous:
+    // letting the later chunk win would let a duplicate with no attributes
+    // erase an earlier `requiredSplitTypes` or `isSplitRequired`, which reads
+    // as an absent declaration and leaves JNI coverage looking complete.
+    let repeatedElement = false;
     // A bundle-built base APK may declare isSplitRequired on <application>
     // instead of the root, so both elements are retained and read below.
     const scanned = walkChunks(reader, declared, (chunk) => {
@@ -332,8 +337,13 @@ export const readAndroidBinaryManifestSplitFacts = (
         unreadableElement = true;
         return true;
       }
-      if (element.name === "manifest") manifest = element;
-      else if (element.name === "application") application = element;
+      if (element.name === "manifest") {
+        if (manifest !== undefined) repeatedElement = true;
+        manifest = element;
+      } else if (element.name === "application") {
+        if (application !== undefined) repeatedElement = true;
+        application = element;
+      }
       return true;
     });
     if (!scanned.ok) return scanned;
@@ -380,20 +390,26 @@ export const readAndroidBinaryManifestSplitFacts = (
     const requiredFlag = find(IS_SPLIT_REQUIRED_ID, "isSplitRequired");
     // A resource reference carries no literal to read, so a declaration that is
     // present but not literal stays unknown rather than reading as absent: the
-    // reference can resolve to true at install time.
+    // reference can resolve to true at install time. A repeated root or
+    // <application> is unknown for the same reason: no single element is
+    // authoritative, so neither an absent nor a false reading is established.
     const isSplitRequired: boolean | "unknown" | null =
       requiredFlag === undefined
-        ? unreadableElement
+        ? unreadableElement || repeatedElement
           ? "unknown"
           : null
         : requiredFlag.dataType === TYPE_INT_BOOLEAN
-          ? requiredFlag.data !== 0
+          ? repeatedElement
+            ? "unknown"
+            : requiredFlag.data !== 0
           : requiredFlag.dataType === TYPE_STRING
-            ? (strings[requiredFlag.data] ?? null) === "true"
-              ? true
-              : (strings[requiredFlag.data] ?? null) === "false"
-                ? false
-                : "unknown"
+            ? repeatedElement
+              ? "unknown"
+              : (strings[requiredFlag.data] ?? null) === "true"
+                ? true
+                : (strings[requiredFlag.data] ?? null) === "false"
+                  ? false
+                  : "unknown"
             : "unknown";
     const requiredValue =
       requiredSplitTypes === undefined ? null : toValue(requiredSplitTypes);
@@ -407,7 +423,9 @@ export const readAndroidBinaryManifestSplitFacts = (
       // An unreadable element can carry either declaration, and the roots that
       // remain readable do not establish that they are absent.
       required_split_types:
-        requiredTypes === null && unreadableElement ? "unknown" : requiredTypes,
+        requiredTypes === null && (unreadableElement || repeatedElement)
+          ? "unknown"
+          : requiredTypes,
       split_name: splitName === undefined ? null : toValue(splitName),
       is_split_required: isSplitRequired,
     });

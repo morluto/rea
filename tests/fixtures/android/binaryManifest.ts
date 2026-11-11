@@ -113,6 +113,13 @@ const element = (
 export const binaryManifestFixture = (input: {
   readonly attributes: readonly BinaryManifestAttributeInput[];
   readonly application?: readonly BinaryManifestAttributeInput[];
+  /**
+   * Emit a second `<manifest>` start element after the first, before the
+   * matching end element. Only malformed input carries a repeated root; the
+   * reader must treat its declarations as ambiguous rather than let the later
+   * chunk win.
+   */
+  readonly repeatedRootAttributes?: readonly BinaryManifestAttributeInput[];
 }): Buffer => {
   const strings = [ANDROID_NS, "manifest"];
   const intern = (value: string): number => {
@@ -149,13 +156,21 @@ export const binaryManifestFixture = (input: {
       resourceId: attribute.resourceId,
     }));
   const rootRows = rowsOf(input.attributes);
+  const repeatedRows =
+    input.repeatedRootAttributes === undefined
+      ? undefined
+      : rowsOf(input.repeatedRootAttributes);
   const applicationRows =
     input.application === undefined ? undefined : rowsOf(input.application);
   // The resource map is indexed by string-pool index, not by attribute order:
   // slot N holds the framework ID of the attribute name interned at N. Rows
   // without an ID leave their slot as 0 so later slots keep their alignment.
   const resourceMap: number[] = [];
-  for (const row of [...rootRows, ...(applicationRows ?? [])]) {
+  for (const row of [
+    ...rootRows,
+    ...(repeatedRows ?? []),
+    ...(applicationRows ?? []),
+  ]) {
     if (row.resourceId === undefined) continue;
     while (resourceMap.length < row.nameIndex) resourceMap.length++;
     resourceMap[row.nameIndex] = row.resourceId;
@@ -167,6 +182,13 @@ export const binaryManifestFixture = (input: {
   );
   const applicationName = intern("application");
   const root = element(1, rootRows);
+  const repeatedRoot =
+    repeatedRows === undefined
+      ? []
+      : (() => {
+          const child = element(1, repeatedRows);
+          return [...child.start, ...child.end];
+        })();
   const application =
     applicationRows === undefined
       ? []
@@ -180,6 +202,7 @@ export const binaryManifestFixture = (input: {
     ...pool,
     ...(resourceMap.length === 0 ? [] : chunk(0x0180, 8, resourceMapBytes)),
     ...root.start,
+    ...repeatedRoot,
     ...application,
     ...root.end,
   ];
