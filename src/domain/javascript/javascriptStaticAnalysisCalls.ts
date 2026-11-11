@@ -559,13 +559,16 @@ export const indexVitePreloadDependencyTable = (
       )
         return;
       const lookup = semanticBindingLookupAt(bindings, node, node.name);
-      if (
-        lookup.kind === "ambient" ||
-        lookup.kind === "captured" ||
-        (lookup.kind === "binding" &&
-          semanticStableInitializer(lookup.binding, bindings)?.node !== helper)
-      )
-        return;
+      if (lookup.kind === "ambient" || lookup.kind === "captured") return;
+      if (lookup.kind === "binding" || lookup.kind === "uncertain-binding") {
+        // A later reassignment removes the whole-binding initializer. The
+        // mutation is still the helper when the ordered read at this site is.
+        const projected = semanticBindingAtRead(lookup.binding, node, bindings);
+        const visible =
+          projected.status === "ordered" ? projected.binding : lookup.binding;
+        if (semanticStableInitializer(visible, bindings)?.node !== helper)
+          return;
+      }
       if (
         (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
         parent.callee === node

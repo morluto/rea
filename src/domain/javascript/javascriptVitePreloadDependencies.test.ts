@@ -228,6 +228,16 @@ it("keeps a preload call that precedes a later helper reassignment", () => {
   expect(
     specifiers(`${helper} __vite__mapDeps = () => []; __vite__mapDeps([0]);`),
   ).toEqual([]);
+  expect(
+    specifiers(
+      `${helper} __vite__mapDeps.f = ["./changed.js"]; __vite__mapDeps([0]); __vite__mapDeps = other;`,
+    ),
+  ).toEqual([null]);
+  expect(
+    specifiers(
+      `${helper} __vite__mapDeps([0]); __vite__mapDeps = other; __vite__mapDeps.f = ["./changed.js"];`,
+    ),
+  ).toEqual(["./canonical.js"]);
 });
 
 it("retains the identity of a function-declared preload helper", () => {
