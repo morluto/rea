@@ -738,6 +738,12 @@ to select another file, the same variable Cline's CLI honors. Entries carry
 every other server and top-level key when it upserts `rea`, and refuses a
 `rea` entry it did not write rather than adopting or overwriting it.
 
+That refusal includes a hand-written `rea` entry: ownership is decided by
+comparing the entry's launcher with the running installation's entry point, so a
+registration that points at a different install path is reported as `foreign`
+and left unchanged. Rename or remove that entry, then rerun setup; doctor's
+remediation names the file and the entry to change.
+
 Cline manages skills through the open skills CLI with `--agent cline`, which
 writes the shared `~/.agents/skills`. Setup installs the bundled skill there,
 and `--skill-client cline` resolves to that shared directory; setup does not
