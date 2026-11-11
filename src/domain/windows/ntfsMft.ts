@@ -105,6 +105,7 @@ export interface MftRecord {
   readonly baseRecordReference: MftFileReference | null;
   /** The record number the header declares; `null` when the header predates the field. */
   readonly declaredRecordNumber: number | null;
+  readonly recordNumberMatchesSlot: boolean | null;
   /** `$LogFile` sequence number as recorded; no log is read. */
   readonly logFileSequenceNumber: string;
   /** Declared offset of the first attribute; no attribute decoding follows yet. */
@@ -258,6 +259,7 @@ const scanMft = (
   let unverifiedCount = 0;
   let invalidSlots = 0;
   let invalidExtents = 0;
+  let inconsistentRecordNumbers = 0;
   let firstInvalidExtentOffset: number | undefined;
   let firstInvalidOffset: number | undefined;
   for (
@@ -289,6 +291,8 @@ const scanMft = (
       record.fixups.coveredSectors < recordBytes / FIXUP_SECTOR_BYTES
     )
       unverifiedCount += 1;
+    if (record.recordNumberMatchesSlot === false)
+      inconsistentRecordNumbers += 1;
     if (!record.extentValid) {
       invalidExtents += 1;
       firstInvalidExtentOffset ??= offset;
@@ -302,6 +306,11 @@ const scanMft = (
   if (firstInvalidExtentOffset !== undefined)
     limitations.push(
       `${String(invalidExtents)} FILE record(s) declare inconsistent record extents, beginning at offset ${String(firstInvalidExtentOffset)}`,
+    );
+
+  if (inconsistentRecordNumbers !== 0)
+    limitations.push(
+      `${String(inconsistentRecordNumbers)} FILE record(s) declare a record number that disagrees with their stream slot`,
     );
 
   const truncatedTailBytes = bytes.length % recordBytes;
@@ -364,6 +373,11 @@ const readRecord = (
     true,
   );
 
+  const declaredRecordNumber =
+    !fixups.malformed && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
+      ? view.getUint32(RECORD_HEADER.recordNumber, true)
+      : null;
+
   return {
     index,
     fileOffset,
@@ -388,10 +402,9 @@ const readRecord = (
       baseRecordReference === 0n
         ? null
         : decodeMftFileReference(baseRecordReference),
-    declaredRecordNumber:
-      !fixups.malformed && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
-        ? view.getUint32(RECORD_HEADER.recordNumber, true)
-        : null,
+    declaredRecordNumber,
+    recordNumberMatchesSlot:
+      declaredRecordNumber === null ? null : declaredRecordNumber === index,
     logFileSequenceNumber: view
       .getBigUint64(RECORD_HEADER.logFileSequenceNumber, true)
       .toString(),
