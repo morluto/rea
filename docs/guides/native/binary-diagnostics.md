@@ -44,6 +44,11 @@ before dependency seeks. Structural inventory and the convenience-map engine
 still parse the snapshot separately; eliminating that remaining duplication
 requires preserving the upstream GOT/PLT and mitigation facts.
 
+The layout profile returns `unsupported_target` for `SHF_COMPRESSED` string,
+symbol, relocation or dynamic metadata sections before upstream convenience-map
+decoding. Their logical names and entry coordinates cannot be read from the
+compressed file bytes. Other compressed payload sections remain opaque.
+
 ## Interpreting results
 
 - Artifact path, SHA-256 and size identify original selected bytes. All parsing
@@ -477,6 +482,13 @@ Enumerating dynamic symbols from that segment is not implemented. A present
 section directory with neither a dynamic symbol table nor a dynamic segment
 reports a complete empty inventory. Mach-O exports are reported by
 `inspect_macho`.
+
+ELF export tables marked `SHF_COMPRESSED` are not decompressed. A compressed
+dynamic symbol table or its string table reports `unsupported` coverage rather
+than treating stored bytes as symbols or names. Compressed version tables or
+their string tables keep readable export rows with `partial` coverage and
+unresolved versions. When version definition storage is compressed, requirement
+names also remain unknown because unseen definitions may override them.
 
 `max_file_bytes` defaults to 256 MiB (maximum 512 MiB; CLI `--max-file-bytes`).
 Export directories in PE headers are read like those in sections. An export or

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
 // Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join("/tmp", prefix));
@@ -93,6 +94,49 @@ afterEach(() => {
 describe.skipIf(process.platform === "win32")(
   "accepted lease connections",
   () => {
+    it("joins concurrent release callers until the listening server finishes closing", async () => {
+      const directory = await createTestTempDirectory("rea-release-join-");
+      const acquired = await acquireOwnedLease({
+        identity: { test: "concurrent-release" },
+        directory,
+        runId: "concurrent-release",
+        failure: (failure) => new Error(failure.kind),
+      });
+      if (!acquired.acquired) throw new Error("expected acquired lease");
+      onTestFinished(() => acquired.lease.release());
+      const started = createDeferred<void>();
+      const finish = createDeferred<void>();
+      const close = Server.prototype.close;
+      vi.spyOn(Server.prototype, "close").mockImplementationOnce(function (
+        this: Server,
+        callback,
+      ) {
+        return close.call(this, (cause) => {
+          started.resolve();
+          void finish.promise.then(() => callback?.(cause));
+        });
+      });
+      let firstFinished = false;
+      let secondFinished = false;
+      const first = acquired.lease.release().then(() => {
+        firstFinished = true;
+      });
+      await started.promise;
+      const second = acquired.lease.release().then(() => {
+        secondFinished = true;
+      });
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(firstFinished).toBe(false);
+        expect(secondFinished).toBe(false);
+      } finally {
+        finish.resolve();
+        await Promise.all([first, second]);
+      }
+      expect(firstFinished).toBe(true);
+      expect(secondFinished).toBe(true);
+    });
+
     it.each([false, true])(
       "closes a held peer and preserves retry after failure=%s",
       async (failClose) => {

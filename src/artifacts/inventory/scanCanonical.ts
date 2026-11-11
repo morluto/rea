@@ -34,6 +34,7 @@ import {
   materializeDirectoryNodes,
   rekeyOccurrences,
   rootOccurrenceFor,
+  type ArtifactParentResolution,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
 import {
@@ -161,7 +162,7 @@ const scanCanonical = async (
       pendingContradictions,
       caseCollisionLimitation,
       inesRegionScan,
-      unknownParentOccurrences,
+      parentResolution,
       traversal,
       rootContradiction,
     } = await scanReader(
@@ -187,7 +188,7 @@ const scanCanonical = async (
         pendingContradictions,
         caseCollisionLimitation,
         inesRegionScan,
-        unknownParentOccurrences,
+        parentResolution,
         traversal,
         rootContradiction,
         recognitionLimitations,
@@ -221,7 +222,10 @@ const scanCanonical = async (
           pendingContradictions: [],
           caseCollisionLimitation: undefined,
           inesRegionScan: undefined,
-          unknownParentOccurrences: new Set(),
+          parentResolution: {
+            unknownParentOccurrences: new Set(),
+            limitations: [],
+          },
           rootContradiction: undefined,
           traversal: {
             status: "unknown",
@@ -424,7 +428,7 @@ interface SnapshotBuildInput {
   readonly pendingContradictions: PendingIntegrityContradiction[];
   readonly caseCollisionLimitation: string | undefined;
   readonly inesRegionScan: InesRegionScan | undefined;
-  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
+  readonly parentResolution: ArtifactParentResolution;
   readonly traversal: ArtifactReaderTraversal;
   readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
 }
@@ -452,7 +456,7 @@ const buildInventorySnapshot = async (
   for (const occurrence of input.occurrences)
     if (
       occurrence.parent_occurrence_id === null &&
-      !input.unknownParentOccurrences.has(occurrence)
+      !input.parentResolution.unknownParentOccurrences.has(occurrence)
     )
       occurrence.parent_occurrence_id = rootOccurrence.occurrence_id;
   input.occurrences.unshift(rootOccurrence);
@@ -483,6 +487,7 @@ const buildInventorySnapshot = async (
   const edgeResult = createArtifactEdges(
     rootNode.artifact_id,
     input.occurrences,
+    input.traversal.status,
     reader?.provenance()[0],
   );
   const { edges } = edgeResult;
@@ -529,8 +534,12 @@ const buildInventorySnapshot = async (
     );
   }
   const traversal = inventoryCoverage(rootFormat, reader, input.traversal);
+  const relationshipLimitations = [
+    ...input.parentResolution.limitations,
+    ...edgeResult.limitations,
+  ];
   const coverage =
-    edgeResult.limitations.length === 0
+    relationshipLimitations.length === 0
       ? traversal.coverage
       : { ...traversal.coverage, status: "unknown" as const };
   return {
@@ -545,7 +554,7 @@ const buildInventorySnapshot = async (
     limitations: buildLimitations(
       [
         ...traversal.limitations,
-        ...edgeResult.limitations,
+        ...relationshipLimitations,
         ...(input.recognitionLimitations ?? []),
       ],
       integrityContradictions,

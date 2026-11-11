@@ -13,6 +13,7 @@ import {
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
   assertKnownAnalysisErrorTag,
+  hasAnalysisContinuingCallerGuidance,
 } from "./analysisErrorPresentation.js";
 import {
   AnalysisAccessDeniedError,
@@ -318,7 +319,7 @@ const projectionDependsOnCallerLifetime = (
     )
       if (
         node.limit !== undefined ||
-        node.continuingCallerGuidance !== undefined ||
+        hasAnalysisContinuingCallerGuidance(node) ||
         node.invocationDiagnostics !== undefined ||
         node.workflowUnknownPublication !== undefined
       )

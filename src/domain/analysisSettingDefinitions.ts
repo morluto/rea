@@ -63,6 +63,16 @@ const timer = {
   unit: "ms",
   appliesAt: "next_operation",
 } as const;
+
+/** Operations that invoke Ghidra's decompiler directly or through a workflow. */
+const ghidraDecompileOperations = [
+  "procedure_pseudo_code",
+  "analyze_function",
+  "inspect_native_api",
+  "decompile_all",
+  "trace_native_values",
+] as const;
+
 /** Metadata aggregates existing owner definitions; no environment mutation or engine discovery. */
 export const ANALYSIS_SETTINGS = {
   "ghidra.decompile_max_payload_mib": {
@@ -74,14 +84,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "MiB",
     appliesAt: "next_operation",
     provider: "ghidra",
-    operations: [
-      "procedure_pseudo_code",
-      "analyze_function",
-      "inspect_native_api",
-      "decompile_all",
-      "trace_native_values",
-      "trace_native_ui_action",
-    ],
+    operations: ghidraDecompileOperations,
   },
   "asar.max_listing_bytes": {
     updateMode: "runtime",
@@ -227,12 +230,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "seconds",
     appliesAt: "next_operation",
     provider: "ghidra",
-    operations: [
-      "procedure_pseudo_code",
-      "analyze_function",
-      "decompile_all",
-      "trace_native_values",
-    ],
+    operations: ghidraDecompileOperations,
   },
   "jadx.operation_timeout_ms": {
     updateMode: "runtime",

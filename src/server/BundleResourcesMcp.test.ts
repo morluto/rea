@@ -83,6 +83,15 @@ it("routes bundle resource MCP calls with null executable identity and retained 
 
   await expectResourceSchemaBranches(client);
 
+  const advertised = (await client.listTools()).tools;
+  for (const name of ["open_binary", "open_bundle_resources", "close_binary"]) {
+    const tool = advertised.find((candidate) => candidate.name === name);
+    expect(tool?.annotations, name).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  }
+
   const unbound = await client.callTool({
     name: "inspect_plist",
     arguments: { path: plistPath },

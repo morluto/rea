@@ -350,8 +350,10 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 The synchronization must include `.release-please-manifest.json`,
 `package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
-`server.json`, both plugin manifests (`.claude-plugin/plugin.json` and
-`.codex-plugin/plugin.json`), the Codex server declaration (`.codex-plugin/mcp.json`), both
+`server.json`, the Claude Code and Codex plugin manifests
+(`.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`), the Codex
+server declaration (`.codex-plugin/mcp.json`), the Cursor Marketplace manifest
+(`.cursor-plugin/plugin.json`) and server pin (`mcp.json`), both
 marketplaces (`.claude-plugin/marketplace.json` and
 `.agents/plugins/marketplace.json`), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration
