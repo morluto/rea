@@ -16,7 +16,8 @@ import {
 
 /** Stable listeners attached for the lifetime of one bridge socket. */
 interface GhidraSocketHandlers {
-  readonly data: (chunk: string) => void;
+  readonly data: (chunk: Buffer) => void;
+  readonly end: () => void;
   readonly error: () => void;
   readonly close: () => void;
 }
@@ -33,17 +34,18 @@ export interface GhidraSocketConnectOptions {
   readonly handlers: GhidraSocketHandlers;
 }
 
-/** Attach decoded bridge listeners and return an idempotent detach callback. */
+/** Attach raw bridge listeners and return an idempotent detach callback. */
 const attachGhidraSocket = (
   socket: Socket,
   handlers: GhidraSocketHandlers,
 ): (() => void) => {
-  socket.setEncoding("utf8");
   socket.on("data", handlers.data);
+  socket.on("end", handlers.end);
   socket.on("error", handlers.error);
   socket.on("close", handlers.close);
   return () => {
     socket.off("data", handlers.data);
+    socket.off("end", handlers.end);
     socket.off("error", handlers.error);
     socket.off("close", handlers.close);
   };

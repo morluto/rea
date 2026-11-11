@@ -1,3 +1,8 @@
+import {
+  processInspectionCancellationError,
+  processInspectionFailure,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
@@ -26,10 +31,13 @@ import {
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
 
-import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import {
@@ -102,9 +110,9 @@ export type GhidraLaunchSupportDiagnostic = {
 export interface GhidraLauncher {
   launch(
     session: GhidraLaunchSession,
-    options?: {
+    options: {
       readonly signal?: AbortSignal;
-      readonly resourceScope?: ArtifactResourceScope;
+      readonly resourceScope: ArtifactResourceScope;
     },
   ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>>;
 }
@@ -163,15 +171,8 @@ export class GhidraLaunchError extends Error {
             errorOptions.cause.cleanupIncomplete
           ? errorOptions.cause
           : undefined;
-    this.cleanupFailure =
-      cleanupFailure === undefined
-        ? inherited
-        : inherited === undefined || inherited === cleanupFailure
-          ? cleanupFailure
-          : analysisErrorWithCleanupFailure(
-              inherited,
-              cleanupFailure,
-            ).bindCleanupDependencies([inherited, cleanupFailure]);
+    // An explicit cleanup projection already owns its complete dependency set.
+    this.cleanupFailure = cleanupFailure ?? inherited;
     const output =
       capturedOutput ??
       (errorOptions.cause instanceof DarwinProcessOwnershipInspectionError ||
@@ -283,8 +284,8 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     session: GhidraLaunchSession,
     options: {
       readonly signal?: AbortSignal;
-      readonly resourceScope?: ArtifactResourceScope;
-    } = {},
+      readonly resourceScope: ArtifactResourceScope;
+    },
   ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>> {
     if (isAborted(options.signal))
       return err(
@@ -323,10 +324,6 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           throw new GhidraLaunchError(
             "Allegrex profile does not belong to the selected Ghidra installation.",
           );
-        if (options.resourceScope === undefined)
-          throw new GhidraLaunchError(
-            "PSP inspection requires a caller-owned resource scope.",
-          );
         const inspected = await inspectGhidraPspExtension(
           psp.root,
           psp.ghidra_version,
@@ -345,10 +342,6 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       );
       let packedProgramPath: string | undefined;
       if (session.packedProgram !== undefined) {
-        if (options.resourceScope === undefined)
-          throw new GhidraLaunchError(
-            "Checkpoint restore requires its owning resource scope.",
-          );
         packedProgramPath = join(session.runtimeRoot, "restored-program.gzf");
         await copyFile(
           session.packedProgram.path,
@@ -386,10 +379,6 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         this.options.analysisSeeds !== undefined ||
         (this.options.analysisExtensions?.length ?? 0) > 0
       ) {
-        if (options.resourceScope === undefined)
-          throw new GhidraLaunchError(
-            "Configured Ghidra artifacts require a caller-owned resource scope.",
-          );
         if (this.options.analysisSeeds !== undefined)
           seedPath = await snapshotGhidraAnalysisSeeds(
             this.options.analysisSeeds,
@@ -530,9 +519,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         homeRoot: paths.homeRoot,
         tempRoot: paths.tempRoot,
         argumentFileRoot: session.runtimeRoot,
-        ...(options.resourceScope === undefined
-          ? {}
-          : { resourceScope: options.resourceScope }),
+        resourceScope: options.resourceScope,
         arguments: headlessArguments,
         environment,
         onStderr: (mode, stderr) => {
@@ -588,12 +575,6 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         env: command.environment,
         hostEnvironment: {},
         ...(options.signal === undefined ? {} : { signal: options.signal }),
-      }).catch((cause: unknown) => {
-        // The spawn boundary throws the exact opaque reason at preparation
-        // checkpoints. Wrap it before interpreting any typed provider facts.
-        if (options.signal?.aborted === true && cause === options.signal.reason)
-          throw new AnalysisCancelledError("open_binary", { cause });
-        throw cause;
       });
       const partialLaunch = ownedGhidraLaunch(
         started,
@@ -627,23 +608,35 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       return ok(partialLaunch);
     } catch (cause: unknown) {
       const cancellation =
-        cause instanceof AnalysisCancelledError
+        processInspectionCancellationError(cause, "open_binary") ??
+        (cause instanceof AnalysisCancelledError
           ? cause
-          : (cause instanceof GhidraLaunchSupportError ||
-                cause instanceof DarwinProcessOwnershipInspectionError) &&
+          : cause instanceof GhidraLaunchSupportError &&
               cause.cancellation !== undefined
             ? new AnalysisCancelledError("open_binary", {
                 cause: cause.cancellation.reason,
               })
-            : undefined;
+            : undefined);
       const capturedOutput = ghidraLaunchCommandOutput(cause);
+      const primary =
+        cancellation ??
+        new ProviderAdapterError("ghidra", "open_binary", { cause });
+      const retained = retainProcessInspectionCleanup(
+        cause,
+        primary,
+        options.resourceScope,
+        "open_binary",
+      );
       const launchFailure = new GhidraLaunchError(
         "Ghidra headless launch failed",
         {
           cause,
-          ...(cancellation === undefined
-            ? {}
-            : { primaryFailure: cancellation }),
+          ...(processInspectionFailure(cause) !== undefined
+            ? { primaryFailure: primaryAnalysisError(retained) }
+            : cancellation === undefined
+              ? {}
+              : { primaryFailure: cancellation }),
+          ...(retained.cleanupIncomplete ? { cleanupFailure: retained } : {}),
           launchSupport,
           ...(capturedOutput === undefined ? {} : { capturedOutput }),
         },

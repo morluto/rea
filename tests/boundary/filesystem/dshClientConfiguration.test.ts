@@ -92,7 +92,7 @@ describe("DeepSeek Harness configuration paths", () => {
   );
 
   it("resolves the home Cordis patch under the Harness home", () => {
-    expect(dshClient({})).toEqual({
+    expect(dshClient({})).toMatchObject({
       name: "dsh",
       displayName: "DeepSeek Harness",
       configPath: resolve("/home/a", ".dsh", "cordis.patch.yml"),

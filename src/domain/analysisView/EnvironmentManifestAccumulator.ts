@@ -215,9 +215,11 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     record: WebNetworkCaptureRecord,
     scenarioResponseBody?: ScenarioResponseBodyRetention,
   ): Result<void, AnalysisError> {
-    const limitations = this.addLimitations(record.limitations);
-    if (!limitations.ok) return limitations;
+    const rollbackAdmission = this.retainedCheckpoint();
+    let committed = false;
     try {
+      const limitations = this.prepareLimitations(record.limitations);
+      if (!limitations.ok) return limitations;
       const line = readRecordedRequestLine(
         record.reported,
         this.includeQueryParameterNames,
@@ -226,16 +228,14 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       if (line === null) return this.overBudget();
       const releaseGrouping = this.temporaryCheckpoint();
       if (line.kind === "excluded") {
-        this.#unrepresented += 1;
         releaseGrouping();
-        return this.onRecordedRequestLine(record, line);
-      }
-      // Coverage uses the same admitted request line as grouping, including origin and raw path.
-      if (scenarioResponseBody !== undefined) {
-        this.#scenarioTransactions += 1;
-        if (scenarioResponseBody === "absent") this.#scenarioWithoutBody += 1;
-        if (scenarioResponseBody === "redacted")
-          this.#scenarioRedactedBodies += 1;
+        const prepared = this.prepareRecordedRequestLine(record, line);
+        if (!prepared.ok) return prepared;
+        prepared.value();
+        limitations.value();
+        this.#unrepresented += 1;
+        committed = true;
+        return ok(undefined);
       }
       const route = scanRouteTemplate(line.path, this.scratch);
       if (route === null) return this.overBudget();
@@ -266,7 +266,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           ? this.#bodyShape(record.reported)
           : ok(null);
       if (!bodyShape.ok) return bodyShape;
-      const grouped = this.#append(
+      const grouped = this.#prepareAppend(
         record.ordinal,
         line,
         route,
@@ -277,18 +277,33 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       if (!grouped.ok) return grouped;
       // Keep the parsed line's admission while releasing grouping-only scratch.
       releaseGrouping();
-      return this.onRecordedRequestLine(record, line);
+      const prepared = this.prepareRecordedRequestLine(record, line);
+      if (!prepared.ok) return prepared;
+      // Both owners admitted their facts; neither commit can reject the record.
+      grouped.value();
+      prepared.value();
+      limitations.value();
+      // Coverage uses the same admitted request line as grouping, including origin and raw path.
+      if (scenarioResponseBody !== undefined) {
+        this.#scenarioTransactions += 1;
+        if (scenarioResponseBody === "absent") this.#scenarioWithoutBody += 1;
+        if (scenarioResponseBody === "redacted")
+          this.#scenarioRedactedBodies += 1;
+      }
+      committed = true;
+      return ok(undefined);
     } finally {
+      if (!committed) rollbackAdmission();
       this.releaseTemporary();
     }
   }
 
-  /** Consume the owner's parsed request line after successful grouping, including exclusions. */
-  protected onRecordedRequestLine(
+  /** Admit derived facts from the owner's parsed line, then commit only after all owners admit it. */
+  protected prepareRecordedRequestLine(
     _record: WebNetworkCaptureRecord,
     _line: RecordedRequestLine,
-  ): Result<void, AnalysisError> {
-    return ok(undefined);
+  ): Result<() => void, AnalysisError> {
+    return ok(() => {});
   }
 
   /** Read the top-level key types of the group's first recorded JSON-typed request body; nested values are never walked. */
@@ -316,14 +331,14 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     return ok({ type: "object", properties: Object.fromEntries(entries) });
   }
 
-  #append(
+  #prepareAppend(
     ordinal: number,
     line: RequestLine,
     route: RouteTemplate,
     queryNames: ReadonlySet<string> | undefined,
     bucket: { readonly key: string; readonly group: GroupState | undefined },
     exchange: { readonly shape: BodyShape | null; readonly empty: boolean },
-  ): Result<void, AnalysisError> {
+  ): Result<() => void, AnalysisError> {
     const bodyShape = exchange.shape;
     const mime = mediaTypeEssence(line.rawMime);
     let group = bucket.group;
@@ -366,48 +381,49 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         bytes += ENTRY_BYTES + textBytes(name.length);
     // Reserve the whole mutation while route scratch is still live.
     if (!this.retain(bytes)) return this.overBudget();
-    const position = this.#records.length;
-    this.#records.push({
-      ordinal,
-      method: line.method,
-      path: line.path,
-      status: line.status,
-      contentType: mime,
-    });
-    const jsonLike = isJsonLike(mime);
-    const stats = origin ?? { records: 0, jsonLike: 0 };
-    stats.records += 1;
-    if (jsonLike) stats.jsonLike += 1;
-    this.#origins.set(line.origin, stats);
-    if (group === undefined) {
-      group = {
+    return ok(() => {
+      const position = this.#records.length;
+      this.#records.push({
+        ordinal,
         method: line.method,
-        origin: line.origin,
-        api_surface_template: route.template,
-        parts: routeParts(route),
-        positions: [],
-        statuses: new Set(),
-        contentTypes: new Set(),
-        queryNames: new Set(),
-        bodyShape,
-        apiPath: isApiPath(route.template),
-        jsonLike: false,
-        bodiless: BODILESS_WRITE_METHODS.has(line.method),
-      };
-      this.#groups.set(bucket.key, group);
-    } else {
-      for (const segment of route.segments) {
-        const part = group.parts[segment.segment_index];
-        if (part?.kind === "param") part.values.add(segment.value);
+        path: line.path,
+        status: line.status,
+        contentType: mime,
+      });
+      const jsonLike = isJsonLike(mime);
+      const stats = origin ?? { records: 0, jsonLike: 0 };
+      stats.records += 1;
+      if (jsonLike) stats.jsonLike += 1;
+      this.#origins.set(line.origin, stats);
+      if (group === undefined) {
+        group = {
+          method: line.method,
+          origin: line.origin,
+          api_surface_template: route.template,
+          parts: routeParts(route),
+          positions: [],
+          statuses: new Set(),
+          contentTypes: new Set(),
+          queryNames: new Set(),
+          bodyShape,
+          apiPath: isApiPath(route.template),
+          jsonLike: false,
+          bodiless: BODILESS_WRITE_METHODS.has(line.method),
+        };
+        this.#groups.set(bucket.key, group);
+      } else {
+        for (const segment of route.segments) {
+          const part = group.parts[segment.segment_index];
+          if (part?.kind === "param") part.values.add(segment.value);
+        }
       }
-    }
-    group.positions.push(position);
-    group.jsonLike ||= jsonLike;
-    group.bodiless &&= exchange.empty;
-    if (line.status !== null) group.statuses.add(line.status);
-    if (mime !== null) group.contentTypes.add(mime);
-    for (const name of queryNames ?? []) group.queryNames.add(name);
-    return ok(undefined);
+      group.positions.push(position);
+      group.jsonLike ||= jsonLike;
+      group.bodiless &&= exchange.empty;
+      if (line.status !== null) group.statuses.add(line.status);
+      if (mime !== null) group.contentTypes.add(mime);
+      for (const name of queryNames ?? []) group.queryNames.add(name);
+    });
   }
 
   #tools(groups: readonly ToolGroup[]): Tool[] {
@@ -513,7 +529,8 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         compare(left.method, right.method) ||
         compare(left.reason, right.reason),
     );
-    const limitations = this.addLimitations([
+    // Derived limitations describe this snapshot, not an earlier finish.
+    const limitations = this.snapshotLimitations([
       ...(this.reportsBodyShapes &&
       tools.some((tool) => tool.body_shape !== null)
         ? [
@@ -521,16 +538,6 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           ]
         : []),
       ...this.#segmentLimitLimitations(toolGroups),
-      ...(this.#scenarioWithoutBody > 0
-        ? [
-            `${String(this.#scenarioWithoutBody)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.`,
-          ]
-        : []),
-      ...(this.#scenarioRedactedBodies > 0
-        ? [
-            `${String(this.#scenarioRedactedBodies)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.`,
-          ]
-        : []),
       ...(this.#unrepresented > 0
         ? [
             `${String(this.#unrepresented)} retained records without a usable request line are not represented in the manifest.`,
@@ -539,6 +546,16 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       ...(primary === null
         ? [
             "No retained record had a parseable origin; the manifest names no primary origin.",
+          ]
+        : []),
+      ...(this.#scenarioWithoutBody > 0
+        ? [
+            `${String(this.#scenarioWithoutBody)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.`,
+          ]
+        : []),
+      ...(this.#scenarioRedactedBodies > 0
+        ? [
+            `${String(this.#scenarioRedactedBodies)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.`,
           ]
         : []),
     ]);
@@ -567,7 +584,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         tools.filter((tool) => tool.params.length > 0).length +
         excluded.filter((exclusion) => exclusion.templated).length,
       coverage: completeWithinViewCoverage(tools.length, tools.length),
-      limitations: this.sortedLimitations(),
+      limitations: limitations.value,
     });
   }
 }

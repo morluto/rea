@@ -1,6 +1,25 @@
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+  isProcessOwnershipInspectionCancellation,
+} from "../ProcessInspectionCancellation.js";
+import {
+  processInspectionCleanupFailures,
+  processInspectionCancellations,
+  type ProcessInspectionFailure,
+  type ProcessInspectionCleanupLease,
+} from "../ProcessInspectionCleanup.js";
 import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 import {
   AnalysisError,
+  primaryAnalysisError,
   type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
 import type {
@@ -110,53 +129,159 @@ export const describeProcessCaptureExecutionFailure = (
   return "Process capture failed with a non-error rejection.";
 };
 
+const captureCancellationPresentation = {
+  userCategory: "cancelled",
+  reason: "cancelled",
+  userMessage: "Process capture was cancelled. Start it again when ready.",
+} as const;
+
 /** Caller-visible cancellation without exposing capture implementation state. */
 export const processCaptureCancelled = (
   reason?: unknown,
 ): ProcessCaptureError =>
   new ProcessCaptureError("process capture was cancelled", {
     cause: reason,
-    userCategory: "cancelled",
-    reason: "cancelled",
-    userMessage: "Process capture was cancelled. Start it again when ready.",
+    ...captureCancellationPresentation,
   });
 
-/** Preserve typed process-inspection preflight failures at the capture boundary. */
-export const normalizeCaptureFailure = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-): unknown => {
-  if (cause instanceof ProcessCaptureError) return cause;
-  if (cause instanceof DarwinProcessOwnershipInspectionError) {
-    const normalized = new ProcessCaptureError(cause.message, {
-      cause,
-      ...(cause.cancellation === undefined
-        ? {}
-        : { userCategory: "cancelled" as const, reason: "cancelled" as const }),
-      ...(cause.cleanupFailure === undefined
-        ? {}
-        : {
-            cleanup: {
-              reason: cause.cleanupFailure.message,
-              resources: cause.cleanupFailure.cleanupResources,
-            },
-          }),
-      ...(cause.capturedOutput === undefined
-        ? {}
-        : { capturedOutput: cause.capturedOutput }),
-      ...(cause.compilerOutcome?.outcome === "timed_out"
-        ? { retryable: true }
-        : {}),
-    });
-    return cause.cleanupFailure === undefined
-      ? normalized
-      : normalized.bindCleanupDependencies([cause.cleanupFailure]);
+/** Keep the exact inspection record and close capabilities through capture finalization. */
+export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
+  readonly #inspectionCleanup: readonly ProcessInspectionCleanupLease[];
+
+  get inspectionCleanup(): readonly ProcessInspectionCleanupLease[] {
+    return this.#inspectionCleanup;
   }
+
+  get cleanupLeases(): readonly AnalysisCleanupLease[] {
+    return this.#inspectionCleanup.map(({ lease }) => lease);
+  }
+
+  constructor(readonly inspectionFailure: ProcessInspectionFailure) {
+    const darwin =
+      inspectionFailure instanceof DarwinProcessOwnershipInspectionError
+        ? inspectionFailure
+        : undefined;
+    const cancellation =
+      darwin?.cancellation ??
+      (isProcessOwnershipInspectionCancellation(inspectionFailure)
+        ? { reason: inspectionFailure.reason }
+        : undefined);
+    const cleanupFailures = processInspectionCleanupFailures(inspectionFailure);
+    const cleanupResources = [
+      ...new Set(
+        cleanupFailures.flatMap((failure) =>
+          failure instanceof DarwinProcessOwnershipInspectionError
+            ? (failure.cleanupFailure?.cleanupResources ?? [
+                "process ownership inspection",
+              ])
+            : [failure.path],
+        ),
+      ),
+    ];
+    super(
+      cancellation === undefined
+        ? inspectionFailure.message
+        : "process capture was cancelled",
+      {
+        cause:
+          cancellation === undefined ? inspectionFailure : cancellation.reason,
+        ...(cancellation === undefined ? {} : captureCancellationPresentation),
+        ...(cleanupFailures.length === 0
+          ? {}
+          : {
+              cleanup: {
+                reason: cleanupFailures
+                  .map((failure) =>
+                    failure instanceof DarwinProcessOwnershipInspectionError
+                      ? (failure.cleanupFailure?.message ?? failure.message)
+                      : (describeProcessCaptureExecutionFailure(
+                          failure.cleanupCause,
+                        ) ?? "descriptor cleanup failed"),
+                  )
+                  .join("; "),
+                resources: cleanupResources,
+              },
+            }),
+        ...(darwin?.capturedOutput === undefined
+          ? {}
+          : { capturedOutput: darwin.capturedOutput }),
+        ...(darwin?.compilerOutcome?.outcome === "timed_out"
+          ? { retryable: true }
+          : {}),
+        ...(inspectionFailure instanceof ProcessOwnershipIdentityBatchFailure
+          ? {
+              diagnostics: {
+                retained_observation_count: inspectionFailure.observations.size,
+                rejected_request_count: inspectionFailure.failures.length,
+              },
+            }
+          : {}),
+      },
+    );
+    const cleanup: ProcessInspectionCleanupLease[] = [];
+    for (const failure of cleanupFailures) {
+      if (failure instanceof DarwinProcessOwnershipInspectionError) {
+        const marker = failure.cleanupFailure;
+        if (marker !== undefined) this.bindCleanupDependencies([marker]);
+        if (
+          failure.cleanupOwner === undefined ||
+          marker?.cleanupIncomplete === false
+        )
+          continue;
+        const owner = failure.cleanupOwner;
+        const lease = new AnalysisCleanupLease(
+          () => owner.close(),
+          marker ?? ["process ownership inspection"],
+        );
+        if (marker !== undefined) lease.bindCleanupError(marker);
+        cleanup.push({ failure, lease });
+      } else
+        cleanup.push({
+          failure,
+          lease: new AnalysisCleanupLease(
+            () => failure.owner.close(),
+            [failure.path],
+          ),
+        });
+    }
+    this.#inspectionCleanup = cleanup;
+    if (cleanup.length > 0)
+      new AnalysisCleanupLeaseGroup(this, this.cleanupLeases);
+    if (cancellation === undefined)
+      for (const fact of processInspectionCancellations(inspectionFailure))
+        this.retainSecondaryFailure(
+          new AnalysisCancelledError("capture_process", { cause: fact.reason }),
+        );
+  }
+}
+
+/** Interpret only facts emitted by the inspection owner; caller values remain opaque. */
+export const normalizeCaptureFailure = (cause: unknown): unknown => {
+  if (cause instanceof ProcessCaptureError) return cause;
   if (
-    signal?.aborted === true &&
-    (cause === signal.reason ||
-      (cause instanceof Error && cause.name === "AbortError"))
+    cause instanceof DarwinProcessOwnershipInspectionError ||
+    cause instanceof ProcessOwnershipInspectionCancelled ||
+    cause instanceof ProcessOwnershipIdentityBatchFailure ||
+    cause instanceof RegularFileCleanupFailure
   )
-    return processCaptureCancelled(signal.reason);
+    return new ProcessCaptureInspectionFailure(cause);
   return cause;
+};
+
+/** Keep normalized inspection cancellation visible when its failure becomes a cleanup child. */
+export const retainCaptureInspectionCancellations = (
+  failure: AnalysisError,
+  inspection: ProcessCaptureInspectionFailure,
+): void => {
+  const primary = primaryAnalysisError(failure);
+  if (inspection.reason === "cancelled" && primary !== inspection)
+    analysisErrorWithCancellation(
+      primary,
+      new AnalysisCancelledError("capture_process", {
+        cause: inspection.cause,
+      }),
+    );
+  for (const secondary of inspection.secondaryFailures)
+    if (secondary instanceof AnalysisCancelledError)
+      analysisErrorWithCancellation(primary, secondary);
 };

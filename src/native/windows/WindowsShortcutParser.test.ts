@@ -83,14 +83,30 @@ it("reads a PowerShell hidden-window shortcut with a spoofed icon", async () => 
   expect(report.coverage.status).toBe("complete");
 });
 
-it("reads network-share LinkInfo names", async () => {
-  const report = await parse(networkShareShortcut());
-  expect(report.link_info?.common_network_relative_link).toMatchObject({
-    net_name_unicode: "\\\\fileserver\\docs",
-    device_name_unicode: "Z:",
-  });
-  expect(report.coverage.status).toBe("complete");
-});
+it.each([false, true])(
+  "reads network-share LinkInfo names with Unicode %s",
+  async (unicode) => {
+    const report = await parse(
+      unicode
+        ? networkShareShortcut()
+        : windowsShortcutBytes({
+            flags: LINK_FLAG.HasLinkInfo,
+            unicode: false,
+            idList: null,
+            linkInfo: { netName: "\\\\fileserver\\docs", deviceName: "Z:" },
+            extraData: [],
+          }),
+    );
+    expect(report.link_info?.common_network_relative_link).toMatchObject({
+      net_name: "\\\\fileserver\\docs",
+      device_name: "Z:",
+      net_name_unicode: unicode ? "\\\\fileserver\\docs" : null,
+      device_name_unicode: unicode ? "Z:" : null,
+    });
+    expect(report.coverage.status).toBe("complete");
+    expect(report.issues).toEqual([]);
+  },
+);
 
 it("reports the network provider type only when ValidNetType is set", async () => {
   const build = (networkFlags: number) =>
@@ -140,6 +156,42 @@ it("ignores device names when ValidDevice is clear", async () => {
   });
   expect(report.issues).toEqual([]);
   expect(report.coverage.status).toBe("complete");
+});
+
+it("retains ANSI network names with partial coverage when declared Unicode offsets are truncated", async () => {
+  const bytes = windowsShortcutBytes({
+    flags: LINK_FLAG.HasLinkInfo,
+    idList: null,
+    linkInfo: { netName: "\\\\server\\share", networkFlags: 0x2 },
+    extraData: [],
+  });
+  const network = 76 + bytes.readUInt32LE(76 + 20);
+  bytes.writeUInt32LE(24, network);
+  bytes.writeUInt32LE(21, network + 8);
+  bytes[network + 21] = 0x78;
+  bytes[network + 22] = 0;
+  const report = await parse(bytes);
+  expect(report.link_info?.common_network_relative_link).toMatchObject({
+    net_name: "x",
+    net_name_unicode: null,
+  });
+  expect(report.artifact).toEqual(artifact(bytes));
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: network + 20,
+  });
+  expect(report.coverage.reason).not.toBeNull();
+  expect(report.issues).toEqual([
+    {
+      code: "truncated",
+      offset: network + 20,
+      message:
+        "CommonNetworkRelativeLink ends before its declared Unicode offsets",
+    },
+  ]);
+  expect(report.link_info?.common_path_suffix).toBe("");
+  expect(report.extra_data.terminal_offset).not.toBeNull();
+  expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
 });
 
 it("derives Tracker version-1 MAC and timestamp facts", async () => {

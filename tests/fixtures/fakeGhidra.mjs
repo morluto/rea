@@ -336,9 +336,73 @@ const handleRequest = (socket, server, request, state) => {
     );
     return;
   }
+  if (["valid_then_invalid", "valid_then_invalid_split"].includes(state.mode)) {
+    if (request.method === "list_procedures") return;
+    if (request.method === "list_strings") {
+      const valid = Buffer.from(
+        `${JSON.stringify({ id: request.id, ok: true, result: "completed" })}\n`,
+      );
+      const invalid = Buffer.concat([
+        Buffer.from(`{"id":${request.id + 1},"ok":true,"result":"`),
+        Buffer.from([0xff]),
+        Buffer.from('"}\n'),
+      ]);
+      if (state.mode === "valid_then_invalid")
+        socket.write(Buffer.concat([valid, invalid]));
+      else {
+        socket.write(valid);
+        setTimeout(() => socket.write(invalid), 5);
+      }
+      return;
+    }
+  }
+  if (request.method === "list_strings" && state.mode === "valid_utf8_end") {
+    socket.end(JSON.stringify({ id: request.id, ok: true, result: "�雪🦊" }));
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8_end") {
+    socket.end(
+      Buffer.concat([
+        Buffer.from(`{"id":${request.id},"ok":true,"result":"`),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    return;
+  }
+  if (
+    request.method === "list_strings" &&
+    state.mode === "invalid_utf8_split"
+  ) {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    setTimeout(
+      () =>
+        socket.write(Buffer.from([0x28, 0xa1, 0x22, 0x7d, 0x5d, 0x7d, 0x0a])),
+      5,
+    );
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8") {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xff]),
+        Buffer.from('"}]}\n'),
+      ]),
+    );
+    return;
+  }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
-      ? [stringItem("0x2000", "fixture 雪🦊")]
+      ? [stringItem("0x2000", "fixture �雪🦊")]
       : request.method === "list_strings" && state.mode === "oversized_result"
         ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
         : state.mode === "unicode_search" &&

@@ -1,8 +1,8 @@
+import type { FileMapping } from "../domain/virtualFileMapping.js";
 import { expect, it } from "vitest";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../domain/go/goBinary.js";
 import type {
   BinaryContainer,
-  FileMapping,
   ImageSection,
   LoadRegion,
 } from "../native/metadata/BinaryContainer.js";

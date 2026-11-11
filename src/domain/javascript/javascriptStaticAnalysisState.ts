@@ -133,7 +133,10 @@ export interface JavaScriptFindingContext {
   readonly expressionShapes: JavaScriptExpressionShapeResolver;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
-  readonly vitePreloadDependencyTable: readonly (string | undefined)[] | null;
+  readonly vitePreloadDependencyTable: {
+    readonly helper: t.Node;
+    readonly dependencies: readonly (string | undefined)[];
+  } | null;
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
