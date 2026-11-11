@@ -17,7 +17,6 @@ import {
   renderEnvToml,
   renderInstallScript,
   renderReadme,
-  seedWording,
   type DesktopAppExportPlan,
 } from "./appExport.js";
 import type { LaunchDocument } from "./seedDocument.js";
@@ -401,7 +400,22 @@ describe("README and class wording", () => {
   it("says the seed is the user's own data to keep local, unless it was made for the task", () => {
     const own = { ...plan, seedCheckpoint: "drafted" };
     const made = { ...own, syntheticSeed: true };
-    const wording = { own: seedWording(own), made: seedWording(made) };
+    const wording = {
+      own: {
+        origin: "from the user's home at checkpoint `drafted`",
+        notice:
+          "The seed is the user's real data. Keep this bundle local; do not publish it.",
+        docstring:
+          "The seed is the user's state at checkpoint drafted: keep this bundle local.",
+      },
+      made: {
+        origin: "made for the task, as saved at checkpoint `drafted`",
+        notice:
+          "The seed was made for this task, not taken from a user's own data; read `envs/mousepad/seed/` before publishing the bundle.",
+        docstring:
+          "The seed was made for the task, as saved at checkpoint drafted.",
+      },
+    };
     // The README's seed line and closing notice, and the class's docstring.
     const renderedIn = {
       origin: renderReadme,

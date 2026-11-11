@@ -910,6 +910,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
 
   it("reports cancellation during the last database read instead of Evidence", async () => {
     const controller = new AbortController();
+    const reason = { stage: "last database read" };
     let reads = 0;
     const folder = await writeCaptureFolder(
       extended({
@@ -925,7 +926,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
         ...readers,
         sqlite: async (database, signal) => {
           reads += 1;
-          if (reads === 3) controller.abort(new Error("stopped"));
+          if (reads === 3) controller.abort(reason);
           return readers.sqlite(database, signal);
         },
       },
@@ -934,6 +935,9 @@ describe("inspectDesktopApplicationState database sidecars", () => {
 
     expect(reads).toBe(3);
     expect(result).toBeInstanceOf(AnalysisCancelledError);
+    expect(result instanceof AnalysisCancelledError && result.cause).toBe(
+      reason,
+    );
   });
 });
 

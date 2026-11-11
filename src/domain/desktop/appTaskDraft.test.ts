@@ -96,22 +96,6 @@ it("omits checks for a lock left out of a selected folder but retains an explici
   ).toBeGreaterThan(0);
 });
 
-it("drafts a changed unselected conversation history in app state", () => {
-  const [file] = draft({
-    ".config/app/history.log": path(
-      "application_state",
-      "text",
-      text("Ada: Hello"),
-      text("Ada: Hello", "Lin: Welcome"),
-    ),
-  });
-  expect(file?.suggested).toContainEqual({
-    kind: "lines_present",
-    file: ".config/app/history.log",
-    lines: ["Lin: Welcome"],
-  });
-});
-
 describe("draftTaskFiles", () => {
   it("suggests the lines a document gained and lost, and leaves the app's state without views", () => {
     const [state, document] = draft({

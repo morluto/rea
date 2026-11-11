@@ -1,3 +1,4 @@
+import { createGdbFixtureOwner } from "./gdbTestHelpers.js";
 import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,9 +18,14 @@ import { waitForTestPidFile } from "../../support/process/pidFile.js";
 const createGdbManagerForInjectedPlatform = (
   options: ConstructorParameters<typeof GdbSessionManager>[0] = {},
 ): GdbSessionManager =>
-  new GdbSessionManager({ platform: "linux", ...options });
+  new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
+    platform: "linux",
+    ...options,
+  });
 
 let directory: string | undefined;
+const fixtureOwner = createGdbFixtureOwner();
 const managers: Array<{ closeAll(): Promise<void> }> = [];
 
 const expectOwnedProcessExited = async (pid: number): Promise<void> => {
@@ -381,7 +387,7 @@ process.stdin.on("data", (chunk) => {
           enterSecondSpawn?.();
           await secondSpawnGate;
         }
-        return spawnOwnedProviderProcess(options);
+        return fixtureOwner.spawnProcess(options);
       },
     });
     managers.push(manager);
@@ -487,14 +493,11 @@ process.stdin.resume();
 );
 
 afterEach(async () => {
-  await Promise.all(
-    managers
-      .splice(0)
-      .map((manager) => manager.closeAll().catch(() => undefined)),
-  );
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
+  await fixtureOwner.cleanup(managers, async () => {
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    directory = undefined;
+  });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -988,7 +991,7 @@ setInterval(() => {}, 1000);
     const manager = createGdbManagerForInjectedPlatform({
       environment: { REA_GDB_COMMAND: provider },
       spawnProcess: async (options) => {
-        ownedLaunch = await spawnOwnedProviderProcess(options);
+        ownedLaunch = await fixtureOwner.spawnProcess(options);
         ownedProcessExit = new Promise<void>((resolve) => {
           const child = ownedLaunch!.process;
           if (child.exitCode !== null || child.signalCode !== null) resolve();
