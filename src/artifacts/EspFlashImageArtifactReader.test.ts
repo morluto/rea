@@ -196,7 +196,7 @@ it("inventories a zero-byte partition without reporting missing bytes", async ()
   });
 });
 
-it("clamps an empty partition before the caller origin to a nonnegative offset", async () => {
+it("keeps a zero-byte partition before the flash origin at a nonnegative offset", async () => {
   const esp32 = espImage({
     segments: ESP32C3_BOOTLOADER_SEGMENTS,
     chipId: 0x0000,
