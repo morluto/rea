@@ -3,7 +3,10 @@ import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { apiContractSchema } from "../../domain/apiContract/apiContract.js";
+import {
+  API_CONTRACT_FACT_BYTES,
+  apiContractSchema,
+} from "../../domain/apiContract/apiContract.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
@@ -400,6 +403,76 @@ it.each(["between-paths", "after-projection"] as const)(
       } finally {
         scheduled.mockRestore();
       }
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
+it.each(["path-admission", "invalid-paths"] as const)(
+  "retains authenticated partial facts when %s exhausts the facts allowance",
+  async (stage) => {
+    const { path } = await inputFile("{}");
+    // Leave enough allowance for invalid-info, but not a second diagnostic.
+    const titleLength = Math.floor(
+      (API_CONTRACT_FACT_BYTES -
+        "3.0.4".length * 12 -
+        4096 -
+        path.length * 12 -
+        (1024 + "/info".length * 12) -
+        500) /
+        12,
+    );
+    const document =
+      stage === "invalid-paths"
+        ? {
+            openapi: "3.0.4",
+            info: { title: "a".repeat(titleLength) },
+            paths: null,
+          }
+        : {
+            openapi: "3.0.4",
+            info: { title: "Capacity", version: "1" },
+            paths: {
+              "/retained": { get: {} },
+              [`/${"a".repeat(Math.ceil(API_CONTRACT_FACT_BYTES / 16))}`]: {},
+            },
+          };
+    const bytes = JSON.stringify(document);
+    await writeFile(path, bytes);
+    const resources = new ArtifactResourceScope();
+    try {
+      const result = await inspectApiContractEvidence({ path }, resources);
+      if (result.ok) throw new Error("Expected a retained-facts refusal");
+      expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+      const evidence = parseEvidence(result.error.partialObservation);
+      const retained = apiContractSchema.parse(evidence.normalized_result);
+      expect(retained.artifact).toEqual({
+        path,
+        bytes: Buffer.byteLength(bytes),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+      expect(retained.source_coverage).toMatchObject({
+        status: "partial",
+        paths_state: stage === "invalid-paths" ? "malformed" : "object",
+        path_entries_examined: stage === "invalid-paths" ? 0 : 1,
+      });
+      if (stage === "invalid-paths") {
+        expect(retained.info).toEqual({
+          title: document.info.title,
+          version: null,
+        });
+        expect(retained.diagnostics.map((row) => row.code)).toEqual([
+          "invalid-info",
+        ]);
+        expect(retained.operations).toEqual([]);
+      } else {
+        expect(retained.operations.map((row) => row.path)).toEqual([
+          "/retained",
+        ]);
+        expect(retained.diagnostics).toEqual([]);
+      }
+      expect(await readFile(path, "utf8")).toBe(bytes);
     } finally {
       await resources.close();
     }

@@ -366,7 +366,7 @@ const contractReport = (
     limitations: [
       ...(incomplete
         ? [
-            "Traversal stopped before the inventory was complete. Counts describe the retained rows.",
+            "Traversal stopped before the inventory was complete. Row counts describe retained facts; path_entries_examined counts fully traversed entries, excluding an interrupted entry whose rows may be retained.",
           ]
         : []),
       "Operations are document declarations, not evidence of runtime implementation, reachability or authorization.",

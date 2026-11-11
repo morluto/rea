@@ -368,3 +368,67 @@ it("retains an interpreted path when cancellation interrupts traversal", () => {
   });
   expect(complete.source_coverage.status).toBe("complete-within-scope");
 });
+
+it("does not count a partially traversed Path Item as examined on cancellation", () => {
+  const input = document({
+    "/first": { get: {} },
+    "/second": {
+      post: {},
+      ...Object.fromEntries(
+        Array.from({ length: 128 }, (_, index) => [`x-${index}`, "metadata"]),
+      ),
+    },
+  });
+  const complete = report(input);
+  expect(complete.source_coverage.path_entries_examined).toBe(2);
+  let reachedCompletion = false;
+  let observedMidPathCancellation = false;
+  let observedCompletedFirstPath = false;
+  for (let checkpoint = 1; checkpoint <= 256; checkpoint++) {
+    const steps = parseApiContractSteps(input, artifact);
+    let done = false;
+    for (let advance = 0; advance < checkpoint; advance++) {
+      const next = steps.next();
+      if (next.done) {
+        expect(next.value).toEqual({ ok: true, value: complete });
+        done = true;
+        break;
+      }
+    }
+    if (done) {
+      reachedCompletion = true;
+      break;
+    }
+    const reason = { stage: "path-traversal", checkpoint };
+    const cancellation = new AnalysisCancelledError("inspect_api_contract", {
+      cause: reason,
+    });
+    const stopped = steps.throw(cancellation);
+    if (!stopped.done || stopped.value.ok)
+      throw new Error("Expected cancellation");
+    expect(stopped.value.error).toBe(cancellation);
+    expect(stopped.value.error.cause).toBe(reason);
+    if (cancellation.partialObservation === undefined) continue;
+    const partial = apiContractSchema.parse(cancellation.partialObservation);
+    expect(partial.artifact).toEqual(complete.artifact);
+    expect(partial.contract_id).toBe(complete.contract_id);
+    expect(partial.info).toEqual(complete.info);
+    expect(partial.operations).toEqual(
+      complete.operations.slice(0, partial.operations.length),
+    );
+    expect(partial.summary.operation_slots).toBe(partial.operations.length);
+    expect(partial.source_coverage.status).toBe("partial");
+    // Every actual yield precedes completion of the second (last) Path Item.
+    expect(partial.source_coverage.path_entries_examined).toBeLessThan(2);
+    expect(partial.source_coverage.path_entries_examined).toBeLessThanOrEqual(
+      partial.operations.length,
+    );
+    if (partial.source_coverage.path_entries_examined === 1) {
+      if (partial.operations.length === 1) observedCompletedFirstPath = true;
+      if (partial.operations.length === 2) observedMidPathCancellation = true;
+    }
+  }
+  expect(reachedCompletion).toBe(true);
+  expect(observedCompletedFirstPath).toBe(true);
+  expect(observedMidPathCancellation).toBe(true);
+});
