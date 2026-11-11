@@ -162,6 +162,40 @@ it("treats a count parsed from a property access as numeric without a suffix", (
   ).toBe(false);
 });
 
+it("distinguishes numeric values from unrelated reads in numeric expressions", () => {
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/limits.ts",
+      source: `
+        const flag = Number(process.env.REA_ANALYSIS_PROVIDER === "ghidra");
+        const conditional = Number(process.env.REA_ANALYSIS_PROVIDER ? 1 : 2);
+        const truthy = Number(process.env.REA_ANALYSIS_PROVIDER && 42);
+        const indirect = Number(getValue(process.env.REA_ANALYSIS_PROVIDER));
+        function shadow(Number) { return Number.parseInt(process.env.REA_SHADOWED_ENTRY_LIMIT); }
+        function shadowParser(parseInt, parseFloat) {
+          return parseInt(process.env.REA_SHADOWED_ONE) + parseFloat(process.env.REA_SHADOWED_TWO);
+        }
+        const direct = Number(process.env.REA_ARCHIVE_ENTRY_LIMIT ?? "8");
+        const unary = +process.env.REA_FIRST_ENTRY_LIMIT;
+        const parsed = Number.parseInt(process.env.REA_SECOND_ENTRY_LIMIT, 10);
+        const adjusted = Number(process.env.REA_THIRD_ENTRY_LIMIT - 1);
+        const scaled = parseInt(process.env.REA_FOURTH_ENTRY_LIMIT * 2);
+        const templated = Number(\`\${process.env.REA_FIFTH_ENTRY_LIMIT}\`);
+      `,
+    },
+  ]);
+  expect(discovered.has("REA_ANALYSIS_PROVIDER")).toBe(false);
+  expect(discovered.has("REA_SHADOWED_ENTRY_LIMIT")).toBe(false);
+  expect(discovered.has("REA_SHADOWED_ONE")).toBe(false);
+  expect(discovered.has("REA_SHADOWED_TWO")).toBe(false);
+  expect(discovered.has("REA_ARCHIVE_ENTRY_LIMIT")).toBe(true);
+  expect(discovered.has("REA_FIRST_ENTRY_LIMIT")).toBe(true);
+  expect(discovered.has("REA_SECOND_ENTRY_LIMIT")).toBe(true);
+  expect(discovered.has("REA_THIRD_ENTRY_LIMIT")).toBe(true);
+  expect(discovered.has("REA_FOURTH_ENTRY_LIMIT")).toBe(true);
+  expect(discovered.has("REA_FIFTH_ENTRY_LIMIT")).toBe(true);
+});
+
 it("does not let diagnostic template prose stand in for a removed producer", () => {
   const name = "REA_NEW_MAX_BYTES";
   const prose = discoverNumericLimitUses([
