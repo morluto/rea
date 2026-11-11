@@ -241,42 +241,58 @@ const callReturnsReassignedMember = (
   index: JavaScriptReceiverIndex,
   site: ReferenceSourceRequireInvocation,
 ): boolean => {
-  const member = returnedMemberExpression(site.callee);
-  if (member === undefined) return false;
-  const chain = semanticMemberChain(member);
-  if (chain === undefined || !t.isIdentifier(chain.root)) return false;
-  const binding = index.bindingForReferenceAt(member);
-  if (binding === undefined) return false;
-  return binding.memberWrites.some(
-    (write) =>
-      write.receiverIdentity === "definite" &&
-      write.node !== undefined &&
-      t.isAssignmentExpression(write.node, { operator: "=" }) &&
-      semanticEffectPathMatches(write.path, chain.members) &&
-      semanticDefiniteEffectPrecedesReference(
-        write.node,
-        site,
-        index.bindings.parentsByNode,
-      ),
-  );
+  return returnedMemberExpressions(site.callee).some((member) => {
+    const chain = semanticMemberChain(member);
+    if (chain === undefined || !t.isIdentifier(chain.root)) return false;
+    const binding = index.bindingForReferenceAt(member);
+    if (binding === undefined) return false;
+    return binding.memberWrites.some(
+      (write) =>
+        write.receiverIdentity === "definite" &&
+        write.node !== undefined &&
+        t.isAssignmentExpression(write.node, { operator: "=" }) &&
+        semanticEffectPathMatches(write.path, chain.members) &&
+        semanticDefiniteEffectPrecedesReference(
+          write.node,
+          site,
+          index.bindings.parentsByNode,
+        ),
+    );
+  });
 };
 
-const returnedMemberExpression = (
+const returnedMemberExpressions = (
   callee: t.Node,
-): t.MemberExpression | t.OptionalMemberExpression | undefined => {
+): readonly (t.MemberExpression | t.OptionalMemberExpression)[] => {
   const invoked = unwrapJavaScriptExpression(callee).node;
   if (!t.isCallExpression(invoked) && !t.isOptionalCallExpression(invoked))
-    return undefined;
+    return [];
   const owner = unwrapJavaScriptExpression(invoked.callee).node;
-  if (!t.isFunction(owner) || owner.async || owner.generator) return undefined;
+  if (!t.isFunction(owner) || owner.async || owner.generator) return [];
   const returned = t.isBlockStatement(owner.body)
     ? singleReturnedExpression(owner.body)
     : owner.body;
-  if (returned === undefined) return undefined;
-  const value = unwrapJavaScriptExpression(returned).node;
-  return t.isMemberExpression(value) || t.isOptionalMemberExpression(value)
-    ? value
-    : undefined;
+  return returned === undefined ? [] : memberLeaves(returned);
+};
+
+const memberLeaves = (
+  node: t.Node,
+): readonly (t.MemberExpression | t.OptionalMemberExpression)[] => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (t.isMemberExpression(value) || t.isOptionalMemberExpression(value))
+    return [value];
+  if (t.isSequenceExpression(value)) {
+    const last = value.expressions.at(-1);
+    return last === undefined ? [] : memberLeaves(last);
+  }
+  if (t.isConditionalExpression(value))
+    return [
+      ...memberLeaves(value.consequent),
+      ...memberLeaves(value.alternate),
+    ];
+  if (t.isLogicalExpression(value))
+    return [...memberLeaves(value.left), ...memberLeaves(value.right)];
+  return [];
 };
 
 const singleReturnedExpression = (
