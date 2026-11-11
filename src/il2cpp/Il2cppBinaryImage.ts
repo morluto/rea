@@ -27,7 +27,10 @@ import {
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
 } from "../native/metadata/ElfPointerRelocations.js";
-import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
+import {
+  Il2cppBinaryFormatFailure,
+  IL2CPP_BINARY_BYTES,
+} from "./Il2cppBinaryFormat.js";
 const MACHO_CPU = new Map([
   [0x01000007, "amd64"],
   [0x0100000c, "arm64"],
@@ -125,14 +128,18 @@ export function* openImageSteps(
   let elfPointerOverlay: ElfVirtualPointerWrites | undefined;
   try {
     if (container.format === "elf")
-      elfPointerOverlay = yield* readElfPointerValuesSteps(image, {
-        bits: 64,
-        little: true,
-        machine: container.elf.machine,
-        dynamicSegments: container.elf.dynamicSegments,
-        mappings: container.mappings,
-        zeroFills: container.zero_fills,
-      });
+      elfPointerOverlay = yield* readElfPointerValuesSteps(
+        image,
+        {
+          bits: 64,
+          little: true,
+          machine: container.elf.machine,
+          dynamicSegments: container.elf.dynamicSegments,
+          mappings: container.mappings,
+          zeroFills: container.zero_fills,
+        },
+        IL2CPP_BINARY_BYTES,
+      );
   } catch (cause) {
     if (cause instanceof ElfPointerRelocationFailure)
       throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
