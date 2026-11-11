@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { apiContractSchema, type ApiContractArtifact } from "./apiContract.js";
+import {
+  API_CONTRACT_FACT_BYTES,
+  apiContractSchema,
+  type ApiContractArtifact,
+} from "./apiContract.js";
 import { parseApiContractSteps } from "./parseApiContract.js";
 import { AnalysisCancelledError } from "../analysisErrorCore.js";
 
@@ -320,6 +324,25 @@ it("bounds expanded identities and source pointers before building a giant row",
     status: "partial",
     path_entries_examined: 1,
   });
+});
+
+it("keeps the invalid-info diagnostic when the paths diagnostic exhausts the allowance", () => {
+  const retainedBeforePaths =
+    "3.0.4".length * 12 +
+    4096 +
+    artifact.path.length * 12 +
+    1024 +
+    "/info".length * 12;
+  const title = "t".repeat(
+    Math.floor((API_CONTRACT_FACT_BYTES - retainedBeforePaths) / 12),
+  );
+  const result = parse({ openapi: "3.0.4", info: { title } });
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a retained-facts refusal");
+  const partial = apiContractSchema.parse(result.error.partialObservation);
+  expect(partial.diagnostics.map(({ code }) => code)).toEqual(["invalid-info"]);
+  expect(partial.info).toEqual({ title, version: null });
+  expect(partial.source_coverage.path_entries_examined).toBe(0);
 });
 
 it("retains an interpreted path when cancellation interrupts traversal", () => {
