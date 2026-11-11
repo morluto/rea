@@ -5,8 +5,10 @@
 Follow the existing artifact readers. `src/domain/windows/ntfsMft.ts` owns FILE
 record bytes and coverage; `src/domain/artifactFormatMetadata.ts` owns the
 `ntfs-mft` result schema. `ntfsMftAttributes.ts` owns verified attribute
-values and descriptor contracts. Journal joins retain only record headers
-outside the selected 32-record detail page. `NtfsMftArtifactReader` reads the admitted file
+values and descriptor contracts. Journal joins retain an ordered identity/header
+index and its reference lookup per validated acquisition pair. MFT detail pages
+select at most 32 records from this index and decode only their retained source
+bytes; page selection never triggers a new whole-MFT scan. `NtfsMftArtifactReader` reads the admitted file
 through `ArtifactFileSource` and exposes its facts through `formatMetadata()`.
 A record stream is its own content, so the root occurrence carries every fact
 and no members are enumerated.
