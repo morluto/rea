@@ -3,6 +3,12 @@ import { join } from "node:path";
 import { open, unlink } from "node:fs/promises";
 
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactFileCleanupFailure,
+  artifactFilePrimaryFacts,
+  withArtifactFileHandle,
+} from "../artifacts/ArtifactFileOperation.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 /**
@@ -19,7 +25,7 @@ export type GhidraTemporaryDirectoryProbe =
   | {
       readonly ok: false;
       readonly directory: string;
-      /** Whether creating/writing the file or removing it failed. */
+      /** Whether writing failed or closing/removing the probe failed. */
       readonly stage: "write" | "cleanup";
       /** Node system code such as EACCES or EPERM, when reported. */
       readonly code: string | undefined;
@@ -31,18 +37,31 @@ export type GhidraTemporaryDirectoryProbe =
 /** Filesystem seam so classification is testable without a restricted host. */
 export interface GhidraTemporaryDirectoryHost {
   readonly sessionRoot: () => string;
-  readonly writeProbe: (path: string) => Promise<void>;
+  readonly writeProbe: (
+    path: string,
+    resourceOwner: RetainedResourceScope,
+  ) => Promise<void>;
   readonly removeProbe: (path: string) => Promise<void>;
 }
 
 const systemHost: GhidraTemporaryDirectoryHost = {
   sessionRoot: () => ghidraSessionRoot(),
-  writeProbe: async (path) => {
-    const handle = await open(path, "wx", 0o600);
+  writeProbe: async (path, resourceOwner) => {
+    const resources = new ArtifactResourceScope();
     try {
-      await handle.writeFile("rea doctor probe\n");
+      await withArtifactFileHandle(
+        path,
+        await open(path, "wx", 0o600),
+        resources,
+        undefined,
+        (handle) => handle.writeFile("rea doctor probe\n"),
+      );
     } finally {
-      await handle.close();
+      if (resources.hasPending)
+        resourceOwner.retain(
+          { close: () => resources.close(), cleanupResources: [path] },
+          path,
+        );
     }
   },
   removeProbe: unlink,
@@ -77,9 +96,16 @@ export const probeGhidraTemporaryDirectory = async (
   const retain = () =>
     resourceOwner.retain({ close: remove, cleanupResources: [path] }, path);
   try {
-    await host.writeProbe(path);
+    await host.writeProbe(path, resourceOwner);
   } catch (cause: unknown) {
-    // A failed write may still have created the entry; try to remove it.
+    const cleanupOnly =
+      cause instanceof ArtifactFileCleanupFailure &&
+      cause.fileCleanupFailure.outcome.kind === "completed";
+    const primary = cleanupOnly
+      ? cause.fileCleanupFailure.cleanupCause
+      : artifactFilePrimaryFacts(cause).cause;
+    const stage = cleanupOnly ? "cleanup" : "write";
+    // A failed write or close may leave an entry; removal has its own owner.
     const removed = await remove().then(
       () => true,
       () => false,
@@ -88,9 +114,9 @@ export const probeGhidraTemporaryDirectory = async (
     return {
       ok: false,
       directory,
-      stage: "write",
-      code: errorCode(cause),
-      message: errorMessage(cause),
+      stage,
+      code: errorCode(primary),
+      message: errorMessage(primary),
       ...(removed ? {} : { retainedPath: path }),
     };
   }
