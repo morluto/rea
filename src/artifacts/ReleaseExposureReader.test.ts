@@ -4839,3 +4839,59 @@ it("keeps a distinct normalized sibling linker map beside a declared one", async
   const scanned = await inspect(script);
   expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
 });
+
+describe("ReleaseExposureReader expanded package member identity", () => {
+  // Split so the test file does not end with a map directive of its own.
+  const inlineMapScript = `//# ${"sourceMappingURL"}=data:application/json;base64,${Buffer.from(
+    JSON.stringify({
+      version: 3,
+      sources: ["src/app.ts"],
+      sourcesContent: ["export {};"],
+      mappings: "",
+    }),
+  ).toString("base64")}\n`;
+
+  it("matches an on-disk page's script target inside an expanded ASAR", async () => {
+    const root = await createTestTempDirectory("rea-expanded-script-target-");
+    await writeFile(
+      join(root, "a.html"),
+      '<script src="app.asar/boot.map"></script>',
+    );
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([{ name: "boot.map", bytes: Buffer.from(inlineMapScript) }]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+  });
+
+  it("matches an absolute file: map declaration inside an expanded ASAR", async () => {
+    const root = await createTestTempDirectory("rea-expanded-map-target-");
+    const target = pathToFileURL(join(root, "app.asar", "app.js.data"));
+    await writeFile(
+      join(root, "a.js"),
+      `//# ${"sourceMappingURL"}=${target.href}\n`,
+    );
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([
+        {
+          name: "app.js.data",
+          bytes: Buffer.from(
+            JSON.stringify({
+              version: 3,
+              sources: ["src/app.ts"],
+              sourcesContent: ["export {};"],
+              mappings: "",
+            }),
+          ),
+        },
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+});

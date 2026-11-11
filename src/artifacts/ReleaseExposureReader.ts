@@ -527,7 +527,11 @@ const scanOccurrences = async (
       ? "directory"
       : sniffNativeFormat(input.snapshot)) ??
     "file";
-  const state = createState(input.visitText, input.asarHeaderAdmission);
+  const state = createState(
+    input.visitText,
+    input.asarHeaderAdmission,
+    input.path,
+  );
   progress.assemble = () => assembleScan(input, state, rootFormat);
   if (EXTRACTABLE.has(rootFormat)) state.formats.add(rootFormat);
   if (input.snapshot !== null)
@@ -841,13 +845,21 @@ interface ScanState {
   examinedScripts: Set<string>;
   visitText: ReleaseExposureTextVisitor;
   readonly asarHeaderAdmission: AsarHeaderAdmission;
+  /**
+   * The selected path. An expanded package member reports its location
+   * relative to it, so lookups resolve that location here rather than
+   * against the process working directory.
+   */
+  readonly anchor: string;
 }
 
 const createState = (
   visitText: ReleaseExposureTextVisitor,
   asarHeaderAdmission: AsarHeaderAdmission,
+  anchor: string,
 ): ScanState => ({
   asarHeaderAdmission,
+  anchor,
   embedded: 0,
   withoutSources: 0,
   unparsedMaps: 0,
@@ -1035,7 +1047,7 @@ const examineMember = async (
   const { packageFormat } = listed;
   if (packageFormat !== null) state.formats.add(packageFormat);
   let readable = false;
-  const key = memberLocationKey(listed.location);
+  const key = memberLocationKey(state, listed.location);
   const map = isDeclaredMap(state, listed);
   const member =
     !map &&
@@ -1234,7 +1246,7 @@ const examineShebangMap = (
   loaded: MemberRead,
   bytesReadBefore: number,
 ): boolean => {
-  const key = memberLocationKey(member.location);
+  const key = memberLocationKey(state, member.location);
   state.examinedMaps.delete(key);
   state.examinedLocations.add(key);
   state.examinedScripts.add(key);
@@ -1597,7 +1609,7 @@ const scriptRoleOfRead = (
   if (holdsScripts(member)) return member;
   const header = headerOfRead(loaded);
   if (header === null || !hasNodeShebang(header)) return member;
-  state.examinedScripts.add(memberLocationKey(member.location));
+  state.examinedScripts.add(memberLocationKey(state, member.location));
   return { ...member, kind: "javascript" };
 };
 
@@ -1885,7 +1897,7 @@ const examineProbedText = async (
   } else if (hasNodeShebang(prefix)) {
     // The probe already read the header, so the role holds even when the
     // text allowance is spent before the text reader reads it again.
-    state.examinedScripts.add(memberLocationKey(member.location));
+    state.examinedScripts.add(memberLocationKey(state, member.location));
     await examineTextMember(state, { ...member, kind: "javascript" }, context);
   } else if (
     prefix.length > 0 &&
@@ -1932,7 +1944,7 @@ const noteScriptReference = (
   baseHref: string | null,
 ): void => {
   try {
-    const page = pathToFileURL(member.location);
+    const page = pathToFileURL(anchoredLocation(state, member.location));
     const url = new URL(
       scriptPath,
       baseHref === null ? page : new URL(baseHref, page),
@@ -1951,7 +1963,7 @@ const noteScriptReference = (
  * and its script was not examined, so its source-map coverage stays unknown.
  */
 const noteScriptTarget = (state: ScanState, location: string): void => {
-  const target = memberLocationKey(location);
+  const target = memberLocationKey(state, location);
   if (state.examinedScripts.has(target)) return;
   const spellings = state.scriptTargets.get(target);
   if (
@@ -1962,7 +1974,7 @@ const noteScriptTarget = (state: ScanState, location: string): void => {
     state.skippedMaps += 1;
     return;
   }
-  const spelling = resolve(location);
+  const spelling = anchoredLocation(state, location);
   if (spellings?.has(spelling)) return;
   state.scriptTargetBytes += Buffer.byteLength(spelling);
   if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES) {
@@ -1979,8 +1991,8 @@ const noteScriptTarget = (state: ScanState, location: string): void => {
  */
 const isScriptTarget = (state: ScanState, location: string): boolean =>
   state.scriptTargets
-    .get(memberLocationKey(location))
-    ?.has(resolve(location)) === true;
+    .get(memberLocationKey(state, location))
+    ?.has(anchoredLocation(state, location)) === true;
 
 const examineInlineMaps = (
   state: ScanState,
@@ -2062,7 +2074,10 @@ const noteLocalMapReference = (
     state.skippedMaps += 1;
     return;
   }
-  noteMapTarget(state, resolve(dirname(member.location), decoded));
+  noteMapTarget(
+    state,
+    resolve(dirname(anchoredLocation(state, member.location)), decoded),
+  );
 };
 
 /**
@@ -2071,7 +2086,7 @@ const noteLocalMapReference = (
  * stays unassessed.
  */
 const noteMapTarget = (state: ScanState, location: string): void => {
-  const target = memberLocationKey(location);
+  const target = memberLocationKey(state, location);
   // A map read before its declaration may have settled as a linker map.
   state.skippedMaps += retractLinkerMapGuesses(state, location);
   if (state.examinedMaps.has(target)) return;
@@ -2080,7 +2095,7 @@ const noteMapTarget = (state: ScanState, location: string): void => {
     state.skippedMaps += 1;
     return;
   }
-  const spelling = resolve(location);
+  const spelling = anchoredLocation(state, location);
   if (spellings?.has(spelling)) return;
   state.mapTargetBytes += Buffer.byteLength(spelling);
   if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES) {
@@ -2096,8 +2111,11 @@ const noteMapTarget = (state: ScanState, location: string): void => {
  * does not prove which of its occurrences a declaration means.
  */
 const claimMapTarget = (state: ScanState, location: string): boolean => {
-  const key = memberLocationKey(location);
-  if (state.mapTargets.get(key)?.has(resolve(location)) !== true) return false;
+  const key = memberLocationKey(state, location);
+  if (
+    state.mapTargets.get(key)?.has(anchoredLocation(state, location)) !== true
+  )
+    return false;
   state.claimedMapTargets.add(key);
   return true;
 };
@@ -2107,18 +2125,30 @@ const claimMapTarget = (state: ScanState, location: string): boolean => {
  * NFC, so a declared target spelled in another normalization form still
  * names the same member. The declared URL itself is left as written.
  */
-const memberLocationKey = (location: string): string =>
-  logicalPathNfc(resolve(location));
+const memberLocationKey = (state: ScanState, location: string): string =>
+  logicalPathNfc(anchoredLocation(state, location));
+
+/**
+ * Where a member location lives. A disk location is already absolute; an
+ * expanded package member's location is relative to the selected path.
+ */
+const anchoredLocation = (state: ScanState, location: string): string =>
+  resolve(state.anchor, location);
 
 /** Retract one source occurrence; a normalized lookup bucket is not identity. */
 const retractLinkerMapGuesses = (
   state: ScanState,
   location: string,
 ): number => {
-  const key = memberLocationKey(location);
+  const key = memberLocationKey(state, location);
   const paths = state.linkerMapGuesses.get(key);
   if (paths === undefined) return 0;
-  if (paths.delete(location)) {
+  const spelling = anchoredLocation(state, location);
+  const guess = [...paths].find(
+    (path) => anchoredLocation(state, path) === spelling,
+  );
+  if (guess !== undefined) {
+    paths.delete(guess);
     if (paths.size === 0) state.linkerMapGuesses.delete(key);
     return 1;
   }
@@ -2136,7 +2166,7 @@ const noteLinkerMapGuess = (state: ScanState, location: string): void => {
     state.skippedCompanions += 1;
     return;
   }
-  const key = memberLocationKey(location);
+  const key = memberLocationKey(state, location);
   const paths = state.linkerMapGuesses.get(key) ?? new Set();
   state.linkerMapGuesses.set(key, paths.add(location));
 };
@@ -2148,7 +2178,7 @@ const noteLinkerMapGuess = (state: ScanState, location: string): void => {
  */
 const isDeclaredMap = (state: ScanState, member: MemberView): boolean => {
   if (member.kindStated && member.kind === "source-map") return true;
-  const key = memberLocationKey(member.location);
+  const key = memberLocationKey(state, member.location);
   if (state.mapTargets.has(key)) return true;
   if (member.kind === "javascript" || isScriptTarget(state, member.location))
     return false;
@@ -3375,7 +3405,7 @@ const noteUnfollowedMapLink = (
     !canDeclareMap({ kind: "file", logical })
   )
     return;
-  const key = memberLocationKey(location);
+  const key = memberLocationKey(state, location);
   state.examinedMaps.add(key);
   state.examinedScripts.add(key);
   state.skippedMaps += 1;
