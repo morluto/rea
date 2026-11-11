@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { JebProvider } from "./JebProvider.js";
@@ -454,12 +454,15 @@ describe("JebProvider target and endpoint selection", () => {
 });
 
 it("refuses remote endpoints before constructing a connection", () => {
+  const connectionFactory = vi.fn(() => scriptedConnection({}));
   expect(
     () =>
       new JebProvider({
+        connectionFactory,
         environment: { REA_JEB_MCP_URL: "http://example.com/mcp" },
       }),
   ).toThrow(AnalysisInputError);
+  expect(connectionFactory).not.toHaveBeenCalled();
 });
 
 it.each(["list_jeb_units", "decompile_jeb_item"] as const)(

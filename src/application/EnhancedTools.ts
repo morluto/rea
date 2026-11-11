@@ -9,6 +9,7 @@ import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInpu
 import {
   cleanupStoppedTraversal,
   readCallRelationships,
+  stopsTraversal,
 } from "./CallRelationshipTraversal.js";
 import { z } from "zod";
 
@@ -99,9 +100,16 @@ const missingPseudocodeError = (pseudocode: JsonValue): AnalysisError =>
       : "provider returned non-text pseudocode",
   );
 
-const isAnalysisCancellation = (
-  error: AnalysisError,
-): error is AnalysisCancelledError => error._tag === "AnalysisCancelledError";
+/** Complete and interrupted batches share one projection of admitted items. */
+const batchDecompileResult = (items: BatchDecompileItem[]) => {
+  const succeeded = items.filter(({ status }) => status === "ok").length;
+  return {
+    items,
+    total: items.length,
+    succeeded,
+    failed: items.length - succeeded,
+  };
+};
 
 /**
  * Composes direct provider operations into reverse-engineering tools.
@@ -434,30 +442,18 @@ export class EnhancedTools {
         address,
         signal,
       );
-      if (!result.ok && isAnalysisCancellation(result.error)) return result;
+      if (!result.ok && stopsTraversal(result.error)) return result;
       resolutions.push({ address, result });
     }
     const identities = await this.#batchIdentities(resolutions, signal);
     if (!identities.ok) return identities;
-    const decompilations = await this.#batchPseudocode(
-      identities.value,
-      signal,
-    );
-    if (!decompilations.ok) return decompilations;
-    const items = decompilations.value;
-    const succeeded = items.filter(({ status }) => status === "ok").length;
-    return ok({
-      items,
-      total: items.length,
-      succeeded,
-      failed: items.length - succeeded,
-    });
+    return this.#batchPseudocode(identities.value, signal);
   }
 
   async #batchIdentities(
     resolutions: readonly BatchResolution[],
     signal?: AbortSignal,
-  ): Promise<Result<BatchReadyItem[], AnalysisCancelledError>> {
+  ): Promise<Result<BatchReadyItem[], AnalysisError>> {
     const ready: BatchReadyItem[] = [];
     for (const { address, result } of resolutions) {
       if (!result.ok) {
@@ -485,7 +481,7 @@ export class EnhancedTools {
   async #batchPseudocode(
     ready: readonly BatchReadyItem[],
     signal?: AbortSignal,
-  ): Promise<Result<BatchDecompileItem[], AnalysisCancelledError>> {
+  ): EnhancedResult {
     const items: BatchDecompileItem[] = [];
     for (const { address, procedure, providerProcedure } of ready) {
       const observed = await this.#observe(
@@ -495,7 +491,13 @@ export class EnhancedTools {
         procedure.status === "resolved" ? "provider" : undefined,
       );
       if (!observed.ok) {
-        if (isAnalysisCancellation(observed.error)) return err(observed.error);
+        if (stopsTraversal(observed.error))
+          return items.length > 0 || observed.error.cleanupIncomplete
+            ? failedWithPartialResult(
+                observed.error,
+                batchDecompileResult(items),
+              )
+            : err(observed.error);
         items.push({
           address,
           procedure,
@@ -530,15 +532,15 @@ export class EnhancedTools {
         ...(limitations.length === 0 ? {} : { limitations }),
       });
     }
-    return ok(items);
+    return ok(batchDecompileResult(items));
   }
 
   async #batchProcedureIdentity(
     address: string,
     signal?: AbortSignal,
-  ): Promise<Result<BatchProcedureIdentity, AnalysisCancelledError>> {
+  ): Promise<Result<BatchProcedureIdentity, AnalysisError>> {
     const observed = await this.#call("address_name", { address }, signal);
-    if (!observed.ok && isAnalysisCancellation(observed.error))
+    if (!observed.ok && stopsTraversal(observed.error))
       return err(observed.error);
     const named =
       observed.ok &&

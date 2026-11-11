@@ -1,6 +1,6 @@
 import { bridgeMaxRequestBytesRecovery } from "../../../src/config/bridgeMaxRequestBytes.js";
 import { createServer } from "node:net";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -60,6 +60,34 @@ it("rejects a bridge ceiling below the floor at client construction", () => {
       }),
   ).toThrow(ConfigurationError);
 });
+
+it.each([false, true])(
+  "admits descriptor path bytes only when valid UTF-8 (malformed=%s)",
+  async (malformed) => {
+    const directory = await privateDirectory();
+    const currentFile = "/selected/\uFFFD";
+    await writeDescriptor(directory, SESSION, 9, TOKEN, { currentFile });
+    const path = join(directory, `cutter-${process.pid}-${SESSION}.json`);
+    if (malformed) {
+      const bytes = await readFile(path);
+      const marker = Buffer.from("\uFFFD");
+      const offset = bytes.indexOf(marker);
+      if (offset < 0) throw new Error("Missing literal UTF-8 fixture value");
+      await writeFile(
+        path,
+        Buffer.concat([
+          bytes.subarray(0, offset),
+          Buffer.from([0xff]),
+          bytes.subarray(offset + marker.length),
+        ]),
+      );
+    }
+    const client = clientFor(directory, "8192");
+    const descriptors = await client.listDescriptors();
+    expect(descriptors).toHaveLength(malformed ? 0 : 1);
+    if (!malformed) expect(descriptors[0]?.current_file).toBe(currentFile);
+  },
+);
 
 const closedPort = async (): Promise<number> => {
   const server = createServer();

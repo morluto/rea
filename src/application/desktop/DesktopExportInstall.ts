@@ -19,7 +19,7 @@ import {
   withExtraPackages,
 } from "../../domain/desktop/appExportInstall.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
-import { isPortableBundleName } from "../environment/environmentBundle.js";
+import { isPortableBundleName } from "../../domain/portableBundleName.js";
 
 const OPERATION = "export_desktop_application";
 const MAX_DOWNLOAD_INSTALL_BYTES = 64 * 1024;

@@ -45,7 +45,10 @@ export interface NativeSection {
   readonly entry_size: bigint;
   /** `sh_addralign` for ELF. PE sections have no note alignment and use 1. */
   readonly alignment: bigint;
+  /** Declared stored bytes are present; compressed bytes are not decoded content. */
   readonly file_backed: boolean;
+  /** ELF SHF_COMPRESSED storage encoding; always false for PE sections. */
+  readonly compressed: boolean;
 }
 /** Program header types retained for load, dynamic, hardening, and unwind consumers. */
 export const ELF_PT_NOTE = 4 as const;
@@ -308,6 +311,7 @@ export function* readElfSectionDirectory(
         alignment: section.alignment,
         file_backed:
           type !== 8 && declaredFileRange(fileSize, offset, size).file_backed,
+        compressed: section.compressed,
       });
     }
   }
@@ -410,6 +414,7 @@ export function* readPeSectionDirectory(
         BigInt(row.offset),
         BigInt(row.size),
       ).file_backed,
+      compressed: false,
     });
   }
   return {

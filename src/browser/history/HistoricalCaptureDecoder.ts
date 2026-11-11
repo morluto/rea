@@ -1,3 +1,4 @@
+import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
 import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import {
   decodeCaptureProtobuf,
@@ -49,6 +50,9 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
+  selectedWebNetworkCaptureBudgets,
+  webNetworkCaptureBudgetFacts,
+  webNetworkCaptureBudgetRecovery,
   selectedWebNetworkCaptureTimeoutMs,
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
@@ -104,25 +108,30 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
-    try {
-      return await this.#resources.run(() =>
-        this.inspectAdmitted(input, options),
-      );
-    } catch (cause: unknown) {
-      const error = historicalCaptureFailure(
-        input,
-        cause,
-        "capture-read",
-        options,
-        this.#heap,
-      );
-      return err(
-        redactExplicitFailure(
-          withCaptureReaderCleanup(error, cause),
-          input.sensitive_values,
-        ),
-      );
-    }
+    return withCaptureBudgets(
+      selectedWebNetworkCaptureBudgets(input),
+      async () => {
+        try {
+          return await this.#resources.run(() =>
+            this.inspectAdmitted(input, options),
+          );
+        } catch (cause: unknown) {
+          const error = historicalCaptureFailure(
+            input,
+            cause,
+            "capture-read",
+            options,
+            this.#heap,
+          );
+          return err(
+            redactExplicitFailure(
+              withCaptureReaderCleanup(error, cause),
+              input.sensitive_values,
+            ),
+          );
+        }
+      },
+    );
   }
 
   private async inspectAdmitted(
@@ -154,7 +163,7 @@ export class HistoricalCaptureDecoder {
         );
       const snapshot = await readStableArtifact(
         input.capture_path,
-        WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+        captureBudgets().inputBytes,
         options?.signal,
         undefined,
         this.#resources,
@@ -181,6 +190,7 @@ export class HistoricalCaptureDecoder {
           snapshot_path: snapshotPath,
           reply_path: replyPath,
           sensitive_values: input.sensitive_values,
+          budgets: captureBudgets(),
         }),
         { mode: 0o600, flag: "wx" },
       );
@@ -234,28 +244,54 @@ export class HistoricalCaptureDecoder {
             },
           ]);
         if (reply.reason === "input-limit")
-          throw new AnalysisInputError(OPERATION, undefined, [
+          throw new AnalysisInputError(
+            OPERATION,
             {
-              path: ["capture_path", reply.pointer],
-              reason: "out_of_range",
-              message: reply.message,
-              expected: {
-                maximum_capture_nesting: WEB_NETWORK_CAPTURE_LIMITS.depth,
+              diagnostics: {
+                budget: webNetworkCaptureBudgetFacts(
+                  input,
+                  "max_nesting_depth",
+                ),
               },
+              remediationAction: webNetworkCaptureBudgetRecovery(
+                input,
+                "max_nesting_depth",
+              ),
             },
-          ]);
+            [
+              {
+                path: ["capture_path", reply.pointer],
+                reason: "out_of_range",
+                message: reply.message,
+                expected: {
+                  maximum_capture_nesting: captureBudgets().depth,
+                },
+              },
+            ],
+          );
         if (reply.reason === "expanded-limit")
-          throw new AnalysisInputError(OPERATION, undefined, [
+          throw new AnalysisInputError(
+            OPERATION,
             {
-              path: ["capture_path", reply.pointer],
-              reason: "out_of_range",
-              message: reply.message,
-              expected: {
-                maximum_expanded_capture_bytes:
-                  WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+              diagnostics: {
+                budget: webNetworkCaptureBudgetFacts(input, "max_input_bytes"),
               },
+              remediationAction: webNetworkCaptureBudgetRecovery(
+                input,
+                "max_input_bytes",
+              ),
             },
-          ]);
+            [
+              {
+                path: ["capture_path", reply.pointer],
+                reason: "out_of_range",
+                message: reply.message,
+                expected: {
+                  maximum_expanded_capture_bytes: captureBudgets().inputBytes,
+                },
+              },
+            ],
+          );
         if (reply.reason === "resource-limit")
           throw captureMemoryFailure(
             input,
@@ -279,11 +315,15 @@ export class HistoricalCaptureDecoder {
             reply.message,
           );
         throw new AnalysisOutputError(OPERATION, reply.message, {
-          userMessage: `The capture decoder refused a complete reply exceeding ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)} bytes: ${reply.message}`,
-          remediationAction: `The ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte complete-reply allowance has no runtime override. Select a smaller capture exported by its producer when a narrower observation is acceptable. Record selection, delivery mode and worker memory do not raise it; no completed capture Evidence is available from this refusal.`,
+          userMessage: `The capture decoder refused a complete reply exceeding ${String(captureBudgets().outputBytes)} bytes: ${reply.message}`,
+          remediationAction: webNetworkCaptureBudgetRecovery(
+            input,
+            "max_reply_bytes",
+          ),
           diagnostics: {
-            maximum_reply_bytes: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+            maximum_reply_bytes: captureBudgets().outputBytes,
             boundary: "historical-capture-reply",
+            budget: webNetworkCaptureBudgetFacts(input, "max_reply_bytes"),
           },
         });
       }
@@ -309,7 +349,7 @@ export class HistoricalCaptureDecoder {
           "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
           "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
           "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          `Complete evidence is bounded by a ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, a ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, and a ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap. Those have no runtime override. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
+          `Complete evidence is bounded by a ${String(captureBudgets().inputBytes)}-byte input budget, a ${String(captureBudgets().outputBytes)}-byte reply budget, and a ${String(captureBudgets().depth)}-level nesting cap. Set max_input_bytes, max_reply_bytes or max_nesting_depth explicitly for the next call to change those budgets without restarting REA. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
         ],
       };
       if (input.format === "qlog") {
@@ -352,13 +392,14 @@ export class HistoricalCaptureDecoder {
                   "capacity",
                   cause.message,
                   {
-                    maximum_encoded_capture_bytes:
-                      WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+                    maximum_encoded_capture_bytes: captureBudgets().outputBytes,
                   },
                   {
                     retryable: false,
-                    remediationAction:
-                      "Select smaller records, or inspect the retained original source bytes.",
+                    remediationAction: webNetworkCaptureBudgetRecovery(
+                      input,
+                      "max_reply_bytes",
+                    ),
                   },
                 )
               : cause instanceof CaptureFormatError

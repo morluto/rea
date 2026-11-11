@@ -15,6 +15,7 @@ import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   providerRetryAction,
@@ -28,7 +29,10 @@ import {
   type LinuxCgroupMemoryState,
 } from "../process/LinuxCgroupMemory.js";
 import { PendingOperations } from "../process/PendingOperations.js";
-import { DecodedNdjsonLineBuffer } from "../process/DecodedNdjsonLineBuffer.js";
+import {
+  Utf8NdjsonLineBuffer,
+  Utf8NdjsonDecodingError,
+} from "../process/Utf8NdjsonLineBuffer.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   SharedStartupAttempt,
@@ -186,10 +190,23 @@ export class GhidraClient {
       }),
     protocolFailure: (message, cause) => this.#abortProtocol(message, cause),
   });
-  readonly #responseLines = new DecodedNdjsonLineBuffer();
-  readonly #onSocketData = (chunk: string): void => {
-    for (const line of this.#responseLines.push(chunk))
-      this.#responseRouter.route(line);
+  readonly #responseLines = new Utf8NdjsonLineBuffer();
+  readonly #onSocketData = (chunk: Buffer): void => {
+    try {
+      for (const line of this.#responseLines.push(chunk))
+        this.#responseRouter.route(line);
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
+    }
+  };
+  readonly #onSocketEnd = (): void => {
+    try {
+      this.#responseLines.finish();
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
+    }
   };
   readonly #onSocketError = (): void => {
     this.#failAll(this.#failure("process", "Ghidra bridge socket failed"));
@@ -400,6 +417,8 @@ export class GhidraClient {
       readonly signal?: AbortSignal;
       readonly progress?: ProgressReporter;
       readonly decompileTimeoutSeconds?: number | null;
+      readonly decompileMaxPayloadMiB?: number | null;
+      readonly valueFlowLimits?: NativeValueFlowLimits;
     } = {},
   ): Promise<Result<JsonValue, GhidraSessionError>> {
     const started = await this.start(options.signal, options.progress);
@@ -423,6 +442,8 @@ export class GhidraClient {
     options: {
       readonly signal?: AbortSignal;
       readonly decompileTimeoutSeconds?: number | null;
+      readonly decompileMaxPayloadMiB?: number | null;
+      readonly valueFlowLimits?: NativeValueFlowLimits;
     },
   ): Promise<Result<JsonValue, GhidraSessionError>> {
     const pattern =
@@ -445,6 +466,12 @@ export class GhidraClient {
         ...(options.decompileTimeoutSeconds === undefined
           ? {}
           : { decompileTimeoutSeconds: options.decompileTimeoutSeconds }),
+        ...(options.valueFlowLimits === undefined
+          ? {}
+          : { valueFlowLimits: options.valueFlowLimits }),
+        ...(options.decompileMaxPayloadMiB === undefined
+          ? {}
+          : { decompileMaxPayloadMiB: options.decompileMaxPayloadMiB }),
       },
     );
   }
@@ -1246,6 +1273,7 @@ export class GhidraClient {
       startupTimeoutMs: deadline.timeoutMs,
       handlers: {
         data: this.#onSocketData,
+        end: this.#onSocketEnd,
         error: this.#onSocketError,
         close: this.#onSocketClose,
       },
@@ -1490,7 +1518,9 @@ export class GhidraClient {
   }
 
   #abortProtocol(message: string, cause?: Error): void {
-    this.#failAll(this.#failure("protocol", message, cause));
+    const failure = this.#failure("protocol", message, cause);
+    this.#requestQueue.failQueued(failure);
+    this.#failAll(failure);
     this.#socket?.destroy();
   }
 

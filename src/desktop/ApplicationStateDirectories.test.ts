@@ -1,51 +1,54 @@
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { desktopApplicationInventorySchema } from "../domain/desktop/desktopCapture.js";
 import { stateDirectories } from "./ApplicationStateDirectories.js";
 
-describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-  "stateDirectories existence at start",
-  () => {
-    it("leaves existence unknown when a parent folder denies the check", async () => {
-      const root = await createTestTempDirectory("desktop-state-");
-      const home = join(root, "home");
-      const blocked = join(home, ".config");
-      const state = join(blocked, "notes");
-      await mkdir(state, { recursive: true });
-      await chmod(blocked, 0o000);
-      try {
-        const entries = await stateDirectories(
-          ["notes"],
-          { environment: {}, home },
-          [],
-        );
-
-        expect(entries).toContainEqual({ path: state, exists_at_start: null });
-      } finally {
-        await chmod(blocked, 0o755);
-      }
-    });
-
-    it("still reports a missing folder as absent and a present one as present", async () => {
-      const root = await createTestTempDirectory("desktop-state-");
-      const home = join(root, "home");
-      const present = join(home, ".config/notes");
-      await mkdir(present, { recursive: true });
-
-      const entries = await stateDirectories(
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "preserves unknown state-path existence when permission denies the probe",
+  async () => {
+    const home = await createTestTempDirectory("state-path-existence-");
+    const sealed = join(home, "sealed");
+    const denied = join(sealed, "notes");
+    const present = join(home, ".notes");
+    const absent = join(home, ".local/share/notes");
+    await mkdir(denied, { recursive: true });
+    await mkdir(present);
+    await chmod(sealed, 0o000);
+    try {
+      await expect(lstat(denied)).rejects.toMatchObject({ code: "EACCES" });
+      const directories = await stateDirectories(
         ["notes"],
-        { environment: {}, home },
+        {
+          home,
+          environment: { XDG_CONFIG_HOME: sealed },
+        },
         [],
       );
-
-      expect(entries).toContainEqual({ path: present, exists_at_start: true });
-      expect(entries).toContainEqual({
-        path: join(home, ".local/share/notes"),
+      const facts = new Map(directories.map((entry) => [entry.path, entry]));
+      expect(facts.get(present)).toEqual({
+        path: present,
+        exists_at_start: true,
+      });
+      expect(facts.get(absent)).toEqual({
+        path: absent,
         exists_at_start: false,
       });
-    });
+      expect(facts.get(denied)).toMatchObject({
+        path: denied,
+        exists_at_start: null,
+        existence_error: expect.stringContaining("EACCES"),
+      });
+      expect(
+        desktopApplicationInventorySchema.shape.state_directories.parse(
+          directories,
+        ),
+      ).toEqual(directories);
+    } finally {
+      await chmod(sealed, 0o700);
+    }
   },
 );

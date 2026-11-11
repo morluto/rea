@@ -102,23 +102,23 @@ export const stateDirectories = async (
     ...extra,
   ]);
   return Promise.all(
-    [...paths].map(async (path) => ({
-      path,
-      exists_at_start: await startExistence(path),
-    })),
+    [...paths].map(async (path) => {
+      try {
+        await lstat(path);
+        return { path, exists_at_start: true };
+      } catch (cause: unknown) {
+        const code = (cause as NodeJS.ErrnoException).code;
+        return code === "ENOENT" || code === "ENOTDIR"
+          ? { path, exists_at_start: false }
+          : {
+              path,
+              exists_at_start: null,
+              existence_error:
+                cause instanceof Error ? cause.message : String(cause),
+            };
+      }
+    }),
   );
 };
 
 /** Whether the path was there before the capture, or null when the check could not tell, such as when a parent folder denied it. */
-const startExistence = async (path: string): Promise<boolean | null> => {
-  try {
-    await lstat(path);
-    return true;
-  } catch (cause: unknown) {
-    // Only a missing name establishes absence; a denied or failed check leaves it unknown.
-    return (cause as NodeJS.ErrnoException).code === "ENOENT" ||
-      (cause as NodeJS.ErrnoException).code === "ENOTDIR"
-      ? false
-      : null;
-  }
-};

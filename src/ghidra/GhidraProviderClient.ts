@@ -7,7 +7,12 @@ import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
+import {
+  MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+} from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -162,8 +167,6 @@ export type GhidraProviderClientFactory = (
       | "attestDosTargetSnapshot"
     >
   >;
-
-type GhidraProviderClientInstance = ReturnType<GhidraProviderClientFactory>;
 
 interface GhidraExecutionMetadata {
   readonly sourceEvidence?: readonly Evidence[];
@@ -860,6 +863,12 @@ export const createGhidraProviderClient = (input: {
   ) => {
     return createAnalysisExecution(normalized, committedProfile.provider, {
       ...observation,
+      ...(operation === "analyze_function"
+        ? {
+            requiresSourceEvidence: true as const,
+            cachePolicy: "live" as const,
+          }
+        : {}),
       ...(projectHistory === undefined
         ? {}
         : {
@@ -889,14 +898,14 @@ export const createGhidraProviderClient = (input: {
           lostProviderHealth(),
         ),
       );
-    const parsed = parseGhidraInventoryResult(operation, called.value);
+    const parsed = parseGhidraInventoryResult(operation, called.value, null);
     if (!parsed.ok) return parsed;
     const { value, ...observation } = parsed.value;
     return ok(projectExecution(operation, value, observation));
   };
   const loadImageExecution = async (raw: JsonValue, signal?: AbortSignal) => {
     const operation = "inspect_native_load_image";
-    const measured = parseGhidraInventoryResult(operation, raw);
+    const measured = parseGhidraInventoryResult(operation, raw, null);
     if (!measured.ok) return measured;
     const { value: observed, ...observation } = measured.value;
     let derived: NativeAotPeResult | undefined;
@@ -973,9 +982,12 @@ export const createGhidraProviderClient = (input: {
           }),
         );
       }
-      const input = isGhidraFunctionOperation(operation)
-        ? parseGhidraFunctionInput(operation, parameters)
-        : parseGhidraInventoryInput(operation, parameters);
+      let input: ReturnType<typeof parseGhidraInventoryInput>;
+      if (isGhidraFunctionOperation(operation)) {
+        const parsed = parseGhidraFunctionInput(operation, parameters);
+        if (!parsed.ok) return parsed;
+        input = { ...parsed, namingRequest: null };
+      } else input = parseGhidraInventoryInput(operation, parameters);
       if (!input.ok) return input;
       // A report binds before any query runs. The client shares one startup
       // attempt, so `callTool` reuses this launch; a restart is checked again.
@@ -983,6 +995,18 @@ export const createGhidraProviderClient = (input: {
       if (!started.ok) return started;
       const called = await client.callTool(operation, input.value, {
         decompileTimeoutSeconds: config.ghidraDecompileTimeoutSeconds ?? null,
+        decompileMaxPayloadMiB: config.ghidraDecompileMaxPayloadMiB ?? null,
+        valueFlowLimits: {
+          max_operations:
+            config.ghidraValueFlowMaxOperations ??
+            DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+          max_inputs_per_operation:
+            config.ghidraValueFlowMaxInputsPerOperation ??
+            DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+          max_edges:
+            config.ghidraValueFlowMaxEdges ??
+            DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+        },
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
         ...(options?.progress === undefined
           ? {}
@@ -1005,7 +1029,11 @@ export const createGhidraProviderClient = (input: {
         return loadImageExecution(called.value, options?.signal);
       const result = isGhidraFunctionOperation(operation)
         ? parseGhidraFunctionResult(operation, called.value)
-        : parseGhidraInventoryResult(operation, called.value);
+        : parseGhidraInventoryResult(
+            operation,
+            called.value,
+            input.namingRequest,
+          );
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;

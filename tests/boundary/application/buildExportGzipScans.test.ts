@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -59,7 +59,7 @@ it("decompresses a gzip seed file once to check it for known secrets and its siz
   gunzipped.length = 0;
   const refused = await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
+    arguments: { computer_id: id, tasks: [{ task: TASK }], directory },
   });
   const { error } = parseMcpToolError(refused as CallToolResult);
   expect(error.code).toBe("invalid_request");
@@ -69,5 +69,5 @@ it("decompresses a gzip seed file once to check it for known secrets and its siz
   expect(
     gunzipped.filter((bytes) => Buffer.from(bytes).equals(compressed)),
   ).toHaveLength(1);
-  expect(await readdir(directory).catch(() => [])).toEqual([]);
+  await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
 });

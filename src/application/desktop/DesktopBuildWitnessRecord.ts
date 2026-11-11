@@ -28,6 +28,7 @@ import {
 import { errorText } from "./DesktopBuildCommands.js";
 import { DESKTOP_PROVIDER } from "./DesktopCaptureRefusals.js";
 import {
+  planOutputTree,
   writeOutputTree,
   writtenWithOpenHandles,
 } from "./DesktopOutputTree.js";
@@ -153,7 +154,7 @@ const writeRecordFolder = async (
 > => {
   try {
     const unclosed = await writeOutputTree(
-      directory,
+      await planOutputTree(directory, { operation: CHECK, field: "directory" }),
       async (tree) => {
         for (const file of files)
           await tree.write(

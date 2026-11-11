@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
@@ -11,10 +11,14 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import {
+  primaryAnalysisError,
   resolvedAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import {
   webBundleHeapExhaustedReason,
   webBundleHeapExhaustedRemediation,
@@ -22,11 +26,15 @@ import {
 } from "../domain/webBundleAnalysis.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import {
   spawnOwnedProviderProcess,
   type ProviderProcessHandle,
 } from "../process/ProviderProcess.js";
-import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
+import {
+  WebBundleAnalysisWorker,
+  WebBundleWorkerCleanup,
+} from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
 
 const makeScript = (text: string): IncludedScript => ({
@@ -268,7 +276,7 @@ const launcherFor = (
   };
 };
 
-const failureOf = <Value>(
+const failureOf = (
   result: Awaited<ReturnType<WebBundleAnalysisWorker["analyze"]>>,
 ): AnalysisError => {
   if (result.ok) throw new Error("Expected web worker failure");
@@ -293,6 +301,143 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) finish();
   });
 };
+
+it("preserves physical ownership inspection failure when cancellation follows", async () => {
+  const controller = new AbortController();
+  const reason = { cancelled: "late" };
+  const physical = new Error("inspection physically failed");
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw physical;
+    });
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(
+      makeScript("0"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisOutputError);
+    expect(error.cause).toBe(physical);
+    expect(
+      error.secondaryFailures.some((failure) => failure.cause === reason),
+    ).toBe(true);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it.each(["reason", "native-abort"] as const)(
+  "retains %s cancellation from ownership inspection",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancel" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw kind === "reason"
+          ? reason
+          : new ExecFileOutputCancelledError(reason);
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisCancelledError);
+      expect(error.cause).toBe(reason);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
+
+it("retains ownership-helper cleanup until worker close retries it", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel" };
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
+        cancellation: { reason },
+        cleanupFailure: cleanup,
+        cleanupOwner: owner,
+      });
+    });
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(
+      makeScript("0"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it("retains failed helper cleanup without caller cancellation", async () => {
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const physical = new DarwinProcessOwnershipInspectionError(
+    "inspection failed",
+    { cleanupFailure: cleanup, cleanupOwner: owner },
+  );
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockRejectedValue(physical);
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(makeScript("0"), 5_000);
+    const error = failureOf(result);
+    expect(primaryAnalysisError(error).cause).toBe(physical);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
 
 it("reuses one real owned worker for completed facts from consecutive scripts", async () => {
   const children: ProviderProcessHandle[] = [];
@@ -1033,4 +1178,67 @@ it("preserves literal replacement characters in valid UTF-8 worker facts", async
     code: "ENOENT",
     path: root,
   });
+});
+
+it("retries independent browser workers once while an earlier exact owner remains stuck", async () => {
+  const cleanup = new WebBundleWorkerCleanup();
+  const failures = [true, true];
+  const attempts = [0, 0];
+  const roots: string[] = [];
+  let spawning = 0;
+  let releaseSpawns: () => void = () => {};
+  const bothSpawning = new Promise<void>((resolve) => {
+    releaseSpawns = resolve;
+  });
+  const workers = [0, 1].map((index) => {
+    const launch = launcherFor({ kind: "protocol", failure: "malformed" });
+    return new WebBundleAnalysisWorker(
+      128,
+      async (request) => {
+        const child = await launch(request);
+        roots[index] = request.cwd!;
+        if (++spawning === 2) releaseSpawns();
+        await bothSpawning;
+        return {
+          ...child,
+          cleanup: async () => {
+            attempts[index]! += 1;
+            return failures[index]
+              ? {
+                  cleaned: false,
+                  reason: `exact worker ${index} cleanup blocked`,
+                }
+              : child.cleanup!();
+          },
+        };
+      },
+      cleanup,
+    );
+  });
+  try {
+    const results = await Promise.all(
+      workers.map((worker) =>
+        worker.analyze(makeScript("fetch('/mixed-cleanup');"), 10_000),
+      ),
+    );
+    const errors = results.map(failureOf);
+    expect(errors.every((error) => error.cleanupIncomplete)).toBe(true);
+    expect(attempts).toEqual([1, 1]);
+    failures[1] = false;
+    await expect(cleanup.retry()).rejects.toThrow();
+    expect(attempts).toEqual([2, 2]);
+    expect(errors[0]?.cleanupIncomplete).toBe(true);
+    expect(errors[1]?.cleanupIncomplete).toBe(false);
+    await access(roots[0]!);
+    await expect(access(roots[1]!)).rejects.toMatchObject({ code: "ENOENT" });
+    failures[0] = false;
+    await cleanup.retry();
+    expect(attempts).toEqual([3, 2]);
+    expect(errors[0]?.cleanupIncomplete).toBe(false);
+    await expect(access(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    failures.fill(false);
+    await Promise.all(workers.map((worker) => worker.close()));
+    await cleanup.retry();
+  }
 });

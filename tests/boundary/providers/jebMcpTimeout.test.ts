@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { expect, it } from "vitest";
 import { JebProvider } from "../../../src/jeb/JebProvider.js";
 import { createStreamableHttpJebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
@@ -40,7 +41,7 @@ it.each([
           requestTimeoutMs: 100,
         }),
     });
-    try {
+    await withVerifierCleanup(async () => {
       const result = await provider.execute(
         operation === "inspect_jeb_client"
           ? { operation, input: {} }
@@ -60,10 +61,16 @@ it.each([
       expect(projected.remediation.action).toContain("restart");
       expect(result.error.cause).toBeDefined();
       expect(result.error.cleanupIncomplete).toBe(false);
-    } finally {
-      release();
-      await provider.close();
-      await fixture.close();
-    }
+    }, [
+      async () => {
+        release();
+      },
+      async () => {
+        await provider.close();
+      },
+      async () => {
+        await fixture.close();
+      },
+    ]);
   },
 );

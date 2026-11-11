@@ -1,3 +1,4 @@
+import { Utf8NdjsonDecodingError } from "../process/Utf8NdjsonLineBuffer.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -161,8 +162,21 @@ export class HopperClient {
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
-  readonly #onSocketData = (chunk: string): void => {
-    this.#responses.push(chunk);
+  readonly #onSocketData = (chunk: Buffer): void => {
+    try {
+      this.#responses.push(chunk);
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
+    }
+  };
+  readonly #onSocketEnd = (): void => {
+    try {
+      this.#responses.finish();
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
+    }
   };
   readonly #onSocketError = (): void => {
     const error = new HopperProcessError(null, {
@@ -1132,8 +1146,9 @@ export class HopperClient {
   }
 
   #attachSocket(socket: Socket): void {
-    socket.setEncoding("utf8");
+    this.#responses.reset();
     socket.on("data", this.#onSocketData);
+    socket.on("end", this.#onSocketEnd);
     socket.on("error", this.#onSocketError);
     socket.on("close", this.#onSocketClose);
   }
@@ -1168,6 +1183,7 @@ export class HopperClient {
 
   #detachSocket(socket: Socket): void {
     socket.off("data", this.#onSocketData);
+    socket.off("end", this.#onSocketEnd);
     socket.off("error", this.#onSocketError);
     socket.off("close", this.#onSocketClose);
   }

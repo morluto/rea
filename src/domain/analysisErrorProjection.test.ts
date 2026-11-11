@@ -159,10 +159,7 @@ describe("agent recovery metadata", () => {
     },
   );
 
-  it("keeps retryability for transient conflicts and provider timeouts", () => {
-    expect(
-      projectAnalysisError(new UnknownRegistryError("revision-conflict")),
-    ).toMatchObject({ code: "revision_conflict", retryable: true });
+  it("keeps retryability for provider timeouts", () => {
     expect(
       projectAnalysisError(
         new AnalysisTimeoutError("inspect_binary_layout", 2500),
@@ -1572,11 +1569,91 @@ describe("analysis error projection: caller lifetime", () => {
       applies_at: "next_invocation",
       environment: "REA_HOPPER_STARTUP_TIMEOUT_MS",
     });
-    // A busy request is not a startup: it carries no lifetime-specific text.
-    const busy = new HopperTimeoutError(30_000, "trace_feature", 42, "busy");
-    expect(projectAnalysisError(busy, "invocation").remediation).toEqual(
-      projectAnalysisError(busy).remediation,
-    );
+  });
+});
+
+describe("analysis error projection: Hopper caller lifetime", () => {
+  it.each([
+    [
+      new HopperProcessError(7, { operation: "search_strings", requestId: 4 }),
+      "close_binary",
+      "exit code 7",
+    ],
+    [
+      new HopperProcessError(null, {
+        operation: "search_strings",
+        providerState: "unreachable",
+      }),
+      "export_evidence_bundle",
+      "process exit was not observed",
+    ],
+    [
+      new HopperProcessError(null, { operation: "search_strings" }),
+      "binary_session.provider_operation_health",
+      "could not determine",
+    ],
+    [
+      new HopperTimeoutError(30_000, "search_strings", 42, "busy"),
+      "binary_session.analysis_activity",
+      "remained busy",
+    ],
+    [
+      new HopperTimeoutError(30_000, "search_strings", 42, "not_started"),
+      "binary_session",
+      "before it started",
+    ],
+  ] as const)(
+    "keeps Hopper outcome facts and scopes request recovery to the caller",
+    (error, continuingTool, outcome) => {
+      const continuing = projectAnalysisError(error);
+      const invocation = projectAnalysisError(error, "invocation");
+      expect(continuing.message).toContain(continuingTool);
+      expect(continuing.remediation.action).toContain(continuingTool);
+      expect(invocation.message).toContain(outcome);
+      expect(invocation.message).not.toContain(continuingTool);
+      expect(invocation.remediation.action).toContain("rerunning the command");
+      expect(invocation.remediation.action).not.toContain(continuingTool);
+      expect(invocation.details).toEqual(continuing.details);
+      expect(invocation.code).toBe(continuing.code);
+      expect(invocation.category).toBe(continuing.category);
+      expect(invocation.retryable).toBe(continuing.retryable);
+      expect(analysisErrorProjectionSchema.parse(invocation)).toEqual(
+        invocation,
+      );
+    },
+  );
+
+  it("keeps Hopper recovery scoped through composed cleanup and its history", () => {
+    const primary = new HopperProcessError(null, {
+      operation: "search_strings",
+      providerState: "unreachable",
+    });
+    const cleanup = new ProviderCleanupError("hopper", ["hopper-bridge"], {});
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+    ).bindCleanupDependencies([cleanup]);
+    const invocationPrimary = projectAnalysisError(primary, "invocation");
+    const continuingPrimary = projectAnalysisError(primary);
+    const invocation = projectAnalysisError(composed, "invocation");
+    const continuing = projectAnalysisError(composed);
+    expect(invocation.message).toBe(invocationPrimary.message);
+    expect(continuing.message).toBe(continuingPrimary.message);
+    expect(invocation.details).toMatchObject({
+      resources: ["hopper-bridge"],
+      diagnostics: { primary_error: invocationPrimary },
+    });
+    expect(continuing.details).toMatchObject({
+      diagnostics: { primary_error: continuingPrimary },
+    });
+
+    cleanup.resolveCleanup();
+    expect(
+      projectAnalysisError(composed, "invocation").details?.cleanup_history,
+    ).toMatchObject({ primary_error: invocationPrimary });
+    expect(
+      projectAnalysisError(composed).details?.cleanup_history,
+    ).toMatchObject({ primary_error: continuingPrimary });
   });
 });
 

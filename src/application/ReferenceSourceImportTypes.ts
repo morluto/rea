@@ -39,10 +39,10 @@ const IMPORT_FAILURE_GUIDANCE = {
     "Reference source could not be indexed. Check that the source tree is readable, then try again.",
 } satisfies Record<ReferenceSourceImportError["code"], string>;
 
-/** Canonical CLI/MCP projection, retaining source facts under diagnostic details. */
-export const projectReferenceSourceImportError = (
+/** Preserve import failure semantics for shared execution and cleanup owners. */
+export const referenceSourceImportAnalysisError = (
   error: ReferenceSourceImportError,
-): AnalysisErrorProjection => {
+): AnalysisError => {
   const guidance =
     error.remediationAction ?? IMPORT_FAILURE_GUIDANCE[error.code];
   const message = `${error.message} ${guidance}`;
@@ -71,13 +71,14 @@ export const projectReferenceSourceImportError = (
           }),
     },
   };
-  let primary: AnalysisError;
   switch (error.code) {
     case "cancelled":
-      primary = new AnalysisCancelledError("import_reference_source", options);
-      break;
+      return new AnalysisCancelledError("import_reference_source", {
+        ...options,
+        userMessage: message,
+      });
     case "invalid-root":
-      primary = new AnalysisInputError(
+      return new AnalysisInputError(
         "import_reference_source",
         {
           ...options,
@@ -88,28 +89,28 @@ export const projectReferenceSourceImportError = (
         },
         [{ path: ["root"], reason: "invalid_value", message: error.message }],
       );
-      break;
     case "unsupported":
-      primary = new AnalysisCapabilityUnavailableError(
+      return new AnalysisCapabilityUnavailableError(
         "filesystem",
         "import_reference_source",
         error.message,
         { ...options, userMessage: message, remediationAction: guidance },
       );
-      break;
     case "io":
     case "parse":
-      primary = new AnalysisOutputError(
-        "import_reference_source",
-        error.message,
-        { ...options, userMessage: message, remediationAction: guidance },
-      );
-      break;
+      return new AnalysisOutputError("import_reference_source", error.message, {
+        ...options,
+        userMessage: message,
+        remediationAction: guidance,
+      });
   }
-  // Cancellation uses a shared fixed message; the producing boundary's reason
-  // is caller evidence and remains useful for every category.
-  return { ...projectAnalysisError(primary), message };
 };
+
+/** Canonical CLI/MCP projection, retaining source facts under diagnostic details. */
+export const projectReferenceSourceImportError = (
+  error: ReferenceSourceImportError,
+): AnalysisErrorProjection =>
+  projectAnalysisError(referenceSourceImportAnalysisError(error));
 
 /** Import a caller-selected local source tree as historical reference. */
 export interface ReferenceSourceImportOptions {
