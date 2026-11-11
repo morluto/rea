@@ -116,8 +116,11 @@ class LauncherStructureTests(unittest.TestCase):
         # Ampersand-free values are dispatched inside our own quotes (one argv
         # entry for multiword needles); &-bearing values dispatch raw because
         # they cannot cross a cmd boundary intact.
-        self.assertIn('set "PATTERN_FLAG="!PATTERN_CLEAN!""', content)
-        self.assertIn('set "FUNC_FLAG="!FUNC_CLEAN!""', content)
+        # The selector crosses to the child inside a quoted FOR-carrier
+        # (bytes preserved, one argv entry).
+        self.assertIn('for %%P in ("--pattern=!SEARCH_TERM!")', content)
+        self.assertIn('for %%P in ("--pattern=!PROC_TERM!")', content)
+        self.assertIn('for %%P in ("--procedure=!FUNC_NAME!")', content)
 
 
 class LauncherBehaviorTests(unittest.TestCase):

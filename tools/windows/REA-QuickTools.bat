@@ -27,9 +27,15 @@ color 0A
 :: Everything below runs inside this setlocal, so no assignment leaks into the
 :: calling shell when the launcher exits.
 if not defined GHIDRA_INSTALL_DIR if exist "C:\tools\ghidra_12.1.4_PUBLIC" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
-:: JDK default only for the matching 12.1 release (JDK 21+): an explicit JAVA_HOME
-:: is authoritative, so never pin jdk-22 when the install may be 12.2 (JDK 25+).
-if not defined JAVA_HOME if defined GHIDRA_INSTALL_DIR if "%GHIDRA_INSTALL_DIR:12.2=%"=="%GHIDRA_INSTALL_DIR%" if exist "C:\Program Files\Java\jdk-22" set "JAVA_HOME=C:\Program Files\Java\jdk-22"
+:: JDK default only for a verified 12.1.x install (application.version,
+:: read from Ghidra\application.properties -- release identity is never
+:: inferred from the directory name) and only when no JAVA_HOME was chosen;
+:: an explicit JAVA_HOME stays authoritative.
+if not defined JAVA_HOME if defined GHIDRA_INSTALL_DIR if exist "%GHIDRA_INSTALL_DIR%\Ghidra\application.properties" (
+    set "GHIDRA_VERSION="
+    for /f "usebackq tokens=1,* delims==" %%A in ("%GHIDRA_INSTALL_DIR%\Ghidra\application.properties") do if /i "%%A"=="application.version" set "GHIDRA_VERSION=%%B"
+    if "!GHIDRA_VERSION:~0,4!"=="12.1." if exist "C:\Program Files\Java\jdk-22" set "JAVA_HOME=C:\Program Files\Java\jdk-22"
+)
 
 :: ---- Locate the REA CLI ------------------------------------------------------
 :: node.exe plus the packaged rea.mjs entry, executed directly: control returns
@@ -185,23 +191,20 @@ set /p FUNC_NAME="พิมพ์ชื่อฟังก์ชันหรื�
 if not defined FUNC_NAME goto FILE_DROPPED
 :: A leading-dash symbol would parse as an option; the decompile contract's
 :: --procedure=<value> selector routes it as the function name.
-:: Selector rules: an &-free value is quote-stripped and dispatched inside
-:: our own quotes, so a multiword symbol stays ONE argv entry; a &
-:: -containing value cannot cross any cmd boundary intact and is dispatched
-:: raw (safe: & stays data, the CLI reports the surplus positional). An
-:: options-shaped value routes through the documented --procedure= selector.
-set "FUNC_CLEAN=!FUNC_NAME:"=!"
-if not "!FUNC_CLEAN:&=!"=="!FUNC_CLEAN!" set "FUNC_CLEAN="
-if not "!FUNC_NAME:~0,1!"=="-" if defined FUNC_CLEAN (
-    set "FUNC_FLAG="!FUNC_CLEAN!""
+:: Selector dispatch: the symbol crosses to the child inside a FOR-carrier
+:: ("!FUNC_NAME!" -> quoted %%P), which preserves every byte (quotes,
+:: spaces) as ONE argv entry; an options-shaped symbol routes through the
+:: documented --procedure= selector. An &-containing symbol cannot cross
+:: any cmd exec boundary intact and is dispatched raw (safe: & stays data;
+:: the CLI reports the surplus positional with a clear error).
+if not "!FUNC_NAME:&=!"=="!FUNC_NAME!" (
+    set "REA_ARGS=decompile "!TARGET!" !FUNC_NAME! --provider ghidra"
+    call :RUN_REA
+) else if "!FUNC_NAME:~0,1!"=="-" (
+    for %%P in ("--procedure=!FUNC_NAME!") do "%NODE_EXE%" "%REA_ENTRY%" decompile "!TARGET!" %%P --provider ghidra
 ) else (
-    set "FUNC_FLAG=!FUNC_NAME!"
+    for %%P in ("!FUNC_NAME!") do "%NODE_EXE%" "%REA_ENTRY%" decompile "!TARGET!" %%P --provider ghidra
 )
-if "!FUNC_NAME:~0,1!"=="-" set "FUNC_FLAG=--procedure=!FUNC_NAME!"
-cls
-echo [กำลัง Decompile ฟังก์ชันตามชื่อที่ระบุ...]
-set "REA_ARGS=decompile "!TARGET!" !FUNC_FLAG! --provider ghidra"
-call :RUN_REA
 pause
 goto FILE_DROPPED
 
@@ -219,24 +222,18 @@ set /p SEARCH_TERM="พิมพ์คำที่ต้องการค้น
 if not defined SEARCH_TERM goto FILE_DROPPED
 :: A leading-dash term such as --help would parse as an option; the CLI's
 :: documented selector form --pattern=<value> routes it as the pattern.
-:: Selector rules (same as the function search): an &-free needle is
-:: quote-stripped and dispatched inside our own quotes, so a multiword
-:: needle stays ONE argv entry; an &-containing needle is dispatched raw
-:: (safe: & stays data, the CLI reports the surplus positional); an
-:: options-shaped needle routes through --pattern=<value>.
-set "PATTERN_CLEAN=!SEARCH_TERM:"=!"
-if not "!PATTERN_CLEAN:&=!"=="!PATTERN_CLEAN!" set "PATTERN_CLEAN="
-if "!SEARCH_TERM:~0,1!"=="-" (
-    set "PATTERN_FLAG=--pattern=!SEARCH_TERM!"
-) else if defined PATTERN_CLEAN (
-    set "PATTERN_FLAG="!PATTERN_CLEAN!""
+:: Selector dispatch (same rules as the function search): the needle
+:: crosses to the child inside a FOR-carrier (quoted %%P), preserving
+:: every byte as ONE argv entry; an options-shaped needle routes through
+:: --pattern=<value>; an &-containing needle is dispatched raw (safe).
+if not "!SEARCH_TERM:&=!"=="!SEARCH_TERM!" (
+    set "REA_ARGS=search "!TARGET!" !SEARCH_TERM! --kind strings --provider ghidra"
+    call :RUN_REA
+) else if "!SEARCH_TERM:~0,1!"=="-" (
+    for %%P in ("--pattern=!SEARCH_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind strings --provider ghidra
 ) else (
-    set "PATTERN_FLAG=!SEARCH_TERM!"
+    for %%P in ("!SEARCH_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind strings --provider ghidra
 )
-cls
-echo [กำลังค้นหาข้อความใน Strings...]
-set "REA_ARGS=search "!TARGET!" !PATTERN_FLAG! --kind strings --provider ghidra"
-call :RUN_REA
 pause
 goto FILE_DROPPED
 
@@ -244,19 +241,14 @@ goto FILE_DROPPED
 set "PROC_TERM="
 set /p PROC_TERM="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
 if not defined PROC_TERM goto FILE_DROPPED
-set "PATTERN_CLEAN=!PROC_TERM:"=!"
-if not "!PATTERN_CLEAN:&=!"=="!PATTERN_CLEAN!" set "PATTERN_CLEAN="
-if "!PROC_TERM:~0,1!"=="-" (
-    set "PATTERN_FLAG=--pattern=!PROC_TERM!"
-) else if defined PATTERN_CLEAN (
-    set "PATTERN_FLAG="!PATTERN_CLEAN!""
+if not "!PROC_TERM:&=!"=="!PROC_TERM!" (
+    set "REA_ARGS=search "!TARGET!" !PROC_TERM! --kind procedures --provider ghidra"
+    call :RUN_REA
+) else if "!PROC_TERM:~0,1!"=="-" (
+    for %%P in ("--pattern=!PROC_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind procedures --provider ghidra
 ) else (
-    set "PATTERN_FLAG=!PROC_TERM!"
+    for %%P in ("!PROC_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind procedures --provider ghidra
 )
-cls
-echo [กำลังค้นหาฟังก์ชันตามชื่อที่ระบุ...]
-set "REA_ARGS=search "!TARGET!" !PATTERN_FLAG! --kind procedures --provider ghidra"
-call :RUN_REA
 pause
 goto FILE_DROPPED
 
