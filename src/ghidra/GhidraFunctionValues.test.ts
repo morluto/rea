@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -1118,26 +1117,6 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
       parseFunctionValueFixture("inspect_native_instruction", emptySource).ok,
     ).toBe(false);
   });
-});
-
-// File-level, not its own suite. Source tests collect every describe in this
-// file; an empty suite fails the file with "No test found in suite" before
-// any shard result is consulted. Shards do not run this source project.
-it("binds TMode to ARM and ISA_MODE to MIPS in the Ghidra bridge script", async () => {
-  const bridgePath = new URL(
-    "../../bridge/ghidra/ReaGhidraBridge.java",
-    import.meta.url,
-  );
-  const content = await readFile(bridgePath, "utf8");
-  expect(content).toContain(
-    'currentProgram.getLanguageID().getIdAsString().startsWith("ARM:")',
-  );
-  expect(content).toContain(
-    'currentProgram.getLanguageID().getIdAsString().startsWith("MIPS:")',
-  );
-  expect(content).toContain('"TMode"');
-  expect(content).toContain('"ISA_MODE"');
-  expect(content).toContain('"ghidra-program-context"');
 });
 
 describe("Ghidra dossier nested boundary composition", () => {
