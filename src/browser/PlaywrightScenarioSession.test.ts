@@ -724,14 +724,11 @@ it("retries a failed connected-page stop when service workers are allowed", asyn
   cancellation.abort();
   const concurrentClose = session.close();
   finishEvents();
-  await expect(
-    Promise.allSettled([firstClose, concurrentClose]),
-  ).resolves.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ status: "rejected" }),
-      expect.objectContaining({ status: "rejected" }),
-    ]),
-  );
+  const outcomes = await Promise.allSettled([firstClose, concurrentClose]);
+  expect(outcomes.map(({ status }) => status)).toEqual([
+    "rejected",
+    "rejected",
+  ]);
 
   expect(cleanup.browserClosed).toBe(false);
   await expect(session.close()).resolves.toBe("disconnected-external");

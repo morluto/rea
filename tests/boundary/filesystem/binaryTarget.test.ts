@@ -178,6 +178,24 @@ it.each([{ cpus: [0x0100000c] }, { cpus: [0x01000007, 0x0100000c] }])(
   },
 );
 
+it("refuses ambiguous host subtypes even when a foreign family is selectable", async () => {
+  const directory = await createTestTempDirectory("rea-ambiguous-host-fat-");
+  const path = join(directory, "image");
+  const bytes = fat([0x0100000c, 0x0100000c, 0x01000007]);
+  bytes.writeUInt32BE(2, 8 + 20 + 4);
+  bytes.writeUInt32BE(2, bytes.readUInt32BE(8 + 20 + 8) + 8);
+  await writeFile(path, bytes);
+  expect(
+    await parseBinaryTarget(path, { hostArchitecture: "arm64" }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      reason: expect.stringContaining("several arm64 slices"),
+    },
+  });
+});
+
 it("reads a sparse FAT slice header beyond the bounded prefix", async () => {
   const directory = await createTestTempDirectory("rea-sparse-fat-target-");
   const path = join(directory, "image");
@@ -217,11 +235,15 @@ it("reads the complete bounded 128-entry FAT64 table beyond the prefix", async (
     const table = Buffer.alloc(tableEnd);
     table.writeUInt32BE(0xcafebabf, 0);
     table.writeUInt32BE(entryCount, 4);
-    const thinHeader = machoImage({ cpu: CPU.arm64 }).subarray(0, 12);
     for (let index = 0; index < entryCount; index += 1) {
+      const cpuType = index === 0 ? CPU.arm64.type : 0x100 + index;
+      const thinHeader = Buffer.from(
+        machoImage({ cpu: CPU.arm64 }).subarray(0, 12),
+      );
+      thinHeader.writeUInt32LE(cpuType, 4);
       const entry = 8 + index * 32;
       const sliceOffset = tableEnd + index * sliceSize;
-      table.writeUInt32BE(CPU.arm64.type, entry);
+      table.writeUInt32BE(cpuType, entry);
       table.writeUInt32BE(CPU.arm64.subtype, entry + 4);
       table.writeBigUInt64BE(BigInt(sliceOffset), entry + 8);
       table.writeBigUInt64BE(BigInt(sliceSize), entry + 16);
@@ -1720,6 +1742,63 @@ it.each([
   },
 );
 
+it.each([
+  {
+    label: "identical file aliases",
+    virtualAddress: 0x1000,
+    rawOffset: 512,
+    rawSize: 512,
+    expected: "first.pdb",
+  },
+  {
+    label: "conflicting file aliases",
+    virtualAddress: 0x1000,
+    rawOffset: 768,
+    rawSize: 512,
+    expected: undefined,
+  },
+  {
+    label: "independent sections",
+    virtualAddress: 0x2000,
+    rawOffset: 768,
+    rawSize: 512,
+    expected: "first.pdb",
+  },
+  {
+    label: "zero-fill aliases",
+    virtualAddress: 0x1000,
+    rawOffset: 0,
+    rawSize: 0,
+    expected: undefined,
+  },
+])(
+  "preserves CodeView mapping certainty for $label",
+  async ({ virtualAddress, rawOffset, rawSize, expected }) => {
+    const directory = await createTestTempDirectory("rea-codeview-mapping-");
+    const path = join(directory, "symbols.exe");
+    const bytes = Buffer.alloc(1280);
+    pe(0x8664, 64, 0x0002, false, { pdbPath: "first.pdb" }).copy(bytes);
+    bytes.writeUInt16LE(2, 64 + 6);
+    const sectionTable = 64 + 24 + 240;
+    bytes.copy(bytes, sectionTable + 40, sectionTable, sectionTable + 40);
+    bytes.writeUInt32LE(virtualAddress, sectionTable + 40 + 12);
+    bytes.writeUInt32LE(rawOffset, sectionTable + 40 + 20);
+    bytes.writeUInt32LE(rawSize, sectionTable + 40 + 16);
+    bytes.copy(bytes, 768, 512, 600);
+    bytes.writeUInt32LE(796, 768 + 24);
+    bytes.write("other.pdb", 796 + 24);
+    await writeFile(path, bytes);
+    const resolved = await parseBinaryTarget(path);
+    if (!resolved.ok) throw resolved.error;
+    const buffered = parseExecutableHeader(bytes, "x64");
+    if (!buffered.ok) throw new Error(buffered.error);
+    for (const metadata of [resolved.value, buffered.value])
+      expect(metadata.format === "pe" ? metadata.codeView?.pdbPath : null).toBe(
+        expected,
+      );
+  },
+);
+
 describe("binary target I/O: PE CodeView header ranges", () => {
   it.each(["RSDS", "NB10"] as const)(
     "reads bounded %s header debug records and rejects unfinished names",
@@ -1817,4 +1896,21 @@ it("refuses a declared DOS relocation header that is not present in the file", a
     ok: false,
     error: { reason: "truncated DOS MZ load module" },
   });
+});
+
+it("does not resolve malformed Unicode paths to a replacement-character sibling", async () => {
+  const directory = await createTestTempDirectory("rea-target-unicode-");
+  const actual = join(directory, "target-�");
+  const selected = join(directory, "target-\ud800");
+  await writeFile(actual, pe(0xaa64));
+  const refused = await parseBinaryTarget(selected);
+  expect(refused).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      path: selected,
+      reason: "Local filesystem paths must contain well-formed Unicode",
+    },
+  });
+  expect(await parseBinaryTarget(actual)).toMatchObject({ ok: true });
 });

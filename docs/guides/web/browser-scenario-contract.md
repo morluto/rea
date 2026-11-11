@@ -604,10 +604,11 @@ id the application assigns:
   Reduce the payload/repetitions, or raise the parent
   Node heap and restart; this is a conservative allocation estimate, not a
   measurement or guarantee of browser/process-family memory.
-- Evidence records a request step's empty `save` list as absent, so a scenario
-  that saves nothing records the same parameters and `scenario_sha256` as
-  before saved values existed, and REA versions without saved values read its
-  captures.
+- Evidence records the current parsed request action, including `save: []`
+  when no values are saved. Its parameters and `scenario_sha256` use that
+  representation; new observations can have different identities from older
+  captures that omitted the empty list. Retained Evidence keeps its original
+  parameters and identity.
 
 ## Network evidence
 
