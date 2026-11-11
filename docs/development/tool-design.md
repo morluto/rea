@@ -358,7 +358,9 @@ In multi-stage work, retain each completed, admitted observation before awaiting
 the next stage. Later reads, validation, cancellation, or finalization can fail
 without erasing those facts. Carry them through typed failure outcomes with
 explicit coverage of unperformed work; do not construct a successful result for
-stages that never ran.
+stages that never ran. For concurrent reads, the batch owner settles every
+admitted peer before reporting a failure. Retain completed observations together with each
+failed request's physical, cancellation and cleanup facts.
 
 - Keep target admission, provider readiness, active work, observed process exit,
   and resource release separate. A valid process handle, successful launcher,
@@ -398,12 +400,13 @@ stages that never ran.
   primary failure and let incomplete cleanup retain its own classification.
   Preserve the caller's abort reason as the typed cancellation error's cause,
   including when cancellation is observed only after provider completion.
-  Shared command owners must retain the observed cancellation reason separately
-  from physical failures and cleanup ownership. Carry that fact through failure
-  wrapping so adapters can preserve the exact reason without interpreting it.
-  ZIP member streams retain the exact signal reason; hdiutil wrappers consume
-  the command owner's typed cancellation record and keep physical command
-  failures separate, even if a host error is named `AbortError`.
+  The producing boundary records cancellation separately from physical failures
+  and cleanup ownership. A caller's abort reason is opaque: its value, error
+  type, name or cause chain cannot establish failure origin or cleanup authority.
+  Consumers use the owner's parsed facts. An established command timeout keeps
+  its timeout or refusal policy when preparation records a cancellation.
+  Failure wrapping and operation rebinding preserve these facts and already
+  classified secondary failures.
   Client cancellation alone does not prove native work stopped.
   For atomic publication, document the cancellation cutoff and preserve any
   committed output's publication receipt.
@@ -421,7 +424,9 @@ stages that never ran.
   original failure and completed observations. Later failure composition must
   report only resources whose cleanup remains unresolved. Carry cleanup
   capabilities explicitly in typed outcomes so consumers can bind returned errors
-  to exact owners without reparsing diagnostic cause chains.
+  to exact owners without reparsing diagnostic cause chains. A cleanup-status
+  observer does not replace a callable close capability retained by the caller's
+  scope.
   Bind every caller-visible retry error and aggregate, including an error already
   produced by the provider. An aggregate remains incomplete until all owners it
   reports are released; releasing one child cannot clear another child's status.

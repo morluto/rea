@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, sep } from "node:path";
 
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+  bindProcessInspectionCancellations,
+  processInspectionCancellationError,
+  retainOwnedCommandCleanup,
+} from "../providers/OwnedCommandCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -32,65 +35,54 @@ export const pathWithin = (root: string, path: string): boolean => {
 const retainGitCleanup = (
   cause: unknown,
   context: McpRegistrationLocationContext,
-): readonly AnalysisCleanupLease[] => {
-  if (!(cause instanceof OwnedCommandFailure)) return [];
-  const leases: AnalysisCleanupLease[] = [];
-  const preparation = cause.preparationFailure;
-  const cleanup = preparation?.cleanupFailure;
-  if (cleanup !== undefined) {
-    leases.push(
-      new AnalysisCleanupLease(async () => {
-        if (!cleanup.cleanupIncomplete) return;
-        if (preparation?.cleanupOwner === undefined) throw cleanup;
-        await preparation.cleanupOwner.close();
-        if (cleanup.cleanupIncomplete) throw cleanup;
-      }, cleanup),
-    );
-  }
-  if (cause.cleanupOwner !== undefined || cause.cleanupFailure !== null) {
-    const supervisor = cause.cleanupOwner;
-    leases.push(
-      new AnalysisCleanupLease(async () => {
-        if (supervisor === undefined) throw cause;
-        const stopped = await supervisor.stop();
-        if (stopped.status === "incomplete")
-          throw new ConfigurationError(stopped.reason, {
-            cleanup: { reason: stopped.reason, resources: cause.resources },
-          });
-        supervisor.dispose();
-      }, cause.resources),
-    );
-  }
-  for (const lease of leases)
-    context.resources.retain({
-      kind: "lease",
-      resource: "Kilo read-only Git discovery",
-      lease,
-    });
-  return leases;
-};
+): readonly AnalysisError[] =>
+  retainOwnedCommandCleanup(
+    cause,
+    {
+      retain: (owner, resource) =>
+        context.resources.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+      run: (work) => work(),
+    },
+    "mcp-registration",
+    "Kilo project root discovery",
+  );
 
 const gitFailure = (
   cause: unknown,
   context: McpRegistrationLocationContext,
 ): ConfigurationError | AnalysisCancelledError => {
-  const leases = retainGitCleanup(cause, context);
+  const cleanups = retainGitCleanup(cause, context);
   const cleanup =
-    leases.length === 0
+    cleanups.length === 0
       ? undefined
       : {
           reason: "Read-only Git discovery cleanup remains incomplete.",
-          resources: leases.flatMap((lease) => lease.cleanupResources ?? []),
+          resources: cleanups.flatMap((failure) => failure.cleanupResources),
         };
   const cancellation =
     cause instanceof OwnedCommandFailure ? cause.cancellation : undefined;
+  const inspectionCancellation = processInspectionCancellationError(
+    cause,
+    "Kilo project root discovery",
+  );
   const primaryCancellation =
-    cause instanceof OwnedCommandFailure && cause.reason === "cancelled";
+    inspectionCancellation !== undefined ||
+    (cause instanceof OwnedCommandFailure && cause.reason === "cancelled");
   const cancelled =
-    cancellation === undefined
+    inspectionCancellation === undefined && cancellation === undefined
       ? undefined
       : new AnalysisCancelledError("Kilo project root discovery", {
-          cause: cancellation.reason,
+          cause:
+            inspectionCancellation === undefined
+              ? cancellation?.reason
+              : inspectionCancellation.cause,
+          ...(inspectionCancellation?.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: inspectionCancellation.capturedOutput }),
           ...(!primaryCancellation || cleanup === undefined ? {} : { cleanup }),
         });
   const failure =
@@ -102,7 +94,12 @@ const gitFailure = (
         );
   if (cancelled !== undefined && failure !== cancelled)
     analysisErrorWithCancellation(failure, cancelled);
-  if (leases.length > 0) new AnalysisCleanupLeaseGroup(failure, leases);
+  if (cleanups.length > 0) failure.bindCleanupDependencies(cleanups);
+  bindProcessInspectionCancellations(
+    cause,
+    failure,
+    "Kilo project root discovery",
+  );
   return failure;
 };
 

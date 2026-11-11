@@ -1,3 +1,4 @@
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   HopperRemoteError,
   HopperTimeoutError,
@@ -270,6 +271,11 @@ export const analysisClientFailureForOperation = (
         ? {}
         : { remediationAction: cause.remediationAction }),
     });
+  for (const secondary of cause.secondaryFailures) {
+    if (secondary instanceof AnalysisCancelledError)
+      result = analysisErrorWithCancellation(result, secondary);
+    else result.retainSecondaryFailure(secondary);
+  }
   return cause.cleanupIncomplete
     ? result.bindCleanupDependencies([cause])
     : result.resolveCleanup();

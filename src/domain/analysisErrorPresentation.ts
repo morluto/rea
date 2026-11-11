@@ -443,6 +443,18 @@ export const hasAnalysisContinuingCallerGuidance = (
   error.continuingCallerGuidance !== undefined ||
   hopperContinuingRecovery(error) !== undefined;
 
+/** A declared recovery action is distinct from a category's generic fallback. */
+const hasAuthoredRemediation = (
+  error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime,
+): boolean =>
+  (callerLifetime === "continuing" &&
+    error.continuingCallerGuidance?.remediationAction !== undefined) ||
+  ("remediationAction" in error &&
+    typeof error.remediationAction === "string") ||
+  (error instanceof AnalysisCapabilityUnavailableError &&
+    error.fallbackRemediationAction !== undefined);
+
 /**
  * Re-attribute one failure's message and another's remediation to a composed
  * error, keeping the form each caller lifetime receives.
@@ -459,12 +471,19 @@ export const composedCallerGuidance = (sources: {
     sources.message === undefined
       ? undefined
       : analysisErrorUserMessageParts(sources.message);
+  const remediationOwner = (lifetime: AnalysisCallerLifetime) =>
+    hasAuthoredRemediation(sources.remediation, lifetime)
+      ? sources.remediation
+      : sources.message !== undefined &&
+          hasAuthoredRemediation(sources.message, lifetime)
+        ? sources.message
+        : sources.remediation;
   const remediationAction = analysisErrorRemediationAction(
-    sources.remediation,
+    remediationOwner("invocation"),
     "invocation",
   );
   const continuingRemediation = analysisErrorRemediationAction(
-    sources.remediation,
+    remediationOwner("continuing"),
   );
   const continuingCallerGuidance = {
     ...(message?.continuing === undefined
