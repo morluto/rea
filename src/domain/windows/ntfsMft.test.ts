@@ -239,6 +239,20 @@ describe("MFT fixup coverage", () => {
     },
   );
 
+  it("counts uncovered sectors independently of a mismatched trailer", () => {
+    const parsed = parseMftImage(
+      recordOf({ recordBytes: 4096, usaEntries: 3, corruptSector: 0 }),
+    );
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.metadata).toMatchObject({
+      fixup_mismatch_count: 1,
+      fixup_unverified_record_count: 1,
+    });
+    expect(parsed.value.limitations.join(" ")).toContain(
+      "invalid or incomplete",
+    );
+  });
+
   it("reports an array that covers fewer sectors than the record has", () => {
     // A 4 KiB record holds eight sectors; a three-entry array leaves five unverified.
     const parsed = parseMftImage(
