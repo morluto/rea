@@ -722,7 +722,18 @@ const tomlInlineKey = (key: string): string =>
 const tomlInlineValue = (value: unknown): string => {
   if (typeof value === "string") return tomlBasicString(value);
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "nan";
+    if (value === Infinity) return "inf";
+    if (value === -Infinity) return "-inf";
+    if (Object.is(value, -0)) return "-0.0";
+    // A float outside the safe integer range must not become an Int64 token.
+    return Number.isInteger(value) && !Number.isSafeInteger(value)
+      ? value.toFixed(1)
+      : String(value);
+  }
+  // TomlDate overrides toISOString to retain local date/time and offset kinds.
+  if (value instanceof Date) return value.toISOString();
   if (typeof value === "bigint") return String(value);
   if (Array.isArray(value))
     return `[${value.map((item) => tomlInlineValue(item)).join(", ")}]`;
@@ -734,7 +745,7 @@ const tomlInlineValue = (value: unknown): string => {
       .join(", ");
     return `{ ${body} }`;
   }
-  return '""';
+  throw new TypeError("Unsupported TOML inline value");
 };
 
 interface InlinePair {

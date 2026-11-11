@@ -68,6 +68,11 @@ export const documentationSections = [
         source: "guides/native/windows-shortcut.md",
         route: "/windows-shortcut",
       },
+      {
+        source: "guides/native/ntfs-metadata.md",
+        route: "/ntfs-metadata",
+        text: "Acquired NTFS metadata",
+      },
     ],
   },
   {
@@ -357,6 +362,11 @@ export const documentationSections = [
         text: "Settings and recovery",
         source: "design/limits-and-recovery.md",
         route: "/design/limits-and-recovery",
+      },
+      {
+        text: "REA limit inventory",
+        source: "design/rea-limit-inventory.md",
+        route: "/design/rea-limit-inventory",
       },
       {
         text: "MCP tool design",

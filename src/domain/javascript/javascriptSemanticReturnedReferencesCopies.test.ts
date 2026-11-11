@@ -81,3 +81,29 @@ it.each([
     );
   },
 );
+
+it.each([
+  ["const box={...{__proto__:{make:()=>module}}};box.make()", false],
+  ["const box={...{get make(){return ()=>module}}};box.make()", true],
+  ["class C{static make(){return module}};const box={...C};box.make()", false],
+  ["class C{make(){return module}};const box={...new C()};box.make()", false],
+  [
+    "class Base{static make=()=>module};class C extends Base{};const box={...C};box.make()",
+    false,
+  ],
+  ["class C{static make=()=>module};const box={...C};box.make()", true],
+  ["class C{make=()=>module};const box={...new C()};box.make()", true],
+] as const)(
+  "copies only own enumerable callable values: %s",
+  (expression, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${expression}.require('./shared.cjs');`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      expected
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);

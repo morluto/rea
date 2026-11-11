@@ -76,3 +76,44 @@ it("recognizes a bundler runtime through nested member names", () => {
     modules: [expect.objectContaining({ exports: ["ok"] })],
   });
 });
+
+it.each(["1 as const", "1 satisfies number"])(
+  "keeps numeric bundle identities through erased syntax: %s",
+  (entry) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      globalThis.webpackChunkApp.push([[(${entry})], {
+        1: function(module, exports, req) { req((2 as const)); req.e((3 satisfies number)); },
+        2: function() {}
+      }, function(req) { req((${entry})); }]);
+    `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.bundler_registrations).toMatchObject([
+      {
+        chunk_keys: ["1"],
+        unknown_chunk_keys: 0,
+        entry_module_keys: ["1"],
+        unknown_entry_module_keys: 0,
+        async_chunk_keys: ["3"],
+        unknown_async_chunk_keys: 0,
+      },
+    ]);
+    expect(analysis.references).toContainEqual(
+      expect.objectContaining({
+        specifier: "2",
+        loader: "factory-loader",
+        module_key: "1",
+      }),
+    );
+  },
+);
+
+it.each(["0, {}", "[], modules"])(
+  "does not grant factory-loader authority to a rejected registration: %s",
+  (entry) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      globalThis.webpackChunkApp.push([${entry}, function(req) { req("electron"); }]);
+    `);
+    expect(analysis.bundler_registrations).toEqual([]);
+    expect(analysis.references).toEqual([]);
+  },
+);

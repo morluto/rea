@@ -175,6 +175,52 @@ describe("ESP flash layout inventory", () => {
   });
 });
 
+it("inventories a zero-byte partition without reporting missing bytes", async () => {
+  const dump = espFlashDump({
+    bootloader: { at: 0, bytes: BOOTLOADER },
+    table: partitionTable([
+      ...TWO_OTA_PARTITIONS,
+      { label: "empty", type: 1, subtype: 0x82, offset: 0xa000, size: 0 },
+    ]),
+  });
+  const snapshot = await scanCanonicalArtifactInventory(await writeDump(dump));
+  expect(snapshot.coverage.status).toBe("complete");
+  expect(
+    snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "partitions/empty.bin",
+    ),
+  ).toMatchObject({
+    declared_size: 0,
+    limitations: ["partitions/empty.bin declares zero bytes."],
+    format_metadata: { flash_address: 0xa000, size: 0 },
+  });
+});
+
+it("keeps a zero-byte partition before the flash origin at a nonnegative offset", async () => {
+  const esp32 = espImage({
+    segments: ESP32C3_BOOTLOADER_SEGMENTS,
+    chipId: 0x0000,
+  });
+  const whole = espFlashDump({
+    bootloader: { at: 0x1000, bytes: esp32 },
+    table: partitionTable([
+      { label: "empty", type: 1, subtype: 0x82, offset: 0, size: 0 },
+      ...TWO_OTA_PARTITIONS,
+    ]),
+  });
+  const snapshot = await scanCanonicalArtifactInventory(
+    await writeDump(whole.subarray(0x1000)),
+    { espFlashSelection: { flashOffset: 0x1000 } },
+  );
+  const empty = snapshot.occurrences.find(
+    ({ logical_path }) => logical_path === "partitions/empty.bin",
+  );
+  expect(empty).toMatchObject({
+    declared_size: 0,
+    source_location: { offset: 0, length: 0 },
+  });
+});
+
 describe("ESP flash layout coverage and selection", () => {
   it("keeps usable partitions beside a truncated and a missing one", async () => {
     const cut = DUMP.subarray(0, 0x2_8000);

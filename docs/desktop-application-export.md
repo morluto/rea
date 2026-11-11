@@ -336,6 +336,9 @@ A withheld file larger than 48 KiB is refused, since its base64 must fit one
 environment variable. `--withheld-copy <folder>` copies the withheld files,
 as captured, into a new or empty folder outside the bundle. The result lists
 them as `withheld_files`, each with its `setting`, `variable` and `handle`.
+REA resolves both destinations before writing either. A path that cannot be
+resolved, including a dangling link, is refused; the copy and bundle cannot
+contain one another, including through symbolic links.
 
 `--consent <file>` ships the person's consents, a `consent.json` that
 `record_build_consent` records, as the bundle's own `consent.json`.

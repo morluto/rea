@@ -1,7 +1,8 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   elfAbsoluteRelocationType,
   readElfRelocationWritesSteps,
+  readElfPointerValuesSteps,
   type ElfPointerWrite,
 } from "./ElfPointerRelocations.js";
 
@@ -112,4 +113,67 @@ it("owns the word-sized absolute relocation type per machine", () => {
   expect(elfAbsoluteRelocationType(183)).toBe(257);
   expect(elfAbsoluteRelocationType(40)).toBe(2);
   expect(elfAbsoluteRelocationType(8)).toBeUndefined();
+});
+
+/** Three fully decoded relative values; empty REL declarations add no state. */
+const relativeValues = (duplicate = false): Buffer => {
+  const bytes = image();
+  bytes.writeBigUInt64LE(0n, 4 * 16 + 8);
+  for (let i = 0; i < 3; i++) {
+    const at = 0x100 + i * 24;
+    bytes.writeBigUInt64LE(duplicate ? 0x300n : 0x300n + BigInt(i * 8), at);
+    bytes.writeBigUInt64LE(8n, at + 8);
+    bytes.writeBigUInt64LE(
+      duplicate ? 0x1234n : 0x1234n + BigInt(i * 0x100),
+      at + 16,
+    );
+  }
+  return bytes;
+};
+
+const pointerValues = (bytes: Buffer, maximumIndexBytes: number) => {
+  const steps = readElfPointerValuesSteps(
+    bytes,
+    {
+      bits: 64,
+      little: true,
+      machine: EM_X86_64,
+      dynamicSegments: [{ offset: 0n, size: 112n }],
+      mappings: [{ address: 0n, offset: 0, size: bytes.length }],
+      zeroFills: [],
+    },
+    maximumIndexBytes,
+  );
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return next.value;
+};
+
+it("admits fitting pointer workspace and preserves its complete values", () => {
+  const facts = pointerValues(relativeValues(), 6144);
+  expect(
+    [0x300n, 0x308n, 0x310n].map((address) => facts.unsignedAt(address, 8)),
+  ).toEqual([0x1234n, 0x1334n, 0x1434n]);
+});
+
+it("charges repeated virtual destinations once within the pointer workspace", () => {
+  const facts = pointerValues(relativeValues(true), 2048);
+  expect(facts.unsignedAt(0x300n, 8)).toBe(0x1234n);
+});
+
+it("refuses pointer workspace growth before inserting the next virtual destination", () => {
+  const inserted = vi.spyOn(Map.prototype, "set");
+  try {
+    expect(() => pointerValues(relativeValues(), 4096)).toThrow(
+      expect.objectContaining({
+        reason: "native-index-capacity",
+        message: expect.stringContaining("4096 estimated representation bytes"),
+      }),
+    );
+    expect(inserted.mock.calls.some(([address]) => address === 0x310n)).toBe(
+      false,
+    );
+  } finally {
+    inserted.mockRestore();
+  }
 });

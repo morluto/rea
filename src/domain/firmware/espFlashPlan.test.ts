@@ -179,6 +179,72 @@ describe("ESP flash layout plans", () => {
 });
 
 describe("ESP flash layout overlaps", () => {
+  it.each([
+    ["inside another partition", 0xa000],
+    ["at the end of the dump", 0x4_0000],
+  ])(
+    "retains a zero-byte partition %s as an empty declaration",
+    (_, offset) => {
+      const plan = planEspFlashLayout(
+        input({
+          table: table([
+            {
+              label: "data",
+              type: 1,
+              subtype: 2,
+              offset: 0x9000,
+              size: 0x4000,
+            },
+            { label: "empty", type: 1, subtype: 0x82, offset, size: 0 },
+          ]),
+        }),
+      );
+      expect(plan.regions.at(-1)).toMatchObject({
+        path: "partitions/empty.bin",
+        fileOffset: offset,
+        length: 0,
+        available: 0,
+      });
+      expect(plan.limitations).toEqual([
+        `Partition empty at 0x${offset.toString(16)} declares zero bytes.`,
+      ]);
+    },
+  );
+
+  it("retains a zero-byte partition declared before the selected flash origin", () => {
+    const origin = 0x1_0000;
+    const offset = 0x9000;
+    const plan = planEspFlashLayout(
+      input({
+        origin: { value: origin, source: "caller" },
+        tableAddress: origin,
+        bootloader: undefined,
+        table: table([
+          { label: "empty", type: 1, subtype: 0x82, offset, size: 0 },
+        ]),
+      }),
+    );
+    expect(plan.regions).toContainEqual(
+      expect.objectContaining({
+        path: "partitions/empty.bin",
+        role: "partition",
+        flashAddress: offset,
+        fileOffset: offset - origin,
+        length: 0,
+        available: 0,
+        availability: "empty",
+      }),
+    );
+    expect(
+      plan.limitations.filter((limitation) =>
+        limitation.startsWith("Partition empty"),
+      ),
+    ).toEqual([
+      "Partition empty at 0x9000 starts before the end of the partition table at 0x11000; gen_esp32part.py rejects such a table.",
+      "Partition empty at 0x9000 declares zero bytes.",
+    ]);
+  });
+
   it("reports every region inside a longer one", () => {
     const plan = planEspFlashLayout(
       input({

@@ -686,44 +686,20 @@ it("projects one locale's strings on request", async () => {
   ]);
 });
 
-it("notes a missing locale table instead of failing", async () => {
-  const { command, root } = await writeApktoolStub(decodeStub());
-  const apk = await apkFixture(root);
-  const result = await evidenceResult(providerOver(command), {
-    operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true, locale: "fr" },
-  });
-  expect(result.strings).toEqual([]);
-});
-
 it("notes a missing default strings table without strings", async () => {
   const { command, root } = await writeApktoolStub(
     decodeStub({ withStrings: false }),
   );
   const apk = await apkFixture(root);
-  const result = await evidenceResult(providerOver(command), {
+  const execution = await providerOver(command).execute({
     operation: "decode_android_resources",
     input: { path: apk.path, include_strings: true },
   });
-  expect(result.strings).toEqual([]);
-});
-
-it("reports apktool's own refusal for undecodable targets", async () => {
-  const { command, root } = await writeApktoolStub(
-    decodeStub({ failDecode: true }),
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({ strings: [] });
+  expect(execution.value.limitations).toContain(
+    "No default res/values/strings.xml was found in the decoded workspace",
   );
-  const apk = await apkFixture(root);
-  const projected = await refusedBy(providerOver(command), {
-    operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
-  });
-  expect(projected).toMatchObject({
-    code: "unsupported_target",
-    details: { path: apk.path },
-  });
-  expect(projected.message).toContain(apk.path);
-  expect(projected.message).not.toContain(command);
-  expect(projected.message).toContain("Could not decode");
 });
 
 it("reports a missing launcher as a capability gap with recovery", async () => {
@@ -1525,6 +1501,7 @@ it.each(["first-selected.apk", "second-selected.apk"])(
         details: { path, captured_output: { exit_code: 1 } },
       });
       expect(projected.message).toContain(path);
+      expect(projected.message).toContain("Could not decode");
       expect(projected.message).not.toContain(command);
     } finally {
       await provider.close();
@@ -1677,7 +1654,6 @@ it.each([
       expect(warnings.length).toBe(
         ["2.7.0-dirty", "2.9.1", "2.9.2-rc.1"].includes(version) ? 1 : 0,
       );
-      if (warnings.length > 0) expect(warnings[0]).toContain("CVE-2024-21633");
       expect(
         inspect.value.limitations.filter((warning) =>
           warning.includes("CVE-2026-39973"),

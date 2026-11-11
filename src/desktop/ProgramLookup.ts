@@ -1,11 +1,11 @@
 import { constants } from "node:fs";
-import { access, lstat } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute } from "node:path";
 
 const isExecutable = async (path: string): Promise<boolean> => {
   try {
     await access(path, constants.X_OK);
-    return (await lstat(path)).isDirectory() === false;
+    return (await stat(path)).isFile();
   } catch {
     return false;
   }
