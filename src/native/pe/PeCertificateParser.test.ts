@@ -159,9 +159,7 @@ it.each([false, true])(
     // required alignment byte. The parser must not silently publish complete
     // certificate coverage for the missing source byte.
     bytes.writeUInt32LE(tableSize - 1, directoryAt + 4);
-    expect(() => parse(bytes)).toThrow(
-      /alignment padding is truncated/u,
-    );
+    expect(() => parse(bytes)).toThrow(/alignment padding is truncated/u);
   },
 );
 
