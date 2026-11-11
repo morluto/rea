@@ -82,6 +82,13 @@ const decodeMftFileReference = (reference: bigint): MftFileReference => ({
   sequenceNumber: Number(reference >> 48n),
 });
 
+export interface MftFileName {
+  readonly fileOffset: number;
+  readonly parent: MftFileReference;
+  readonly namespace: number;
+  readonly name: string;
+}
+
 export interface MftRecord {
   /** Zero-based ordinal of this record in the stream. */
   readonly index: number;
@@ -108,11 +115,14 @@ export interface MftRecord {
   readonly recordNumberMatchesSlot: boolean | null;
   /** `$LogFile` sequence number as recorded; no log is read. */
   readonly logFileSequenceNumber: string;
-  /** Declared offset of the first attribute; no attribute decoding follows yet. */
+  /** Declared offset of the first attribute. */
   readonly firstAttributeOffset: number;
   /** Declared id of the next attribute; no attribute decoding follows yet. */
   readonly nextAttributeId: number;
   readonly fixups: MftRecordFixups;
+  readonly fileNames: readonly MftFileName[];
+  /** An incomplete scan can still retain names from the valid prefix. */
+  readonly fileNameCoverage: "complete" | "incomplete";
 }
 
 export interface MftInventory {
@@ -136,7 +146,10 @@ export interface MftMetadata {
   readonly fixup_mismatch_count: number;
   readonly fixup_unverified_record_count: number;
   readonly truncated_tail_bytes: number;
-  readonly record_headers: readonly MftRecord[];
+  readonly record_headers: readonly Omit<
+    MftRecord,
+    "fileNames" | "fileNameCoverage"
+  >[];
   readonly omitted_record_headers: number;
 }
 
@@ -210,13 +223,8 @@ export const hasMftFileRecordHeader = (prefix: Uint8Array): boolean => {
 };
 
 /**
- * Parse FILE record headers and verify their update-sequence fixups.
- *
- * Only the record structure is established: attributes, their names, the
- * filenames and the USN journal are left to later steps, so no path, timestamp
- * or file identity beyond the record itself is claimed. A record whose fixup
- * does not match keeps its header facts, because the stream still declares it,
- * and the mismatch is reported on the record and counted in the metadata.
+ * Parse FILE record headers and resident file names. A record with failed
+ * fixups keeps its header facts; its attributes are left unread.
  */
 export const parseMftImage = (
   bytes: Uint8Array,
@@ -257,6 +265,8 @@ const scanMft = (
   let extensionCount = 0;
   let mismatchCount = 0;
   let unverifiedCount = 0;
+  const restored = Buffer.allocUnsafe(recordBytes);
+  let incompleteNames = 0;
   let invalidSlots = 0;
   let invalidExtents = 0;
   let inconsistentRecordNumbers = 0;
@@ -277,7 +287,7 @@ const scanMft = (
       if (!isRecordSize(declaredRecordBytes)) break;
       continue;
     }
-    const record = readRecord(bytes, offset, offset / recordBytes, recordBytes);
+    const record = readRecord(bytes, offset, restored);
     retainedRecords?.push(record);
     if (recordHeaders.length < MFT_INLINE_HEADER_LIMIT)
       recordHeaders.push(record);
@@ -293,6 +303,7 @@ const scanMft = (
       unverifiedCount += 1;
     if (record.recordNumberMatchesSlot === false)
       inconsistentRecordNumbers += 1;
+    if (record.fileNameCoverage === "incomplete") incompleteNames += 1;
     if (!record.extentValid) {
       invalidExtents += 1;
       firstInvalidExtentOffset ??= offset;
@@ -328,6 +339,11 @@ const scanMft = (
       `${String(unverifiedCount)} record(s) carry an invalid or incomplete update sequence array; their sector trailers were not fully verified`,
     );
 
+  if (incompleteNames > 0)
+    limitations.push(
+      `File name coverage is incomplete for ${String(incompleteNames)} record(s)`,
+    );
+
   const metadata: MftMetadata = {
     kind: "ntfs-mft",
     record_bytes: recordBytes,
@@ -338,7 +354,10 @@ const scanMft = (
     fixup_mismatch_count: mismatchCount,
     fixup_unverified_record_count: unverifiedCount,
     truncated_tail_bytes: truncatedTailBytes,
-    record_headers: recordHeaders,
+    record_headers: recordHeaders.map(
+      ({ fileNames: _fileNames, fileNameCoverage: _coverage, ...header }) =>
+        header,
+    ),
     omitted_record_headers: recordCount - recordHeaders.length,
   };
 
@@ -348,9 +367,10 @@ const scanMft = (
 const readRecord = (
   bytes: Uint8Array,
   fileOffset: number,
-  index: number,
-  recordBytes: number,
+  restored: Buffer,
 ): MftRecord => {
+  const recordBytes = restored.length;
+  const index = fileOffset / recordBytes;
   const record = bytes.subarray(fileOffset, fileOffset + recordBytes);
   const view = new DataView(
     record.buffer,
@@ -372,12 +392,35 @@ const readRecord = (
     RECORD_HEADER.firstAttributeOffset,
     true,
   );
-
   const usaLayoutValid = updateSequenceArrayFits(
     usaOffset,
     fixups.entries,
     recordBytes / FIXUP_SECTOR_BYTES,
   );
+  const extentValid =
+    totalBytes === recordBytes &&
+    usedBytes >= NTFS_MFT_MIN_RECORD_BYTES &&
+    usedBytes % 8 === 0 &&
+    usedBytes <= totalBytes &&
+    firstAttributeOffset % 8 === 0 &&
+    firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
+    firstAttributeOffset + 4 <= usedBytes &&
+    (!usaLayoutValid ||
+      firstAttributeOffset >= usaOffset + fixups.entries * 2);
+  const fileNames: MftFileName[] = [];
+  const completeNames =
+    fixups.verifiedSectors === recordBytes / FIXUP_SECTOR_BYTES &&
+    extentValid &&
+    readFileNames(
+      record,
+      view,
+      restored,
+      firstAttributeOffset,
+      usedBytes,
+      fileOffset,
+      fileNames,
+    );
+
   const declaredRecordNumber =
     usaLayoutValid && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
       ? view.getUint32(RECORD_HEADER.recordNumber, true)
@@ -393,16 +436,7 @@ const readRecord = (
     directory: (flags & FILE_RECORD_IS_DIRECTORY) !== 0,
     usedBytes,
     totalBytes,
-    extentValid:
-      totalBytes === recordBytes &&
-      usedBytes >= NTFS_MFT_MIN_RECORD_BYTES &&
-      usedBytes % 8 === 0 &&
-      usedBytes <= totalBytes &&
-      firstAttributeOffset % 8 === 0 &&
-      firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
-      firstAttributeOffset + 4 <= usedBytes &&
-      (!usaLayoutValid ||
-        firstAttributeOffset >= usaOffset + fixups.entries * 2),
+    extentValid,
     baseRecordReference:
       baseRecordReference === 0n
         ? null
@@ -416,7 +450,78 @@ const readRecord = (
     firstAttributeOffset,
     nextAttributeId: view.getUint16(RECORD_HEADER.nextAttributeId, true),
     fixups,
+    fileNames,
+    fileNameCoverage: completeNames ? "complete" : "incomplete",
   };
+};
+
+const ATTRIBUTE_END = 0xffff_ffff;
+const ATTRIBUTE_LIST = 0x20;
+const ATTRIBUTE_FILE_NAME = 0x30;
+const RESIDENT_HEADER_BYTES = 24;
+const FILE_NAME_HEADER_BYTES = 66;
+
+const readFileNames = (
+  record: Uint8Array,
+  raw: DataView,
+  restored: Buffer,
+  firstAttributeOffset: number,
+  usedBytes: number,
+  fileOffset: number,
+  names: MftFileName[],
+): boolean => {
+  restored.set(record.subarray(0, usedBytes));
+  const usaOffset = raw.getUint16(RECORD_HEADER.updateSequenceOffset, true);
+  for (
+    let end = FIXUP_SECTOR_BYTES;
+    end <= usedBytes + 1;
+    end += FIXUP_SECTOR_BYTES
+  )
+    restored.writeUInt16LE(
+      raw.getUint16(usaOffset + 2 * (end / FIXUP_SECTOR_BYTES), true),
+      end - 2,
+    );
+
+  let hasAttributeList = false;
+  for (let offset = firstAttributeOffset; offset + 4 <= usedBytes;) {
+    const type = restored.readUInt32LE(offset);
+    if (type === ATTRIBUTE_END) return !hasAttributeList;
+    if (offset + RESIDENT_HEADER_BYTES > usedBytes) return false;
+    const length = restored.readUInt32LE(offset + 4);
+    const form = restored.readUInt8(offset + 8);
+    const headerBytes = form === 0 ? RESIDENT_HEADER_BYTES : 64;
+    if (
+      form > 1 ||
+      length < headerBytes ||
+      length % 8 !== 0 ||
+      offset + length > usedBytes
+    )
+      return false;
+    if (type === ATTRIBUTE_LIST) hasAttributeList = true;
+    if (type === ATTRIBUTE_FILE_NAME) {
+      if (form !== 0) return false;
+      const valueLength = restored.readUInt32LE(offset + 16);
+      const valueOffset = restored.readUInt16LE(offset + 20);
+      if (
+        valueOffset < headerBytes ||
+        valueLength < FILE_NAME_HEADER_BYTES ||
+        valueOffset + valueLength > length
+      )
+        return false;
+      const value = offset + valueOffset;
+      const nameBytes = restored.readUInt8(value + 64) * 2;
+      if (FILE_NAME_HEADER_BYTES + nameBytes > valueLength) return false;
+      const nameStart = value + FILE_NAME_HEADER_BYTES;
+      names.push({
+        fileOffset: fileOffset + value,
+        parent: decodeMftFileReference(restored.readBigUInt64LE(value)),
+        namespace: restored.readUInt8(value + 65),
+        name: restored.toString("utf16le", nameStart, nameStart + nameBytes),
+      });
+    }
+    offset += length;
+  }
+  return false;
 };
 
 /**

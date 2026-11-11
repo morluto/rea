@@ -232,6 +232,40 @@ describe("MFT fixup coverage", () => {
       );
     },
   );
+  it("decodes a FILE_NAME across a restored sector trailer without changing the source bytes", () => {
+    const bytes = recordOf();
+    const view = new DataView(bytes.buffer);
+    const attribute = 416;
+    const value = attribute + 24;
+    view.setUint16(20, attribute, true);
+    view.setUint32(24, 528, true);
+    view.setUint32(attribute, 0x30, true);
+    view.setUint32(attribute + 4, 104, true);
+    view.setUint32(attribute + 16, 76, true);
+    view.setUint16(attribute + 20, 24, true);
+    view.setBigUint64(value, 0x1234_0000_0000_0005n, true);
+    bytes.set([5, 1], value + 64);
+    bytes.set(Buffer.from("names", "utf16le"), value + 66);
+    view.setUint16(50, view.getUint16(510, true), true);
+    view.setUint16(510, view.getUint16(48, true), true);
+    view.setUint32(520, 0xffff_ffff, true);
+    const original = bytes.slice();
+
+    const parsed = parseMftImage(bytes);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.records[0]).toMatchObject({
+      fileNameCoverage: "complete",
+      fileNames: [
+        {
+          fileOffset: value,
+          parent: { recordNumber: 5, sequenceNumber: 0x1234 },
+          namespace: 1,
+          name: "names",
+        },
+      ],
+    });
+    expect(bytes).toEqual(original);
+  });
 
   it("keeps a record whose sector trailer is not the sequence number, and reports it", () => {
     const parsed = parseMftImage(

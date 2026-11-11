@@ -32,9 +32,11 @@ its own.
   `limit` failure with its boundary.
 - Return the first 32 decoded record headers with their source offsets and the
   number of omitted headers. Aggregate counts cover the full parsed stream.
-- Parse only the records' headers and fixups. Attributes, filenames, data
-  streams and the `$UsnJrnl:$J` journal are not decoded in this step, so no path,
-  file size, file reference correlation or change history is claimed.
+- Restore verified sector trailers in a per-record scratch buffer before
+  scanning attributes. The domain decoder retains resident `$FILE_NAME`
+  names, namespaces, parent references and source offsets. Report incomplete
+  coverage when the walk cannot finish or an attribute list may refer to
+  extensions. The inventory does not yet expose the individual names.
 
 ## Acceptance
 
@@ -47,5 +49,5 @@ Inventory tests cover the root occurrence's metadata and the coverage status
 when a fixup fails, and classification tests cover several file names for the
 same bytes.
 
-Not covered in this step: real `$MFT` files written by a Windows host, USN
-journal records, attribute decoding, and any correlation between the two.
+Pending verification with real `$MFT` files written by a Windows host. USN
+journal records and correlation remain future steps.
