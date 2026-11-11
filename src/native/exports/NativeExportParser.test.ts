@@ -1246,3 +1246,26 @@ it("refuses formats other than PE and ELF", () => {
     BinaryFormatFailure,
   );
 });
+
+it.each(
+  ([32, 64] as const).flatMap((bits) =>
+    [false, true].map((little) => ({ bits, little })),
+  ),
+)(
+  "keeps definition names and complete coverage when empty requirements are compressed (ELF$bits, little $little)",
+  ({ bits, little }) => {
+    const bytes = elfExportImage({
+      bits,
+      little,
+      symbols: [{ name: "versioned", version: 2 }],
+      versionDefinitions: ["libfixture.so", "DEFINED"],
+    });
+    const expected = parse(bytes);
+    expect(expected).toMatchObject({
+      exports: [{ name: "versioned", version: { index: 2, name: "DEFINED" } }],
+      coverage: { status: "complete" },
+      issues: [],
+    });
+    expect(parse(compressExportSection(bytes, 5))).toEqual(expected);
+  },
+);
