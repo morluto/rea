@@ -28,7 +28,11 @@ import {
   occurrenceIdForLocation,
   logicalPathNfc,
 } from "../../domain/artifactIdentity.js";
-import type { ArtifactEntry, ArtifactReader } from "../ArtifactReader.js";
+import type {
+  ArtifactEntry,
+  ArtifactReader,
+  ArtifactReaderTraversal,
+} from "../ArtifactReader.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,
@@ -56,6 +60,9 @@ export interface MutableOccurrence {
   occurrence_id: string;
   artifact_id: string | null;
   parent_occurrence_id: string | null;
+  relationship_coverage?: NonNullable<
+    ArtifactOccurrence["relationship_coverage"]
+  >;
   logical_path: string;
   entry_kind: ArtifactOccurrence["entry_kind"];
   artifact_kind: ArtifactOccurrence["artifact_kind"];
@@ -344,6 +351,7 @@ export const rekeyOccurrences = (
 export const createArtifactEdges = (
   rootArtifactId: string,
   occurrences: MutableOccurrence[],
+  traversalStatus: ArtifactReaderTraversal["status"],
   producer?: ArtifactCommand,
 ): { readonly edges: ArtifactEdge[]; readonly limitations: string[] } => {
   const byId = new Map(occurrences.map((item) => [item.occurrence_id, item]));
@@ -351,12 +359,17 @@ export const createArtifactEdges = (
   const edges: ArtifactEdge[] = [];
   const limitations: string[] = [];
   for (const occurrence of occurrences) {
+    let relationshipComplete =
+      occurrence.logical_path === "." ||
+      (occurrence.parent_occurrence_id !== null &&
+        occurrence.artifact_id !== null);
     // Use the occurrence's own classification: a directory named `x.map` is
     // a container, not a source map of its sibling.
     const isSourceMap = occurrence.artifact_kind === "source-map";
-    const sourcePath = isSourceMap
-      ? occurrence.logical_path.slice(0, -".map".length)
-      : undefined;
+    const sourcePath =
+      isSourceMap && occurrence.logical_path !== "."
+        ? occurrence.logical_path.slice(0, -".map".length)
+        : undefined;
     const sourceCandidates =
       sourcePath === undefined ? [] : (byPath.get(sourcePath) ?? []);
     const mappedSource =
@@ -381,10 +394,15 @@ export const createArtifactEdges = (
               }
             : undefined;
       if (unknownMapping !== undefined) {
+        relationshipComplete = false;
         occurrence.limitations.push(unknownMapping.occurrence);
         limitations.push(unknownMapping.coverage);
       }
+      if (traversalStatus === "unknown") relationshipComplete = false;
     }
+    occurrence.relationship_coverage = relationshipComplete
+      ? "complete"
+      : "unknown";
     if (
       occurrence.parent_occurrence_id === null ||
       occurrence.artifact_id === null
@@ -424,15 +442,17 @@ interface ArtifactParentIndex {
   occurrences?: readonly MutableOccurrence[];
 }
 
+export interface ArtifactParentResolution {
+  readonly limitations: readonly string[];
+  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
+}
+
 /** Resolve strict observed ancestors without rebuilding every path prefix. */
 export const resolveOccurrenceParents = (
   occurrences: readonly MutableOccurrence[],
   byPath: ReadonlyMap<string, readonly MutableOccurrence[]>,
   expandedContainerIds: ReadonlySet<string>,
-): {
-  readonly limitations: readonly string[];
-  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
-} => {
+): ArtifactParentResolution => {
   const root: ArtifactParentIndex = { children: new Map() };
   for (const matches of byPath.values()) {
     const parents = matches.filter(
