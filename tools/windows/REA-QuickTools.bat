@@ -27,15 +27,9 @@ color 0A
 :: Everything below runs inside this setlocal, so no assignment leaks into the
 :: calling shell when the launcher exits.
 if not defined GHIDRA_INSTALL_DIR if exist "C:\tools\ghidra_12.1.4_PUBLIC" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
-:: JDK default only for a verified 12.1.x install (application.version,
-:: read from Ghidra\application.properties -- release identity is never
-:: inferred from the directory name) and only when no JAVA_HOME was chosen;
-:: an explicit JAVA_HOME stays authoritative.
-if not defined JAVA_HOME if defined GHIDRA_INSTALL_DIR if exist "%GHIDRA_INSTALL_DIR%\Ghidra\application.properties" (
-    set "GHIDRA_VERSION="
-    for /f "usebackq tokens=1,* delims==" %%A in ("%GHIDRA_INSTALL_DIR%\Ghidra\application.properties") do if /i "%%A"=="application.version" set "GHIDRA_VERSION=%%B"
-    if "!GHIDRA_VERSION:~0,4!"=="12.1." if exist "C:\Program Files\Java\jdk-22" set "JAVA_HOME=C:\Program Files\Java\jdk-22"
-)
+:: No JAVA_HOME guessing here: release identity and java.exe selection
+:: belong to REA's GhidraInstallation (doctor reads the real release and
+:: probes java.exe from PATH); the launcher only suggests the directory.
 
 :: ---- Locate the REA CLI ------------------------------------------------------
 :: node.exe plus the packaged rea.mjs entry, executed directly: control returns
@@ -197,7 +191,8 @@ if not defined FUNC_NAME goto FILE_DROPPED
 :: documented --procedure= selector. An &-containing symbol cannot cross
 :: any cmd exec boundary intact and is dispatched raw (safe: & stays data;
 :: the CLI reports the surplus positional with a clear error).
-if not "!FUNC_NAME:&=!"=="!FUNC_NAME!" (
+call :SCAN_VALUE "FUNC_NAME"
+if defined META_VALUE (
     set "REA_ARGS=decompile "!TARGET!" !FUNC_NAME! --provider ghidra"
     call :RUN_REA
 ) else if "!FUNC_NAME:~0,1!"=="-" (
@@ -226,7 +221,13 @@ if not defined SEARCH_TERM goto FILE_DROPPED
 :: crosses to the child inside a FOR-carrier (quoted %%P), preserving
 :: every byte as ONE argv entry; an options-shaped needle routes through
 :: --pattern=<value>; an &-containing needle is dispatched raw (safe).
-if not "!SEARCH_TERM:&=!"=="!SEARCH_TERM!" (
+:: Selector boundary: the charset scan rejects any value carrying cmd
+:: metacharacters (" ^ %% ! & | < >) -- the same set the repository batch
+:: boundary rejects -- so the quoted FOR-carrier below only ever receives
+:: values cmd cannot reparse. Rejected values dispatch raw through
+:: :RUN_REA (safe: they stay data; the CLI reports the surplus positional).
+call :SCAN_VALUE "SEARCH_TERM"
+if defined META_VALUE (
     set "REA_ARGS=search "!TARGET!" !SEARCH_TERM! --kind strings --provider ghidra"
     call :RUN_REA
 ) else if "!SEARCH_TERM:~0,1!"=="-" (
@@ -241,7 +242,8 @@ goto FILE_DROPPED
 set "PROC_TERM="
 set /p PROC_TERM="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
 if not defined PROC_TERM goto FILE_DROPPED
-if not "!PROC_TERM:&=!"=="!PROC_TERM!" (
+call :SCAN_VALUE "PROC_TERM"
+if defined META_VALUE (
     set "REA_ARGS=search "!TARGET!" !PROC_TERM! --kind procedures --provider ghidra"
     call :RUN_REA
 ) else if "!PROC_TERM:~0,1!"=="-" (
@@ -274,6 +276,35 @@ goto MENU
 :OPEN_GUIDE
 start notepad "!GUIDE_FILE!"
 goto MENU
+
+:: ---- selector charset scan -------------------------------------------------
+:: Splits no value: walks %1-named variable one char at a time and rejects
+:: any character outside the safe set. Sets META_VALUE=1 when a cmd
+:: metacharacter (" ^ %% ! & | < >) or ! is present, clears it otherwise;
+:: rejected values keep every byte and cross through :RUN_REA raw.
+:SCAN_VALUE
+set "META_VALUE="
+set "SCAN_REST=!%~1!"
+:: ! anywhere: reject (delayed expansion consumes it); quotes are rejected
+:: too: they cannot be tested per-char without reparse-prone constructions
+:: (the CLI pattern/procedure values accept these characters, but the
+:: launcher surfaces them raw through :RUN_REA instead, where they stay
+:: data and the CLI reports the surplus positional).
+set "SCAN_SAFE=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .:-_()[]{}^+*=@/,~?""
+goto SCAN_LOOP
+
+:SCAN_LOOP
+if not defined SCAN_REST goto SCAN_DONE
+set "SCAN_CH=!SCAN_REST:~0,1!"
+for %%C in ("!SCAN_CH!") do if "!SCAN_SAFE:%%~C=!"=="!SCAN_SAFE!" set "META_VALUE=1"
+set "SCAN_REST=!SCAN_REST:~1!"
+goto SCAN_LOOP
+
+:SCAN_DONE
+set "SCAN_REST="
+set "SCAN_SAFE="
+set "SCAN_CH="
+goto :eof
 
 :: ---- run rea with the resolved launcher ------------------------------------
 :: REA_ARGS is built with delayed expansion at the action sites. Expanding it
