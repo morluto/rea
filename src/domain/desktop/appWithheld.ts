@@ -172,6 +172,8 @@ const PYTHON_KEYWORDS = new Set(
 /** Pydantic >=2.12: configuration, its instance initialization hook and protected inherited methods. */
 const PYDANTIC_RESERVED_FIELDS = new Set([
   "model_config",
+  "model_extra",
+  "model_fields_set",
   "model_post_init",
   "model_dump",
   "model_dump_json",

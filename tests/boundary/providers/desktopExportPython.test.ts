@@ -5,6 +5,7 @@ import {
 } from "../../../src/domain/desktop/desktopViewPolicy.js";
 import {
   execFileSync,
+  spawnSync,
   type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
@@ -34,6 +35,8 @@ import {
   textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
 import { safeParseJson } from "../../../src/domain/safeJson.js";
+import { withheldSettings } from "../../../src/domain/desktop/appWithheld.js";
+import { withheldSettingsClass } from "../../../src/domain/desktop/appExportWithheld.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** Keep the exported Python helpers out of the host command-line size limit. */
@@ -825,3 +828,54 @@ print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["
   );
   expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });
+
+const hasPydantic2 =
+  spawnSync(
+    process.platform === "win32" ? "python" : "python3",
+    [
+      "-I",
+      "-c",
+      "import pydantic; assert int(pydantic.__version__.split('.')[0]) >= 2",
+    ],
+    { stdio: "ignore", timeout: 10_000 },
+  ).status === 0;
+
+it.skipIf(!hasPydantic2)(
+  "restores withheld files with Pydantic-reserved names",
+  async () => {
+    const home = await createTestTempDirectory("rea-pydantic-withheld-");
+    const files = ["model_extra", "model_fields_set", "file_model_extra"];
+    const withheld = withheldSettings("fixture", files);
+    const imports = PYTHON_IMPORTS.split("\n")
+      .filter((line) => !line.includes("agentenv_protocol"))
+      .join("\n");
+    const program = `
+${imports}
+from pydantic import BaseModel, SecretStr, create_model
+class ComputerAppEnvironment:
+    Settings = BaseModel
+class Exported:
+${withheldSettingsClass(withheld)}
+${PYTHON_HELPERS}
+settings = Exported.Settings(**{name: "YQ==" for name in json.loads(sys.argv[2])})
+_write_withheld(Path(sys.argv[1]), settings, json.loads(sys.argv[3]))
+`;
+    execPython(
+      [
+        "-B",
+        "-c",
+        program,
+        home,
+        JSON.stringify(withheld.map(({ setting }) => setting)),
+        JSON.stringify(
+          Object.fromEntries(
+            withheld.map(({ setting, file }) => [setting, file]),
+          ),
+        ),
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    for (const file of files)
+      expect(await readFile(join(home, file), "utf8")).toBe("a");
+  },
+);

@@ -149,6 +149,9 @@ describe("withheld file settings", () => {
       "file_1license",
       "class",
       "model_config",
+      "model_extra",
+      "model_fields_set",
+      "file_model_extra",
       "model_post_init",
       "model_dump",
       "model_dump_json",
@@ -170,6 +173,8 @@ describe("withheld file settings", () => {
         expect(["pass", "class"]).not.toContain(setting);
         expect([
           "model_config",
+          "model_extra",
+          "model_fields_set",
           "model_post_init",
           "model_dump",
           "model_dump_json",
