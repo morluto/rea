@@ -274,7 +274,7 @@ const collectRequests = (
       return;
     // `http`/`https` validate the path before the request exists, so an unescaped
     // character throws from the call itself.
-    if (rejectsHttpPathLiteral(node, method)) return;
+    if (rejectsHttpPathLiteral(node, method, context.state)) return;
     output.push({
       node,
       operation: {
@@ -608,6 +608,7 @@ const UNESCAPED_PATH_CHARACTER = /[^\u0021-\u00ff]/u;
 const rejectsHttpPathLiteral = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   method: JavaScriptSemanticRequestOperation["method"],
+  state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (method !== "get" && method !== "request") return false;
   const first = node.arguments[0];
@@ -618,12 +619,15 @@ const rejectsHttpPathLiteral = (
   // request to `/` because `ClientRequest` reads the function as the callback and
   // replaces options with defaults, so the second object is never read. Only a string,
   // template or `new URL` target proves that overload.
+  // `new URL` only proves the overload while \`URL\` is the untouched global. Measured on
+  // Node 24.22.1, \`const URL = Function; http.request(new URL(), {path: "/a b"})\` treats the
+  // function as the callback and builds the default \`/\` request, so the second object is
+  // never read.
   const urlTarget =
     t.isStringLiteral(firstValue) ||
     t.isTemplateLiteral(firstValue) ||
     (t.isNewExpression(firstValue) &&
-      t.isIdentifier(firstValue.callee) &&
-      firstValue.callee.name === "URL");
+      isUnmodifiedGlobalReference(firstValue.callee, state, "URL"));
   const optionsIndex = t.isObjectExpression(firstValue)
     ? 0
     : urlTarget

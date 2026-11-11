@@ -106,3 +106,18 @@ it.each([
 ] as const)("still reads slot 1 for a proven url target: %s", (call) => {
   expect(requestsFor(call)).toEqual([]);
 });
+
+it("keeps the request when the URL constructor is replaced", () => {
+  // `new URL()` is not a URL target once `URL` is not the global, so slot 0 is the callback
+  // and the second object is never read. Measured on Node 24.22.1.
+  const operations = analyzeJavaScriptSemantics(
+    `import http from "node:http";\nconst URL = Function;\nfunction f() { http.request(new URL(), { path: "/a b" }); }`,
+  ).requestOperations;
+  expect(operations).toHaveLength(1);
+});
+
+it("still reads slot 1 for the genuine URL constructor", () => {
+  expect(
+    requestsFor(`http.request(new URL("http://h/"), { path: "/a b" })`),
+  ).toEqual([]);
+});
