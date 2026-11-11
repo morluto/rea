@@ -1,8 +1,8 @@
 # NTFS $MFT and USN Journal inspection
 
 This specification records an implementation increment and its original problem
-statement. For current behavior and limitations, see the artifact inventory
-workflow below.
+statement. For current behavior and limitations, see the
+[NTFS workflow guide](../../../guides/native/ntfs-metadata.md).
 
 ## Problem and outcome
 
@@ -59,12 +59,11 @@ file has a 64 MiB working-set admission limit. Follow `nextFileOffset` as
 `start_file_offset` on MCP or `--startFileOffset` on CLI and compare the two
 input digests between pages.
 
-USN V2 results preserve the full record reference, sequence number,
-source offset, FILETIME, name and raw flags. Older and newer record layouts
-are reported as unsupported. Padding, malformed records and truncation
-appear as coverage rows. Record order follows the acquisition, and the
-results do not establish which journal history is absent due to wrap or a
-partial acquisition.
+USN V2, V3 and V4 records are supported. V3/V4 opaque IDs remain unresolved
+against MFT references; V4 delivers bounded extent samples with omission counts.
+Both the journal events and the MFT metadata have independent continuation
+positions. Padding, malformed records and truncation appear as coverage rows.
+Record order follows the acquisition, and history completeness remains unknown.
 
 The CLI and MCP workflow tests use synthesized acquisitions. Verification
 with real `$MFT` and journal files from a Windows host remains pending.

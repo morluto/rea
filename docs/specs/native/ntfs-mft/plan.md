@@ -4,7 +4,9 @@
 
 Follow the existing artifact readers. `src/domain/windows/ntfsMft.ts` owns FILE
 record bytes and coverage; `src/domain/artifactFormatMetadata.ts` owns the
-`ntfs-mft` result schema. `NtfsMftArtifactReader` reads the admitted file
+`ntfs-mft` result schema. `ntfsMftAttributes.ts` owns verified attribute
+values and descriptor contracts. Journal joins retain only record headers
+outside the selected 32-record detail page. `NtfsMftArtifactReader` reads the admitted file
 through `ArtifactFileSource` and exposes its facts through `formatMetadata()`.
 A record stream is its own content, so the root occurrence carries every fact
 and no members are enumerated.
@@ -26,7 +28,8 @@ Recognition lives in `hasMftFileRecordSignature` and is applied in
 
 ## Effects and compatibility
 
-The workflow reads one caller-selected local file. It adds no target execution,
+The inventory reads one caller-selected MFT file; the journal workflow reads
+the explicitly paired MFT and journal files. It adds no target execution,
 injection, mutation, protection recovery, network access, volume mount or live
 filesystem access, so no maintainer scope decision is required.
 `inspect_artifact` routing for every existing format is unchanged, and the new
@@ -37,3 +40,6 @@ signature.
 
 - https://learn.microsoft.com/en-us/windows/win32/fileio/master-file-table
 - https://github.com/libyal/libfsntfs/blob/main/documentation/New%20Technologies%20File%20System%20(NTFS).asciidoc
+
+Current analyst behavior and limitations live in the
+[NTFS guide](../../../guides/native/ntfs-metadata.md).
