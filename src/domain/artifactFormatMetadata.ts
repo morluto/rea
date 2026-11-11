@@ -304,6 +304,21 @@ const ntfsFileReferenceSchema = z.strictObject({
   recordNumber: offset,
   sequenceNumber: offset,
 });
+const unsignedDecimalSchema = z.string().regex(/^(?:0|[1-9][0-9]*)$/u);
+export const ntfsFileNameSchema = z.strictObject({
+  fileOffset: offset,
+  parent: ntfsFileReferenceSchema,
+  namespace: offset,
+  name: z.string(),
+  createdFileTime: unsignedDecimalSchema,
+  modifiedFileTime: unsignedDecimalSchema,
+  mftChangedFileTime: unsignedDecimalSchema,
+  accessedFileTime: unsignedDecimalSchema,
+  allocatedBytes: unsignedDecimalSchema,
+  dataBytes: unsignedDecimalSchema,
+  fileAttributes: offset,
+  reparseOrEa: offset,
+});
 const ntfsRecordHeaderSchema = z.strictObject({
   index: offset,
   fileOffset: offset,
@@ -325,6 +340,8 @@ const ntfsRecordHeaderSchema = z.strictObject({
   logFileSequenceNumber: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
   firstAttributeOffset: offset,
   nextAttributeId: offset,
+  fileNames: z.array(ntfsFileNameSchema).exactOptional(),
+  fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
   fixups: z.strictObject({
     sequenceNumber: offset,
     entries: offset,

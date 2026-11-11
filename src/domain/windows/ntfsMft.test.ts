@@ -269,6 +269,47 @@ describe("MFT fixup coverage", () => {
     expect(bytes).toEqual(original);
   });
 
+  it("preserves multiple hard-link names with independent parents and source metadata", () => {
+    const bytes = recordOf({ hardLinkCount: 2 });
+    const view = new DataView(bytes.buffer);
+    for (const [index, name] of ["first", "second"].entries()) {
+      const attribute = 56 + index * 104;
+      const value = attribute + 24;
+      view.setUint32(attribute, 0x30, true);
+      view.setUint32(attribute + 4, 104, true);
+      view.setUint32(attribute + 16, 66 + name.length * 2, true);
+      view.setUint16(attribute + 20, 24, true);
+      view.setBigUint64(value, (3n << 48n) | BigInt(5 + index), true);
+      view.setBigUint64(value + 8, 133000000000000001n, true);
+      view.setBigUint64(value + 48, 9007199254740993n, true);
+      bytes.set([name.length, index + 1], value + 64);
+      bytes.set(Buffer.from(name, "utf16le"), value + 66);
+    }
+    view.setUint32(264, 0xffffffff, true);
+    view.setUint32(24, 272, true);
+    const parsed = parseMftImage(bytes);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.metadata.record_headers[0]).toMatchObject({
+      fileNameCoverage: "complete",
+      fileNames: [
+        {
+          name: "first",
+          parent: { recordNumber: 5 },
+          fileOffset: 80,
+          createdFileTime: "133000000000000001",
+          dataBytes: "9007199254740993",
+        },
+        {
+          name: "second",
+          parent: { recordNumber: 6 },
+          fileOffset: 184,
+          namespace: 2,
+        },
+      ],
+    });
+    expect(parsed.value.metadata.file_name_count).toBe(2);
+  });
+
   it("keeps a record whose sector trailer is not the sequence number, and reports it", () => {
     const parsed = parseMftImage(
       streamOf(recordOf(), recordOf({ sequenceNumber: 9, corruptSector: 1 })),

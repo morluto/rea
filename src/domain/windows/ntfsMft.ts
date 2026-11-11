@@ -24,8 +24,8 @@ const USA_MIN_ENTRIES = 2;
 /** NTFS fixes up one 512-byte sector at a time. */
 export const FIXUP_SECTOR_BYTES = 512;
 /**
- * Fixed whole-file ceiling. Records are inventoried from their headers only;
- * attributes and their payloads are not decoded, so this is deliberately
+ * Fixed whole-file ceiling. Records and supported resident metadata are inventoried; no volume data
+ * is fetched, so this is deliberately
  * smaller than a volume's MFT can be.
  */
 export const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
@@ -87,6 +87,15 @@ export interface MftFileName {
   readonly parent: MftFileReference;
   readonly namespace: number;
   readonly name: string;
+  /** Raw FILETIME values and sizes remain lossless decimal strings. */
+  readonly createdFileTime: string;
+  readonly modifiedFileTime: string;
+  readonly mftChangedFileTime: string;
+  readonly accessedFileTime: string;
+  readonly allocatedBytes: string;
+  readonly dataBytes: string;
+  readonly fileAttributes: number;
+  readonly reparseOrEa: number;
 }
 
 export interface MftRecord {
@@ -117,7 +126,7 @@ export interface MftRecord {
   readonly logFileSequenceNumber: string;
   /** Declared offset of the first attribute. */
   readonly firstAttributeOffset: number;
-  /** Declared id of the next attribute; no attribute decoding follows yet. */
+  /** Declared id of the next attribute. */
   readonly nextAttributeId: number;
   readonly fixups: MftRecordFixups;
   readonly fileNames: readonly MftFileName[];
@@ -146,10 +155,7 @@ export interface MftMetadata {
   readonly fixup_mismatch_count: number;
   readonly fixup_unverified_record_count: number;
   readonly truncated_tail_bytes: number;
-  readonly record_headers: readonly Omit<
-    MftRecord,
-    "fileNames" | "fileNameCoverage"
-  >[];
+  readonly record_headers: readonly MftRecord[];
   readonly omitted_record_headers: number;
   readonly file_name_count: number;
   readonly file_name_incomplete_record_count: number;
@@ -358,10 +364,7 @@ const scanMft = (
     fixup_mismatch_count: mismatchCount,
     fixup_unverified_record_count: unverifiedCount,
     truncated_tail_bytes: truncatedTailBytes,
-    record_headers: recordHeaders.map(
-      ({ fileNames: _fileNames, fileNameCoverage: _coverage, ...header }) =>
-        header,
-    ),
+    record_headers: recordHeaders,
     omitted_record_headers: recordCount - recordHeaders.length,
     file_name_count: fileNameCount,
     file_name_incomplete_record_count: incompleteNames,
@@ -523,6 +526,14 @@ const readFileNames = (
         parent: decodeMftFileReference(restored.readBigUInt64LE(value)),
         namespace: restored.readUInt8(value + 65),
         name: restored.toString("utf16le", nameStart, nameStart + nameBytes),
+        createdFileTime: restored.readBigUInt64LE(value + 8).toString(),
+        modifiedFileTime: restored.readBigUInt64LE(value + 16).toString(),
+        mftChangedFileTime: restored.readBigUInt64LE(value + 24).toString(),
+        accessedFileTime: restored.readBigUInt64LE(value + 32).toString(),
+        allocatedBytes: restored.readBigUInt64LE(value + 40).toString(),
+        dataBytes: restored.readBigUInt64LE(value + 48).toString(),
+        fileAttributes: restored.readUInt32LE(value + 56),
+        reparseOrEa: restored.readUInt32LE(value + 60),
       });
     }
     offset += length;

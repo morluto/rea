@@ -2,7 +2,7 @@
 
 This specification records an implementation increment and its original problem
 statement. For current behavior and limitations, see the artifact inventory
-guide.
+workflow below.
 
 ## Problem and outcome
 
@@ -36,7 +36,9 @@ its own.
   scanning attributes. The domain decoder retains resident `$FILE_NAME`
   names, namespaces, parent references and source offsets. Report incomplete
   coverage when the walk cannot finish or an attribute list may refer to
-  extensions. The inventory does not yet expose the individual names.
+  extensions. The first 32 record samples expose individual names, parent
+  references, namespaces, FILETIME values, sizes and attribute bits. Keep each
+  name attribute separate, including multiple names for one record.
 
 ## Acceptance
 
