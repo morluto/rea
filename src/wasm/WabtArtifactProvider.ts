@@ -229,6 +229,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       input.command_timeout_ms ??
       options?.commandTimeoutMs ??
       DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const commandTimeoutSource =
+      input.command_timeout_ms !== undefined
+        ? "request"
+        : options?.commandTimeoutSource;
     try {
       if (options?.signal?.aborted)
         throw new AnalysisCancelledError(OPERATION, {
@@ -695,6 +699,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         phase === "artifact" ? artifactInput.path : input.path,
         {
           commandTimeoutMs,
+          ...(commandTimeoutSource === undefined
+            ? {}
+            : { commandTimeoutSource }),
           limits,
           inputField: artifactInput.field,
           observedOutput: capturedOutput,

@@ -79,7 +79,7 @@ export const webNetworkCaptureBudgetFacts = (
         ? MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH
         : Number.MAX_SAFE_INTEGER,
     applies_at: "next_operation",
-    update_mode: "runtime" as const,
+    update_mode: "parameter" as const,
     pending_restart: false as const,
   };
 };

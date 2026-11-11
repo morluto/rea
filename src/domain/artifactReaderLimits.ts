@@ -191,7 +191,7 @@ export interface ArtifactReaderLimitFact {
   readonly applies_at: "next_operation";
   readonly agent_editable: true;
   readonly can_increase: boolean;
-  readonly update_mode: "runtime";
+  readonly update_mode: "parameter";
   readonly pending_restart: false;
 }
 

@@ -27,7 +27,7 @@ const requiredFacts = (
   expect(message).toContain(String(fact.defaultValue));
   expect(message).toContain(String(fact.floor));
   expect(message).toContain(String(fact.maximum));
-  expect(message).toContain("restart REA");
+  expect(message).toContain("positive decimal integer");
 };
 
 it("keeps today's settle defaults when the settings are unset", () => {
@@ -98,17 +98,21 @@ it.each([
   const message = resolved.error.settings[0]?.constraint;
   if (message === undefined) throw new Error("Missing configuration guidance");
   requiredFacts(message, { ...bound, currentValue: value, source: "setting" });
-  expect(resolved.error.settings).toEqual([
-    { setting: bound.setting, constraint: message },
-  ]);
+  const facts = {
+    setting: bound.setting,
+    constraint: message,
+    update_mode: "restart" as const,
+    pending_restart: true as const,
+  };
+  expect(resolved.error.settings).toEqual([facts]);
   expect(projectAnalysisError(resolved.error)).toMatchObject({
     code: "configuration_invalid",
-    details: { settings: [{ setting: bound.setting, constraint: message }] },
+    details: { settings: [facts] },
   });
   const startup = parseEnvironment({ [bound.setting]: value });
   if (startup.ok) throw new Error(`Startup accepted ${bound.setting}=${value}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: bound.setting,
-    constraint: message,
+  expect(startup.error.settings).toContainEqual(facts);
+  expect(projectAnalysisError(startup.error).details).toMatchObject({
+    settings: [facts],
   });
 });
