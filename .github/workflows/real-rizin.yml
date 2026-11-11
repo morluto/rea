@@ -1,0 +1,108 @@
+name: Real Rizin provider gates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/real-rizin.yml"
+      - ".nvmrc"
+      - "src/rizin/**"
+      - "src/domain/reverseEngineering.ts"
+      - "src/cli/reverseEngineeringCommands.ts"
+      - "tests/boundary/providers/RizinDecoderInputs.test.ts"
+      - "tests/boundary/providers/RizinInferiorTty.test.ts"
+      - "tests/boundary/providers/RizinTestInferiorTty.ts"
+      - "tests/boundary/providers/RizinDebugSessionCoverage.fixtures.ts"
+      - "tests/support/requiredRizin.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-rizin-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: --max-old-space-size=768
+  HUSKY: "0"
+  # Writes only on the default branch for push, schedule, manual dispatch,
+  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
+
+jobs:
+  real-rizin:
+    name: Real Rizin ${{ matrix.version }} gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Official static Linux x86_64 releases from github.com/rizinorg/rizin.
+        # Rizin publishes no signature or checksum file. 0.9.1's hash is the
+        # digest GitHub shows for the release asset; 0.7.4's asset has no
+        # digest, so its hash comes from a maintainer download (see
+        # docs/testing-lanes.md).
+        include:
+          - version: "0.9.1"
+            sha256: 9102249a9f0b6319c5334a2e5cf8d9cc3f2035e1d3def027c41f6a90f647e8cf
+          - version: "0.7.4"
+            sha256: db51f7c2def9c5c09df4e4102e9e294a030c77bd92a319ced6ec216293064d63
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - name: Fetch pinned Rizin static release into the job workspace
+        shell: bash
+        env:
+          RIZIN_VERSION: ${{ matrix.version }}
+          RIZIN_SHA256: ${{ matrix.sha256 }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/rea-rizin-$RIZIN_VERSION"
+          archive="$root/rizin-v$RIZIN_VERSION-static-x86_64.tar.xz"
+          mkdir -p "$root/install"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/rizinorg/rizin/releases/download/v$RIZIN_VERSION/rizin-v$RIZIN_VERSION-static-x86_64.tar.xz"
+          # Check the archive before extracting anything from it.
+          printf '%s  %s\n' "$RIZIN_SHA256" "$archive" | sha256sum --check --strict
+          tar -xJf "$archive" -C "$root/install"
+          mapfile -t found < <(find "$root/install" -type f -path '*/bin/rizin')
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::Expected one bin/rizin in rizin-v$RIZIN_VERSION-static-x86_64.tar.xz, found ${#found[@]}"
+            exit 1
+          fi
+          dirname "${found[0]}" >> "$GITHUB_PATH"
+      - name: Record the Rizin under test
+        shell: bash
+        env:
+          RIZIN_VERSION: ${{ matrix.version }}
+          RIZIN_SHA256: ${{ matrix.sha256 }}
+        run: |
+          set -euo pipefail
+          binary="$(command -v rizin)"
+          banner="$(rizin -v | head -n 1)"
+          printf '%s\n%s\n' "$binary" "$banner"
+          {
+            printf '### Rizin %s (official static, Linux x86_64)\n\n' "$RIZIN_VERSION"
+            printf -- '- Binary: `%s`\n' "$binary"
+            printf -- '- Banner: `%s`\n' "$banner"
+            printf -- '- Archive SHA-256: `%s`\n' "$RIZIN_SHA256"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # REA_REQUIRE_RIZIN makes a missing Rizin, or another version first on
+      # PATH, fail these gates instead of skipping them.
+      - name: Run the decoder and map input gate
+        env:
+          REA_REQUIRE_RIZIN: ${{ matrix.version }}
+        run: npm run test:focused -- tests/boundary/providers/RizinDecoderInputs.test.ts
+      - name: Run the Linux inferior TTY gate
+        if: matrix.version == '0.7.4'
+        env:
+          REA_REQUIRE_RIZIN: ${{ matrix.version }}
+        run: npm run test:focused -- tests/boundary/providers/RizinInferiorTty.test.ts

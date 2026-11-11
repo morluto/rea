@@ -10,12 +10,15 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/rever
 import { rizinInputSchema } from "../../../src/domain/reverseEngineering.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { assertRequiredRizin } from "../../support/requiredRizin.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
 
 // Real-provider gate for execute_rizin_command's decoder and map inputs. It
 // runs the Rizin found on PATH and skips without one; put another Rizin's
-// bin directory first on PATH to check that version.
+// bin directory first on PATH to check that version. With REA_REQUIRE_RIZIN
+// set to a version, a missing or different Rizin fails instead of skipping.
 const rizin = findRizin();
+assertRequiredRizin("RizinDecoderInputs", rizin);
 const banner = rizin === undefined ? "no Rizin on PATH" : versionBanner(rizin);
 
 // Cortex-M vector table head (SP 0x20002000, Reset 0x08000109), then the

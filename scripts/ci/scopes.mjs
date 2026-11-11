@@ -117,6 +117,7 @@ const PATH_SCOPES = {
     "tests/support/reverseEngineering*.ts",
     "tests/support/ownedRizinCommandEvidenceTests.ts",
     "tests/support/reverseDebuggerMcpTestHelpers.ts",
+    "tests/support/requiredRizin.ts",
     "tests/processOwnershipRunner.ts",
     "tests/composition/reverseEngineering*.test.ts",
     "vitest.reverse-tools.config.ts",
