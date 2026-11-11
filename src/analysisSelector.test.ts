@@ -1,3 +1,4 @@
+import { AnalysisInputError } from "./domain/analysisErrorCore.js";
 import { expect, it } from "vitest";
 import { resolveCliAnalysisSelector } from "./cli/analysisSelector.js";
 
@@ -24,11 +25,11 @@ it.each([
 ])("preserves distinct or unknown identities: %s / %s", (left, right) => {
   expect(() =>
     resolveCliAnalysisSelector(left, right, "address", "xrefs", "native"),
-  ).toThrow("different objects");
+  ).toThrow(AnalysisInputError);
 });
 
 it("keeps text selectors exact even when they look like addresses", () => {
   expect(() =>
     resolveCliAnalysisSelector("0x1a", "0x1A", "pattern", "search_strings"),
-  ).toThrow("different objects");
+  ).toThrow(AnalysisInputError);
 });
