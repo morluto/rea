@@ -163,13 +163,19 @@ describe("parseMftImage", () => {
     const parsed = parseMftImage(
       streamOf(
         recordOf(),
-        recordOf({ flags: 0x0005, baseRecordReference: 0x0000000000000001n }),
+        recordOf({
+          flags: 0x0005,
+          baseRecordReference: 0xabcd_fedc_ba98_7654n,
+        }),
       ),
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.records[1]).toMatchObject({
-      baseRecordReference: 1,
+      baseRecordReference: {
+        recordNumber: 0xfedc_ba98_7654,
+        sequenceNumber: 0xabcd,
+      },
       flags: { raw: 0x0005, names: ["in-use", "extension"] },
     });
     expect(parsed.value.metadata.extension_record_count).toBe(1);

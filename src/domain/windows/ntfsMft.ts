@@ -75,6 +75,16 @@ export interface MftRecordFixups {
   readonly malformed: boolean;
 }
 
+export interface MftFileReference {
+  readonly recordNumber: number;
+  readonly sequenceNumber: number;
+}
+
+const decodeMftFileReference = (reference: bigint): MftFileReference => ({
+  recordNumber: Number(reference & 0xffff_ffff_ffffn),
+  sequenceNumber: Number(reference >> 48n),
+});
+
 export interface MftRecord {
   /** Zero-based ordinal of this record in the stream. */
   readonly index: number;
@@ -90,7 +100,7 @@ export interface MftRecord {
   readonly usedBytes: number;
   readonly totalBytes: number;
   /** The base record this is an extension of, or `null` for a base record. */
-  readonly baseRecordReference: number | null;
+  readonly baseRecordReference: MftFileReference | null;
   /** The record number the header declares; `null` when the header predates the field. */
   readonly declaredRecordNumber: number | null;
   /** `$LogFile` sequence number as recorded; no log is read. */
@@ -278,7 +288,7 @@ const readRecord = (
     baseRecordReference:
       baseRecordReference === 0n
         ? null
-        : Number(baseRecordReference & 0xffff_ffff_ffffn),
+        : decodeMftFileReference(baseRecordReference),
     declaredRecordNumber:
       recordBytes >= RECORD_HEADER.recordNumber + 4
         ? view.getUint32(RECORD_HEADER.recordNumber, true)
