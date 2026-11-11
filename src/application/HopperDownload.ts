@@ -60,6 +60,19 @@ export const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 /** Small release feed and key requests must not use the package bounds. */
 export const HOPPER_METADATA_TIMEOUT_MS = 10_000;
 
+/** Attribute a raw rejection to this caller's exact cancellation. */
+export const isHopperRequestCancellation = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): boolean =>
+  signal?.aborted === true &&
+  (cause === signal.reason ||
+    (cause instanceof Error &&
+      cause.name === "AbortError" &&
+      "code" in cause &&
+      cause.code === "ABORT_ERR" &&
+      cause.cause === signal.reason));
+
 /**
  * Bound observed response bytes before retaining them, including chunked bodies.
  * Expected transport outcomes are returned; caller cancellation still rejects
@@ -126,8 +139,11 @@ export const downloadHopperPackage = async (
       progressed,
     });
   } catch (cause: unknown) {
-    if (options.signal?.aborted === true) throw cause;
-    if (expired !== undefined)
+    if (isHopperRequestCancellation(cause, options.signal)) throw cause;
+    if (
+      expired !== undefined &&
+      isHopperRequestCancellation(cause, deadline.signal)
+    )
       return err({ url: reported, kind: "timeout", ...expired });
     // Fetch reports network errors (DNS, TLS, reset, truncated body) as TypeError.
     if (cause instanceof TypeError)
