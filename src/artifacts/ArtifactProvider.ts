@@ -106,6 +106,31 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 }
 
+/** Project both artifact clients' shutdown through the exact retained cleanup owner. */
+const closeArtifactResources = (
+  resources: ArtifactResourceScope,
+  fallbackResource: string,
+): Promise<Result<null, AnalysisError>> =>
+  resources.close().then(
+    () => ok(null),
+    (cause: unknown) => {
+      const failure =
+        cause instanceof ArtifactReaderFailure ? cause : undefined;
+      const error = new ProviderCleanupError(
+        ARTIFACT_GRAPH_PROVIDER.id,
+        failure?.cleanup?.resources ?? [fallbackResource],
+        {
+          reason:
+            failure?.cleanup?.reason ??
+            (cause instanceof Error ? cause.message : String(cause)),
+        },
+        { cause, operation: "close_binary" },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
+    },
+  );
+
 const serializedResourceRoot = (
   root: ResolvedAppBundleResourceRoot,
 ): BundleResourceRoot => ({
@@ -198,17 +223,9 @@ class BundleResourceArtifactClient implements AnalysisClient {
   }
 
   close(): Promise<Result<null, AnalysisError>> {
-    return this.#resourceScope.close().then(
-      () => ok(null),
-      (cause: unknown) =>
-        err(
-          new ProviderCleanupError(
-            ARTIFACT_GRAPH_PROVIDER.id,
-            ["app bundle resource reader"],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
-            { cause, operation: "close_binary" },
-          ),
-        ),
+    return closeArtifactResources(
+      this.#resourceScope,
+      "app bundle resource reader",
     );
   }
 }
@@ -398,25 +415,7 @@ class ArtifactClient implements AnalysisClient {
   }
 
   close(): Promise<Result<null, AnalysisError>> {
-    return this.#resourceScope.close().then(
-      () => ok(null),
-      (cause: unknown) => {
-        const failure =
-          cause instanceof ArtifactReaderFailure ? cause : undefined;
-        const error = new ProviderCleanupError(
-          ARTIFACT_GRAPH_PROVIDER.id,
-          failure?.cleanup?.resources ?? ["artifact resources"],
-          {
-            reason:
-              failure?.cleanup?.reason ??
-              (cause instanceof Error ? cause.message : String(cause)),
-          },
-          { cause, operation: "close_binary" },
-        );
-        bindArtifactFileCleanup(cause, error);
-        return err(error);
-      },
-    );
+    return closeArtifactResources(this.#resourceScope, "artifact resources");
   }
 
   /** The active target's kind is outside this operation's supported targets. */

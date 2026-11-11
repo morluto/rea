@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { processArgumentSchema } from "../process/processArgument.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import {
   boundedProducerLimitsSchema,
@@ -9,11 +10,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 
-const argument = z
-  .string()
-  .min(1)
-  .max(8192)
-  .refine((value) => !value.includes("\0"), "NUL is not an argument character");
+const argument = processArgumentSchema.min(1).max(8192);
 const captureInputShape = z.strictObject({
   producer_limits: boundedProducerLimitsSchema,
   path: localPathStringSchema.describe("Absolute local capture path"),

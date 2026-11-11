@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  addOffsetDateTimeMilliseconds,
   inspectRecordedDateTime,
   offsetDateTimeSchema,
   readRecordedDateTime,
@@ -21,6 +22,34 @@ it.each([
 ])("classifies recorded spelling %s as %s", (text, kind) => {
   expect(inspectRecordedDateTime(text).kind).toBe(kind);
 });
+
+it.each([
+  ["000001", 0, 10, "000001"],
+  ["999999", 0.001, 11, ""],
+  ["999999", 0.001001, 11, "000000001"],
+  ["1234567890123456789", 1000.001, 11, "1234577890123456789"],
+  ["", 1e-7, 10, "0000000001"],
+  ["", 999.9999999999999, 10, "9999999999999999"],
+])(
+  "adds duration %s + %sms without losing decimal precision",
+  (fraction, duration, epochSecond, expectedFraction) => {
+    expect(
+      addOffsetDateTimeMilliseconds({ epochSecond: 10, fraction }, duration),
+    ).toEqual({ epochSecond, fraction: expectedFraction });
+  },
+);
+
+it.each([-1, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_VALUE])(
+  "keeps unsupported recorded duration %s unknown",
+  (duration) => {
+    expect(
+      addOffsetDateTimeMilliseconds(
+        { epochSecond: 10, fraction: "" },
+        duration,
+      ),
+    ).toBeUndefined();
+  },
+);
 
 const ACCEPTED: readonly (readonly [string, string])[] = [
   ["a UTC timestamp", "2026-10-09T04:00:00Z"],
