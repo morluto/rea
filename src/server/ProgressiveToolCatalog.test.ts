@@ -204,3 +204,42 @@ it.each([
     expect(f.changed).not.toHaveBeenCalled();
   },
 );
+
+it("distinguishes exhausted pages from unmatched queries without loading tools", async () => {
+  const f = await connect();
+  const before = await f.client.listTools();
+  for (const offset of [3, 4, 100]) {
+    const reply = await f.discover({ query: "sqlite", offset, limit: 1 });
+    expect(reply.isError).not.toBe(true);
+    expect(reply.structuredContent).toMatchObject({
+      total_matches: 3,
+      tools: [],
+      next_offset: null,
+      next_step: expect.stringContaining("offset 0"),
+    });
+    expect(
+      z.object({ next_step: z.string() }).parse(reply.structuredContent)
+        .next_step,
+    ).not.toContain("No matches.");
+    expect(await f.client.listTools()).toEqual(before);
+  }
+  const unmatched = await f.discover({
+    query: "no_such_keyword",
+    offset: 100,
+    limit: 1,
+  });
+  expect(unmatched.structuredContent).toMatchObject({
+    total_matches: 0,
+    tools: [],
+    next_offset: null,
+    next_step: expect.stringContaining("No matches."),
+  });
+  expect(f.changed).not.toHaveBeenCalled();
+  const last = await f.discover({ query: "sqlite", offset: 2, limit: 1 });
+  expect(last.structuredContent).toMatchObject({
+    total_matches: 3,
+    tools: [{ name: "binary_session" }],
+    next_offset: null,
+    next_step: expect.stringContaining("Call the returned tool"),
+  });
+});
