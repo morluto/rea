@@ -313,7 +313,7 @@ const scanMft = (
     );
   if (unverifiedCount !== 0)
     limitations.push(
-      `${String(unverifiedCount)} record(s) carry an update sequence array that does not cover every sector; those trailers were neither restored nor verified`,
+      `${String(unverifiedCount)} record(s) carry an invalid or incomplete update sequence array; their sector trailers were not fully verified`,
     );
 
   const metadata: MftMetadata = {
@@ -418,6 +418,15 @@ const verifyFixups = (
     };
 
   const sequenceNumber = view.getUint16(usaOffset, true);
+  if (sequenceNumber === 0 || sequenceNumber === 0xffff)
+    return {
+      sequenceNumber,
+      entries: usaCount,
+      verifiedSectors: 0,
+      coveredSectors,
+      mismatchSector: null,
+      malformed: true,
+    };
   for (let sector = 0; sector < coveredSectors; sector += 1) {
     const trailerOffset = sector * FIXUP_SECTOR_BYTES + FIXUP_SECTOR_BYTES - 2;
     if (view.getUint16(trailerOffset, true) !== sequenceNumber)
