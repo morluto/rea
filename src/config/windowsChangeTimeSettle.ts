@@ -64,7 +64,7 @@ export interface WindowsChangeTimeSettingFailure {
   readonly floor: number;
   readonly maximum: number;
   readonly unit: "ms" | "polls";
-  readonly update_mode: "restart";
+  readonly update_mode: "runtime";
 }
 
 /** Effective settle budget and whether each part came from the default or a setting. */
@@ -88,14 +88,14 @@ const windowsChangeTimeSettingFailure = (
   floor: bound.floor,
   maximum: bound.maximum,
   unit: bound.unit,
-  update_mode: "restart",
+  update_mode: "runtime",
 });
 
 /** Name the rejected value, its source, and the allowed range. */
 const windowsChangeTimeSettingMessage = (
   failure: WindowsChangeTimeSettingFailure,
 ): string =>
-  `The supplied ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). Set ${failure.setting} in the environment that starts REA to a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}, then start a new REA invocation.`;
+  `The supplied ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). windows change-time settings can be changed at runtime with update_analysis_settings. The launch seed ${failure.setting} must be a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}. The rejected value is not active.`;
 
 const inRange = (bound: WindowsChangeTimeBound, value: string): boolean => {
   if (!decimalInteger.test(value)) return false;

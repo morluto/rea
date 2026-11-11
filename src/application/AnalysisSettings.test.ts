@@ -291,8 +291,7 @@ it("rejects an out-of-range per-call limit and reads an accepted value from the 
   expect(accepted.ok).toBe(true);
   if (!accepted.ok) return;
   expect(accepted.value).toMatchObject({
-    effect: "immediate",
-    rea_restart_required: false,
+    pending_restart: false,
   });
   const parsed = parseConfig({});
   if (!parsed.ok) throw parsed.error;

@@ -336,6 +336,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["match_native_functions"],
   },
   "bridge.max_request_bytes": {
+    updateMode: "runtime",
     environment: "REA_BRIDGE_MAX_REQUEST_BYTES",
     defaultValue: DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
     minimum: MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
@@ -396,6 +397,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "debugger.command_deadline_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_DEBUGGER_COMMAND_DEADLINE_MS",
     defaultValue: DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
@@ -413,6 +415,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "debugger.max_command_output_bytes": {
+    updateMode: "runtime",
     environment: "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
     defaultValue: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
     minimum: MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
@@ -424,6 +427,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["gdb_console", "rizin_debug_command"],
   },
   "hopper.caller_scan_budget_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_HOPPER_CALLER_SCAN_BUDGET_MS",
     defaultValue: DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS,
@@ -436,6 +440,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "jeb.mcp_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_JEB_MCP_TIMEOUT_MS",
     defaultValue: DEFAULT_JEB_MCP_TIMEOUT_MS,
@@ -448,6 +453,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "kuna.project_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_KUNA_PROJECT_TIMEOUT_MS",
     defaultValue: DEFAULT_KUNA_PROJECT_TIMEOUT_MS,
@@ -466,6 +472,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "kuna.function_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_KUNA_TIMEOUT_MS",
     defaultValue: DEFAULT_KUNA_FUNCTION_TIMEOUT_MS,
@@ -478,6 +485,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "pwntools.max_input_bytes": {
+    updateMode: "runtime",
     environment: "REA_PWNTOOLS_MAX_INPUT_BYTES",
     defaultValue: DEFAULT_PWNTOOLS_MAX_INPUT_BYTES,
     minimum: 1,
@@ -489,6 +497,7 @@ export const ANALYSIS_SETTINGS = {
     parameter: "producer_limits.input_bytes",
   },
   "windows.change_time_drift_ms": {
+    updateMode: "runtime",
     environment: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
     defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS,
     minimum: 1,
@@ -505,6 +514,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "windows.change_time_settle_poll_ms": {
+    updateMode: "runtime",
     environment: "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
     defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
     minimum: 1,
@@ -521,6 +531,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "windows.change_time_settle_max_polls": {
+    updateMode: "runtime",
     environment: "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
     defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
     minimum: 1,

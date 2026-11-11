@@ -85,8 +85,8 @@ it("explains the time budget and that fixed byte allowances have no override", (
     source: "setting",
     minimum: MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
     maximum: MAX_NODE_TIMER_DELAY_MS,
-    effect: "immediate",
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   });
   expect(DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS).toBe(2000);
   const page = hopperCallerScanRecovery(

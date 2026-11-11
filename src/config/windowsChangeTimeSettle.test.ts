@@ -97,7 +97,7 @@ it.each([
   const facts = {
     setting: bound.setting,
     constraint: message,
-    update_mode: "restart" as const,
+    update_mode: "runtime" as const,
   };
   expect(resolved.error.settings).toEqual([facts]);
   expect(resolved.error.settings[0]).not.toHaveProperty("pending_restart");
