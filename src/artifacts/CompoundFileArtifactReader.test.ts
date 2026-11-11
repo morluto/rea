@@ -210,6 +210,28 @@ it("keeps an entry that declares no usable name", async () => {
   );
 });
 
+it("does not reuse a fallback path a member already claimed", async () => {
+  // Entry 1 is literally named `entry-2`, and entry 2 is unreachable, so it
+  // also needs the `entry-2` fallback. The second projection must not take the
+  // member's own path.
+  const path = await write(
+    "collide.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        { name: "entry-2", type: 2, start: 2, size: 512 },
+        { name: "Lost", type: 2, start: 3, size: 512 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const paths = inventory.occurrences
+    .map((row) => row.logical_path)
+    .filter((row) => row !== ".");
+  expect(paths).toContain("entry-2");
+  expect(paths).toContain("entry-2-2");
+  expect(new Set(paths).size).toBe(paths.length);
+});
+
 it("leaves a stream whose chain reaches the directory unresolved", async () => {
   const path = await write(
     "overlap.automaticDestinations-ms",

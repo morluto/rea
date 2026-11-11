@@ -45,6 +45,14 @@ const SECTOR_MARKERS = new Set([
  */
 const MAX_TREE_DEPTH = 64;
 
+/**
+ * Directory entries the parser will materialize. The directory stream, its
+ * copy and one parsed entry per 128 bytes are retained together, so this caps
+ * the representation at roughly 1M entries rather than letting a valid but
+ * pathologically large version-3 directory consume several GiB.
+ */
+const MAX_DIRECTORY_ENTRIES = 1_048_576;
+
 /** Header field offsets; all are relative to the start of the file. */
 const HEADER = {
   majorVersion: 0x1a,
@@ -467,13 +475,36 @@ export const parseCompoundFile = (
     );
   if (directoryChain.sectors.length === 0)
     return err(failure("the directory stream holds no sector"));
-  // The FAT, the DIFAT and the directory are container structure, not content,
-  // so a stream whose chain reaches one of those sectors is published as an
-  // unresolved range instead of as that structure's bytes.
+  // A directory chain that runs through allocation-table sectors would let
+  // FAT cells be read as object types and names, so the whole interpretation is
+  // rejected rather than reported as a partial directory.
+  if (
+    directoryChain.sectors.some(
+      (sector) => seenFatSectors.has(sector) || seenDifat.has(sector),
+    )
+  )
+    return err(
+      failure(
+        `the directory chain starting at sector ${String(firstDirectorySector)} reuses a FAT or DIFAT sector`,
+      ),
+    );
+  // A mini-FAT chain is container structure too: a stream that reaches one of
+  // its sectors would publish allocation cells as member bytes.
+  const miniFatChain = chainOf(
+    table,
+    firstMiniFatSector,
+    sectorBytes,
+    bytes.length,
+  );
+  // The FAT, the DIFAT, the directory and the mini FAT are container
+  // structure, not content, so a stream whose chain reaches one of those
+  // sectors is published as an unresolved range instead of as that structure's
+  // bytes.
   const structuralSectors = new Set<number>([
     ...seenFatSectors,
     ...difatSectors,
     ...directoryChain.sectors,
+    ...miniFatChain.sectors,
   ]);
   if (
     majorVersion === 4 &&
@@ -501,6 +532,17 @@ export const parseCompoundFile = (
     directoryBytes.byteLength,
   );
   const entryCount = Math.floor(directoryBytes.length / DIRECTORY_ENTRY_BYTES);
+  // The chain's sectors, the image copy and one RawEntry per 128 bytes are
+  // all retained, so a structurally valid directory that fills most of the
+  // 512 MiB ceiling would cost several GiB. Refuse it as a modeled limit
+  // instead of expanding it.
+  if (entryCount > MAX_DIRECTORY_ENTRIES)
+    return err(
+      limit(
+        `the directory stream holds ${String(entryCount)} entries, more than the ${String(MAX_DIRECTORY_ENTRIES)}-entry allowance`,
+        "capacity",
+      ),
+    );
   const raw = Array.from({ length: entryCount }, (_, index) =>
     readEntry(directoryBytes, directory, index, majorVersion),
   );
@@ -578,9 +620,13 @@ export const parseCompoundFile = (
           prefix: next.prefix,
           depth: next.depth,
         });
-      // An unnamed storage still owns its children, so they are walked with the
-      // parent's prefix rather than dropped as unreachable.
-      if (entry.type !== "stream" && entry.child !== null) {
+      // Only a storage owns a child tree. A stale child link on an unallocated
+      // or undefined-type slot would otherwise claim a live entry as its
+      // descendant and drop it from the orphan count.
+      if (
+        (entry.type === "storage" || entry.type === "root-storage") &&
+        entry.child !== null
+      ) {
         if (next.depth >= MAX_TREE_DEPTH) {
           depthLimited += 1;
           continue;

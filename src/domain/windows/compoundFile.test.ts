@@ -228,6 +228,45 @@ it("keeps an entry outside the root's tree as an orphan with no path", () => {
   );
 });
 
+it("does not let an unallocated slot's stale child link adopt an entry", () => {
+  // Entry 1 is type 0 (unallocated) yet names entry 2 as its child. Only a
+  // storage owns a child tree, so entry 2 must stay an orphan.
+  const image = parse(
+    compoundFile({
+      entries: root(1, [
+        { name: "", type: 0, start: END, size: 0, child: 2 },
+        { name: "live", type: 2, start: 2, size: 512 },
+      ]),
+    }),
+  );
+  expect(image.metadata.orphan_entry_count).toBe(1);
+  expect(image.entries.find((entry) => entry.name === "live")?.path).toBeNull();
+});
+
+it("rejects a directory chain that reuses a FAT sector", () => {
+  // Sector 0 is the FAT; naming it as the directory stream would read
+  // allocation cells as directory entries.
+  const result = parseCompoundFile(
+    compoundFile({ entries: root(undefined, []), directorySector: 0 }),
+  );
+  expect(!result.ok && result.error.message).toMatch(
+    /reuses a FAT or DIFAT sector/u,
+  );
+});
+
+it("leaves a stream whose chain reaches the mini FAT unresolved", () => {
+  // The header names sector 2 as the first mini FAT sector, and a stream also
+  // starts there; its bytes are allocation cells, not content.
+  const file = compoundFile({
+    entries: root(1, [{ name: "big", type: 2, start: 2, size: 4096 }]),
+  });
+  file.writeUInt32LE(2, 0x3c);
+  file.writeUInt32LE(1, 0x40);
+  const image = parse(file);
+  const big = image.entries.find((entry) => entry.name === "big");
+  expect(big).toMatchObject({ structuralOverlap: true, byteOffset: null });
+});
+
 it("reports a directory tree link that leaves the entry table", () => {
   const image = parse(
     compoundFile({

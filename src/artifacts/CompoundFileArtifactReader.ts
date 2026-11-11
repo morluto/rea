@@ -203,10 +203,18 @@ const claimPath = (
   claimed: Set<string>,
   index: number,
 ): ArtifactEntry => {
-  const fallback = `entry-${String(index)}`;
   const collides =
     entry.path === "" || claimed.has(entry.path) || !isSafePath(entry.path);
-  const path = collides ? fallback : entry.path;
+  let path = entry.path;
+  if (collides) {
+    // A member may literally be named `entry-<ordinal>`, so the fallback is
+    // probed against the same set; reusing a claimed fallback would overwrite
+    // that member's path and make open() resolve the wrong range.
+    const base = `entry-${String(index)}`;
+    path = base;
+    for (let suffix = 2; claimed.has(path); suffix += 1)
+      path = `${base}-${String(suffix)}`;
+  }
   claimed.add(path);
   if (!collides) return entry;
   return {
