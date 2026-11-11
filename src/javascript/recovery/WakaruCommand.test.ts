@@ -1,4 +1,9 @@
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
+import { execFileOutput } from "../../process/ExecFileOutput.js";
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
 import {
@@ -91,9 +96,10 @@ it.each([null, false, { request: "cancel launch" }])(
         environment: {},
         deadline: performance.now() + 5_000,
         signal: controller.signal,
-        launcher: async () => {
+        launcher: async (options) => {
           controller.abort(reason);
-          throw new Error("launcher interrupted");
+          options.signal?.throwIfAborted();
+          throw new Error("Expected launcher cancellation");
         },
       }),
     ).rejects.toMatchObject({
@@ -102,6 +108,67 @@ it.each([null, false, { request: "cancel launch" }])(
     });
   },
 );
+
+it("preserves cancellation reported by the ownership preparation command", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel ownership preparation" };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await expect(
+      runWakaruCommand({
+        command: "/selected/wakaru",
+        limiter: "/unused/prlimit",
+        arguments: ["--version"],
+        cwd: tmpdir(),
+        environment: {},
+        deadline: performance.now() + 10_000,
+        signal: controller.signal,
+        launcher: async () => {
+          timer = setTimeout(() => controller.abort(reason), 100);
+          await execFileOutput(
+            process.execPath,
+            ["-e", "setInterval(() => {}, 1000)"],
+            {
+              signal: controller.signal,
+              stopSignal: "SIGTERM",
+            },
+          );
+          throw new Error("Expected preparation cancellation");
+        },
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisCancelledError", cause: reason });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+});
+
+it("preserves a real launch failure when the caller cancels after it", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel after launch failure" };
+  const missing = join(tmpdir(), `rea-missing-wakaru-${randomUUID()}`);
+  const failure: unknown = await runWakaruCommand({
+    command: "/selected/wakaru",
+    limiter: missing,
+    arguments: ["--version"],
+    cwd: tmpdir(),
+    environment: {},
+    deadline: performance.now() + 30_000,
+    signal: controller.signal,
+    launcher: async (options) => {
+      try {
+        return await spawnOwnedProviderProcess(options);
+      } catch (cause) {
+        controller.abort(reason);
+        throw cause;
+      }
+    },
+  }).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    _tag: "ProviderAdapterError",
+    cause: { code: "ENOENT" },
+    secondaryFailures: [{ _tag: "AnalysisCancelledError", cause: reason }],
+  });
+});
 
 const commandFixture = (
   emit: (producer: ReturnType<typeof createProducer>) => void,

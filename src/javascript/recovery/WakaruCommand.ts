@@ -16,6 +16,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { prlimitArgumentVector } from "../../process/LinuxResourceLimits.js";
+import { ExecFileOutputCancelledError } from "../../process/ExecFileOutput.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
@@ -178,11 +179,15 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     env: { TMPDIR: context.cwd, RAYON_NUM_THREADS: "1", NO_COLOR: "1" },
   }).catch((cause: unknown) => {
-    if (context.signal?.aborted === true)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: context.signal.reason,
-      });
-    throw new ProviderAdapterError("wakaru", OPERATION, {
+    const signal = context.signal;
+    if (
+      signal?.aborted === true &&
+      (Object.is(cause, signal.reason) ||
+        (cause instanceof ExecFileOutputCancelledError &&
+          Object.is(cause.cause, signal.reason)))
+    )
+      throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+    const failure = new ProviderAdapterError("wakaru", OPERATION, {
       cause,
       diagnostics: {
         reason: "Failed to launch configured Wakaru through util-linux prlimit",
@@ -190,6 +195,12 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
         detail: recoveryFailureMessage(cause),
       },
     });
+    throw signal?.aborted === true
+      ? analysisErrorWithCancellation(
+          failure,
+          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+        )
+      : failure;
   });
   let oversized = false;
   const supervisor = new ProviderProcessSupervisor(
