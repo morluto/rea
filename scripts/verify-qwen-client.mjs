@@ -310,7 +310,6 @@ await withVerifierCleanup(async () => {
             role: "assistant",
             content: "REA_CLIENT_COMPATIBILITY_OK",
           };
-          finalSeen = true;
         } else if (skill && !skillRequested) {
           skillRequested = true;
           message = call(skill.name, { skill: "reverse-engineer-anything" });
@@ -401,11 +400,13 @@ await withVerifierCleanup(async () => {
         stderr: join(lab, `${mode}.stderr`),
       },
     );
-    const initialized = response.stdout
+    const events = response.stdout
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line))
-      .find((v) => v.type === "system" && v.subtype === "init");
+      .map((line) => JSON.parse(line));
+    const initialized = events.find(
+      (v) => v.type === "system" && v.subtype === "init",
+    );
     assert(initialized);
     const observed = initialized.tools
       .filter((n) => n.startsWith("mcp__rea__"))
@@ -417,7 +418,15 @@ await withVerifierCleanup(async () => {
       "Qwen must discover the complete REA catalog",
     );
     assert.equal(fixture.failure, undefined);
-    assert(finalSeen);
+    const result = events.findLast((event) => event.type === "result");
+    assert.equal(
+      result?.subtype,
+      "success",
+      "Qwen must emit a successful terminal result",
+    );
+    assert.equal(result.is_error, false);
+    assert.equal(result.result, "REA_CLIENT_COMPATIBILITY_OK");
+    finalSeen = true;
     if (mode === "call") {
       assert(evidenceSeen);
       assert(selectedSkillLoaded);

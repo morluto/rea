@@ -71,8 +71,6 @@ interface SymbolicReadBoundary {
 }
 type SymbolicNamespace = Extract<SymbolicValue, { kind: "namespace" }>;
 
-const SYMBOLIC_DEPTH_LIMIT = 128;
-
 const emptyEnvironment: SymbolicEnvironment = { values: new Map() };
 
 const containsOwnedReturn = (root: t.Node): boolean => {
@@ -124,9 +122,13 @@ export class JavaScriptSymbolicBindings {
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
   }> = [];
-  #remainingEvaluations = 1_000_000;
+  #remainingEvaluations: number;
   #depth = 0;
-  truncated = false;
+  readonly resourceLimits = new Set<"wrapper_visits" | "wrapper_depth">();
+
+  get truncated(): boolean {
+    return this.resourceLimits.size > 0;
+  }
   unresolved = false;
 
   constructor(
@@ -136,6 +138,7 @@ export class JavaScriptSymbolicBindings {
       indexJavaScriptElectronIdentitySteps(program, state),
     ),
   ) {
+    this.#remainingEvaluations = state.precision.wrapper_visits;
     this.#electronIdentity = electronIdentity;
     const shapes = createSemanticExpressionShapeResolver(state);
     const defineProperty = createGlobalReferenceReader(state, [
@@ -222,9 +225,11 @@ export class JavaScriptSymbolicBindings {
   #admitEvaluation(): boolean {
     if (
       --this.#remainingEvaluations < 0 ||
-      this.#depth >= SYMBOLIC_DEPTH_LIMIT
+      this.#depth >= this.state.precision.wrapper_depth
     ) {
-      this.truncated = true;
+      this.resourceLimits.add(
+        this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
+      );
       return false;
     }
     return true;
@@ -273,7 +278,7 @@ export class JavaScriptSymbolicBindings {
           : 0);
       if (cost > this.#remainingEvaluations) {
         this.#remainingEvaluations = 0;
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return symbolicUnknown("symbolic condition resource limit");
       }
       this.#remainingEvaluations -= cost;
@@ -323,7 +328,7 @@ export class JavaScriptSymbolicBindings {
       first === undefined ? undefined : this.#completionGroups.get(first);
     if (group === undefined || group.members.size !== values.length) return [];
     if (values.length > this.#remainingEvaluations) {
-      this.truncated = true;
+      this.resourceLimits.add("wrapper_visits");
       this.#remainingEvaluations = 0;
       return [];
     }
@@ -1016,7 +1021,7 @@ export class JavaScriptSymbolicBindings {
       current = current.parent
     ) {
       if (--this.#remainingEvaluations < 0) {
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return false;
       }
       if (current.activation === activation) return true;
@@ -1035,7 +1040,7 @@ export class JavaScriptSymbolicBindings {
       current = current.caller
     ) {
       if (--this.#remainingEvaluations < 0) {
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return undefined;
       }
       const point = current.point;
@@ -1066,7 +1071,7 @@ export class JavaScriptSymbolicBindings {
     const boundary =
       read === undefined ? undefined : this.#namespaceReadBoundary(value, read);
     if (this.#remainingEvaluations <= 0) {
-      this.truncated = true;
+      this.resourceLimits.add("wrapper_visits");
       return undefined;
     }
     const sourcePoint = boundary?.node[boundary.edge];
@@ -1084,7 +1089,7 @@ export class JavaScriptSymbolicBindings {
     if (commonThrough != null) {
       if (writes.length > this.#remainingEvaluations) {
         this.#remainingEvaluations = 0;
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return undefined;
       }
       this.#remainingEvaluations -= writes.length;
@@ -1182,7 +1187,7 @@ export class JavaScriptSymbolicBindings {
       ) {
         if (variants.length > this.#remainingEvaluations) {
           this.#remainingEvaluations = 0;
-          this.truncated = true;
+          this.resourceLimits.add("wrapper_visits");
         } else {
           this.#remainingEvaluations -= variants.length;
           const exits = variants as readonly SymbolicNamespace[];
@@ -1316,8 +1321,13 @@ export class JavaScriptSymbolicBindings {
         ...(unresolvedFallthrough ? { conditionUnresolved: true } : {}),
       });
     for (const statement of statements) {
-      if (--this.#remainingEvaluations < 0 || depth >= 128) {
-        this.truncated = true;
+      if (
+        --this.#remainingEvaluations < 0 ||
+        depth >= this.state.precision.wrapper_depth
+      ) {
+        this.resourceLimits.add(
+          this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
+        );
         return {
           values: [...possible, symbolicUnknown("symbolic resource limit")],
           fallsThrough: false,

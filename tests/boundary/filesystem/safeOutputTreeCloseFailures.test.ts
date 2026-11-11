@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  readFile,
+  rm,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -8,6 +14,9 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 const injectedFilesystemFailures = vi.hoisted(() => ({
   closeNext: false,
+  observeClose: undefined as
+    | ((handle: FileHandle, close: () => Promise<void>) => void)
+    | undefined,
   blockCloseRetries: false,
   chmodNext: false,
   syncAbortAfter: undefined as AbortController | undefined,
@@ -37,6 +46,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (injectedFilesystemFailures.closeNext) {
         injectedFilesystemFailures.closeNext = false;
         const close = handle.close.bind(handle);
+        injectedFilesystemFailures.observeClose?.(handle, close);
         let attempted = false;
         handle.close = async () => {
           if (!attempted || injectedFilesystemFailures.blockCloseRetries) {
@@ -77,19 +87,39 @@ describe("safe artifact output close failures", () => {
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.byteLength,
       });
+      let failedHandle: FileHandle | undefined;
+      let recover: (() => Promise<void>) | undefined;
+      injectedFilesystemFailures.observeClose = (handle, close) => {
+        failedHandle = handle;
+        recover = close;
+      };
       injectedFilesystemFailures.closeNext = true;
-
-      await expect(tree.commit()).rejects.toMatchObject({
-        cleanup: { resources: [output] },
-      });
-      expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-        "durable output",
-      );
-      expect(await tree.rollback()).toEqual({ status: "not-required" });
-      expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-        "durable output",
-      );
-      await rm(parent, { recursive: true, force: true });
+      try {
+        await expect(tree.commit()).rejects.toMatchObject({
+          cleanup: { resources: [output] },
+        });
+        expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
+          "durable output",
+        );
+        if (failedHandle === undefined)
+          throw new Error("Expected the failed commit handle");
+        expect(failedHandle.fd).toBeGreaterThanOrEqual(0);
+        expect(await tree.rollback()).toEqual({ status: "not-required" });
+        expect(failedHandle.fd).toBe(-1);
+        expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
+          "durable output",
+        );
+      } finally {
+        injectedFilesystemFailures.observeClose = undefined;
+        injectedFilesystemFailures.closeNext = false;
+        try {
+          await tree.rollback();
+        } finally {
+          if (failedHandle !== undefined && failedHandle.fd !== -1)
+            await recover?.();
+          await rm(parent, { recursive: true, force: true });
+        }
+      }
     },
   );
 

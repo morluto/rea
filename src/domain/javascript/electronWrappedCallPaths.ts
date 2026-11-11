@@ -295,7 +295,7 @@ export function* collectElectronWrappedCallPathsSteps(
 ): Generator<void, readonly ElectronCallPath[]> {
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
-  let remainingVisits = 1_000_000;
+  let remainingVisits = state.precision.wrapper_visits;
   const prefixes = new ElectronCallPathBlockPrefixes(
     () => --remainingVisits >= 0,
     state.parentsByNode,
@@ -939,9 +939,9 @@ export function* collectElectronWrappedCallPathsSteps(
     boolean
   > {
     if (active.has(value) || functionlessBridgeObjects.has(value)) return false;
-    if (active.size >= 128) {
+    if (active.size >= state.precision.wrapper_depth) {
       accumulator.unknownFindings += 1;
-      accumulator.electronCallPathLimitReached = true;
+      (accumulator.electronCallPathLimits ??= new Set()).add("wrapper_depth");
       return true;
     }
     const shared = inSharedSubtree || seenBridgeFunctionValues.has(value);
@@ -957,7 +957,9 @@ export function* collectElectronWrappedCallPathsSteps(
       }
       if (shared && remainingBridgeFunctionVisits <= 0) {
         accumulator.unknownFindings += 1;
-        accumulator.electronCallPathLimitReached = true;
+        (accumulator.electronCallPathLimits ??= new Set()).add(
+          "wrapper_visits",
+        );
         truncated = true;
         break;
       }
@@ -968,7 +970,9 @@ export function* collectElectronWrappedCallPathsSteps(
       if (shared && nextBytes > remainingBridgeFunctionBytes) {
         remainingBridgeFunctionVisits = 0;
         accumulator.unknownFindings += 1;
-        accumulator.electronCallPathLimitReached = true;
+        (accumulator.electronCallPathLimits ??= new Set()).add(
+          "wrapper_visits",
+        );
         truncated = true;
         break;
       }
@@ -1817,7 +1821,9 @@ export function* collectElectronWrappedCallPathsSteps(
   recordBridgeExposures();
   if (remainingVisits < 0 || resolver.truncated) {
     accumulator.unknownFindings += 1;
-    accumulator.electronCallPathLimitReached = true;
+    const limits = (accumulator.electronCallPathLimits ??= new Set());
+    if (remainingVisits < 0) limits.add("wrapper_visits");
+    for (const limit of resolver.resourceLimits) limits.add(limit);
   } else
     // A dynamic site's channels are enumerated only when the complete trace
     // reached it with literal channels, no other invocation outcome, and no

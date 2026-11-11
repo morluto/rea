@@ -60,6 +60,74 @@ const statePathsOf = async (folder: string, using = readers) => {
   return new Map(state.paths.map((entry) => [entry.home_path, entry]));
 };
 
+it("treats both explicitly selected files as documents when one ends in -journal", async () => {
+  const report = `${HOME}/Documents/report`;
+  const journal = `${report}-journal`;
+  const base = extended({
+    baseline: [
+      retained(report, "old report"),
+      retained(journal, "old journal"),
+    ],
+    changes: [
+      change(report, { before: "old report", after: "new report" }),
+      change(journal, { before: "old journal", after: "new journal" }),
+    ],
+    later: [retained(report, "new report"), retained(journal, "new journal")],
+  });
+  const folder = await writeCaptureFolder(
+    {
+      ...base,
+      state: {
+        ...base.state,
+        content_roots: [...base.state.content_roots, report, journal],
+        selected_paths: [report, journal].map((path) => ({
+          path,
+          physical: path,
+          kind: "file" as const,
+        })),
+      },
+    },
+    undefined,
+    ["old report", "old journal", "new report", "new journal"],
+  );
+  const byPath = await statePathsOf(folder);
+  for (const file of ["Documents/report", "Documents/report-journal"])
+    expect(byPath.get(file)).toMatchObject({
+      role: "document",
+      reasons: ["selected_path"],
+    });
+});
+
+describe("desktop state view admission", () => {
+  it.each([{ text_lines: 0 }, { xml_depth: 495 }, { json_depth: 992 }])(
+    "rejects an invalid view policy before reading a capture: %j",
+    async (viewPolicy) => {
+      const refused = await inspectDesktopApplicationState(
+        "/must-not-read",
+        readers,
+        undefined,
+        { viewPolicy },
+      );
+      expect(refused).toMatchObject({ _tag: "AnalysisInputError" });
+    },
+  );
+
+  it("preserves an unresolved captured path instead of reading the current file", async () => {
+    const folder = await writeCaptureFolder(capture());
+    const missing = `${HOME}/Documents/missing.txt`;
+    const refused = await inspectDesktopApplicationState(
+      folder,
+      readers,
+      undefined,
+      { paths: [missing] },
+    );
+    expect(refused).toMatchObject({
+      _tag: "AnalysisInputError",
+      userMessage: expect.stringContaining(missing),
+    });
+  });
+});
+
 describe("inspectDesktopApplicationState", () => {
   it("assigns roles and reads each version into typed views and changes", async () => {
     const folder = await writeCaptureFolder(capture());
@@ -842,6 +910,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
 
   it("reports cancellation during the last database read instead of Evidence", async () => {
     const controller = new AbortController();
+    const reason = { stage: "last database read" };
     let reads = 0;
     const folder = await writeCaptureFolder(
       extended({
@@ -857,7 +926,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
         ...readers,
         sqlite: async (database, signal) => {
           reads += 1;
-          if (reads === 3) controller.abort(new Error("stopped"));
+          if (reads === 3) controller.abort(reason);
           return readers.sqlite(database, signal);
         },
       },
@@ -866,6 +935,9 @@ describe("inspectDesktopApplicationState database sidecars", () => {
 
     expect(reads).toBe(3);
     expect(result).toBeInstanceOf(AnalysisCancelledError);
+    expect(result instanceof AnalysisCancelledError && result.cause).toBe(
+      reason,
+    );
   });
 });
 
