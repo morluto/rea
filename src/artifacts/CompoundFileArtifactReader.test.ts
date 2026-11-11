@@ -235,6 +235,88 @@ it("does not reuse a fallback path a member already claimed", async () => {
   expect(new Set(paths).size).toBe(paths.length);
 });
 
+it("claims a canonically equivalent name as one path", async () => {
+  // `é` (U+00E9) and `e` + U+0301 normalize to the same NFC path. Claiming
+  // raw spellings would let both through and the inventory registry would
+  // abort on the collision instead of projecting the second to its ordinal.
+  const path = await write(
+    "nfc.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        { name: "é", type: 2, start: 2, size: 512, right: 2 },
+        { name: "é", type: 2, start: 3, size: 512 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const listed = inventory.occurrences.filter(
+    (row) => row.logical_path !== ".",
+  );
+  expect(listed).toHaveLength(2);
+  expect(new Set(listed.map((row) => row.logical_path)).size).toBe(2);
+  // The first spelling keeps its declared path; the second is projected.
+  expect(listed.map((row) => row.logical_path).sort()).toEqual([
+    "entry-2",
+    "é",
+  ]);
+});
+
+it("does not publish a clamped size as the declared size", async () => {
+  // A version-4 entry can declare more bytes than a JavaScript number carries
+  // exactly; the parse clamps it, and the inventory must not report the clamp
+  // as an observed declaration. Version 4 requires 4096-byte sectors.
+  const sector = 4096;
+  const file = Buffer.alloc((10 + 1) * sector);
+  Buffer.from("d0cf11e0a1b11ae1", "hex").copy(file, 0);
+  file.writeUInt16LE(0x003c, 0x18);
+  file.writeUInt16LE(4, 0x1a);
+  file.writeUInt16LE(0xfffe, 0x1c);
+  file.writeUInt16LE(12, 0x1e);
+  file.writeUInt16LE(6, 0x20);
+  file.writeUInt32LE(1, 0x2c);
+  file.writeUInt32LE(1, 0x30);
+  file.writeUInt32LE(1, 0x34);
+  file.writeUInt32LE(4096, 0x38);
+  file.writeUInt32LE(END, 0x3c);
+  file.writeUInt32LE(0, 0x40);
+  file.writeUInt32LE(END, 0x44);
+  file.writeUInt32LE(0, 0x48);
+  for (let index = 0; index < 109; index += 1)
+    file.writeUInt32LE(index === 0 ? 0 : FREE, 0x4c + index * 4);
+  for (let index = 0; index < sector / 4; index += 1)
+    file.writeUInt32LE([END, END, END, END][index] ?? FREE, sector + index * 4);
+  const rootName = Buffer.from("Root Entry\0", "utf16le");
+  const base = 2 * sector;
+  rootName.copy(file, base);
+  file.writeUInt16LE(rootName.length, base + 0x40);
+  file.writeUInt8(5, base + 0x42);
+  file.writeUInt32LE(FREE, base + 0x44);
+  file.writeUInt32LE(FREE, base + 0x48);
+  file.writeUInt32LE(1, base + 0x4c);
+  file.writeUInt32LE(END, base + 0x74);
+  file.writeBigUInt64LE(0n, base + 0x78);
+  const name = Buffer.from("Huge\0", "utf16le");
+  const streamBase = base + 128;
+  name.copy(file, streamBase);
+  file.writeUInt16LE(name.length, streamBase + 0x40);
+  file.writeUInt8(2, streamBase + 0x42);
+  file.writeUInt32LE(FREE, streamBase + 0x44);
+  file.writeUInt32LE(FREE, streamBase + 0x48);
+  file.writeUInt32LE(FREE, streamBase + 0x4c);
+  file.writeUInt32LE(END, streamBase + 0x74);
+  file.writeBigUInt64LE(2n ** 53n, streamBase + 0x78);
+  const inventory = await scanCanonicalArtifactInventory(
+    await write("huge.automaticDestinations-ms", file),
+  );
+  const listed = inventory.occurrences.find(
+    (row) => row.logical_path === "Huge",
+  );
+  expect(listed).toMatchObject({ entry_kind: "metadata", declared_size: null });
+  expect(listed?.limitations).toContainEqual(
+    expect.stringMatching(/more bytes than a JavaScript number carries/u),
+  );
+});
+
 it("leaves a stream whose chain reaches the directory unresolved", async () => {
   const path = await write(
     "overlap.automaticDestinations-ms",

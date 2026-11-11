@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 
 import type { CompoundFileMetadata } from "../domain/artifactFormatMetadata.js";
@@ -143,7 +144,9 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       let delivered = 0;
       // A carrier truncated or rewritten after the pre-read would otherwise
       // publish whatever bytes happened to arrive, so the delivered length and
-      // the source identity are checked once the range has been consumed.
+      // the source identity are checked once the range has been consumed. The
+      // check runs at the end of the stream instead of before the first write:
+      // a near-ceiling member must not be held resident in full to be delivered.
       const verify = async (): Promise<void> => {
         this.#assertOpen(signal);
         if (delivered !== stored.declaredSize)
@@ -155,13 +158,11 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       };
       void this.#scope
         .run(async () => {
-          const chunks: Buffer[] = [];
           for await (const chunk of source as AsyncIterable<Buffer>) {
             delivered += chunk.length;
-            chunks.push(chunk);
+            if (!output.write(chunk)) await once(output, "drain");
           }
           await verify();
-          for (const chunk of chunks) output.write(chunk);
           output.end();
         })
         .catch((cause: unknown) =>
@@ -264,14 +265,19 @@ const sameRange = (entry: ArtifactEntry, stored: ArtifactEntry): boolean =>
  * path, so an entry whose path is already claimed by another is listed under
  * its source ordinal instead. The same applies to a name that is not a single
  * safe path component: the raw declared name stays in `sourcePath`.
+ *
+ * Claiming compares the normalized identity, not the raw spelling: the
+ * inventory registry normalizes NFC, so two canonically equivalent names would
+ * otherwise both pass here and abort the whole inventory downstream.
  */
 const claimPath = (
   entry: ArtifactEntry,
   claimed: Set<string>,
   index: number,
 ): ArtifactEntry => {
+  const identity = normalizedIdentity(entry.path);
   const collides =
-    entry.path === "" || claimed.has(entry.path) || !isSafePath(entry.path);
+    entry.path === "" || identity === null || claimed.has(identity);
   let path = entry.path;
   if (collides) {
     // A member may literally be named `entry-<ordinal>`, so the fallback is
@@ -282,7 +288,7 @@ const claimPath = (
     for (let suffix = 2; claimed.has(path); suffix += 1)
       path = `${base}-${String(suffix)}`;
   }
-  claimed.add(path);
+  claimed.add(collides ? path : (identity as string));
   if (!collides) return entry;
   return {
     ...entry,
@@ -295,12 +301,12 @@ const claimPath = (
   };
 };
 
-const isSafePath = (path: string): boolean => {
+/** The path identity the inventory registry compares after NFC normalization. */
+const normalizedIdentity = (path: string): string | null => {
   try {
-    normalizeArtifactPath(path);
-    return true;
+    return normalizeArtifactPath(path);
   } catch {
-    return false;
+    return null;
   }
 };
 
@@ -362,15 +368,25 @@ const toArtifactEntry = (
     );
   // A zero-byte stream is a file: it has content (none) and opens as empty,
   // rather than being reported as metadata that carries no bytes.
+  // A version-4 size beyond 2^53-1 cannot be carried, so its declaration is
+  // unknown: the clamped `streamSize` is not published as an observed size and
+  // the entry has no byte range to open.
+  const sizeKnown = entry.streamSizeRepresentable;
   const resolvable =
+    sizeKnown &&
     entry.storage === "fat" &&
     entry.byteOffset !== null &&
     !entry.structuralOverlap;
-  const emptyStream = entry.storage === "empty" && entry.streamSize === 0;
+  const emptyStream =
+    sizeKnown && entry.storage === "empty" && entry.streamSize === 0;
+  if (!sizeKnown)
+    limitations.push(
+      "This stream declares more bytes than a JavaScript number carries exactly, so its declared size is unknown here rather than the clamped value that bounds the parse.",
+    );
   return {
     path: path ?? "",
     kind: resolvable || emptyStream ? "file" : "metadata",
-    declaredSize: entry.streamSize,
+    declaredSize: sizeKnown ? entry.streamSize : null,
     compressedSize: null,
     executable: false,
     encrypted: false,
