@@ -948,7 +948,7 @@ export class JavaScriptAnalysisWorker {
         limit: analysisSettingLimit(
           "javascript.max_heap_mb",
           this.limits.heapMb,
-          undefined,
+          this.limits.heapSource,
         ),
         remediationAction: javaScriptWorkerHeapRemediation(this.limits.heapMb),
       },
@@ -1147,7 +1147,7 @@ export class JavaScriptAnalysisWorker {
           limit: analysisSettingLimit(
             "javascript.analysis_timeout_ms",
             this.limits.timeoutMs,
-            undefined,
+            this.limits.timeoutSource,
           ),
           capturedOutput: this.#captured(),
           userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
@@ -1182,7 +1182,7 @@ export class JavaScriptAnalysisWorker {
                 limit: analysisSettingLimit(
                   "javascript.max_heap_mb",
                   this.limits.heapMb,
-                  undefined,
+                  this.limits.heapSource,
                 ),
               }
             : {}),
