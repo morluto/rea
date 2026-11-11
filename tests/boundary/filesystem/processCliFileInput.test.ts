@@ -1,10 +1,11 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
 } from "../../../src/application/process/ProcessCli.js";
+import * as scenarioPreparation from "../../../src/application/process/ProcessScenarioPreparation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
@@ -635,3 +636,102 @@ const validTraceSpecification = () => ({
     happens_before: [{ before: "started", after: "finished" }],
   },
 });
+
+it.each([
+  { cleanupFails: false, cancel: false },
+  { cleanupFails: true, cancel: false },
+  { cleanupFails: true, cancel: true },
+])(
+  "keeps the typed plan failure through final input close (fails: $cleanupFails; cancelled: $cancel)",
+  async ({ cleanupFails, cancel }) => {
+    const root = await createTestTempDirectory(
+      "rea-process-cli-primary-close-",
+    );
+    const path = join(root, "scenario.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        executable: process.execPath,
+        working_directory: join(root, "missing-directory"),
+        dry_run: true,
+      }),
+    );
+    const owner = new OwnedFileHandle(await open(path, "r"));
+    const controller = new AbortController();
+    const reason = { caller: "stop during failed input cleanup" };
+    const cleanupCause = new Error("retained input descriptor close failure");
+    const realPrepare = scenarioPreparation.prepareProcessScenarioPlan;
+    let primary: unknown;
+    const preparing = vi
+      .spyOn(scenarioPreparation, "prepareProcessScenarioPlan")
+      .mockImplementation(async (...args) => {
+        const result = await realPrepare(...args);
+        if (!result.ok) primary = result.error;
+        return result;
+      });
+    const realFileClose = OwnedFileHandle.prototype.close;
+    const closingFile = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this !== owner || !cleanupFails) return realFileClose.call(this);
+        if (cancel) controller.abort(reason);
+        throw cleanupCause;
+      });
+    const realScopeClose = ArtifactResourceScope.prototype.close;
+    const closingScope = vi
+      .spyOn(ArtifactResourceScope.prototype, "close")
+      .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+        // A real descriptor is retained at the final input-scope boundary;
+        // this supplies cleanup authority, not a fabricated ownership receipt.
+        this.retain({ kind: "file-handle", resource: path, handle: owner });
+        await realScopeClose.call(this);
+      });
+    let failure: unknown;
+    let returned: unknown;
+    try {
+      try {
+        returned = await captureProcessScenarioFile(
+          path,
+          process.env,
+          controller.signal,
+        );
+      } catch (cause) {
+        failure = cause;
+      }
+      expect(primary).toMatchObject({ _tag: "AnalysisInputError" });
+      if (!cleanupFails) {
+        expect(returned).toMatchObject({
+          code: "invalid_request",
+          details: { issues: [{ path: ["working_directory"] }] },
+        });
+        expect(failure).toBeUndefined();
+        return;
+      }
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("Expected retained input cleanup failure");
+      const causes = new Set<unknown>();
+      const pending = [failure as unknown];
+      while (pending.length > 0) {
+        const cause = pending.pop();
+        if (causes.has(cause)) continue;
+        causes.add(cause);
+        if (cause instanceof Error) pending.push(cause.cause);
+        if (cause instanceof AggregateError)
+          for (const nested of cause.errors) pending.push(nested);
+      }
+      expect(causes.has(primary)).toBe(true);
+      expect(failure.cleanupLeases).toHaveLength(1);
+      expect(owner.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(controller.signal.aborted).toBe(cancel);
+    } finally {
+      preparing.mockRestore();
+      closingScope.mockRestore();
+      closingFile.mockRestore();
+      if (failure instanceof ArtifactReaderFailure)
+        for (const lease of failure.cleanupLeases ?? []) await lease.release();
+      await owner.close();
+      expect(owner.handle.fd).toBe(-1);
+    }
+  },
+);

@@ -72,9 +72,11 @@ export const captureProcessScenarioFile = async (
           process.platform,
           signal,
         );
-        return prepared.ok
-          ? createProcessScenarioPlanEvidence(prepared.value, process.platform)
-          : cliAnalysisError(prepared.error);
+        if (!prepared.ok) throw prepared.error;
+        return createProcessScenarioPlanEvidence(
+          prepared.value,
+          process.platform,
+        );
       }
       const progress = createProgressReporter(
         async (update) => {
@@ -97,18 +99,16 @@ export const captureProcessScenarioFile = async (
         await resourceScope.close();
       } catch (cause: unknown) {
         if (!captured.ok && cause instanceof AnalysisError)
-          return cliAnalysisError(
-            captured.error instanceof ProcessCaptureError
-              ? captured.error.withFinalization({ cleanupFailure: cause })
-              : analysisErrorWithCleanupFailure(
-                  captured.error,
-                  cause,
-                  "capture_process_scenario",
-                ).bindCleanupDependencies([captured.error, cause]),
-          );
+          throw captured.error instanceof ProcessCaptureError
+            ? captured.error.withFinalization({ cleanupFailure: cause })
+            : analysisErrorWithCleanupFailure(
+                captured.error,
+                cause,
+                "capture_process_scenario",
+              ).bindCleanupDependencies([captured.error, cause]);
         throw cause;
       }
-      if (!captured.ok) return cliAnalysisError(captured.error);
+      if (!captured.ok) throw captured.error;
       return createProcessCaptureEvidence(parsed.data, captured.value);
     },
   );
@@ -298,12 +298,10 @@ const projectProcessCliError = (
 const withProcessInputResources = async (
   operation: "capture_process_scenario" | "compare_process_captures",
   signal: AbortSignal | undefined,
-  run: (
-    resources: ArtifactResourceScope,
-  ) => Promise<Evidence | ProcessCliErrorOutput>,
+  run: (resources: ArtifactResourceScope) => Promise<Evidence>,
 ): Promise<Evidence | ProcessCliErrorOutput> => {
   const resources = new ArtifactResourceScope();
-  let outcome: Result<Evidence | ProcessCliErrorOutput, unknown>;
+  let outcome: Result<Evidence, unknown>;
   try {
     outcome = ok(await run(resources));
   } catch (cause: unknown) {
@@ -324,7 +322,6 @@ const withProcessInputResources = async (
     );
   }
   if (!outcome.ok) return projectProcessCliError(outcome.error, operation);
-  if ("error" in outcome.value) return outcome.value;
   const completed = completeProviderEvidence(outcome.value, signal);
   return completed.ok ? completed.value : cliAnalysisError(completed.error);
 };
