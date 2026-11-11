@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **process:** retain inspection cancellation and cleanup ownership ([#10113](https://github.com/morluto/rea/issues/10113))
 * **desktop:** Internal desktop readers must report cancellation with AnalysisCancelledError or ArtifactReaderFailure instead of throwing an arbitrary caller cancellation reason.
 * **cli:** own MCP client registration boundaries ([#10102](https://github.com/morluto/rea/issues/10102))
 * **settings:** replace effect with update_mode and pending_restart
@@ -351,6 +352,7 @@
 * **asar:** retain unsupported integrity declarations ([1008d5e](https://github.com/morluto/rea/commit/1008d5e30290d9f056f262d2aff0f042ba3897ab))
 * **asn1:** preserve decoder capacity refusals ([#9932](https://github.com/morluto/rea/issues/9932)) ([9145610](https://github.com/morluto/rea/commit/91456101f1417423fd0471960736f341ca6a827f))
 * **asn1:** reject non-minimal OID subidentifiers ([#7800](https://github.com/morluto/rea/issues/7800)) ([b14b94f](https://github.com/morluto/rea/commit/b14b94f0f5f0da0696271dd57b571fff57ee1ddc))
+* **audit:** claim exact map occurrences from late declarations ([f668c86](https://github.com/morluto/rea/commit/f668c862717fd1c63c649a04709191bbe86e4479))
 * **audit:** retract map declarations once per source spelling ([aa017c6](https://github.com/morluto/rea/commit/aa017c61ff3803dea3b823664ae255c4059c19d4))
 * **binary:** seal session admission during shutdown ([#10012](https://github.com/morluto/rea/issues/10012)) ([44ef32c](https://github.com/morluto/rea/commit/44ef32c1c037fc80c2c344b2042a9af8e793a0bd))
 * **browser-scenario:** preserve scenario evidence and coverage ([#9896](https://github.com/morluto/rea/issues/9896)) ([133a849](https://github.com/morluto/rea/commit/133a849b2e2fc7b4a48f2292bd3bead92681e6e7))
@@ -1272,6 +1274,7 @@
 * **process:** retain cleanup ownership through input finalization ([#10095](https://github.com/morluto/rea/issues/10095)) ([84041ff](https://github.com/morluto/rea/commit/84041fff23b3570a80ef3464575369c0061a8065))
 * **process:** retain failures through finalization ([95d9d51](https://github.com/morluto/rea/commit/95d9d51f7298f855d62c19035f4e3d6491fa9f1e))
 * **process:** retain inherited pipes on output overflow ([57d0ed4](https://github.com/morluto/rea/commit/57d0ed45f7559fc3329a6080a92f68420ae52d63))
+* **process:** retain inspection cancellation and cleanup ownership ([#10113](https://github.com/morluto/rea/issues/10113)) ([ab84ba6](https://github.com/morluto/rea/commit/ab84ba68399907c11a9564883915448cad1abc14))
 * **process:** retain lease directory cleanup ownership ([fe95b76](https://github.com/morluto/rea/commit/fe95b7611f794005deb23ad511607742fc829712))
 * **process:** retain lease recovery cleanup owners ([5d5fef7](https://github.com/morluto/rea/commit/5d5fef7391122925f3f184ae88f0e4c298f8b679))
 * **process:** retain uncertain cleanup ownership ([#7845](https://github.com/morluto/rea/issues/7845)) ([114731e](https://github.com/morluto/rea/commit/114731eb1ed01507d63bde194cbb6073c2449c63))
@@ -1929,6 +1932,7 @@
 * preserve provider harness cleanup and parser admission ([56d2ba3](https://github.com/morluto/rea/commit/56d2ba36b84578413706c910219d1d007d91a513))
 * preserve relational policy and cumulative read coverage ([c8a52fd](https://github.com/morluto/rea/commit/c8a52fd478bb6a2367cbf9440a32da6f6cc951ab))
 * preserve repeated attribute URL node identity ([38286d4](https://github.com/morluto/rea/commit/38286d4bc38eb4ca4ee17b43132e07c0267a1a16))
+* **process:** assert recovery for the selected host platform ([e966bc0](https://github.com/morluto/rea/commit/e966bc06ad350fcc3014b143a1c6ca788f43e5c9))
 * **process:** bind cleanup fixtures to selected resources ([95382c2](https://github.com/morluto/rea/commit/95382c2ba0865438338ea2b3de8299d046bbfd14))
 * **process:** isolate startup failure from shared helper state ([c78c8ae](https://github.com/morluto/rea/commit/c78c8aed403b955680a342f5ad38680867e3858f))
 * **process:** strengthen macOS token parser boundaries ([96606f5](https://github.com/morluto/rea/commit/96606f511455e5b3af1eb6aa14fc9e895f3e9efb))
