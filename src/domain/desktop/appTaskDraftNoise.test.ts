@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../jsonValue.js";
 import {
   draftOf,
+  passing,
   pointerOf,
   statePath,
   xml,
   xmlDraft,
 } from "./appTaskDraft.fixture.js";
 
+const FILE = "Documents/doc.xml";
 const CELLS =
   "/root/children/[name=Sheet]/children/[name=Cells]/children/[name=Cell]";
 const SELECTIONS = "/root/children/[name=Sheet]/children/[name=Selections]";
@@ -43,10 +45,15 @@ const EDITED = {
 } as const;
 
 describe("draftTaskFiles noise", () => {
-  it("leaves view state, renumbered ids, volatile values and times out of a document's suggestions when an edit is there, noting each in values", () => {
+  it("leaves view state, volatile values and times out while retaining unproven ids", () => {
     const file = xmlDraft(workbook(SEED), workbook(EDITED));
 
-    expect(file.suggested.map(pointerOf)).toEqual([`${CELLS}[@Col=3][@Row=2]`]);
+    expect(file.suggested.map(pointerOf)).toEqual(
+      expect.arrayContaining([
+        `${CELLS}[@Col=3][@Row=2]`,
+        `${CELLS}[@Col=3][@Row=5]/attributes/ExprID`,
+      ]),
+    );
     const noted = (note: string) =>
       file.values
         .filter((value) => value.note === note)
@@ -60,15 +67,8 @@ describe("draftTaskFiles noise", () => {
         `${SELECTIONS}/children/[name=Selection]/attributes/startCol`,
       ].toSorted(),
     );
-    // The emptied formula text goes with the renumbered id of its cell.
-    expect(noted("renumbered")).toEqual(
-      [
-        `${CELLS}[@Col=3][@Row=5]/attributes/ExprID`,
-        `${CELLS}[@Col=3][@Row=5]/children/0`,
-        `${CELLS}[@Col=4][@Row=5]/attributes/ExprID`,
-        `${CELLS}[@Col=4][@Row=5]/children/0`,
-      ].toSorted(),
-    );
+    // The attribute name alone does not prove its value is generated.
+    expect(noted("renumbered")).toEqual([]);
     expect(noted("volatile")).toEqual([
       "/root/children/[name=meta]/attributes/saved",
       "/root/children/[name=meta]/attributes/session",
@@ -79,6 +79,28 @@ describe("draftTaskFiles noise", () => {
     // The edit leads, noise last.
     expect(file.values[0]?.note).toBeUndefined();
     expect(file.notes).toEqual([]);
+  });
+
+  it("keeps a changed relationship id alongside another edit", () => {
+    const expense = (account: string, description: string) =>
+      `<doc><expense id="one" accountId="${account}" description="${description}"/></doc>`;
+    const file = xmlDraft(expense("A1", "old"), expense("A2", "new"));
+    const account = file.values.find(({ pointer }) =>
+      pointer.endsWith("/attributes/accountId"),
+    );
+    expect(account?.note).toBeUndefined();
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "value_equals",
+          pointer: expect.stringContaining("/attributes/accountId"),
+          value: "A2",
+        }),
+      ]),
+    );
+    expect(passing(FILE, xml(expense("A1", "new")), file.suggested)).toContain(
+      false,
+    );
   });
 
   it("keeps a formula edit when the cell's ExprID changes too", () => {
@@ -94,12 +116,9 @@ describe("draftTaskFiles noise", () => {
 
     expect(shown).toContain("=sum(C2:C5)");
     expect(
-      file.values
-        .filter(({ note }) => note === "renumbered")
-        .map(({ pointer }) => pointer),
-    ).toEqual([
-      "/root/children/[name=Sheet]/children/[name=Cells]/children/[name=Cell][@Row=5]/attributes/ExprID",
-    ]);
+      file.values.find(({ pointer }) => pointer.endsWith("/attributes/ExprID"))
+        ?.note,
+    ).toBeUndefined();
   });
 
   it("keeps an edit that follows more noise than a file has room for checks", () => {
@@ -353,5 +372,407 @@ describe("draftTaskFiles upkeep in an archive", () => {
     expect(file.suggested.map(pointerOf)).toContain(
       "/entries/[name=styles.xml]/view/root/children/[name=style][@name=Text]/children/[name=props]/attributes/fo:font-weight",
     );
+  });
+});
+
+describe("draftTaskFiles layout beside a text edit", () => {
+  it("keeps a number an edit changed beside text as content, unless a name on its way says it is layout", () => {
+    const shop = (description: string, amount: string, width: string) =>
+      `<shop><orders><order id="1"><description>${description}</description><amount value="${amount}"/><box width="${width}"/></order><order id="2"><description>Tape</description><amount value="1"/><box width="2"/></order></orders></shop>`;
+    const order = "/root/children/[name=orders]/children/[name=order][@id=1]";
+
+    const file = xmlDraft(
+      shop("Two boxes", "10", "4"),
+      shop("Twelve boxes", "12", "6"),
+    );
+
+    expect(
+      file.values.map(({ pointer, note }) => [
+        pointer.replace(order, "~"),
+        note ?? null,
+      ]),
+    ).toEqual([
+      ["~/children/[name=description]/children/0", null],
+      ["~/children/[name=amount]/attributes/value", null],
+      ["~/children/[name=box]/attributes/width", "layout"],
+    ]);
+    expect(file.suggested.map(pointerOf)).toContain(
+      `${order}/children/[name=amount]/attributes/value`,
+    );
+  });
+});
+
+describe("draftTaskFiles for a presentation whose save after a reload rewrote its styles", () => {
+  const entry = (name: string, view: string) => ({
+    name,
+    size: view.length,
+    sha256: view,
+    format: "xml",
+    view: xml(view),
+    view_error: null,
+  });
+  const NS =
+    'xmlns:office="o" xmlns:draw="d" xmlns:presentation="p" xmlns:text="t" xmlns:style="s"';
+  /** Slides as Impress keeps them: frames by class, each with an automatic style it shares and renumbers. */
+  const slides = (title: string) =>
+    `<office:document-content ${NS}><office:automatic-styles><text:list-style style:name="L2"><style:list-level-properties text:space-before="0.6cm"/></text:list-style></office:automatic-styles><office:body><office:presentation>${[
+      "Welcome",
+      "Schedule",
+    ]
+      .map(
+        (page) =>
+          `<draw:page draw:name="${page}"><draw:frame presentation:style-name="pr1" presentation:class="title"><draw:text-box><text:p>${page === "Schedule" ? title : "Welcome"}</text:p></draw:text-box></draw:frame><draw:frame presentation:style-name="pr4" presentation:class="outline"><draw:text-box><text:p>Tomatoes</text:p></draw:text-box></draw:frame></draw:page>`,
+      )
+      .join("")}</office:presentation></office:body></office:document-content>`;
+  /** Master pages' fields, wrapped or not in an automatic text style, beside many such pages. */
+  const masters = (wrapped: boolean, spacing: string) =>
+    `<office:document-styles ${NS}><office:automatic-styles><text:list-style style:name="L2"><style:list-level-properties text:space-before="${spacing}"/></text:list-style></office:automatic-styles><office:master-styles>${Array.from(
+      { length: 12 },
+      (_, index) =>
+        `<style:master-page style:name="M${String(index)}"><draw:frame presentation:class="footer"><draw:text-box><text:p>${wrapped ? '<text:span text:style-name="MT1"><presentation:footer/></text:span>' : "<presentation:footer/>"}</text:p></draw:text-box></draw:frame></style:master-page>`,
+    ).join("")}</office:master-styles></office:document-styles>`;
+  const deck = (title: string, wrapped: boolean) => ({
+    entries: [
+      entry("content.xml", slides(title)),
+      entry("styles.xml", masters(wrapped, wrapped ? "0.9cm" : "0.6cm")),
+    ],
+    entry_count: 2,
+    truncated: false,
+  });
+  const SCHEDULE =
+    "/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:presentation]/children/[name=draw:page][@draw:name=Schedule]/children/[name=draw:frame]";
+
+  it("names a slide's frames by their class, not the automatic style the app renumbers, suggests the title alone, and lists it before the rewrite", () => {
+    const [file] = draftOf({
+      "Documents/garden.odp": statePath(
+        "document",
+        "zip",
+        deck("Planting Schedule", false),
+        deck("Spring Planting Calendar", true),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: "Documents/garden.odp",
+        pointer: `${SCHEDULE}[@presentation:class=title]`,
+        value: "Spring Planting Calendar",
+      },
+    ]);
+    const [first, ...rest] = file?.values ?? [];
+    expect(first).toMatchObject({
+      pointer: `${SCHEDULE}[@presentation:class=title]/children/[name=draw:text-box]/children/[name=text:p]/children/0`,
+      after: "Spring Planting Calendar",
+    });
+    expect(rest.length).toBeGreaterThan(10);
+    expect(rest.every(({ note }) => note === "upkeep")).toBe(true);
+  });
+});
+
+describe("draftTaskFiles for an animation whose app keeps what is current", () => {
+  /** A Pencil2D project: the frame, colour, layer and view the app has current, and its layers. */
+  const project = (current: string, bitmap: string) =>
+    `<document><projectdata><currentFrame value="1"/><currentColor r="0" b="0" g="0" a="255"/><currentLayer value="${current}"/><currentView m11="1" dx="0"/><fps value="12"/></projectdata><object><layer id="1" name="Camera Layer" type="5"/><layer id="2" name="Vector Layer" type="2"/><layer id="3" name="${bitmap}" type="1"/><layer id="4" name="Ground" type="1"/></object></document>`;
+
+  it("notes the layer the app has current as view state, never a check, beside the layer the user renamed", () => {
+    const file = xmlDraft(project("3", "Bitmap Layer"), project("2", "Ball"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/root/children/[name=object]/children/[name=layer][@id=3]/attributes/name",
+      "/root/children/[name=object]/children/[name=layer][@name=Bitmap Layer]",
+    ]);
+    expect(
+      file.values.map(({ pointer, note }) => [pointer, note ?? null]),
+    ).toEqual([
+      [
+        "/root/children/[name=object]/children/[name=layer][@id=3]/attributes/name",
+        null,
+      ],
+      [
+        "/root/children/[name=projectdata]/children/[name=currentLayer]/attributes/value",
+        "view_state",
+      ],
+    ]);
+  });
+});
+
+describe("draftTaskFiles for a mind map, as VYM saves one", () => {
+  const branch = (uuid: string, heading: string) =>
+    `<branch hideLink="false" uuid="{${uuid}}"><heading textMode="plainText">${heading}</heading></branch>`;
+  /** A map: its branch count, branches each with a GUID VYM makes, a view setting, and the saved selection. */
+  const map = (count: string, added: string, selected: string) =>
+    `<vymmap version="2.6.11" branchCount="${count}"><mapcenter uuid="{4b6e7612-970d-4d72-8fae-8ebaf02511c9}"><heading>Team Offsite</heading>${branch("d1e07ab2-1ecd-4c39-aa93-e7b70576a029", "Venue")}<branch hideLink="false" uuid="{4cdcd61f-90fb-4965-91a1-849509829d26}"><heading>Agenda</heading>${branch("d47c1733-7117-42b7-b45b-9ac244bc3d67", "Kickoff talk")}${branch("8e689d15-a04a-4c60-81ad-6317a3b5874f", "Strategy workshop")}${added}</branch></mapcenter>${added === "" ? "" : '<setting key="/treeeditor/visible">false</setting>'}<select>${selected}</select></vymmap>`;
+  const SEED = map("4", "", "mc:0,bo:2");
+  const END = map(
+    "5",
+    branch("18eadb5d-04fc-4448-a0f9-1f9a3dedaff7", "Sunset boat tour"),
+    "mc:0,bo:1",
+  );
+  const AGENDA =
+    "/root/children/[name=mapcenter]/children/[name=branch][@uuid={4cdcd61f-90fb-4965-91a1-849509829d26}]/children";
+
+  it("names the new branch by its heading, not the GUID VYM made for it, and checks that heading and the branches' count", () => {
+    const file = xmlDraft(SEED, END);
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: "Documents/doc.xml",
+        pointer: `${AGENDA}/[name=branch][>heading=Sunset boat tour]/children/[name=heading]`,
+        value: "Sunset boat tour",
+      },
+      {
+        kind: "member_count",
+        file: "Documents/doc.xml",
+        pointer: AGENDA,
+        matching: "[name=branch]",
+        equals: 3,
+      },
+    ]);
+  });
+
+  it("notes the saved selection and a tree editor setting as view state and the branch count as upkeep, the new heading first", () => {
+    const file = xmlDraft(SEED, END);
+
+    expect(
+      file.values.map(({ pointer, note }) => [
+        pointer.replace(AGENDA, "~"),
+        note ?? null,
+      ]),
+    ).toEqual([
+      [
+        "~/[name=branch][>heading=Sunset boat tour]/children/[name=heading]",
+        null,
+      ],
+      ["/root/children/[name=setting]", "view_state"],
+      ["/root/attributes/branchCount", "upkeep"],
+      ["/root/children/[name=select]/children/0", "view_state"],
+    ]);
+  });
+});
+
+describe("draftTaskFiles counts an app keeps of its records", () => {
+  it("notes a count in an element's text that equals its records, as GnuCash's count-data, as upkeep, never a check or a guard", () => {
+    const book = (count: string, added: string) =>
+      `<gnc:book xmlns:gnc="g" xmlns:cd="c"><gnc:count-data cd:type="account">2</gnc:count-data><gnc:count-data cd:type="transaction">${count}</gnc:count-data><gnc:account name="Groceries"/><gnc:account name="Checking"/><gnc:transaction description="Corner Grocer"/>${added}</gnc:book>`;
+
+    const file = xmlDraft(
+      book("1", ""),
+      book("2", '<gnc:transaction description="Greenleaf Market"/>'),
+    );
+
+    const count =
+      "/root/children/[name=gnc:count-data][@cd:type=transaction]/children/0";
+    expect(file.values.find(({ pointer }) => pointer === count)).toMatchObject({
+      note: "upkeep",
+    });
+    expect(file.suggested.map(pointerOf)).not.toContain(count);
+    expect(
+      file.guards.map(pointerOf).filter((at) => at?.includes("count-data")),
+    ).toEqual([]);
+  });
+
+  it("checks a count the user entered, which tallies no tag at both ends, though it equals how many of a tag its record holds", () => {
+    const stock = (widgets: string) =>
+      `<inventory><item><name>Widget</name><count>${widgets}</count></item><item><name>Gadget</name><count>5</count></item></inventory>`;
+
+    const file = xmlDraft(stock("3"), stock("1"));
+
+    const count = file.values.find(({ after }) => after === "1");
+    expect(count).toBeDefined();
+    expect(count?.note).toBeUndefined();
+    expect(passing(FILE, xml(stock("3")), file.suggested)).toEqual([false]);
+    expect(passing(FILE, xml(stock("1")), file.suggested)).toEqual([true]);
+  });
+
+  it("suggests no check of the count a new element keeps of its members, as FreeCAD's ObjectDeps of its Deps", () => {
+    /** Objects as FreeCAD saves them: each one's dependencies, by name, then the objects. */
+    const model = (count: string, deps: string, objects: string) =>
+      `<Document><Objects Count="${count}" Dependencies="1"><ObjectDeps Name="Plate" Count="0"/>${deps}<Object type="Part::Box" name="Plate" id="1324"/>${objects}</Objects></Document>`;
+
+    const file = xmlDraft(
+      model("1", "", ""),
+      model(
+        "3",
+        '<ObjectDeps Name="Hole" Count="0"/><ObjectDeps Name="PlateWithHole" Count="2"><Dep Name="Plate"/><Dep Name="Hole"/></ObjectDeps>',
+        '<Object type="Part::Cylinder" name="Hole" id="1325"/><Object type="Part::Cut" name="PlateWithHole" id="1326"/>',
+      ),
+    );
+
+    // Count="2" counts the two Deps it holds; Count="0" another object's none, which no tag tallies.
+    expect(file.suggested.map(pointerOf)).not.toContain(
+      "/root/children/[name=Objects]/children/[name=ObjectDeps][@Name=PlateWithHole]/attributes/Count",
+    );
+  });
+});
+
+describe("draftTaskFiles styles a user applies", () => {
+  const NS = 'xmlns:office="o" xmlns:text="t" xmlns:style="s"';
+  /** A Writer document: its automatic styles, and named sections each holding a paragraph in a named style. */
+  const minutes = (quote: string, next: string) =>
+    `<office:document-content ${NS}><office:automatic-styles><style:style style:name="P1" style:family="paragraph"/></office:automatic-styles><office:body><office:text><text:h text:style-name="Heading_20_1">Minutes</text:h><text:section text:name="Quote"><text:p text:style-name="${quote}">Ship it, said Ana.</text:p></text:section><text:section text:name="Next"><text:p text:style-name="Standard">${next}</text:p></text:section></office:text></office:body></office:document-content>`;
+
+  it("checks a named style the user gave a paragraph beside another edit, never upkeep, as it would an automatic one the app renumbers", () => {
+    const seed = minutes("Standard", "Next meeting Friday.");
+    const end = minutes("Quotations", "Next meeting Monday.");
+    const file = xmlDraft(seed, end);
+
+    const style = file.values.find(({ after }) => after === "Quotations");
+    expect(style).toBeDefined();
+    expect(style?.note).toBeUndefined();
+    expect(
+      file.suggested.some(
+        (check) => "value" in check && check.value === "Quotations",
+      ),
+    ).toBe(true);
+    // A solve that edits the date alone fails.
+    expect(
+      passing(
+        FILE,
+        xml(minutes("Standard", "Next meeting Monday.")),
+        file.suggested,
+      ),
+    ).toContain(false);
+  });
+});
+
+describe("draftTaskFiles for a name shared by two lists", () => {
+  it("checks a category added beside a template of the same name", () => {
+    const file = xmlDraft(
+      '<doc><template name="Travel"><item>bag</item></template></doc>',
+      '<doc><template name="Travel"><item>bag</item></template><category name="Travel"/></doc>',
+    );
+
+    expect(
+      file.values.some(
+        (value) =>
+          value.pointer.includes("category") && value.note === "upkeep",
+      ),
+    ).toBe(false);
+    expect(file.suggested.map(pointerOf).join(" ")).toContain("category");
+  });
+});
+
+describe("draftTaskFiles for a drawing resized beside a rename", () => {
+  const model = (name: string, width: string) =>
+    `<model><name>${name}</name><diagram><widget width="${width}"/><widget width="4"/></diagram></model>`;
+
+  it("checks the width the user changed when the only other edit is a name outside the drawing", () => {
+    const file = xmlDraft(model("Shop", "10"), model("Store", "20"));
+
+    expect(file.suggested.map(pointerOf)).toContain(
+      "/root/children/[name=diagram]/children/[name=widget][@width=20]/name",
+    );
+    expect(
+      file.values.some(
+        (value) => value.pointer.includes("width") && value.note === "layout",
+      ),
+    ).toBe(false);
+    expect(passing(FILE, xml(model("Store", "10")), file.suggested)).toContain(
+      false,
+    );
+    expect(
+      passing(FILE, xml(model("Store", "20")), file.suggested).every(Boolean),
+    ).toBe(true);
+  });
+});
+
+describe("draftTaskFiles when a sibling lock changed", () => {
+  const text = (line: string) => ({
+    lines: [line],
+    line_count: 1,
+    truncated: false,
+  });
+
+  it("keeps the settings draft when the lock is the only document that changed", () => {
+    const files = draftOf({
+      ".config/app/settings.json": statePath(
+        "application_state",
+        "json",
+        { size: 1 },
+        { size: 2 },
+      ),
+      "Documents/plan.vym": statePath(
+        "document",
+        "text",
+        text("map"),
+        text("map"),
+      ),
+      "Documents/plan.vym.lock": statePath(
+        "document",
+        "text",
+        text("lock"),
+        text("held"),
+      ),
+    });
+    const settings = files.find(
+      (file) => file.file === ".config/app/settings.json",
+    );
+
+    expect(settings?.suggested.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("keeps the settings draft when the selected folder also contains the lock", () => {
+    const marked = (
+      role: "application_state" | "document",
+      format: "json" | "text",
+      before: { size: number } | ReturnType<typeof text>,
+      after: { size: number } | ReturnType<typeof text>,
+    ) => ({
+      ...statePath(role, format, before, after),
+      reasons: ["selected_path" as const],
+    });
+    const files = draftOf(
+      {
+        ".config/app/settings.json": marked(
+          "application_state",
+          "json",
+          { size: 1 },
+          { size: 2 },
+        ),
+        "Documents/plan.vym": marked(
+          "document",
+          "text",
+          text("map"),
+          text("map"),
+        ),
+        "Documents/plan.vym.lock": marked(
+          "document",
+          "text",
+          text("lock"),
+          text("held"),
+        ),
+      },
+      ["Documents"],
+    );
+    const settings = files.find(
+      (file) => file.file === ".config/app/settings.json",
+    );
+
+    expect(settings?.suggested.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("drafts a lock that was selected itself, beside the file it names", () => {
+    const files = draftOf(
+      {
+        "Documents/plan.vym": statePath(
+          "document",
+          "text",
+          text("map"),
+          text("map"),
+        ),
+        "Documents/plan.vym.lock": statePath(
+          "document",
+          "text",
+          text("lock"),
+          text("held"),
+        ),
+      },
+      ["Documents/plan.vym.lock"],
+    );
+    const lock = files.find((file) => file.file === "Documents/plan.vym.lock");
+
+    expect(lock?.suggested.length ?? 0).toBeGreaterThan(0);
   });
 });

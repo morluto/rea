@@ -11,21 +11,17 @@ import type {
   RustInferredCrates,
   RustcVersions,
 } from "../domain/rust/rustBinary.js";
+import { DEFAULT_RUSTC_HASH_LIMIT } from "../domain/rust/rustBinary.js";
+import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSection,
   RustAuditableFormatFailure,
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
-import {
-  mergedReadOnlyFileRanges,
-  recoverRustSourceFingerprints,
-  recoverRustSourceFingerprintsAsync,
-} from "./RustInferredCrates.js";
+import { recoverRustSourceFingerprintsAsync } from "./RustInferredCrates.js";
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
-/** One toolchain normally leaves one hash; a small cap bounds retained output. */
-const MAX_RUSTC_HASHES = 64;
 
 export interface ReadRustBinaryImageOptions {
   readonly includeInferredCrates?: boolean | undefined;
@@ -49,20 +45,19 @@ export interface RustBinaryImage {
 /** Read dependency metadata from container sections without executing the image. */
 export const readRustBinaryImage = (
   bytes: Buffer,
-  options?: ReadRustBinaryImageOptions,
+  maxRustcHashes = DEFAULT_RUSTC_HASH_LIMIT,
+  maxOutputBytes: number = RUST_PRODUCER_DEFAULTS.output_bytes,
 ): RustBinaryImage => {
   const container = readContainer(bytes);
   const dependency = dependencySection(container.format, container.sections);
-  const fingerprints =
-    options?.includeInferredCrates === true
-      ? recoverRustSourceFingerprints(
-          bytes,
-          container,
-          options.maxInferredCrates,
-          options.checkActive,
-        )
-      : undefined;
-  return buildRustBinaryImage(bytes, container, dependency, fingerprints);
+  return buildRustBinaryImage(
+    bytes,
+    container,
+    dependency,
+    undefined,
+    maxRustcHashes,
+    maxOutputBytes,
+  );
 };
 
 /**
@@ -72,11 +67,13 @@ export const readRustBinaryImage = (
  */
 export const readRustBinaryImageAsync = async (
   bytes: Buffer,
+  maxRustcHashes: number | undefined,
+  maxOutputBytes: number,
   options?: ReadRustBinaryImageOptions,
 ): Promise<RustBinaryImage> => {
   options?.checkActive?.();
   if (options?.includeInferredCrates !== true)
-    return readRustBinaryImage(bytes, options);
+    return readRustBinaryImage(bytes, maxRustcHashes, maxOutputBytes);
   const container = readContainer(bytes);
   const dependency = dependencySection(container.format, container.sections);
   options.checkActive?.();
@@ -87,14 +84,25 @@ export const readRustBinaryImageAsync = async (
     options.checkActive,
   );
   options.checkActive?.();
-  return buildRustBinaryImage(bytes, container, dependency, fingerprints);
+  return buildRustBinaryImage(
+    bytes,
+    container,
+    dependency,
+    fingerprints,
+    maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT,
+    maxOutputBytes,
+  );
 };
 
 const buildRustBinaryImage = (
   bytes: Buffer,
   container: BinaryContainer,
   dependency: ImageSection | null,
-  fingerprints: ReturnType<typeof recoverRustSourceFingerprints> | undefined,
+  fingerprints:
+    | Awaited<ReturnType<typeof recoverRustSourceFingerprintsAsync>>
+    | undefined,
+  maxRustcHashes: number,
+  maxOutputBytes: number,
 ): RustBinaryImage => ({
   format: container.format,
   architecture: container.architecture,
@@ -103,8 +111,8 @@ const buildRustBinaryImage = (
   auditable_metadata:
     dependency === null
       ? null
-      : readDependency(bytes, container.format, dependency),
-  rustc_commit: rustcCommit(bytes, container),
+      : readDependency(bytes, container.format, dependency, maxOutputBytes),
+  rustc_commit: rustcCommit(bytes, container, maxRustcHashes, maxOutputBytes),
   ...(fingerprints === undefined
     ? {}
     : {
@@ -169,12 +177,14 @@ const readDependency = (
   bytes: Buffer,
   format: RustBinaryImage["format"],
   section: ImageSection,
+  maxOutputBytes: number,
 ): RustAuditableMetadata =>
   readAuditableSection(
     format === "macho" ? "__DATA,.dep-v0" : ".dep-v0",
     section.offset,
     bytes.subarray(section.offset, section.offset + section.size),
     {
+      maxOutputBytes,
       peFileAlignment:
         section.format === "pe" &&
         section.virtual_size === 0 &&
@@ -188,9 +198,17 @@ const readDependency = (
 const rustcCommit = (
   bytes: Buffer,
   container: BinaryContainer,
+  maxHashes: number,
+  maxOutputBytes: number,
 ): RustBinaryImage["rustc_commit"] => {
-  const hashes: { hash: string; file_offset: number }[] = [];
-  const seen = new Set<string>();
+  const retention: RustcPathRetention = {
+    hashes: [],
+    seen: new Set(),
+    maxHashes,
+    maxBytes: maxOutputBytes,
+    bytes: 2,
+    reason: undefined,
+  };
   const sections = container.sections
     .filter((section) => section.read_only)
     .map(({ offset, size }) => ({ offset, size }));
@@ -202,19 +220,61 @@ const rustcCommit = (
       : [];
   // Overlapping section and ELF load ranges are scanned once, so total work
   // stays bounded by the file size however many mappings reference a range.
-  for (const range of mergedReadOnlyFileRanges(
-    [...sections, ...loadRegions],
-    bytes.length,
-  ))
-    collectHashes(bytes, range, seen, hashes);
-  return hashes.length === 0 ? null : { evidence_kind: "inferred", hashes };
+  for (const range of mergedReadOnlyFileRanges([...sections, ...loadRegions])) {
+    collectHashes(bytes, range, retention);
+    if (retention.reason !== undefined) break;
+  }
+  return retention.hashes.length === 0
+    ? null
+    : {
+        evidence_kind: "inferred",
+        hashes: retention.hashes,
+        ...(retention.reason !== undefined
+          ? {
+              coverage: {
+                status: "partial" as const,
+                reason: retention.reason,
+                effective_limit:
+                  retention.reason === "report_bytes"
+                    ? maxOutputBytes
+                    : maxHashes,
+              },
+            }
+          : {}),
+      };
+};
+
+/** One owner for compiler-path uniqueness, retained output and exhaustion. */
+interface RustcPathRetention {
+  readonly hashes: { hash: string; file_offset: number }[];
+  readonly seen: Set<string>;
+  readonly maxHashes: number;
+  readonly maxBytes: number;
+  bytes: number;
+  reason: "max_rustc_hashes" | "report_bytes" | undefined;
+}
+
+const mergedReadOnlyFileRanges = (
+  ranges: readonly { readonly offset: number; readonly size: number }[],
+): { readonly offset: number; readonly end: number }[] => {
+  const sorted = ranges
+    .filter(({ size }) => size > 0)
+    .map(({ offset, size }) => ({ offset, end: offset + size }))
+    .sort((left, right) => left.offset - right.offset);
+  const merged: { offset: number; end: number }[] = [];
+  for (const range of sorted) {
+    const last = merged.at(-1);
+    if (last !== undefined && range.offset <= last.end)
+      last.end = Math.max(last.end, range.end);
+    else merged.push({ ...range });
+  }
+  return merged;
 };
 
 const collectHashes = (
   bytes: Buffer,
   range: { readonly offset: number; readonly end: number },
-  seen: Set<string>,
-  hashes: { hash: string; file_offset: number }[],
+  retention: RustcPathRetention,
 ): void => {
   const region = bytes.subarray(range.offset, range.end);
   let cursor = 0;
@@ -223,17 +283,20 @@ const collectHashes = (
     if (at < 0) return;
     const start = at + RUSTC_PREFIX.length;
     const hash = hashAt(region, start);
-    if (hash !== null && !seen.has(hash)) {
-      if (seen.size >= MAX_RUSTC_HASHES)
-        throw new RustAuditableResourceFailure(
-          {
-            resource: "capacity",
-            reported_limits: { maximum_rustc_hashes: MAX_RUSTC_HASHES },
-          },
-          `Read-only data contains more than ${MAX_RUSTC_HASHES} distinct rustc commit paths.`,
-        );
-      seen.add(hash);
-      hashes.push({ hash, file_offset: range.offset + at });
+    if (hash !== null && !retention.seen.has(hash)) {
+      if (retention.seen.size >= retention.maxHashes) {
+        retention.reason = "max_rustc_hashes";
+        return;
+      }
+      const entry = { hash, file_offset: range.offset + at };
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry)) + 1;
+      if (entryBytes > retention.maxBytes - retention.bytes) {
+        retention.reason = "report_bytes";
+        return;
+      }
+      retention.bytes += entryBytes;
+      retention.seen.add(hash);
+      retention.hashes.push(entry);
     }
     cursor = at + 1;
   }

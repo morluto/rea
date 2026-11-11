@@ -678,7 +678,11 @@ it("keeps answering pseudocode one function at a time when the export fails", as
   });
   expect(pseudocode.rawResult).toMatchObject({
     source: { kind: "single-function" },
-    project_export: { state: "failed", failure_records: "not_exposed" },
+    project_export: {
+      state: "failed",
+      failure_records: "not_exposed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
   });
   expect(pseudocode.limitations).toEqual(
     expect.arrayContaining([
@@ -1055,25 +1059,6 @@ it("recovers when another server evicts the export this session adopted", async 
     source: { kind: "project-export" },
   });
   expect(await readdir(join(cacheRoot, "projects"))).toEqual([key]);
-  await client.close();
-});
-
-it("reports a failed export as failed rather than building", async () => {
-  const { open } = await session("rea-kuna-failed-state-", {
-    project: "exit-failure",
-  });
-  const client = open();
-  await client.execute("procedure_assembly", { procedure: "main" });
-
-  expect(
-    (await run(client, "procedure_pseudo_code", { procedure: "main" }))
-      .rawResult,
-  ).toMatchObject({
-    project_export: {
-      state: "failed",
-      reason: expect.stringContaining("not in recognized object file format"),
-    },
-  });
   await client.close();
 });
 

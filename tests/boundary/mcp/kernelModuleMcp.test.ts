@@ -23,6 +23,66 @@ const connect = async (mcp: TestMcp) => {
 };
 
 mcpTest(
+  "keeps valid omitted modinfo fields distinct from malformed syntax and recovers on the same connection",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-kernel-module-text-mcp-");
+      const path = join(root, "text.ko");
+      const key = "k".repeat(257);
+      const value = "v".repeat(4097);
+      await writeFile(
+        path,
+        kernelModuleFixture({ modinfo: Buffer.from(`${key}=${value}\0`) }),
+      );
+      const inspect = async (budgets: Record<string, number> = {}) => {
+        const response = await client.callTool({
+          name: "inspect_kernel_module",
+          arguments: { path, ...budgets },
+        });
+        expect(response.isError, JSON.stringify(response.content)).not.toBe(
+          true,
+        );
+        return toolContract("inspect_kernel_module").outputSchema.parse(
+          response.structuredContent,
+        );
+      };
+      const initial = await inspect();
+      const omitted = initial.normalized_result.modinfo?.entries[0];
+      expect(omitted).toMatchObject({
+        status: "observed",
+        reason: null,
+        key: null,
+        value: null,
+        omitted_fields: ["key", "value"],
+        raw_hex: null,
+      });
+      expect(initial.normalized_result.coverage.status).toBe("partial");
+      expect(initial.normalized_result.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("max_modinfo_key_bytes at least 257"),
+          expect.stringContaining("max_modinfo_value_bytes at least 4097"),
+        ]),
+      );
+      const recovered = await inspect({
+        max_modinfo_key_bytes: 257,
+        max_modinfo_value_bytes: 4097,
+      });
+      expect(recovered.subject).toEqual(initial.subject);
+      expect(recovered.normalized_result.modinfo?.entries[0]).toEqual({
+        ...omitted,
+        key,
+        value,
+        omitted_fields: [],
+      });
+      expect(recovered.normalized_result.coverage.status).toBe("complete");
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
   "advertises inspect_kernel_module and reads an ELF32 big-endian module",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);

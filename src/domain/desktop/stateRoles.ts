@@ -90,7 +90,12 @@ const hiddenTail = (path: string): string | null => {
   return index < 0 ? null : path.slice(index + 1);
 };
 
-/** The state directory a path lies in, or the folder beside one whose name differs only in letter case that the application may create during the capture, as the path spells it. */
+/**
+ * The state directory a path lies in, or the folder beside one that the
+ * application may create during the capture, as the path spells it: one
+ * whose name differs only in letter case, or that adds a version, as
+ * TreeLine's `~/.treeline-3.1` beside `~/.treeline`.
+ */
 export const stateDirectoryOf = (
   path: string,
   directories: readonly string[],
@@ -99,9 +104,13 @@ export const stateDirectoryOf = (
     const parent = directory.slice(0, directory.lastIndexOf("/") + 1);
     if (!path.startsWith(parent)) continue;
     const folder = path.slice(parent.length).split("/")[0] ?? "";
+    const name = directory.slice(parent.length).toLowerCase();
+    const own = folder.toLowerCase();
     if (
       folder.length > 0 &&
-      folder.toLowerCase() === directory.slice(parent.length).toLowerCase()
+      (own === name ||
+        (own.startsWith(name) &&
+          /^-?\d+(?:\.\d+)*$/u.test(own.slice(name.length))))
     )
       return `${parent}${folder}`;
   }
@@ -127,18 +136,18 @@ export interface DesktopRoleFacts {
 
 /**
  * Content roots that are the `-wal` or `-journal` of another root, not
- * selections of their own. Explicit selections remain selections regardless
- * of their names.
+ * selections of their own. An explicitly selected path is not one of those
+ * logs, even when its name ends in `-wal` or `-journal`.
  */
 export const sqliteSidecarRoots = (
   roots: readonly string[],
-  selections: ReadonlySet<string> = new Set(),
+  selected: ReadonlySet<string> = new Set(),
 ): ReadonlySet<string> => {
   const present = new Set(roots);
   return new Set(
     roots.filter(
       (root) =>
-        !selections.has(root) &&
+        !selected.has(root) &&
         SQLITE_SIDECARS.some(
           ({ suffix }) =>
             root.endsWith(suffix) && present.has(root.slice(0, -suffix.length)),
@@ -160,13 +169,13 @@ export const roleFacts = (
   const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
-  const selections = new Set(
+  const selected = new Set(
     (state.selected_paths ?? []).flatMap((entry) => [
       entry.path,
       entry.physical,
     ]),
   );
-  const sqliteSidecars = sqliteSidecarRoots(state.content_roots, selections);
+  const sqliteSidecars = sqliteSidecarRoots(state.content_roots, selected);
   return {
     home: host.home,
     stateDirectories,
@@ -174,10 +183,14 @@ export const roleFacts = (
     sqliteSidecars,
     selectedRoots: state.content_roots.filter((root) => {
       const relative = homePath(root, host.home);
+      const chosen = (state.selected_paths ?? []).some(
+        (entry) => entry.path === root || entry.physical === root,
+      );
       return (
         !sqliteSidecars.has(root) &&
-        !stateDirectories.includes(root) &&
-        (relative === null || !stateTails.includes(relative))
+        (chosen ||
+          (!stateDirectories.includes(root) &&
+            (relative === null || !stateTails.includes(relative))))
       );
     }),
     selections: [...(state.selected_paths ?? [])].sort(
@@ -192,8 +205,15 @@ export const roleFacts = (
 
 const FILENAME_CHARACTER = /[\p{L}\p{M}\p{N}._~-]/u;
 
-/** Whether a title holds a spelling not joined to other file name characters. */
-const spelledIn = (title: string, spelling: string): boolean => {
+/** Home folders whose files a title never names as a document: caches, and dconf's databases. */
+const NEVER_NAMED = [".cache", ".config/dconf"];
+
+/**
+ * Whether a title holds a spelling as a whole token: not joined to other file
+ * name characters, and not a folder of a longer path shown there (followed by
+ * `/`); a bare name without an extension, not even its last segment.
+ */
+const spelledIn = (title: string, spelling: string, bare = false): boolean => {
   for (
     let at = title.indexOf(spelling);
     at >= 0;
@@ -203,23 +223,35 @@ const spelledIn = (title: string, spelling: string): boolean => {
     const after = title[at + spelling.length];
     if (
       (before === undefined || !FILENAME_CHARACTER.test(before)) &&
-      (after === undefined || !FILENAME_CHARACTER.test(after))
+      (after === undefined || !FILENAME_CHARACTER.test(after)) &&
+      after !== "/" &&
+      !(bare && before === "/")
     )
       return true;
   }
   return false;
 };
 
-/** Whether an application window title spells the file's name or home path. */
-const namedInTitle = (path: string, facts: DesktopRoleFacts): boolean => {
+/**
+ * Whether one of an application's window titles names the file: its whole
+ * name, with its extension, or its `~/` or absolute path. A file under a
+ * cache or a dconf database is never named, whatever a title shows.
+ */
+export const namedInTitles = (
+  path: string,
+  home: string,
+  titles: readonly string[],
+): boolean => {
   const name = path.split("/").at(-1) ?? "";
-  const relative = homePath(path, facts.home);
-  const spellings = [
-    ...(name.length >= 3 ? [name] : []),
-    ...(relative === null ? [] : [`~/${relative}`]),
-  ];
-  return facts.titles.some((title) =>
-    spellings.some((spelling) => spelledIn(title, spelling)),
+  const relative = homePath(path, home);
+  if (relative !== null && isWithinAny(relative, NEVER_NAMED)) return false;
+  // A dot after the first character starts an extension; `.bashrc` has none.
+  const bare = name.lastIndexOf(".") <= 0;
+  return titles.some(
+    (title) =>
+      (name.length >= 3 && spelledIn(title, name, bare)) ||
+      (relative !== null && spelledIn(title, `~/${relative}`)) ||
+      spelledIn(title, path),
   );
 };
 
@@ -245,11 +277,15 @@ export const stateReasons = (
   )
     reasons.push("opened_by_application");
   if (
-    namedInTitle(path, facts) ||
+    namedInTitles(path, facts.home, facts.titles) ||
     facts.selections.some(
       ({ path: selected, physical }) =>
         isWithinAny(path, [physical]) &&
-        namedInTitle(`${selected}${path.slice(physical.length)}`, facts),
+        namedInTitles(
+          `${selected}${path.slice(physical.length)}`,
+          facts.home,
+          facts.titles,
+        ),
     )
   )
     reasons.push("named_in_window_title");

@@ -117,6 +117,13 @@ const summarize = (
     if (item.source_kind === "registry") registryCount += 1;
     else gitCount += 1;
   }
+  let compilerSummary: z.output<
+    typeof rustBinarySummarySchema
+  >["rustc_commit"] = null;
+  if (compiler !== null) {
+    const { hashes, ...facts } = compiler;
+    compilerSummary = { ...facts, hashes_count: hashes.length };
+  }
   return {
     format: report.format,
     architecture: report.architecture,
@@ -127,13 +134,7 @@ const summarize = (
       : { selected_slice: report.selected_slice }),
     bytes: artifact.bytes,
     auditable_metadata: section,
-    rustc_commit:
-      compiler === null
-        ? null
-        : {
-            evidence_kind: compiler.evidence_kind,
-            hashes_count: compiler.hashes.length,
-          },
+    rustc_commit: compilerSummary,
     ...(crates === undefined
       ? {}
       : {

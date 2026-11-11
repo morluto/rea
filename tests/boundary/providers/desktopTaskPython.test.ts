@@ -4,20 +4,34 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
-import { evaluateTaskChecks } from "../../../src/domain/desktop/appTaskChecks.js";
+import type {
+  DesktopTaskCheck,
+  DesktopTaskReader,
+} from "../../../src/domain/desktop/appTask.js";
+import {
+  evaluateTaskChecks,
+  type TaskFileView,
+} from "../../../src/domain/desktop/appTaskChecks.js";
 import {
   CHECK_CASES,
   CHECK_VIEWS,
 } from "../../../src/domain/desktop/appTaskChecks.fixture.js";
 import { SETTLE_TIMING } from "../../../src/domain/desktop/appSettle.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
+import {
+  readerAnswerView,
+  readerCommand,
+} from "../../../src/domain/desktop/appTaskReaders.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** The protocol client calls the verifier makes, replaced so it reads the given views. */
 const STUB_CLIENT = `
 def find_child(card, name):
     return next((child for child in card.get("children_environments") or [] if child.get("name") == name), None)
+
+
+def find_extension(card, uri):
+    return next((ext for ext in (card.get("capabilities") or {}).get("extensions") or [] if ext.get("uri") == uri), None)
 `;
 
 /**
@@ -33,6 +47,12 @@ from agentenv_protocol import client
 
 scenario = json.load(sys.stdin)
 saves, durations, called, reads, clock = scenario["saves"], scenario["durations"], [], [], [0.0]
+answers, execs = scenario.get("answers") or {}, []
+cleanup_failures = [scenario.get("cleanup_failures", 0)]
+cancel_cleanup = [scenario.get("cancel_cleanup", False)]
+verify_task = None
+reader_started, release_reader = asyncio.Event(), asyncio.Event()
+reader_calls = [0]
 #: Virtual seconds each data/get takes, a binary fraction so the clock stays exact.
 READ_S = 0.125
 
@@ -43,7 +63,34 @@ def views_at(now):
 
 async def get_card(url, **_):
     called.append(url)
-    return {"name": "computer", "children_environments": [{"name": "notes", "url": "/svc/notes/agentenv"}]}
+    extensions = [{"uri": "urn:agentenv:computer-exec/v1"}] if scenario.get("exec", True) else []
+    return {"name": "computer", "children_environments": [{"name": "notes", "url": "/svc/notes/agentenv"}],
+            "capabilities": {"extensions": extensions}}
+
+
+async def invoke_extension(url, card, uri, params=None, timeout=30, verify=True, *, method=None, headers=None):
+    execs.append({"url": url, "uri": uri, "method": method, "timeout": timeout, **params})
+    if params["request_id"].startswith("rea-reader-cleanup-"):
+        if cancel_cleanup[0]:
+            cancel_cleanup[0] = False
+            verify_task.cancel()
+            await asyncio.sleep(0)
+        if cleanup_failures[0] > 0:
+            cleanup_failures[0] -= 1
+            return {"exit_code": 1, "stdout": "", "stderr": "permission denied", "timed_out": False}
+        if scenario.get("parallel_retry"):
+            await asyncio.sleep(0)
+        return {"exit_code": 0, "stdout": "", "stderr": "", "timed_out": False}
+    if scenario.get("concurrent"):
+        reader_calls[0] += 1
+        if reader_calls[0] == 1:
+            reader_started.set()
+            await release_reader.wait()
+        else:
+            release_reader.set()
+    answer = answers[json.loads("".join(params["argv"][4:]))["id"]]
+    stdout = answer if isinstance(answer, str) else "Python noise\n" + json.dumps(answer) + "\n"
+    return {"exit_code": 0, "stdout": stdout, "stderr": "", "truncated": False, "timed_out": False}
 
 
 async def get_data(url, **_):
@@ -74,20 +121,55 @@ async def wait_for(awaitable, timeout):
     return result
 
 
-client.get_card, client.get_data = get_card, get_data
-spec = importlib.util.spec_from_file_location("verifier", verifier)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-module.time = types.SimpleNamespace(monotonic=lambda: clock[0])
-module.asyncio = types.SimpleNamespace(sleep=sleep, wait_for=wait_for, TimeoutError=Cut)
-results = asyncio.run(module.verify("http://mcp", "http://computer:8080"))
-print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results}))
+client.get_card, client.get_data, client.invoke_extension = get_card, get_data, invoke_extension
+def load_verifier():
+    spec = importlib.util.spec_from_file_location("verifier", verifier)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.time = types.SimpleNamespace(monotonic=lambda: clock[0])
+    module.asyncio = types.SimpleNamespace(sleep=sleep, wait_for=wait_for, TimeoutError=Cut,
+                                           create_task=asyncio.create_task, shield=asyncio.shield,
+                                           CancelledError=asyncio.CancelledError)
+    return module
+
+module = load_verifier()
+async def run():
+    global verify_task, module
+    first_error = None
+    if scenario.get("concurrent"):
+        first = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
+        await asyncio.wait_for(reader_started.wait(), timeout=2)
+        other = load_verifier()
+        second = asyncio.create_task(other.verify("http://mcp", "http://computer:8080"))
+        results, _ = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+        return results, first_error
+    if scenario.get("retry"):
+        try:
+            verify_task = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
+            await verify_task
+        except (RuntimeError, asyncio.CancelledError) as error:
+            first_error = str(error) + " ".join(getattr(error, "__notes__", ()))
+        if scenario.get("reload_verifier"):
+            module = load_verifier()
+    if scenario.get("parallel_retry"):
+        other = load_verifier()
+        first = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
+        second = asyncio.create_task(other.verify("http://mcp", "http://computer:8080"))
+        results, _ = await asyncio.gather(first, second)
+        return results, first_error
+    results = await module.verify("http://mcp", "http://computer:8080")
+    return results, first_error
+
+results, first_error = asyncio.run(run())
+print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs, "first_error": first_error}))
 `;
 
 type VerifierOutput = {
   called: string[];
+  execs: Record<string, unknown>[];
   reads: number[];
   ended: number;
+  first_error: string | null;
   results: {
     id: string;
     result: boolean;
@@ -102,6 +184,17 @@ const runVerifier = async (
   checks: readonly DesktopTaskCheck[],
   saves: readonly (readonly [number, Record<string, unknown>])[],
   durations: readonly number[] = [],
+  computer: {
+    readonly readers?: readonly DesktopTaskReader[];
+    readonly answers?: Readonly<Record<string, unknown>>;
+    readonly exec?: boolean;
+    readonly cleanupFailures?: number;
+    readonly retry?: boolean;
+    readonly cancelCleanup?: boolean;
+    readonly reloadVerifier?: boolean;
+    readonly concurrent?: boolean;
+    readonly parallelRetry?: boolean;
+  } = {},
 ): Promise<VerifierOutput> => {
   const folder = await createTestTempDirectory("desktop-task-python-");
   await mkdir(join(folder, "agentenv_protocol"));
@@ -115,13 +208,31 @@ const runVerifier = async (
   await writeFile(
     verifier,
     renderTaskVerifier(
-      { name: "edit-notes", prompt: "Edit.", checks: [...checks] },
+      {
+        name: "edit-notes",
+        prompt: "Edit.",
+        checks: [...checks],
+        ...(computer.readers === undefined
+          ? {}
+          : { readers: computer.readers }),
+      },
       "notes",
     ),
   );
   return JSON.parse(
     execFileSync("python3", ["-I", "-B", "-c", DRIVER, folder, verifier], {
-      input: JSON.stringify({ saves, durations }),
+      input: JSON.stringify({
+        saves,
+        durations,
+        answers: computer.answers,
+        exec: computer.exec ?? true,
+        cleanup_failures: computer.cleanupFailures,
+        retry: computer.retry,
+        cancel_cleanup: computer.cancelCleanup,
+        reload_verifier: computer.reloadVerifier,
+        concurrent: computer.concurrent,
+        parallel_retry: computer.parallelRetry,
+      }),
       encoding: "utf8",
     }),
   ) as VerifierOutput;
@@ -146,12 +257,15 @@ const linesPresent = (...lines: string[]): DesktopTaskCheck => ({
 const graded = ({ results }: VerifierOutput) =>
   results.map(({ result, settled, read_cut }) => [result, settled, read_cut]);
 
-it("evaluates every kind of check in the exported verifier as REA does", async () => {
+it("evaluates every kind of file check without computer-exec as REA does", async () => {
   const checks: DesktopTaskCheck[] = CHECK_CASES.map(([check], index) => ({
     ...check,
     id: `check-${String(index + 1)}`,
   }));
-  const output = await runVerifier(checks, [[0, CHECK_VIEWS]]);
+  const output = await runVerifier(checks, [[0, CHECK_VIEWS]], [], {
+    exec: false,
+  });
+  expect(output.execs).toEqual([]);
 
   const [card, ...data] = output.called;
   expect(card).toBe("http://computer:8080");
@@ -240,3 +354,285 @@ it("grades an app that saved before the check within the window plus one interva
   expect(graded(output)).toEqual([[true, true, false]]);
   expect(output.reads.at(-1)).toBeLessThanOrEqual(WINDOW_S + INTERVAL_S);
 });
+
+const READERS: readonly DesktopTaskReader[] = [
+  {
+    id: "layers",
+    file: "Documents/poster.xcf",
+    argv: ["gimp-console-2.10", "-i", "-b", "-"],
+    stdin: '(gimp-file-load RUN-NONINTERACTIVE "{file}" "{file}")',
+    output: "lines",
+  },
+  {
+    id: "objects",
+    file: "Documents/scene.blend",
+    argv: ["blender", "-b", "{file}", "--python-expr", "print('REA {}')"],
+    output: "json",
+    timeout_s: 20,
+  },
+  {
+    id: "broken",
+    file: "Documents/broken.xcf",
+    argv: ["gimp-console-2.10", "{file}"],
+    output: "lines",
+  },
+  {
+    id: "gone",
+    file: "Documents/gone.xcf",
+    argv: ["gimp-console-2.10", "{file}"],
+    output: "lines",
+  },
+];
+/** What REA's reader runner answers for each reader, as its last line. */
+const ANSWERS: Readonly<Record<string, unknown>> = {
+  layers: {
+    view: {
+      format: "text",
+      view: {
+        lines: ["layer Summer Sale", "layer Background"],
+        line_count: 2,
+        truncated: false,
+      },
+    },
+  },
+  objects: {
+    view: {
+      format: "json",
+      view: {
+        Crate: { location: [2.0004, 0, 0] },
+        Camera: { location: [7, -6, 5] },
+      },
+    },
+  },
+  broken: {
+    error: "the reader exited 1; its stderr ends: cannot open the file",
+  },
+  gone: { absent: true },
+};
+const READER_CHECKS: DesktopTaskCheck[] = [
+  {
+    id: "renamed",
+    kind: "lines_present",
+    file: "Documents/poster.xcf",
+    reader: "layers",
+    lines: ["layer Summer Sale"],
+  },
+  {
+    id: "kept",
+    kind: "lines_absent",
+    file: "Documents/poster.xcf",
+    reader: "layers",
+    lines: ["layer Headline"],
+  },
+  {
+    id: "moved",
+    kind: "value_equals",
+    file: "Documents/scene.blend",
+    reader: "objects",
+    pointer: "/Crate/location/0",
+    value: 2,
+    tolerance: 0.001,
+  },
+  {
+    id: "camera",
+    kind: "value_equals",
+    file: "Documents/scene.blend",
+    reader: "objects",
+    pointer: "/Camera/location/0",
+    value: 8,
+  },
+  {
+    id: "objects",
+    kind: "member_count",
+    file: "Documents/scene.blend",
+    reader: "objects",
+    pointer: "/Crate/location",
+    equals: 3,
+  },
+  {
+    id: "broken",
+    kind: "line_count",
+    file: "Documents/broken.xcf",
+    reader: "broken",
+    contains: "layer",
+    at_least: 1,
+  },
+  {
+    id: "gone",
+    kind: "lines_absent",
+    file: "Documents/gone.xcf",
+    reader: "gone",
+    lines: ["layer"],
+  },
+];
+
+it("sends large reader input in the same bounded arguments as the witness", async () => {
+  const reader = { ...READERS[0]!, stdin: "é".repeat(65536) };
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [reader],
+    answers: ANSWERS,
+  });
+  const argv = output.execs[0]?.argv as string[];
+  const arguments_ = JSON.parse(argv.slice(4).join("")) as Record<
+    string,
+    unknown
+  >;
+  expect(arguments_).toMatchObject({
+    stdin: reader.stdin,
+    lease: { path: expect.stringMatching(/^\/tmp\/rea-reader-/u) },
+  });
+  expect(
+    argv.slice(4).every((argument) => Buffer.byteLength(argument) < 131072),
+  ).toBe(true);
+});
+
+it("reads each reader's view through the computer's computer-exec and grades it as REA does", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: READERS,
+    answers: ANSWERS,
+  });
+
+  expect(
+    output.execs
+      .filter(
+        ({ request_id }) =>
+          !String(request_id).startsWith("rea-reader-cleanup-"),
+      )
+      .map(({ url, uri, method, argv, timeout_s }) => ({
+        url,
+        uri,
+        method,
+        argv: (argv as string[]).slice(0, 4),
+        timeout_s,
+      })),
+  ).toEqual(
+    READERS.map((reader) => ({
+      url: "http://computer:8080",
+      uri: "urn:agentenv:computer-exec/v1",
+      method: "run",
+      argv: readerCommand(reader, undefined).slice(0, 4),
+      timeout_s: (reader.timeout_s ?? 60) + 30,
+    })),
+  );
+  // computer-exec answers a repeated request id with its first result, so each reader's is new.
+  expect(new Set(output.execs.map(({ request_id }) => request_id)).size).toBe(
+    READERS.length * 2,
+  );
+  const readers = new Map<string, TaskFileView>();
+  for (const [id, answer] of Object.entries(ANSWERS)) {
+    const view = readerAnswerView(JSON.stringify(answer));
+    if (view !== undefined) readers.set(id, view);
+  }
+  const typescript = evaluateTaskChecks(
+    READER_CHECKS,
+    new Map(Object.entries(CHECK_VIEWS)),
+    readers,
+  );
+  expect(
+    output.results.map(({ id, result, description }) => [
+      id,
+      result,
+      description,
+    ]),
+  ).toEqual(
+    typescript.map(({ id, passed, description }) => [id, passed, description]),
+  );
+  expect(output.results.map(({ result }) => result)).toEqual([
+    true,
+    true,
+    true,
+    false,
+    true,
+    false,
+    true,
+  ]);
+});
+
+it("reports a cleanup failure with the completed view and retries the same folder on the next verification", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    cleanupFailures: 1,
+    retry: true,
+    reloadVerifier: true,
+  });
+  expect(output.first_error).toContain("Could not remove owned reader folder");
+  expect(output.first_error).toContain("completed reader views");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(3);
+  const lease = (entry: Record<string, unknown>) =>
+    JSON.parse((entry.argv as string[])[4]!);
+  expect(lease(cleanups[1]!)).toEqual(lease(cleanups[0]!));
+  expect(cleanups[1]?.request_id).not.toBe(cleanups[0]?.request_id);
+});
+
+it("keeps cleanup owned when verification is cancelled during final cleanup", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    cancelCleanup: true,
+    retry: true,
+    reloadVerifier: true,
+  });
+  expect(output.first_error).toContain("Reader cleanup remains owned");
+  expect(output.first_error).toContain("completed reader views");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(2);
+});
+
+it("does not adopt another active verifier's reader lease", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    concurrent: true,
+  });
+  expect(
+    output.execs
+      .slice(0, 2)
+      .every(
+        ({ request_id }) =>
+          !String(request_id).startsWith("rea-reader-cleanup-"),
+      ),
+  ).toBe(true);
+});
+
+it("joins concurrent retries of one abandoned reader cleanup", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    cleanupFailures: 1,
+    retry: true,
+    parallelRetry: true,
+  });
+  expect(output.first_error).toContain("Could not remove owned reader folder");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(4);
+  const lease = (entry: Record<string, unknown>) =>
+    JSON.parse((entry.argv as string[])[4]!);
+  expect(lease(cleanups[1]!)).toEqual(lease(cleanups[0]!));
+});
+
+it.each([
+  [{ exec: false }, "offers no urn:agentenv:computer-exec/v1"],
+  [
+    { answers: { ...ANSWERS, layers: "Traceback (most recent call last)\n" } },
+    "REA's reader runner",
+  ],
+])(
+  "raises rather than grading when the readers cannot be run (%j)",
+  async (computer, message) => {
+    await expect(
+      runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+        readers: READERS,
+        answers: ANSWERS,
+        ...computer,
+      }),
+    ).rejects.toThrow(message);
+  },
+);

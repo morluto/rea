@@ -11,6 +11,65 @@ again.
 rea inspect-desktop-application-state ./mousepad-capture --format json
 ```
 
+Views use bounded defaults. When a view reports truncation or a byte-budget
+refusal, retry the same capture with `--view-policy` JSON overrides:
+
+```bash
+rea inspect-desktop-application-state ./mousepad-capture \
+  --state-path /home/ada/Documents/notes.txt \
+  --view-policy '{"text_lines":10000,"file_bytes":134217728}' --format json
+```
+
+`--state-path` selects an exact original captured path and can be repeated.
+Omitting it examines every captured path. Selection preserves the captured
+checkpoint and digest; it does not substitute the file's current contents.
+A path absent from the capture is an input error.
+
+`--view-policy` accepts positive safe-integer overrides for `file_bytes`,
+`sqlite_tables`, `sqlite_rows`, `sqlite_view_bytes`, `text_lines`, `xml_nodes`, `xml_depth`,
+`parsed_bytes`, `json_depth`, `zip_entries`, `zip_entry_bytes`, `zip_bytes`,
+and `zip_ratio`. Unspecified controls keep the defaults described below.
+`xml_depth` admits at most 494 and `json_depth` at most 991: these bounds
+follow the fixed Evidence JSON nesting limit, including the captured-version
+and ZIP-member wrappers and XML's element/children representation. A request
+above either bound is rejected before reading the capture.
+Evidence parameters retain only the supplied `view_policy` overrides; omission
+and an explicitly empty selection remain distinct. State inspection and task
+drafts report the resolved policy separately as
+`normalized_result.effective_view_policy`. Changes apply on this call, without
+a restart. File and ZIP byte counts refer to retained file bytes or uncompressed
+ZIP member bytes, not transport size. Gzip document views share `zip_entry_bytes`
+and `zip_ratio` with ZIP entry views; `zip_bytes` bounds a ZIP archive, not a
+gzip stream. These selections also apply to the decompressed document's format
+view. `sqlite_view_bytes` instead bounds each
+projected table's compact UTF-8 JSON, including column names, primary keys,
+rows and truncation metadata; it defaults to 16 MiB. Rows are charged before
+retention. A table that exceeds this allowance keeps an actionable `error`,
+while other tables remain readable. Increase this control and retry the same
+capture for a projected-view refusal. It does not raise the SQLite worker's
+separate fixed value/record or complete-reply limits, which may refuse earlier.
+Each reader counts its native compact JSON encoding. Float spelling can differ:
+Python emits `16.0` where JavaScript emits `16`, and exponent spelling also
+varies. Identical numeric facts can therefore cross this byte threshold at
+different settings. This is not a common transport-byte guarantee.
+
+The same option is available on `describe-desktop-application-task` and
+`export-desktop-application`. Export uses the accepted policy for task
+validation and emits it into the Python readers used by the environment's
+`data/get`; re-export with another policy to change those reader budgets.
+Task checks apply `file_bytes` to the actual scrubbed seed bytes, including any
+growth from replacing the capture home with `/home/user`. A seed over that
+view allowance may still be exported under the independent acquisition limit,
+but its unreadable view cannot establish a known task failure.
+The TypeScript and exported Python readers share the policy's defaults.
+These desktop capture workflows remain CLI-only.
+
+Raising a view budget cannot recover content the capture never retained,
+change numeric exactness, enable encrypted or unsupported archive formats,
+or raise SQLite worker, Evidence nesting, process-memory or transport limits.
+Keep increases specific to the exhausted budget. Truncation and incomplete
+comparison coverage remain visible until the requested facts were examined.
+
 The result is Evidence with operation `inspect_desktop_application_state` and
 predicate type `rea.desktop-application-state`. Its confidence is `inferred`,
 because roles come from heuristics; the views themselves are read from the
@@ -25,7 +84,7 @@ changed later. Each path records the evidence the capture holds about it:
 | ------------------------ | ------------------------------------------------------------------------- |
 | `state_directory`        | It lies in one of the application's state directories, in either spelling |
 | `opened_by_application`  | An application process held it open during a sample                       |
-| `named_in_window_title`  | An application window title spelled its name or `~/` path on its own      |
+| `named_in_window_title`  | An application window title spelled its name, `~/` or absolute path whole |
 | `selected_path`          | It lies under a `--state-path` or absolute `--argument` of the capture    |
 | `dconf_application_keys` | It is a dconf database holding groups whose path names the application    |
 | `desktop_service`        | It lies where desktop services and toolkits keep shared files, or caches  |
@@ -53,7 +112,13 @@ recorded selected paths is judged by their physical spelling);
 open file outside shared locations; `shared_desktop` for other files in shared
 locations; `unrelated` otherwise. A window title names a file only when no
 other file name character adjoins the name, so `day.txt` does not match
-`today.txt - Notes`.
+`today.txt - Notes`, and never by a folder of a path the title shows: in
+CherryTree's `home-notebook.ctd - /home/user/Documents - CherryTree 1.1.2`,
+`user` names no file. A name without an extension, such as `Makefile`, must
+also stand on its own rather than end a longer path, as in
+`Makefile - Editor`. A file under `~/.cache` or `~/.config/dconf` is never
+named by a title. The capture's checkpoint acknowledgements rank files by the
+same rule.
 
 Application names, which select dconf groups, come from the package, the
 executable, the desktop entry's id and `StartupWMClass`, and the window match.
@@ -79,13 +144,20 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 | `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups            |
 | `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                   |
 | `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
-| `xml`     | An XML name or declaration that parses                                 | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
+| `xml`     | An XML name, a declaration or a leading element that parses            | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
 | `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
 | `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
 | `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
 
 A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
+
+Text that opens with an element, such as a Freeplane map's
+`<map version="freeplane 1.7.0">` with no declaration, or with a DOCTYPE that
+has no internal subset and then an element, such as a KmPlot plot's
+`<!DOCTYPE kmpdoc>` before `<kmpdoc version="4">`, is XML when the whole text
+is well formed, whatever the file is called, a `.txt` file included;
+otherwise it stays text. The exported verifier makes the same choice.
 
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.

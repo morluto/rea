@@ -8,7 +8,10 @@ import type {
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  artifactReadCancelledBy,
+  assertArtifactReadActive,
+} from "./ArtifactFileOperation.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
@@ -47,7 +50,9 @@ export class UImageArtifactReader implements ArtifactReader {
   readonly #entries = new Map<string, UImageEntry>();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+  #prepared:
+    | { signal: AbortSignal | undefined; promise: Promise<void> }
+    | undefined;
   #header: UImageMetadata | undefined;
   #closing = false;
 
@@ -75,8 +80,27 @@ export class UImageArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      for (;;) {
+        const pending = (this.#prepared ??= {
+          signal,
+          promise: this.#prepare(signal),
+        });
+        try {
+          await pending.promise;
+          break;
+        } catch (cause: unknown) {
+          if (this.#prepared === pending) this.#prepared = undefined;
+          if (
+            pending.signal !== signal &&
+            signal?.aborted !== true &&
+            artifactReadCancelledBy(cause, pending.signal)
+          ) {
+            this.#assertOpen(signal);
+            continue;
+          }
+          throw cause;
+        }
+      }
       await this.#source.read(signal);
     });
     this.#assertOpen(signal);

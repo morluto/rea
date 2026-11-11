@@ -1,6 +1,6 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { TextDecoder } from "node:util";
 
@@ -65,10 +65,10 @@ export const parseCaptureJson = (
   // container add no level, so empty and scalar-bearing containers agree.
   const admitContainer = (): void => {
     admitNode();
-    if (frames.length >= WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (frames.length >= captureBudgets().depth)
       throw new CaptureFormatError(
         "input-limit",
-        `${format} exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.`,
+        `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         valuePointer(),
       );
   };

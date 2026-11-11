@@ -1,4 +1,13 @@
 import { z } from "incur";
+import { producerLimitsOption } from "./producerLimitsOption.js";
+import { rustProducerLimitsSchema } from "../domain/rust/rustResourceLimits.js";
+import {
+  DEFAULT_MAX_RUST_INFERRED_CRATES,
+  inspectRustBinaryInputSchema,
+  MAX_RUST_INFERRED_CRATES_LIMIT,
+  rustMaxInferredCratesSchema,
+} from "../domain/rust/rustBinary.js";
+import { cliDecimalField } from "./options.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -17,12 +26,6 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
-import {
-  DEFAULT_MAX_RUST_INFERRED_CRATES,
-  MAX_RUST_INFERRED_CRATES_LIMIT,
-  rustMaxInferredCratesSchema,
-} from "../domain/rust/rustBinary.js";
-import { cliDecimalField } from "./options.js";
 
 /** Resolve caller paths and inspect embedded Rust dependencies through the shared workflow. */
 export const registerRustCommands = (
@@ -39,6 +42,10 @@ export const registerRustCommands = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
+      producerLimits: producerLimitsOption(rustProducerLimitsSchema),
+      maxRustcHashes: cliDecimalField(
+        inspectRustBinaryInputSchema.shape.max_rustc_hashes,
+      ),
       architecture: machoSliceArchitectureSchema
         .optional()
         .describe(
@@ -94,6 +101,12 @@ export const registerRustCommands = (
           const view = decoded.value;
           const input = inspectRustBinaryRequestSchema.safeParse({
             path: absoluteCallerPath(args.path),
+            ...(options.producerLimits === undefined
+              ? {}
+              : { producer_limits: options.producerLimits }),
+            ...(options.maxRustcHashes === undefined
+              ? {}
+              : { max_rustc_hashes: options.maxRustcHashes }),
             ...(options.architecture === undefined
               ? {}
               : { architecture: options.architecture }),
@@ -121,6 +134,12 @@ export const registerRustCommands = (
               service.inspect(
                 {
                   path: input.data.path,
+                  ...(input.data.producer_limits === undefined
+                    ? {}
+                    : { producer_limits: input.data.producer_limits }),
+                  ...(input.data.max_rustc_hashes === undefined
+                    ? {}
+                    : { max_rustc_hashes: input.data.max_rustc_hashes }),
                   ...(input.data.architecture === undefined
                     ? {}
                     : { architecture: input.data.architecture }),

@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { WorkerFrameSignal } from "../process/WorkerFrameSignal.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -273,6 +274,7 @@ export class WebBundleAnalysisWorker {
     script: IncludedScript,
     timeoutMs: number,
     signal?: AbortSignal,
+    precision?: JavaScriptSemanticPrecisionInput,
   ): Promise<Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure>> {
     let deadline: ProviderStartupDeadline | undefined;
     const id = randomUUID();
@@ -324,6 +326,7 @@ export class WebBundleAnalysisWorker {
       );
       const request = webBundleWorkerRequestSchema.parse({
         kind: "analyze",
+        ...(precision === undefined ? {} : { semantic_precision: precision }),
         id,
         source,
         result_budget_bytes: resultBudget,

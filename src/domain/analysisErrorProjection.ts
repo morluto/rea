@@ -524,6 +524,12 @@ const projectError = (
       RETRYABLE_CODES.has(code) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
+      (error._tag === "ProcessCaptureError" &&
+        "retryable" in error &&
+        error.retryable === true) ||
+      (error instanceof ArtifactOperationError &&
+        error.readerLimit?.can_increase === true &&
+        !error.cleanupIncomplete) ||
       (code === "resource_constraint" &&
         error instanceof AnalysisResourceConstraintError &&
         (error.retryable ?? error.resource === "capacity")),
@@ -795,13 +801,24 @@ const artifactStateErrorDetails = (
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.readerLimit === undefined
+        ? {}
+        : { reader_limit: { ...error.readerLimit } }),
       ...(error.admission === undefined
         ? {}
         : {
             admission: error.admission.kind,
-            maximum_header_bytes: error.admission.maximumBytes,
-            maximum_header_bytes_source: error.admission.source,
-            setting: "REA_ASAR_MAX_HEADER_BYTES",
+            ...(error.admission.kind === "asar-header"
+              ? {
+                  maximum_header_bytes: error.admission.maximumBytes,
+                  maximum_header_bytes_source: error.admission.source,
+                  setting: "REA_ASAR_MAX_HEADER_BYTES",
+                }
+              : {
+                  maximum_listing_bytes: error.admission.maximumBytes,
+                  maximum_listing_bytes_source: error.admission.source,
+                  setting: "REA_ASAR_MAX_LISTING_BYTES",
+                }),
           }),
     };
   if (error instanceof UnknownRegistryError)
