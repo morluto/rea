@@ -262,3 +262,25 @@ it("retains malformed stored argv syntax for ownership while refusing launch rea
     error: { kind: "invalid", cause: { _tag: "ConfigurationError" } },
   });
 });
+
+it("reads policy from the selected nested Cline launcher", () => {
+  const selected: SetupClient = {
+    name: "cline",
+    registrationProfile: supportedClientRegistrationProfile("cline"),
+    format: "json",
+    configPath: "/fixture/cline.json",
+  };
+  const parsed = parseClientRegistrationPolicy(
+    {
+      transport: { type: "stdio", command: "selected", args: ["mcp"] },
+      command: "shadowed",
+      args: ["ignored"],
+      disabled: true,
+    },
+    selected,
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.command).toBe("selected");
+  expect(parsed.value.args).toEqual(["mcp"]);
+  expect(parsed.value.disabled).toBe(true);
+});

@@ -751,6 +751,11 @@ Setup and `mcp add --agent cline-cli` share this native path selection. Entries 
 every other server and top-level key when it upserts `rea`, and refuses a
 `rea` entry it did not write rather than adopting or overwriting it.
 
+Existing nested `transport` registrations retain their representation during
+setup. In that shape, launch `env` and `cwd` belong inside `transport`;
+setup preserves those values and other nested metadata separately from outer
+registration policy.
+
 That refusal includes a hand-written `rea` entry: ownership is decided by
 comparing the entry's launcher with the running installation's entry point, so a
 registration that points at a different install path is reported as `foreign`

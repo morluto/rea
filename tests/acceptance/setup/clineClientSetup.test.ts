@@ -251,3 +251,73 @@ cliTest(
     expect(await readFile(config, "utf8")).toBe(malformed);
   },
 );
+
+cliTest(
+  "refreshes an owned nested Cline transport without losing its settings",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-cline-nested-");
+    const config = join(
+      home,
+      ".cline",
+      "data",
+      "settings",
+      "cline_mcp_settings.json",
+    );
+    expect((await setupCline(cli, home)).exitCode).toBe(0);
+    const configured = JSON.parse(await readFile(config, "utf8"));
+    const original = configured.mcpServers.rea;
+    const transport = {
+      type: "stdio",
+      command: original.command,
+      args: original.args,
+      env: { ...original.env, CLINE_NESTED_VALUE: "caller selected" },
+      cwd: home,
+      metadata: { selected: "nested transport" },
+    };
+    const nested = {
+      ...configured,
+      mcpServers: {
+        ...configured.mcpServers,
+        peer: { command: "recorded-peer" },
+        rea: {
+          transport,
+          env: { SHADOWED_OUTER_VALUE: "retained but not selected" },
+          metadata: { selected: "outer registration" },
+        },
+      },
+    };
+    await writeFile(config, JSON.stringify(nested));
+    const refreshed = await setupCline(cli, home);
+    expect(refreshed.exitCode, refreshed.stdout).toBe(0);
+    const after = await readFile(config, "utf8");
+    expect(JSON.parse(after)).toEqual(nested);
+    const doctor = await cli.run({
+      arguments: ["doctor", "--client", "cline", "--json"],
+      cwd: home,
+      environment: clineEnvironment(home),
+    });
+    expect(doctor.json).toMatchObject({
+      identity: {
+        registrations: [
+          expect.objectContaining({
+            client: "cline",
+            state: "aligned",
+            command_identity: "owned",
+          }),
+        ],
+      },
+    });
+    expect((await setupCline(cli, home)).exitCode).toBe(0);
+    expect(await readFile(config, "utf8")).toBe(after);
+    const removal = await cli.run({
+      arguments: ["uninstall", "--json"],
+      cwd: home,
+      environment: clineEnvironment(home),
+    });
+    expect(removal.exitCode, removal.stdout).toBe(0);
+    expect(JSON.parse(await readFile(config, "utf8"))).toEqual({
+      ...nested,
+      mcpServers: { peer: { command: "recorded-peer" } },
+    });
+  },
+);
