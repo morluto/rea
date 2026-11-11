@@ -183,13 +183,13 @@ const formatSelectionOption = executableFormatHintSchema
   .exclude(["esp-flash-image"])
   .optional()
   .describe(
-    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
+    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection. Raw binaries may name any Ghidra language id as their architecture",
   );
 
 export const architectureSelectionOption = binaryArchitectureSchema
   .optional()
   .describe(
-    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
+    "Caller-supplied CPU family (x86, x86_64, arm, arm64, 6502, m68k) or a Ghidra language id such as 8051:BE:16:default; required with --target-format raw-binary, must be omitted with gamecube-dol",
   );
 
 export const entryPointSelectionOption = rawBinaryEntryPointSchema

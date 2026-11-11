@@ -18,8 +18,22 @@ export const BINARY_ARCHITECTURES = [
   "m68k",
 ] as const satisfies readonly BinaryArchitecture[];
 
+/**
+ * A Ghidra language id, such as `8051:BE:16:default`. Callers that know the
+ * exact processor may name it directly instead of picking one of the families
+ * above, which keeps every processor Ghidra ships usable without a code change.
+ */
+export const GHIDRA_LANGUAGE_ID =
+  /^[A-Za-z0-9][A-Za-z0-9_.]*:(LE|BE):(8|16|24|32|64):[A-Za-z0-9_.]+$/u;
+
+/** A caller-supplied Ghidra language id admitted as a raw-binary architecture. */
+export type GhidraLanguageArchitecture = string;
+
 /** Provider-neutral CPU family for a caller-supplied raw-binary load. */
-export const binaryArchitectureSchema = z.enum(BINARY_ARCHITECTURES);
+export const binaryArchitectureSchema = z.union([
+  z.enum(BINARY_ARCHITECTURES),
+  z.string().regex(GHIDRA_LANGUAGE_ID),
+]);
 
 /** Caller-supplied hexadecimal address of at most 64 bits, such as 0x08000000. */
 export const RAW_BINARY_ENTRY_POINT = /^0x[0-9A-Fa-f]{1,16}$/u;
@@ -62,7 +76,10 @@ export const validateRawBinaryLength = (
 
 /** Admitted headerless load identity used by target resolution and profiles. */
 export interface RawBinaryAdmission {
-  readonly architecture: HeaderArchitecture | RawOnlyArchitecture;
+  readonly architecture:
+    | HeaderArchitecture
+    | RawOnlyArchitecture
+    | GhidraLanguageArchitecture;
   readonly entryPoint: string;
   readonly entryPointSource: string;
 }
@@ -77,14 +94,22 @@ export interface RawBinaryAdmissionRejection {
   readonly constraint: "load_selection_rejected" | "file_format_rejected";
 }
 
-const addressWidth = (architecture: BinaryArchitecture): bigint =>
-  architecture === "6502"
-    ? 0xffffn
-    : architecture === "x86" ||
-        architecture === "arm" ||
-        architecture === "m68k"
-      ? 0xffffffffn
-      : 0xffffffffffffffffn;
+/** Address width of a named Ghidra language, taken from its bit size. */
+const languageAddressWidth = (architecture: string): bigint => {
+  const bits = BigInt(architecture.split(":")[2] ?? "64");
+  return (1n << bits) - 1n;
+};
+
+const addressWidth = (architecture: string): bigint =>
+  GHIDRA_LANGUAGE_ID.test(architecture)
+    ? languageAddressWidth(architecture)
+    : architecture === "6502"
+      ? 0xffffn
+      : architecture === "x86" ||
+          architecture === "arm" ||
+          architecture === "m68k"
+        ? 0xffffffffn
+        : 0xffffffffffffffffn;
 
 /** Validate architecture, entry, and that the mapped image fits the CPU width. */
 export const admitRawBinary = (input: {
@@ -96,7 +121,7 @@ export const admitRawBinary = (input: {
   if (!architecture.success)
     return err({
       reason:
-        "raw-binary format requires architecture (x86, x86_64, arm, arm64, 6502, or m68k)",
+        "raw-binary format requires architecture (x86, x86_64, arm, arm64, 6502, m68k, or a Ghidra language id such as 8051:BE:16:default)",
       constraint: "load_selection_rejected",
     });
   if (typeof input.entryPoint !== "string")
