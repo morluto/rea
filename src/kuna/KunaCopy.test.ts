@@ -20,6 +20,14 @@ import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgem
 
 vi.mock("node:fs/promises", { spy: true });
 
+const copyGate = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((acknowledge) => {
+    resolve = acknowledge;
+  });
+  return { promise, resolve };
+};
+
 it.each([null, { caller: "active input copy" }])(
   "attributes cancellation after an actual copied chunk to its file owner (%j)",
   async (reason) => {
@@ -92,8 +100,8 @@ it.each(["read", "write"] as const)(
     await writeFile(source, Buffer.alloc(100, 0x61));
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
+    const entered = copyGate();
+    const release = copyGate();
     const handles: FileHandle[] = [];
     const native =
       await vi.importActual<typeof import("node:fs/promises")>(
@@ -106,11 +114,13 @@ it.each(["read", "write"] as const)(
         stage === "read" ? args[0] === source : args[0] === destination;
       if (selected) {
         const original = file[stage];
-        vi.spyOn(file, stage).mockImplementationOnce(async (...ioArgs) => {
-          entered.resolve();
-          await release.promise;
-          return Reflect.apply(original, file, ioArgs);
-        });
+        vi.spyOn(file, stage).mockImplementationOnce(
+          async (...ioArgs: unknown[]) => {
+            entered.resolve();
+            await release.promise;
+            return Reflect.apply(original, file, ioArgs);
+          },
+        );
       }
       return file;
     });
@@ -337,8 +347,8 @@ it.each([false, true])(
     await writeFile(source, input);
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
+    const entered = copyGate();
+    const release = copyGate();
     const original = OwnedFileHandle.prototype.close;
     let first = true;
     let rejectClose = refuse;
