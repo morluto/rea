@@ -2,6 +2,7 @@ import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPoli
 import { arch, hostname, userInfo } from "node:os";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { retainProcessInspectionCleanup } from "../../providers/OwnedCommandCleanup.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -370,11 +371,24 @@ const runCapture = async (
     );
     published = await captureFile.publish(recorded.evidence);
   } catch (cause: unknown) {
+    // Adopt inspection cleanup before the capture's existing store close retries it.
+    const primary =
+      cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
+    const failure = retainProcessInspectionCleanup(
+      primary,
+      projectFailure(primary, undefined),
+      store.resourceScope,
+      DESKTOP_OPERATION,
+    );
+    const sessionCleanup =
+      cause instanceof DesktopSessionCleanupError
+        ? cause.cleanup
+        : recorded?.unreleased;
     // Nothing was published, so a failure or cancellation removes what was written.
     throw failedCaptureError(
-      recorded?.unreleased === undefined
-        ? cause
-        : new DesktopSessionCleanupError(cause, recorded.unreleased),
+      sessionCleanup === undefined
+        ? failure
+        : new DesktopSessionCleanupError(failure, sessionCleanup),
       await discardFailedCapture(store, captureFile),
     );
   }

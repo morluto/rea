@@ -1,5 +1,11 @@
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  assertProcessOwnershipInspectionActive,
+  isProcessOwnershipInspectionCancellation,
+  waitForProcessOwnershipInspection,
+} from "../process/ProcessInspectionCancellation.js";
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -215,7 +221,7 @@ const watch = async (
   let quietSamples = 0;
   const taken = new Set<string>();
   for (;;) {
-    signal.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     if (observations.now() >= plan.maxDurationMs) return "time_limit";
     // One request per sample, so queued lines cannot starve observation.
     const request = plan.nextRequest();
@@ -229,7 +235,7 @@ const watch = async (
       (await noStartedProcessLeft(observations, signal));
     quietSamples = quiet ? quietSamples + 1 : 0;
     if (quietSamples >= 2) return "application_exited";
-    await delay(plan.pollIntervalMs, undefined, { signal });
+    await waitForProcessOwnershipInspection(plan.pollIntervalMs, signal);
   }
 };
 
@@ -390,11 +396,15 @@ export const runDesktopSession = async (
         "stop",
       );
     releaseResult = await releaseOnce();
-    signal.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     await checkpointNow(plan, observations, "exit", "exit");
-    signal.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
   } catch (cause: unknown) {
-    const cancelled = signal.aborted;
+    const cancelled =
+      cause instanceof AnalysisCancelledError ||
+      (cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled") ||
+      isProcessOwnershipInspectionCancellation(cause);
     releaseResult = await releaseOnce();
     if (!cancelled) {
       const left = unreleased(spawned, supervisor, releaseResult);

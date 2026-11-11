@@ -1,5 +1,4 @@
 import type { ProviderProcessInspectionCleanup } from "../../process/ProviderProcess.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -9,7 +8,7 @@ import {
   ArtifactResourceScope,
 } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   ProviderAdapterError,
   type ProviderAdapterErrorOptions,
@@ -220,7 +219,7 @@ export const failedCaptureError = (
   if (!nonEmpty(unresolved)) return cause;
   const primary =
     cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
-  return cleanupError(unresolved, (reason) => ({
+  const failure = cleanupError(unresolved, (reason) => ({
     cause: primary,
     ...(primary instanceof AnalysisError ? { cleanupPrimary: primary } : {}),
     userMessage: `Desktop capture could not complete: ${describe(primary)}; cleanup is incomplete: ${reason}.`,
@@ -230,6 +229,13 @@ export const failedCaptureError = (
         : PROCESS_REMEDIATION,
     diagnostics: { phase: "desktop_capture" },
   }));
+  return primary instanceof AnalysisError && primary.cleanupIncomplete
+    ? analysisErrorWithCleanupFailure(
+        primary,
+        failure,
+        DESKTOP_OPERATION,
+      ).bindCleanupDependencies([primary, failure])
+    : failure;
 };
 
 /** Project any capture failure into a typed analysis error. */
@@ -237,28 +243,16 @@ export const projectFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  // A resource the inventory could not release stays reported, with its owner.
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-    return desktopOperationFailure(
-      cause,
-      signal,
-      DESKTOP_OPERATION,
-      "Desktop capture",
-    );
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
-    });
-  if (cause instanceof XpropUnavailableError)
-    return unavailable(
-      "executable_missing",
-      cause.message,
-      "Install x11-utils, or set REA_XPROP_COMMAND to an xprop executable.",
-    );
-  return new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
-    cause,
-    diagnostics: { phase: "desktop_capture" },
-    userMessage: `Desktop capture could not complete: ${describeValidationFailure(cause)}`,
-  });
+  return desktopOperationFailure(
+    cause instanceof XpropUnavailableError
+      ? unavailable(
+          "executable_missing",
+          cause.message,
+          "Install x11-utils, or set REA_XPROP_COMMAND to an xprop executable.",
+        )
+      : cause,
+    signal,
+    DESKTOP_OPERATION,
+    "Desktop capture",
+  );
 };
