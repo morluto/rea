@@ -348,3 +348,58 @@ it.each(["completed", "partial"] as const)(
     expect(getterCalls).toBe(0);
   },
 );
+
+it.each(["extension", "omission"])(
+  "retains passive Electron source %s before named contract normalization",
+  async (kind) => {
+    const { workers: _workers, ...withoutWorkers } = inspection;
+    const source =
+      kind === "extension"
+        ? { ...inspection, provider_metadata: { source_id: "own-source" } }
+        : withoutWorkers;
+    const provider: ElectronObservationPort = {
+      identity: () => identity,
+      listTargets: async () =>
+        err(new AnalysisCancelledError("list_electron_targets")),
+      inspectPage: async () => ok(source as typeof inspection),
+    };
+    const result = await inspectElectronPage(provider, input);
+    if (!result.ok) throw result.error;
+    expect(result.value.raw_result).toEqual(source);
+    expect(result.value.normalized_result).toHaveProperty("workers", []);
+    expect(result.value.normalized_result).not.toHaveProperty(
+      "provider_metadata",
+    );
+  },
+);
+
+it("retains passive source metadata when promoting a completed failure inspection", async () => {
+  const source = {
+    ...inspection,
+    provider_metadata: { source_id: "partial-source" },
+  };
+  const failure = new AnalysisCancelledError("inspect_electron_page", {
+    partialObservation: {
+      kind: "electron-page-observation",
+      inspection: source,
+      cleanup: "transport-closed",
+    },
+  });
+  const result = await inspectElectronPage(pageProvider(failure), input);
+  if (result.ok) throw new Error("expected retained failure");
+  expect(parseEvidence(result.error.partialObservation).raw_result).toEqual(
+    source,
+  );
+});
+
+it("does not duplicate unchanged passive Electron source JSON", async () => {
+  const result = await inspectElectronPage(
+    {
+      ...pageProvider(new AnalysisCancelledError("inspect_electron_page")),
+      inspectPage: async () => ok(inspection),
+    },
+    input,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.raw_result).toBeNull();
+});

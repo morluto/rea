@@ -62,7 +62,7 @@ export const listElectronTargets = async (
     createElectronEvidence(
       "list_electron_targets",
       input,
-      report.data,
+      { source: json.data, facts: report.data },
       ready.value.identity(),
     ),
     options.signal,
@@ -114,7 +114,10 @@ export const inspectElectronPage = async (
         result.error.partialObservation = createElectronEvidence(
           "inspect_electron_page",
           input,
-          inspection,
+          {
+            source: jsonValueSchema.parse(partial.data.inspection),
+            facts: inspection,
+          },
           ready.value.identity(),
         );
         return result;
@@ -153,7 +156,7 @@ export const inspectElectronPage = async (
     createElectronEvidence(
       "inspect_electron_page",
       input,
-      report.data,
+      { source: json.data, facts: report.data },
       ready.value.identity(),
     ),
     options.signal,

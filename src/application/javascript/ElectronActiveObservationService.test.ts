@@ -385,3 +385,24 @@ it("does not invoke hidden provider getters while validating an active capture",
   });
   expect(getterCalls).toBe(0);
 });
+
+it("refuses active result extensions under its strict completed contract", async () => {
+  const { readable } = await fixture();
+  const application = join(readable, "main.js");
+  const report = createElectronActiveObservationFixtureResult(application);
+  const result = await captureElectronScenario(
+    {
+      identity: () => ({ id: "test", name: "test", version: "1" }),
+      capture: async () =>
+        ok({ ...report, provider_metadata: { source_id: "unsupported" } }),
+    },
+    electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: application,
+    }),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
