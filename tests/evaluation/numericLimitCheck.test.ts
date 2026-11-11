@@ -16,7 +16,7 @@ it("recognizes the documented endpoint-candidate limit as numeric", () => {
       source: `const candidates = process.env.${ENDPOINT_CANDIDATES};`,
     },
   ]);
-  expect(discovered.get(ENDPOINT_CANDIDATES)).toBe(
+  expect(discovered.get(ENDPOINT_CANDIDATES)?.path).toBe(
     "src/domain/webBundleAnalysis.ts",
   );
 });
@@ -33,7 +33,7 @@ it("does not treat a registry declaration as a producer", () => {
       source: `const value = process.env.${name};`,
     },
   ]);
-  expect(discovered.get(name)).toBe("src/config/removedLimit.ts");
+  expect(discovered.get(name)?.path).toBe("src/config/removedLimit.ts");
   expect(
     discoverNumericLimitUses([
       { path: NUMERIC_LIMIT_DECLARATION, source: `name: "${name}",` },
@@ -53,7 +53,7 @@ it("keeps a helper-call argument that is not the first argument", () => {
       source: `const value = read(environment, "${name}");`,
     },
   ]);
-  expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+  expect(discovered.get(name)?.path).toBe("src/config/newLimit.ts");
 });
 
 it("does not treat prose that mentions a limit name as a producer", () => {
@@ -75,7 +75,33 @@ it("keeps a destructured environment key, including a rename and a default", () 
       source: `const { ${name}: renamed = 1 } = process.env;\nconst present = "${name}" in environment;\nconst owned = Object.hasOwn(environment, "${name}");\nconst source = { ${name}: renamed };\nconst copy = { ...source };`,
     },
   ]);
-  expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+  expect(discovered.get(name)?.path).toBe("src/config/newLimit.ts");
+});
+
+it("records a constructor read separately from a per-call read", () => {
+  const name = "REA_NEW_MAX_BYTES";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/constructedLimit.ts",
+      source: `class Session {\n  constructor(environment) {\n    this.limit = environment.${name};\n  }\n}`,
+    },
+  ]);
+  expect(discovered.get(name)).toEqual({
+    path: "src/config/constructedLimit.ts",
+    read: "construction",
+  });
+});
+
+it("treats a count parsed from the environment as numeric without a suffix", () => {
+  const name = "REA_ARCHIVE_ENTRY_LIMIT";
+  expect(isNumericLimit(name)).toBe(false);
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/archiveLimit.ts",
+      source: `const limit = Number(process.env.${name});\nconst schema = { ${name}: z.number().int() };`,
+    },
+  ]);
+  expect(discovered.get(name)?.path).toBe("src/config/archiveLimit.ts");
 });
 
 it("does not invent a limit from a spread of the environment object", () => {
@@ -96,7 +122,7 @@ it("keeps a bracket-access read as a producer", () => {
       source: `const selected = environment["${name}"] ?? environment?.[ "${name}" ];`,
     },
   ]);
-  expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+  expect(discovered.get(name)?.path).toBe("src/config/newLimit.ts");
 });
 
 it("does not treat a registration allowlist or a comment as a producer", () => {

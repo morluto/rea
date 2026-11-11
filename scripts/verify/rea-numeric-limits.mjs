@@ -30,14 +30,6 @@ const listFiles = async (dir) => {
   return output;
 };
 
-/**
- * Count-shaped limits whose names do not use a byte, time, or maximum suffix.
- * `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` is the runtime setting on #9836.
- */
-const DOCUMENTED_COUNT_LIMITS = new Set([
-  "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
-]);
-
 /** Registry text is a declaration, not a producer that uses the limit. */
 export const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
 
@@ -118,7 +110,7 @@ const boundLimitName = (node, bindings) => {
 };
 
 export const isNumericLimit = (name) =>
-  DOCUMENTED_COUNT_LIMITS.has(name) ||
+  REQUIRED_RUNTIME_LIMITS.includes(name) ||
   /(?:_BYTES|_MS|_MIB|_SECONDS|_POLLS|_JOBS|_ELEMENTS|_COUNT|_SESSIONS|_COMMANDS)$/u.test(
     name,
   ) ||
@@ -126,15 +118,54 @@ export const isNumericLimit = (name) =>
   /_(?:TIMEOUT|DEADLINE|BUDGET)(?:_|$)/u.test(name) ||
   /_HEAP(?:_|$)/u.test(name);
 
-const limitName = (text) =>
-  text !== undefined && /^REA_[A-Z0-9_]+$/u.test(text) && isNumericLimit(text)
-    ? text
-    : undefined;
+const exactLimit = (text) =>
+  text !== undefined && /^REA_[A-Z0-9_]+$/u.test(text) ? text : undefined;
 
-const remember = (discovered, path, name) => {
-  const limit = limitName(name);
-  if (limit === undefined || discovered.has(limit)) return;
-  discovered.set(limit, path);
+const limitName = (text) => {
+  const name = exactLimit(text);
+  return name !== undefined && isNumericLimit(name) ? name : undefined;
+};
+
+const numericSchemaText = (node) =>
+  /z\.(?:number|int|coerce\.number)|(?:Bytes|Timeout|Deadline|Budget|Heap|Count|Integer|MiB)Schema\b/u.test(
+    node.getText(),
+  );
+
+const numericParse = (node) => {
+  if (!ts.isCallExpression(node)) return false;
+  const expression = unwrapExpression(node.expression);
+  if (
+    ts.isIdentifier(expression) &&
+    (expression.text === "Number" ||
+      expression.text === "parseInt" ||
+      expression.text === "parseFloat")
+  )
+    return true;
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    (expression.name.text === "safeParse" || expression.name.text === "parse")
+  );
+};
+
+const readLifecycle = (node) => {
+  let current = node.parent;
+  while (current !== undefined) {
+    if (ts.isConstructorDeclaration(current)) return "construction";
+    current = current.parent;
+  }
+  return "call";
+};
+
+const remember = (discovered, path, name, node, force = false) => {
+  const limit = force ? exactLimit(name) : limitName(name);
+  if (limit === undefined) return;
+  const read = readLifecycle(node);
+  const current = discovered.get(limit);
+  if (current === undefined) {
+    discovered.set(limit, { path, read });
+    return;
+  }
+  if (current.read === "construction" && read === "call") current.read = "call";
 };
 
 /**
@@ -161,26 +192,35 @@ export const discoverNumericLimitUses = (files) => {
         ts.isPropertyAccessExpression(node) ||
         ts.isPropertyAccessChain?.(node)
       )
-        remember(discovered, relativePath, node.name.text);
+        remember(discovered, relativePath, node.name.text, node);
       if (ts.isElementAccessExpression(node))
         remember(
           discovered,
           relativePath,
           boundLimitName(node.argumentExpression, bindings),
+          node,
         );
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+        const force = numericParse(node);
         for (const argument of node.arguments ?? [])
           remember(
             discovered,
             relativePath,
             boundLimitName(argument, bindings),
+            node,
+            force,
           );
       }
       if (
         ts.isBinaryExpression(node) &&
         node.operatorToken.kind === ts.SyntaxKind.InKeyword
       )
-        remember(discovered, relativePath, boundLimitName(node.left, bindings));
+        remember(
+          discovered,
+          relativePath,
+          boundLimitName(node.left, bindings),
+          node,
+        );
       if (
         ts.isBindingElement(node) &&
         node.dotDotDotToken === undefined &&
@@ -192,7 +232,7 @@ export const discoverNumericLimitUses = (files) => {
           ts.isStringLiteral(key) ||
           ts.isNumericLiteral(key)
         )
-          remember(discovered, relativePath, key.text);
+          remember(discovered, relativePath, key.text, node);
       }
       if (
         (ts.isPropertyAssignment(node) ||
@@ -201,18 +241,26 @@ export const discoverNumericLimitUses = (files) => {
           ts.isStringLiteral(node.name) ||
           ts.isNumericLiteral(node.name))
       )
-        remember(discovered, relativePath, node.name.text);
+        remember(
+          discovered,
+          relativePath,
+          node.name.text,
+          node,
+          ts.isPropertyAssignment(node) && numericSchemaText(node.initializer),
+        );
       if (ts.isVariableDeclaration(node) && node.initializer !== undefined)
         remember(
           discovered,
           relativePath,
           literalText(unwrapExpression(node.initializer)),
+          node,
         );
       if (ts.isPropertyAssignment(node))
         remember(
           discovered,
           relativePath,
           literalText(unwrapExpression(node.initializer)),
+          node,
         );
       if (
         ts.isTemplateExpression(node) ||
@@ -226,7 +274,7 @@ export const discoverNumericLimitUses = (files) => {
             ];
         for (const chunk of chunks)
           for (const token of chunk.match(/REA_[A-Z0-9_]+/gu) ?? [])
-            remember(discovered, relativePath, token);
+            remember(discovered, relativePath, token, node);
       }
       ts.forEachChild(node, visit);
     };
@@ -258,7 +306,7 @@ if (direct) {
   const runtime = namesIn(definitions, /environment:\s*"(REA_[A-Z0-9_]+)"/gu);
   const entries = [
     ...registry.matchAll(
-      /name:\s*"(REA_[A-Z0-9_]+)"\s*,\s*policy:\s*"(restart-only|per-call)"\s*,\s*read:\s*"(startup|per-call)"\s*,\s*reason:\s*"((?:\\.|[^"\\])*)"/gu,
+      /name:\s*"(REA_[A-Z0-9_]+)"\s*,\s*policy:\s*"(restart-only|per-call)"\s*,\s*read:\s*"(startup|per-call|construction)"\s*,\s*reason:\s*"((?:\\.|[^"\\])*)"/gu,
     ),
   ];
   const listed = new Map();
@@ -272,9 +320,15 @@ if (direct) {
       failures.push(
         `${name} is both a runtime setting and on the exception list`,
       );
-    if (policy === "per-call" && read !== "per-call")
-      failures.push(`${name} is per-call policy but is not read per call`);
-    if (policy === "restart-only" && read !== "startup")
+    if (policy === "restart-only" && read === "per-call")
+      failures.push(
+        `${name} is restart-only but is recorded as a per-call read`,
+      );
+    if (
+      policy === "restart-only" &&
+      read !== "startup" &&
+      read !== "construction"
+    )
       failures.push(`${name} is restart-only but is not read at startup`);
   }
 
@@ -292,12 +346,18 @@ if (direct) {
   )) {
     if (!runtime.has(name) && !listed.has(name))
       failures.push(
-        `${name} in ${file} is neither an analysis setting nor docs/design/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
+        `${name} in ${file.path} is neither an analysis setting nor docs/design/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
       );
   }
   for (const name of listed.keys()) {
     if (!discovered.has(name))
       failures.push(`${name} is registered but no longer appears in src`);
+    const site = discovered.get(name);
+    const declared = listed.get(name);
+    if (site?.read === "construction" && declared?.read === "per-call")
+      failures.push(
+        `${name} is copied when its owner is constructed, so read cannot be per-call`,
+      );
   }
   const present = new Set([...discovered.keys(), ...listed.keys(), ...runtime]);
   for (const name of REQUIRED_RUNTIME_LIMITS) {
