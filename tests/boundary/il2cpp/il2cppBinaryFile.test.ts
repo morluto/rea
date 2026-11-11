@@ -231,6 +231,22 @@ it("requires an explicit slice of a universal Mach-O and reads only that slice",
   expect(failure(thin, "arm64").reason).toBe("slice-not-found");
 });
 
+it("rejects a universal Mach-O whose slices overlap before selecting one", () => {
+  const universal = createUniversalFixture([
+    { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
+    { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+  ]);
+  expect(link(universal, "arm64").method_addresses).toEqual(expectedAddresses);
+  // Stretch the first slice into the second one.
+  const first = universal.readUInt32BE(8 + 8);
+  const second = universal.readUInt32BE(8 + 20 + 8);
+  universal.writeUInt32BE(second - first + 16, 8 + 12);
+  expect(failure(universal, "arm64")).toEqual({
+    reason: "malformed-container",
+    kind: "malformed",
+  });
+});
+
 it.each(["thin", "universal"] as const)(
   "links a %s x86-64 Mach-O while retaining the reader's amd64 spelling",
   (format) => {

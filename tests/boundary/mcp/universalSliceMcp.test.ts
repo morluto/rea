@@ -390,6 +390,32 @@ sliceTest(
 );
 
 sliceTest(
+  "rejects overlapping same-family slices as a malformed container",
+  async ({ slices: { client, write } }) => {
+    // Each entry is in bounds and its header agrees, but the arm64e entry's
+    // range runs into the arm64 slice, so no subtype is a valid choice.
+    const universal = arm64AndArm64e();
+    const [first, second] = universal.slices;
+    if (first === undefined || second === undefined)
+      throw new Error("expected two slices");
+    universal.bytes.writeUInt32BE(second.offset - first.offset + 16, 8 + 12);
+    const path = await write("overlapping", universal.bytes);
+    for (const architecture of ["arm64", "arm64e"])
+      expect(
+        issues(
+          await client.callTool({
+            name: "inspect_go_binary",
+            arguments: { path, architecture },
+          }),
+        ).details.issues[0],
+      ).toMatchObject({
+        path: ["path"],
+        message: `Selected artifact ${path}: Mach-O slices 0 and 1 overlap.`,
+      });
+  },
+);
+
+sliceTest(
   "reads the selected Rust slice and keeps section and rustc offsets in the universal file",
   async ({ slices: { client, write } }) => {
     const thin = createRustImage({ format: "macho", includeRustc: true });
