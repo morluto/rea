@@ -1,3 +1,4 @@
+import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
 import {
   filterGhidraLiteralCandidates,
   GHIDRA_LITERAL_CANDIDATES_LIMITATION,
@@ -1230,9 +1231,16 @@ const ghidraClientPrerequisites = (
 ): Result<GhidraClientCoordinates, AnalysisError> => {
   if (installation.status === "unavailable")
     return err(
-      new ProviderAdapterError("ghidra", "health", {
-        diagnostics: ghidraInstallationDiagnostics(installation),
-      }),
+      bindProcessInspectionCancellations(
+        installation.javaProbeFailure?.inspectionFailure,
+        new ProviderAdapterError("ghidra", "health", {
+          ...(installation.javaProbeFailure === undefined
+            ? {}
+            : { cause: installation.javaProbeFailure }),
+          diagnostics: ghidraInstallationDiagnostics(installation),
+        }),
+        "health",
+      ),
     );
   const readiness =
     installation.platform === "win32"
@@ -1334,16 +1342,24 @@ const projectPrimarySessionError = (
         "Preserve the checkpoint directory. Correct the reported file, permission or competing-session problem, then reopen the target. Select a new checkpoint directory only if you explicitly want fresh analysis.",
     });
   }
-  // Launch-time copies, such as the verified existing-project copy, report a
-  // changed source as the launcher's primary failure; read it through the
-  // launch wrapper so the refusal keeps its typed projection.
-  const launchChange =
-    failure.cause instanceof GhidraLaunchError &&
-    failure.cause.primaryFailure instanceof AnalysisArtifactChangedError
+  // The launcher owns normalized inspection and typed artifact outcomes.
+  // Ordinary launch errors have no such primary and keep session recovery.
+  const launchPrimary =
+    failure.cause instanceof GhidraLaunchError
       ? failure.cause.primaryFailure
       : undefined;
+  if (
+    launchPrimary !== undefined &&
+    !(launchPrimary instanceof AnalysisCancelledError)
+  )
+    return analysisClientFailureForOperation(
+      launchPrimary,
+      "ghidra",
+      operation,
+      failure.diagnostics,
+    );
   const { cause: physicalCause, origin } = artifactFilePrimaryFacts(
-    launchChange ?? failure.cause,
+    failure.cause,
   );
   // A client-side ceiling refusal travels as the cause; re-attribute it to this
   // operation so callers see a typed resource constraint rather than a generic

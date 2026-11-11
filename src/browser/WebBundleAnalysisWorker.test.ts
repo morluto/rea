@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
@@ -302,36 +303,39 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
   });
 };
 
-it("preserves physical ownership inspection failure when cancellation follows", async () => {
-  const controller = new AbortController();
-  const reason = { cancelled: "late" };
-  const physical = new Error("inspection physically failed");
-  const prepare = vi
-    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
-    .mockImplementation(async () => {
-      controller.abort(reason);
-      throw physical;
-    });
-  const worker = new WebBundleAnalysisWorker();
-  try {
-    const result = await worker.analyze(
-      makeScript("0"),
-      5_000,
-      controller.signal,
-    );
-    const error = failureOf(result);
-    expect(error).toBeInstanceOf(AnalysisOutputError);
-    expect(error.cause).toBe(physical);
-    expect(
-      error.secondaryFailures.some((failure) => failure.cause === reason),
-    ).toBe(true);
-  } finally {
-    prepare.mockRestore();
-    await worker.close();
-  }
-});
+it.each([false, true])(
+  "preserves physical ownership inspection failure when cancellation follows (same reason: %s)",
+  async (sameReason) => {
+    const controller = new AbortController();
+    const physical = new Error("inspection physically failed");
+    const reason = sameReason ? physical : { cancelled: "late" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw physical;
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.cause).toBe(physical);
+      expect(
+        error.secondaryFailures.some((failure) => failure.cause === reason),
+      ).toBe(true);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
 
-it.each(["reason", "native-abort"] as const)(
+it.each(["reason", "normalized-exec"] as const)(
   "retains %s cancellation from ownership inspection",
   async (kind) => {
     const controller = new AbortController();
@@ -341,8 +345,10 @@ it.each(["reason", "native-abort"] as const)(
       .mockImplementation(async () => {
         controller.abort(reason);
         throw kind === "reason"
-          ? reason
-          : new ExecFileOutputCancelledError(reason);
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : ProcessOwnershipInspectionCancelled.from(
+              new ExecFileOutputCancelledError(reason),
+            );
       });
     const worker = new WebBundleAnalysisWorker();
     try {
@@ -1242,3 +1248,52 @@ it("retries independent browser workers once while an earlier exact owner remain
     await cleanup.retry();
   }
 });
+
+it.each(["typed", "physical"] as const)(
+  "preserves %s ownership-admission facts from the recording worker launcher",
+  async (kind) => {
+    const controller = new AbortController();
+    const physical = new Error("physical worker admission failure");
+    const reason =
+      kind === "physical" ? physical : { caller: "cancel worker admission" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockResolvedValue();
+    const launcher = vi.fn<typeof spawnOwnedProviderProcess>(
+      async (options) => {
+        expect(options.signal).toBeDefined();
+        controller.abort(reason);
+        expect(options.signal?.reason).toBe(reason);
+        throw kind === "typed"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : physical;
+      },
+    );
+    const worker = new WebBundleAnalysisWorker(128, launcher);
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("0"), 5_000, controller.signal),
+      );
+      if (kind === "typed")
+        expect(error).toBeInstanceOf(AnalysisCancelledError);
+      else {
+        expect(error).toBeInstanceOf(AnalysisOutputError);
+        expect(
+          error.secondaryFailures.some((failure) => failure.cause === reason),
+        ).toBe(true);
+      }
+      expect(error.cause).toBe(reason);
+      expect(launcher).toHaveBeenCalledOnce();
+      launcher.mockImplementationOnce(launcherFor({ kind: "source" }));
+      const recovered = await worker.analyze(
+        makeScript("fetch('/after-admission');"),
+        5_000,
+      );
+      expect(recovered.ok).toBe(true);
+      expect(launcher).toHaveBeenCalledTimes(2);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);

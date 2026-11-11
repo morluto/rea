@@ -738,6 +738,16 @@ materialized source. Exercise descriptor close failure and retry before output
 publication.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
+Include a physical I/O failure reused as the abort reason and genuine
+cancellation whose reason is already a typed error; neither error names nor
+value equality establishes origin. Assert that cleanup capabilities carried by
+that opaque reason are neither adopted nor released. Verify an owning command's timeout or
+refusal policy when preparation records cancellation but its caller is still
+active. Parallel inspection failures must retain completed observations and
+mixed physical/cancelled request facts after all peers settle, including
+multiple failed closes and partial cleanup retry. For input copying, hold an
+admitted read or write in flight before cancelling; descriptor close and
+workspace retirement must await its settlement.
 
 Electron fuse regressions cover actual descriptor close denial and retry through
 the built CLI, same-connection MCP recovery, mixed descriptor outcomes, and

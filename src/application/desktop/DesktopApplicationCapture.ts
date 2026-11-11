@@ -1,7 +1,13 @@
+import { processInspectionCleanupFailures } from "../../process/ProcessInspectionCleanup.js";
+import { samplingInspectionFailures } from "../../process/capture/ProcessSamplingObservation.js";
 import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
 import { arch, hostname, userInfo } from "node:os";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  bindProcessInspectionCancellations,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -370,11 +376,45 @@ const runCapture = async (
     );
     published = await captureFile.publish(recorded.evidence);
   } catch (cause: unknown) {
+    // Adopt inspection cleanup before the capture's existing store close retries it.
+    const primary =
+      cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
+    const projected = projectFailure(primary, undefined);
+    const inspections = samplingInspectionFailures(primary);
+    const cleanupInspections = inspections.filter(
+      (inspection) => processInspectionCleanupFailures(inspection).length > 0,
+    );
+    // The supervisor owns every cleanup-bearing fact in this explicit source vector.
+    const sessionOwnsInspection =
+      cause instanceof DesktopSessionCleanupError &&
+      cleanupInspections.length > 0 &&
+      cleanupInspections.every(
+        (inspection) =>
+          cause.cleanup.inspectionCleanup?.causes.includes(inspection) === true,
+      );
+    let failure = projected;
+    for (const inspection of inspections.length === 0 ? [primary] : inspections)
+      failure = sessionOwnsInspection
+        ? bindProcessInspectionCancellations(
+            inspection,
+            failure,
+            DESKTOP_OPERATION,
+          )
+        : retainProcessInspectionCleanup(
+            inspection,
+            failure,
+            store.resourceScope,
+            DESKTOP_OPERATION,
+          );
+    const sessionCleanup =
+      cause instanceof DesktopSessionCleanupError
+        ? cause.cleanup
+        : recorded?.unreleased;
     // Nothing was published, so a failure or cancellation removes what was written.
     throw failedCaptureError(
-      recorded?.unreleased === undefined
-        ? cause
-        : new DesktopSessionCleanupError(cause, recorded.unreleased),
+      sessionCleanup === undefined
+        ? failure
+        : new DesktopSessionCleanupError(failure, sessionCleanup),
       await discardFailedCapture(store, captureFile),
     );
   }
