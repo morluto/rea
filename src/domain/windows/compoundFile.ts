@@ -233,10 +233,24 @@ const nameOf = (
       name: null,
       problem: "declares a name that does not end with a NUL terminator",
     };
-  return {
-    name: Buffer.from(bytes.subarray(0, nameLength - 2)).toString("utf16le"),
-    problem: null,
-  };
+  const decoded = Buffer.from(bytes.subarray(0, nameLength - 2)).toString(
+    "utf16le",
+  );
+  // The name is a single path component. A name that would read as two
+  // components, as a parent step, or that carries a NUL is kept as the raw
+  // declared text but cannot name a path, so callers project it instead of
+  // aborting the inventory on a normalized-path failure.
+  if (
+    decoded.includes("\0") ||
+    decoded.includes("/") ||
+    decoded === "." ||
+    decoded === ".."
+  )
+    return {
+      name: decoded,
+      problem: "declares a name that is not a single safe path component",
+    };
+  return { name: decoded, problem: null };
 };
 
 /**

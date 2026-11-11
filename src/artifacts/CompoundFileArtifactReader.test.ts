@@ -172,6 +172,23 @@ it("reports a stream whose FAT chain leaves the file", async () => {
   );
 });
 
+it("keeps an unsafe name as a source path instead of aborting the inventory", async () => {
+  const path = await write(
+    "unsafe.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        { name: "../escape", type: 2, start: 2, size: 512 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const listed = inventory.occurrences.find((row) => row.logical_path !== ".");
+  // The name reads as two components, so it cannot name a logical path; the
+  // entry is still listed under its source ordinal and the raw name is kept.
+  expect(listed?.logical_path).toBe("entry-1");
+  expect(listed?.source_path).toBe("../escape");
+});
+
 it("refuses a version the container does not define", async () => {
   const bytes = compoundFile({ entries: rootWith(undefined, []) });
   bytes.writeUInt16LE(2, 0x1a);

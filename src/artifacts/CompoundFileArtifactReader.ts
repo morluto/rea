@@ -15,6 +15,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { normalizeArtifactPath } from "./ArtifactPaths.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
@@ -194,7 +195,8 @@ const sameRange = (entry: ArtifactEntry, stored: ArtifactEntry): boolean =>
 /**
  * The root storage has no name of its own and two entries can share a logical
  * path, so an entry whose path is already claimed by another is listed under
- * its source ordinal instead. The original name is kept in `sourcePath`.
+ * its source ordinal instead. The same applies to a name that is not a single
+ * safe path component: the raw declared name stays in `sourcePath`.
  */
 const claimPath = (
   entry: ArtifactEntry,
@@ -202,7 +204,8 @@ const claimPath = (
   index: number,
 ): ArtifactEntry => {
   const fallback = `entry-${String(index)}`;
-  const collides = entry.path === "" || claimed.has(entry.path);
+  const collides =
+    entry.path === "" || claimed.has(entry.path) || !isSafePath(entry.path);
   const path = collides ? fallback : entry.path;
   claimed.add(path);
   if (!collides) return entry;
@@ -212,9 +215,18 @@ const claimPath = (
     ...(entry.path === "" ? {} : { sourcePath: entry.path }),
     limitations: [
       ...entry.limitations,
-      "Another directory entry already claimed this logical path, so this entry is listed under its source ordinal; the original name, when it has one, is retained in sourcePath.",
+      "This entry's declared name is not a single safe path component, or another entry already claimed its logical path, so it is listed under its source ordinal; the declared name, when it has one, is retained in sourcePath.",
     ],
   };
+};
+
+const isSafePath = (path: string): boolean => {
+  try {
+    normalizeArtifactPath(path);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const toArtifactEntry = (
