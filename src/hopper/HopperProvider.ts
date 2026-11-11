@@ -26,7 +26,6 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -491,7 +490,6 @@ export class HopperProvider implements AnalysisProviderCandidate {
             );
           });
         } catch (cause: unknown) {
-          if (cause instanceof ConfigurationError) return err(cause);
           if (!(cause instanceof ArtifactReaderFailure)) throw cause;
           return err(hopperSourceCleanupError(cause, operation));
         }
@@ -538,7 +536,6 @@ export class HopperProvider implements AnalysisProviderCandidate {
         try {
           await sourceReads.retryCleanup();
         } catch (cause: unknown) {
-          if (cause instanceof ConfigurationError) return err(cause);
           if (!(cause instanceof ArtifactReaderFailure)) throw cause;
           descriptors = hopperSourceCleanupError(cause, "close_binary");
         }
