@@ -1,4 +1,4 @@
-import { StateResponseCleanup } from "./StateResponseCleanup.js";
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -47,7 +47,7 @@ interface CallContext {
   readonly intake: StateIntake;
   readonly cancel: AbortSignal;
   readonly files: ArtifactResourceScope;
-  readonly responses: StateResponseCleanup;
+  readonly responses: ResponseBodyCleanup;
 }
 
 /** `data/add`: exactly one part, whose document replaces the whole state only when it is valid and the call was not cancelled. */
@@ -109,7 +109,9 @@ export const stateDataPlane = (
   intake: StateIntake = DEFAULT_STATE_INTAKE,
   stopped: AbortSignal = new AbortController().signal,
   files: ArtifactResourceScope = new ArtifactResourceScope(),
-  responses: StateResponseCleanup = new StateResponseCleanup(),
+  responses: ResponseBodyCleanup = new ResponseBodyCleanup(
+    "state response body",
+  ),
 ): RpcMethods => {
   let previous: Promise<unknown> = Promise.resolve();
   return (method, params, signal) => {
