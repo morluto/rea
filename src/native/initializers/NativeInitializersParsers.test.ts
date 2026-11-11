@@ -1151,21 +1151,25 @@ describe("ELF relocation coverage", () => {
     expect(report.entries.every((entry) => entry.value_va === null)).toBe(true);
   });
 
-  it("keeps raw object slots unresolved when skipped relocation target identity is unknown", async () => {
-    const bytes = elfRelocatableCtors();
-    // This invalid target makes it unknown whether the skipped table affects .ctors.
-    bytes.writeUInt32LE(999, 0x500 + 3 * 64 + 44);
-    bytes.writeBigUInt64LE(16n, 0x500 + 3 * 64 + 56);
-    const report = await read(bytes);
-    expect(report.status).toBe("incomplete");
-    const ctors = report.entries.filter((entry) => entry.kind === "ctors");
-    expect(ctors).toHaveLength(3);
-    expect(
-      ctors.every(
-        (entry) => entry.resolution === "unresolved" && entry.value_va === null,
-      ),
-    ).toBe(true);
-  });
+  it.each([0, 999])(
+    "keeps raw object slots unresolved when skipped relocation target %s is unknown",
+    async (target) => {
+      const bytes = elfRelocatableCtors();
+      // This invalid target makes it unknown whether the skipped table affects .ctors.
+      bytes.writeUInt32LE(target, 0x500 + 3 * 64 + 44);
+      bytes.writeBigUInt64LE(16n, 0x500 + 3 * 64 + 56);
+      const report = await read(bytes);
+      expect(report.status).toBe("incomplete");
+      const ctors = report.entries.filter((entry) => entry.kind === "ctors");
+      expect(ctors).toHaveLength(3);
+      expect(
+        ctors.every(
+          (entry) =>
+            entry.resolution === "unresolved" && entry.value_va === null,
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("does not treat a dynamic write that overlaps half a slot as leaving it untouched", async () => {
     const bytes = elf64PieInitializers();

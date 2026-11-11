@@ -464,11 +464,16 @@ export const sectionRelocations = async (
   );
   const wantedBy = (section: NativeSection): readonly ElfInitializerSlot[] =>
     sorted.get(input.relocatable ? section.info : null) ?? [];
+  const targetSection = (section: NativeSection): NativeSection | undefined => {
+    if (!input.relocatable || section.info === 0) return undefined;
+    const target = input.sections[section.info];
+    return target?.type === 0 ? undefined : target;
+  };
   const word = wordOf(input.bits);
   let complete = true;
   const skip = (section: NativeSection): void => {
     if (
-      (input.relocatable && input.sections[section.info] === undefined) ||
+      (input.relocatable && targetSection(section) === undefined) ||
       wantedBy(section).length > 0
     )
       complete = false;
@@ -495,7 +500,7 @@ export const sectionRelocations = async (
       continue;
     }
     const symbols = input.tables.get(section.link);
-    const target = input.relocatable ? input.sections[section.info] : undefined;
+    const target = targetSection(section);
     const wanted = wantedBy(section);
     if (input.relocatable && target === undefined) {
       input.notes.add(

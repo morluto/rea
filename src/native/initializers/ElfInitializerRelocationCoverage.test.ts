@@ -68,3 +68,27 @@ it("keeps an unrelated known section from invalidating a wanted slot", async () 
   });
   expect(result.complete).toBe(true);
 });
+
+it.each([true, false])(
+  "keeps coverage unknown for zero sh_info with compressed=%s",
+  async (compressed) => {
+    const sections = [
+      section({ type: 0, file_backed: false }),
+      section(),
+      section({ type: 4, info: 0, compressed }),
+    ];
+    const result = await sectionRelocations({
+      bytes: Buffer.alloc(32),
+      bits: 64,
+      little: true,
+      machine: 62,
+      sections,
+      relocatable: true,
+      wanted: [{ va: 0n, sectionIndex: 1 }],
+      tables: new Map(),
+      notes: new InitializerNotes(),
+      fileOffset: () => null,
+    });
+    expect(result.complete).toBe(false);
+  },
+);
