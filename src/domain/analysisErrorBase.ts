@@ -436,7 +436,10 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
-import type { ElectronActivePartialObservation } from "./javascript/electronActiveObservation.js";
+import type {
+  ElectronActiveObservationResult,
+  ElectronActivePartialObservation,
+} from "./javascript/electronActiveObservation.js";
 import type { JavaScriptRuntimeObservation } from "./javascript/javascriptRuntimeObservation.js";
 import type {
   ArtifactInventoryPartialObservation,
@@ -446,7 +449,10 @@ import type { WebScriptExportPartialObservation } from "./webScriptExport.js";
 import type { JavaScriptRecoveryPartialObservation } from "./javascript/javascriptRecovery.js";
 import type { BrowserScenarioPartialObservation } from "./browserScenarioCapture.js";
 import type { Evidence } from "./evidence.js";
-import type { ElectronPagePartialObservation } from "./javascript/electronObservation.js";
+import type {
+  ElectronPageInspection,
+  ElectronPagePartialObservation,
+} from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
@@ -516,6 +522,7 @@ export type AnalysisPartialObservation =
   | HopperCallerReconciliationPartial
   | FileOffsetPartialObservation
   | ElectronActivePartialObservation
+  | ElectronActiveObservationResult
   | BrowserScenarioPartialObservation
   | WebPageInspection
   | WebBundleAnalysis
@@ -541,6 +548,7 @@ export type AnalysisPartialObservation =
   | InspectSignature
   | InspectMacho
   | ElectronPagePartialObservation
+  | ElectronPageInspection
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation
