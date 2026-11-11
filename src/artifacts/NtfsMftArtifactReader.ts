@@ -89,6 +89,7 @@ export class NtfsMftArtifactReader implements ArtifactReader {
         }
       }
       this.#assertOpen(signal);
+      await this.#source.read(signal);
     });
     // An MFT declares no members, so the root occurrence is the whole
     // inventory; the coverage callback reports what its parse did not establish.
