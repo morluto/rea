@@ -243,6 +243,80 @@ it("does not let an unallocated slot's stale child link adopt an entry", () => {
   expect(image.entries.find((entry) => entry.name === "live")?.path).toBeNull();
 });
 
+it("does not let an unallocated slot's sibling links name an entry", () => {
+  // Entry 1 is type 0 and links to entry 2 as a sibling. A free record's links
+  // are stale, so entry 2 must stay an orphan rather than be presented under
+  // the root's hierarchy.
+  const image = parse(
+    compoundFile({
+      entries: root(1, [
+        { name: "", type: 0, start: END, size: 0, right: 2 },
+        { name: "live", type: 2, start: 2, size: 512 },
+      ]),
+    }),
+  );
+  expect(image.metadata.orphan_entry_count).toBe(1);
+  expect(image.entries.find((entry) => entry.name === "live")?.path).toBeNull();
+});
+
+it("leaves a chain that reaches a sector another stream owns unresolved", () => {
+  // Both streams start at sector 2, so the second would publish the first's
+  // bytes under its own identity.
+  const image = parse(
+    compoundFile({
+      entries: root(1, [
+        { name: "first", type: 2, start: 2, size: 4096 },
+        { name: "second", type: 2, start: 2, size: 4096 },
+      ]),
+    }),
+  );
+  expect(image.entries.find((entry) => entry.name === "first")).toMatchObject({
+    byteOffset: expect.any(Number) as unknown,
+    sharedOverlap: false,
+  });
+  expect(image.entries.find((entry) => entry.name === "second")).toMatchObject({
+    byteOffset: null,
+    sharedOverlap: true,
+  });
+  expect(image.limitations).toContainEqual(
+    expect.stringMatching(/another stream already owns/u),
+  );
+});
+
+it("counts header-declared FAT sectors the DIFAT never lists", () => {
+  // The header declares two FAT sectors but lists only sector 0, so the gap is
+  // an unlisted sector: the field is meant to count header-declared sectors the
+  // allocation tables do not name.
+  const bytes = compoundFile({ entries: root(undefined, []) });
+  bytes.writeUInt32LE(2, 0x2c);
+  const image = parse(bytes);
+  expect(image.metadata.unlisted_fat_sector_count).toBe(1);
+  expect(image.limitations).toContainEqual(
+    expect.stringMatching(/absent from the DIFAT/u),
+  );
+});
+
+it("stops collecting FAT ids once the DIFAT names more than the file holds", () => {
+  // A DIFAT sector whose 126 slots all name sector 1 would keep growing the
+  // collection to 109 + 126 * chain-length ids if the bound only ran after the
+  // whole chain. The file holds 12 sectors, so the collection is refused as
+  // soon as it passes that.
+  const bytes = compoundFile({
+    entries: root(undefined, []),
+    fat: [END, END, END, END],
+    totalSectors: 12,
+  });
+  bytes.writeUInt32LE(9, 0x44);
+  bytes.writeUInt32LE(1, 0x48);
+  for (let index = 0; index < 127; index += 1)
+    bytes.writeUInt32LE(1, 10 * SECTOR + index * 4);
+  bytes.writeUInt32LE(END, 10 * SECTOR + 127 * 4);
+  const result = parseCompoundFile(bytes);
+  expect(!result.ok && result.error.message).toMatch(
+    /FAT sector\(s\) the file holds/u,
+  );
+});
+
 it("rejects a directory chain that reuses a FAT sector", () => {
   // Sector 0 is the FAT; naming it as the directory stream would read
   // allocation cells as directory entries.

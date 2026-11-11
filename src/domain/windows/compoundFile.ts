@@ -130,6 +130,11 @@ export interface CompoundFileDirectoryEntry {
    * already owns, so its bytes are container structure rather than content.
    */
   readonly structuralOverlap: boolean;
+  /**
+   * True when the chain reaches a sector an earlier entry's chain already owns,
+   * so publishing these bytes would present one range under two identities.
+   */
+  readonly sharedOverlap: boolean;
   /** File offset of the first sector, only when the chain is contiguous. */
   readonly byteOffset: number | null;
 }
@@ -403,7 +408,19 @@ export const parseCompoundFile = (
     const perSector = sectorBytes / 4 - 1;
     for (let index = 0; index < perSector; index += 1) {
       const sector = difat.getUint32(index * 4, true);
-      if (sector !== CFB_FREE_SECTOR) fatSectorIds.push(sector);
+      // A malformed chain can name far more FAT sectors than the file holds.
+      // Bound the collection while it grows rather than after the whole chain:
+      // a near-ceiling v3 file would otherwise retain tens of millions of ids
+      // before the count check ran.
+      if (sector !== CFB_FREE_SECTOR) {
+        fatSectorIds.push(sector);
+        if (fatSectorIds.length > sectorCount)
+          return err(
+            failure(
+              `DIFAT names more than the ${String(sectorCount)} FAT sector(s) the file holds`,
+            ),
+          );
+      }
     }
     difatSector = difat.getUint32(perSector * 4, true);
   }
@@ -460,10 +477,28 @@ export const parseCompoundFile = (
     limitations.push(
       `header declares ${String(declaredFatSectors)} FAT sector(s) but the DIFAT lists ${String(fatSectorIds.length)}`,
     );
-  if (unlistedFatSectors !== 0)
-    limitations.push(
-      `${String(unlistedFatSectors)} declared FAT sector(s) lie outside the file or are already owned by the DIFAT chain and were not read`,
-    );
+  // The field counts header-declared sectors absent from the allocation
+  // tables, so a declared-but-never-listed sector belongs here beside the ids
+  // that were listed and unusable.
+  const missingFatSectors = Math.max(
+    0,
+    declaredFatSectors - fatSectorIds.length,
+  );
+  if (missingFatSectors !== 0 || unlistedFatSectors !== 0) {
+    const parts = [
+      ...(unlistedFatSectors === 0
+        ? []
+        : [
+            `${String(unlistedFatSectors)} declared FAT sector(s) lie outside the file or are already owned by the DIFAT chain and were not read`,
+          ]),
+      ...(missingFatSectors === 0
+        ? []
+        : [
+            `${String(missingFatSectors)} header-declared FAT sector(s) are absent from the DIFAT`,
+          ]),
+    ];
+    limitations.push(parts.join("; "));
+  }
   if (table.length === 0)
     return err(failure("the header lists no FAT sector within the file"));
 
@@ -627,6 +662,10 @@ export const parseCompoundFile = (
             ? entry.name
             : `${next.prefix}/${entry.name}`;
       if (path !== null) paths.set(entryIndex, path);
+      // An unallocated or undefined-type slot belongs to no tree. Its links are
+      // stale fields of a free record: following them would name a live entry
+      // under a fabricated hierarchy and drop it from the orphan count.
+      if (entry.type === "unknown") continue;
       // Siblings share this entry's parent, so they keep its prefix; only a
       // storage's children take its full path.
       if (entry.leftSibling !== null)
@@ -643,9 +682,7 @@ export const parseCompoundFile = (
           prefix: next.prefix,
           depth: next.depth,
         });
-      // Only a storage owns a child tree. A stale child link on an unallocated
-      // or undefined-type slot would otherwise claim a live entry as its
-      // descendant and drop it from the orphan count.
+      // Only a storage owns a child tree.
       if (
         (entry.type === "storage" || entry.type === "root-storage") &&
         entry.child !== null
@@ -699,6 +736,12 @@ export const parseCompoundFile = (
     entry.type === "stream" || entry.type === "root-storage";
   let brokenChains = 0;
   let overlappingChains = 0;
+  let sharedChains = 0;
+  // Two entries can name the same starting sector or merge chains, which would
+  // publish the same bytes under two identities. The first entry in directory
+  // order owns the sectors; a later chain that reaches one of them is left
+  // unresolved instead of being read as its own member.
+  const ownedSectors = new Map<number, number>();
   const entries: CompoundFileDirectoryEntry[] = raw.map((entry, index) => {
     const parent = parents.get(index) ?? null;
     const path = paths.get(index) ?? null;
@@ -736,6 +779,7 @@ export const parseCompoundFile = (
         storage,
         contiguous: null,
         structuralOverlap: false,
+        sharedOverlap: false,
         byteOffset: null,
       };
     const chain = chainOf(table, startingSector, sectorBytes, bytes.length);
@@ -753,7 +797,17 @@ export const parseCompoundFile = (
     const structuralOverlap = chain.sectors.some((sector) =>
       structuralSectors.has(sector),
     );
+    const sharedOverlap = chain.sectors.some((sector) => {
+      const owner = ownedSectors.get(sector);
+      return owner !== undefined && owner !== index;
+    });
     if (structuralOverlap) overlappingChains += 1;
+    if (sharedOverlap) sharedChains += 1;
+    // Only a chain that becomes the owner of its sectors can be published with
+    // a byte range; the chain itself is complete regardless.
+    if (!structuralOverlap && !sharedOverlap)
+      for (const sector of chain.sectors)
+        if (!ownedSectors.has(sector)) ownedSectors.set(sector, index);
     return {
       index,
       path,
@@ -769,8 +823,9 @@ export const parseCompoundFile = (
       storage,
       contiguous,
       structuralOverlap,
+      sharedOverlap,
       byteOffset:
-        contiguous && complete && !structuralOverlap
+        contiguous && complete && !structuralOverlap && !sharedOverlap
           ? sectorOf(startingSector, sectorBytes)
           : null,
     };
@@ -779,6 +834,10 @@ export const parseCompoundFile = (
   if (overlappingChains !== 0)
     limitations.push(
       `${String(overlappingChains)} stream(s) reach sectors the FAT, the DIFAT or the directory already owns; their byte ranges are left unresolved rather than reading container structure as content`,
+    );
+  if (sharedChains !== 0)
+    limitations.push(
+      `${String(sharedChains)} stream(s) reach sectors another stream already owns; their byte ranges are left unresolved rather than reading the same bytes under two identities`,
     );
 
   if (brokenChains !== 0)
@@ -809,7 +868,7 @@ export const parseCompoundFile = (
     orphan_entry_count: orphanCount,
     unreadable_entry_count: raw.filter((entry) => !entry.definedType).length,
     broken_chain_count: brokenChains,
-    unlisted_fat_sector_count: unlistedFatSectors,
+    unlisted_fat_sector_count: missingFatSectors + unlistedFatSectors,
   };
 
   return ok({ metadata, entries, limitations });

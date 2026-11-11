@@ -22,7 +22,10 @@ import {
   artifactReadCancelledBy,
 } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import {
+  FileReadCancelled,
+  readFileHandleChunks,
+} from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 /**
@@ -36,6 +39,8 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
   readonly #entries = new Map<string, ArtifactEntry>();
+  /** Member streams whose consumer may still be draining them. */
+  readonly #liveOutputs = new Set<PassThrough>();
   /** Logical path to source ordinal, so `open` finds the entry it was given. */
   readonly #byPath = new Map<string, string>();
   #prepared:
@@ -141,6 +146,11 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       const output = new PassThrough();
       // Retirement can destroy the stream before its consumer listens.
       output.on("error", () => undefined);
+      // A consumer that stops draining leaves `write` returning false forever,
+      // so the pump would wait on a `drain` that never comes and the scope
+      // could never settle. Destroy every live output before the scope drains.
+      this.#liveOutputs.add(output);
+      output.once("close", () => this.#liveOutputs.delete(output));
       let delivered = 0;
       // A carrier truncated or rewritten after the pre-read would otherwise
       // publish whatever bytes happened to arrive, so the delivered length and
@@ -159,17 +169,30 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       void this.#scope
         .run(async () => {
           for await (const chunk of source as AsyncIterable<Buffer>) {
+            if (output.destroyed) return;
             delivered += chunk.length;
-            if (!output.write(chunk)) await once(output, "drain");
+            if (!output.write(chunk)) {
+              await drain(output);
+              if (output.destroyed) return;
+            }
           }
           await verify();
           output.end();
         })
         .catch((cause: unknown) =>
           output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error(`${label} read failed`, { cause }),
+            // A read cancelled by the caller's signal leaves the pump with the
+            // stream's own FileReadCancelled, which the operation boundary only
+            // recognizes as cancellation when it is an ArtifactReaderFailure.
+            cause instanceof FileReadCancelled
+              ? new ArtifactReaderFailure(
+                  "cancelled",
+                  `${label} read cancelled`,
+                  { cause: cause.reason },
+                )
+              : cause instanceof Error
+                ? cause
+                : new Error(`${label} read failed`, { cause }),
           ),
         );
       return output;
@@ -178,6 +201,10 @@ export class CompoundFileArtifactReader implements ArtifactReader {
 
   async close(): Promise<void> {
     this.#closing = true;
+    // Destroying an undrained output makes its pump's pending `drain` settle,
+    // so the scope's active set can empty instead of waiting on a consumer
+    // that may never read again.
+    for (const output of this.#liveOutputs) output.destroy();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -259,6 +286,22 @@ const sameRange = (entry: ArtifactEntry, stored: ArtifactEntry): boolean =>
   entry.kind === stored.kind &&
   entry.byteOffset === stored.byteOffset &&
   entry.declaredSize === stored.declaredSize;
+
+/**
+ * Wait for a backpressured write to be consumed. `once("drain")` alone never
+ * settles when the stream is destroyed, so a close would strand the pump; this
+ * settles on close as well.
+ */
+const drain = (output: PassThrough): Promise<void> =>
+  new Promise((resolve) => {
+    const settle = (): void => {
+      output.off("drain", settle);
+      output.off("close", settle);
+      resolve();
+    };
+    output.once("drain", settle);
+    output.once("close", settle);
+  });
 
 /**
  * The root storage has no name of its own and two entries can share a logical
@@ -366,6 +409,10 @@ const toArtifactEntry = (
     limitations.push(
       "This stream's chain reaches sectors the FAT, the DIFAT or the directory already owns, so its byte range is not resolved in this step.",
     );
+  if (entry.sharedOverlap)
+    limitations.push(
+      "This stream's chain reaches sectors an earlier entry's chain already owns, so its byte range is not resolved rather than reading the same bytes under two identities.",
+    );
   // A zero-byte stream is a file: it has content (none) and opens as empty,
   // rather than being reported as metadata that carries no bytes.
   // A version-4 size beyond 2^53-1 cannot be carried, so its declaration is
@@ -376,7 +423,8 @@ const toArtifactEntry = (
     sizeKnown &&
     entry.storage === "fat" &&
     entry.byteOffset !== null &&
-    !entry.structuralOverlap;
+    !entry.structuralOverlap &&
+    !entry.sharedOverlap;
   const emptyStream =
     sizeKnown && entry.storage === "empty" && entry.streamSize === 0;
   if (!sizeKnown)
