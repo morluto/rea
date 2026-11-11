@@ -2,8 +2,11 @@ import { expect, it, vi } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 import * as javascriptSemanticTraversal from "./javascript/javascriptSemanticTraversal.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
+import { fitJavaScriptRouteSourceFacts } from "./javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "./jsonValueByteLength.js";
 import type { JsonValue } from "./jsonValue.js";
+import { analyzeCapturedWebScript } from "./webBundleAnalyzer.js";
+import { isIncludedScript } from "./webBundleAnalyzerState.js";
 import {
   DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
@@ -12,7 +15,9 @@ import {
   WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
   retainLiteralCandidatesWithinResultBudget,
   webBundleEndpointLiteralLimit,
+  webBundleEndpointLiteralLimitMessage,
 } from "./webBundleEndpointLiteralBudget.js";
+import { isLiteralEndpointCandidate } from "./webBundleEndpointLiterals.js";
 
 const analyze = (source: string) =>
   analyzeWebBundleFixture(
@@ -525,4 +530,82 @@ it("fits literals by cumulative bytes and keeps byte drops out of the count", ()
     if (fitted.omittedByResultBudget > 0 && omittedByCount === 0)
       expect(limit?.omitted_by_count).toBe(0);
   }
+});
+
+it("does not call an inexact omission count unique", () => {
+  const limit = webBundleEndpointLiteralLimit(
+    { maximumCount: 1, source: "runtime" },
+    1,
+    2,
+    0,
+    false,
+  );
+  expect(limit?.omitted_by_count_exact).toBe(false);
+  const message = webBundleEndpointLiteralLimitMessage(
+    limit ??
+      (() => {
+        throw new Error("Expected a partial literal limit");
+      })(),
+  );
+  expect(message).toContain("which is not a unique count");
+  expect(message).not.toContain("unique literals");
+});
+
+it("reserves checked route facts before optional literal candidates", () => {
+  const captured = createWebPageInspection([
+    {
+      source: `createBrowserRouter([{path:'/reports',children:[{path:'settings'},{path:'history'},{path:'billing'}]}]);
+        const paths = ['/${"p".repeat(2_000)}'];`,
+      scriptKey: `scr_${"1".repeat(64)}`,
+      url: "https://app.example.test/app.js",
+      origin: "https://app.example.test",
+      cdpHash: "hash",
+    },
+  ]);
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script");
+  const full = analyzeCapturedWebScript(script);
+  if (full.status !== "analyzed" || full.route_facts == null)
+    throw new Error("Expected route facts");
+  const literals = full.inferences.filter(isLiteralEndpointCandidate);
+  expect(literals.length).toBeGreaterThan(0);
+  const { endpoint_literal_candidates: _limit, ...withoutLiterals } = {
+    ...full,
+    inferences: full.inferences.filter(
+      (item) => !isLiteralEndpointCandidate(item),
+    ),
+  };
+  const routeBudget = jsonValueByteLength(
+    withoutLiterals as unknown as JsonValue,
+  );
+  const withLiterals = jsonValueByteLength({
+    ...withoutLiterals,
+    inferences: full.inferences,
+  } as unknown as JsonValue);
+  const budget = routeBudget + 800;
+  expect(withLiterals).toBeGreaterThan(budget);
+
+  const limited = analyzeCapturedWebScript(
+    script,
+    undefined,
+    undefined,
+    budget,
+  );
+  if (limited.status !== "analyzed" || limited.route_facts == null)
+    throw new Error("Expected limited analysis");
+  const {
+    route_facts: routes,
+    endpoint_literal_candidates: _omitted,
+    ...existing
+  } = limited;
+  const available =
+    budget -
+    jsonValueByteLength(existing as unknown as JsonValue) -
+    Buffer.byteLength(',"route_facts":');
+  const admitted = fitJavaScriptRouteSourceFacts(routes, available);
+  expect(admitted?.candidates).toEqual(full.route_facts.candidates);
+  expect(admitted?.unresolved).toEqual(full.route_facts.unresolved);
+  expect(
+    limited.inferences.filter(isLiteralEndpointCandidate).length,
+  ).toBeLessThan(literals.length);
 });

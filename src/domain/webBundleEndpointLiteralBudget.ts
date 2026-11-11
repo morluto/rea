@@ -97,7 +97,7 @@ export const webBundleEndpointLiteralLimitMessage = (
 ): string =>
   [
     `The effective ${limit.setting} value is ${String(limit.maximum_count)} candidates (source ${limit.source}; default ${String(limit.default_count)}, floor ${String(limit.floor_count)}, maximum ${String(limit.maximum_setting_count)}).`,
-    `Retained ${String(limit.admitted_count)} literal endpoint candidates and omitted ${String(limit.omitted_count)} further unique literals.`,
+    `Retained ${String(limit.admitted_count)} literal endpoint candidates and omitted ${limit.omitted_by_count_exact ? `${String(limit.omitted_count)} further unique literals` : `${String(limit.omitted_count)} further literal occurrences, which is not a unique count`}.`,
     limit.omitted_by_count > 0 && limit.ceiling === "maximal"
       ? `The ${limit.setting} allowance is already the maximum of ${String(limit.maximum_setting_count)}. No accepted value reveals the count-omitted literals. Use the retained candidates and the captured script.`
       : limit.omitted_by_count > 0
@@ -119,7 +119,8 @@ interface LiteralCandidateRecord {
 /**
  * Drop path/URL literals whose serialized record, including provenance, does
  * not fit in the worker result that remains after the other script facts.
- * Count omissions stay omitted. Route facts are fitted later by the worker.
+ * Count omissions stay omitted. Callers reserve checked route facts before
+ * choosing this budget; byte drops stay out of the count ceiling.
  */
 export const retainLiteralCandidatesWithinResultBudget = <
   T extends LiteralCandidateRecord,

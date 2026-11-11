@@ -1,13 +1,18 @@
 import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
-import { analyzeScript } from "./webBundleAnalyzerInspection.js";
+import { fitJavaScriptRouteSourceFacts } from "./javascript/javascriptRouteResultBudget.js";
+import type { JavaScriptRouteSourceFacts } from "./javascript/javascriptRouteFacts.js";
+import { jsonValueByteLength } from "./jsonValueByteLength.js";
 import type { JsonValue } from "./jsonValue.js";
+import { analyzeScript } from "./webBundleAnalyzerInspection.js";
 import {
   retainLiteralCandidatesWithinResultBudget,
   webBundleEndpointLiteralLimit,
   type WebBundleEndpointLiteralAdmission,
 } from "./webBundleEndpointLiteralBudget.js";
+import { isLiteralEndpointCandidate } from "./webBundleEndpointLiterals.js";
 import {
   createWebBundleAnalysisAccumulator,
+  type AnalysisAccumulator,
   type IncludedScript,
 } from "./webBundleAnalyzerState.js";
 import {
@@ -39,10 +44,24 @@ export const analyzeCapturedWebScript = (
       webmcp_declarations: accumulator.webMcp,
     },
   };
-  // Route facts stay out of this measurement. The worker fits that optional
-  // facet into whatever result budget remains after these facts.
-  const fitted =
+  // Checked route facts are reserved before optional path/URL literals. The
+  // worker still owns the final route-fact prefix; this only keeps literals
+  // from spending the bytes that prefix needs.
+  const literalBudget =
     resultBudgetBytes === undefined
+      ? undefined
+      : resultBudgetBytes -
+        reservedRouteFactBytes(
+          routeFacts,
+          stableFacts,
+          accumulator.inferences,
+          accumulator.endpointLiterals,
+          accumulator.endpointLiteralOmitted,
+          accumulator.endpointLiteralOmittedExact,
+          resultBudgetBytes,
+        );
+  const fitted =
+    literalBudget === undefined
       ? {
           inferences: accumulator.inferences,
           admittedCount: accumulator.endpointLiteralAdmitted,
@@ -56,7 +75,7 @@ export const analyzeCapturedWebScript = (
           accumulator.endpointLiterals,
           accumulator.endpointLiteralOmitted,
           accumulator.endpointLiteralOmittedExact,
-          resultBudgetBytes,
+          literalBudget,
         );
   const endpointLiteralCandidates = webBundleEndpointLiteralLimit(
     accumulator.endpointLiterals,
@@ -73,4 +92,44 @@ export const analyzeCapturedWebScript = (
       ? {}
       : { endpoint_literal_candidates: endpointLiteralCandidates }),
   });
+};
+
+const ROUTE_FACTS_MEMBER_PREFIX = ',"route_facts":';
+
+/**
+ * Bytes the worker will need for the route-fact prefix that fits beside the
+ * non-literal facts. Literal records pay for their own omission metadata.
+ */
+const reservedRouteFactBytes = (
+  routeFacts: JavaScriptRouteSourceFacts | null,
+  stableFacts: object,
+  inferences: AnalysisAccumulator["inferences"],
+  admission: WebBundleEndpointLiteralAdmission,
+  omittedByCount: number,
+  omittedByCountExact: boolean,
+  resultBudgetBytes: number,
+): number => {
+  if (routeFacts === null) return 0;
+  const countLimit = webBundleEndpointLiteralLimit(
+    admission,
+    0,
+    omittedByCount,
+    0,
+    omittedByCountExact,
+  );
+  const base = {
+    ...(stableFacts as object),
+    inferences: inferences.filter((item) => !isLiteralEndpointCandidate(item)),
+    ...(countLimit === undefined
+      ? {}
+      : { endpoint_literal_candidates: countLimit }),
+  };
+  const prefix = Buffer.byteLength(ROUTE_FACTS_MEMBER_PREFIX);
+  const available =
+    resultBudgetBytes -
+    jsonValueByteLength(base as unknown as JsonValue) -
+    prefix;
+  const reserved = fitJavaScriptRouteSourceFacts(routeFacts, available);
+  if (reserved === undefined) return 0;
+  return jsonValueByteLength(reserved as unknown as JsonValue) + prefix;
 };
