@@ -1,3 +1,8 @@
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
+import {
+  processInspectionCleanupFailures,
+  type ProcessInspectionCleanupFailure,
+} from "./ProcessInspectionCleanup.js";
 import { assertProcessOwnershipInspectionActive } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -241,6 +246,14 @@ export type ProviderProcessStopResult =
       readonly status: "incomplete";
       readonly reason: string;
       readonly cleanupResult?: ProcessCleanupFailure;
+      /** Current retained capabilities and their exact originating inspection facts; never JSON diagnostics. */
+      readonly inspectionCleanup?: {
+        readonly causes: readonly unknown[];
+        readonly failures: readonly {
+          readonly failure: ProcessInspectionCleanupFailure;
+          readonly cause: unknown;
+        }[];
+      };
     };
 
 const incompleteCleanup = (
@@ -419,6 +432,14 @@ export class ProviderProcessSupervisor {
     | Exclude<ProcessDiagnosticBudget, number>
     | undefined;
   #outputEpoch = 0;
+  readonly #inspectionCleanup = new Map<
+    object,
+    {
+      readonly failure: ProcessInspectionCleanupFailure;
+      readonly origin: unknown;
+      cause: unknown;
+    }
+  >();
 
   constructor(
     readonly launch: ProviderProcessLaunch,
@@ -639,6 +660,61 @@ export class ProviderProcessSupervisor {
     }
   }
 
+  /** Adopt only explicit inspection capabilities into this process owner's existing lifetime. */
+  retainInspectionFailure(cause: unknown): void {
+    for (const failure of processInspectionCleanupFailures(cause)) {
+      const owner =
+        failure instanceof DarwinProcessOwnershipInspectionError
+          ? failure.cleanupOwner
+          : failure.owner;
+      const key = owner ?? failure;
+      if (this.#inspectionCleanup.has(key)) continue;
+      this.#inspectionCleanup.set(key, {
+        failure,
+        origin: cause,
+        cause:
+          failure instanceof DarwinProcessOwnershipInspectionError
+            ? (failure.cleanupFailure ?? failure)
+            : failure.cleanupCause,
+      });
+    }
+  }
+
+  async #retryInspectionCleanup(): Promise<void> {
+    for (const [key, retained] of this.#inspectionCleanup) {
+      const owner =
+        retained.failure instanceof DarwinProcessOwnershipInspectionError
+          ? retained.failure.cleanupOwner
+          : retained.failure.owner;
+      if (owner === undefined) continue;
+      try {
+        await owner.close();
+        this.#inspectionCleanup.delete(key);
+      } catch (cause: unknown) {
+        retained.cause = cause;
+      }
+    }
+  }
+
+  #inspectionStopFailure(reason: string): ProviderProcessStopResult {
+    const retained = [...this.#inspectionCleanup.values()];
+    return {
+      status: "incomplete",
+      reason,
+      ...(retained.length === 0
+        ? {}
+        : {
+            inspectionCleanup: {
+              causes: [...new Set(retained.map(({ origin }) => origin))],
+              failures: retained.map(({ failure, cause }) => ({
+                failure,
+                cause,
+              })),
+            },
+          }),
+    };
+  }
+
   /** Share each stop attempt; incomplete cleanup retains ownership and permits retry. */
   stop(
     options: ProviderProcessStopOptions = {},
@@ -719,6 +795,15 @@ export class ProviderProcessSupervisor {
   ): Promise<ProviderProcessStopResult> {
     try {
       if (!this.launch.ownsProcessLifetime) return { status: "not-owned" };
+      await this.#retryInspectionCleanup();
+      if (this.#inspectionCleanup.size > 0)
+        return this.#inspectionStopFailure(
+          [...this.#inspectionCleanup.values()]
+            .map(({ cause }) =>
+              cause instanceof Error ? cause.message : String(cause),
+            )
+            .join("; "),
+        );
       if (this.launch.cleanup !== undefined) {
         const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
         const exitObservedBeforeCleanup = this.#exitObservation !== undefined;
@@ -764,13 +849,12 @@ export class ProviderProcessSupervisor {
         reason: "owned provider process did not exit after SIGKILL",
       };
     } catch (cause: unknown) {
-      return {
-        status: "incomplete",
-        reason:
-          cause instanceof Error
-            ? cause.message
-            : "owned provider process cleanup failed",
-      };
+      this.retainInspectionFailure(cause);
+      return this.#inspectionStopFailure(
+        cause instanceof Error
+          ? cause.message
+          : "owned provider process cleanup failed",
+      );
     }
   }
 

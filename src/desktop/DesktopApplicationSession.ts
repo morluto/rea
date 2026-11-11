@@ -241,10 +241,15 @@ const release = async (
   supervisor: ProviderProcessSupervisor,
 ): Promise<DesktopSession["cleanup"]> => {
   // One SIGTERM each, since some applications treat a second one as a forced exit.
-  const { launchGroupSignalled } = await terminateTokenOwnedProcesses(
+  const termination = await terminateTokenOwnedProcesses(
     spawned.ownership,
     TERMINATION_GRACE_MS,
   );
+  const { launchGroupSignalled } = termination.ok
+    ? termination.value
+    : termination.error;
+  if (!termination.ok)
+    supervisor.retainInspectionFailure(termination.error.cause);
   if (!launchGroupSignalled && supervisor.observedExit() === undefined) {
     spawned.process.kill("SIGTERM");
     await supervisor.waitForExit(TERMINATION_GRACE_MS);
