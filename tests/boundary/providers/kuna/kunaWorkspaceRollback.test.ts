@@ -1,5 +1,7 @@
+import { fstatSync, statSync, existsSync } from "node:fs";
+import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { failedInspectionDescriptor } from "../../../fixtures/processInspectionCleanup.js";
@@ -514,3 +516,88 @@ const inertTarget = async (prefix: string): Promise<BinaryTarget> => {
     availableArchitectures: ["x86_64"],
   };
 };
+
+it.each(["source", "destination", "both"] as const)(
+  "retries the exact copy %s descriptors before removing the workspace root",
+  async (side) => {
+    const target = await inertTarget("rea-kuna-copy-close-");
+    const commands = new KunaTargetCommands(target, {
+      signal: new AbortController().signal,
+    });
+    const create = PrivateRuntimeRoot.create;
+    let root: PrivateRuntimeRoot | undefined;
+    let rootClose: ReturnType<typeof vi.spyOn> | undefined;
+    let allow = false;
+    const retained = new Set<OwnedFileHandle>();
+    const sourceIdentity = statSync(target.path);
+    const roots = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        root = await create(options);
+        rootClose = vi.spyOn(root, "close");
+        return root;
+      });
+    const originalClose = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        const observed =
+          this.handle.fd < 0 ? undefined : fstatSync(this.handle.fd);
+        const input =
+          root === undefined
+            ? undefined
+            : join(root.path, basename(target.path));
+        const destination =
+          input !== undefined && existsSync(input)
+            ? statSync(input)
+            : undefined;
+        const isSource =
+          observed?.dev === sourceIdentity.dev &&
+          observed?.ino === sourceIdentity.ino;
+        const isDestination =
+          destination !== undefined &&
+          observed?.dev === destination.dev &&
+          observed?.ino === destination.ino;
+        if (
+          (side !== "destination" && isSource) ||
+          (side !== "source" && isDestination)
+        ) {
+          retained.add(this);
+          if (!allow)
+            throw new Error("controlled copy descriptor close refusal");
+        }
+        await originalClose.call(this);
+      });
+    try {
+      const result = await commands.prepare();
+      if (result.ok) throw new Error("Expected workspace copy close failure");
+      expect(retained.size).toBe(side === "both" ? 2 : 1);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(rootClose).not.toHaveBeenCalled();
+      if (root === undefined)
+        throw new Error("Expected retained workspace root");
+      expect(existsSync(root.path)).toBe(true);
+      for (const owner of retained)
+        expect(fstatSync(owner.handle.fd).isFile()).toBe(true);
+      const refused = await commands.close();
+      if (refused.ok)
+        throw new Error("Expected exact copy descriptor retry refusal");
+      expect(rootClose).not.toHaveBeenCalled();
+      expect(result.error.cleanupIncomplete).toBe(true);
+      allow = true;
+      expect((await commands.close()).ok).toBe(true);
+      for (const owner of retained)
+        expect(() => fstatSync(owner.handle.fd)).toThrow();
+      expect(rootClose).toHaveBeenCalledOnce();
+      expect(existsSync(root.path)).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(refused.error.cleanupIncomplete).toBe(false);
+    } finally {
+      allow = true;
+      for (const owner of retained) await originalClose.call(owner);
+      close.mockRestore();
+      roots.mockRestore();
+      expect((await commands.close()).ok).toBe(true);
+    }
+  },
+);

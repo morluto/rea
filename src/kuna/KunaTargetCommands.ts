@@ -1,4 +1,7 @@
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   retainProcessInspectionCleanup,
@@ -24,6 +27,7 @@ import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipOb
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
+  kunaCopyFailureFacts,
   runKunaCommand,
   type KunaInputPrefix,
   type KunaProcessLauncher,
@@ -344,17 +348,27 @@ export class KunaTargetCommands {
     let owned: WorkspaceRoot | undefined;
     try {
       const root = await PrivateRuntimeRoot.create({ prefix: "rea-kuna-" });
+      const copyResources = new ArtifactResourceScope();
       owned = {
         root,
-        cleanup: new AnalysisCleanupLease(() => root.close(), [root.path]),
+        cleanup: new AnalysisCleanupLease(async () => {
+          await copyResources.close();
+          await root.close();
+        }, [root.path]),
       };
       const input = join(root.path, basename(this.target.path));
-      const copied = await copyAndHash(
-        this.target.path,
-        input,
-        this.lifetime.signal,
-        this.lifetime.inputPrefix,
-      );
+      let copied: Awaited<ReturnType<typeof copyAndHash>>;
+      try {
+        copied = await copyAndHash(this.target.path, input, {
+          signal: this.lifetime.signal,
+          resources: copyResources,
+          ...(this.lifetime.inputPrefix === undefined
+            ? {}
+            : { keep: this.lifetime.inputPrefix }),
+        });
+      } catch (cause: unknown) {
+        return await this.#workspaceFailure(this.#copyFailure(cause), owned);
+      }
       if (copied.sha256 !== this.target.sha256)
         return await this.#workspaceFailure(
           new AnalysisArtifactChangedError(
@@ -396,6 +410,47 @@ export class KunaTargetCommands {
         owned,
       );
     }
+  }
+
+  #copyFailure(cause: unknown): AnalysisError {
+    const facts = kunaCopyFailureFacts(cause);
+    const completion = facts.completion;
+    const primaryCause = facts.cause;
+    const cancellation =
+      completion?.cancellation ??
+      (facts.origin === "owned-or-classified" &&
+      primaryCause instanceof ArtifactReaderFailure &&
+      primaryCause.reason === "cancelled"
+        ? { reason: artifactFileCancellationCause(primaryCause) }
+        : undefined);
+    const primary =
+      cancellation !== undefined
+        ? new AnalysisCancelledError("kuna:workspace", {
+            cause: cancellation.reason,
+          })
+        : completion === undefined
+          ? new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
+              cause: primaryCause,
+            })
+          : undefined;
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+      const error = new ProviderCleanupError(
+        KUNA_PROVIDER_ID,
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        {
+          operation: "kuna:workspace",
+          cause,
+          ...(primary === undefined ? {} : { cleanupPrimary: primary }),
+        },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return error;
+    }
+    return (
+      primary ??
+      new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", { cause })
+    );
   }
 
   /** Rollback and the original outcome share the exact root cleanup lease. */
