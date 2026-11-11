@@ -2421,16 +2421,25 @@ describe("exportDesktopApplication published close cancellation", () => {
 });
 
 describe("exportDesktopApplication bundle writes", () => {
-  it.each(["cancelled", "out of space"])(
-    "removes the unpublished bundle when its write fails (%s)",
-    async (failure) => {
+  it.each([
+    { abort: false, physical: true },
+    { abort: true, physical: true },
+    { abort: true, physical: false },
+  ])(
+    "retains the write outcome and removes the unpublished bundle (physical: $physical, abort: $abort)",
+    async ({ abort, physical }) => {
       const controller = new AbortController();
+      const reason = { source: "caller" };
+      const failure = Object.assign(new Error("out of space"), {
+        code: "ENOSPC",
+      });
       const original = unspied("write");
       vi.spyOn(SafeOutputTree.prototype, "write").mockImplementation(
         async function (this: SafeOutputTree, ...args) {
           if (!args[0].includes("/seed/")) return original.apply(this, args);
-          if (failure === "cancelled") controller.abort();
-          throw Object.assign(new Error(failure), { code: "ENOSPC" });
+          if (abort) controller.abort(reason);
+          if (!physical) return original.apply(this, args);
+          throw failure;
         },
       );
 
@@ -2439,9 +2448,27 @@ describe("exportDesktopApplication bundle writes", () => {
         controller.signal,
       );
 
-      expect(result).toBeInstanceOf(Error);
-      if (failure === "cancelled")
-        expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError)) throw result;
+      if (physical) {
+        expect(result).toMatchObject({ _tag: "ProviderAdapterError" });
+        expect(result.cause).toBe(failure);
+        if (abort)
+          expect(result.secondaryFailures).toContainEqual(
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          );
+        else expect(result.secondaryFailures).toEqual([]);
+      } else {
+        expect(result).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          operation: "export_desktop_application",
+        });
+        expect(result.cause).toBe(reason);
+      }
+      expect(result.cleanupResources).toEqual([]);
       expect(await exists(directory)).toBe(false);
     },
   );
