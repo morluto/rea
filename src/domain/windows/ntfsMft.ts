@@ -284,7 +284,10 @@ const scanMft = (
     if (record.directory) directoryCount += 1;
     if (record.baseRecordReference !== null) extensionCount += 1;
     if (record.fixups.mismatchSector !== null) mismatchCount += 1;
-    else if (record.fixups.verifiedSectors < recordBytes / FIXUP_SECTOR_BYTES)
+    if (
+      record.fixups.malformed ||
+      record.fixups.coveredSectors < recordBytes / FIXUP_SECTOR_BYTES
+    )
       unverifiedCount += 1;
     if (!record.extentValid) {
       invalidExtents += 1;
