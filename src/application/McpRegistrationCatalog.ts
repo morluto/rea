@@ -3,6 +3,8 @@ import {
   kiloProjectLocation,
 } from "./McpRegistrationKiloLocations.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { dirname, join, win32 } from "node:path";
+
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -17,6 +19,11 @@ import type {
   NativeStdioIncompatibility,
 } from "./ClientRegistrationProfile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  bindRegularFileCleanup,
+  readRegularFileText,
+} from "./RegularFileRead.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
 import {
   selectedPath,
   fromSetup,
@@ -464,6 +471,73 @@ const globalTarget = async (
   };
 };
 
+const validateJunieGlobal = async (
+  client: McpRegistrationClient,
+  context: McpRegistrationLocationContext,
+): Promise<void> => {
+  const env = context.environment;
+  if (env.JUNIE_MCP_DEFAULT_LOCATIONS?.toLowerCase() === "false")
+    throw new ConfigurationError(
+      "Junie's default MCP locations are disabled by JUNIE_MCP_DEFAULT_LOCATIONS.",
+    );
+  if (env.JUNIE_CONFIG_LOCATION)
+    throw new ConfigurationError(
+      "Cannot determine Junie's MCP location selection while JUNIE_CONFIG_LOCATION is set. Inspect the additional Junie configuration before registering.",
+    );
+  if (env.JUNIE_CONFIG_DEFAULT_LOCATIONS?.toLowerCase() !== "false") {
+    const paths = context.platform === "win32" ? win32 : { dirname, join };
+    const configPath = selectedPath(
+      paths.join(
+        paths.dirname(paths.dirname(client.configPath)),
+        "config.json",
+      ),
+      context,
+    );
+    let content: string | undefined;
+    try {
+      content = await readRegularFileText(configPath, {
+        resources: context.resources,
+        signal: context.signal,
+      });
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      ) {
+        const failure = new ConfigurationError(
+          "Cannot inspect Junie's user configuration to determine its MCP locations.",
+          { cause },
+        );
+        bindRegularFileCleanup(cause, failure);
+        throw failure;
+      }
+    }
+    if (content !== undefined) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch (cause: unknown) {
+        throw new ConfigurationError(
+          "Cannot parse Junie's user configuration to determine its MCP locations.",
+          { cause },
+        );
+      }
+      const record = clientConfigurationRecordSchema.safeParse(parsed);
+      if (
+        !record.success ||
+        (record.data["mcp-default-locations"] !== undefined &&
+          typeof record.data["mcp-default-locations"] !== "boolean")
+      )
+        throw new ConfigurationError(
+          "Junie's user configuration does not establish whether default MCP locations are enabled.",
+        );
+      if (record.data["mcp-default-locations"] === false)
+        throw new ConfigurationError(
+          "Junie's user configuration disables its default MCP locations.",
+        );
+    }
+  }
+};
+
 /** Resolve all selected paths before any registration writer receives authority. */
 export const resolveMcpRegistrationClients = async (
   selection: McpRegistrationSelection,
@@ -498,6 +572,10 @@ export const resolveMcpRegistrationClients = async (
             : await projectTarget(id, context),
         );
       }
+      if (selection.global) {
+        const junie = clients.find((client) => client.id === "junie");
+        if (junie) await validateJunieGlobal(junie, context);
+      }
       checkCancellation(selection.signal);
       return ok(clients);
     }
@@ -515,7 +593,10 @@ export const resolveMcpRegistrationClients = async (
     }
     const amp = (await globalTarget("amp", context)).client;
     checkCancellation(selection.signal);
-    return ok([...(detected.length === 0 ? all : detected), amp]);
+    const selected = [...(detected.length === 0 ? all : detected), amp];
+    const junie = selected.find((client) => client.id === "junie");
+    if (junie) await validateJunieGlobal(junie, context);
+    return ok(selected);
   } catch (cause: unknown) {
     const failure =
       cause instanceof ConfigurationError ||

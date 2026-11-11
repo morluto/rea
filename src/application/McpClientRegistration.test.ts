@@ -1,7 +1,9 @@
 import {
+  mkdir,
   readFile,
   readdir,
   rename,
+  rm,
   stat,
   symlink,
   writeFile,
@@ -294,6 +296,67 @@ it("selects Goose and Zed native settings paths for their platforms and override
   }
 });
 
+it("refuses global Junie registration when known configuration disables or obscures default MCP locations", async () => {
+  const home = await createTestTempDirectory("rea-junie-selection-");
+  await mkdir(join(home, ".junie"));
+  const config = join(home, ".junie", "config.json");
+  const selection = {
+    agents: ["junie"],
+    global: true,
+    home,
+    cwd: home,
+    platform: process.platform,
+  };
+  await writeFile(config, JSON.stringify({ "mcp-default-locations": false }));
+  const disabled = await resolveMcpRegistrationClients(
+    { ...selection, environment: {} },
+    resources,
+  );
+  expect(disabled.ok).toBe(false);
+  const configDisabled = await resolveMcpRegistrationClients(
+    { ...selection, environment: { JUNIE_CONFIG_DEFAULT_LOCATIONS: "false" } },
+    resources,
+  );
+  expect(configDisabled.ok).toBe(true);
+  const envDisabled = await resolveMcpRegistrationClients(
+    {
+      ...selection,
+      environment: {
+        JUNIE_CONFIG_DEFAULT_LOCATIONS: "false",
+        JUNIE_MCP_DEFAULT_LOCATIONS: "false",
+      },
+    },
+    resources,
+  );
+  expect(envDisabled.ok).toBe(false);
+  const extra = await resolveMcpRegistrationClients(
+    {
+      ...selection,
+      environment: { JUNIE_CONFIG_LOCATION: "/fixture/extra.json" },
+    },
+    resources,
+  );
+  expect(extra.ok).toBe(false);
+  await writeFile(config, JSON.stringify({ "mcp-default-locations": true }));
+  const enabled = await resolveMcpRegistrationClients(
+    { ...selection, environment: {} },
+    resources,
+  );
+  expect(enabled.ok).toBe(true);
+  await mkdir(join(home, ".cursor"));
+  await rm(join(home, ".junie"), { recursive: true });
+  const automatic = await resolveMcpRegistrationClients(
+    {
+      ...selection,
+      agents: [],
+      environment: { JUNIE_MCP_DEFAULT_LOCATIONS: "false" },
+    },
+    resources,
+  );
+  expect(automatic.ok).toBe(true);
+  if (!automatic.ok) throw automatic.error;
+  expect(automatic.value.some((client) => client.id === "cursor")).toBe(true);
+});
 const settingsFixture = async (original?: string) => {
   const directory = await createTestTempDirectory("rea-amp-writer-");
   const path = join(directory, "settings.json");
