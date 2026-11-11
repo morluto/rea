@@ -1982,3 +1982,33 @@ it("does not claim a unique type table when a bound word may complete a competin
   );
   expect(() => linkWholeTable(bytes)).toThrow(Il2cppBinaryFormatFailure);
 });
+
+it("retains a unique module array when an isolated bound word cannot form a competing two-module array", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.fill(0, 0x600, 0x610);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(bytes.readBigUInt64LE(0x6f8)).toBe(0n);
+  expect(bytes.readBigUInt64LE(0x708)).toBe(0n);
+  const linked = link(bytes);
+  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+});
+
+it("does not treat a repeated possible module as a competing array", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x70c);
+  bytes.fill(0, 0x600, 0x610);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x400n, 0x700);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x400n, 0x708);
+  bytes.writeUInt32LE(0, 0x70c);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(link(bytes).code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+});

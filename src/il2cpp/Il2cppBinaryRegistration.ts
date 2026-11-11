@@ -23,22 +23,33 @@ import type { Il2cppCodeGenModule } from "./Il2cppBinaryFile.js";
 const TOTAL_NAME_OCCURRENCES = 65536;
 const SCAN_BYTES = 65536;
 
-/** An unresolved legacy write cannot disprove candidates matching untouched bytes. */
-const mayMatchUnresolvedPointer = (
+/** Index candidates by untouched bytes, retaining bounded representation space. */
+const unresolvedPointerMatcher = (
   image: NativeImage,
-  address: bigint,
-  raw: bigint,
   candidates: Iterable<bigint>,
-): boolean => {
+): ((address: bigint, raw: bigint) => boolean) => {
   const fixups = image.machoPointerFixups;
-  if (fixups?.hasUnresolvedLegacyBytes(address, 8) !== true) return false;
-  let knownMask = 0n;
-  for (let byte = 0; byte < 8; byte++)
-    if (!fixups.hasUnresolvedLegacyBytes(address + BigInt(byte), 1))
-      knownMask |= 0xffn << BigInt(byte * 8);
-  for (const candidate of candidates)
-    if (((candidate ^ raw) & knownMask) === 0n) return true;
-  return false;
+  if (fixups === undefined) return () => false;
+  const values = [...candidates];
+  const masks = new Map<bigint, ReadonlySet<bigint>>();
+  const maximumEntries = 8 * TOTAL_NAME_OCCURRENCES;
+  let indexedEntries = 0;
+  return (address, raw) => {
+    if (!fixups.hasUnresolvedLegacyBytes(address, 8)) return false;
+    let knownMask = 0n;
+    for (let byte = 0; byte < 8; byte++)
+      if (!fixups.hasUnresolvedLegacyBytes(address + BigInt(byte), 1))
+        knownMask |= 0xffn << BigInt(byte * 8);
+    let matches = masks.get(knownMask);
+    if (matches === undefined) {
+      // Beyond the retained index budget applicability remains unknown.
+      if (values.length > maximumEntries - indexedEntries) return true;
+      matches = new Set(values.map((candidate) => candidate & knownMask));
+      indexedEntries += values.length;
+      masks.set(knownMask, matches);
+    }
+    return matches.has(raw & knownMask);
+  };
 };
 
 interface NameTrie {
@@ -154,6 +165,7 @@ export function* findModules(
   );
   const counts = yield* imageMethodCounts(metadata);
   const candidates = new Map<number, Il2cppCodeGenModule[]>();
+  const unresolvedName = unresolvedPointerMatcher(image, names.keys());
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     for (let at = start; at + 24 <= mapping.size; at += 8) {
@@ -161,7 +173,7 @@ export function* findModules(
       const offset = mapping.offset + at;
       const address = mapping.address + BigInt(at);
       const raw = image.bytes.readBigUInt64LE(offset);
-      if (mayMatchUnresolvedPointer(image, address, raw, names.keys())) {
+      if (unresolvedName(address, raw)) {
         const count = readUInt32(image, address + 8n);
         const plausibleCounts = counts.filter(
           (expected) => count === "unknown" || count === expected,
@@ -328,26 +340,71 @@ function* findModuleArrayByCode(
 ): Generator<void, bigint | null> {
   const arrays = new Set<bigint>();
   let unresolvedCandidate = false;
+  const unresolvedModule = unresolvedPointerMatcher(image, expected);
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     let runStart = start;
     const lastPosition = new Map<bigint, number>();
+    const possible = new Map<number, bigint | null>();
+    const occurrences = new Map<bigint, number>();
+    let possibleUnknown = 0;
+    let duplicateValues = 0;
     for (let at = start; at + 8 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
-      if (
-        mayMatchUnresolvedPointer(
-          image,
-          mapping.address + BigInt(at),
-          raw,
-          expected,
-        )
-      )
-        unresolvedCandidate = true;
+      const unknown = unresolvedModule(mapping.address + BigInt(at), raw);
       const value =
-        image.elfPointerOverlay !== undefined || expected.has(raw)
+        !unknown && (image.elfPointerOverlay !== undefined || expected.has(raw))
           ? readPointer(image, mapping.address + BigInt(at))
           : null;
+      if (!unknown && (value === null || !expected.has(value))) {
+        possible.clear();
+        occurrences.clear();
+        possibleUnknown = 0;
+        duplicateValues = 0;
+      } else {
+        const candidate = unknown ? null : value;
+        possible.set(at, candidate);
+        if (candidate === null) possibleUnknown++;
+        else {
+          const count = (occurrences.get(candidate) ?? 0) + 1;
+          occurrences.set(candidate, count);
+          if (count === 2) duplicateValues++;
+        }
+        const expired = at - expected.size * 8;
+        if (possible.has(expired)) {
+          const previous = possible.get(expired)!;
+          possible.delete(expired);
+          if (previous === null) possibleUnknown--;
+          else {
+            const count = occurrences.get(previous)!;
+            if (count === 2) duplicateValues--;
+            if (count === 1) occurrences.delete(previous);
+            else occurrences.set(previous, count - 1);
+          }
+        }
+        if (
+          possible.size === expected.size &&
+          possibleUnknown > 0 &&
+          duplicateValues === 0
+        ) {
+          if (possibleUnknown === 1) {
+            const missing = [...expected].find(
+              (candidate) => !occurrences.has(candidate),
+            );
+            const unknownAt = [...possible].find(
+              ([, item]) => item === null,
+            )?.[0];
+            if (missing !== undefined && unknownAt !== undefined)
+              unresolvedCandidate ||= unresolvedPointerMatcher(image, [
+                missing,
+              ])(
+                mapping.address + BigInt(unknownAt),
+                image.bytes.readBigUInt64LE(mapping.offset + unknownAt),
+              );
+          } else unresolvedCandidate = true;
+        }
+      }
       if (value === null || !expected.has(value)) {
         runStart = at + 8;
         lastPosition.clear();
