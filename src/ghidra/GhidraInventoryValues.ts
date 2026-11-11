@@ -1,4 +1,7 @@
-import { parseGhidraAddressNameResult } from "./GhidraAddressNameValues.js";
+import {
+  type GhidraNamingRequest,
+  parseGhidraAddressNameResult,
+} from "./GhidraAddressNameValues.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { nativeSearchFields } from "../domain/native/nativeSearch.js";
 import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
@@ -117,19 +120,52 @@ const inputSchemas = {
     ),
 } satisfies Readonly<Record<GhidraInventoryOperation, z.ZodType>>;
 
+/** Parsed naming identity accompanies wire parameters without crossing the socket. */
+type GhidraInventoryInputAdmission =
+  | {
+      readonly ok: true;
+      readonly value: Readonly<Record<string, JsonValue>>;
+      readonly namingRequest: GhidraNamingRequest | null;
+    }
+  | { readonly ok: false; readonly error: AnalysisInputError };
+
 /** Validate and default one provider request before it crosses the socket. */
 export const parseGhidraInventoryInput = (
   operation: GhidraInventoryOperation,
   value: Readonly<Record<string, JsonValue>>,
-): Result<Readonly<Record<string, JsonValue>>, AnalysisInputError> => {
+): GhidraInventoryInputAdmission => {
+  const failure = (
+    issues: readonly z.core.$ZodIssue[],
+    cause: unknown,
+  ): Extract<GhidraInventoryInputAdmission, { readonly ok: false }> => ({
+    ok: false,
+    error: analysisInputErrorFromIssues(operation, issues, value, { cause }),
+  });
+
+  if (operation === "set_address_name") {
+    const parsed = inputSchemas.set_address_name.safeParse(value);
+    return parsed.success
+      ? {
+          ok: true,
+          value: parsed.data,
+          namingRequest: { keys: [parsed.data.address] },
+        }
+      : failure(parsed.error.issues, parsed.error);
+  }
+  if (operation === "set_addresses_names") {
+    const parsed = inputSchemas.set_addresses_names.safeParse(value);
+    return parsed.success
+      ? {
+          ok: true,
+          value: parsed.data,
+          namingRequest: { keys: Object.keys(parsed.data.names) },
+        }
+      : failure(parsed.error.issues, parsed.error);
+  }
   const parsed = inputSchemas[operation].safeParse(value);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(operation, parsed.error.issues, value, {
-        cause: parsed.error,
-      }),
-    );
-  return ok(parsed.data);
+  return parsed.success
+    ? { ok: true, value: parsed.data, namingRequest: null }
+    : failure(parsed.error.issues, parsed.error);
 };
 
 const symbolFacts = z
@@ -333,7 +369,7 @@ export interface ParsedGhidraInventoryResult<Value = JsonValue> {
 export function parseGhidraInventoryResult(
   operation: "inspect_native_load_image",
   value: JsonValue,
-  admittedRequest: Readonly<Record<string, JsonValue>>,
+  namingRequest: GhidraNamingRequest | null,
 ): Result<
   ParsedGhidraInventoryResult<NativeLoadImageObservation>,
   AnalysisOutputError
@@ -341,12 +377,12 @@ export function parseGhidraInventoryResult(
 export function parseGhidraInventoryResult(
   operation: GhidraInventoryOperation,
   value: JsonValue,
-  admittedRequest: Readonly<Record<string, JsonValue>>,
+  namingRequest: GhidraNamingRequest | null,
 ): Result<ParsedGhidraInventoryResult, AnalysisOutputError>;
 export function parseGhidraInventoryResult(
   operation: GhidraInventoryOperation,
   value: JsonValue,
-  admittedRequest: Readonly<Record<string, JsonValue>>,
+  namingRequest: GhidraNamingRequest | null,
 ): Result<
   ParsedGhidraInventoryResult<JsonValue | NativeLoadImageObservation>,
   AnalysisOutputError
@@ -358,7 +394,7 @@ export function parseGhidraInventoryResult(
       : err(inventoryOutputFailure(operation, parsed.error));
   }
   if (operation === "set_address_name" || operation === "set_addresses_names") {
-    return parseGhidraAddressNameResult(operation, value, admittedRequest);
+    return parseGhidraAddressNameResult(operation, value, namingRequest);
   }
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success

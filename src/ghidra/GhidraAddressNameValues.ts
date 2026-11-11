@@ -5,6 +5,11 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 
+/** Exact source keys retained by successful naming request admission. */
+export interface GhidraNamingRequest {
+  readonly keys: readonly string[];
+}
+
 type GhidraNamingOperation = "set_address_name" | "set_addresses_names";
 
 /**
@@ -159,7 +164,7 @@ const singleAddressNameOutcome = addressNameOutcomes.superRefine(
 export const parseGhidraAddressNameResult = (
   operation: GhidraNamingOperation,
   value: JsonValue,
-  admittedRequest: Readonly<Record<string, JsonValue>>,
+  namingRequest: GhidraNamingRequest | null,
 ): Result<
   { readonly value: JsonValue; readonly rawResult?: JsonValue },
   AnalysisOutputError
@@ -174,17 +179,14 @@ export const parseGhidraAddressNameResult = (
   const { results, failures, conflicts } = parsed.data;
   // Java returns every original request key, including distinct spellings
   // that resolve to the same address. Canonicalizing here would erase them.
-  const expected =
-    operation === "set_address_name"
-      ? [admittedRequest.address]
-      : Object.keys(admittedRequest.names ?? {});
   if (
-    expected.length !== Object.keys(results).length ||
-    expected.some(
-      (key) => typeof key !== "string" || !Object.hasOwn(results, key),
-    )
+    namingRequest === null ||
+    namingRequest.keys.length === 0 ||
+    namingRequest.keys.length !== Object.keys(results).length ||
+    namingRequest.keys.some((key) => !Object.hasOwn(results, key))
   )
     return err(namingOutputFailure(operation, value));
+
   const outcomes = Object.values(results);
   // Booleans answer the caller. Failure facts stay in raw_result without a
   // second copy of those booleans.
