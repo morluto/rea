@@ -11,11 +11,16 @@ export interface Asn1BerNode {
   readonly children: readonly Asn1BerNode[];
 }
 
+/** The fixed parser allowance that prevented examining more BER structure. */
+export interface Asn1BerConstraint {
+  readonly resource: "nodes" | "depth";
+  readonly limit: number;
+}
+
 export class Asn1BerFailure extends Error {
   constructor(
     message: string,
-    readonly kind: "malformed" | "budget-exceeded" = "malformed",
-    readonly limit: number | null = null,
+    readonly constraint: Asn1BerConstraint | null = null,
   ) {
     super(message);
     this.name = "Asn1BerFailure";
@@ -28,10 +33,9 @@ interface Budget {
 
 const fail = (
   message: string,
-  kind: Asn1BerFailure["kind"] = "malformed",
-  limit: number | null = null,
+  constraint: Asn1BerConstraint | null = null,
 ): never => {
-  throw new Asn1BerFailure(message, kind, limit);
+  throw new Asn1BerFailure(message, constraint);
 };
 
 /**
@@ -51,12 +55,14 @@ export class Asn1BerReader {
 
   read(offset = 0, end = this.bytes.length, depth = 0): Asn1BerNode {
     if (depth > this.maxDepth)
-      return fail(`ASN.1 nesting exceeds ${String(this.maxDepth)} levels.`);
+      return fail(`ASN.1 nesting exceeds ${String(this.maxDepth)} levels.`, {
+        resource: "depth",
+        limit: this.maxDepth,
+      });
     if (this.#budget.remaining <= 0)
       return fail(
         `ASN.1 value count exceeds the ${String(this.maxNodes)}-node budget.`,
-        "budget-exceeded",
-        this.maxNodes,
+        { resource: "nodes", limit: this.maxNodes },
       );
     this.#budget.remaining -= 1;
     if (offset >= end || offset + 2 > end)
