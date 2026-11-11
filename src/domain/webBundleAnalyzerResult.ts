@@ -17,6 +17,7 @@ import {
   webBundleEndpointLiteralLimitMessage,
   type WebBundleEndpointLiteralLimit,
 } from "./webBundleEndpointLiteralBudget.js";
+import { isLiteralEndpointCandidate } from "./webBundleEndpointLiterals.js";
 import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
@@ -99,15 +100,7 @@ export const buildCapturedWebBundleAnalysis = (
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
   const endpointLiteralCandidates = aggregateEndpointLiteralLimits(
     orderedResults.flatMap((result) =>
-      result.status === "analyzed" &&
-      result.endpoint_literal_candidates !== undefined
-        ? [
-            {
-              scriptKey: result.script_key,
-              limit: result.endpoint_literal_candidates,
-            },
-          ]
-        : [],
+      result.status === "analyzed" ? [result] : [],
     ),
   );
   const partial =
@@ -489,24 +482,47 @@ const buildCompleteness = (
 });
 
 const aggregateEndpointLiteralLimits = (
-  partials: readonly {
-    readonly scriptKey: string;
-    readonly limit: WebBundleEndpointLiteralLimit;
-  }[],
+  analyzed: readonly Extract<WebBundleScriptAnalysis, { status: "analyzed" }>[],
 ):
   | {
       readonly limit: WebBundleEndpointLiteralLimit;
       readonly scriptKeys: readonly string[];
     }
   | undefined => {
+  const partials = analyzed.flatMap((result) =>
+    result.endpoint_literal_candidates === undefined
+      ? []
+      : [
+          {
+            scriptKey: result.script_key,
+            limit: result.endpoint_literal_candidates,
+          },
+        ],
+  );
   const first = partials[0];
   if (first === undefined) return undefined;
+  const admitted = analyzed.reduce(
+    (total, result) =>
+      total +
+      result.inferences.filter((inference) =>
+        isLiteralEndpointCandidate(inference),
+      ).length,
+    0,
+  );
   return {
     scriptKeys: partials.map(({ scriptKey }) => scriptKey),
     limit: {
       ...first.limit,
-      admitted_count: partials.reduce(
-        (total, entry) => total + entry.limit.admitted_count,
+      admitted_count: admitted,
+      omitted_by_count: partials.reduce(
+        (total, entry) => total + entry.limit.omitted_by_count,
+        0,
+      ),
+      omitted_by_count_exact: partials.every(
+        (entry) => entry.limit.omitted_by_count_exact,
+      ),
+      omitted_by_result_budget: partials.reduce(
+        (total, entry) => total + entry.limit.omitted_by_result_budget,
         0,
       ),
       omitted_count: partials.reduce(

@@ -2,12 +2,15 @@ import { expect, it, vi } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 import * as javascriptSemanticTraversal from "./javascript/javascriptSemanticTraversal.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
+import { jsonValueByteLength } from "./jsonValueByteLength.js";
+import type { JsonValue } from "./jsonValue.js";
 import {
   DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
   WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
   WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
+  retainLiteralCandidatesWithinResultBudget,
   webBundleEndpointLiteralLimit,
 } from "./webBundleEndpointLiteralBudget.js";
 
@@ -155,6 +158,9 @@ fetch("/api/kept");`;
     code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
     setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
     admitted_count: 2,
+    omitted_by_count: 1,
+    omitted_by_count_exact: false,
+    omitted_by_result_budget: 0,
     omitted_count: 1,
     maximum_count: 2,
     source: "setting",
@@ -193,6 +199,8 @@ it("records a runtime ceiling on the same structured limit", () => {
     code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
     setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
     admitted_count: 1,
+    omitted_by_count: 1,
+    omitted_by_result_budget: 0,
     omitted_count: 1,
     maximum_count: 1,
     source: "runtime",
@@ -310,6 +318,8 @@ fetch("/api/kept");`;
   expect(result.endpoint_literal_candidates).toMatchObject({
     code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
     admitted_count: 1,
+    omitted_by_count: 0,
+    omitted_by_result_budget: 1,
     omitted_count: 1,
     maximum_count: 16,
     update_mode: "runtime",
@@ -337,6 +347,8 @@ it("marks the candidate ceiling maximal when it is already at the setting maximu
     maximum_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     maximum_setting_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
     admitted_count: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    omitted_by_count: 1,
+    omitted_by_result_budget: 0,
     omitted_count: 1,
     ceiling: "maximal",
     update_mode: "runtime",
@@ -344,8 +356,173 @@ it("marks the candidate ceiling maximal when it is already at the setting maximu
   });
   expect(adjustable).toMatchObject({
     maximum_count: 2,
+    omitted_by_count: 1,
+    omitted_by_result_budget: 0,
     omitted_count: 1,
     ceiling: "adjustable",
     pending_restart: false,
   });
+});
+
+it("does not treat a proven Map.has key or an unbound open as a candidate", () => {
+  const proven = analyze(`const settings = new Map();
+settings.has("/api/map");
+settings.get("/api/get");
+wrap("/api/kept");`);
+  expect(
+    proven.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/kept"]);
+  const globalOpen = analyze(`open("/help");
+open?.("/help-optional");
+wrap("/api/kept");`);
+  expect(
+    globalOpen.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/kept"]);
+  const localOpen = analyze(`function open(path) { return path; }
+open("/api/local-open");`);
+  expect(
+    localOpen.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/local-open"]);
+});
+
+it("admits an earlier callee literal before a later call argument", () => {
+  const result = analyzeWebBundleFixture(
+    createWebPageInspection([
+      {
+        source: `(wrap("/api/first"), handler)("/api/later");`,
+        scriptKey: `scr_${"c".repeat(64)}`,
+        url: "https://app.example.test/app.js",
+        origin: "https://app.example.test",
+        cdpHash: "hash",
+      },
+    ]),
+    undefined,
+    { maximumCount: 1, source: "setting" },
+  );
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/first"]);
+});
+
+it("counts admitted literals from scripts that stayed under the ceiling", () => {
+  const script = (
+    source: string,
+    key: string,
+  ): Parameters<typeof createWebPageInspection>[0][number] => ({
+    source,
+    scriptKey: `scr_${key}`,
+    url: "https://app.example.test/app.js",
+    origin: "https://app.example.test",
+    cdpHash: "hash",
+  });
+  const result = analyzeWebBundleFixture(
+    createWebPageInspection([
+      script(`const routes = ["/api/one"];`, "a".repeat(64)),
+      script(`const routes = ["/api/two", "/api/three"];`, "b".repeat(64)),
+    ]),
+    undefined,
+    { maximumCount: 1, source: "setting" },
+  );
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/one", "/api/two"]);
+  expect(result.endpoint_literal_candidates).toMatchObject({
+    admitted_count: 2,
+    omitted_by_count: 1,
+    omitted_by_result_budget: 0,
+    omitted_count: 1,
+  });
+});
+
+it("fits literals by cumulative bytes and keeps byte drops out of the count", () => {
+  const stable = { status: "analyzed", script_key: "s" };
+  const admission = { maximumCount: 8, source: "runtime" as const };
+  const literal = (value: string) => ({
+    kind: "endpoint_candidate" as const,
+    value,
+    confidence: "low" as const,
+    basis: [
+      {
+        detector: "literal:path-shaped",
+        script_key: "s",
+        artifact_sha256: "aa",
+        line: 1,
+        column: 0,
+      },
+    ],
+  });
+  const other = (value: string) => ({
+    kind: "vendor_fingerprint" as const,
+    value,
+    confidence: "low" as const,
+    basis: [
+      {
+        detector: "vendor",
+        script_key: "s",
+        artifact_sha256: "aa",
+        line: 1,
+        column: 0,
+      },
+    ],
+  });
+  for (const [budget, records, omittedByCount] of [
+    [4_000, [literal("/a"), literal(`/${"b".repeat(3_000)}`)], 0],
+    [4_000, [literal("/a"), other("x".repeat(3_500))], 0],
+    [4_000, [literal("/a"), literal("/b")], 1],
+  ] as const) {
+    const fitted = retainLiteralCandidatesWithinResultBudget(
+      stable,
+      records,
+      admission,
+      omittedByCount,
+      true,
+      budget,
+    );
+    const limit = webBundleEndpointLiteralLimit(
+      admission,
+      fitted.admittedCount,
+      fitted.omittedByCount,
+      fitted.omittedByResultBudget,
+      fitted.omittedByCountExact,
+    );
+    const serialized = {
+      ...stable,
+      inferences: fitted.inferences,
+      ...(limit === undefined ? {} : { endpoint_literal_candidates: limit }),
+    };
+    const literals = records.filter(
+      (record) => record.kind === "endpoint_candidate",
+    );
+    expect(fitted.omittedByCount).toBe(omittedByCount);
+    expect(fitted.omittedByResultBudget).toBe(
+      literals.length - fitted.admittedCount,
+    );
+    expect(
+      fitted.inferences
+        .filter((record) => record.kind !== "endpoint_candidate")
+        .map((record) => record.value),
+    ).toEqual(
+      records
+        .filter((record) => record.kind !== "endpoint_candidate")
+        .map((record) => record.value),
+    );
+    const withinBudget =
+      jsonValueByteLength(serialized as unknown as JsonValue) <= budget;
+    const mandatoryOverflow =
+      fitted.admittedCount === 0 &&
+      records.some((record) => record.kind !== "endpoint_candidate");
+    expect(withinBudget || mandatoryOverflow).toBe(true);
+    if (fitted.omittedByResultBudget > 0 && omittedByCount === 0)
+      expect(limit?.omitted_by_count).toBe(0);
+  }
 });

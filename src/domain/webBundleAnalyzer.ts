@@ -46,20 +46,24 @@ export const analyzeCapturedWebScript = (
       ? {
           inferences: accumulator.inferences,
           admittedCount: accumulator.endpointLiteralAdmitted,
-          omittedCount: accumulator.endpointLiteralOmitted,
+          omittedByCount: accumulator.endpointLiteralOmitted,
+          omittedByCountExact: accumulator.endpointLiteralOmittedExact,
+          omittedByResultBudget: 0,
         }
       : retainLiteralCandidatesWithinResultBudget(
           stableFacts as unknown as JsonValue,
           accumulator.inferences,
           accumulator.endpointLiterals,
-          accumulator.endpointLiteralAdmitted,
           accumulator.endpointLiteralOmitted,
+          accumulator.endpointLiteralOmittedExact,
           resultBudgetBytes,
         );
   const endpointLiteralCandidates = webBundleEndpointLiteralLimit(
     accumulator.endpointLiterals,
     fitted.admittedCount,
-    fitted.omittedCount,
+    fitted.omittedByCount,
+    fitted.omittedByResultBudget,
+    fitted.omittedByCountExact,
   );
   return webBundleScriptAnalysisSchema.parse({
     ...stableFacts,

@@ -349,6 +349,8 @@ it("applies the literal-candidate ceiling sent with that script", async () => {
       maximum_count: 1,
       source: "runtime",
       admitted_count: 1,
+      omitted_by_count: 1,
+      omitted_by_result_budget: 0,
       omitted_count: 1,
       update_mode: "runtime",
       pending_restart: false,

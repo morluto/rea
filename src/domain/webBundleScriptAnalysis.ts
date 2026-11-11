@@ -14,6 +14,9 @@ const endpointLiteralCandidatesSchema = z.strictObject({
   code: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_CODE),
   setting: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID),
   admitted_count: z.number().int().nonnegative(),
+  omitted_by_count: z.number().int().nonnegative(),
+  omitted_by_count_exact: z.boolean(),
+  omitted_by_result_budget: z.number().int().nonnegative(),
   omitted_count: z.number().int().positive(),
   maximum_count: z
     .number()

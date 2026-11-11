@@ -39,6 +39,12 @@ export interface WebBundleEndpointLiteralLimit {
   readonly code: typeof WEB_BUNDLE_ENDPOINT_LITERAL_CODE;
   readonly setting: typeof WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID;
   readonly admitted_count: number;
+  /** Unique count-ceiling omissions when `omitted_by_count_exact` is true. */
+  readonly omitted_by_count: number;
+  readonly omitted_by_count_exact: boolean;
+  /** Literals dropped because the serialized result would exceed its budget. */
+  readonly omitted_by_result_budget: number;
+  /** Sum of the two omission counts. Positive whenever this object exists. */
   readonly omitted_count: number;
   readonly maximum_count: number;
   readonly source: "default" | "setting" | "runtime";
@@ -54,15 +60,21 @@ export interface WebBundleEndpointLiteralLimit {
 export const webBundleEndpointLiteralLimit = (
   admission: WebBundleEndpointLiteralAdmission,
   admittedCount: number,
-  omittedCount: number,
-): WebBundleEndpointLiteralLimit | undefined =>
-  omittedCount === 0
+  omittedByCount: number,
+  omittedByResultBudget = 0,
+  omittedByCountExact = true,
+): WebBundleEndpointLiteralLimit | undefined => {
+  const omittedCount = omittedByCount + omittedByResultBudget;
+  return omittedCount === 0
     ? undefined
     : {
         coverage: "partial",
         code: WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
         setting: WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
         admitted_count: admittedCount,
+        omitted_by_count: omittedByCount,
+        omitted_by_count_exact: omittedByCountExact,
+        omitted_by_result_budget: omittedByResultBudget,
         omitted_count: omittedCount,
         maximum_count: admission.maximumCount,
         source: admission.source,
@@ -77,6 +89,7 @@ export const webBundleEndpointLiteralLimit = (
             ? "maximal"
             : "adjustable",
       };
+};
 
 /** Name the effective ceiling, its source, the allowed range, and the runtime update. */
 export const webBundleEndpointLiteralLimitMessage = (
@@ -85,11 +98,18 @@ export const webBundleEndpointLiteralLimitMessage = (
   [
     `The effective ${limit.setting} value is ${String(limit.maximum_count)} candidates (source ${limit.source}; default ${String(limit.default_count)}, floor ${String(limit.floor_count)}, maximum ${String(limit.maximum_setting_count)}).`,
     `Retained ${String(limit.admitted_count)} literal endpoint candidates and omitted ${String(limit.omitted_count)} further unique literals.`,
-    limit.ceiling === "maximal"
-      ? `The ${limit.setting} allowance is already the maximum of ${String(limit.maximum_setting_count)}. No accepted value reveals the omitted literals. Use the retained candidates and the captured script.`
-      : `On MCP, call update_analysis_settings with setting ${limit.setting}, action set, and a value from ${String(limit.floor_count)} to ${String(limit.maximum_setting_count)}, then retry the original request. It applies to the next analysis without restarting REA. For CLI or future REA processes, set ${WEB_BUNDLE_ENDPOINT_LITERAL_SETTING} in the launch environment.`,
+    limit.omitted_by_count > 0 && limit.ceiling === "maximal"
+      ? `The ${limit.setting} allowance is already the maximum of ${String(limit.maximum_setting_count)}. No accepted value reveals the count-omitted literals. Use the retained candidates and the captured script.`
+      : limit.omitted_by_count > 0
+        ? `On MCP, call update_analysis_settings with setting ${limit.setting}, action set, and a value from ${String(limit.floor_count)} to ${String(limit.maximum_setting_count)}, then retry the original request. It applies to the next analysis without restarting REA. For CLI or future REA processes, set ${WEB_BUNDLE_ENDPOINT_LITERAL_SETTING} in the launch environment.`
+        : "Raising the candidate count does not recover literals omitted for the result budget.",
+    limit.omitted_by_result_budget > 0
+      ? `Omitted ${String(limit.omitted_by_result_budget)} literals because the serialized result would exceed its byte budget.`
+      : "",
     "This setting does not raise the worker result budget.",
-  ].join(" ");
+  ]
+    .filter((part) => part.length > 0)
+    .join(" ");
 
 interface LiteralCandidateRecord {
   readonly kind: string;
@@ -107,67 +127,104 @@ export const retainLiteralCandidatesWithinResultBudget = <
   stableFacts: JsonValue,
   inferences: readonly T[],
   admission: WebBundleEndpointLiteralAdmission,
-  admittedCount: number,
-  omittedCount: number,
+  omittedByCount: number,
+  omittedByCountExact: boolean,
   resultBudgetBytes: number,
 ): {
   readonly inferences: T[];
   readonly admittedCount: number;
-  readonly omittedCount: number;
+  readonly omittedByCount: number;
+  readonly omittedByCountExact: boolean;
+  readonly omittedByResultBudget: number;
 } => {
-  const selected: T[] = [];
-  let dropped = 0;
-  for (const inference of inferences) {
-    if (!isLiteralEndpointCandidate(inference)) {
-      selected.push(inference);
-      continue;
-    }
-    const trial = {
-      ...jsonObject(stableFacts),
-      inferences: [...selected, inference],
-    };
-    if (serializedBytes(trial, resultBudgetBytes) <= resultBudgetBytes)
-      selected.push(inference);
-    else dropped += 1;
-  }
-  if (dropped === 0)
-    return { inferences: [...inferences], admittedCount, omittedCount };
-
-  const literalCount = (items: readonly T[]): number =>
-    items.filter((item) => isLiteralEndpointCandidate(item)).length;
-  let kept = selected;
-  while (true) {
-    const droppedNow = literalCount(inferences) - literalCount(kept);
+  const facts = jsonObject(stableFacts);
+  const measured = inferences.map((item) => ({
+    item,
+    literal: isLiteralEndpointCandidate(item),
+    bytes: jsonValueByteLength(item as unknown as JsonValue, resultBudgetBytes),
+  }));
+  const base = jsonValueByteLength(
+    { ...facts, inferences: [] },
+    resultBudgetBytes,
+  );
+  const selected: typeof measured = [];
+  let payload = 0;
+  let byteDropped = 0;
+  const recount = (): void => {
+    payload = selected.reduce(
+      (sum, slot, index) => sum + slot.bytes + (index === 0 ? 0 : 1),
+      0,
+    );
+  };
+  const admitted = (): number =>
+    selected.reduce((count, slot) => count + (slot.literal ? 1 : 0), 0);
+  const metadataBytes = (): number => {
     const limit = webBundleEndpointLiteralLimit(
       admission,
-      literalCount(kept),
-      omittedCount + droppedNow,
+      admitted(),
+      omittedByCount,
+      byteDropped,
+      omittedByCountExact,
     );
-    const measured = serializedBytes(
+    if (limit === undefined) return 0;
+    return (
+      jsonValueByteLength("endpoint_literal_candidates") +
+      jsonValueByteLength(limit as unknown as JsonValue) +
+      2
+    );
+  };
+  const estimated = (): number => base + payload + metadataBytes();
+  const dropLastLiteral = (): boolean => {
+    const index = selected.findLastIndex((slot) => slot.literal);
+    if (index < 0) return false;
+    selected.splice(index, 1);
+    byteDropped += 1;
+    recount();
+    return true;
+  };
+  for (const slot of measured) {
+    selected.push(slot);
+    recount();
+    if (!slot.literal) {
+      while (estimated() > resultBudgetBytes && dropLastLiteral());
+      continue;
+    }
+    if (estimated() > resultBudgetBytes) {
+      selected.pop();
+      recount();
+      byteDropped += 1;
+      while (estimated() > resultBudgetBytes && dropLastLiteral());
+    }
+  }
+  // One exact check of the object the caller serializes. Trim literals if the
+  // incremental estimate missed a comma or key.
+  let checks = 0;
+  while (checks <= selected.length) {
+    const limit = webBundleEndpointLiteralLimit(
+      admission,
+      admitted(),
+      omittedByCount,
+      byteDropped,
+      omittedByCountExact,
+    );
+    const actual = jsonValueByteLength(
       {
-        ...jsonObject(stableFacts),
-        inferences: kept,
+        ...facts,
+        inferences: selected.map((slot) => slot.item),
         ...(limit === undefined ? {} : { endpoint_literal_candidates: limit }),
-      },
+      } as unknown as JsonValue,
       resultBudgetBytes,
     );
-    if (measured <= resultBudgetBytes || literalCount(kept) === 0)
-      return {
-        inferences: kept,
-        admittedCount: literalCount(kept),
-        omittedCount: omittedCount + droppedNow,
-      };
-    const index = kept.findLastIndex((item) =>
-      isLiteralEndpointCandidate(item),
-    );
-    if (index < 0)
-      return {
-        inferences: kept,
-        admittedCount: 0,
-        omittedCount: omittedCount + droppedNow,
-      };
-    kept = kept.filter((_, itemIndex) => itemIndex !== index);
+    if (actual <= resultBudgetBytes || !dropLastLiteral()) break;
+    checks += 1;
   }
+  return {
+    inferences: selected.map((slot) => slot.item),
+    admittedCount: admitted(),
+    omittedByCount,
+    omittedByCountExact,
+    omittedByResultBudget: byteDropped,
+  };
 };
 
 const jsonObject = (value: JsonValue): { readonly [key: string]: JsonValue } =>

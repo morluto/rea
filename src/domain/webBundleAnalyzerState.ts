@@ -30,6 +30,7 @@ export interface AnalysisAccumulator {
   readonly endpointLiterals: WebBundleEndpointLiteralAdmission;
   endpointLiteralAdmitted: number;
   endpointLiteralOmitted: number;
+  endpointLiteralOmittedExact: boolean;
 }
 
 export const createWebBundleAnalysisAccumulator = (
@@ -49,6 +50,7 @@ export const createWebBundleAnalysisAccumulator = (
   endpointLiterals,
   endpointLiteralAdmitted: 0,
   endpointLiteralOmitted: 0,
+  endpointLiteralOmittedExact: true,
 });
 
 export const isIncludedScript = (

@@ -19,6 +19,7 @@ import * as javascriptSemanticTraversal from "./javascript/javascriptSemanticTra
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
@@ -113,6 +114,15 @@ export const analyzeScript = (
       accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
       inspectEndpointLiterals(script, node, parent, readAncestors, accumulator);
+      inspectWrapperLiteralArgument(
+        script,
+        node,
+        parent,
+        accumulator,
+        openReceiverFacts,
+        isMapLookup,
+        index.bindings,
+      );
       inspectNode(
         script,
         node,
@@ -270,27 +280,55 @@ const inspectCall = (
       node,
       accumulator,
     });
-  // Fill the wrapper-call gap only after the existing receiver-aware rules.
-  // Never resurrect proven Map lookups, module edges or browsing-context opens.
-  else if (
-    !mapLookup &&
-    !t.isNewExpression(node) &&
-    !requireCall &&
-    !workerImportCall &&
-    openReceiverFacts.get(node.start ?? -1) !== "window"
-  ) {
-    const literal = webBundleEndpointLiteral(node.arguments[0]);
-    if (literal !== undefined)
-      addEndpointCandidate(
-        script,
-        node.arguments[0] ?? node,
-        literal.detector,
-        literal.value,
-        accumulator,
-      );
-  }
   if (isWebMcpRegistrationCallee(node.callee))
     addWebMcpDeclaration(script, node, accumulator);
+};
+
+/** Record a wrapper argument when traversal enters it, after its callee. */
+const inspectWrapperLiteralArgument = (
+  script: IncludedScript,
+  node: t.Node,
+  parent: t.Node | null,
+  accumulator: AnalysisAccumulator,
+  openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+  isMapLookup: (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ) => boolean,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  if (
+    parent === null ||
+    (!t.isCallExpression(parent) && !t.isOptionalCallExpression(parent)) ||
+    parent.arguments[0] !== node
+  )
+    return;
+  const name = calleeName(parent.callee);
+  if (
+    t.isNewExpression(parent) ||
+    name === "require" ||
+    name.endsWith(".require") ||
+    name === "importScripts" ||
+    name.endsWith(".importScripts") ||
+    isMapLookup(parent) ||
+    openReceiverFacts.get(parent.start ?? -1) === "window" ||
+    isUnmodifiedGlobalReference(parent.callee, bindings, "open") ||
+    endpointArgument(
+      name,
+      parent.arguments,
+      parent.callee,
+      openReceiverFacts.get(parent.start ?? -1),
+    ) !== undefined
+  )
+    return;
+  const literal = webBundleEndpointLiteral(node);
+  if (literal === undefined) return;
+  addEndpointCandidate(
+    script,
+    node,
+    literal.detector,
+    literal.value,
+    accumulator,
+  );
 };
 
 const inspectEndpointLiterals = (
@@ -404,8 +442,8 @@ const addEndpointCandidate = (
     accumulator.endpointLiteralAdmitted >=
       accumulator.endpointLiterals.maximumCount
   ) {
-    accumulator.seen.add(key);
     accumulator.endpointLiteralOmitted += 1;
+    accumulator.endpointLiteralOmittedExact = false;
     return;
   }
   // This is a per-script candidate inventory, not a callsite list. Keep the
