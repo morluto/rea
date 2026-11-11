@@ -276,9 +276,10 @@ await withVerifierCleanup(async () => {
   report.cases.push(await checkLostBlock());
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }, [
-  () => commands.close(),
-  () =>
-    workspace === undefined
-      ? undefined
-      : rm(workspace, { recursive: true, force: true }),
+  // Workspace files may still belong to an unresolved command resource.
+  async () => {
+    await commands.close();
+    if (workspace !== undefined)
+      await rm(workspace, { recursive: true, force: true });
+  },
 ]);
