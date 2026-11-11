@@ -1,3 +1,8 @@
+import {
+  resolveMappedFileOffset,
+  type FileMapping,
+  type ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
 
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
@@ -40,22 +45,9 @@ export class BinaryStringReadLimitFailure extends BinaryFormatFailure {
     // allowing coverage-aware consumers to distinguish a limit from corruption.
     super(
       "malformed",
-      `String is unterminated or longer than ${String(maximumBytes)} bytes`,
+      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
     );
   }
-}
-
-/** One file-backed virtual range; addresses stay exact until mapped to file offsets. */
-export interface FileMapping {
-  readonly address: bigint;
-  readonly offset: number;
-  readonly size: number;
-}
-
-/** Declared zero-initialized virtual memory with no corresponding file bytes. */
-export interface ZeroFillMapping {
-  readonly address: bigint;
-  readonly size: bigint;
 }
 
 /** Native loader region facts; language-specific fallback selection belongs to consumers. */
@@ -85,6 +77,7 @@ export type ImageSection = {
       /** Null when the ELF name table is unavailable or this name is unreadable. */
       readonly name: string | null;
       readonly type: number;
+      readonly flags: bigint;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -105,6 +98,7 @@ export type ImageSection = {
       readonly name: string;
       readonly section_name: string;
       readonly type: number;
+      readonly flags: number;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -112,6 +106,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Declared `reloff` and `nreloc`, which only object files populate. */
+      readonly relocations: { readonly offset: number; readonly count: number };
     }
 );
 
@@ -260,71 +256,19 @@ export const declaredFileRange = (
   };
 };
 
-/** Map a physically contiguous virtual span across consistent adjacent ranges. */
+/** Translate the domain mapping result into native parser failure classes. */
 export const mappedFileOffset = (
   mappings: readonly FileMapping[],
   address: bigint,
   size: number,
   zeroFills: readonly ZeroFillMapping[] = [],
 ): number => {
-  if (!Number.isSafeInteger(size) || size < 0)
-    throw new BinaryFormatFailure("malformed", "Virtual span size is invalid");
-  const end = address + BigInt(size);
-  let found: number | undefined;
-  const covered: { start: bigint; end: bigint }[] = [];
-  let whollyCovered = size === 0;
-  for (const mapping of mappings) {
-    const mappingEnd = mapping.address + BigInt(mapping.size);
-    const start = address > mapping.address ? address : mapping.address;
-    const overlapEnd = end < mappingEnd ? end : mappingEnd;
-    if (
-      size === 0
-        ? address < mapping.address || address > mappingEnd
-        : start >= overlapEnd
-    )
-      continue;
-    const origin = mapping.offset + Number(address - mapping.address);
-    if (found !== undefined && found !== origin)
-      throw new BinaryMappingFailure(
-        "ambiguous",
-        "Virtual span has ambiguous or noncontiguous file mappings",
-      );
-    found = origin;
-    if (start === address && overlapEnd === end) whollyCovered = true;
-    else if (!whollyCovered) covered.push({ start, end: overlapEnd });
-  }
-  if (found === undefined)
-    throw new BinaryMappingFailure(
-      "unmapped",
-      "Virtual address or string range is not file mapped",
-    );
-  if (!whollyCovered) {
-    covered.sort((left, right) =>
-      left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
-    );
-    let cursor = address;
-    for (const span of covered) {
-      if (span.start > cursor)
-        throw new BinaryMappingFailure(
-          "unmapped",
-          "Virtual address or string range is not file mapped",
-        );
-      if (span.end > cursor) cursor = span.end;
-    }
-    if (cursor < end)
-      throw new BinaryMappingFailure(
-        "unmapped",
-        "Virtual address or string range is not file mapped",
-      );
-  }
-  for (const zeroFill of zeroFills) {
-    if (spansOverlap(address, BigInt(size), zeroFill.address, zeroFill.size))
-      throw new BinaryMappingFailure(
-        "ambiguous",
-        "Virtual address has ambiguous file and zero-fill mappings",
-      );
-  }
-  return found;
+  const mapped = resolveMappedFileOffset(mappings, address, size, zeroFills);
+  if (mapped.ok) return mapped.value;
+  const { reason, message } = mapped.error;
+  if (reason === "invalid-size")
+    throw new BinaryFormatFailure("malformed", message);
+  throw new BinaryMappingFailure(reason, message);
 };
 
 /** Index of the last sorted value at or below `value`, or -1. */

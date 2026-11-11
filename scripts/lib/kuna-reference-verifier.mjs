@@ -114,6 +114,46 @@ export const verifyKunaReferences = async ({
         );
       }
       assert.equal(trace.value.truncated, false);
+      const summary = await call("trace_feature", {
+        query: name,
+        detail: "summary",
+      });
+      assert.equal(
+        summary.value.parent_evidence_id,
+        trace.structured.evidence_id,
+      );
+      assert.equal(
+        summary.value.summary.references,
+        trace.value.references.length,
+      );
+      assert.equal(
+        summary.value.summary.unknowns,
+        trace.value.residual_unknowns.length,
+      );
+      for (const [collection, values] of [
+        ["matches", trace.value.matches],
+        ["references", trace.value.references],
+        ["unknowns", trace.value.residual_unknowns],
+      ]) {
+        const view = await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: trace.structured.evidence_id,
+          },
+          view: {
+            kind: "native-feature-trace",
+            collection,
+            offset: 0,
+            limit: 1,
+          },
+        });
+        assert.equal(view.value.coverage.total, values.length);
+        assert.deepEqual(
+          view.value.items.rows.map(({ value }) => value),
+          values.slice(0, 1),
+        );
+        assert.equal(view.value.items.collection, collection);
+      }
     }
     composed = {
       graph_ms: graph.ms,

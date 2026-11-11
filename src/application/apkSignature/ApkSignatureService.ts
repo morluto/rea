@@ -4,20 +4,17 @@ import {
   projectRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import { isAbsolute } from "node:path";
 
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ApkSignaturePort } from "./ApkSignaturePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   apkSignatureMatchesSubject,
   apkSignatureResultSchema,
 } from "../../domain/apkSignature/apkSignatureReport.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -48,16 +45,6 @@ export class ApkSignatureService {
       options?.signal,
     );
     if (!input.ok) return input;
-    if (!isAbsolute(input.value.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     const { detail, view, ...parameters } = input.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
@@ -80,17 +67,12 @@ export class ApkSignatureService {
         ),
       );
     const completed = completeProviderEvidence(
-      createEvidence(execution.subject, execution.provider, {
-        operation: OPERATION,
-        parameters: { path: input.value.path },
-        result: report.data,
-        ...(execution.rawResult === null
-          ? {}
-          : { rawResult: execution.rawResult }),
-        confidence: "observed",
-        locations: execution.locations,
-        limitations: execution.limitations,
-      }),
+      createAnalysisExecutionEvidence(
+        OPERATION,
+        { path: input.value.path },
+        { ...execution, result: report.data },
+        "observed",
+      ),
       options?.signal,
     );
     if (!completed.ok) return completed;

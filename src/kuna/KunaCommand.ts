@@ -4,10 +4,14 @@ import { stat } from "node:fs/promises";
 import { Transform, type Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
+  AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
@@ -269,6 +273,20 @@ export const runKunaCommand = async (
           : { launcher: request.launcher }),
       },
     );
+    // Buffered text is the source for inventories, xrefs and pseudocode.
+    // Replacement decoding cannot establish the provider's original text.
+    if (request.stdout === undefined && snapshot.stdout.invalidUtf8 === true)
+      return {
+        kind: "failed",
+        error: new AnalysisOutputError(
+          request.operation,
+          "Kuna stdout is not valid UTF-8",
+          {
+            diagnostics: { stdout_invalid_utf8: true },
+            capturedOutput: capturedKunaOutput(snapshot),
+          },
+        ),
+      };
     return { kind: "ok", snapshot };
   } catch (cause: unknown) {
     return commandFailure(cause, request);
@@ -341,26 +359,30 @@ export const copyAndHash = async (
   };
 };
 
-/**
- * The same run takes as long again, so only a longer deadline helps. Only a
- * session that outlives this request can also read the later project export.
- */
-export const kunaTimeoutRecovery = (
-  setting: string,
-  subcommand: string,
-): {
-  readonly remediationAction: string;
-  readonly continuingCallerGuidance?: { readonly remediationAction: string };
-} => {
-  const remediationAction = `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.`;
-  return subcommand === "decompile"
-    ? {
-        remediationAction,
-        continuingCallerGuidance: {
-          remediationAction: `${remediationAction} Within a session, pseudocode is also read from the project export once it finishes.`,
-        },
-      }
-    : { remediationAction };
+/** Project a command's observed output without promoting diagnostic tails to complete text. */
+const capturedKunaOutput = (
+  snapshot: ProviderProcessSnapshot | null,
+  failureReason?: OwnedCommandFailure["reason"],
+): AnalysisCapturedOutput | undefined => {
+  if (snapshot === null) return undefined;
+  const text = snapshot.stdout.text;
+  let start = Math.max(0, text.length - 4096);
+  // Drop the whole leading character when the cap falls inside its pair.
+  if (start > 0 && (text.codePointAt(start - 1) ?? 0) > 0xffff) start += 1;
+  return {
+    // An overflowing document is cut off; its tail explains nothing.
+    // Other evidence-sized output keeps only a bounded diagnostic tail.
+    stdout: failureReason === "output-limit" ? "" : text.slice(start),
+    stderr: snapshot.stderr.text,
+    truncated:
+      snapshot.diagnosticTruncated === true ||
+      snapshot.outputIncomplete === true ||
+      start > 0,
+    stdout_bytes: snapshot.stdout.observedBytes,
+    stderr_bytes: snapshot.stderr.observedBytes,
+    exit_code: snapshot.exitCode ?? null,
+    signal: snapshot.signal ?? null,
+  };
 };
 
 /** Map an owned-command failure to its typed error, keeping unproven cleanup owned. */
@@ -378,26 +400,7 @@ const commandFailure = (
         userMessage: `Cannot run ${request.installation.executable}: ${message(cause)}`,
       }),
     };
-  const snapshot = cause.snapshot;
-  const capturedOutput =
-    snapshot === null
-      ? undefined
-      : {
-          // Output can be evidence-sized, not diagnostic-sized; keep only its
-          // tail. Output that overflowed its buffer is a cut-off document
-          // whose tail explains nothing, so none of it is kept.
-          stdout:
-            cause.reason === "output-limit"
-              ? ""
-              : snapshot.stdout.text.slice(-4096),
-          stderr: snapshot.stderr.text,
-          truncated:
-            snapshot.diagnosticTruncated === true ||
-            snapshot.outputIncomplete === true ||
-            snapshot.stdout.text.length > 4096,
-          exit_code: snapshot.exitCode ?? null,
-          signal: snapshot.signal ?? null,
-        };
+  const capturedOutput = capturedKunaOutput(cause.snapshot, cause.reason);
   const details = {
     cause,
     ...(capturedOutput === undefined ? {} : { capturedOutput }),
@@ -413,7 +416,7 @@ const commandFailure = (
     primary = new AnalysisTimeoutError(operation, ms, {
       ...details,
       userMessage: `kuna ${subcommand} did not finish within ${setting} (${String(ms)} ms).`,
-      ...kunaTimeoutRecovery(setting, subcommand),
+      remediationAction: `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.`,
     });
   }
   // The same input overflows the same fixed buffer; waiting cannot help.

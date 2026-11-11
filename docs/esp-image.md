@@ -23,7 +23,7 @@ and consider setting both `REA_MCP_INPUT_SCHEMA_PROFILE` and
 advertised output schema to 4,096 bytes by relaxing nested client validation;
 REA still validates complete results against the canonical contracts. Pair
 this with retained summaries and selected inventory views to limit the context
-needed for one question. See [MCP contracts](mcp-contracts.md) for the profiles
+needed for one question. See [MCP contracts](reference/mcp-contracts.md) for the profiles
 and their client compatibility tradeoffs.
 
 The layout facts follow ESP-IDF v6.1 (`esp_app_format.h`, `esp_app_desc.h`,

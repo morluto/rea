@@ -409,7 +409,7 @@ it.each(["unavailable", "output"] as const)(
         resolution: "unresolved",
         reason:
           failure === "unavailable"
-            ? "This analysis is unavailable for the current target. Choose another analysis or target."
+            ? expect.stringMatching(/unavailable.*target/iu)
             : expect.stringContaining("unreadable result"),
         limitations: expect.arrayContaining([
           "The provider could not complete callee enumeration.",

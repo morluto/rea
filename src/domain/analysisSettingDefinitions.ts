@@ -7,6 +7,13 @@ import type {
 import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_LISTING_BYTES,
+  MAXIMUM_ASAR_MAX_LISTING_BYTES,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+  MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+  MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB,
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   MAX_NODE_TIMER_DELAY_MS,
@@ -37,8 +44,9 @@ interface SettingDefinition {
   readonly defaultValue: number | null;
   readonly minimum: number;
   readonly maximum: number;
-  readonly unit: "bytes" | "ms" | "seconds" | "MiB";
+  readonly unit: "bytes" | "ms" | "seconds" | "MiB" | "count";
   readonly appliesAt: "next_operation" | "next_worker" | "next_startup";
+  readonly updateMode: "runtime" | "restart";
   readonly provider: string;
   readonly relatedProviders?: readonly string[];
   readonly operations: readonly string[];
@@ -50,9 +58,100 @@ const timer = {
   unit: "ms",
   appliesAt: "next_operation",
 } as const;
+
+/** Operations that invoke Ghidra's decompiler directly or through a workflow. */
+const ghidraDecompileOperations = [
+  "procedure_pseudo_code",
+  "analyze_function",
+  "inspect_native_api",
+  "decompile_all",
+  "trace_native_values",
+] as const;
+
 /** Metadata aggregates existing owner definitions; no environment mutation or engine discovery. */
 export const ANALYSIS_SETTINGS = {
+  "ghidra.decompile_max_payload_mib": {
+    updateMode: "runtime",
+    environment: "REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB",
+    defaultValue: null,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB,
+    unit: "MiB",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: ghidraDecompileOperations,
+  },
+  "asar.max_listing_bytes": {
+    updateMode: "runtime",
+    environment: "REA_ASAR_MAX_LISTING_BYTES",
+    defaultValue: DEFAULT_ASAR_MAX_LISTING_BYTES,
+    minimum: 1,
+    maximum: MAXIMUM_ASAR_MAX_LISTING_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    relatedProviders: [
+      "rea-javascript-application",
+      "rea-cdp-electron",
+      "rea-v8-inspector",
+    ],
+    operations: [
+      "open_binary",
+      "inspect_artifact",
+      "inventory_artifact",
+      "extract_artifact",
+      "analyze_javascript_application",
+      "inspect_electron_page",
+      "observe_javascript_runtime",
+    ],
+  },
+  "ghidra.value_flow_max_operations": {
+    updateMode: "runtime",
+    environment: "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
+    defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: [
+      "analyze_function",
+      "inspect_native_api",
+      "trace_native_values",
+    ],
+  },
+  "ghidra.value_flow_max_inputs_per_operation": {
+    updateMode: "runtime",
+    environment: "REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION",
+    defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: [
+      "analyze_function",
+      "inspect_native_api",
+      "trace_native_values",
+    ],
+  },
+  "ghidra.value_flow_max_edges": {
+    updateMode: "runtime",
+    environment: "REA_GHIDRA_VALUE_FLOW_MAX_EDGES",
+    defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+    minimum: 1,
+    maximum: MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "ghidra",
+    operations: [
+      "analyze_function",
+      "inspect_native_api",
+      "trace_native_values",
+    ],
+  },
   "asar.max_header_bytes": {
+    updateMode: "runtime",
     environment: "REA_ASAR_MAX_HEADER_BYTES",
     defaultValue: DEFAULT_ASAR_MAX_HEADER_BYTES,
     minimum: 1,
@@ -76,6 +175,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "ghidra.startup_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
     defaultValue: DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
@@ -96,6 +196,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "hopper.startup_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_HOPPER_STARTUP_TIMEOUT_MS",
     defaultValue: DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -116,6 +217,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "ghidra.decompile_timeout_seconds": {
+    updateMode: "runtime",
     environment: "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
     defaultValue: null,
     minimum: 1,
@@ -123,14 +225,10 @@ export const ANALYSIS_SETTINGS = {
     unit: "seconds",
     appliesAt: "next_operation",
     provider: "ghidra",
-    operations: [
-      "procedure_pseudo_code",
-      "analyze_function",
-      "decompile_all",
-      "trace_native_values",
-    ],
+    operations: ghidraDecompileOperations,
   },
   "jadx.operation_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_JADX_OPERATION_TIMEOUT_MS",
     defaultValue: DEFAULT_JADX_OPERATION_TIMEOUT_MS,
@@ -144,6 +242,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "regex.matching_deadline_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_REGEX_MATCHING_DEADLINE_MS",
     defaultValue: DEFAULT_REGEX_MATCHING_DEADLINE_MS,
@@ -153,6 +252,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["search_strings", "search_procedures"],
   },
   "regex.worker_heap_request_mib": {
+    updateMode: "runtime",
     environment: "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
     defaultValue: DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB,
     minimum: MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -164,6 +264,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["search_strings", "search_procedures"],
   },
   "capture.decoder_old_generation_mib": {
+    updateMode: "runtime",
     environment: "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
     defaultValue: DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
     minimum: CAPTURE_DECODER_SEMI_SPACE_MIB,
@@ -174,6 +275,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["inspect_web_network_capture"],
   },
   "javascript.analysis_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     defaultValue: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
     provider: "rea-javascript-application",
@@ -181,6 +283,7 @@ export const ANALYSIS_SETTINGS = {
     parameter: "analysis_timeout_ms",
   },
   "javascript.max_heap_mb": {
+    updateMode: "runtime",
     defaultValue: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
     minimum: JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
     maximum: JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
@@ -191,6 +294,7 @@ export const ANALYSIS_SETTINGS = {
     parameter: "max_heap_mb",
   },
   "wasm.command_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     defaultValue: DEFAULT_WASM_COMMAND_TIMEOUT_MS,
     maximum: MAX_WASM_COMMAND_TIMEOUT_MS,
@@ -199,6 +303,7 @@ export const ANALYSIS_SETTINGS = {
     parameter: "command_timeout_ms",
   },
   "native.matching_representation_bytes": {
+    updateMode: "runtime",
     environment: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
     defaultValue: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
     minimum: 1,
@@ -223,8 +328,28 @@ export const analysisSettingValueSchema = (id: AnalysisSettingId) => {
     .int()
     .min(definition.minimum)
     .max(definition.maximum);
-  return id === "ghidra.decompile_timeout_seconds" ? number.nullable() : number;
+  return id === "ghidra.decompile_timeout_seconds" ||
+    id === "ghidra.decompile_max_payload_mib"
+    ? number.nullable()
+    : number;
 };
+/**
+ * Caller argument, then the accepted runtime override, then the built-in
+ * default. The third value is that default, not a launch-environment seed.
+ */
+export const selectedAnalysisSetting = (
+  request: number | undefined,
+  override: number | undefined,
+  fallback: number,
+): {
+  readonly value: number;
+  readonly source: "default" | "runtime" | "request";
+} => {
+  if (request !== undefined) return { value: request, source: "request" };
+  if (override !== undefined) return { value: override, source: "runtime" };
+  return { value: fallback, source: "default" };
+};
+
 /** Project one owner's accepted budget, including the explicit per-call precedence. */
 export const analysisSettingLimit = (
   setting: AnalysisSettingId,
@@ -242,7 +367,8 @@ export const analysisSettingLimit = (
     applies_at: definition.appliesAt,
     agent_editable: true,
     scope: "rea-runtime",
-    rea_restart_required: false,
+    update_mode: source === "request" ? "parameter" : definition.updateMode,
+    pending_restart: false,
     ...(definition.parameter === undefined
       ? {}
       : { parameter: definition.parameter }),

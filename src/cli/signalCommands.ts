@@ -15,8 +15,10 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField, cliDecimalShape } from "./options.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { producerLimitsOption } from "./producerLimitsOption.js";
 export const registerSignalCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -26,20 +28,27 @@ export const registerSignalCommands = (
     "decode" | "inspectDecoders" | "close"
   > = createSignalRecordingService(environment),
 ): void => {
+  const { producer_limits: discoveryLimits, ...discoveryShape } =
+    inspectSignalDecodersInputSchema.shape;
+  const { producer_limits: selectedLimits, ...selectedShape } =
+    signalRecordingOptionsSchema.shape;
   cli.command(CLI_COMMANDS.inspectSignalDecoders, {
     description: "Search installed sigrok decoders or selected decoder help",
     options: z
       .object({
-        ...inspectSignalDecodersInputSchema.shape,
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(Number.MAX_SAFE_INTEGER)
-          .optional()
-          .describe(
-            "Maximum matching decoders or help lines to return; defaults to 50",
-          ),
+        ...cliDecimalShape(discoveryShape),
+        producerLimits: producerLimitsOption(discoveryLimits.unwrap()),
+        limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER)
+            .optional()
+            .describe(
+              "Maximum matching decoders or help lines to return; defaults to 50",
+            ),
+        ),
         all: z
           .boolean()
           .default(false)
@@ -52,14 +61,26 @@ export const registerSignalCommands = (
             path: ["all"],
             message: "all and limit are mutually exclusive",
           });
+      })
+      .meta({
+        not: {
+          required: ["all", "limit"],
+          properties: { all: { const: true } },
+        },
       }),
-    run: ({ options: { all, ...options } }) =>
+    run: ({ options: { all, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectSignalDecoders, async () =>
           finishAnalysisCommand(
             () =>
               service.inspectDecoders(
-                { ...options, ...(all ? { limit: null } : {}) },
+                {
+                  ...options,
+                  ...(producerLimits === undefined
+                    ? {}
+                    : { producer_limits: producerLimits }),
+                  ...(all ? { limit: null } : {}),
+                },
                 { signal },
               ),
             service,
@@ -78,13 +99,16 @@ export const registerSignalCommands = (
     }),
     options: z
       .object({
-        ...signalRecordingOptionsSchema.shape,
-        line_limit: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("Returned output lines per page; default 50"),
+        ...cliDecimalShape(selectedShape),
+        producerLimits: producerLimitsOption(selectedLimits.unwrap()),
+        line_limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Returned output lines per page; default 50"),
+        ),
         all_lines: z
           .boolean()
           .default(false)
@@ -103,8 +127,14 @@ export const registerSignalCommands = (
       .refine(
         withinSignalRecordingSelectorBudget,
         signalRecordingSelectorBudgetIssue,
-      ),
-    run: ({ args, options: { all_lines, ...options } }) =>
+      )
+      .meta({
+        not: {
+          required: ["all_lines", "line_limit"],
+          properties: { all_lines: { const: true } },
+        },
+      }),
+    run: ({ args, options: { all_lines, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {
           return finishCliEvidenceCommand(
@@ -113,6 +143,9 @@ export const registerSignalCommands = (
               service.decode(
                 {
                   ...options,
+                  ...(producerLimits === undefined
+                    ? {}
+                    : { producer_limits: producerLimits }),
                   ...(all_lines ? { line_limit: null } : {}),
                   path: absoluteCallerPath(args.path),
                 },

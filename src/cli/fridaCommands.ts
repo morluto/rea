@@ -1,5 +1,7 @@
+import { fridaCapturePolicyInputSchema } from "../domain/fridaCapturePolicy.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type {
@@ -15,6 +17,7 @@ import { ok } from "../domain/result.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "../contracts/fridaToolContracts.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -48,12 +51,14 @@ export const registerFridaCommands = (
       .optional()
       .describe("Remote TLS certificate"),
     origin: z.string().min(1).optional().describe("Remote connection origin"),
-    keepaliveInterval: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe(FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION),
+    keepaliveInterval: cliDecimalField(
+      z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION),
+    ),
   });
   const remoteFrom = (
     options: z.infer<typeof remoteOptions>,
@@ -162,9 +167,7 @@ export const registerFridaCommands = (
           .string()
           .optional()
           .describe(`Inline JavaScript to load. ${exactlyOneScriptSource}`),
-        scriptFile: z
-          .string()
-          .min(1)
+        scriptFile: localPathStringSchema
           .optional()
           .describe(
             `Path to JavaScript source file. ${exactlyOneScriptSource}`,
@@ -173,13 +176,32 @@ export const registerFridaCommands = (
           .array(z.string())
           .optional()
           .describe("Arguments passed to a spawned target"),
-        durationMs: z
-          .number()
-          .int()
-          .min(0)
-          .max(60_000)
-          .default(1_000)
-          .describe("Instrumentation duration in milliseconds"),
+        captureSessionBytes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.session_bytes,
+        ).describe(
+          "Session retention bytes including encoded payloads; select before starting the experiment",
+        ),
+        captureMessageTextBytes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.message_text_bytes,
+        ).describe("Retained bytes per Frida error text field"),
+        captureMessageTypeBytes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.message_type_bytes,
+        ).describe("Retained bytes per Frida message type"),
+        captureJsonNodes: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.json_nodes,
+        ).describe("Retained JSON nodes per Frida payload"),
+        captureJsonDepth: cliDecimalField(
+          fridaCapturePolicyInputSchema.shape.json_depth,
+        ).describe("Retained JSON nesting depth per Frida payload"),
+        durationMs: cliDecimalField(
+          z
+            .number()
+            .int()
+            .min(0)
+            .max(60_000)
+            .default(1_000)
+            .describe("Instrumentation duration in milliseconds"),
+        ),
       })
       .refine(
         (options) =>
@@ -233,7 +255,7 @@ export const registerFridaCommands = (
               : { remote };
           const targetInput =
             args.mode === "attach"
-              ? /^[1-9][0-9]*$/u.test(args.target) &&
+              ? /^[0-9]+$/u.test(args.target) &&
                 Number.isSafeInteger(Number(args.target)) &&
                 Number(args.target) > 0
                 ? {
@@ -269,6 +291,39 @@ export const registerFridaCommands = (
               const result = await service.instrument(
                 {
                   ...targetInput,
+                  ...([
+                    options.captureSessionBytes,
+                    options.captureMessageTextBytes,
+                    options.captureMessageTypeBytes,
+                    options.captureJsonNodes,
+                    options.captureJsonDepth,
+                  ].every((value) => value === undefined)
+                    ? {}
+                    : {
+                        captureLimits: {
+                          ...(options.captureSessionBytes === undefined
+                            ? {}
+                            : { session_bytes: options.captureSessionBytes }),
+                          ...(options.captureMessageTextBytes === undefined
+                            ? {}
+                            : {
+                                message_text_bytes:
+                                  options.captureMessageTextBytes,
+                              }),
+                          ...(options.captureMessageTypeBytes === undefined
+                            ? {}
+                            : {
+                                message_type_bytes:
+                                  options.captureMessageTypeBytes,
+                              }),
+                          ...(options.captureJsonNodes === undefined
+                            ? {}
+                            : { json_nodes: options.captureJsonNodes }),
+                          ...(options.captureJsonDepth === undefined
+                            ? {}
+                            : { json_depth: options.captureJsonDepth }),
+                        },
+                      }),
                   source:
                     options.scriptFile === undefined
                       ? { sourceKind: "inline", source: options.script ?? "" }

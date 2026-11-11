@@ -22,7 +22,8 @@ export const debuggerAdmissionDiagnostics = (
   readonly minimum: number;
   readonly maximum: number;
   readonly unit: DebuggerAdmissionLimit["unit"];
-  readonly restart_required: true;
+  readonly update_mode: "restart";
+  readonly pending_restart: false;
 } => ({
   setting: admission.setting,
   effective_value: admission.value,
@@ -31,7 +32,8 @@ export const debuggerAdmissionDiagnostics = (
   minimum: admission.minimum,
   maximum: admission.maximum,
   unit: admission.unit,
-  restart_required: true,
+  update_mode: "restart",
+  pending_restart: false,
 });
 
 /** Name the setting, the effective value, its source, the range, and a restart. */

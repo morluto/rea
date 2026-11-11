@@ -1,3 +1,4 @@
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
@@ -6,7 +7,10 @@ import {
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -22,6 +26,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
@@ -53,9 +58,10 @@ export class PeResourcesProvider implements PeResourcesPort {
   }
 
   async inspect(input: InspectPeResourcesInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -76,7 +82,7 @@ export class PeResourcesProvider implements PeResourcesPort {
         );
       });
     } catch (cause) {
-      return err(peResourcesFailure(cause, input));
+      return err(peResourcesFailure(cause, input, snapshot));
     }
   }
 }
@@ -104,6 +110,14 @@ const peResourcesFailurePrimary = (
 ) => {
   const { cause, origin } = facts;
   const operation = "inspect_pe_resources";
+  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+    return new AnalysisUnsupportedTargetError(
+      operation,
+      input.path,
+      cause.message,
+      { cause },
+    );
+
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
@@ -205,7 +219,11 @@ const peResourcesFailurePrimary = (
   );
 };
 
-const peResourcesFailure = (cause: unknown, input: InspectPeResourcesInput) => {
+const peResourcesFailure = (
+  cause: unknown,
+  input: InspectPeResourcesInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = peResourcesFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
@@ -216,5 +234,6 @@ const peResourcesFailure = (cause: unknown, input: InspectPeResourcesInput) => {
     input.path,
     PE_RESOURCES_PROVIDER.id,
     "inspect_pe_resources",
+    snapshot,
   );
 };

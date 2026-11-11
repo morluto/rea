@@ -412,7 +412,6 @@ it("returns typed AnalysisResourceConstraintError when a single record exceeds 1
     }),
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected resource error");
   expect(result.error._tag).toBe("AnalysisResourceConstraintError");
   expect(result.error.message).toContain("byte budget");
@@ -492,7 +491,6 @@ it("rejects non-web-bundle parent operation with invalid_value", () => {
     }),
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failure");
   if (!(result.error instanceof AnalysisInputError)) throw result.error;
   expect(result.error.issues[0]!.message).toContain(

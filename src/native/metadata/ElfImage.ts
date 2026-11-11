@@ -1,13 +1,16 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
+import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
   type ElfDynamicSegment,
-  type FileMapping,
   type ImageSection,
   type LoadRegion,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { readElfDirectoryFromBuffer } from "./NativeSectionDirectory.js";
@@ -30,6 +33,8 @@ export const readElfImage = (
       dynamicSegments.push(program);
       continue;
     }
+    // PT_INTERP and GNU program headers are not load segments.
+    if (program.type !== 1) continue;
     const {
       flags,
       file_offset: fileOffset,
@@ -37,11 +42,12 @@ export const readElfImage = (
       file_size: size,
       memory_size: memorySize,
     } = program;
-    if (size > memorySize || address + memorySize > 1n << BigInt(bits))
-      throw new BinaryFormatFailure(
-        "malformed",
-        "ELF load segment sizes or addresses are invalid",
-      );
+    const admitted = admitElfLoadSegment(
+      { virtualAddress: address, memorySize, fileSize: size },
+      bits,
+    );
+    if (!admitted.ok)
+      throw new BinaryFormatFailure("malformed", admitted.error.message);
     const mapping = {
       ...(size === 0n
         ? { offset: 0, size: 0 }
@@ -64,8 +70,7 @@ export const readElfImage = (
   }
   for (const section of directory.sections) {
     const range = declaredFileRange(bytes.length, section.offset, section.size);
-    const file_backed = section.type !== 8 && range.file_backed;
-    const compressed = (section.flags & 0x800n) !== 0n;
+    const { file_backed, compressed } = section;
     const read_only =
       section.type === 1 &&
       file_backed &&
@@ -78,6 +83,7 @@ export const readElfImage = (
       format: "elf",
       name: section.name,
       type: section.type,
+      flags: section.flags,
       address: section.address,
       declared_range: { offset: section.offset, size: section.size },
       ...range,

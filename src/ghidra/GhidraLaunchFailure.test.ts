@@ -72,7 +72,6 @@ describe("Ghidra launch failure diagnostics", () => {
       const launched = await probeLauncher(javaHome, runtimeRoot).launch(
         launchSession(runtimeRoot),
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("expected the launch to fail");
       expect(launched.error).toBeInstanceOf(GhidraLaunchError);
       expect(launched.error.message).toBe("Ghidra headless launch failed");
@@ -106,7 +105,6 @@ describe("Ghidra launch failure diagnostics", () => {
       const launched = await probeLauncher(javaHome, runtimeRoot).launch(
         launchSession(runtimeRoot),
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("expected the launch to fail");
       const outcome = launchOutcomeOf(launched.error);
       expect(outcome?.["stderrTruncated"]).toBe(true);
@@ -134,7 +132,6 @@ describe("Ghidra launch failure diagnostics", () => {
         bridgeScriptPath: join(runtimeRoot, "bridge", "ReaGhidraBridge.java"),
       });
       const launched = await launcher.launch(launchSession(runtimeRoot));
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("expected the launch to fail");
       expect(launched.error).toBeInstanceOf(GhidraLaunchError);
       expect(launched.error.message).toBe("Ghidra headless launch failed");

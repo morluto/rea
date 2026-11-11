@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   projectReferenceSourceImportError,
+  referenceSourceImportAnalysisError,
   type ReferenceSourceImportError,
 } from "./ReferenceSourceImportTypes.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import type { ReferenceSourceRead } from "../reference/ReferenceSourceReaderTypes.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 
 describe("reference-source import error projection", () => {
   it("preserves primary evidence with category-specific recovery guidance", () => {
@@ -35,6 +38,23 @@ describe("reference-source import error projection", () => {
     }
   });
 
+  it("projects a later cancellation without replacing a physical failure", () => {
+    const reason = { caller: "stop after I/O failure" };
+    const projected = projectReferenceSourceImportError({
+      tag: "reference-source-import",
+      code: "io",
+      message: "directory read failed",
+      secondaryCancellation: { cause: reason },
+    });
+    expect(projected.category).toBe("execution_failure");
+    expect(projected.details?.secondary_failures).toEqual([
+      expect.objectContaining({ category: "cancelled" }),
+    ]);
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  });
+
   it("preserves cancellation, partial facts, and cleanup diagnostics", () => {
     const bytes = Buffer.from("export const observed = true;\n");
     const partial: ReferenceSourceRead = {
@@ -51,7 +71,8 @@ describe("reference-source import error projection", () => {
       bytesRead: bytes.length,
       limitations: [],
     };
-    const projected = projectReferenceSourceImportError({
+    const reason = { caller: "stop importing" };
+    const typed = referenceSourceImportAnalysisError({
       tag: "reference-source-import",
       code: "cancelled",
       message: "Traversal cancelled after reading src/main.ts",
@@ -60,7 +81,10 @@ describe("reference-source import error projection", () => {
         resources: ["/selected/source"],
       },
       partial,
+      cause: reason,
     });
+    expect(typed.cause).toBe(reason);
+    const projected = projectAnalysisError(typed);
 
     expect(projected).toMatchObject({
       category: "cancelled",
@@ -83,6 +107,11 @@ describe("reference-source import error projection", () => {
     });
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
       true,
+    );
+    const redacted = redactExplicitFailure(typed, ["src/main.ts"]);
+    expect(redacted.cause).toBe(reason);
+    expect(projectAnalysisError(redacted).message).toContain(
+      "Traversal cancelled after reading [REDACTED]",
     );
   });
 });

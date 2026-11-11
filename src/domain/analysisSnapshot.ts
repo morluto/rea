@@ -86,6 +86,7 @@ const formatSchema = z.enum([
   "dfuse",
   "esp-flash-image",
   "fit",
+  "ntfs-mft",
   "plist",
   "javascript",
   "source-map",
@@ -760,7 +761,7 @@ const restoreSnapshot = (
     scopedEvidence.unknowns.length !== bundle.unknowns.length
   )
     throw new TypeError(
-      "Analysis snapshot evidence contains records for another target",
+      "Analysis snapshot evidence contains records unrelated to the selected target and its linked sources",
     );
   if (!hasCanonicalQueryOrder(providerRows.map(({ entry }) => entry)))
     throw new TypeError("Analysis snapshot entries are not canonical");

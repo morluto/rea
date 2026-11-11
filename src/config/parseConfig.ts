@@ -119,6 +119,9 @@ export const parseConfig = (
     ...(env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpOutputSchemaProfile: env.REA_MCP_OUTPUT_SCHEMA_PROFILE }),
+    ...(env.REA_MCP_TOOL_CATALOG_PROFILE === undefined
+      ? {}
+      : { mcpToolCatalogProfile: env.REA_MCP_TOOL_CATALOG_PROFILE }),
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
@@ -134,8 +137,32 @@ export const parseConfig = (
           },
         }),
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
+    ...(env.REA_GHIDRA_CHECKPOINT_DIR === undefined
+      ? {}
+      : { ghidraCheckpointDirectory: env.REA_GHIDRA_CHECKPOINT_DIR }),
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: env.REA_GHIDRA_STARTUP_TIMEOUT_MS,
+    ...(env.REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB === undefined
+      ? {}
+      : {
+          ghidraDecompileMaxPayloadMiB:
+            env.REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB,
+        }),
+    ...(env.REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS === undefined
+      ? {}
+      : {
+          ghidraValueFlowMaxOperations:
+            env.REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+        }),
+    ...(env.REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION === undefined
+      ? {}
+      : {
+          ghidraValueFlowMaxInputsPerOperation:
+            env.REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+        }),
+    ...(env.REA_GHIDRA_VALUE_FLOW_MAX_EDGES === undefined
+      ? {}
+      : { ghidraValueFlowMaxEdges: env.REA_GHIDRA_VALUE_FLOW_MAX_EDGES }),
     ...(env.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS === undefined
       ? {}
       : {

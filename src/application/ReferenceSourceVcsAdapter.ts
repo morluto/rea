@@ -4,8 +4,15 @@ import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFile, retryRegularFileCleanup } from "./RegularFileRead.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
+import {
+  readRegularFile,
+  RegularFileReadFailure,
+  retryRegularFileCleanup,
+} from "./RegularFileRead.js";
 import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
 
@@ -39,7 +46,12 @@ export const readReferenceSourceVcs = async (
     });
   } catch (cause: unknown) {
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    return err(referenceSourceResourceFailure(cause));
+    return err({
+      ...referenceSourceResourceFailure(cause),
+      ...(cause.reason !== "cancelled" && signal?.aborted === true
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
+    });
   }
 };
 
@@ -63,7 +75,25 @@ const resolveSourceVcs = async (
       return await readRegularFile(path, { signal });
     } catch (cause: unknown) {
       if (signal?.aborted === true && cause === signal.reason) throw cause;
-      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+      if (!(cause instanceof RegularFileCleanupFailure)) {
+        if (
+          signal?.aborted === true &&
+          regularFileCancellation(cause) === undefined
+        ) {
+          const physical =
+            cause instanceof RegularFileReadFailure
+              ? cause.operationCause
+              : cause;
+          // The Git directory owner interprets absence of optional metadata.
+          if (errorCode(physical) === "ENOENT") throw physical;
+          throw new ArtifactReaderFailure(
+            "io",
+            `Git metadata could not be read safely: ${errorMessage(physical)}`,
+            { cause: physical },
+          );
+        }
+        throw cause;
+      }
       const retry = await retryRegularFileCleanup(cause, resources, signal);
       if (
         retry.outcome.kind === "failed" &&
@@ -81,7 +111,10 @@ const resolveSourceVcs = async (
           ? retry.outcome.cause
           : cause.cleanupCause;
       throw new ArtifactReaderFailure(
-        isAborted(signal) ? "cancelled" : "io",
+        regularFileCancellation(cause) !== undefined ||
+          (signal?.aborted === true && primary === signal.reason)
+          ? "cancelled"
+          : "io",
         `Git metadata could not be read safely: ${errorMessage(primary)}`,
         {
           cause: primary,
@@ -97,7 +130,11 @@ const resolveSourceVcs = async (
       failure.cleanup === undefined ? [] : [failure.cleanup],
     );
     throw new ArtifactReaderFailure(
-      isAborted(signal) ? "cancelled" : "io",
+      (primary instanceof ArtifactReaderFailure &&
+        primary.reason === "cancelled") ||
+        (signal?.aborted === true && primary === signal.reason)
+        ? "cancelled"
+        : "io",
       `Git metadata could not be read safely: ${errorMessage(primary)}`,
       {
         cause: new AggregateError(
@@ -155,6 +192,8 @@ const resolveSourceVcs = async (
         } catch (cause: unknown) {
           if (cause instanceof ArtifactReaderFailure) {
             cleanupFailures.push(cause);
+            if (cause.reason !== "cancelled")
+              failedRead ??= { cause: cause.cause ?? cause };
           } else if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
           throw cause;
         }

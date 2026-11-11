@@ -25,24 +25,17 @@ ARGUMENT_REGISTERS = {
     "x86_64": ["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
     "x86_64h": ["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
 }
-MAX_SELECTOR_BYTES = 1024
-MAX_OTHER_STOPS = 256
-MAX_TRACE_BYTES = 8 * 1024 * 1024
-MAX_TRACE_FRAMES = 65_536
-MAX_OBSERVATION_JOURNAL_BYTES = MAX_TRACE_BYTES
-MAX_BREAKPOINT_LOCATION_BYTES = 8 * 1024 * 1024
-MAX_TARGET_OUTPUT_BYTES = 1024 * 1024
 OUTPUT_DRAIN_BYTES_PER_PASS = 1024 * 1024
 OUTPUT_EOF_WAIT_SECONDS = 1.0
 OUTPUT_READER_JOIN_SECONDS = 0.5
 LISTENER_NAME = "rea-native-call-observation"
 
 
-def _can_retain_trace(current_bytes, current_frames, event_bytes, event_frames):
+def _can_retain_trace(current_bytes, current_frames, event_bytes, event_frames, limits):
     """Whether a complete event fits both aggregate trace budgets."""
     return (
-        current_bytes + event_bytes <= MAX_TRACE_BYTES
-        and current_frames + event_frames <= MAX_TRACE_FRAMES
+        current_bytes + event_bytes <= limits["trace_bytes"]
+        and current_frames + event_frames <= limits["trace_frames"]
     )
 
 
@@ -71,7 +64,7 @@ def _fits_trace_budget(value, remaining_bytes):
 class _ObservationJournal:
     """Flush a bounded JSONL prefix so observations survive tracer failure."""
 
-    def __init__(self, handle, max_bytes=MAX_OBSERVATION_JOURNAL_BYTES):
+    def __init__(self, handle, max_bytes):
         self.handle = handle
         self.max_bytes = max_bytes
         self.bytes = 0
@@ -243,6 +236,20 @@ def _hex(value):
     return "0x%x" % value
 
 
+def _source_location(address):
+    """Preserve available line-entry facets without acquiring source files."""
+    entry = address.GetLineEntry()
+    if not entry.IsValid():
+        return None
+    file_spec = entry.GetFileSpec()
+    file_path = str(file_spec) if file_spec.IsValid() else None
+    line = entry.GetLine() or None
+    column = entry.GetColumn() or None
+    if not file_path and line is None and column is None:
+        return None
+    return {"file_path": file_path or None, "line": line, "column": column}
+
+
 def _location(address, target):
     """Load and file address, module and symbol of one code address."""
     module = address.GetModule()
@@ -256,6 +263,7 @@ def _location(address, target):
         "module": module.GetFileSpec().GetFilename() if module.IsValid() else None,
         "module_path": str(module.GetFileSpec()) if module.IsValid() else None,
         "symbol": symbol.GetName() if symbol.IsValid() else None,
+        "source_location": _source_location(address),
     }
     return location
 
@@ -356,7 +364,7 @@ def _record(context, thread, frame, index, sequence, location, remaining_bytes):
         error = lldb.SBError()
         text = process.ReadCStringFromMemory(
             values[names[1]],
-            MAX_SELECTOR_BYTES,
+            config["capture_limits"]["selector_bytes"],
             error,
         )
         selector = text if error.Success() and text else None
@@ -389,10 +397,16 @@ def _record(context, thread, frame, index, sequence, location, remaining_bytes):
 _TRACE_CONTEXT = None
 
 
+def _resource_limit(context, limit):
+    context["resource_limit"] = limit
+    return "resource-limit"
+
+
 def _handle_breakpoint(context, frame, index):
     """Read one hit while LLDB's breakpoint callback owns the stopped frame."""
     if not frame.IsValid() or frame.GetPC() == lldb.LLDB_INVALID_ADDRESS:
         raise RuntimeError("LLDB breakpoint callback did not supply a readable frame")
+    limits = context["config"]["capture_limits"]
     thread = frame.GetThread()
     events = context["events"]
     location = _location(frame.GetPCAddress(), context["target"])
@@ -409,49 +423,50 @@ def _handle_breakpoint(context, frame, index):
         context["retained_frames"],
         0,
         event_frame_count,
+        limits,
     ):
-        return "resource-limit"
+        return _resource_limit(context, "trace_frames")
     try:
-        remaining_bytes = MAX_TRACE_BYTES - context["retained_trace_bytes"]
+        remaining_bytes = limits["trace_bytes"] - context["retained_trace_bytes"]
         record = _record(
             context, thread, frame, index, len(events), location, remaining_bytes
         )
     except ValueError:
-        return "resource-limit"
+        return _resource_limit(context, "trace_bytes")
     if record is not None:
         if not _fits_trace_budget(record, remaining_bytes):
-            return "resource-limit"
+            return _resource_limit(context, "trace_bytes")
         record_bytes = len(json.dumps(record).encode("utf-8"))
-        if context["retained_trace_bytes"] + record_bytes > MAX_TRACE_BYTES:
-            return "resource-limit"
+        if context["retained_trace_bytes"] + record_bytes > limits["trace_bytes"]:
+            return _resource_limit(context, "trace_bytes")
         for depth in range(1, frame_count + 1):
             try:
                 location = _location(
                     thread.GetFrameAtIndex(depth).GetPCAddress(), context["target"]
                 )
             except ValueError:
-                return "resource-limit"
+                return _resource_limit(context, "trace_bytes")
             if (
                 _estimated_json_size(location) + record_bytes + 1
-                > MAX_TRACE_BYTES - context["retained_trace_bytes"]
+                > limits["trace_bytes"] - context["retained_trace_bytes"]
             ):
-                return "resource-limit"
+                return _resource_limit(context, "trace_bytes")
             location_bytes = len(json.dumps(location).encode("utf-8"))
             addition = location_bytes + (1 if record["backtrace"] else 0)
             if (
                 context["retained_trace_bytes"]
                 + record_bytes
                 + addition
-                > MAX_TRACE_BYTES
+                > limits["trace_bytes"]
             ):
-                return "resource-limit"
+                return _resource_limit(context, "trace_bytes")
             record["backtrace"].append(location)
             record_bytes += addition
         journal = context.get("observation_journal")
         if journal is not None and not journal.append(
             {"kind": "event", "event": record}
         ):
-            return "resource-limit"
+            return _resource_limit(context, "trace_bytes")
         events.append(record)
         context["retained_frames"] += event_frame_count
         context["retained_trace_bytes"] += record_bytes
@@ -483,9 +498,9 @@ def _handle_stop(context, other_stops):
             if journal is not None and not journal.append(
                 {"kind": "other-stop", "reason": stop_description}
             ):
-                return "resource-limit"
+                return _resource_limit(context, "trace_bytes")
             other_stops.append(stop_description)
-            if len(other_stops) >= MAX_OTHER_STOPS:
+            if len(other_stops) >= context["config"]["capture_limits"]["other_stops"]:
                 return "stop-limit"
     return None
 
@@ -505,7 +520,7 @@ def _breakpoint_report(target, created, config):
                     continue
                 count += 1
                 remaining_bytes = (
-                    MAX_BREAKPOINT_LOCATION_BYTES - retained_location_bytes
+                    config["capture_limits"]["breakpoint_location_bytes"] - retained_location_bytes
                 )
                 if not _fits_trace_budget(location, remaining_bytes):
                     locations_truncated = True
@@ -636,7 +651,7 @@ def trace(debugger, config):
         for breakpoint in breakpoints:
             breakpoint_index[breakpoint.GetID()] = index
     listener = lldb.SBListener(LISTENER_NAME)
-    output_budget = config.get("max_output_bytes", MAX_TARGET_OUTPUT_BYTES)
+    output_budget = config["capture_limits"]["output_bytes"]
     stdout = _OutputPipe(
         config["stdout_path"], config["stdout_capture_path"], output_budget
     )
@@ -656,7 +671,8 @@ def trace(debugger, config):
         observation_path = config.get("observation_path")
         if observation_path:
             observation_journal = _ObservationJournal(
-                open(observation_path, "wb")
+                open(observation_path, "wb"),
+                config["capture_limits"]["trace_bytes"],
             )
         process = target.Launch(_launch_info(target, config, listener), error)
         process_created = process.IsValid()
@@ -847,6 +863,7 @@ def trace(debugger, config):
             "breakpoint_locations_truncated": breakpoint_locations_truncated,
             "events": events,
             "resource_limit_reached": outcome == "resource-limit",
+            "resource_limit": context.get("resource_limit"),
             "target_output": {
                 "stdout_bytes": stdout.bytes,
                 "stderr_bytes": stderr.bytes,

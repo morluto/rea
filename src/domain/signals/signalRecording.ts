@@ -1,17 +1,19 @@
 import { z } from "zod";
+import { processArgumentSchema } from "../process/processArgument.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
 import { windowAnnotationText } from "./annotationTextWindow.js";
+import {
+  boundedProducerLimitsSchema,
+  boundedProducerLimitsResultSchema,
+} from "../producerResourceLimits.js";
 
 // These strings are single sigrok arguments, never shell fragments.
-const selection = z
-  .string()
-  .min(1)
-  .max(8192)
-  .refine((value) => !value.includes("\0"), "NUL is not an argument character");
+const selection = processArgumentSchema.min(1).max(8192);
 const signalInputShape = z.strictObject({
+  producer_limits: boundedProducerLimitsSchema,
   path: localPathStringSchema.describe("Absolute local recording path"),
   decoders: selection.describe(
     "sigrok decoder stack, options and channel assignments, e.g. uart:rx=RX:baudrate=9600",
@@ -31,7 +33,7 @@ const signalInputShape = z.strictObject({
     .int()
     .nonnegative()
     .default(0)
-    .describe("Skip this many literal LF-separated output lines; default 0"),
+    .describe("Skip this many literal LF-separated output lines"),
   line_limit: z
     .number()
     .int()
@@ -123,14 +125,7 @@ export const signalRecordingSchema = z
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       arguments: z.array(z.string()),
     }),
-    limits: z.strictObject({
-      input_bytes: z.number().int().positive(),
-      output_bytes: z.number().int().positive(),
-      command_timeout_ms: z.number().int().positive(),
-      address_space_bytes: z.number().int().nonnegative(),
-      file_bytes: z.number().int().nonnegative(),
-      cpu_seconds: z.number().int().nonnegative(),
-    }),
+    limits: boundedProducerLimitsResultSchema,
     hardware_acquisition: z.literal("not-performed"),
   })
   .superRefine((report, context) => {

@@ -39,7 +39,6 @@ import {
   withEvidenceCallerInputPath,
 } from "../../../src/domain/evidence.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
@@ -298,7 +297,25 @@ it("retains a malformed artifact parent and refuses publication through both del
       evidenceOutput: join(root, "cli.json"),
     },
   );
-  expect(cli).toEqual(projected);
+  // The one-shot CLI also explains that malformed embedded sources could not
+  // be collected before exit; the application still returns its typed cause.
+  expect(cli).toMatchObject(projected);
+  expect(cli).toMatchObject({
+    details: {
+      partial_observation: evidence,
+      source_closure: {
+        publication: "not_published",
+        complete: false,
+        collection_failure: "Error",
+        records: [],
+        omitted_count: 0,
+        omitted: [],
+        recovery: expect.stringContaining(
+          "this invocation retains nothing after exit",
+        ),
+      },
+    },
+  });
   expect(JSON.stringify(projected)).toContain(evidence.evidence_id);
   expect(await readdir(root)).toEqual([]);
 });
@@ -312,10 +329,15 @@ it.each([undefined, "../selected-link/./artifact"])(
     const parent =
       callerInputPath === undefined
         ? original
-        : withEvidenceCallerInputPath(original, callerInputPath);
+        : withEvidenceCallerInputPath(original, callerInputPath, {
+            operations_path: "./query 雪.graphql",
+          });
     const delivered = await deliverAnalysisEvidence(parent, path, "summary");
     if (!delivered.ok) throw delivered.error;
     expect(delivered.value.caller_input_path).toBe(callerInputPath);
+    expect(delivered.value.caller_input_paths).toEqual(
+      parent.caller_input_paths,
+    );
     expect(delivered.value.evidence_links).toContain(parent.evidence_id);
     expect(original.caller_input_path).toBeUndefined();
     const saved = await readEvidenceBundle(path);
@@ -324,6 +346,7 @@ it.each([undefined, "../selected-link/./artifact"])(
       (record) => record.evidence_id === parent.evidence_id,
     );
     expect(savedParent?.caller_input_path).toBe(callerInputPath);
+    expect(savedParent?.caller_input_paths).toEqual(parent.caller_input_paths);
   },
 );
 
@@ -340,13 +363,24 @@ it.each([0, 9 * 1024 * 1024])(
     if (result.ok) throw new Error("Expected strict JSON BOM rejection");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: JSON_BYTE_ORDER_MARK_MESSAGE,
-      remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+      remediation: {
+        action: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+      },
       details: {
         path,
         reason: "invalid-json",
         content_issues: [
-          { reason: "invalid_format", message: JSON_BYTE_ORDER_MARK_MESSAGE },
+          {
+            reason: "invalid_format",
+            message: expect.stringMatching(
+              /byte-order mark.*UTF-8 without a byte-order mark/iu,
+            ),
+          },
         ],
       },
     });

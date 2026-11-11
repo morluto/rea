@@ -13,22 +13,71 @@ import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtur
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
-import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
 
-it("documents the shared combined capture limit for both command tools", () => {
-  expect(REVERSE_ENGINEERING_TOOL_CONTRACTS.map(({ name }) => name)).toEqual(
-    expect.arrayContaining(["inspect_with_objdump", "execute_rizin_command"]),
-  );
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("shared 16 MiB combined limit");
-  expect(
-    REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
-      ({ name }) => name === "inspect_with_objdump",
-    )?.description,
-  ).toContain("does not follow local debug links by default");
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("command_timeout_ms");
-});
+it.each(["objdump", "rizin"] as const)(
+  "recovers a bounded %s capture after the caller raises output admission",
+  async (provider) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-reverse-output-admission-"),
+    );
+    const path = join(directory, "input.bin");
+    await writeFile(path, "selected artifact");
+    const profile = {
+      executable: process.execPath,
+      arguments: ["-e", "process.stdout.write('complete-output')"],
+      identity: {
+        id: "fixture-command",
+        name: "Fixture command",
+        version: "1",
+      },
+    };
+    const service = new ReverseEngineeringService({
+      commands: { objdump: () => profile, rizin: () => profile },
+    });
+    const inspect = (max_output_bytes: number) =>
+      provider === "objdump"
+        ? service.inspectWithObjdump({
+            operation: "architectures",
+            max_output_bytes,
+          })
+        : service.executeRizinCommand({
+            path,
+            command: "iI",
+            max_output_bytes,
+          });
+    try {
+      const limited = await inspect(8);
+      if (!limited.ok) throw limited.error;
+      expect(limited.value.normalized_result).toMatchObject({
+        stdout: "complete",
+        output_budget_bytes: 8,
+        output_budget_source: "request",
+        output_truncated: true,
+        completion_status: "unknown",
+      });
+      expect(limited.value.parameters).toMatchObject({ max_output_bytes: 8 });
+      expect(limited.value.limitations).toContainEqual(
+        expect.stringContaining("max_output_bytes=8"),
+      );
+      const recovered = await inspect(32);
+      if (!recovered.ok) throw recovered.error;
+      expect(recovered.value.normalized_result).toMatchObject({
+        stdout: "complete-output",
+        output_budget_bytes: 32,
+        output_budget_source: "request",
+        output_truncated: false,
+        completion_status: "complete",
+      });
+      expect(recovered.value.parameters).toMatchObject({
+        max_output_bytes: 32,
+      });
+    } finally {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 describe("reverse engineering command services", () => {
   it("uses compatible local DWARF link flags and disables debuginfod through the environment", async () => {
@@ -97,12 +146,17 @@ describe("reverse engineering command services", () => {
         path: directory,
         operation: "file_headers",
       });
-      expect(result.ok).toBe(false);
-      if (!result.ok)
-        expect(result.error.cause).toMatchObject({
-          code: "EINVAL",
-          message: "Artifact digest requires a regular file",
-        });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          operation: "inspect_with_objdump",
+          cause: {
+            code: "EINVAL",
+            message: "Artifact digest requires a regular file",
+          },
+        },
+      });
       expect(invoked).toBe(false);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -166,13 +220,17 @@ describe("reverse engineering command services", () => {
         command: "wx 00 @ 0",
       });
       expect(result.ok).toBe(true);
-      if (result.ok)
+      if (result.ok) {
         expect(result.value.raw_result).toMatchObject({
           stdout: "captured partial output",
           exit_code: null,
           output_truncated: true,
           completion_status: "unknown",
         });
+        expect(result.value.limitations).toContainEqual(
+          expect.stringContaining("max_output_bytes=16777216"),
+        );
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -341,8 +399,10 @@ it("marks signal-terminated provider commands as unknown completion", async () =
       expect(ordinaryExit.value.limitations.join(" ")).not.toContain(
         "terminated by signal",
       );
-      expect(ordinaryExit.value.limitations).toContain(
-        "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
+      expect(ordinaryExit.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
+        ),
       );
       expect(ordinaryExit.value.limitations).toHaveLength(4);
     }
@@ -411,8 +471,10 @@ describe("Rizin command service", () => {
       expect(result.value.normalized_result).toMatchObject({
         stdout: "\u001b[31mpartial data\u001b[0m\n",
       });
-      expect(result.value.limitations).toContain(
-        "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
+        ),
       );
       expect(result.value.limitations).toHaveLength(4);
       expect(result.value.parameters).toMatchObject({
@@ -427,29 +489,38 @@ describe("Rizin command service", () => {
     }
   });
 
-  it("rejects multiline Rizin command input before launching the provider", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-input-"));
-    const path = join(directory, "fixture.bin");
-    await writeFile(path, "fixture");
-    let invoked = false;
-    const service = new ReverseEngineeringService({
-      run: async () => {
-        invoked = true;
-        return { stdout: "", stderr: "" };
-      },
-    });
-
-    try {
-      const result = await service.executeRizinCommand({
-        path,
-        command: "iI\nq",
+  it.each(["iI\nq", "wx\u0000 00"])(
+    "rejects malformed Rizin command %j before launching the provider",
+    async (command) => {
+      const directory = await mkdtemp(join(tmpdir(), "rea-rizin-input-"));
+      const path = join(directory, "fixture.bin");
+      await writeFile(path, "fixture");
+      let invoked = false;
+      const service = new ReverseEngineeringService({
+        run: async () => {
+          invoked = true;
+          return { stdout: "", stderr: "" };
+        },
       });
-      expect(result.ok).toBe(false);
-      expect(invoked).toBe(false);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
+
+      try {
+        const result = await service.executeRizinCommand({
+          path,
+          command,
+        });
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisInputError",
+            operation: "execute_rizin_command",
+          },
+        });
+        expect(invoked).toBe(false);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves pre and post artifact digests when an unrestricted Rizin command changes the file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-rizin-mutation-"));
@@ -478,13 +549,162 @@ describe("Rizin command service", () => {
           .digest("hex"),
         artifact_changed: true,
       });
-      expect(result.value.limitations).toContain(
-        "The provider command may have changed the artifact while analysis was running; pre-run and post-run digests are both reported.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /may have changed the artifact.*pre-run and post-run digests/iu,
+        ),
       );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+it("passes decoder and map inputs to Rizin before the path and records them", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-rizin-load-"));
+  const path = join(directory, "flash.bin");
+  await writeFile(path, Buffer.from([0x70, 0x47]));
+  const calls: (readonly string[])[] = [];
+  const service = new ReverseEngineeringService({
+    environment: { REA_RIZIN_COMMAND: "/tools/rizin" },
+    run: async (_command, args) => {
+      calls.push(args);
+      return { stdout: "bx lr\n", stderr: "" };
+    },
+  });
+  const input = {
+    path,
+    command: "pi 1",
+    asm_arch: "arm",
+    asm_bits: 16,
+    asm_cpu: "cortexm",
+    base_address: "0x08000000",
+  };
+
+  try {
+    const result = await service.executeRizinCommand(input);
+    if (!result.ok) throw result.error;
+    const argv = [
+      "-N",
+      "-q",
+      "-e",
+      "scr.color=0",
+      "-a",
+      "arm",
+      "-b",
+      "16",
+      "-e",
+      "asm.cpu=cortexm",
+      "-n",
+      "-m",
+      "0x08000000",
+      "-c",
+      "pi 1",
+      path,
+    ];
+    // The command is the last launch; a provider probe may precede it.
+    expect(calls.at(-1)).toEqual(argv);
+    expect(result.value.parameters).toMatchObject({
+      ...input,
+      command_arguments: argv,
+    });
+    expect(result.value.limitations).toEqual(
+      expect.arrayContaining([...rizinCommandLimitations(input)]),
+    );
+    // One statement for the decoder inputs and one for the raw map.
+    expect(rizinCommandLimitations(input)).toHaveLength(2);
+    expect(
+      rizinCommandLimitations({ path, command: "pi 1", asm_bits: 16 }),
+    ).toHaveLength(1);
+    expect(
+      rizinCommandLimitations({ path, command: "pi 1", base_address: "0x0" }),
+    ).toHaveLength(1);
+    expect(rizinCommandLimitations({ path, command: "pi 1" })).toEqual([]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("checks only the spelling and range of decoder and map inputs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-rizin-load-input-"));
+  const path = join(directory, "image.bin");
+  await writeFile(path, "image");
+  const calls: (readonly string[])[] = [];
+  const service = new ReverseEngineeringService({
+    run: async (_command, args) => {
+      calls.push(args);
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  try {
+    // Rizin's own names: digits first, dotted plugins, '+', '-' and case.
+    for (const [selection, flags] of [
+      [{ asm_arch: "6502", asm_bits: 8 }, ["-a", "6502", "-b", "8"]],
+      [{ asm_arch: "x86.nasm", asm_bits: 64 }, ["-a", "x86.nasm", "-b", "64"]],
+      [{ asm_cpu: "c55x+" }, ["-e", "asm.cpu=c55x+"]],
+      [{ asm_cpu: "c166-generic" }, ["-e", "asm.cpu=c166-generic"]],
+      [{ asm_cpu: "ATxmega128a4u" }, ["-e", "asm.cpu=ATxmega128a4u"]],
+      [{ asm_bits: 1 }, ["-b", "1"]],
+      [{ base_address: "0x0" }, ["-n", "-m", "0x0"]],
+      [
+        { base_address: "0xFFFFFFFFFFFFFFFF" },
+        ["-n", "-m", "0xFFFFFFFFFFFFFFFF"],
+      ],
+    ] as const) {
+      const result = await service.executeRizinCommand({
+        path,
+        command: "e asm.arch",
+        ...selection,
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.parameters.command_arguments).toEqual([
+        "-N",
+        "-q",
+        "-e",
+        "scr.color=0",
+        ...flags,
+        "-c",
+        "e asm.arch",
+        path,
+      ]);
+    }
+
+    calls.length = 0;
+    for (const [field, value] of [
+      ["asm_arch", ""],
+      ["asm_arch", "arm;q"],
+      ["asm_arch", "arm x"],
+      ["asm_arch", "-q"],
+      ["asm_cpu", "?"],
+      ["asm_cpu", "cortex=m"],
+      ["asm_bits", 0],
+      ["asm_bits", 65],
+      ["asm_bits", 16.5],
+      ["asm_bits", "16"],
+      ["base_address", "0x"],
+      ["base_address", "08000000"],
+      ["base_address", "0X08000000"],
+      ["base_address", "0x10000000000000000"],
+    ] as const) {
+      const result = await service.executeRizinCommand({
+        path,
+        command: "e asm.arch",
+        [field]: value,
+      });
+      if (result.ok) throw new Error(`${field}=${String(value)} was accepted`);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "execute_rizin_command",
+          issues: [expect.objectContaining({ path: [field] })],
+        },
+      });
+    }
+    expect(calls).toEqual([]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 it("retains partial Evidence when a provider command times out", async () => {

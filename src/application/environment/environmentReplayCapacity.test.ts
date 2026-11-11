@@ -41,7 +41,6 @@ it("bounds content-type display without changing body interpretation or retained
     (tool) => tool.name === "get_users_by_id",
   )!;
   const result = replayEnvironmentTool(source, tool, { id: "2" });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.body).toEqual({ value: 1 });
   expect(

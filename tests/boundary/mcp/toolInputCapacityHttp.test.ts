@@ -136,6 +136,7 @@ processTest(
         });
       } else {
         expect(error.code).toBe("resource_constraint");
+        expect(error.remediation.action).toContain("retained-evidence");
         expect(error.details).toMatchObject({
           resource: "transport",
           reported_limits: { max_input_elements: 1_024 },
@@ -183,6 +184,9 @@ processTest(
     });
     const calibratedError = parseMcpToolError(calibration).error;
     expect(calibratedError.code).toBe("resource_constraint");
+    expect(calibratedError.remediation.action).not.toContain(
+      "retained-evidence",
+    );
     expect(calibratedError.details).toMatchObject({
       resource: "transport",
       reported_limits: { max_input_elements: 1_024 },
