@@ -14,6 +14,7 @@ describe("pwntools input bound", () => {
     expect(pwntoolsInputBytes({})).toEqual({
       configured: true,
       bytes: PWNTOOLS_LIMITS.input_bytes,
+      source: "default",
     });
     expect(PWNTOOLS_LIMITS.input_bytes).toBe(32 * 1024 * 1024);
   });
@@ -25,7 +26,7 @@ describe("pwntools input bound", () => {
     ["1073741824", 1024 * 1024 * 1024],
   ] as const)("accepts %s as %s bytes", (value, expected) => {
     expect(pwntoolsInputBytes({ REA_PWNTOOLS_MAX_INPUT_BYTES: value })).toEqual(
-      { configured: true, bytes: expected },
+      { configured: true, bytes: expected, source: "setting" },
     );
   });
 

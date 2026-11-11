@@ -222,9 +222,9 @@ it.each(["@loader_path_suffix", "@executable_path_suffix", "@loader_path\n"])(
       }),
       { roots: [MAIN] },
     );
-    expect(edgeFor(trace, MAIN, name).resolution).toEqual({
-      status: "undetermined",
-      image: null,
+    expect(edgeFor(trace, MAIN, name)).toMatchObject({
+      candidates: [{ source: "literal", path: name }],
+      resolution: { status: "undetermined", image: null },
     });
   },
 );
@@ -1020,6 +1020,12 @@ describe("dyld slice compatibility and coverage", () => {
       ],
       resolution: { status: "undetermined", image: null },
     });
+    expect(trace.coverage.status).toBe("partial");
+    expect(trace.limitations).toContainEqual(
+      expect.stringContaining(
+        "Contents/MacOS/libarm.dylib have unknown architecture compatibility",
+      ),
+    );
   });
 
   it("lets an x86_64h process load generic x86_64 but not arm64e load arm64", async () => {

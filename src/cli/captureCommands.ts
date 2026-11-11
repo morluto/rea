@@ -59,6 +59,12 @@ export const registerCaptureCommands = (
             path: ["all"],
             message: "all and limit are mutually exclusive",
           });
+      })
+      .meta({
+        not: {
+          required: ["all", "limit"],
+          properties: { all: { const: true } },
+        },
       }),
     run: ({ options: { all, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
@@ -119,7 +125,13 @@ export const registerCaptureCommands = (
       .refine(
         withinPacketCaptureSelectorBudget,
         packetCaptureSelectorBudgetIssue,
-      ),
+      )
+      .meta({
+        not: {
+          required: ["all_matches", "match_limit"],
+          properties: { all_matches: { const: true } },
+        },
+      }),
     run: ({ args, options: { all_matches, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectPacketCapture, async () => {

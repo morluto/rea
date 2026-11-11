@@ -3,6 +3,7 @@ import {
   checkItemPlan,
   type StateGateContext,
 } from "./environmentStateGate.js";
+import { locateItem, locateItems } from "./environmentStateRules.js";
 import type {
   JsonObject,
   StateEntity,
@@ -21,7 +22,7 @@ const check = (
     path: `/api/books/${ordinal + 1}`,
     query: undefined,
     status: 200,
-    timing: { start: undefined, endMs: undefined },
+    timing: { start: undefined, end: undefined, endMs: undefined },
   }));
   const bodies: JsonObject[] = clocks.map(([, stamp], index) => ({
     id: index + 1,
@@ -114,5 +115,39 @@ describe("clock spelling facts at the read gate", () => {
     const large = check(clocks(1024));
     expect(large.view).not.toHaveProperty("clock_formats");
     expect(large.bytes).toBe(small.bytes);
+  });
+});
+
+describe("item response identity selection", () => {
+  it("uses the known identity field before choosing an envelope tier", () => {
+    const body = { request_id: "42", data: { id: "42", name: "Book" } };
+    expect(locateItem(body, "42", "id")).toEqual({
+      pointer: "/data",
+      keys: ["id"],
+    });
+    expect(locateItem(body, "42")).toEqual({
+      pointer: "",
+      keys: ["request_id"],
+    });
+    expect(locateItem(body, "42", "uid")).toBeUndefined();
+  });
+
+  it("retains ambiguity between objects carrying the known identity", () => {
+    const body = { request_id: "42", left: { id: "42" }, right: { id: "42" } };
+    expect(locateItem(body, "42", "id")).toBeUndefined();
+    expect(locateItems(body, "42", "id")).toEqual([
+      { pointer: "/left", keys: ["id"] },
+      { pointer: "/right", keys: ["id"] },
+    ]);
+    expect(locateItems(body, "42", "uid")).toEqual([]);
+  });
+
+  it("admits an explicitly known custom identity in a sole array element", () => {
+    const body = { data: [{ bookNumber: "42", name: "Book" }] };
+    expect(locateItem(body, "42", "bookNumber")).toEqual({
+      pointer: "/data/0",
+      keys: ["bookNumber"],
+    });
+    expect(locateItem(body, "42")).toBeUndefined();
   });
 });

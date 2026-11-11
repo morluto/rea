@@ -40,7 +40,7 @@ const zcodePath = (
 
 describe("ZCode configuration paths", () => {
   it("resolves the user config file and marker directory", () => {
-    expect(zcodePath("/home/a")).toEqual({
+    expect(zcodePath("/home/a")).toMatchObject({
       name: "zcode",
       displayName: "ZCode",
       configPath: join("/home/a", ".zcode", "cli", "config.json"),

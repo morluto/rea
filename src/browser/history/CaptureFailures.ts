@@ -30,6 +30,7 @@ import {
   type InspectWebNetworkCaptureInput,
 } from "../../domain/webNetworkCapture.js";
 import {
+  captureDecoderHeapContinuingRecovery,
   captureDecoderHeapRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
   type CaptureDecoderHeap,
@@ -299,6 +300,7 @@ export const captureMemoryFailure = (
     heap.oldGenerationMiB,
   );
   const recovery = captureDecoderHeapRecovery(heap);
+  const continuingRecovery = captureDecoderHeapContinuingRecovery(heap);
   return new AnalysisResourceConstraintError(
     OPERATION,
     "memory",
@@ -341,6 +343,13 @@ export const captureMemoryFailure = (
           }
         : {}),
       remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage.${input.format !== "mitmproxy" ? ` ${recovery}` : ""}${input.format !== "mitmproxy" && processMemoryLimitBytes !== null ? ` The Windows Job Object commit limit for this decoder is ${String(processMemoryLimitBytes)} bytes, ${String(heap.oldGenerationMiB)} MiB plus a 512 MiB Bun reserve.` : ""}`,
+      ...(input.format === "mitmproxy"
+        ? {}
+        : {
+            continuingCallerGuidance: {
+              remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage. ${continuingRecovery}${processMemoryLimitBytes !== null ? ` The Windows Job Object commit limit for this decoder is ${String(processMemoryLimitBytes)} bytes, ${String(heap.oldGenerationMiB)} MiB plus a 512 MiB Bun reserve.` : ""}`,
+            },
+          }),
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
             capturedOutput: {

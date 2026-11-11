@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { decodeMachoFixedName } from "../AppleMachoNames.js";
 import {
   isMachoZeroFillSection,
@@ -13,10 +17,8 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
-  type FileMapping,
   type ImageSection,
   type LoadRegion,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 import {
   MachoLoadCommandCursor,

@@ -46,8 +46,10 @@ import {
   WORK,
 } from "./DesktopBuildCommands.js";
 import {
+  planOutputTree,
   writeOutputTree,
-  writtenWithOpenHandles,
+  desktopOutputFailure,
+  type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
 
 const EXPORT = "export_build_environment";
@@ -173,17 +175,19 @@ const writeBundle = async (
     guard,
   }: { readonly directory: string; readonly guard: BundleGuard },
   signal: AbortSignal,
-): Promise<
-  Result<{ readonly files: number; readonly bytes: number }, AnalysisError>
-> => {
+): Promise<{
+  readonly files: number;
+  readonly bytes: number;
+  readonly completion: DesktopOutputCompletion;
+}> => {
   let fetched = { files: 0, bytes: 0 };
   const holding: {
     path: string;
     handles: string[];
     unchecked: boolean;
   }[] = [];
-  const unclosed = await writeOutputTree(
-    directory,
+  const completion = await writeOutputTree(
+    await planOutputTree(directory, { operation: EXPORT, field: "directory" }),
     async (tree) => {
       fetched = await fetchHomeFolder(
         computer,
@@ -215,15 +219,7 @@ const writeBundle = async (
     { operation: EXPORT, field: "directory" },
     signal,
   );
-  return unclosed === undefined
-    ? ok(fetched)
-    : err(
-        writtenWithOpenHandles(
-          { provider: AGENTENV_PROVIDER, operation: EXPORT, what: "bundle" },
-          directory,
-          unclosed,
-        ),
-      );
+  return { ...fetched, completion };
 };
 
 /** The export's arguments past the capture and the bundle: the tasks and each one's end, the ends, the install, and withheld state with its consents. */
@@ -443,12 +439,18 @@ export const exportBuild = async (
       },
       signal,
     );
-    if (!written.ok) return written;
     published = {
       directory: request.directory,
       environment: result.environment,
-      ...written.value,
+      files: written.files,
+      bytes: written.bytes,
     };
+    const outputFailure = desktopOutputFailure(
+      { provider: AGENTENV_PROVIDER, operation: EXPORT, what: "bundle" },
+      request.directory,
+      written.completion,
+    );
+    if (outputFailure !== undefined) throw outputFailure;
     const kept = await keepWithheld(computer, withheld, result.withheld_files, {
       keep: capture.keep,
       signal,
@@ -457,8 +459,8 @@ export const exportBuild = async (
     return ok({
       directory: request.directory,
       environment: result.environment,
-      files: written.value.files,
-      bytes: written.value.bytes,
+      files: written.files,
+      bytes: written.bytes,
       tasks: result.tasks,
       seed_files: result.seed_files,
       scrubbed_files: result.scrubbed_files,
