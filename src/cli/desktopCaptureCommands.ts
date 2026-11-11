@@ -263,14 +263,12 @@ const withheldExportOptions = {
     .describe(
       "Seed the withheld files after all, which needs a seed_sign_in consent in --consent",
     ),
-  consent: z
-    .string()
+  consent: localPathStringSchema
     .optional()
     .describe(
       "consent.json holding the person's consents, which the bundle ships",
     ),
-  withheldCopy: z
-    .string()
+  withheldCopy: localPathStringSchema
     .optional()
     .describe(
       "New or empty folder outside the bundle the withheld files are copied into, for whoever supplies them at run time",
@@ -340,8 +338,7 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
-      downloadInstall: z
-        .string()
+      downloadInstall: localPathStringSchema
         .optional()
         .describe(
           "JSON file naming the AppImage or tarball a build computer unpacked the application from: kind, desktop_entry, url, sha256, architecture, and a tarball's program and name",
@@ -358,8 +355,7 @@ const registerDesktopExportCommand = (
         .describe(
           "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
         ),
-      screens: z
-        .string()
+      screens: localPathStringSchema
         .optional()
         .describe(
           "Folder holding checkpoint screenshots for screen-judge examples.",

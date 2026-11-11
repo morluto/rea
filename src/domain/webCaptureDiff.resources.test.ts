@@ -110,3 +110,47 @@ describe("web resource comparison identity and optional size", () => {
     });
   });
 });
+
+it.each([
+  [[128, 256], [128], [false, true], "unknown"],
+  [[128], [256], [true, true], "unknown"],
+  [[128], [128], [true, true], "unknown"],
+  [[128], [128, 256], [false, true], "changed"],
+  [[], [128], [false, true], "changed"],
+  [[128], [], [true, true], "unknown"],
+  [[128], [null], [false, true], "unknown"],
+] as const)(
+  "uses directional resource coverage for %j vs %j (limited=%j): %s",
+  (leftSizes, rightSizes, [leftLimited, rightLimited], status) => {
+    const before = capture(leftSizes.map((size) => resource(size)));
+    const after = capture(rightSizes.map((size) => resource(size)));
+    if (leftLimited) before.completeness.truncated_sections.push("resources");
+    if (rightLimited) after.completeness.truncated_sections.push("resources");
+    for (const [left, right] of [
+      [before, after],
+      [after, before],
+    ] as const)
+      expect(compareResources(left, right)).toMatchObject({
+        status,
+        total_changes: status === "changed" ? 1 : 0,
+        changes:
+          status === "changed"
+            ? [
+                {
+                  identity: expect.stringMatching(/^resg_/u),
+                  change:
+                    left.resources.length === 0
+                      ? "added"
+                      : right.resources.length === 0
+                        ? "removed"
+                        : "modified",
+                },
+              ]
+            : [],
+        reason:
+          status === "changed"
+            ? null
+            : expect.stringContaining("Resource inventory"),
+      });
+  },
+);

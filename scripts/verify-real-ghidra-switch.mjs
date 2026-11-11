@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpOperationResult,
@@ -95,7 +96,7 @@ await writeFile(source, buildSwitchSource());
 const flags = ["-O2", "-g", "-fno-pie", "-no-pie"];
 const results = [];
 let productionControls = null;
-try {
+await withVerifierCleanup(async () => {
   for (const compiler of ["gcc", "clang"]) {
     const original = join(workspace, `${compiler}-optimized`);
     await exec(commands[compiler], [...flags, source, "-o", original]);
@@ -169,17 +170,19 @@ try {
       });
     }
   }
-} finally {
-  try {
+}, [
+  async () => {
     assert.deepEqual(
       (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
       [],
       "Owned Ghidra runtime survived close",
     );
-  } finally {
+    const cleanup = await completeVerifierRun(run);
+    assert.equal(cleanup.process_lineage.status, "verified");
+    assert.deepEqual(cleanup.process_lineage.descendants, []);
     await rm(workspace, { recursive: true, force: true });
-  }
-}
+  },
+]);
 const lifecycle = await completeVerifierRun(run);
 if (lifecycle.process_lineage.status === "verified")
   assert.deepEqual(lifecycle.process_lineage.descendants, []);
@@ -212,7 +215,7 @@ async function verifyTarget(path, sha256, fixtures, variant) {
   let opened = false;
   let stderr = "";
   const observations = [];
-  try {
+  return withVerifierCleanup(async () => {
     await client.connect(transport);
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
@@ -287,17 +290,13 @@ async function verifyTarget(path, sha256, fixtures, variant) {
       });
     }
     return { observations, stderr };
-  } finally {
-    try {
+  }, [
+    async () => {
       if (opened) await call(client, "close_binary");
-    } finally {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    }
-  }
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
 }
 function assertWorkflowIdentity(evidence, sha256) {
   assert.equal(evidence.subject.digest.sha256, sha256);
