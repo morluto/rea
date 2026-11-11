@@ -189,6 +189,40 @@ it.each(
   },
 );
 
+it("keeps requirement names when an empty compressed definition table declares no entries", () => {
+  const bytes = elfExportImage({
+    bits: 64,
+    little: true,
+    symbols: [
+      { name: "defined", version: 2 },
+      { name: "required", version: 3 },
+    ],
+    versionDefinitions: ["lib.so", "DEFINED"],
+    versionRequirements: [{ index: 3, name: "REQUIRED" }],
+  });
+  const compressed = compressExportSection(bytes, 4);
+  const view = new DataView(
+    compressed.buffer,
+    compressed.byteOffset,
+    compressed.byteLength,
+  );
+  const table = Number(view.getBigUint64(40, true));
+  view.setUint32(table + 4 * 64 + 44, 0, true);
+  const result = parse(compressed);
+  const required = result.exports.find(({ name }) => name === "required");
+  if (required === undefined || !("version" in required))
+    throw new Error("Expected the ELF requirement export");
+  expect(required.version).toMatchObject({ index: 3, name: "REQUIRED" });
+  expect(result.issues).toEqual([
+    {
+      code: "version_unresolved",
+      location: "0x1010",
+      message:
+        "Version index 2, first used by symbol 1, has no unambiguous version name",
+    },
+  ]);
+});
+
 it.each(["requirements", "definitions"] as const)(
   "bounds aliased GNU version %s work and keeps exports with unknown versions",
   (kind) => {

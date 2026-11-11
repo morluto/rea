@@ -495,7 +495,9 @@ function* readVersionNames(
   }
   // GNU lookup installs requirement names first, then definition names.
   const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
-  if (verdef !== undefined) {
+  // sh_info is the definition count. Zero definitions cannot replace a
+  // requirement index, so compressed storage of that empty table is unread.
+  if (verdef !== undefined && verdef.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
