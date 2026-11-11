@@ -5,10 +5,40 @@ import {
   readProcessOwnershipFacts,
 } from "../../dist/process/ProcessOwnershipObservation.js";
 import { readRunTokenCarriers } from "../../dist/process/ProcessRunTokenObservations.js";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+
+class VerifierOwnershipCleanupError extends AggregateError {
+  constructor(firstFailure, retryFailure, cleanupOwner) {
+    super(
+      [firstFailure, retryFailure],
+      "Verifier process ownership inspector cleanup is incomplete",
+      { cause: firstFailure },
+    );
+    this.name = "VerifierOwnershipCleanupError";
+    this.cleanupOwner = cleanupOwner;
+  }
+}
 
 /** Capture the prelaunch identities used by the canonical, PPID-independent sweep. */
 export async function prepareVerifierTokenCleanup(run, suppliedHost) {
   const host = suppliedHost ?? createSystemProcessOwnershipHost();
+  const close = async () => {
+    try {
+      await host.close?.();
+    } catch (firstFailure) {
+      // Retry the native reader's retained helper and cache ownership.
+      try {
+        await host.close?.();
+      } catch (retryFailure) {
+        throw new VerifierOwnershipCleanupError(
+          firstFailure,
+          retryFailure,
+          host,
+        );
+      }
+      throw firstFailure;
+    }
+  };
   try {
     await host.prepare?.();
     const baseline = await host.captureBaseline?.();
@@ -112,12 +142,11 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
           runs,
         };
       },
-      close: async () => {
-        await host.close?.();
-      },
+      close,
     };
   } catch (cause) {
-    await host.close?.();
-    throw cause;
+    return withVerifierCleanup(() => {
+      throw cause;
+    }, [close]);
   }
 }

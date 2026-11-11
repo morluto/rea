@@ -12,12 +12,23 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { assertMipsLoadedImage } from "../tests/conformance/ghidra/mips-checks.mjs";
 import { buildMips1Fixture } from "../tests/conformance/ghidra/mips1-fixture.mjs";
 import {
+  createGhidraVerifierMcpOperations,
+  resolveGhidraVerifierTimeouts,
+} from "./lib/ghidra-verifier-timeouts.mjs";
+import {
   requireMcpOperationResult,
+  requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { prepareVerifierTokenCleanup } from "./lib/verifier-token-cleanup.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { parseEvidence } from "../dist/domain/evidence.js";
 
 // Static source-owned controls. Never execute an ELF or acquire a toolchain.
 if (!["darwin", "linux"].includes(process.platform))
@@ -29,29 +40,32 @@ if (!process.env.GHIDRA_INSTALL_DIR || !process.env.JAVA_HOME)
     "Supply GHIDRA_INSTALL_DIR and JAVA_HOME for the MIPS32 positive control.",
   );
 const execute = promisify(execFile);
-const run = createVerifierRun();
-const root = await mkdtemp(join(tmpdir(), "rea-mips-boundaries-"));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const cli = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 // Only declared tool prerequisites and resource settings reach REA children.
 // Ambient REA seeds, analyzer controls and session settings cannot alter controls.
-const env = {
+const environment = {
   PATH: process.env.PATH ?? "/usr/bin:/bin",
-  TMPDIR: root,
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_LOG_LEVEL: "silent",
-  REA_PROCESS_RUN_ID: run.run_id,
   GHIDRA_INSTALL_DIR: process.env.GHIDRA_INSTALL_DIR,
   JAVA_HOME: process.env.JAVA_HOME,
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
 };
-for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
-  if (process.env[setting] !== undefined) env[setting] = process.env[setting];
+for (const setting of [
+  "GHIDRA_HEADLESS_MAXMEM",
+  "GHIDRA_MAXMEM",
+  "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+]) {
+  if (process.env[setting] !== undefined)
+    environment[setting] = process.env[setting];
 }
+const { requestOptions } = resolveGhidraVerifierTimeouts(environment);
+const run = createVerifierRun();
+const root = await mkdtemp(join(tmpdir(), "rea-mips-boundaries-"));
+const env = { ...environment, TMPDIR: root, REA_PROCESS_RUN_ID: run.run_id };
 const reports = [];
-let primaryFailure;
-const cleanup = await prepareVerifierTokenCleanup(run);
-try {
+async function runControls(cleanup) {
   for (const byteOrder of ["little", "big"]) {
     const original = await buildMips1Fixture(root, byteOrder);
     const initial = await readFile(original.path);
@@ -101,8 +115,8 @@ try {
       stderr: "inherit",
     });
     const client = new Client({ name: "rea-mips-boundaries", version: "1" });
-    const invoke = (name, args = {}) =>
-      client.callTool({ name, arguments: args }, { timeout: 240_000 });
+    const mcp = createGhidraVerifierMcpOperations(client, requestOptions);
+    const invoke = (name, args = {}) => mcp.callTool({ name, arguments: args });
     const call = async (name, args = {}) =>
       requireMcpOperationResult(await invoke(name, args), name);
     const currentGhidraRun = async () => {
@@ -115,8 +129,8 @@ try {
       );
       return status.analysis_run;
     };
-    try {
-      await client.connect(transport);
+    await withVerifierCleanup(async () => {
+      await mcp.connect(transport);
       for (const [path, pattern] of [
         [
           original.path,
@@ -142,7 +156,7 @@ try {
               "--full-output",
               "--json",
             ],
-            { env, timeout: 240_000 },
+            { env, timeout: requestOptions.timeout },
           );
           assert.fail("CLI admitted an unsupported MIPS declaration");
         } catch (cause) {
@@ -163,12 +177,16 @@ try {
         // Ghidra. Its token stays in the sweep even if that first call fails.
         const providerRunId = (await currentGhidraRun()).run_id;
         cleanup.registerProviderRun(providerRunId);
-        const dossier = functionDossierSchema.parse(
-          await call("analyze_function", {
-            procedure: original.entry,
-            detail: "complete",
-          }),
+        const evidence = parseEvidence(
+          requireMcpOutput(
+            await invoke("analyze_function", {
+              procedure: original.entry,
+              detail: "complete",
+            }),
+            "analyze_function",
+          ),
         );
+        const dossier = functionDossierSchema.parse(evidence.normalized_result);
         assert.ok(dossier.pseudocode.length > 0);
         const activeRun = await currentGhidraRun();
         assert.equal(activeRun.run_id, providerRunId);
@@ -188,13 +206,32 @@ try {
         // Capture native token-verified identities while the provider is live;
         // A public lineage snapshot is optional; native ownership is mandatory.
         await cleanup.retainProviderRun(providerRunId, providerScope);
+        const isMips1 = path === recordlessMips1Path;
+        // The provider's session limitations belong to the public Evidence;
+        // the normalized function payload has its own local observations.
+        const mips1Limitation = evidence.limitations.find((limitation) =>
+          /generic 32-bit MIPS language.*conformance to the MIPS-I subset is not established/u.test(
+            limitation,
+          ),
+        );
+        if (isMips1)
+          assert.ok(
+            mips1Limitation,
+            "MIPS-I dossier Evidence omitted its decoder limitation",
+          );
+        else
+          assert.equal(
+            mips1Limitation,
+            undefined,
+            "MIPS32 dossier Evidence reports a MIPS-I decoder limitation",
+          );
         const image = await call("inspect_native_load_image");
         assertMipsLoadedImage(image.observations, byteOrder, digest(expected));
         providerRuns.push({
-          control:
-            path === legacyPath ? "recordless_mips32" : "recordless_mips1",
+          control: isMips1 ? "recordless_mips1" : "recordless_mips32",
           run_id: providerRunId,
           language_id: image.observations.language_id,
+          ...(isMips1 ? { dossier_evidence_limitation: mips1Limitation } : {}),
           ...(providerScope === undefined
             ? { public_lineage: "not_observed" }
             : providerScope),
@@ -218,7 +255,7 @@ try {
         provider_runs: providerRuns,
         declared_o32_mips1: "refused by CLI and MCP",
         recordless_mips1:
-          "real Ghidra dossier, pinned 32-bit import language and exact loaded bytes; instruction subset/load-delay semantics unverified",
+          "real Ghidra dossier with decoder limitation, pinned 32-bit import language and exact loaded bytes; load-delay semantics unverified",
         gnu_fp_attributes:
           "independently decoded soft-float declaration; refused by CLI and MCP",
         existing_mips32_control:
@@ -232,38 +269,36 @@ try {
         source_unchanged: true,
         target_executed: false,
       });
-    } finally {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    }
+    }, [() => client.close(), () => transport.close()]);
   }
-} catch (cause) {
-  primaryFailure = cause;
 }
 let tokenCleanup;
+let completed;
 try {
-  tokenCleanup = await cleanup.verify();
-} finally {
-  await cleanup.close();
-}
-const completed = await completeVerifierRun(run);
-if (
-  !tokenCleanup.cleaned ||
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw new Error(
-    `Cleanup unverified (${JSON.stringify(tokenCleanup)}); retained diagnostic workspace: ${root}`,
-    { cause: primaryFailure },
+  const cleanup = await prepareVerifierTokenCleanup(run);
+  await withVerifierCleanup(
+    () => runControls(cleanup),
+    [
+      async () => {
+        tokenCleanup = await cleanup.verify();
+        if (!tokenCleanup.cleaned)
+          throw new Error(
+            `Token cleanup unverified: ${JSON.stringify(tokenCleanup)}`,
+          );
+      },
+      cleanup.close,
+      async () => {
+        completed = await completeVerifierRun(run);
+        assertVerifierCleanupComplete(completed.process_lineage);
+      },
+    ],
   );
-if (primaryFailure !== undefined)
+} catch (cause) {
   throw new Error(
     `MIPS boundary verification failed; retained workspace: ${root}`,
-    { cause: primaryFailure },
+    { cause },
   );
+}
 await rm(root, { recursive: true, force: true });
 console.log(
   JSON.stringify(

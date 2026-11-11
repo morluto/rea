@@ -28,5 +28,6 @@ export function prepareVerifierTokenCleanup(
       readonly result: ProcessCleanupResult;
     }[];
   }>;
+  /** Retry a failed close on the same host and preserve any release failure. */
   close(): Promise<void>;
 }>;

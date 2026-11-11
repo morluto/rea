@@ -7,6 +7,7 @@ import {
   signalProcessWithStartIdentity,
 } from "../../../src/process/ProcessOwnershipObservation.js";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { prepareVerifierTokenCleanup } from "../../../scripts/lib/verifier-token-cleanup.mjs";
 import type {
   ProcessOwnershipHost,
@@ -158,6 +159,83 @@ it("closes the inspection host when baseline ownership cannot be established", a
     ),
   ).rejects.toThrow("baseline is unavailable");
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("preserves preparation and close failures after the same host closes on retry", async () => {
+  const primary = new Error("baseline inspection failed");
+  const firstClose = new Error("helper root is temporarily busy");
+  const close = vi.fn().mockRejectedValueOnce(firstClose);
+  const host: ProcessOwnershipHost = {
+    captureBaseline: vi.fn().mockRejectedValueOnce(primary),
+    listProcesses: async () => [],
+    environment: async () => ({}),
+    signalGroup: vi.fn(),
+    close,
+  };
+  await expect(
+    prepareVerifierTokenCleanup(
+      { run_id: "owned-run", verifier_pid: 100, parent_pid: 50 },
+      host,
+    ),
+  ).rejects.toMatchObject({ cause: primary, errors: [primary, firstClose] });
+  expect(close.mock.contexts).toEqual([host, host]);
+});
+
+it("preserves a retryable host and every failure after final verification", async () => {
+  const primary = new Error("analysis failed");
+  const sweepFailure = new Error("token sweep could not verify cleanup");
+  const firstClose = new Error("helper root is still busy");
+  const retryClose = new Error("helper root remained busy on retry");
+  const close = vi
+    .fn()
+    .mockRejectedValueOnce(firstClose)
+    .mockRejectedValueOnce(retryClose);
+  const host: ProcessOwnershipHost = {
+    captureBaseline: async () => [],
+    listProcesses: async () => [
+      {
+        pid: 100,
+        parentPid: 50,
+        processGroupId: 100,
+        state: "S",
+        command: "verifier",
+      },
+    ],
+    environment: async () => ({}),
+    signalGroup: vi.fn(),
+    close,
+  };
+  const cleanup = await prepareVerifierTokenCleanup(
+    { run_id: "owned-run", verifier_pid: 100, parent_pid: 50 },
+    host,
+  );
+  const failure = await withVerifierCleanup(() => {
+    throw primary;
+  }, [
+    () => {
+      throw sweepFailure;
+    },
+    cleanup.close,
+  ]).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AggregateError);
+  const aggregate = failure as AggregateError;
+  expect(aggregate.cause).toBe(primary);
+  expect(aggregate.errors).toEqual([
+    primary,
+    sweepFailure,
+    expect.objectContaining({
+      cause: firstClose,
+      errors: [firstClose, retryClose],
+      cleanupOwner: host,
+    }),
+  ]);
+  expect(close.mock.contexts).toEqual([host, host]);
+  const retainedFailure = aggregate.errors[2] as {
+    cleanupOwner: ProcessOwnershipHost;
+  };
+  expect(retainedFailure.cleanupOwner).toBe(host);
+  await retainedFailure.cleanupOwner.close?.();
+  expect(close.mock.contexts).toEqual([host, host, host]);
 });
 
 it.runIf(process.platform !== "win32")(
