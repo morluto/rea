@@ -37,7 +37,8 @@ import {
 } from "../process/ProviderProcess.js";
 import {
   debuggerControlReplyOutput,
-  resolveDebuggerSessionLimits,
+  debuggerConstructionLimits,
+  parseDebuggerSessionLimits,
   type DebuggerAdmissionLimit,
 } from "../config/debuggerSessionLimits.js";
 import {
@@ -285,7 +286,7 @@ export class RizinDebugSessionManager {
   ) {
     this.#environment = { ...environment };
     this.#command = environment.REA_RIZIN_COMMAND ?? "rizin";
-    const limits = resolveDebuggerSessionLimits(this.#environment);
+    const limits = debuggerConstructionLimits(this.#environment);
     this.#launchCommandDeadline = limits.commandDeadline;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
     this.#maxSessions = limits.maxSessions;
@@ -301,9 +302,15 @@ export class RizinDebugSessionManager {
       currentAnalysisOperationSnapshot()?.overrides[
         "debugger.command_deadline_ms"
       ];
-    return override === undefined
-      ? this.#launchCommandDeadline
-      : { ...this.#launchCommandDeadline, value: override, source: "runtime" };
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandDeadline,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerSessionLimits(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value.commandDeadline;
   }
   get #frameTimeoutMs(): number {
     return this.#commandDeadline.value;
@@ -313,9 +320,15 @@ export class RizinDebugSessionManager {
       currentAnalysisOperationSnapshot()?.overrides[
         "debugger.max_command_output_bytes"
       ];
-    return override === undefined
-      ? this.#launchCommandOutput
-      : { ...this.#launchCommandOutput, value: override, source: "runtime" };
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandOutput,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerSessionLimits(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value.maxCommandOutputBytes;
   }
   get #maxCommandOutputBytes(): number {
     return this.#commandOutput.value;

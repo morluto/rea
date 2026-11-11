@@ -11,6 +11,7 @@ import { parseConfig } from "./parseConfig.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   parseRegexMatchingDeadline,
+  resolveRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
   regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
@@ -153,19 +154,17 @@ it.each([
     },
   ]);
   const startup = parseEnvironment({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: REGEX_MATCHING_DEADLINE_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
   const config = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (config.ok)
-    throw new Error(`parseConfig accepted ${JSON.stringify(value)}`);
-  expect(projectAnalysisError(config.error)).toMatchObject({
-    code: "configuration_invalid",
-    message: expect.stringContaining("REA_REGEX_MATCHING_DEADLINE_MS"),
-  });
-  expect(
-    () => new KunaProvider({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
+  if (!config.ok)
+    throw new Error(
+      `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
+    );
+  expect(config.value.regexMatchingDeadline).toEqual(
+    DEFAULT_REGEX_MATCHING_DEADLINE,
+  );
+  expect(() =>
+    resolveRegexMatchingDeadline({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
   ).toThrow(ConfigurationError);
 });

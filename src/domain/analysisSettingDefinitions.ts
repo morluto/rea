@@ -406,8 +406,10 @@ export const ANALYSIS_SETTINGS = {
     operations: [
       "start_gdb_session",
       "gdb_console",
+      "close_gdb_session",
       "start_rizin_debug_session",
       "rizin_debug_command",
+      "close_rizin_debug_session",
     ],
   },
   "debugger.max_command_output_bytes": {
@@ -472,6 +474,7 @@ export const ANALYSIS_SETTINGS = {
       "procedure_pseudo_code",
       "procedure_assembly",
       "analyze_function",
+      "list_procedures",
     ],
   },
   "pwntools.max_input_bytes": {
@@ -483,7 +486,7 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_operation",
     provider: "pwntools",
     operations: ["inspect_binary_layout", "inspect_recorded_crash"],
-    parameter: "input_bytes",
+    parameter: "producer_limits.input_bytes",
   },
   "windows.change_time_drift_ms": {
     environment: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
@@ -493,7 +496,13 @@ export const ANALYSIS_SETTINGS = {
     unit: "ms",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: ["inventory_artifact", "inspect_artifact", "extract_artifact"],
+    operations: [
+      "inventory_artifact",
+      "inspect_artifact",
+      "extract_artifact",
+      "inspect_binary_layout",
+      "inspect_recorded_crash",
+    ],
   },
   "windows.change_time_settle_poll_ms": {
     environment: "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
@@ -503,7 +512,13 @@ export const ANALYSIS_SETTINGS = {
     unit: "ms",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: ["inventory_artifact", "inspect_artifact", "extract_artifact"],
+    operations: [
+      "inventory_artifact",
+      "inspect_artifact",
+      "extract_artifact",
+      "inspect_binary_layout",
+      "inspect_recorded_crash",
+    ],
   },
   "windows.change_time_settle_max_polls": {
     environment: "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
@@ -513,9 +528,25 @@ export const ANALYSIS_SETTINGS = {
     unit: "count",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: ["inventory_artifact", "inspect_artifact", "extract_artifact"],
+    operations: [
+      "inventory_artifact",
+      "inspect_artifact",
+      "extract_artifact",
+      "inspect_binary_layout",
+      "inspect_recorded_crash",
+    ],
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
+/** Launch seeds `update_analysis_settings` can replace. Startup must not reject them. */
+export const runtimeAnalysisEnvironmentNames = (): ReadonlySet<string> =>
+  new Set(
+    Object.values(ANALYSIS_SETTINGS).flatMap((definition) =>
+      definition.updateMode === "runtime" && "environment" in definition
+        ? [definition.environment]
+        : [],
+    ),
+  );
+
 export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
 ) as AnalysisSettingId[];

@@ -11,6 +11,7 @@ import { parseConfig } from "./parseConfig.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   parseRegexWorkerHeapRequest,
+  resolveRegexWorkerHeapRequest,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
   regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
@@ -168,18 +169,21 @@ it.each([
   const startup = parseEnvironment({
     REA_REGEX_WORKER_HEAP_REQUEST_MIB: value,
   });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
   const config = parseConfig({ REA_REGEX_WORKER_HEAP_REQUEST_MIB: value });
-  if (config.ok)
-    throw new Error(`parseConfig accepted ${JSON.stringify(value)}`);
-  expect(projectAnalysisError(config.error)).toMatchObject({
-    code: "configuration_invalid",
-    message: expect.stringContaining("REA_REGEX_WORKER_HEAP_REQUEST_MIB"),
-  });
+  if (!config.ok)
+    throw new Error(
+      `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
+    );
+  expect(config.value.regexWorkerHeapRequest).toEqual(
+    DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  );
+  expect(() =>
+    resolveRegexWorkerHeapRequest({
+      REA_REGEX_WORKER_HEAP_REQUEST_MIB: value,
+    }),
+  ).toThrow(ConfigurationError);
   expect(
     () => new KunaProvider({ REA_REGEX_WORKER_HEAP_REQUEST_MIB: value }),
   ).toThrow(ConfigurationError);

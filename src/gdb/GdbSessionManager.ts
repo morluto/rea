@@ -32,7 +32,8 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import {
-  resolveDebuggerSessionLimits,
+  debuggerConstructionLimits,
+  parseDebuggerSessionLimits,
   type DebuggerAdmissionLimit,
 } from "../config/debuggerSessionLimits.js";
 import {
@@ -617,9 +618,15 @@ export class GdbSessionManager {
       currentAnalysisOperationSnapshot()?.overrides[
         "debugger.command_deadline_ms"
       ];
-    return override === undefined
-      ? this.#launchCommandDeadline
-      : { ...this.#launchCommandDeadline, value: override, source: "runtime" };
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandDeadline,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerSessionLimits(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value.commandDeadline;
   }
   get #commandTimeoutMs(): number {
     return this.#commandDeadline.value;
@@ -629,9 +636,15 @@ export class GdbSessionManager {
       currentAnalysisOperationSnapshot()?.overrides[
         "debugger.max_command_output_bytes"
       ];
-    return override === undefined
-      ? this.#launchCommandOutput
-      : { ...this.#launchCommandOutput, value: override, source: "runtime" };
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandOutput,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerSessionLimits(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value.maxCommandOutputBytes;
   }
   get #maxCommandOutputBytes(): number {
     return this.#commandOutput.value;
@@ -664,7 +677,7 @@ export class GdbSessionManager {
   ) {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#command = this.#environment.REA_GDB_COMMAND ?? "gdb";
-    const limits = resolveDebuggerSessionLimits(this.#environment);
+    const limits = debuggerConstructionLimits(this.#environment);
     this.#launchCommandDeadline = limits.commandDeadline;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
     this.#platform = options.platform ?? process.platform;
