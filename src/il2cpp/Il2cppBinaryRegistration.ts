@@ -27,15 +27,23 @@ const SCAN_BYTES = 65536;
 const unresolvedPointerMatcher = (
   image: NativeImage,
   candidates: Iterable<bigint>,
-): ((address: bigint, raw: bigint) => boolean) => {
+  candidateCounts?: (candidate: bigint) => Iterable<number>,
+): ((
+  address: bigint,
+  raw: bigint,
+  count?: number,
+) => number | null | undefined) => {
   const fixups = image.machoPointerFixups;
-  if (fixups === undefined) return () => false;
+  if (fixups === undefined) return () => undefined;
   const values = [...candidates];
-  const masks = new Map<bigint, ReadonlySet<bigint>>();
+  const masks = new Map<
+    bigint,
+    Map<bigint, { counts: Set<number>; minimum: number }> | null
+  >();
   const maximumEntries = 8 * TOTAL_NAME_OCCURRENCES;
   let indexedEntries = 0;
-  return (address, raw) => {
-    if (!fixups.hasUnresolvedLegacyBytes(address, 8)) return false;
+  return (address, raw, count) => {
+    if (!fixups.hasUnresolvedLegacyBytes(address, 8)) return undefined;
     let knownMask = 0n;
     for (let byte = 0; byte < 8; byte++)
       if (!fixups.hasUnresolvedLegacyBytes(address + BigInt(byte), 1))
@@ -43,12 +51,41 @@ const unresolvedPointerMatcher = (
     let matches = masks.get(knownMask);
     if (matches === undefined) {
       // Beyond the retained index budget applicability remains unknown.
-      if (values.length > maximumEntries - indexedEntries) return true;
-      matches = new Set(values.map((candidate) => candidate & knownMask));
-      indexedEntries += values.length;
+      const index = new Map<bigint, { counts: Set<number>; minimum: number }>();
+      let entries = 0;
+      for (const candidate of values) {
+        const key = candidate & knownMask;
+        let candidateSet = index.get(key);
+        if (candidateSet === undefined) {
+          candidateSet = {
+            counts: new Set(),
+            minimum: Number.POSITIVE_INFINITY,
+          };
+          index.set(key, candidateSet);
+          entries++;
+        }
+        for (const value of candidateCounts?.(candidate) ?? [])
+          if (!candidateSet.counts.has(value)) {
+            candidateSet.counts.add(value);
+            candidateSet.minimum = Math.min(candidateSet.minimum, value);
+            entries++;
+          }
+        if (entries > maximumEntries - indexedEntries) {
+          masks.set(knownMask, null);
+          return null;
+        }
+      }
+      matches = index;
+      indexedEntries += entries;
       masks.set(knownMask, matches);
     }
-    return matches.has(raw & knownMask);
+    if (matches === null) return null;
+    const candidateSet = matches.get(raw & knownMask);
+    if (candidateSet === undefined) return undefined;
+    if (candidateCounts === undefined) return null;
+    if (count !== undefined)
+      return candidateSet.counts.has(count) ? count : undefined;
+    return candidateSet.minimum;
   };
 };
 
@@ -170,7 +207,9 @@ export function* findModules(
     Number.POSITIVE_INFINITY,
   );
   const candidates = new Map<number, Il2cppCodeGenModule[]>();
-  const unresolvedName = unresolvedPointerMatcher(image, names.keys());
+  const unresolvedName = unresolvedPointerMatcher(image, names.keys(), (name) =>
+    (names.get(name) ?? []).map((index) => counts[index]!),
+  );
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     for (let at = start; at + 24 <= mapping.size; at += 8) {
@@ -182,14 +221,27 @@ export function* findModules(
         image.elfPointerOverlay === undefined
           ? undefined
           : readSlot(image, address);
-      if (elfSlot === "unknown" || unresolvedName(address, raw)) {
+      const unresolvedLegacy =
+        image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, 8) === true;
+      if (elfSlot === "unknown" || unresolvedLegacy) {
         const count = readUInt32(image, address + 8n);
-        const plausibleCount =
+        let plausibleCount =
           count === "unknown"
             ? minimumCount
             : count !== null && countSet.has(count)
               ? count
               : Number.POSITIVE_INFINITY;
+        if (elfSlot !== "unknown" && Number.isFinite(plausibleCount)) {
+          const matched = unresolvedName(
+            address,
+            raw,
+            count === "unknown" || count === null ? undefined : count,
+          );
+          plausibleCount =
+            matched === undefined
+              ? Number.POSITIVE_INFINITY
+              : (matched ?? plausibleCount);
+        }
         if (Number.isFinite(plausibleCount)) {
           const pointers = readSlot(image, address + 16n);
           if (
@@ -203,6 +255,7 @@ export function* findModules(
             );
         }
       }
+      if (unresolvedLegacy) continue;
       // Non-ELF images retain their stored bytes. Nominate before decoding so
       // unrelated partial fixups do not invalidate the module search.
       if (image.elfPointerOverlay === undefined && !names.has(raw)) continue;
@@ -405,7 +458,8 @@ function* findModuleArrayByCode(
         image.elfPointerOverlay === undefined
           ? undefined
           : readSlot(image, address);
-      const unknown = elfSlot === "unknown" || unresolvedModule(address, raw);
+      const unknown =
+        elfSlot === "unknown" || unresolvedModule(address, raw) !== undefined;
       const value =
         !unknown && (image.elfPointerOverlay !== undefined || expected.has(raw))
           ? elfSlot === undefined
@@ -455,7 +509,7 @@ function* findModuleArrayByCode(
               unresolvedPointerMatcher(image, [expectedXor ^ possibleXor])(
                 mapping.address + BigInt(unknownAt),
                 image.bytes.readBigUInt64LE(mapping.offset + unknownAt),
-              )
+              ) !== undefined
             )
               return null;
           } else return null;

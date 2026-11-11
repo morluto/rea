@@ -2132,3 +2132,33 @@ it("does not treat bound data with a known invalid kind as a competing type tabl
   );
   expect(linkWholeTable(bytes).types_count).toBe(4);
 });
+
+it.each([2, 3])(
+  "binds a partially known module name to its own image count %s",
+  (count) => {
+    const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+    const duplicate = createIl2cppBinaryFixture({ duplicateModule: true });
+    duplicate.copy(bytes, 0x700, 0x700, 0x718);
+    bytes.writeUInt32LE(0, 0x704);
+    bytes.writeUInt32LE(count, 0x708);
+    // BIND_TYPE_TEXT_ABSOLUTE32 owns only the upper half of the name pointer.
+    bytes[0xf00 + 2 + Buffer.byteLength("_FixtureMethod") + 1] = 0x52;
+    if (count === 2)
+      expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+    else expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("does not mix masked image count and pointer extent when count is unresolved", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0xff0n, 0x710);
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("retains an unresolved matching image count when its method array could fit", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
+  bytes.writeBigUInt64LE(bytes.readBigUInt64LE(0x410), 0x710);
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
