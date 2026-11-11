@@ -781,18 +781,27 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     changesUiState: true,
     idempotent: false,
   }),
+  // Runs the task's readers, commands the task names, on the captured files.
   export_build_environment: effects({
     mutatesSession: true,
     writesFilesystem: true,
     launchesProcess: true,
     accessesNetwork: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
-  // A witness stage records the display and writes its record on this host.
+  // A witness stage records the display, runs the task's readers or the bundle's judge, and writes its record here.
   check_build_task: effects({
     mutatesSession: true,
     writesFilesystem: true,
+    launchesProcess: true,
     accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  // Keeps the person's consent with the computer for the export to ship.
+  record_build_consent: effects({
+    mutatesSession: true,
     idempotent: false,
   }),
   close_build_computer: effects({

@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Kỹ thuật dịch ngược cho mọi thứ
 
@@ -278,6 +278,12 @@ REA xuất môi trường chạy được cùng bài kiểm tra cơ bản để 
 [Hướng dẫn xây dựng môi trường](https://rea.tools/guides/rl-environments/) ·
 [Tài liệu tham chiếu môi trường](../agent-environments.md) ·
 [Xem bản demo trên X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Môi trường ứng dụng desktop
+
+REA cũng có thể xây dựng môi trường cho một ứng dụng desktop Linux mà tác tử dùng qua ảnh chụp màn hình, chuột và bàn phím. Từ một yêu cầu một dòng, chẳng hạn "Tạo cho tôi một môi trường Gnote trong đó tác tử thêm dầu ô liu vào ghi chú danh sách mua sắm", tác tử của bạn cài ứng dụng trên một máy tính dựng cục bộ, viết tác vụ, xuất môi trường và kiểm tra tác vụ trên một máy tính mới. Máy dựng môi trường cần Linux trên amd64 hoặc arm64, Docker và phiên bản framework agentenv mà hướng dẫn chỉ định.
+
+[Thiết lập môi trường ứng dụng desktop](../desktop-build-computer.md)
 
 ## Câu hỏi thường gặp
 

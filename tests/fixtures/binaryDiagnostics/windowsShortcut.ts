@@ -561,11 +561,6 @@ export const networkShareShortcut = (): Buffer =>
     extraData: [],
   });
 
-export const trackerV1Shortcut = (): Buffer =>
-  windowsShortcutBytes({
-    extraData: [{ kind: "tracker" }],
-  });
-
 export const ansiShortcut = (): Buffer =>
   windowsShortcutBytes({
     unicode: false,

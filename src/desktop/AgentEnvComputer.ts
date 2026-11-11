@@ -13,6 +13,11 @@ import type {
   ComputerHelper,
   ComputerRelease,
 } from "./AgentEnvComputerHelper.js";
+import {
+  dataGetSchema,
+  readHomeFiles,
+  writeHomeFiles,
+} from "./ComputerHomeFiles.js";
 import { drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 
@@ -158,21 +163,6 @@ const recordingManifestSchema = z.looseObject({
 });
 /** An ended recording's manifest, as `computer-recording/v1` returns it. */
 export type RecordingManifest = z.infer<typeof recordingManifestSchema>;
-const dataGetSchema = z.union([
-  z.object({
-    result: z.object({
-      parts: z.array(
-        z.looseObject({
-          file: z.looseObject({ bytes: z.string().optional() }).optional(),
-          metadata: z
-            .record(z.string(), z.looseObject({ path: z.string().optional() }))
-            .optional(),
-        }),
-      ),
-    }),
-  }),
-  z.object({ error: z.looseObject({ message: z.string() }) }),
-]);
 const rpcSchema = z.union([
   z.object({ result: z.looseObject({}) }),
   z.object({ error: z.looseObject({ message: z.string() }) }),
@@ -525,6 +515,18 @@ export class AgentEnvComputer {
     return bytes;
   }
 
+  /** Write files under the computer user's home, by home path, through the driver's `data/add`. */
+  async addHomeFiles(
+    files: ReadonlyMap<string, Buffer>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await writeHomeFiles(
+      (body) => this.#request("/agentenv", body, signal),
+      (text) => this.redacted(text),
+      files,
+    );
+  }
+
   /**
    * The files under paths of the computer user's home, by home path, through
    * the driver's `data/get`; its answer is read within `bytes` of files.
@@ -537,38 +539,19 @@ export class AgentEnvComputer {
     const ceiling = guestFileAnswerCeiling();
     const refusal = guestFileAnswerRefusal(bytes, paths.length, ceiling);
     if (refusal !== undefined) throw refusal;
-    const answer = dataGetSchema.parse(
-      await this.#request(
-        "/agentenv",
-        { jsonrpc: "2.0", id: 1, method: "data/get", params: { paths } },
-        signal,
-        {
-          limit: {
-            bytes: Math.min(
-              guestFileAnswerBytes(bytes, paths.length),
-              guestFileAnswerWorkingBytes(ceiling),
-            ),
-            what: `The computer's answer for ${paths.join(", ")}`,
-          },
-        },
+    const limit = {
+      bytes: Math.min(
+        guestFileAnswerBytes(bytes, paths.length),
+        guestFileAnswerWorkingBytes(ceiling),
       ),
-    );
-    if ("error" in answer)
-      throw new Error(
-        `data/get failed: ${this.redacted(answer.error.message)}`,
-      );
+      what: `The computer's answer for ${paths.join(", ")}`,
+    };
     const retained = retainGuestFiles(
-      answer.result.parts.flatMap((part) => {
-        const encoded = part.file?.bytes;
-        return encoded === undefined
-          ? []
-          : [
-              {
-                path: Object.values(part.metadata ?? {})[0]?.path,
-                bytes: Buffer.from(encoded, "base64"),
-              },
-            ];
-      }),
+      await readHomeFiles(
+        (body) => this.#request("/agentenv", body, signal, { limit }),
+        (text) => this.redacted(text),
+        paths,
+      ),
       bytes,
       paths.length,
       ceiling,
@@ -582,11 +565,12 @@ export class AgentEnvComputer {
     argv: readonly string[],
     timeoutS: number,
     signal?: AbortSignal,
+    requestId: string = randomUUID(),
   ): Promise<ComputerCommandResult> {
     const result = execSchema.parse(
       await this.#request(
         "/agentenv/ext/computer-exec/run",
-        { argv, request_id: randomUUID(), timeout_s: timeoutS },
+        { argv, request_id: requestId, timeout_s: timeoutS },
         signal,
         {
           limit: {

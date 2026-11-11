@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · **Українська** · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Реверс-інжиніринг будь-чого
 
@@ -278,6 +278,12 @@ REA експортує готове до запуску середовище з 
 [Посібник зі створення середовища](https://rea.tools/guides/rl-environments/) ·
 [Довідник середовищ](../agent-environments.md) ·
 [Дивитися демо в X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Середовища настільних застосунків
+
+REA також може створити середовище настільного застосунку для Linux, яким агент користується через знімки екрана, мишу й клавіатуру. За запитом в один рядок, як-от «Створи середовище Gnote, де агент додає оливкову олію до нотатки зі списком покупок», ваш агент встановлює застосунок на локальний комп’ютер збирання, пише завдання, експортує середовище й перевіряє завдання на новому комп’ютері. Машині, яка його збирає, потрібні Linux на amd64 або arm64, Docker і версія фреймворку agentenv, зазначена в посібнику.
+
+[Налаштування середовищ настільних застосунків](../desktop-build-computer.md)
 
 ## Поширені запитання
 

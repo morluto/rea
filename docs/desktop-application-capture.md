@@ -67,6 +67,9 @@ environment, and reads commands from stdin, one per line. The application gets
 REA's environment without the `AGENTENV_*` variables an agent environment sets,
 such as its control token: an app the exported computer launches never has
 them, and an app captured inside a computer must not hold a credential to it.
+It also gets `LIBC_FATAL_STDERR_=1`, so glibc writes a fatal error, such as
+an abort's reason, to the app's stderr rather than its terminal, and an app
+that exits at launch reports it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -325,7 +328,10 @@ dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
 start. A folder in those places whose name is one of these in another letter
 case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
-the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+the whole name is compared, so `~/.config/GIMPshop` does not. A file under a
+folder the application creates during the capture beside one of them, with
+the same name in another letter case or with a version added (`-3.1` or
+`3`), as TreeLine's `~/.treeline-3.1`, is its state too. Dotfiles in the
 home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
@@ -402,7 +408,10 @@ was added must be made again before state inspection, task drafting or export.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
 `--state-path`, or `state_paths` on a build computer's `start_build_capture`,
-and a limitation names them, spelled from `~/` under the home.
+and a limitation names them, spelled from `~/` under the home. A lock file
+the application held open, such as Poedit's `~/poedit.lock` or Lucene's
+`write.lock`, makes no folder such a directory, since it holds nothing to
+retain.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.

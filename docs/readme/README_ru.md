@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · **Русский** · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Реверс-инжиниринг чего угодно
 
@@ -278,6 +278,12 @@ REA экспортирует готовое к запуску окружение
 [Руководство по созданию окружения](https://rea.tools/guides/rl-environments/) ·
 [Справочник окружений](../agent-environments.md) ·
 [Смотреть демо в X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Окружения десктопных приложений
+
+REA также может создать окружение десктопного приложения для Linux, которым агент пользуется через снимки экрана, мышь и клавиатуру. По запросу в одну строку, например «Создай окружение Gnote, где агент добавляет оливковое масло в заметку со списком покупок», ваш агент устанавливает приложение на локальный компьютер сборки, пишет задание, экспортирует окружение и проверяет задание на новом компьютере. Машине, которая его собирает, нужны Linux на amd64 или arm64, Docker и версия фреймворка agentenv, указанная в руководстве.
+
+[Настройка окружений десктопных приложений](../desktop-build-computer.md)
 
 ## Частые вопросы
 

@@ -19,6 +19,7 @@ import {
   isGhidraFunctionOperation,
   type GhidraFunctionOperation,
 } from "../../../src/ghidra/GhidraFunctionValues.js";
+import { limitationsFor } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 
 it.each([
   { pseudocodeAvailable: true, reportsCoverage: true },
@@ -698,10 +699,17 @@ describe("Ghidra MCP evidence parity", () => {
             .limitations,
         },
         limitations: expect.arrayContaining([
+          // Wording-tolerant: the loop below already pins the provider's exact
+          // text, so a literal here would only re-couple the test to prose.
           expect.stringMatching(/auto.analysis.*complete/iu),
           expect.stringMatching(/original executable bytes.*unchanged/iu),
         ]),
       });
+      // Every source-declared limitation must survive the MCP projection;
+      // pinning a literal here re-copies prose the provider owns.
+      for (const limitation of limitationsFor("analyze_function")) {
+        expect(analyzed.limitations).toContain(limitation);
+      }
       expect(
         functionDossierSchema.parse(analyzed.normalized_result).limitations,
       ).toEqual(

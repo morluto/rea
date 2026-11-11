@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · **Română**
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · **Română** · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -338,6 +338,12 @@ REA exportă un mediu executabil cu un test de bază care verifică pornirea și
 [Ghid pentru construirea unui mediu](https://rea.tools/guides/rl-environments/) ·
 [Referință pentru medii](../agent-environments.md) ·
 [Vezi demonstrația pe X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Medii pentru aplicații desktop
+
+REA poate crea și un mediu pentru o aplicație desktop Linux, pe care un agent o folosește prin capturi de ecran, mouse și tastatură. Dintr-o cerere de un rând, precum „Creează-mi un mediu Gnote în care agentul adaugă ulei de măsline în notița cu lista de cumpărături”, agentul tău instalează aplicația pe un computer de build local, scrie sarcina, exportă mediul și verifică sarcina pe un computer nou. Mașina care îl creează are nevoie de Linux pe amd64 sau arm64, Docker și versiunea frameworkului agentenv fixată de ghid.
+
+[Configurează mediile pentru aplicații desktop](../desktop-build-computer.md)
 
 ## Întrebări frecvente
 

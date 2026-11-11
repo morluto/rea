@@ -42,6 +42,7 @@ const plan: DesktopAppExportPlan = {
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
+  seedModes: {},
   leftOutLocks: [],
   unownedFolders: [],
   runtimeSeeds: [],
@@ -59,6 +60,26 @@ describe("names", () => {
     expect(className("7zip")).toBe("App7zip");
     expect(className("none")).toBe("NoneApp");
     expect(className("true")).toBe("TrueApp");
+  });
+
+  it("names the app by a reverse-DNS id's last part, and by any other id without its trailing version", () => {
+    const names = [
+      "org.gnumeric.gnumeric",
+      "com.github.xournalpp.xournalpp",
+      "glabels-3.0",
+      "gimp-2.10",
+      "display-im6.q16",
+      "mousepad",
+    ].map((id) => environmentName(id, notNumeric));
+
+    expect(names).toEqual([
+      "gnumeric",
+      "xournalpp",
+      "glabels",
+      "gimp",
+      "display-im6-q16",
+      "mousepad",
+    ]);
   });
 
   it("ends a shortened name without a hyphen and prefixes one the name check refuses", () => {
@@ -100,6 +121,11 @@ describe("ownedPaths", () => {
     expect(
       ownedPaths([".config/GIMPshop/2.10/sessionrc"], [], [".config/gimp"]),
     ).toEqual([".config/GIMPshop/2.10"]);
+  });
+
+  it("owns the folder a log sits in, and a lock in the home as itself", () => {
+    expect(ownedPaths([".qet/20261106.log"], [], [])).toEqual([".qet"]);
+    expect(ownedPaths(["poedit.lock"], [], [])).toEqual(["poedit.lock"]);
   });
 
   it("owns a file directly in the home or a shared folder as itself", () => {
@@ -187,6 +213,17 @@ describe("renderers", () => {
   it("declares data hooks only when the app owns paths", () => {
     expect(renderAppClass(plan)).toContain("keep_initial(self.paths)");
     expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@get_data");
+  });
+
+  it("gives an app without owned paths a reset that only relaunches it when its task judges the screen", () => {
+    const relaunched = renderAppClass({
+      ...plan,
+      paths: [],
+      relaunchOnReset: true,
+    });
+    expect(relaunched).toContain("@reset_data\n    async def relaunch(self)");
+    expect(relaunched).not.toContain("@get_data");
+    expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@reset_data");
   });
 
   it("loads captured dconf settings even without owned paths", () => {

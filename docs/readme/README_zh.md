@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · **简体中文** · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA：逆向一切
 
@@ -276,6 +276,12 @@ REA 导出可直接运行的环境，并附带基本测试，检查环境能否�
 [构建环境指南](https://rea.tools/guides/rl-environments/) ·
 [环境参考文档](../agent-environments.md) ·
 [在 X 上观看演示](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### 桌面应用环境
+
+REA 也能为 Linux 桌面应用构建环境，智能体通过截图、鼠标和键盘使用它。只需一行请求，例如“帮我构建一个 Gnote 环境，让智能体在购物清单笔记中加入橄榄油”，你的智能体就会在本地构建计算机上安装应用、编写任务、导出环境，并在全新的计算机上检查任务。构建环境的机器需要 amd64 或 arm64 上的 Linux、Docker，以及指南固定的 agentenv 框架版本。
+
+[设置桌面应用环境](../desktop-build-computer.md)
 
 ## 常见问题
 
