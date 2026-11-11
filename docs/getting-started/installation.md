@@ -968,7 +968,10 @@ and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
 If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+**System Settings → Privacy & Security → Automation**, then retry. A hardened-runtime
+application starting REA requires the `com.apple.security.automation.apple-events`
+entitlement before macOS will prompt for permission; without it, grant the entitlement
+or start REA from a client macOS can authorize (such as a terminal). REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
