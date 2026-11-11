@@ -1,21 +1,37 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { splitNmSymbolRecords } from "../../../scripts/lib/conformance-fixtures.mjs";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
-const execute = promisify(execFile);
 const digest = (bytes: string | Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 const verifier = fileURLToPath(
   new URL("../../../scripts/verify-conformance-fixtures.mjs", import.meta.url),
 );
+
+const ownedFixture = async (prefix: string) => {
+  const commands = await createVerifierCommands();
+  let root: string | undefined;
+  onTestFinished(async () => {
+    await commands.close();
+    if (root !== undefined) await removeTestWorkspace(root);
+  });
+  root = await realpath(await mkdtemp(join(await realpath(tmpdir()), prefix)));
+  return { commands, root };
+};
 
 it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
   { mode: "complete", marker: "REA_C_ENTRY" },
@@ -31,7 +47,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
 ])(
   "verifies compiler-produced fixture records: $mode / $marker",
   async ({ mode, marker }) => {
-    const root = await createTestTempDirectory("rea-fixture-symbols-");
+    const { commands, root } = await ownedFixture("rea-fixture-symbols-");
     const sources = join(root, "sources");
     const output = join(root, "output");
     await mkdir(sources);
@@ -52,7 +68,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       const counted = mode === "prefix-complete" ? "" : "unrelated_";
       const content = `int rea_version_entry${suffix}(void) { return ${version}; }\nint ${counted}rea_inventory_0000(void) { return 0; }\nconst char *marker = "${literal}";\n`;
       await writeFile(join(sources, path), content);
-      await execute(
+      await commands.exec(
         "cc",
         ["-c", join(sources, path), "-o", join(output, artifact)],
         { timeout: 10_000 },
@@ -84,85 +100,77 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
         fixtures,
       }),
     );
-    const result = execute(process.execPath, [verifier, manifest, sources], {
-      cwd: root,
-      timeout: 25_000,
-    });
+    const result = commands.exec(
+      process.execPath,
+      [verifier, manifest, sources],
+      {
+        cwd: root,
+        timeout: 25_000,
+      },
+    );
     if (!["complete", "fragment", "prefix-complete"].includes(mode))
       await expect(result).rejects.toMatchObject({
         code: 1,
-        signal: null,
-        stderr: expect.stringContaining(
-          mode === "renamed"
-            ? `missing symbol ${prefix}rea_version_entry`
-            : mode === "wrong-prefix"
-              ? `expected 1 ${prefix}rea_inventory_ records, received 0`
-              : `missing string marker ${marker}`,
-        ),
+        snapshot: {
+          stderr: {
+            text: expect.stringContaining(
+              mode === "renamed"
+                ? `missing symbol ${prefix}rea_version_entry`
+                : mode === "wrong-prefix"
+                  ? `expected 1 ${prefix}rea_inventory_ records, received 0`
+                  : `missing string marker ${marker}`,
+            ),
+          },
+        },
       });
     else {
-      const completed = await result.then(
-        (value) => ({
-          code: 0,
-          signal: null,
-          stdout: value.stdout,
-          stderr: value.stderr,
-        }),
-        (error: unknown) => {
-          if (!(error instanceof Error)) throw error;
-          const failed = error as Error & {
-            code?: number | null;
-            signal?: NodeJS.Signals | null;
-            stdout?: string;
-            stderr?: string;
-          };
-          return {
-            code: failed.code ?? null,
-            signal: failed.signal ?? null,
-            stdout: failed.stdout ?? "",
-            stderr: failed.stderr ?? "",
-          };
-        },
-      );
-      expect(completed).toMatchObject({
-        code: 0,
-        signal: null,
-        stderr: "",
-      });
+      const completed = await result;
+      expect(completed.stderr).toBe("");
       expect(JSON.parse(completed.stdout)).toMatchObject({ verified: 2 });
     }
   },
+  120_000,
 );
 
 it.each([
   { schemaVersion: undefined, expectations: {} },
   { schemaVersion: 1, expectations: {} },
   { schemaVersion: 2, expectations: { strings: ["ambiguous"] } },
-])("refuses retired manifest semantics: %j", async (legacy) => {
-  const root = await createTestTempDirectory("rea-fixture-manifest-version-");
-  const manifest = join(root, "manifest.json");
-  await writeFile(
-    manifest,
-    JSON.stringify({
-      schemaVersion: legacy.schemaVersion,
-      platform: "linux",
-      fixtures: [{ expectations: legacy.expectations }],
-    }),
-  );
-  await expect(
-    execute(process.execPath, [verifier, manifest, root], {
-      cwd: root,
-      timeout: 10_000,
-    }),
-  ).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining(
-      legacy.schemaVersion === 2
-        ? "Invalid conformance fixture string expectations"
-        : "Unsupported conformance manifest",
-    ),
-  });
-});
+])(
+  "refuses retired manifest semantics: %j",
+  async (legacy) => {
+    const { commands, root } = await ownedFixture(
+      "rea-fixture-manifest-version-",
+    );
+    const manifest = join(root, "manifest.json");
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        schemaVersion: legacy.schemaVersion,
+        platform: "linux",
+        fixtures: [{ expectations: legacy.expectations }],
+      }),
+    );
+    await expect(
+      commands.exec(process.execPath, [verifier, manifest, root], {
+        cwd: root,
+        timeout: 10_000,
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      snapshot: {
+        stderr: {
+          text: expect.stringContaining(
+            legacy.schemaVersion === 2
+              ? "Invalid conformance fixture string expectations"
+              : "Unsupported conformance manifest",
+          ),
+        },
+      },
+    });
+  },
+  30_000,
+);
 
 it("preserves a carriage return that belongs to an nm symbol name", () => {
   expect(splitNmSymbolRecords("rea_entry\r\nrea_inventory_0000\n")).toEqual([
