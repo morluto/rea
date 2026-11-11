@@ -6,6 +6,7 @@ import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenRe
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
+  rethrowProcessOwnershipInspectionFailure,
 } from "./ProcessInspectionCancellation.js";
 
 export type ProcessInspectionFailure =
@@ -86,4 +87,14 @@ export const processInspectionCancellations = (
   };
   visit(cause);
   return facts;
+};
+
+/** Mandatory cleanup cannot replace transferred inspection facts with an uncertainty row. */
+export const rethrowProcessInspectionFailure = (cause: unknown): void => {
+  if (
+    processInspectionCleanupFailures(cause).length > 0 ||
+    processInspectionCancellations(cause).length > 0
+  )
+    throw cause;
+  rethrowProcessOwnershipInspectionFailure(cause);
 };

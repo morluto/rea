@@ -1,3 +1,5 @@
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import { constants } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,8 +24,12 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import {
   processInspectionCancellations,
   processInspectionCleanupFailures,
+  rethrowProcessInspectionFailure,
 } from "./ProcessInspectionCleanup.js";
-import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "./ProcessInspectionCancellation.js";
 
 it.each([
   "literal cancellation",
@@ -134,5 +140,77 @@ it.each([
       await resources.close();
       await owner.close();
     }
+  },
+);
+
+it.each([
+  "descriptor",
+  "mixed batch",
+  "cancelled",
+  "retained Darwin",
+  "Darwin cancellation",
+] as const)(
+  "rethrows the actual known %s inspection fact before mandatory fallback",
+  async (kind) => {
+    const descriptor = await failedInspectionDescriptor();
+    const reason = { caller: "mandatory inspection stopped" };
+    const observations = new Map([
+      [200, { state: "unavailable" as const, reason: "not fully observed" }],
+    ]);
+    const failure =
+      kind === "descriptor"
+        ? descriptor.failure
+        : kind === "mixed batch"
+          ? new ProcessOwnershipIdentityBatchFailure(
+              [
+                { pid: 100, requestIndex: 0, cause: descriptor.failure },
+                {
+                  pid: 200,
+                  requestIndex: 1,
+                  cause: new ProcessOwnershipInspectionCancelled(reason),
+                },
+              ],
+              observations,
+            )
+          : kind === "cancelled"
+            ? new ProcessOwnershipInspectionCancelled(descriptor.failure)
+            : kind === "retained Darwin"
+              ? new DarwinProcessOwnershipInspectionError(
+                  "recorded helper close failed",
+                  {
+                    cleanupOwner: descriptor.failure.owner,
+                    cleanupFailure: new ProviderCleanupError(
+                      "fixture",
+                      [descriptor.path],
+                      { reason: "descriptor close remains denied" },
+                    ),
+                  },
+                )
+              : new DarwinProcessOwnershipInspectionError(
+                  "recorded helper cancelled",
+                  { cancellation: { reason } },
+                );
+    let observed: unknown;
+    try {
+      rethrowProcessInspectionFailure(failure);
+    } catch (cause: unknown) {
+      observed = cause;
+    }
+    expect(observed).toBe(failure);
+    if (failure instanceof ProcessOwnershipIdentityBatchFailure) {
+      expect(failure.observations).toBe(observations);
+      expect(failure.origin).toBe("physical");
+      expect(failure.physicalFailures[0]?.cause).toBe(descriptor.failure);
+      expect(failure.cancellations[0]?.cancellation.reason).toBe(reason);
+    }
+    expect(descriptor.handle.fd).toBeGreaterThanOrEqual(0);
+    expect(
+      rethrowProcessInspectionFailure(
+        new Error("opaque wrapper", { cause: failure }),
+      ),
+    ).toBeUndefined();
+    descriptor.allow();
+    await descriptor.failure.owner.close();
+    expect(descriptor.handle.fd).toBe(-1);
   },
 );
