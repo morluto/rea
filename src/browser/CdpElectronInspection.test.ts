@@ -879,25 +879,29 @@ it.each([2, 3])(
 );
 
 it.each([
+  { stage: 1, loader: undefined },
+  { stage: 1, loader: "" },
   { stage: 2, loader: undefined },
   { stage: 2, loader: "" },
   { stage: 3, loader: undefined },
   { stage: 3, loader: "" },
   { stage: 0, loader: undefined },
 ])(
-  "retains uncertainty when a known main loader is missing at read $stage",
+  "retains uncertainty when the main loader is missing at read $stage",
   async ({ stage, loader }) => {
     const root = await mkdtemp(join(tmpdir(), "rea-electron-missing-loader-"));
     temporary.push(root);
     const main = join(root, "main.html");
-    await writeFile(main, "main");
+    const child = join(root, "child.html");
+    await Promise.all([writeFile(main, "main"), writeFile(child, "child")]);
     const mainUrl = pathToFileURL(main).href;
+    const childUrl = pathToFileURL(child).href;
     let reads = 0;
     let listener: (event: CdpEvent) => void = () => {};
-    const emitScript = (hash: string, id: number) => {
+    const emitScript = (hash: string, id: number, frameId: string) => {
       listener({
         method: "Runtime.executionContextCreated",
-        params: { context: { id, auxData: { frameId: "main" } } },
+        params: { context: { id, auxData: { frameId } } },
       });
       listener({
         method: "Debugger.scriptParsed",
@@ -914,6 +918,16 @@ it.each([
           reads++;
           return {
             frameTree: {
+              childFrames: [
+                {
+                  frame: {
+                    id: "child",
+                    parentId: "main",
+                    url: childUrl,
+                    loaderId: "loader-child",
+                  },
+                },
+              ],
               frame: {
                 id: "main",
                 url: mainUrl,
@@ -926,9 +940,13 @@ it.each([
             },
           };
         }
-        if (method === "Debugger.enable") emitScript("before", 7);
+        if (method === "Debugger.enable") {
+          emitScript("before", 7, "main");
+          emitScript("child-before", 9, "child");
+        }
         if (method === "Page.getResourceTree") {
-          emitScript("after", 8);
+          emitScript("after", 8, "main");
+          emitScript("child-after", 10, "child");
           return { frameTree: { resources: [] } };
         }
         if (method === "DOMSnapshot.captureSnapshot")
@@ -945,13 +963,25 @@ it.each([
     expect(result.scripts.items).toContainEqual(
       expect.objectContaining({
         cdp_hash: "before",
-        frame_scope: "authorized",
+        frame_scope: stage === 1 ? "unknown" : "authorized",
       }),
     );
     expect(result.scripts.items).toContainEqual(
       expect.objectContaining({
         cdp_hash: "after",
-        frame_scope: stage === 2 ? "unknown" : "authorized",
+        frame_scope: stage === 1 || stage === 2 ? "unknown" : "authorized",
+      }),
+    );
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "child-before",
+        frame_scope: stage === 1 ? "unknown" : "authorized",
+      }),
+    );
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "child-after",
+        frame_scope: stage === 1 || stage === 2 ? "unknown" : "authorized",
       }),
     );
   },

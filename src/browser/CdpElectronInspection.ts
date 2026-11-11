@@ -66,6 +66,7 @@ interface ElectronInspectionState {
   readonly frameGenerations: Map<string, number>;
   readonly frameParents: Map<string, string | null>;
   readonly frameDocuments: Map<string, ElectronFrameDocument>;
+  readonly unknownDocumentFrames: Set<string>;
   readonly authorizedFrameGenerations: Set<string>;
   readonly excludedFrameGenerations: Set<string>;
   readonly scriptGenerations: WeakMap<ElectronScriptDraft, number>;
@@ -82,6 +83,7 @@ interface ElectronFrameInventory {
 }
 
 interface ElectronFrameRead extends ElectronFrameInventory {
+  readonly unprovenDocuments: ReadonlySet<string>;
   readonly generations: ReadonlyMap<string, number>;
 }
 
@@ -103,6 +105,7 @@ export const inspectCdpElectronPage = async (
     frameGenerations: new Map(),
     frameParents: new Map(),
     frameDocuments: new Map(),
+    unknownDocumentFrames: new Set(),
     authorizedFrameGenerations: new Set(),
     excludedFrameGenerations: new Set(),
     scriptGenerations: new WeakMap(),
@@ -162,7 +165,10 @@ const runElectronInspection = async (
   const main = initialFrames.at(0);
   if (main === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  if (unprovenFrameIds(initialRead, state).has(main.frame_id))
+  if (
+    !initialRead.unprovenDocuments.has(main.frame_id) &&
+    unprovenFrameIds(initialRead, state).has(main.frame_id)
+  )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   state.mainFrameId = main.frame_id;
   state.lastProvenMainDocument = state.frameDocuments.get(main.frame_id);
@@ -243,6 +249,13 @@ const authorizeFrameGenerations = (
   state: ElectronInspectionState,
 ): void => {
   const unproven = markUnstableFrameRead(read, state);
+  // Never let a later authorization retroactively bless facts from an
+  // unproven generation, including descendants of an unknown document.
+  for (const id of unproven) {
+    const generation = state.frameGenerations.get(id) ?? 0;
+    if ((read.generations.get(id) ?? 0) === generation)
+      state.frameGenerations.set(id, generation + 1);
+  }
   for (const [id, parent] of read.parents)
     if (!unproven.has(id)) state.frameParents.set(id, parent);
   for (const frame of read.frames) {
@@ -265,7 +278,7 @@ const unprovenFrameIds = (
   state: ElectronInspectionState,
 ): Set<string> => {
   const children = new Map<string, string[]>();
-  const unproven = new Set<string>();
+  const unproven = new Set(read.unprovenDocuments);
   for (const [id, parent] of read.parents) {
     if (
       (read.generations.get(id) ?? 0) !== (state.frameGenerations.get(id) ?? 0)
@@ -430,12 +443,29 @@ const seedFrameDocuments = (
     if (
       id !== null &&
       document === undefined &&
-      documents.has(id) &&
       state.frameDocuments.get(id) === documents.get(id) &&
       (generations.get(id) ?? 0) === (state.frameGenerations.get(id) ?? 0)
     ) {
       unproven.add(id);
-      invalidateFrameGenerations(id, state, "unproven");
+      state.unknownDocumentFrames.add(id);
+      if (documents.has(id)) invalidateFrameGenerations(id, state, "unproven");
+    }
+    if (
+      id !== null &&
+      document !== undefined &&
+      state.unknownDocumentFrames.has(id) &&
+      state.frameDocuments.get(id) === documents.get(id) &&
+      (generations.get(id) ?? 0) === (state.frameGenerations.get(id) ?? 0)
+    ) {
+      state.unknownDocumentFrames.delete(id);
+      const previous =
+        id === state.mainFrameId ? state.lastProvenMainDocument : undefined;
+      const changed =
+        previous !== undefined && !sameFrameDocument(previous, document);
+      invalidateFrameGenerations(id, state, changed ? "changed" : "unproven");
+      unproven.add(id);
+      retainFrameDocument(id, document, state);
+      continue;
     }
     if (
       id !== null &&
@@ -486,7 +516,12 @@ const readCurrentFrames = async (
     context.sessionId,
     context.signal,
   );
-  seedFrameDocuments(result, generations, documents, state);
+  const unprovenDocuments = seedFrameDocuments(
+    result,
+    generations,
+    documents,
+    state,
+  );
   const inventory = await captureFrames(
     result,
     completeness,
@@ -494,7 +529,7 @@ const readCurrentFrames = async (
     context.signal,
   );
   selectedMainFrame(inventory, state.mainFrameId);
-  return { ...inventory, generations };
+  return { ...inventory, generations, unprovenDocuments };
 };
 
 const markUnstableFrameRead = (
@@ -609,7 +644,10 @@ const assertStableMainFrame = async (
         (state.frameGenerations.get(state.mainFrameId) ?? 0))
   )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
-  markUnstableFrameRead({ ...inventory, generations }, state);
+  markUnstableFrameRead(
+    { ...inventory, generations, unprovenDocuments },
+    state,
+  );
   if (
     completeness
       .snapshot()
