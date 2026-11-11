@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 
 import type { DoctorHost } from "../application/Doctor.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { assertSetupActive } from "../application/SetupCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
@@ -142,21 +145,30 @@ export const systemDesktopBuildSetupHost = (
             try {
               await rm(partial, { force: true });
             } catch (cleanup: unknown) {
-              resources.retain({
-                kind: "lease",
-                resource: partial,
-                lease: { release: () => rm(partial, { force: true }) },
-              });
-              if (cause instanceof AnalysisCancelledError) throw cause;
-              assertSetupActive(
-                signal,
-                `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`,
+              const lease = new AnalysisCleanupLease(
+                () => rm(partial, { force: true }),
+                [partial],
               );
+              resources.retain({ kind: "lease", resource: partial, lease });
+              if (cause instanceof AnalysisError) {
+                const cleanupFailure = new ProviderCleanupError(
+                  "rea-desktop",
+                  [partial],
+                  { reason: failureReason(cleanup) },
+                  { operation: "setup", cause: cleanup },
+                );
+                cleanupFailure.bindCleanupResourceOwner(lease);
+                lease.bindCleanupError(cleanupFailure);
+                throw analysisErrorWithCleanupFailure(
+                  cause,
+                  cleanupFailure,
+                  "setup",
+                ).bindCleanupDependencies([cause, cleanupFailure]);
+              }
               return `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`;
             }
           }
-          if (cause instanceof AnalysisCancelledError) throw cause;
-          assertSetupActive(signal, desktopBuildOwnedCommandReason(cause));
+          if (cause instanceof AnalysisError) throw cause;
           return desktopBuildOwnedCommandReason(cause);
         }
       });
@@ -180,8 +192,7 @@ export const systemDesktopBuildSetupHost = (
           });
           return undefined;
         } catch (cause: unknown) {
-          if (cause instanceof AnalysisCancelledError) throw cause;
-          assertSetupActive(signal, desktopBuildOwnedCommandReason(cause));
+          if (cause instanceof AnalysisError) throw cause;
           return desktopBuildOwnedCommandReason(cause);
         }
       });
