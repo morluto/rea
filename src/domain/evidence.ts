@@ -88,8 +88,12 @@ const executionEnvironmentSchema = z.strictObject({
 });
 const callerInputPathsSchema = z.record(
   nulFreeStringSchema,
-  nulFreeStringSchema,
+  z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
 );
+/** Caller-selected auxiliary paths, retaining ordered repeated options. */
+export type CallerInputPaths = Readonly<
+  Record<string, string | readonly string[]>
+>;
 
 const evidenceBaseSchema = z
   .object({
@@ -107,7 +111,7 @@ const evidenceBaseSchema = z
     caller_input_paths: callerInputPathsSchema
       .exactOptional()
       .describe(
-        "Verbatim auxiliary input paths keyed by argument name; caller assertions outside semantic identity.",
+        "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
       ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
@@ -374,10 +378,11 @@ export const rebindEvidenceToTargetPath = (
 /** Bind the exact selected request path without changing semantic identity or stored history. */
 export const withEvidenceCallerInputPath = (
   evidence: Evidence,
-  rawPath: string,
-  additionalPaths?: Readonly<Record<string, string>>,
+  rawPath: string | undefined,
+  additionalPaths?: CallerInputPaths,
 ): Evidence => {
-  const callerInputPath = nulFreeStringSchema.parse(rawPath);
+  const callerInputPath =
+    rawPath === undefined ? undefined : nulFreeStringSchema.parse(rawPath);
   const owned = immutableEvidence(evidence);
   const paths =
     additionalPaths === undefined
@@ -385,12 +390,19 @@ export const withEvidenceCallerInputPath = (
       : callerInputPathsSchema.parse(additionalPaths);
   const samePaths =
     paths === undefined || isDeepStrictEqual(owned.caller_input_paths, paths);
-  if (owned.caller_input_path === callerInputPath && samePaths) return owned;
+  if (
+    (callerInputPath === undefined ||
+      owned.caller_input_path === callerInputPath) &&
+    samePaths
+  )
+    return owned;
   // The authenticated source owns its immutable payloads. Only this small
   // envelope changes, so replay does not copy a document-sized result.
   const rebound = {
     ...owned,
-    caller_input_path: callerInputPath,
+    ...(callerInputPath === undefined
+      ? {}
+      : { caller_input_path: callerInputPath }),
     ...(paths === undefined ? {} : { caller_input_paths: paths }),
   };
   return rememberReboundEvidence(owned, rebound);

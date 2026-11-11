@@ -181,7 +181,8 @@ When choosing the manual path, leave the automatic main release PR unmerged.
 Select the application commit from main, create the frozen branch, and prepare
 its own release PR using the steps below. Merging the main release PR starts
 automatic publication instead. Close the superseded main PR after the manual
-release has published and its metadata has been synchronized back to main.
+release has published, before merging the metadata synchronization PR back
+to main.
 
 `release/VERSION` also sets the expected version for the workflow. Use an exact
 SemVer such as `release/6.1.0` or `release/6.1.0-rc.1`, without build metadata.
@@ -349,8 +350,10 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 The synchronization must include `.release-please-manifest.json`,
 `package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
-`server.json`, both plugin manifests (`.claude-plugin/plugin.json` and
-`.codex-plugin/plugin.json`), the Codex server declaration (`.codex-plugin/mcp.json`), both
+`server.json`, the Claude Code and Codex plugin manifests
+(`.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`), the Codex
+server declaration (`.codex-plugin/mcp.json`), the Cursor Marketplace manifest
+(`.cursor-plugin/plugin.json`) and server pin (`mcp.json`), both
 marketplaces (`.claude-plugin/marketplace.json` and
 `.agents/plugins/marketplace.json`), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration

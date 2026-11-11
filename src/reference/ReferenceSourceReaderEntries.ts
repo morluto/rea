@@ -69,7 +69,8 @@ export const traverseDirectory = async (
     current.path,
     state.signal,
   );
-  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
+  if (isAborted(state.signal))
+    return { ok: false, error: cancelled(state.signal) };
   if (!before.ok) {
     recordDirectoryFailure(
       state,
@@ -103,11 +104,12 @@ export const traverseDirectory = async (
       // A directory that cannot be opened retains its ordinary partial-entry
       // failure; only an opened directory needs policy before enumeration.
       result = isAborted(state.signal)
-        ? err(cancelled())
+        ? err(cancelled(state.signal))
         : ((await state.beforeDirectory?.(
             pathFromRoot(state.root, current.path),
           )) ?? ok(undefined));
-      if (result.ok && isAborted(state.signal)) result = err(cancelled());
+      if (result.ok && isAborted(state.signal))
+        result = err(cancelled(state.signal));
       while (result.ok) {
         let child: Dirent | null;
         try {
@@ -154,7 +156,7 @@ export const traverseDirectory = async (
       const previous = result.ok ? undefined : result.error.cleanup;
       const primary = result.ok
         ? isAborted(state.signal)
-          ? cancelled()
+          ? cancelled(state.signal)
           : failure(
               "io",
               readFailure?.localDiagnostic ??
@@ -173,12 +175,13 @@ export const traverseDirectory = async (
                   ...new Set([...previous.resources, ...observation.resources]),
                 ],
               },
-        cause: primary.cause ?? cleanup.cause,
+        cause: Object.hasOwn(primary, "cause") ? primary.cause : cleanup.cause,
       });
     }
     if (!result.ok) return result;
   }
-  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
+  if (isAborted(state.signal))
+    return { ok: false, error: cancelled(state.signal) };
   if (readFailure !== undefined) {
     recordDirectoryFailure(
       state,
@@ -196,7 +199,8 @@ export const traverseDirectory = async (
     current.path,
     state.signal,
   );
-  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
+  if (isAborted(state.signal))
+    return { ok: false, error: cancelled(state.signal) };
   if (!after.ok || !sameFile(before.stats, after.stats)) {
     recordDirectoryFailure(
       state,
@@ -263,11 +267,13 @@ const processEntry = async (
   name: string,
   directories: PendingDirectory[],
 ): Promise<ReferenceSourceResult<undefined>> => {
-  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
+  if (isAborted(state.signal))
+    return { ok: false, error: cancelled(state.signal) };
   const absolute = join(current.path, name);
   const path = pathFromRoot(state.root, absolute);
   const metadata = await readMetadata(absolute);
-  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
+  if (isAborted(state.signal))
+    return { ok: false, error: cancelled(state.signal) };
   if (!metadata.ok) {
     const excluded = applyExclusion(state.shouldExclude, path, "unknown");
     if (!excluded.ok)
@@ -312,7 +318,8 @@ const processEntry = async (
     state.exclusions.push({ path, kind });
     return { ok: true, value: undefined };
   }
-  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
+  if (isAborted(state.signal))
+    return { ok: false, error: cancelled(state.signal) };
   if (kind === "symlink")
     state.entries.push(
       await readStableSymlinkTarget(
@@ -370,6 +377,11 @@ const processFileEntry = async (
           ? entry.message
           : `Reference file cleanup failed: ${path}`,
       cleanup: result.cleanup,
+      ...(entry.status === "failed" &&
+      entry.code === "cancelled" &&
+      state.signal?.aborted === true
+        ? { cause: state.signal.reason }
+        : {}),
     });
   return ok(undefined);
 };
@@ -476,7 +488,7 @@ const readSymlinkTarget = async (
       status: "read",
       kind: "symlink",
       path,
-      target: await missingSymlinkPath(root, nativeTarget),
+      target: await missingSymlinkPath(root, nativeTarget, code === "ENOENT"),
       targetState: "missing",
     };
   }
@@ -494,6 +506,7 @@ const readSymlinkTarget = async (
 const missingSymlinkPath = async (
   root: string,
   target: string,
+  missingFinalComponent: boolean,
 ): Promise<string> => {
   if (basename(target) === "..") return target;
   let parent: string;
@@ -507,11 +520,11 @@ const missingSymlinkPath = async (
     throw cause;
   }
   const candidate = appendCallerPath(parent, basename(target));
-  // A trailing separator requires a directory; relative() would erase it.
-  if (target.endsWith(sep)) return `${candidate}${sep}`;
-  return isPathWithinRoot(root, candidate)
-    ? pathFromRoot(root, candidate)
-    : candidate;
+  const directoryRequired = target.endsWith(sep);
+  if (directoryRequired && !missingFinalComponent) return `${candidate}${sep}`;
+  const internal = isPathWithinRoot(root, candidate);
+  const scoped = internal ? pathFromRoot(root, candidate) : candidate;
+  return directoryRequired ? `${scoped}${internal ? "/" : sep}` : scoped;
 };
 
 const applyExclusion = (

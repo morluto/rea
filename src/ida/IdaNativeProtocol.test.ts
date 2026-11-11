@@ -19,6 +19,7 @@ import {
   type IdaMcpConnection,
 } from "./IdaMcpConnection.js";
 import { parseConfig } from "../config/parseConfig.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "./IdaCallGraph.js";
 import { IdaProvider } from "./IdaProvider.js";
 import { idaCapabilities } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
@@ -385,6 +386,12 @@ describe("native IDA provider observations", () => {
         if (!direct.ok) throw direct.error;
         expect(direct.value.relationshipCoverage).toMatchObject({
           status: more ? "partial" : "complete",
+          discovery: {
+            callees: {
+              status: "unknown",
+              reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+            },
+          },
         });
         const dossier = await client.execute("analyze_function", {
           procedure: "main",
@@ -965,9 +972,29 @@ describe("native IDA malformed observations", () => {
       procedure: "main",
     });
     expect(result.ok && result.value.result).toBe("0x1000: nop\n0x1001: ret");
-    producer.overrideCall = (name) =>
-      name === "find_regex" ? { matches: [], cursor: { next: 0 } } : undefined;
-    expect((await client.execute("list_strings", {})).ok).toBe(false);
+    let pages = 0;
+    producer.overrideCall = (name) => {
+      if (name !== "disasm") return undefined;
+      if (++pages > 2)
+        throw new Error("Non-advancing assembly requested another page");
+      return {
+        asm: {
+          name: "main",
+          start_ea: "0x1000",
+          lines: "main (.text @ 0x1000):\n1000  nop",
+        },
+        cursor: { next: 0 },
+      };
+    };
+    const refused = await client.execute("procedure_assembly", {
+      procedure: "main",
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(refused.error.message).toMatch(
+        /cursor.*advance|pagination.*advance/iu,
+      );
+    expect(pages).toBe(1);
     await client.close();
   });
 });

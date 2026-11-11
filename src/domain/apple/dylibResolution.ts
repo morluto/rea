@@ -268,6 +268,7 @@ interface ProcessContext {
   >;
   readonly searchOverrides: readonly DyldSearchOverride[];
   readonly environmentRoots: Set<string>;
+  readonly unknownArchitectureCandidates: Set<string>;
   readonly unknownPlatformCandidates: Set<string>;
   readonly undecodableSymlinkTargets: Map<string, string>;
   readonly implicitMacOSPlatformCandidates: Set<string>;
@@ -310,15 +311,11 @@ const candidateTemplates = (
 ): CandidateTemplate[] => {
   const name = dependency.install_name;
   if (!name.startsWith("@rpath/")) {
-    const source = name.startsWith("@executable_path")
-      ? "executable_path"
-      : name.startsWith("@loader_path")
-        ? "loader_path"
-        : "literal";
+    const expansion = expandCandidatePath(name, directoryOf(loader), context);
     return [
       {
-        expansion: expandCandidatePath(name, directoryOf(loader), context),
-        source,
+        expansion,
+        source: expansion.prefix ?? "literal",
         rpath: null,
         rpathOwner: null,
       },
@@ -379,8 +376,10 @@ const evaluateCandidate = async (
       machoImageSlices(facts),
       context.processIdentity,
     );
-    if (selection.kind === "unknown") outcome = "undetermined";
-    else if (selection.kind === "missing") outcome = "architecture-missing";
+    if (selection.kind === "unknown") {
+      outcome = "undetermined";
+      context.unknownArchitectureCandidates.add(lookup.path);
+    } else if (selection.kind === "missing") outcome = "architecture-missing";
     // Dependency commands require a dylib; generic dyld image loadability
     // also admits main executables and bundles for different operations.
     else if (selection.slice.file_type_code !== 6) outcome = "not-loadable";
@@ -672,6 +671,7 @@ const projectTraceResult = (input: {
   readonly edges: readonly Edge[];
   readonly withoutArchitecture: readonly string[];
   readonly environmentRoots: ReadonlySet<string>;
+  readonly unknownArchitectureCandidates: ReadonlySet<string>;
   readonly unknownPlatformCandidates: ReadonlySet<string>;
   readonly undecodableSymlinkTargets: ReadonlyMap<string, string>;
   readonly implicitMacOSPlatformCandidates: ReadonlySet<string>;
@@ -705,6 +705,7 @@ const projectTraceResult = (input: {
         unparsed.length === 0 &&
         input.withoutArchitecture.length === 0 &&
         input.environmentRoots.size === 0 &&
+        input.unknownArchitectureCandidates.size === 0 &&
         input.unknownPlatformCandidates.size === 0 &&
         input.undecodableSymlinkTargets.size === 0 &&
         input.rootEnumeration?.status !== "unknown"
@@ -725,6 +726,11 @@ const projectTraceResult = (input: {
         ? []
         : [
             `Roots ${[...input.environmentRoots].join(", ")} request applicable image-selection inputs through LC_DYLD_ENVIRONMENT that are not modeled; affected dependencies or inserted images remain uncertain.`,
+          ]),
+      ...(input.unknownArchitectureCandidates.size === 0
+        ? []
+        : [
+            `In-root dylib candidates ${[...input.unknownArchitectureCandidates].sort(compare).join(", ")} have unknown architecture compatibility and are not treated as incompatible. Their dependent graphs may be incomplete.`,
           ]),
       ...(input.unknownPlatformCandidates.size === 0
         ? []
@@ -760,6 +766,7 @@ export const traceDylibLoading = async (
   const edges: Edge[] = [];
   const withoutArchitecture: string[] = [];
   const environmentRoots = new Set<string>();
+  const unknownArchitectureCandidates = new Set<string>();
   const unknownPlatformCandidates = new Set<string>();
   const undecodableSymlinkTargets = new Map<string, string>();
   const implicitMacOSPlatformCandidates = new Set<string>();
@@ -802,6 +809,7 @@ export const traceDylibLoading = async (
             },
             searchOverrides,
             environmentRoots,
+            unknownArchitectureCandidates,
             unknownPlatformCandidates,
             undecodableSymlinkTargets,
             implicitMacOSPlatformCandidates,
@@ -824,6 +832,7 @@ export const traceDylibLoading = async (
     edges,
     withoutArchitecture,
     environmentRoots,
+    unknownArchitectureCandidates,
     unknownPlatformCandidates,
     undecodableSymlinkTargets,
     implicitMacOSPlatformCandidates,

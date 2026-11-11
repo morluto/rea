@@ -1043,7 +1043,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       expect(await fs.readFile(path, "utf8")).toBe(original);
       expect((await fs.lstat(path)).mode & 0o777).toBe(0o400);
       expect(state.publicationHandles).toHaveLength(0);
-      expect(await host.close?.()).toContain("cleanup failed");
+      expect(await host.close?.()).toBeInstanceOf(AnalysisError);
     } finally {
       if (inserted !== undefined) await fs.unlink(inserted);
       await host.close?.();
@@ -1081,7 +1081,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       ).toBe("failed");
       expect(state.publicationHandles).toHaveLength(1);
       expect(state.publicationHandles[0]!.fd).toBeGreaterThanOrEqual(0);
-      expect(await host.close?.()).toContain("cleanup failed");
+      expect(await host.close?.()).toBeInstanceOf(AnalysisError);
       state.rejectPublicationMode = false;
       state.rejectPublicationClose = false;
       expect(await host.close?.()).toBeUndefined();
@@ -1351,15 +1351,13 @@ it.each(["setup", "uninstall"] as const)(
         ).toBe("failed");
       }
       const cleanupFailure = await host.close?.();
-      if (operation === "setup") {
-        expect(cleanupFailure).toBeInstanceOf(AnalysisError);
-        const retainedRoots = (await fs.readdir(root))
-          .filter((name) => name.startsWith(".rea-config-"))
-          .map((name) => join(root, name));
-        expect((cleanupFailure as AnalysisError).cleanupResources).toEqual(
-          retainedRoots,
-        );
-      } else expect(cleanupFailure).toContain("cleanup");
+      expect(cleanupFailure).toBeInstanceOf(AnalysisError);
+      const retainedRoots = (await fs.readdir(root))
+        .filter((name) => name.startsWith(".rea-config-"))
+        .map((name) => join(root, name));
+      expect((cleanupFailure as AnalysisError).cleanupResources).toEqual(
+        retainedRoots,
+      );
       expect(
         (await fs.readdir(root)).filter((name) =>
           name.startsWith(".rea-config-"),

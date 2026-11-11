@@ -159,6 +159,39 @@ describe("native UI screenshot validation", () => {
         nodes: [{ children_count: null }],
       });
   });
+
+  it("retains incomplete action observations and their gap", async () => {
+    const partial = {
+      ...snapshot,
+      nodes: [
+        {
+          path: [],
+          role: "AXWindow",
+          title: null,
+          value: null,
+          actions: [],
+          children_count: 0,
+        },
+      ],
+      truncated: true,
+      gaps: [
+        "AX actions unavailable at path []: AXError -25204",
+        "AX value unavailable at path []: AXError -25204",
+      ],
+    };
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, accessibility: true },
+      { environment: {}, invoke: async () => ({ ok: true, result: partial }) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.initial.truncated).toBe(true);
+      expect(result.value.initial.gaps).toEqual(partial.gaps);
+      expect(result.value.initial.nodes[0]?.actions).toEqual([]);
+    }
+  });
 });
 
 describe("native UI capture selection and budgets", () => {
@@ -299,14 +332,7 @@ describe("native UI deadline execution", () => {
       },
       {
         environment: {},
-        runtime: {
-          signal: new AbortController().signal,
-          deadlineMs: 2_500,
-          invoke: async () => ({ ok: true, result: snapshot }),
-          cleanupLease: new AnalysisCleanupLease(async () => undefined),
-          close: async () => undefined,
-          resources: () => [],
-        },
+        invoke: async () => ({ ok: true, result: snapshot }),
       },
     );
     if (!result.ok) throw new Error("expected a completed scenario");
@@ -317,6 +343,27 @@ describe("native UI deadline execution", () => {
     expect(limitation).toMatch(
       /wait step.*capped at 180000 ms.*no runtime override/iu,
     );
+  });
+
+  it("enforces the selected owned deadline and retains the completed capture", async () => {
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, native_ui_deadline_ms: 1 },
+      {
+        environment: {},
+        invoke: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return { ok: true, result: snapshot };
+        },
+      },
+    );
+    if (result.ok) throw new Error("Expected selected owned deadline");
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error).toMatchObject({
+      timeoutMs: 1,
+      partialObservation: { initial: snapshot },
+    });
   });
 
   it("states the omitted 180000 ms deadline separately from the wait-step cap", async () => {
@@ -341,6 +388,7 @@ describe("native UI deadline execution", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
@@ -363,6 +411,7 @@ describe("native UI deadline execution", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
@@ -390,6 +439,7 @@ describe("native UI deadline execution", () => {
         environment: {},
         runtime: {
           signal: deadline.signal,
+          deadlineMs: 180_000,
           invoke: async () => ({ ok: true, result: snapshot }),
           cleanupLease: new AnalysisCleanupLease(async () => undefined),
           close: async () => undefined,
@@ -460,6 +510,7 @@ describe("native UI interruption provenance", () => {
         environment: {},
         runtime: {
           signal: deadline.signal,
+          deadlineMs: 180_000,
           invoke: async () => ({ ok: true, result: snapshot }),
           cleanupLease: new AnalysisCleanupLease(async () => undefined),
           close: async () => undefined,
@@ -498,6 +549,7 @@ describe("native UI interruption provenance", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
@@ -519,6 +571,7 @@ describe("native UI interruption provenance", () => {
       environment: {},
       runtime: {
         signal: deadline.signal,
+        deadlineMs: 180_000,
         invoke: async () => ({ ok: true, result: snapshot }),
         cleanupLease: new AnalysisCleanupLease(async () => undefined),
         close: async () => undefined,
@@ -538,6 +591,7 @@ describe("native UI interruption provenance", () => {
 describe("native UI target and cancellation failures", () => {
   it.each([
     "accessibility-denied",
+    "accessibility-unavailable",
     "screen-recording-denied",
     "ambiguous-window",
   ])("preserves actionable %s without fallback", async (code) => {
@@ -564,7 +618,10 @@ describe("native UI target and cancellation failures", () => {
             ],
           },
         });
-      else expect(projected.details?.reason).toContain(code);
+      else {
+        expect(projected.code).toBe("capability_unavailable");
+        expect(projected.details?.reason).toContain(code);
+      }
     }
   });
   it("preserves the underlying helper failure reason in diagnostics", async () => {

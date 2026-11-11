@@ -1,6 +1,9 @@
 import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
+import {
+  Il2cppBinaryFormatFailure,
+  IL2CPP_BINARY_BYTES,
+} from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -59,8 +62,6 @@ import {
 
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
-// GameAssembly binaries of large games reach several hundred megabytes.
-const BINARY_BYTES = 1024 * 1024 * 1024;
 // A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
 const OUTPUT_BYTES = 64 * 1024 * 1024;
 /** Instruction form the module-array fallback matched, per architecture. */
@@ -523,7 +524,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           try {
             const binary = await this.#readArtifact(
               binaryPath,
-              BINARY_BYTES,
+              IL2CPP_BINARY_BYTES,
               options?.signal,
               (artifact) => {
                 observed.binary = artifact;
@@ -556,7 +557,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               cause,
               binaryPath,
               "binary_path",
-              BINARY_BYTES,
+              IL2CPP_BINARY_BYTES,
               input.path,
             );
             failure.partialObservation = metadataSourceEvidence(

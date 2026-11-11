@@ -13,6 +13,75 @@ import { nativeMatchingNamedInventory } from "../fixtures/nativeFunctionMatching
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 
+it("recovers expanded ASAR listing admission on the same MCP connection independently of header bytes", async () => {
+  const root = await createTestTempDirectory("rea-listing-settings-");
+  const archive = join(root, "small.asar");
+  const payload = Buffer.from("answer");
+  await writeFile(
+    archive,
+    Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: { "answer.txt": { size: payload.length, offset: "0" } },
+        }),
+      ),
+      payload,
+    ]),
+  );
+  const { client, call } = await connectLocalToolsMcp();
+  try {
+    expect((await call("open_binary", { path: archive })).isError).not.toBe(
+      true,
+    );
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: [
+            { setting: "asar.max_listing_bytes", action: "set", value: 1 },
+          ],
+        })
+      ).isError,
+    ).not.toBe(true);
+    const refused = await call("inspect_artifact", {});
+    expect(refused.isError).toBe(true);
+    const text = refused.content.find((item) => item.type === "text");
+    if (text?.type !== "text") throw new Error("Missing projected error");
+    expect(JSON.parse(text.text).error).toMatchObject({
+      details: {
+        limit: {
+          setting: "asar.max_listing_bytes",
+          effective_value: 1,
+          agent_editable: true,
+        },
+      },
+    });
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: [
+            { setting: "asar.max_listing_bytes", action: "set", value: 4096 },
+          ],
+        })
+      ).isError,
+    ).not.toBe(true);
+    const recovered = await call("inspect_artifact", {});
+    expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+    const inspected = artifactInspectionResultSchema.parse(
+      parseEvidence(recovered.structuredContent).normalized_result,
+    );
+    const inventory = inspected.substeps.find(
+      (step) => step.operation === "inventory_artifact",
+    );
+    expect(
+      inventory?.evidence.normalized_result.occurrences.some(
+        (row) => row.logical_path === "answer.txt",
+      ),
+    ).toBe(true);
+  } finally {
+    await client.close();
+  }
+}, 30000);
+
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
   const root = await createTestTempDirectory("rea-runtime-settings-");
   const archive = join(root, "application.asar");

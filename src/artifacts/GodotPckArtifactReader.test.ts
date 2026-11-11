@@ -21,6 +21,7 @@ import { openRegularFile } from "../filesystem/RegularFile.js";
 import type { ArtifactEntry } from "./ArtifactReader.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
+import { DEFAULT_GODOT_READER_LIMITS } from "../domain/artifactReaderLimits.js";
 
 const writePck = async (bytes: Buffer): Promise<string> => {
   const path = join(await createTestTempDirectory("rea-godot-pck-"), "game");
@@ -53,6 +54,79 @@ const members: readonly GodotPckMember[] = [
   { path: "project.binary", data: "" },
   { path: "data/é.json", data: '{"session":"Session1"}' },
 ];
+
+it("recovers the same PCK directory after raising encoded metadata admission", async () => {
+  const bytes = buildGodotPck(4, [
+    { path: "res://main.gd", data: "extends Node\n" },
+  ]);
+  const path = await writePck(bytes);
+  const refused = new GodotPckArtifactReader(path, undefined, {
+    ...DEFAULT_GODOT_READER_LIMITS,
+    directory_bytes: 128,
+  });
+  try {
+    await expect(list(refused)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+      readerLimit: {
+        parameter: "artifact_limits.godot.directory_bytes",
+        effective_value: 128,
+      },
+    });
+  } finally {
+    await refused.close();
+  }
+  const recovered = new GodotPckArtifactReader(path, undefined, {
+    ...DEFAULT_GODOT_READER_LIMITS,
+    directory_bytes: 4096,
+  });
+  try {
+    const entries = await list(recovered);
+    expect(entries).toMatchObject([{ path: "main.gd", declaredSize: 13 }]);
+    expect(await text(await recovered.open(entries[0]!))).toBe(
+      "extends Node\n",
+    );
+  } finally {
+    await recovered.close();
+  }
+});
+
+it("applies selected aggregate work before yielding Godot members", async () => {
+  const path = await writePck(
+    buildGodotPck(4, [{ path: "res://main.gd", data: "extends Node\n" }]),
+  );
+  const refused = new GodotPckArtifactReader(
+    path,
+    undefined,
+    DEFAULT_GODOT_READER_LIMITS,
+    12,
+  );
+  try {
+    await expect(list(refused)).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: {
+        parameter: "artifact_limits.expanded_bytes",
+        effective_value: 12,
+        required_value: 13,
+      },
+    });
+  } finally {
+    await refused.close();
+  }
+  const recovered = new GodotPckArtifactReader(
+    path,
+    undefined,
+    DEFAULT_GODOT_READER_LIMITS,
+    13,
+  );
+  try {
+    expect(await list(recovered)).toMatchObject([
+      { path: "main.gd", declaredSize: 13 },
+    ]);
+  } finally {
+    await recovered.close();
+  }
+});
 
 describe("GodotPckArtifactReader format 1", () => {
   it.each([false, true])(
@@ -234,9 +308,19 @@ describe("GodotPckArtifactReader", () => {
     });
   });
 
-  it("rejects oversized encoded path metadata before allocating its declared bytes", async () => {
+  it("reports an oversized path that cannot fit in the pack as malformed", async () => {
     const bytes = buildGodotPck(2, members);
     bytes.writeUInt32LE(0xffff_ffff, 100);
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "format",
+      });
+    });
+  });
+
+  it("refuses a fully framed path over the metadata budget", async () => {
+    const path = "a".repeat(Math.floor((64 * 1024 * 1024) / 18) + 1);
+    const bytes = buildGodotPck(2, [{ path, data: "" }]);
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({
         reason: "limit",
