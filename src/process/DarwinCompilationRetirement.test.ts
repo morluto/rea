@@ -10,13 +10,18 @@ const fixture = vi.hoisted(() => {
   let started: Promise<void>;
   let stopped: Promise<void>;
   let gate: Promise<void>;
-  let mode: "failure" | "abort" | "cleanup";
+  let mode: "failure" | "abort" | "cleanup" | "abort-error";
   let failRemoval = false;
   let calls = 0;
   const compilerFailure = new Error("controlled compiler failure");
+  const compilerAbortError = new DOMException(
+    "independent compiler failure",
+    "AbortError",
+  );
   return {
     compilerFailure,
-    configure(selected: "failure" | "abort" | "cleanup") {
+    compilerAbortError,
+    configure(selected: "failure" | "abort" | "cleanup" | "abort-error") {
       failRemoval = selected === "cleanup";
       mode = selected;
       calls = 0;
@@ -60,6 +65,7 @@ const fixture = vi.hoisted(() => {
         options.signal?.addEventListener("abort", aborted, { once: true });
         start();
         await gate;
+        if (mode === "abort-error") throw compilerAbortError;
         if (mode !== "failure") throw options.signal?.reason;
         throw compilerFailure;
       }
@@ -89,7 +95,7 @@ import {
   DarwinProcessOwnershipInspectionError,
 } from "./DarwinProcessRunTokenReader.js";
 
-it.each(["failure", "abort", "cleanup"] as const)(
+it.each(["failure", "abort", "cleanup", "abort-error"] as const)(
   "handles a %s outcome for a waiter joining retirement",
   async (mode) => {
     fixture.configure(mode);
@@ -118,9 +124,12 @@ it.each(["failure", "abort", "cleanup"] as const)(
         cause: expect.objectContaining({ message: "first caller left" }),
       });
     else await expect(first).rejects.toThrow("first caller left");
-    if (mode === "failure") {
+    if (mode === "failure" || mode === "abort-error") {
       await expect(second).rejects.toMatchObject({
-        cause: fixture.compilerFailure,
+        cause:
+          mode === "failure"
+            ? fixture.compilerFailure
+            : fixture.compilerAbortError,
       });
       expect(fixture.calls).toBe(1);
     } else if (mode === "cleanup") {

@@ -1,10 +1,15 @@
 import {
+  DESKTOP_VIEW_DEFAULTS,
+  type DesktopViewPolicy,
+} from "../../domain/desktop/desktopViewPolicy.js";
+import {
   Reader,
   Uint8ArrayWriter,
   ZipReader,
   type FileEntry,
 } from "@zip.js/zip.js";
 
+import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
   decodeZipEntryText,
   ZIP_READER_OPTIONS,
@@ -12,7 +17,6 @@ import {
 } from "../../artifacts/ZipArtifactReader.js";
 import {
   DAMAGED_ZIP_ENTRY,
-  MAX_ZIP_ENTRIES,
   UNREADABLE_ZIP,
   unreadZipEntry,
   zipEntry,
@@ -63,6 +67,7 @@ const readEntry = async (
   entry: FileEntry,
   header: ZipEntryHeader,
   signal: AbortSignal | undefined,
+  policy: DesktopViewPolicy,
 ): Promise<JsonValue> => {
   let bytes: Uint8Array;
   try {
@@ -71,10 +76,10 @@ const readEntry = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     return unreadZipEntry(header, DAMAGED_ZIP_ENTRY);
   }
-  return zipEntry(header, bytes);
+  return zipEntry(header, bytes, policy);
 };
 
 /**
@@ -86,9 +91,10 @@ const readEntry = async (
 export const readZipView = async (
   bytes: Uint8Array,
   signal?: AbortSignal,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): Promise<Result<JsonValue, string>> => {
   // The directory is scanned first, so zip.js sees only the records the view lists.
-  const directory = scanZipDirectory(bytes, MAX_ZIP_ENTRIES);
+  const directory = scanZipDirectory(bytes, policy.zip_entries);
   if (directory === undefined) return err(UNREADABLE_ZIP);
   const reader = new ZipReader(
     new BoundedArchiveReader(
@@ -103,7 +109,7 @@ export const readZipView = async (
     for await (const entry of reader.getEntriesGenerator({
       decodeText: decodeZipEntryText,
     })) {
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       if (entry.directory) continue;
       const name = zipEntryPath(entry);
       const header: ZipEntryHeader = {
@@ -113,16 +119,16 @@ export const readZipView = async (
         method: entry.compressionMethod,
         encrypted: entry.encrypted,
       };
-      const refusal = zipEntryRefusal(header, spent);
+      const refusal = zipEntryRefusal(header, spent, policy);
       if (refusal === undefined) spent += header.size;
       entries.push(
         refusal === undefined
-          ? await readEntry(entry, header, signal)
+          ? await readEntry(entry, header, signal, policy)
           : unreadZipEntry(header, refusal),
       );
     }
   } catch {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     return err(UNREADABLE_ZIP);
   } finally {
     await reader.close();

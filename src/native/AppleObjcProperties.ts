@@ -154,19 +154,21 @@ export const readObjcPropertyList = (
   return { properties, issues };
 };
 
-/** Decode a property list, recording a failure for `owner` instead of throwing. */
+/** Own the property-list pointer field and list, retaining the declaring owner on failure. */
 export const readObjcPropertiesOf = (
   read: ObjcPropertyReaders,
-  list: bigint,
+  field: bigint,
   context: {
     readonly owner: string;
     readonly admit: () => boolean;
     readonly issues: DecodeIssue[];
-    readonly location?: string;
     readonly onTruncated?: () => void;
   },
 ): ObjcProperty[] => {
+  let location = `0x${field.toString(16)}`;
   try {
+    const list = read.pointer(field);
+    location = `0x${list.toString(16)}`;
     const { properties, issues } = readObjcPropertyList(
       read,
       list,
@@ -189,7 +191,7 @@ export const readObjcPropertiesOf = (
         "objc_properties_categories",
         "property_decode_failed",
         `${context.owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        context.location,
+        location,
       ),
     );
     return [];

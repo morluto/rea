@@ -16,7 +16,6 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
@@ -160,7 +159,10 @@ export const collectJavaScriptSemanticAsyncEffects = (
  *
  * A class expression passes Node's own `typeof` check, so it is kept.
  */
-const rejectsEventListener = (listener: t.Node): boolean => {
+export const rejectsSemanticEventListener = (
+  listener: t.Node | undefined,
+): boolean => {
+  if (listener === undefined) return true;
   if (t.isSpreadElement(listener)) return false;
   const value = unwrapJavaScriptExpression(listener).node;
   if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
@@ -204,9 +206,9 @@ const collectEvent = (
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
+    EVENT_LISTENER_METHODS.includes(method) &&
     !t.isSpreadElement(eventArgument) &&
-    listenerArgument !== undefined &&
-    rejectsEventListener(listenerArgument)
+    rejectsSemanticEventListener(listenerArgument)
   )
     return;
   const emitter = emitterIdentity(member.object, state);

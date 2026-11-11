@@ -407,10 +407,17 @@ cliTest(
         expect(reply.exitCode, reply.stdout + reply.stderr).toBe(1);
         expect(reply.json).toMatchObject({
           code: "truncated",
+          retryable: true,
           details: {
             reason: "limit",
             truncated: true,
-            detail: expect.stringContaining("expansion budget"),
+            reader_limit: {
+              parameter: "artifact_limits.expanded_bytes",
+              effective_value: 268_435_456,
+              required_value: 268_697_600,
+              unit: "bytes",
+              can_increase: true,
+            },
           },
         });
         expect(await readdir(root)).toEqual(["aliased.pck"]);

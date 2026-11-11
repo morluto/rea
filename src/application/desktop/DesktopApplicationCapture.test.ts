@@ -14,17 +14,22 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,
 } from "../../domain/desktop/desktopCapture.js";
 import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
+import * as desktopSession from "../../desktop/DesktopApplicationSession.js";
+import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
+import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   captureDesktopApplication,
   type DesktopCaptureRequest,
 } from "./DesktopApplicationCapture.js";
+import { capture as captureFixture } from "./desktopCapture.fixture.js";
 
 const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
@@ -170,6 +175,15 @@ describe("captureDesktopApplication refusals", () => {
         await captureDesktopApplication(request(output), host(environment)),
       ),
     ).toContain("is not empty");
+    const file = join(root, "existing-file");
+    await writeFile(file, "keep");
+    expect(
+      await captureDesktopApplication(request(file), host(environment)),
+    ).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["output"], reason: "invalid_value" }] },
+    });
+    expect(await readFile(file, "utf8")).toBe("keep");
   });
 
   it("refuses a window manager that does not publish its client list", async () => {
@@ -225,6 +239,56 @@ describe("captureDesktopApplication refusals", () => {
     expect(await readdir(output)).toEqual([]);
   });
 });
+
+it.each([false, true])(
+  "preserves unresolved session ownership when publication fails (unreleased: %s)",
+  async (unreleased) => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "out");
+    const captured = captureFixture();
+    const lease = new AnalysisCleanupLease(async () => {}, ["run-pending"]);
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: { ...captured.application, state_directories: [] },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    vi.spyOn(desktopSession, "runDesktopSession").mockResolvedValue({
+      session: {
+        ...captured.session,
+        cleanup: { verified: !unreleased, reason: unreleased ? "busy" : null },
+      },
+      unreleased: unreleased ? { reason: "busy", leases: [lease] } : undefined,
+      unreadableWindowSamples: 0,
+    });
+    vi.spyOn(CaptureFile.prototype, "publish").mockRejectedValue(
+      new Error("publication denied"),
+    );
+    try {
+      const result = await captureDesktopApplication(request(output), {
+        ...host(environment),
+        callerDirectory: home,
+      });
+      expect(result).toMatchObject({
+        code: unreleased ? "cleanup_incomplete" : "execution_failure",
+        message: expect.stringContaining("publication denied"),
+        ...(unreleased
+          ? { details: { cleanup: "incomplete", resources: ["run-pending"] } }
+          : {}),
+      });
+      expect(await readdir(output)).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      await lease.release();
+    }
+  },
+);
 
 it.skipIf(process.platform !== "linux")(
   "returns the published evidence when cancellation arrives during publication",

@@ -84,6 +84,9 @@ export const redactSensitiveFailure = (
   // Other observation owners already apply their format-aware exclusions.
   if (redacted !== error && error.partialObservation !== undefined)
     redacted.retainPartialObservation(error.partialObservation);
+  if (redacted !== error)
+    for (const secondary of error.secondaryFailures)
+      redacted.retainSecondaryFailure(redactSensitiveFailure(secondary, text));
   return redacted === error ? error : mirrorCleanup(error, redacted, text);
 };
 
@@ -223,6 +226,9 @@ const redactFailure = (
     return new AnalysisCancelledError(error.operation, {
       ...context,
       cause: error.cause,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
     });
   if (error instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
@@ -233,6 +239,7 @@ const redactFailure = (
       ...(error.remediationAction === undefined
         ? {}
         : { remediationAction: text(error.remediationAction) }),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
     });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -264,11 +271,16 @@ const redactFailure = (
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)
-    return new AnalysisOutputError(
-      error.operation,
-      text(error.reason),
-      context,
-    );
+    return new AnalysisOutputError(error.operation, text(error.reason), {
+      ...context,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
+      ...(error.remediationAction === undefined
+        ? {}
+        : { remediationAction: text(error.remediationAction) }),
+      cleanupOnly: error.cleanupOnly,
+    });
   if (error instanceof AnalysisCapabilityUnavailableError)
     return new AnalysisCapabilityUnavailableError(
       error.providerId,
@@ -309,7 +321,11 @@ const redactFailure = (
       error.resource,
       text(error.reason),
       error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
-      { ...context, ...resourceConstraintRecovery(error, text) },
+      {
+        ...context,
+        ...resourceConstraintRecovery(error, text),
+        ...(error.limit === undefined ? {} : { limit: error.limit }),
+      },
     );
   if (error instanceof ProviderCleanupError)
     return new ProviderCleanupError(

@@ -7,7 +7,8 @@
 3. Runtime: read the response body when a step saves, start waiting for a UI
    step's response before it acts, keep saved values with their JSON type,
    fill placeholders, build Basic credentials, and redact secret saves.
-4. Evidence: leave an empty `save` out of the recorded step.
+4. Evidence: record the current parsed step, including an empty `save` list;
+   preserve the representation and identity of retained Evidence.
 5. Environment build: warn about credential-named saved values not marked
    secret.
 6. Skill and docs: write through the UI first and save ids instead of guessing

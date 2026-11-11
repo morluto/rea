@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, stat, statfs } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import { z } from "zod";
 
@@ -30,6 +30,9 @@ import {
 
 const DEFAULT_DOCKER_ROOT = "/var/lib/docker";
 const CONFIG_BYTES = 1024 * 1024;
+
+const missingPath = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
 /** Inspect the same tar compression formats as the build's Python extractor without extracting files. */
 const ARCHIVE_VERSION = String.raw`
@@ -77,7 +80,14 @@ export const readDesktopBuildFacts = async (
     versions.set(path, pending);
     return pending;
   };
-  const archive = await archiveFact(input, agentEnv);
+  const archive = await archiveFact(input, async () =>
+    agentEnv.status === "found"
+      ? agentEnvInterpreter(
+          { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
+          "desktop_build_doctor",
+        ).catch(() => "python3")
+      : "python3",
+  );
   const chosenCommand = (
     name: BuildComputerSetting,
     command: DesktopBuildCommand,
@@ -228,7 +238,7 @@ const freeSpace = async (path: string): Promise<DesktopBuildFacts["disk"]> => {
       return { path: candidate, freeBytes: fs.bavail * fs.bsize };
     } catch (cause: unknown) {
       const parent = dirname(candidate);
-      if (parent === candidate)
+      if (parent === candidate || !missingPath(cause))
         return {
           path,
           error: cause instanceof Error ? cause.message : String(cause),
@@ -249,7 +259,7 @@ const agentEnvVersion = async (
 /** The setup-packed archive is named by its version; another is read for its package version. */
 const archiveFact = async (
   input: DesktopBuildFactsInput,
-  agentEnv: DesktopBuildCommand,
+  pythonForArchive: () => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["archive"]> => {
   const selected = input.environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
   const source =
@@ -258,19 +268,28 @@ const archiveFact = async (
     source === "cache"
       ? defaultBuildComputerArchive(input.environment, input.platform)
       : (selected as string);
-  const file = await stat(path).then(
-    (entry) => entry.isFile(),
-    () => false,
-  );
-  if (!file) return { path, source, status: "missing" };
+  try {
+    if (!(await stat(path)).isFile())
+      return { path, source, status: "missing" };
+  } catch (cause: unknown) {
+    return missingPath(cause)
+      ? { path, source, status: "missing" }
+      : {
+          path,
+          source,
+          status: "unknown",
+          detail: `REA could not inspect ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        };
+  }
   if (source === "cache") return { path, source, status: "current" };
-  const python =
-    agentEnv.status === "found"
-      ? await agentEnvInterpreter(
-          { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
-          "desktop_build_doctor",
-        ).catch(() => "python3")
-      : "python3";
+  const python = await pythonForArchive();
+  if (python === undefined)
+    return {
+      path,
+      source,
+      status: "unknown",
+      detail: `REA could not identify the selected runner's Python to inspect ${path}.`,
+    };
   const packed = await attempt(input, python, [
     "-I",
     "-c",
@@ -314,7 +333,7 @@ const registrationFacts = async (
   versionFor: (path: string) => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["registrations"]> => {
   const selected = input.clientIds.length === 0 ? undefined : input.clientIds;
-  const recordedRunners = new Map<string, string>();
+  const recorded = new Map<string, Map<string, string>>();
   const statuses = await input.registrations(
     selected,
     Object.fromEntries(
@@ -325,11 +344,11 @@ const registrationFacts = async (
     ),
     undefined,
     (client, name, value) => {
-      if (
-        name === "REA_AGENT_ENV_COMMAND" &&
-        (selected === undefined || selected.includes(client))
-      )
-        recordedRunners.set(client, value);
+      if (selected === undefined || selected.includes(client)) {
+        const settings = recorded.get(client) ?? new Map<string, string>();
+        settings.set(name, value);
+        recorded.set(client, settings);
+      }
     },
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
@@ -337,8 +356,8 @@ const registrationFacts = async (
   return Promise.all(
     considered.map(async (client) => {
       const status = registered.find((entry) => entry.client === client);
-      const recordedRunner =
-        status === undefined ? undefined : recordedRunners.get(client);
+      const values = status === undefined ? undefined : recorded.get(client);
+      const recordedRunner = values?.get("REA_AGENT_ENV_COMMAND");
       const effectiveRunner =
         recordedRunner === undefined
           ? undefined
@@ -376,14 +395,43 @@ const registrationFacts = async (
           effectiveRunner === undefined ||
           effectiveRunner !== selectedSettings.REA_AGENT_ENV_COMMAND,
       );
-      const compared = differing.filter(
-        (name) => selectedSettings[name as BuildComputerSetting] !== undefined,
-      );
-      const unchecked = differing.filter(
-        (name) =>
-          selectedSettings[name as BuildComputerSetting] === undefined &&
-          !(name === "REA_AGENT_ENV_COMMAND" && runner !== undefined),
-      );
+      const compared: string[] = [];
+      const unchecked: string[] = [];
+      for (const name of differing) {
+        if (name === "REA_AGENT_ENV_COMMAND") {
+          if (runner !== undefined) compared.push(name);
+          else unchecked.push(name);
+          continue;
+        }
+        const value = values?.get(name);
+        if (value === undefined) {
+          unchecked.push(name);
+          continue;
+        }
+        const environment = { ...input.environment, [name]: value };
+        if (name === "REA_DOCKER_COMMAND") {
+          const command = await settingCommand(environment, name, "docker");
+          if (command.status !== "found") compared.push(name);
+          else if (
+            (await dockerDaemon({ ...input, environment }, command.path))
+              .status !== "reachable"
+          )
+            unchecked.push(name);
+        } else if (name === "REA_BUILD_COMPUTER_REA_ARCHIVE") {
+          const archive = await archiveFact(
+            { ...input, environment },
+            async () =>
+              effectiveRunner === undefined || runner?.status === "invalid"
+                ? undefined
+                : agentEnvInterpreter(
+                    { ...environment, REA_AGENT_ENV_COMMAND: effectiveRunner },
+                    "desktop_build_doctor",
+                  ).catch(() => undefined),
+          );
+          if (archive.status === "unknown") unchecked.push(name);
+          else if (archive.status !== "current") compared.push(name);
+        } else unchecked.push(name);
+      }
       return {
         client,
         registered: status !== undefined,
