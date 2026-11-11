@@ -14,6 +14,7 @@ import {
   processInspectionCleanupFailures,
   processInspectionCancellations,
   type ProcessInspectionFailure,
+  type ProcessInspectionCleanupLease,
 } from "../ProcessInspectionCleanup.js";
 import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 import {
@@ -145,7 +146,15 @@ export const processCaptureCancelled = (
 
 /** Keep the exact inspection record and close capabilities through capture finalization. */
 export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
-  readonly cleanupLeases: readonly AnalysisCleanupLease[];
+  readonly #inspectionCleanup: readonly ProcessInspectionCleanupLease[];
+
+  get inspectionCleanup(): readonly ProcessInspectionCleanupLease[] {
+    return this.#inspectionCleanup;
+  }
+
+  get cleanupLeases(): readonly AnalysisCleanupLease[] {
+    return this.#inspectionCleanup.map(({ lease }) => lease);
+  }
 
   constructor(readonly inspectionFailure: ProcessInspectionFailure) {
     const darwin =
@@ -209,7 +218,7 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
           : {}),
       },
     );
-    const leases: AnalysisCleanupLease[] = [];
+    const cleanup: ProcessInspectionCleanupLease[] = [];
     for (const failure of cleanupFailures) {
       if (failure instanceof DarwinProcessOwnershipInspectionError) {
         const marker = failure.cleanupFailure;
@@ -225,14 +234,19 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
           marker ?? ["process ownership inspection"],
         );
         if (marker !== undefined) lease.bindCleanupError(marker);
-        leases.push(lease);
+        cleanup.push({ failure, lease });
       } else
-        leases.push(
-          new AnalysisCleanupLease(() => failure.owner.close(), [failure.path]),
-        );
+        cleanup.push({
+          failure,
+          lease: new AnalysisCleanupLease(
+            () => failure.owner.close(),
+            [failure.path],
+          ),
+        });
     }
-    this.cleanupLeases = leases;
-    if (leases.length > 0) new AnalysisCleanupLeaseGroup(this, leases);
+    this.#inspectionCleanup = cleanup;
+    if (cleanup.length > 0)
+      new AnalysisCleanupLeaseGroup(this, this.cleanupLeases);
     if (cancellation === undefined)
       for (const fact of processInspectionCancellations(inspectionFailure))
         this.retainSecondaryFailure(
