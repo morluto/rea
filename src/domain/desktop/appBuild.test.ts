@@ -260,6 +260,8 @@ describe("build bundle download installs", () => {
         },
       }).success;
     expect(install({})).toBe(true);
+    expect(install({ url: "not-a-url" })).toBe(false);
+    expect(install({ url: "https://" })).toBe(false);
     expect(install({ program: "../bin/sh" })).toBe(false);
     expect(install({ program: "/usr/bin/notes" })).toBe(false);
     expect(install({ program: "notes//notes" })).toBe(false);

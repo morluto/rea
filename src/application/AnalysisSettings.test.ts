@@ -6,6 +6,31 @@ import {
 } from "../config/runtimeAnalysisSettings.js";
 import { parseConfig } from "../config/parseConfig.js";
 
+it.each([
+  ["inspect_native_api", [64, 7]],
+  ["trace_native_ui_action", []],
+] as const)(
+  "reports the decompiler budgets consumed by %s",
+  (operation, values) => {
+    const store = new AnalysisSettings({
+      REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "7",
+      REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: "64",
+    });
+    expect(
+      store
+        .inspect({
+          provider: "ghidra",
+          operation,
+          settings: [
+            "ghidra.decompile_max_payload_mib",
+            "ghidra.decompile_timeout_seconds",
+          ],
+        })
+        .settings.map(({ value }) => value),
+    ).toEqual(values);
+  },
+);
+
 it("updates atomically, restores launch values, and refuses stale or invalid writes", () => {
   const store = new AnalysisSettings({ REA_ASAR_MAX_HEADER_BYTES: "20000000" });
   const inspect = () => store.inspect({ settings: ["asar.max_header_bytes"] });

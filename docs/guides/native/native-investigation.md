@@ -1031,6 +1031,11 @@ complete observation.
     arm64e formats;
   - legacy `LC_DYLD_INFO` rebase and bind opcodes.
 
+  Text relocation records retain their import identity without claiming a
+  pointer value. Bind types are explicit: a non-lazy binding with no declared
+  type is invalid. Reads that overlap only part of an encoded chained-fixup word remain
+  unresolved rather than treating those stored bytes as an ordinary pointer.
+
   [dyld symbol names are byte strings](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L203-L208),
   compared with [`strcmp`](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L42-L56).
   Dependent library install names likewise originate as
