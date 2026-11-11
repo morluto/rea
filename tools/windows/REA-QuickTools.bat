@@ -26,7 +26,13 @@ color 0A
 :: Only set defaults when the caller has not chosen an installation already.
 :: Everything below runs inside this setlocal, so no assignment leaks into the
 :: calling shell when the launcher exits.
-if not defined GHIDRA_INSTALL_DIR if exist "C:\tools\ghidra_12.1.4_PUBLIC" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
+:: Directory default only when Ghidra is absent from PATH: REA treats an
+:: explicit GHIDRA_INSTALL_DIR as authoritative, so this fallback must not
+:: mask a caller-selected installation discoverable from PATH.
+if not defined GHIDRA_INSTALL_DIR (
+    for %%I in (analyzeHeadless.bat) do if exist "%%~$PATH:I" goto HAVE_REA
+    if exist "C:\tools\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
+)
 :: No JAVA_HOME guessing here: release identity and java.exe selection
 :: belong to REA's GhidraInstallation (doctor reads the real release and
 :: probes java.exe from PATH); the launcher only suggests the directory.
@@ -192,7 +198,9 @@ if not defined FUNC_NAME goto FILE_DROPPED
 :: any cmd exec boundary intact and is dispatched raw (safe: & stays data;
 :: the CLI reports the surplus positional with a clear error).
 call :SCAN_VALUE "FUNC_NAME"
-if defined META_VALUE (
+if defined SCAN_HAS_QUOTE (
+    echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
+) else if defined META_VALUE (
     set "REA_ARGS=decompile "!TARGET!" !FUNC_NAME! --provider ghidra"
     call :RUN_REA
 ) else if "!FUNC_NAME:~0,1!"=="-" (
@@ -227,7 +235,9 @@ if not defined SEARCH_TERM goto FILE_DROPPED
 :: values cmd cannot reparse. Rejected values dispatch raw through
 :: :RUN_REA (safe: they stay data; the CLI reports the surplus positional).
 call :SCAN_VALUE "SEARCH_TERM"
-if defined META_VALUE (
+if defined SCAN_HAS_QUOTE (
+    echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
+) else if defined META_VALUE (
     set "REA_ARGS=search "!TARGET!" !SEARCH_TERM! --kind strings --provider ghidra"
     call :RUN_REA
 ) else if "!SEARCH_TERM:~0,1!"=="-" (
@@ -243,7 +253,9 @@ set "PROC_TERM="
 set /p PROC_TERM="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
 if not defined PROC_TERM goto FILE_DROPPED
 call :SCAN_VALUE "PROC_TERM"
-if defined META_VALUE (
+if defined SCAN_HAS_QUOTE (
+    echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
+) else if defined META_VALUE (
     set "REA_ARGS=search "!TARGET!" !PROC_TERM! --kind procedures --provider ghidra"
     call :RUN_REA
 ) else if "!PROC_TERM:~0,1!"=="-" (
@@ -284,19 +296,30 @@ goto MENU
 :: rejected values keep every byte and cross through :RUN_REA raw.
 :SCAN_VALUE
 set "META_VALUE="
+set "SCAN_HAS_QUOTE="
 set "SCAN_REST=!%~1!"
+set QUOTE=^"
+:: a quote alters argv parsing no matter the transport (raw dispatch
+:: strips it, the FOR carrier re-parses it); flag it for an explicit
+:: refusal instead of silently running an altered selector.
+:: (quote detection happens per-char inside SCAN_LOOP below, where the
+:: comparison never embeds a literal quote in an if statement.)
 :: ! anywhere: reject (delayed expansion consumes it); quotes are rejected
 :: too: they cannot be tested per-char without reparse-prone constructions
 :: (the CLI pattern/procedure values accept these characters, but the
 :: launcher surfaces them raw through :RUN_REA instead, where they stay
 :: data and the CLI reports the surplus positional).
-set "SCAN_SAFE=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .:-_()[]{}^+*=@/,~?""
+set "SCAN_SAFE=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .:-_()[]{}^+*=@/,~?"
 goto SCAN_LOOP
 
 :SCAN_LOOP
 if not defined SCAN_REST goto SCAN_DONE
 set "SCAN_CH=!SCAN_REST:~0,1!"
-for %%C in ("!SCAN_CH!") do if "!SCAN_SAFE:%%~C=!"=="!SCAN_SAFE!" set "META_VALUE=1"
+:: !QUOTE! holds the quote character (caret-built at parse time), so no
+:: comparison below embeds a literal quote; ! is rejected by the safe
+:: walk because the substitution syntax cannot test it per-char.
+if "!SCAN_CH!"=="!QUOTE!" set "SCAN_HAS_QUOTE=1"
+for %%C in ("!SCAN_CH!") do if not "%%~C"=="!QUOTE!" if "!SCAN_SAFE:%%~C=!"=="!SCAN_SAFE!" set "META_VALUE=1"
 set "SCAN_REST=!SCAN_REST:~1!"
 goto SCAN_LOOP
 

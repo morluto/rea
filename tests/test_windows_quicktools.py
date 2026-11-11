@@ -286,35 +286,25 @@ class LauncherBehaviorTests(unittest.TestCase):
         target = self.tmp / "sample.dll"
         target.write_bytes(b"MZ")
         # Menu 3 -> paste path (no pause before the file menu), menu 4 ->
-        # hostile needle, feed pause, 7 back, 5 exit.
+        # hostile needle with a quote, feed pause, 7 back, 5 exit. A quote
+        # alters argv parsing under every batch transport, so the launcher
+        # must refuse it explicitly (no dispatch, no altered selector).
         needle = 'x" & calc.exe & "y'
-        self.assertSuccess(
-            self.run_launcher(
-                [
-                    "3\r\n",
-                    f"{target}\r\n",
-                    "4\r\n",
-                    f"{needle}\r\n",
-                    ".\r\n",
-                    "7\r\n",
-                    "5\r\n",
-                ]
-            )
+        result = self.run_launcher(
+            [
+                "3\r\n",
+                f"{target}\r\n",
+                "4\r\n",
+                f"{needle}\r\n",
+                ".\r\n",
+                "7\r\n",
+                "5\r\n",
+            ]
         )
+        self.assertSuccess(result)
         dispatches = self.logged_dispatches()
-        # Exactly ONE child exec may happen; the hostile text must stay data
-        # inside it (cmd re-tokenizes an unquoted & on exec lines at the NT
-        # level, so argv arrives split — but never as a separate process).
-        self.assertEqual(len(dispatches), 1, dispatches)
-        payload = dispatches[0]
-        self.assertIn('"search"', payload)
-        self.assertIn("--kind", payload)
-        self.assertIn('"strings"', payload)
-        self.assertIn("calc.exe", payload)
-        # The dispatch must remain the strings search (not a re-run of doctor
-        # or another action) and must not contain cmd operator residue.
-        self.assertNotIn('"doctor"', payload)
-        self.assertNotIn("&&", payload)
+        self.assertEqual(len(dispatches), 0, dispatches)
+        self.assertIn("ERROR", result[1])
 
 
 if __name__ == "__main__":
