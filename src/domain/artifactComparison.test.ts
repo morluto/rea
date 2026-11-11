@@ -18,6 +18,7 @@ import {
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
 import { createEvidence } from "./evidence.js";
+import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 const inventoryCarrier = (inventory: ArtifactInventoryResult) =>
@@ -208,6 +209,35 @@ it("compares complete relations when an unrelated node is omitted", () => {
         dimensions: ["relations"],
       }),
     ]),
+  });
+});
+
+it("keeps a historical edge and its Evidence while reporting omitted coverage as unknown", () => {
+  const { inventory, evidence } = relationInventory();
+  const oldInventory = structuredClone(inventory);
+  const occurrence = oldInventory.occurrences.find(
+    ({ logical_path }) => logical_path === "one.js",
+  )!;
+  delete occurrence.relationship_coverage;
+  const historical = commit(oldInventory);
+  const parsed = parseArtifactInventoryEvidence(historical);
+  expect(parsed.evidence[0]).toEqual(historical);
+  expect(parsed.inventory.manifest).toEqual(oldInventory.manifest);
+  expect(parsed.inventory.edges).toEqual(oldInventory.edges);
+  expect(
+    parsed.inventory.occurrences.find(
+      ({ occurrence_id }) => occurrence_id === occurrence.occurrence_id,
+    ),
+  ).not.toHaveProperty("relationship_coverage");
+  expect(compareArtifacts(historical, evidence)).toMatchObject({
+    status: "unknown",
+    changes: [
+      {
+        logical_path: "one.js",
+        classification: "unknown",
+        dimensions: ["availability"],
+      },
+    ],
   });
 });
 
@@ -466,6 +496,7 @@ const recordObservation = (
     }),
     artifact_id: artifactId,
     parent_occurrence_id: root.occurrence_id,
+    relationship_coverage: artifactId === null ? "unknown" : "complete",
     logical_path: "record",
     entry_kind: "metadata",
     artifact_kind: "package-metadata",

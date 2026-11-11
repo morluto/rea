@@ -1,10 +1,11 @@
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { z } from "zod";
 
-import type {
-  ArtifactInventoryResult,
-  ArtifactNode,
-  ArtifactOccurrence,
+import {
+  artifactOccurrenceRelationshipCoverage,
+  type ArtifactInventoryResult,
+  type ArtifactNode,
+  type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import {
@@ -539,9 +540,7 @@ const occurrenceDifferences = (input: {
     input.leftOccurrence?.executable !== input.rightOccurrence?.executable,
   metadata:
     declaredFactChanged(input.metadata) ||
-    input.leftOccurrence?.entry_kind !== input.rightOccurrence?.entry_kind ||
-    JSON.stringify(input.leftOccurrence?.limitations) !==
-      JSON.stringify(input.rightOccurrence?.limitations),
+    input.leftOccurrence?.entry_kind !== input.rightOccurrence?.entry_kind,
 });
 
 const compareAsarPacking = (
@@ -705,8 +704,7 @@ const metadataChanged = (left: ArtifactNode, right: ArtifactNode): boolean =>
     !differsWithMissing(left.media_type, right.media_type)) ||
   (left.architecture !== right.architecture &&
     !differsWithMissing(left.architecture, right.architecture)) ||
-  left.content_state !== right.content_state ||
-  JSON.stringify(left.limitations) !== JSON.stringify(right.limitations);
+  left.content_state !== right.content_state;
 
 const nodeFor = (
   occurrence: ArtifactOccurrence | undefined,
@@ -764,6 +762,8 @@ const relationsForOccurrence = (
     );
   return (occurrence) => {
     if (occurrence?.artifact_id == null) return undefined;
+    if (artifactOccurrenceRelationshipCoverage(occurrence) === "unknown")
+      return undefined;
     const path = occurrence.logical_path;
     return unresolvedPaths.has(path) ? undefined : (output.get(path) ?? []);
   };
