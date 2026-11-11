@@ -546,9 +546,8 @@ const publishOne = async (input: {
   // A provider still owns cleanup even if the caller aborted meanwhile.
   if (!decompiled.ok && decompiled.error.cleanupIncomplete)
     return { result: decompiled, bodySupport: body.support };
-  if (isAborted(input.signal))
-    return { result: err(cancelled(input.signal)), bodySupport: body.support };
   if (
+    !isAborted(input.signal) &&
     decompiled.ok &&
     input.retryFailed === "independent_fresh" &&
     decompiled.value.result === null &&
@@ -583,11 +582,6 @@ const publishOne = async (input: {
     );
     if (!decompiled.ok && decompiled.error.cleanupIncomplete)
       return { result: decompiled, bodySupport: body.support };
-    if (isAborted(input.signal))
-      return {
-        result: err(cancelled(input.signal)),
-        bodySupport: body.support,
-      };
   }
   if (!decompiled.ok) {
     if (decompiled.error instanceof AnalysisCancelledError)
@@ -622,7 +616,8 @@ const publishOne = async (input: {
       ...decompiled.value.limitations,
       ...(input.retryFailed === "independent_fresh" &&
       !attemptedIndependent &&
-      decompiled.value.result === null
+      decompiled.value.result === null &&
+      decompiled.value.pseudocodeAbsence?.kind !== "provider-failure"
         ? [
             "Independent retry was not attempted because the provider did not report a function failure for this observation.",
           ]
@@ -661,6 +656,10 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
+  // Classify and journal settled failures before a later caller abort. A valid
+  // result still needs an active caller before publishing a new function file.
+  if (isAborted(input.signal))
+    return { result: err(cancelled(input.signal)), bodySupport: body.support };
   const relativePath = input.session.pathFor(input.procedure.address);
   const bytes = Buffer.from(
     functionFileText({

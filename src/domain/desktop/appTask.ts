@@ -1,3 +1,4 @@
+import { isPortableBundleName } from "../portableBundleName.js";
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
@@ -97,7 +98,7 @@ const checkSchema = z.discriminatedUnion("kind", [
       .string()
       .optional()
       .describe(
-        "A selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>PATH=VALUE] conditions that a member must meet to count, where PATH is up to three /-separated steps inside the member; every member counts without it, text nodes of an XML element's children included.",
+        "A selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>PATH=VALUE] conditions that a member must meet to count, where PATH is up to three /-separated steps inside the member. For XML, [>text()=VALUE] compares the member's whole text with whitespace collapsed. Every member counts without a selector, text nodes of an XML element's children included.",
       ),
     ...comparison,
     ...readerField,
@@ -403,12 +404,11 @@ const screenProblem = (
 /** Parse a task file and settle its check ids, or say what is wrong with it. */
 export const parseDesktopTask = (
   value: unknown,
-  isPortableName: (name: string) => boolean,
 ): Result<DesktopTask, string> => {
   const parsed = desktopTaskSchema.safeParse(value);
   if (!parsed.success) return err(describeValidationFailure(parsed.error));
   const { name, prompt, checks, readers } = parsed.data;
-  if (!isPortableName(name) || name === "smoke")
+  if (!isPortableBundleName(name) || name === "smoke")
     return err(
       `name ${JSON.stringify(name)} must be a portable bundle name other than smoke: lowercase letters, digits and hyphens.`,
     );

@@ -1,3 +1,5 @@
+import type { DesktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
+import { describeValidationFailure } from "../domain/validationFailure.js";
 import { readdir } from "node:fs/promises";
 
 import {
@@ -41,6 +43,7 @@ export type DebianPackageHost = AptRepositoryHost;
 
 /** What package identification reads with and adds to. */
 export interface InventoryContext {
+  readonly libraryPolicy?: DesktopLibraryPolicy;
   readonly host: DebianPackageHost;
   readonly signal: AbortSignal | undefined;
   readonly limitations: string[];
@@ -138,6 +141,7 @@ const installFacts = async (
           installed.name ?? "",
           runQuery,
           context.signal,
+          context.libraryPolicy,
         ),
   );
   context.limitations.push(...vendor.limitations);
@@ -200,6 +204,11 @@ const dpkgOwner = async (
   { host, signal }: InventoryContext,
 ): Promise<Ownership> => {
   for (const path of ownershipCandidates(paths)) {
+    if (/[*?[\\]/u.test(path))
+      return {
+        kind: "unknown",
+        reason: `dpkg-query cannot safely query ${path} containing pattern characters`,
+      };
     const outcome = await host.runQuery("dpkg-query", ["-S", path], signal);
     if (outcome === "missing")
       return { kind: "unknown", reason: "dpkg-query is not installed" };
@@ -280,10 +289,17 @@ export const debianPackage = async (
     await host.runQuery("apt-cache", ["policy", name], signal),
   );
   const apt = await resolveAptLocations(host.runQuery, signal, host.apt);
-  const listsPresent = (
-    await readdir(apt.lists).catch(() => [] as string[])
-  ).some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list));
-  if (!listsPresent)
+  const listsPresent = await readdir(apt.lists).then(
+    (lists) => lists.some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list)),
+    (cause: unknown) => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+      limitations.push(
+        `The apt package lists directory ${apt.lists} could not be read, so whether package lists are present is unknown: ${describeValidationFailure(cause)}`,
+      );
+      return null;
+    },
+  );
+  if (listsPresent === false)
     limitations.push(
       "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
     );

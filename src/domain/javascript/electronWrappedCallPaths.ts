@@ -263,7 +263,7 @@ export function* collectElectronWrappedCallPathsSteps(
 ): Generator<void, readonly ElectronCallPath[]> {
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
-  let remainingVisits = 1_000_000;
+  let remainingVisits = state.precision.wrapper_visits;
   const prefixes = new ElectronCallPathBlockPrefixes(
     () => --remainingVisits >= 0,
     state.parentsByNode,
@@ -820,9 +820,9 @@ export function* collectElectronWrappedCallPathsSteps(
     readonly fn: SymbolicFunction;
   }> {
     if (active.has(value)) return;
-    if (active.size >= 128) {
+    if (active.size >= state.precision.wrapper_depth) {
       accumulator.unknownFindings += 1;
-      accumulator.electronCallPathLimitReached = true;
+      (accumulator.electronCallPathLimits ??= new Set()).add("wrapper_depth");
       return;
     }
     const nested = new Set(active);
@@ -1458,10 +1458,17 @@ export function* collectElectronWrappedCallPathsSteps(
         const branch = node.cases[index]!;
         if (branch.test) walk(branch.test, env, context);
         if (remainingVisits < 0) return;
-        const branchContext = switchCaseContext(node, index, context);
+        let branchContext = switchCaseContext(node, index, context);
         for (const statement of branch.consequent) {
           if (remainingVisits < 0) return;
           walk(statement, env, branchContext);
+          const fallthrough = sequentialFallthrough(
+            prefixes.statement(statement, branch) ?? null,
+            env,
+            branchContext,
+          );
+          if (!fallthrough.continues) break;
+          branchContext = fallthrough.context;
         }
       }
       return;
@@ -1532,7 +1539,11 @@ export function* collectElectronWrappedCallPathsSteps(
             parent.left,
             parent.operator === "??" ? "nullish" : parent.operator === "&&",
           );
-      } else if (t.isBlockStatement(parent)) {
+      }
+      if (
+        t.isBlockStatement(parent) ||
+        (t.isSwitchCase(parent) && child !== parent.test)
+      ) {
         const prefix = yield* prefixes.before(parent, child);
         if (remainingVisits < 0) return;
         if (prefix !== undefined) {
@@ -1580,7 +1591,9 @@ export function* collectElectronWrappedCallPathsSteps(
   recordBridgeExposures();
   if (remainingVisits < 0 || resolver.truncated) {
     accumulator.unknownFindings += 1;
-    accumulator.electronCallPathLimitReached = true;
+    const limits = (accumulator.electronCallPathLimits ??= new Set());
+    if (remainingVisits < 0) limits.add("wrapper_visits");
+    for (const limit of resolver.resourceLimits) limits.add(limit);
   } else
     // A dynamic site's channels are enumerated only when the complete trace
     // reached it with literal channels, no other invocation outcome, and no

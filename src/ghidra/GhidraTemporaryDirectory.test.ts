@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import * as fs from "node:fs/promises";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 import {
@@ -10,6 +14,11 @@ import {
   type GhidraTemporaryDirectoryHost,
 } from "./GhidraTemporaryDirectory.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
 
 const denied = (code: string): NodeJS.ErrnoException =>
   Object.assign(new Error(`${code}: operation not permitted`), { code });
@@ -24,7 +33,8 @@ const host = (
   overrides: Partial<GhidraTemporaryDirectoryHost> = {},
 ): GhidraTemporaryDirectoryHost => ({
   sessionRoot: () => "C:\\sandbox\\tmp",
-  writeProbe: () => Promise.resolve(),
+  writeProbe: (_path: string, _resourceOwner: RetainedResourceScope) =>
+    Promise.resolve(),
   removeProbe: () => Promise.resolve(),
   ...overrides,
 });
@@ -42,7 +52,11 @@ describe("Ghidra temporary directory probe", () => {
     const removeProbe = vi.fn(() => Promise.reject(denied("ENOENT")));
     const result = await probeGhidraTemporaryDirectory(
       resources.owner,
-      host({ writeProbe: () => Promise.reject(denied("EPERM")), removeProbe }),
+      host({
+        writeProbe: (_path: string, _resourceOwner: RetainedResourceScope) =>
+          Promise.reject(denied("EPERM")),
+        removeProbe,
+      }),
     );
     expect(result).toMatchObject({
       ok: false,
@@ -54,7 +68,10 @@ describe("Ghidra temporary directory probe", () => {
   });
 
   it("probes the Ghidra session root rather than an unusable inherited temp", async () => {
-    const writeProbe = vi.fn((_path: string) => Promise.resolve());
+    const writeProbe = vi.fn(
+      (_path: string, _resourceOwner: RetainedResourceScope) =>
+        Promise.resolve(),
+    );
     const names = ["TMPDIR", "TMP", "TEMP"] as const;
     const previous = names.map((name) => process.env[name]);
     const dotted = resolve("work", ".cache", "tmp");
@@ -78,11 +95,22 @@ describe("Ghidra temporary directory probe", () => {
       });
     }
     expect(dirname(writeProbe.mock.calls[0]?.[0] ?? "")).toBe(expected);
+    expect(writeProbe.mock.calls[0]?.[1]).toBe(resources.owner);
   });
 
   it.each([
-    ["a failed write", "write", () => Promise.reject(denied("EIO"))],
-    ["a written probe", "cleanup", () => Promise.resolve()],
+    [
+      "a failed write",
+      "write",
+      (_path: string, _resourceOwner: RetainedResourceScope) =>
+        Promise.reject(denied("EIO")),
+    ],
+    [
+      "a written probe",
+      "cleanup",
+      (_path: string, _resourceOwner: RetainedResourceScope) =>
+        Promise.resolve(),
+    ],
   ] as const)(
     "retains cleanup ownership of %s whose removal fails and retries it on close",
     async (_label, stage, writeProbe) => {
@@ -145,3 +173,86 @@ describe("Ghidra java_home.save denial", () => {
     expect(ghidraJavaHomeSaveDenial([text])).toBeUndefined();
   });
 });
+
+it.each([
+  {
+    label: "successful write and close",
+    writeFails: false,
+    closeFails: false,
+    removeFails: false,
+  },
+  {
+    label: "close failure after successful write",
+    writeFails: false,
+    closeFails: true,
+    removeFails: false,
+  },
+  {
+    label: "write and close failures",
+    writeFails: true,
+    closeFails: true,
+    removeFails: false,
+  },
+  {
+    label: "write, close and removal failures",
+    writeFails: true,
+    closeFails: true,
+    removeFails: true,
+  },
+])(
+  "retains the default probe descriptor through $label",
+  async ({ writeFails, closeFails, removeFails }) => {
+    const directory = await createTestTempDirectory("rea-ghidra-probe-owner-");
+    const { open } =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    const writeFailure = denied("ENOSPC");
+    const closeFailure = denied("EIO");
+    let descriptor: Awaited<ReturnType<typeof open>> | undefined;
+    let closeAttempts = 0;
+    const opening = vi
+      .mocked(fs.open)
+      .mockImplementationOnce(async (path, flags, mode) => {
+        const file = await open(path, flags, mode);
+        descriptor = file;
+        const close = file.close.bind(file);
+        vi.spyOn(file, "close").mockImplementation(async () => {
+          closeAttempts += 1;
+          if (closeFails && closeAttempts === 1) throw closeFailure;
+          await close();
+        });
+        if (writeFails)
+          vi.spyOn(file, "writeFile").mockRejectedValueOnce(writeFailure);
+        return file;
+      });
+    let removalAttempts = 0;
+    try {
+      const result = await probeGhidraTemporaryDirectory(resources.owner, {
+        sessionRoot: () => directory,
+        removeProbe: async (path) => {
+          removalAttempts += 1;
+          if (removeFails && removalAttempts === 1) throw denied("EPERM");
+          await fs.unlink(path);
+        },
+      });
+      if (writeFails || closeFails) {
+        expect(result).toMatchObject({
+          ok: false,
+          stage: writeFails ? "write" : "cleanup",
+          code: writeFails ? "ENOSPC" : "EIO",
+        });
+        if (removeFails) expect(result).toHaveProperty("retainedPath");
+        else expect(result).not.toHaveProperty("retainedPath");
+      } else expect(result).toEqual({ ok: true, directory });
+      await resources.close();
+      expect(descriptor?.fd).toBe(-1);
+      expect(closeAttempts).toBe(closeFails ? 2 : 1);
+      expect(removalAttempts).toBe(removeFails ? 2 : 1);
+    } finally {
+      opening.mockRestore();
+      if (descriptor !== undefined && descriptor.fd >= 0)
+        await descriptor.close();
+    }
+  },
+);

@@ -13,6 +13,7 @@ import {
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
   assertKnownAnalysisErrorTag,
+  hasAnalysisContinuingCallerGuidance,
 } from "./analysisErrorPresentation.js";
 import {
   AnalysisAccessDeniedError,
@@ -318,7 +319,7 @@ const projectionDependsOnCallerLifetime = (
     )
       if (
         node.limit !== undefined ||
-        node.continuingCallerGuidance !== undefined ||
+        hasAnalysisContinuingCallerGuidance(node) ||
         node.invocationDiagnostics !== undefined ||
         node.workflowUnknownPublication !== undefined
       )
@@ -524,6 +525,12 @@ const projectError = (
       RETRYABLE_CODES.has(code) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
+      (error._tag === "ProcessCaptureError" &&
+        "retryable" in error &&
+        error.retryable === true) ||
+      (error instanceof ArtifactOperationError &&
+        error.readerLimit?.can_increase === true &&
+        !error.cleanupIncomplete) ||
       (code === "resource_constraint" &&
         error instanceof AnalysisResourceConstraintError &&
         (error.retryable ?? error.resource === "capacity")),
@@ -795,13 +802,24 @@ const artifactStateErrorDetails = (
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.readerLimit === undefined
+        ? {}
+        : { reader_limit: { ...error.readerLimit } }),
       ...(error.admission === undefined
         ? {}
         : {
             admission: error.admission.kind,
-            maximum_header_bytes: error.admission.maximumBytes,
-            maximum_header_bytes_source: error.admission.source,
-            setting: "REA_ASAR_MAX_HEADER_BYTES",
+            ...(error.admission.kind === "asar-header"
+              ? {
+                  maximum_header_bytes: error.admission.maximumBytes,
+                  maximum_header_bytes_source: error.admission.source,
+                  setting: "REA_ASAR_MAX_HEADER_BYTES",
+                }
+              : {
+                  maximum_listing_bytes: error.admission.maximumBytes,
+                  maximum_listing_bytes_source: error.admission.source,
+                  setting: "REA_ASAR_MAX_LISTING_BYTES",
+                }),
           }),
     };
   if (error instanceof UnknownRegistryError)
@@ -1027,9 +1045,15 @@ const lifecycleErrorDetails = (
   }
   if (error instanceof ConfigurationError && error.settings.length > 0)
     return {
-      settings: error.settings.map(({ setting, constraint }) => ({
-        setting,
-        constraint,
+      settings: error.settings.map((issue) => ({
+        setting: issue.setting,
+        constraint: issue.constraint,
+        ...(issue.update_mode === undefined
+          ? {}
+          : { update_mode: issue.update_mode }),
+        ...(issue.pending_restart === undefined
+          ? {}
+          : { pending_restart: issue.pending_restart }),
       })),
     };
   if (error instanceof BinaryTargetError)

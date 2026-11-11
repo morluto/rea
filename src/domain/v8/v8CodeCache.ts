@@ -196,6 +196,12 @@ export const v8CodeCacheSchema = z
         message:
           "Observation coverage disagrees with the listed embedded strings.",
       });
+    if (report.coverage.scanned_bytes !== report.payload.bytes)
+      context.addIssue({
+        code: "custom",
+        path: ["coverage", "scanned_bytes"],
+        message: "Complete coverage must examine every declared payload byte.",
+      });
     report.embedded_strings.forEach((observation, index) => {
       if (observation.retained_bytes > observation.bytes)
         context.addIssue({

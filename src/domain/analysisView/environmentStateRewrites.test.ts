@@ -24,6 +24,10 @@ const record = (
       instant: parseOffsetDateTimeInstant(new Date(start).toISOString()),
       ms: start,
     },
+    end:
+      endMs === undefined
+        ? undefined
+        : parseOffsetDateTimeInstant(new Date(endMs).toISOString()),
     endMs,
   },
 });

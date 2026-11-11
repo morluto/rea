@@ -1010,7 +1010,7 @@ describe("decompile_all partial results", () => {
     if (!result.ok)
       expect(result.error.userMessage).toContain("before address start");
     expect(calls).toHaveLength(0);
-    await expect(readFile(directory())).rejects.toThrow();
+    await expect(stat(directory())).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
@@ -2201,5 +2201,224 @@ describe("decompile_all resumed file cleanup", () => {
       if (resumed.ok)
         expect(resumed.value).toMatchObject({ counts: { skipped: 3 } });
     },
+  );
+});
+
+describe("decompile_all journal UTF-8 fidelity", () => {
+  const directory = useOutputDirectory();
+
+  it.each([
+    { label: "invalid UTF-8", replacement: Buffer.from([0xff]), refused: true },
+    {
+      label: "a literal replacement character",
+      replacement: Buffer.from("\ufffd"),
+      refused: false,
+    },
+  ])(
+    "distinguishes $label in a committed function record",
+    async ({ replacement, refused }) => {
+      expect((await run(harness().tools, directory())).ok).toBe(true);
+      const path = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+      const indexPath = join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME);
+      const indexBefore = await readFile(indexPath);
+      const original = await readFile(path);
+      const at = original.indexOf(Buffer.from('"name":"Foo::main"')) + 8;
+      expect(at).toBeGreaterThan(8);
+      const changed = Buffer.concat([
+        original.subarray(0, at),
+        replacement,
+        original.subarray(at + 1),
+      ]);
+      await writeFile(path, changed);
+      const next = harness();
+      const result = await run(next.tools, directory(), { resume: true });
+      expect(result.ok).toBe(!refused);
+      if (refused) {
+        if (result.ok) throw new Error("Expected incompatible committed bytes");
+        expect(result.error).toBeInstanceOf(AnalysisInputError);
+        expect(result.error.userMessage).toContain("not a compatible export");
+        expect((await readFile(indexPath)).equals(indexBefore)).toBe(true);
+      }
+      expect(of(next.calls, "procedure_pseudo_code")).toHaveLength(0);
+      expect((await readFile(path)).equals(changed)).toBe(true);
+    },
+  );
+
+  it("repairs an invalid UTF-8 tail outside the committed journal", async () => {
+    expect((await run(harness().tools, directory(), { limit: 1 })).ok).toBe(
+      true,
+    );
+    const path = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+    await writeFile(
+      path,
+      Buffer.concat([await readFile(path), Buffer.from([0xff])]),
+    );
+    const result = await run(harness().tools, directory(), { resume: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({ counts: { written: 2, skipped: 1 } });
+    expect((await readFile(path)).includes(0xff)).toBe(false);
+  });
+});
+
+describe("decompile_all settled function outcome precedence", () => {
+  const directory = useOutputDirectory();
+
+  it.each([
+    { independent: false, typedCancellation: false },
+    { independent: true, typedCancellation: false },
+    { independent: false, typedCancellation: true },
+    { independent: true, typedCancellation: true },
+  ])(
+    "retains the settled outcome before late abort: %j",
+    async ({ independent, typedCancellation }) => {
+      const controller = new AbortController();
+      const reason = { request: "after provider outcome settled" };
+      const physical = new AnalysisOutputError(
+        "procedure_pseudo_code",
+        "physical rejection",
+        { userMessage: "physical rejection" },
+      );
+      const providerStop = new AnalysisCancelledError("procedure_pseudo_code", {
+        cause: "provider cancelled",
+      });
+      const { port } = harness({
+        procedures: [{ address: "0x1000", name: "main" }],
+      });
+      let calls = 0;
+      const stopping: AnalysisOperationPort = {
+        execute: (operation, parameters, options) => {
+          if (operation !== "procedure_pseudo_code")
+            return port.execute(operation, parameters, options);
+          calls += 1;
+          if (independent && calls === 1)
+            return Promise.resolve(
+              ok(
+                createAnalysisExecution(null, provider, {
+                  analysisProfile: profile,
+                  pseudocodeAbsence: {
+                    kind: "provider-failure",
+                    reason: "initial provider failure",
+                  },
+                }),
+              ),
+            );
+          const result = Promise.resolve(
+            err(typedCancellation ? providerStop : physical),
+          );
+          // This observer runs only after the provider's typed outcome has settled.
+          void result.then(() => controller.abort(reason));
+          return result;
+        },
+      };
+      const result = await run(
+        new EnhancedTools(stopping),
+        directory(),
+        independent ? { retry_failed: "independent_fresh" } : {},
+        controller.signal,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected caller cancellation");
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(reason);
+      expect(calls).toBe(independent ? 2 : 1);
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      if (!typedCancellation)
+        expect(index.functions).toMatchObject([
+          {
+            address: "0x1000",
+            status: "failed",
+            failure: { message: "physical rejection" },
+          },
+        ]);
+      else if (independent)
+        expect(index.functions).toMatchObject([
+          {
+            address: "0x1000",
+            status: "failed",
+            failure: { code: "no_pseudocode" },
+          },
+        ]);
+      else expect(index.functions).toEqual([]);
+      const records = (
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+          "utf8",
+        )
+      )
+        .trimEnd()
+        .split("\n")
+        .map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
+      expect(records.slice(1)).toHaveLength(
+        independent ? (typedCancellation ? 1 : 2) : typedCancellation ? 0 : 1,
+      );
+    },
+  );
+});
+
+it("keeps a settled null failure but starts no independent retry after caller abort", async () => {
+  const directory = join(
+    await createTestTempDirectory("rea-decompile-retry-admission-"),
+    "out",
+  );
+  const controller = new AbortController();
+  const reason = { request: "after first null failure" };
+  const { port } = harness({
+    procedures: [{ address: "0x1000", name: "main" }],
+  });
+  let calls = 0;
+  const stopping: AnalysisOperationPort = {
+    execute: (operation, parameters, options) => {
+      if (operation !== "procedure_pseudo_code")
+        return port.execute(operation, parameters, options);
+      calls += 1;
+      const result = Promise.resolve(
+        ok(
+          createAnalysisExecution(null, provider, {
+            analysisProfile: profile,
+            pseudocodeAbsence: {
+              kind: "provider-failure",
+              reason: "observed function failure",
+            },
+          }),
+        ),
+      );
+      void result.then(() => controller.abort(reason));
+      return result;
+    },
+  };
+  const result = await run(
+    new EnhancedTools(stopping),
+    directory,
+    { retry_failed: "independent_fresh" },
+    controller.signal,
+  );
+  if (result.ok) throw new Error("Expected cancelled completion");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(calls).toBe(1);
+  const index = decompileDirectoryIndexSchema.parse(
+    JSON.parse(
+      await readFile(join(directory, DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+    ),
+  );
+  expect(index.functions).toMatchObject([
+    {
+      status: "failed",
+      pseudocode_absence: {
+        kind: "provider-failure",
+        reason: "observed function failure",
+      },
+    },
+  ]);
+  expect(index.functions[0]?.limitations ?? []).not.toContain(
+    "Independent retry was not attempted because the provider did not report a function failure for this observation.",
   );
 });

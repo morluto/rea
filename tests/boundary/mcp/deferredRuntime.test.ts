@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { spawnSync } from "node:child_process";
@@ -780,11 +781,15 @@ const copyCompiledPackage = async (prefix: string): Promise<string> => {
   await cp(resolve("dist"), join(directory, "dist"), { recursive: true });
   await mkdir(join(directory, "scripts/lib"), { recursive: true });
   await cp(resolve("scripts/rea.mjs"), join(directory, "scripts/rea.mjs"));
-  // The launcher imports its process-environment owner, as the package ships it.
-  await cp(
-    resolve("scripts/lib/cli-process-environment.mjs"),
-    join(directory, "scripts/lib/cli-process-environment.mjs"),
-  );
+  // Copy the helpers selected by the package, so this fixture exercises the
+  // same launcher files that an installation receives.
+  const manifest = JSON.parse(await readFile("package.json", "utf8")) as {
+    files: string[];
+  };
+  for (const path of manifest.files.filter((file) =>
+    file.startsWith("scripts/lib/"),
+  ))
+    await cp(resolve(path), join(directory, path));
   await cp(resolve("package.json"), join(directory, "package.json"));
   await symlink(
     resolve("node_modules"),
@@ -1080,4 +1085,48 @@ try {
   expect(child.error).toBeUndefined();
   expect(child.status, child.stderr).toBe(0);
   expect(child.stdout).toBe("ONE_INPUT_OWNER\n");
+});
+
+it("distinguishes an exhausted production discovery page from an unmatched query", async () => {
+  const { client } = await connect(
+    "auto",
+    { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+    ["--max-old-space-size=1024"],
+  );
+  const discover = (arguments_: Record<string, unknown>) =>
+    artifactMcpCall(client, { name: "discover_tools", arguments: arguments_ });
+  const first = await discover({ query: "inspect", limit: 1 });
+  const { total_matches: total } = z
+    .object({ total_matches: z.number().int().positive() })
+    .parse(first.structuredContent);
+  const last = await discover({
+    query: "inspect",
+    offset: total - 1,
+    limit: 1,
+  });
+  expect(last.structuredContent).toMatchObject({
+    total_matches: total,
+    next_offset: null,
+    next_step: expect.stringContaining("Call the returned tool"),
+  });
+  const before = await client.listTools();
+  for (const offset of [total, total + 1]) {
+    const page = await discover({ query: "inspect", offset, limit: 1 });
+    expect(page.structuredContent).toMatchObject({
+      total_matches: total,
+      tools: [],
+      next_offset: null,
+      next_step: expect.stringContaining("offset 0"),
+    });
+    expect(await client.listTools()).toEqual(before);
+  }
+  const unmatched = await discover({
+    query: "rea-no-such-tool-keyword-9995",
+    limit: 1,
+  });
+  expect(unmatched.structuredContent).toMatchObject({
+    total_matches: 0,
+    tools: [],
+    next_step: expect.stringContaining("No matches."),
+  });
 });

@@ -690,7 +690,7 @@ it("preserves provider-launch ENOENT when configured command path contains ps su
 });
 
 it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
-  "preserves Linux process ownership admission failure in baseline capture (%s) without blaming objdump command",
+  "preserves host process ownership admission failure in baseline capture (%s) without blaming objdump command",
   async (code) => {
     const { directory } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
@@ -727,7 +727,7 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
         );
         expect(projected.message).toContain(code);
         expect(projected.remediation.action).toContain(
-          processOwnershipAdmissionRecovery(code, "linux"),
+          processOwnershipAdmissionRecovery(code, process.platform),
         );
         expect(projected.remediation.action).toContain(
           "REA_OBJDUMP_COMMAND does not need to change",
@@ -742,7 +742,7 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
   },
 );
 
-it("preserves Linux process ownership admission failure in baseline capture without blaming rizin command", async () => {
+it("preserves host process ownership admission failure in baseline capture without blaming rizin command", async () => {
   const { directory, path } = await createArtifact();
   const command = resolve(directory, "configured-rizin");
   const captureSpy = vi
@@ -776,7 +776,7 @@ it("preserves Linux process ownership admission failure in baseline capture with
       expect(projected.remediation.action).toContain(
         processOwnershipAdmissionRecovery(
           "identity_snapshot_unavailable",
-          "linux",
+          process.platform,
         ),
       );
       expect(projected.remediation.action).toContain(
