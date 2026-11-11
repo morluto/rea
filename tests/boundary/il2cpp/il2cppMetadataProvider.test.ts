@@ -960,6 +960,12 @@ it("returns schema-valid wasm32 rows with table and function indices and no addr
       table_index: 1,
       function_index: 10,
     });
+    // Imported functions are unknown for a wasm-specific reason, not a relocation.
+    expect(
+      report.limitations.some(
+        (line) => line.includes("imported function") && !line.includes("unresolved relocation"),
+      ),
+    ).toBe(true);
     // A native report may not carry wasm rows, nor a wasm report addresses.
     const native = { ...report, binary: { ...report.binary!, format: "elf" } };
     expect(il2cppMetadataSchema.safeParse(native).success).toBe(false);
