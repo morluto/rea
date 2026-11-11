@@ -678,12 +678,18 @@ const loadWrites = async (
   }
 };
 
+const UNAVAILABLE_DYNAMIC_SYMBOLS =
+  "DT_SYMTAB does not identify a decoded symbol table; dynamic relocation symbols are unresolved.";
+
 const dynamicSymbols = (
   scan: ElfScan,
   sections: readonly NativeSection[],
   tags: ReadonlyMap<bigint, DynTag>,
   tables: ReadonlyMap<number, readonly ElfInitializerSymbol[]>,
-): readonly ElfInitializerSymbol[] | undefined => {
+): {
+  readonly symbols: readonly ElfInitializerSymbol[] | undefined;
+  readonly unavailable: boolean;
+} => {
   const declared = tags.get(DT_SYMTAB);
   if (declared !== undefined) {
     const match = sections.findIndex(
@@ -691,21 +697,23 @@ const dynamicSymbols = (
         section.address === declared.value &&
         (section.type === 11 || section.type === 2),
     );
-    if (match >= 0) return tables.get(match);
-    note(
-      scan,
-      "DT_SYMTAB does not identify a decoded symbol table; dynamic relocation symbols are unresolved.",
-    );
-    return undefined;
+    if (match >= 0) return { symbols: tables.get(match), unavailable: false };
+    // A declared table that was not decoded is not replaced by another table.
+    // Coverage drops only when a relocation actually asks for a symbol.
+    return { symbols: undefined, unavailable: true };
   }
   const dynsym = sections.findIndex((section) => section.type === 11);
-  return dynsym < 0 ? undefined : tables.get(dynsym);
+  return {
+    symbols: dynsym < 0 ? undefined : tables.get(dynsym),
+    unavailable: false,
+  };
 };
 
 const fromDynamicWrite = (
   scan: ElfScan,
   write: ElfPointerWrite,
   symbols: readonly ElfInitializerSymbol[] | undefined,
+  symbolsUnavailable: boolean,
 ): SlotRelocation => {
   if (write.source.encoding === "relr")
     return {
@@ -730,6 +738,8 @@ const fromDynamicWrite = (
       importName: null,
       definedName: null,
     };
+  if (symbolsUnavailable && write.symbol_index !== 0)
+    note(scan, UNAVAILABLE_DYNAMIC_SYMBOLS);
   return relocationFromEntry(
     scan,
     {
@@ -772,10 +782,12 @@ const resolveSlot = (
   clobbered: boolean,
   sectionRel: SlotRelocation | undefined,
   symbols: readonly ElfInitializerSymbol[] | undefined,
+  symbolsUnavailable: boolean,
   trustRaw: boolean,
 ): SlotRelocation => {
   if (clobbered) return UNRESOLVED;
-  if (write !== undefined) return fromDynamicWrite(scan, write, symbols);
+  if (write !== undefined)
+    return fromDynamicWrite(scan, write, symbols, symbolsUnavailable);
   if (sectionRel !== undefined) return sectionRel;
   if (!trustRaw) return UNRESOLVED;
   return rawRelocation(scan, slot.fileOffset);
@@ -848,6 +860,7 @@ const collectEntries = (
   sectionRels: ReadonlyMap<number, SlotRelocation>,
   sectionClobbered: ReadonlySet<number>,
   symbols: readonly ElfInitializerSymbol[] | undefined,
+  symbolsUnavailable: boolean,
   names: SymbolNames,
   trustRaw: boolean,
   sections: readonly NativeSection[],
@@ -888,6 +901,7 @@ const collectEntries = (
                   ? undefined
                   : sectionRels.get(slot.fileOffset),
                 symbols,
+                symbolsUnavailable,
                 trustRaw,
               )
             : {
@@ -1050,13 +1064,20 @@ export const readElfInitializers = async (
   });
   if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)
     scan.incomplete = true;
+  const dynamic = dynamicSymbols(
+    scan,
+    directory.sections,
+    tags,
+    symbols.tables,
+  );
   const collected = collectEntries(
     scan,
     sources,
     loaded,
     sectionRels.found,
     sectionRels.clobbered,
-    dynamicSymbols(scan, directory.sections, tags, symbols.tables),
+    dynamic.symbols,
+    dynamic.unavailable,
     symbols,
     loaded.trustRaw && sectionRels.complete,
     directory.sections,

@@ -319,6 +319,50 @@ describe("ELF slot semantics", () => {
       ]),
     );
   });
+
+  const sectionlessElf = (directOnly: boolean): Buffer => {
+    const bytes = Buffer.from(elf64PieInitializers());
+    bytes.writeBigUInt64LE(0n, 40);
+    bytes.writeUInt16LE(0, 60);
+    bytes.writeUInt16LE(0, 62);
+    if (!directOnly) return bytes;
+    (
+      [
+        [12, 0x100],
+        [13, 0x120],
+        [6, 0x520],
+        [0, 0],
+      ] as const
+    ).forEach(([tag, value], index) => {
+      const at = 0x300 + index * 16;
+      bytes.writeBigUInt64LE(BigInt(tag), at);
+      bytes.writeBigUInt64LE(BigInt(value), at + 8);
+    });
+    bytes.writeBigUInt64LE(64n, 120 + 32);
+    bytes.writeBigUInt64LE(64n, 120 + 40);
+    return bytes;
+  };
+
+  it("keeps direct initializers complete when DT_SYMTAB has no decoded table", async () => {
+    const report = await read(sectionlessElf(true));
+    expect(report.entries.map((entry) => entry.kind)).toEqual(["init", "fini"]);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_entries: 2,
+    });
+    expect(report.limitations.join("\n")).not.toContain("DT_SYMTAB");
+  });
+
+  it("marks coverage incomplete when a relocation needs the missing DT_SYMTAB", async () => {
+    const report = await read(sectionlessElf(false));
+    expect(report.coverage).toMatchObject({
+      status: "incomplete",
+      total_entries: null,
+    });
+    expect(report.limitations).toContain(
+      "DT_SYMTAB does not identify a decoded symbol table; dynamic relocation symbols are unresolved.",
+    );
+  });
 });
 
 describe("ELF section content admission", () => {
