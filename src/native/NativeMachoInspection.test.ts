@@ -519,6 +519,7 @@ describe("Mach-O encryption reporting", () => {
     container_file_offset: 32768,
     size: 8192,
     status: "absent",
+    malformed_kind: null,
     reason: null,
     commands: [],
     range: null,
@@ -602,6 +603,7 @@ describe("Mach-O encryption reporting", () => {
         slice({
           container_file_offset: 49152,
           status: "malformed",
+          malformed_kind: "structure",
           reason: "load commands is truncated",
         }),
       ],

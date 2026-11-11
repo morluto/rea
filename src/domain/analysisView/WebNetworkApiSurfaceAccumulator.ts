@@ -92,8 +92,10 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
   }
 
   add(record: WebNetworkCaptureRecord): Result<void, AnalysisError> {
-    const limitations = this.addLimitations(record.limitations);
+    const rollbackAdmission = this.retainedCheckpoint();
+    const limitations = this.prepareLimitations(record.limitations);
     if (!limitations.ok) return limitations;
+    let committed = false;
     try {
       const line = readRecordedRequestLine(
         record.reported,
@@ -101,14 +103,23 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         this.scratch,
       );
       if (line === null) return this.overBudget();
+      let appended: Result<void, AnalysisError>;
       if (line.kind === "excluded")
-        return this.#exclude(record.ordinal, line.reason);
-      const route = scanRouteTemplate(line.path, this.scratch);
-      if (route === null) return this.overBudget();
-      const queryNames = readQueryParameterNames(line.query, this.scratch);
-      if (queryNames === null) return this.overBudget();
-      return this.#append(record.ordinal, line, route, queryNames);
+        appended = this.#exclude(record.ordinal, line.reason);
+      else {
+        const route = scanRouteTemplate(line.path, this.scratch);
+        if (route === null) return this.overBudget();
+        const queryNames = readQueryParameterNames(line.query, this.scratch);
+        if (queryNames === null) return this.overBudget();
+        appended = this.#append(record.ordinal, line, route, queryNames);
+      }
+      if (appended.ok) {
+        limitations.value();
+        committed = true;
+      }
+      return appended;
     } finally {
+      if (!committed) rollbackAdmission();
       this.releaseTemporary();
     }
   }
