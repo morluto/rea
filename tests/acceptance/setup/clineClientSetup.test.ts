@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  type CliResult,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 cliTest(
   "registers Cline at its documented path and preserves peers and backups",
@@ -132,5 +136,118 @@ cliTest(
     expect(skill[0]!.target).toBe(
       join(home, ".agents", "skills", "reverse-engineer-anything"),
     );
+  },
+);
+
+const clineEnvironment = (home: string) => ({
+  HOME: home,
+  USERPROFILE: home,
+  HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+  GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
+  JAVA_HOME: join(home, "missing-java"),
+});
+
+const setupCline = (cli: TestCli, home: string): Promise<CliResult> =>
+  cli.run({
+    arguments: [
+      "setup",
+      "--client",
+      "cline",
+      "--skill=false",
+      "--yes",
+      "--json",
+    ],
+    cwd: home,
+    environment: clineEnvironment(home),
+  });
+
+cliTest(
+  "reports the Cline registration as aligned and REA-owned",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-cline-doctor-");
+    expect((await setupCline(cli, home)).exitCode).toBe(0);
+    const doctor = await cli.run({
+      arguments: ["doctor", "--client", "cline", "--json"],
+      cwd: home,
+      environment: clineEnvironment(home),
+    });
+    const report = doctor.json as {
+      identity: {
+        registrations: {
+          client: string;
+          state: string;
+          command_identity: string;
+        }[];
+      };
+    };
+    const registration = report.identity.registrations.find(
+      ({ client }) => client === "cline",
+    );
+    expect(registration?.state).toBe("aligned");
+    expect(registration?.command_identity).toBe("owned");
+  },
+);
+
+cliTest(
+  "refuses a foreign rea registration in the Cline file",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-cline-foreign-");
+    const directory = join(home, ".cline", "data", "settings");
+    const config = join(directory, "cline_mcp_settings.json");
+    const foreign = JSON.stringify({
+      mcpServers: { rea: { command: "custom", args: ["keep"] } },
+    });
+    await mkdir(directory, { recursive: true });
+    await writeFile(config, foreign);
+    const result = await setupCline(cli, home);
+    expect(result.exitCode).toBe(1);
+    const plan = result.json as { status: string; remediation: string | null };
+    expect(plan.status).toBe("needs_human");
+    expect(plan.remediation).toContain("foreign ownership");
+    expect(await readFile(config, "utf8")).toBe(foreign);
+  },
+);
+
+cliTest(
+  "uninstall removes only the REA entry from the Cline file",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-cline-uninstall-");
+    const directory = join(home, ".cline", "data", "settings");
+    const config = join(directory, "cline_mcp_settings.json");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      config,
+      JSON.stringify({ mcpServers: { peer: { command: "peer" } } }),
+    );
+    expect((await setupCline(cli, home)).exitCode).toBe(0);
+    const removal = await cli.run({
+      arguments: ["uninstall", "--json"],
+      cwd: home,
+      environment: clineEnvironment(home),
+    });
+    expect(removal.exitCode, removal.stdout).toBe(0);
+    const report = removal.json as {
+      items: { name: string; status: string }[];
+    };
+    expect(report.items.find(({ name }) => name === "cline")?.status).toBe(
+      "removed",
+    );
+    const remaining = JSON.parse(await readFile(config, "utf8"));
+    expect(remaining.mcpServers).toEqual({ peer: { command: "peer" } });
+  },
+);
+
+cliTest(
+  "refuses a malformed Cline configuration without rewriting it",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-cline-malformed-");
+    const directory = join(home, ".cline", "data", "settings");
+    const config = join(directory, "cline_mcp_settings.json");
+    const malformed = '{"mcpServers": {';
+    await mkdir(directory, { recursive: true });
+    await writeFile(config, malformed);
+    const result = await setupCline(cli, home);
+    expect(result.exitCode).toBe(1);
+    expect(await readFile(config, "utf8")).toBe(malformed);
   },
 );
