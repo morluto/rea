@@ -46,3 +46,39 @@ these CLI observations were executed locally. No upstream parser was run as an
 independent oracle. V2/V3/V4 journal decoding, paging and error recovery retain
 synthesized-fixture CLI/MCP coverage; real paired MFT/journal captures and
 Windows-host execution remain unverified.
+
+## Default journal delivery comparison
+
+Compared `d31647d03` with `c37d26dca`: an analyst requests the journal events and
+inventory counts without asking for MFT record details. Each completed workflow
+first queries the CLI schema, then inspects 50 events. The MFT input is the
+Windows system sample above; the 3,600-byte journal contains 50 synthesized V2
+records. This is a controlled delivery comparison, not real paired-journal
+verification.
+
+Each CLI call ran in a fresh Node process, sequentially, on one CPU with a 1 GiB
+heap cap and warm filesystem caches. One trial per variant includes startup,
+acquisition, hashing and Evidence serialization. CPU covers the child process
+family; RSS/PSS peaks are sampled every 20 ms and exclude the Python observer.
+
+| Whole workflow | Before | Default summary after |
+| --- | ---: | ---: |
+| CLI calls | 2 | 2 |
+| Proxy tokens, including command text, schema and result | 24,582 | 8,086 |
+| Elapsed time, ms | 6,646 | 6,090 |
+| Process-family CPU time, ms | 5,765 | 5,346 |
+| Sampled peak family RSS, KiB | 251,740 | 246,428 |
+| Sampled peak family PSS, KiB | 248,075 | 242,844 |
+
+Proxy tokens use `tiktoken` 0.12.0 `o200k_base`; they are not measured agent
+billing or reasoning tokens. Tool transport wrappers, model latency and warm
+persistent-process runs were not measured. The single timing/memory samples do
+not establish a stable speedup.
+
+The schema query itself grows from 361 to 429 proxy tokens. All 50 event rows,
+input identities and aggregate counts remain equal. MFT record delivery becomes
+explicit: the default metadata representation is 424 serialized bytes rather
+than the original 57,946 bytes. An additional validation call with
+`--mftRecordLimit=32` reproduced the entire baseline normalized result exactly.
+That full-detail workflow, including its schema query, uses 24,662 proxy tokens;
+its CPU and memory were not measured separately.
