@@ -13,9 +13,11 @@ import type {
   ProcessDiagnosticBudget,
   ProviderProcessStopResult,
   SpawnedOwnedProviderProcess,
+  PreparedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
   ProviderProcessSupervisor,
+  capturePreparedProviderOwnership,
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
@@ -107,7 +109,21 @@ interface OwnedCommandLimits {
 export const prepareOwnedCommand = async (
   signal?: AbortSignal,
 ): Promise<void> => {
-  if (systemProcessOwnershipHost.platform !== "darwin") return;
+  await prepareDarwinCommandOwnership(signal);
+};
+
+/** Prepare the launch baseline with the same cancellation and cleanup conversion. */
+export const prepareOwnedCommandLaunch = (
+  spawn: OwnedProviderProcessSpawnOptions,
+  signal?: AbortSignal,
+): Promise<PreparedOwnedProviderProcess | undefined> =>
+  prepareDarwinCommandOwnership(signal, spawn);
+
+const prepareDarwinCommandOwnership = async (
+  signal?: AbortSignal,
+  spawn?: OwnedProviderProcessSpawnOptions,
+): Promise<PreparedOwnedProviderProcess | undefined> => {
+  if (systemProcessOwnershipHost.platform !== "darwin") return undefined;
   try {
     signal?.throwIfAborted();
     await prepareProcessOwnershipInspection(signal);
@@ -117,6 +133,26 @@ export const prepareOwnedCommand = async (
       signal,
       signal?.aborted === true ? "cancelled" : undefined,
     );
+  }
+  if (spawn === undefined) return undefined;
+  // Bound baseline collection independently of helper compilation and the
+  // provider command; process listing also runs during this stage.
+  const baseline = new ProviderStartupDeadline(15_000, signal);
+  try {
+    const prepared = await capturePreparedProviderOwnership({
+      ...spawn,
+      signal: baseline.signal,
+    });
+    if (baseline.interruption !== undefined)
+      throw (
+        baseline.signal.reason ??
+        new DOMException("Ownership baseline deadline elapsed", "TimeoutError")
+      );
+    return prepared;
+  } catch (cause: unknown) {
+    throwCommandPreparationFailure(cause, signal, baseline.interruption);
+  } finally {
+    baseline.dispose();
   }
 };
 
