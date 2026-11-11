@@ -10,6 +10,7 @@ import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidencePro
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import {
   analysisCliErrorEnvelopeSchema,
   analysisErrorProjectionSchema,
@@ -408,6 +409,94 @@ describe("process CLI input diagnostics", () => {
       }),
     });
   });
+});
+
+describe("process CLI final cleanup cancellation", () => {
+  it.each([
+    { kind: "plan", cancel: false },
+    { kind: "comparison", cancel: false },
+    { kind: "plan", cancel: true },
+    { kind: "comparison", cancel: true },
+    { kind: "invalid-scenario", cancel: true },
+  ] as const)(
+    "preserves the $kind outcome through final input cleanup (cancelled: $cancel)",
+    async ({ kind, cancel }) => {
+      const root = await createTestTempDirectory(
+        "rea-process-cli-final-close-",
+      );
+      const path = join(root, "input.json");
+      await writeFile(
+        path,
+        JSON.stringify(
+          kind === "comparison"
+            ? processCaptureEvidence()
+            : kind === "plan"
+              ? {
+                  executable: process.execPath,
+                  working_directory: root,
+                  dry_run: true,
+                }
+              : {},
+        ),
+      );
+      const controller = new AbortController();
+      const reason = { phase: "final-input-close" };
+      const realClose = ArtifactResourceScope.prototype.close;
+      const close = vi
+        .spyOn(ArtifactResourceScope.prototype, "close")
+        .mockImplementation(async function (this: ArtifactResourceScope) {
+          await realClose.call(this);
+          if (cancel) controller.abort(reason);
+        });
+      try {
+        const result =
+          kind === "comparison"
+            ? await compareProcessEvidenceFiles(
+                path,
+                path,
+                undefined,
+                controller.signal,
+              )
+            : await captureProcessScenarioFile(
+                path,
+                process.env,
+                controller.signal,
+              );
+        expect(controller.signal.aborted).toBe(cancel);
+        if (!cancel) {
+          expect(result).toMatchObject({
+            operation:
+              kind === "plan"
+                ? "capture_process_scenario"
+                : "compare_process_captures",
+          });
+          return;
+        }
+        expect(controller.signal.reason).toBe(reason);
+        expect(result).toMatchObject({
+          error: "Process command failed",
+          code: kind === "invalid-scenario" ? "invalid_request" : "cancelled",
+        });
+        if (kind !== "invalid-scenario")
+          expect(result).toMatchObject({
+            details: {
+              partial_observation: {
+                operation:
+                  kind === "plan"
+                    ? "capture_process_scenario"
+                    : "compare_process_captures",
+                predicate_type:
+                  kind === "plan"
+                    ? "rea.process-scenario-plan"
+                    : "rea.process-comparison",
+              },
+            },
+          });
+      } finally {
+        close.mockRestore();
+      }
+    },
+  );
 });
 
 describe("process CLI file cleanup", () => {
