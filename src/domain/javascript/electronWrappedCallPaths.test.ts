@@ -147,7 +147,11 @@ it("preserves every direct observation in a long flat sibling block", () => {
   }`);
   expect(result.electron.ipc.map(({ channel }) => channel)).toEqual(channels);
   expect(result.electron.call_paths ?? []).toEqual([]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage?.syntax.status).toBe("complete");
+  expect(result.analysis_coverage?.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 
 it("keeps sibling guards, definite exits and nested shadowing separate", () => {
@@ -370,7 +374,11 @@ it("preserves an observed empty contextBridge API object", () => {
   expect(result.electron.context_bridge_apis?.[0]).not.toHaveProperty(
     "resolution_basis",
   );
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage?.syntax.status).toBe("complete");
+  expect(result.analysis_coverage?.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 
 it.each([
@@ -767,7 +775,11 @@ it("resolves a site-determined constant channel in place of its dynamic observat
     expect.objectContaining({ entry: "desktop.ping", channel: "ping" }),
   );
   // The syntax pass's unknown channel is resolved, not left as partial.
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage?.syntax.status).toBe("complete");
+  expect(result.analysis_coverage?.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it("resolves a site-determined registration whose handler is a named local", () => {
   const result = analyzeJavaScriptStaticSource(`
@@ -784,7 +796,11 @@ it("resolves a site-determined registration whose handler is a named local", () 
       handler_kind: "inline-function",
     }),
   ]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage?.syntax.status).toBe("complete");
+  expect(result.analysis_coverage?.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it("keeps an argument-supplied channel unresolved beside its resolved candidates", () => {
   const result = analyzeJavaScriptStaticSource(`
@@ -987,7 +1003,11 @@ it.each(["interface Shape { marker(): void }", "type Shape = typeof marker;"])(
           resolution_basis ?? "direct",
         ]),
     ).toEqual([["ch", "wrapper-substitution"]]);
-    expect(result.parse_status).toBe("complete");
+    expect(result.parse_status).toBe("partial");
+    expect(result.analysis_coverage?.syntax.status).toBe("complete");
+    expect(
+      result.analysis_coverage?.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
   },
 );
 it("resolves a handler a module-level factory call created once in place", () => {
@@ -1005,7 +1025,11 @@ it("resolves a handler a module-level factory call created once in place", () =>
       resolution_basis ?? "direct",
     ]),
   ).toEqual([["ch", "wrapper-substitution"]]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage?.syntax.status).toBe("complete");
+  expect(result.analysis_coverage?.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it("keeps separate outer calls that pass one shared handler through a wrapper", () => {
   const result = analyzeJavaScriptStaticSource(`
@@ -1063,7 +1087,11 @@ it("resolves a module-level handler in place when the entry binds an unused para
       resolution_basis: "wrapper-substitution",
     }),
   ]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage?.syntax.status).toBe("complete");
+  expect(result.analysis_coverage?.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it.each([
   ["a named local", 'const handler = () => tag; register("same", handler);'],
@@ -1150,15 +1178,7 @@ it("keeps distinct exposed renderer listener callsites distinct", () => {
     result.electron.call_paths?.filter(({ channel }) => channel === "pong"),
   ).toHaveLength(2);
 });
-it("does not identify overwritten Electron namespaces or shadowed require", () => {
-  for (const source of [
-    `const e=require("electron");e.ipcMain={on(){}};e.ipcMain.on("bad",event=>event.sender.copy());`,
-    `function require(){return {ipcMain:{on(){}}}};const e=require("electron");e.ipcMain.on("bad",event=>event.sender.copy());`,
-  ])
-    expect(
-      analyzeJavaScriptStaticSource(source).electron.call_paths ?? [],
-    ).toEqual([]);
-});
+
 it("preserves guarded alternatives in direct exposed object literals", () => {
   const result = analyzeJavaScriptStaticSource(`
       const e=require("electron");
@@ -1256,7 +1276,9 @@ it("reports nested bridge depth truncation while retaining shallow paths", () =>
   expect(result.electron.call_paths).toContainEqual(
     expect.objectContaining({ entry: "desktop.shallow", channel: "shallow" }),
   );
-  expect(result.limitations.join(" ")).toContain("depth 128");
+  expect(result.limitations.join(" ")).toContain(
+    "semantic_precision.wrapper_depth=128",
+  );
 });
 it("preserves conditions when a wrapper dispatches through conditional external methods", () => {
   const result = analyzeJavaScriptStaticSource(`

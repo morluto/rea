@@ -1,3 +1,5 @@
+import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
+import type { SemanticPropertyReadSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
@@ -81,6 +83,7 @@ export interface JavaScriptSemanticReferenceEffectsAtSite {
 
 export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemanticMemberEffect {
   readonly kind: "write" | "escape";
+  readonly loaderAuthority?: "candidate";
 }
 
 export interface JavaScriptSemanticBindingState {
@@ -119,17 +122,38 @@ export interface JavaScriptSemanticScopeState {
 /** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
 export interface JavaScriptOpaqueScopeEffects {
   /** Cheap source evidence collected with declarations, before alias queries. */
-  mayReferenceGlobalEval: boolean;
+  mayReferenceGlobalCode: boolean;
   readonly sites: WeakSet<t.Node>;
   readonly sloppySites: WeakSet<t.Node>;
   readonly byScope: Map<string, t.CallExpression[]>;
   readonly children: Map<string, Set<string>>;
-  readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
+  readonly globalSites: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+    | t.TaggedTemplateExpression
+  )[];
 }
+
+/** Intrinsic prototypes tracked from mutation sites to inherited reads. */
+export const semanticPrototypeOwners = [
+  "Object",
+  "Array",
+  "String",
+  "Function",
+  "Number",
+  "Boolean",
+  "RegExp",
+  "BigInt",
+] as const;
+export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  readonly precision: JavaScriptSemanticPrecision;
   arrayIterationUnknown: boolean;
+  /** Receiver isolation requires the completed member-effect inventory. */
+  memberMutationFactsComplete: boolean;
   readonly program: t.Program;
   readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
   /** Effective loader for static imports in this source artifact. */
@@ -154,6 +178,14 @@ export interface JavaScriptSemanticAnalysisState {
   prototypeRequireMutationObserved: boolean | undefined;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */
   prototypeEnumerationMayAffect: boolean | undefined;
+  readonly implicitPropertyReads: WeakMap<
+    t.Node,
+    readonly SemanticPropertyReadSource[]
+  >;
+  readonly prototypeMutationSites: {
+    readonly owner: SemanticPrototypeOwner;
+    readonly node: t.Node;
+  }[];
   /** Effects on a cached require exports object, independent of local projections. */
   readonly requiredModuleEffects: Map<
     string,
@@ -163,7 +195,9 @@ export interface JavaScriptSemanticAnalysisState {
   readonly callableNodesById: Map<string, t.Node>;
   readonly moduleLinks: JavaScriptSemanticModuleLink[];
   /** Exact calls already represented by binding or dependency links. */
-  readonly linkedRequireCalls: WeakSet<t.CallExpression>;
+  readonly linkedRequireCalls: WeakSet<
+    t.CallExpression | t.OptionalCallExpression
+  >;
   readonly moduleLinkBindings: WeakMap<
     JavaScriptSemanticModuleLink,
     JavaScriptSemanticBindingState

@@ -1,5 +1,8 @@
 import { err, ok, type Result } from "../domain/result.js";
-import { EVM_CPU_SECONDS, EVM_INTERFACE_LIMITS } from "./EvmoleRelease.js";
+import {
+  selectedEvmProducerLimits,
+  type EvmProducerLimits,
+} from "../domain/evm/evmInterface.js";
 
 /** Selected worker soft limits to configure; inherited hard limits are left unchanged. */
 export interface EvmWorkerLimits {
@@ -11,6 +14,7 @@ export interface EvmWorkerLimits {
 /** Read only the three selected Linux limits, retaining tighter soft/hard boundaries. */
 export const selectEvmWorkerLimits = (
   raw: unknown,
+  requested: EvmProducerLimits = selectedEvmProducerLimits(undefined),
 ): Result<EvmWorkerLimits, string> => {
   if (typeof raw !== "string" || Buffer.byteLength(raw) > 64 * 1024)
     return err(
@@ -18,9 +22,9 @@ export const selectEvmWorkerLimits = (
     );
   const selected: number[] = [];
   for (const [name, units, maximum] of [
-    ["Max address space", "bytes", EVM_INTERFACE_LIMITS.addressSpaceBytes],
-    ["Max cpu time", "seconds", EVM_CPU_SECONDS],
-    ["Max file size", "bytes", EVM_INTERFACE_LIMITS.outputBytes],
+    ["Max address space", "bytes", requested.address_space_bytes],
+    ["Max cpu time", "seconds", requested.cpu_seconds],
+    ["Max file size", "bytes", requested.file_bytes],
   ] as const) {
     const entries = raw
       .split("\n")

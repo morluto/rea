@@ -4,6 +4,7 @@ import {
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
@@ -99,6 +100,7 @@ const readFailurePrimary = (
   if (owned?.reason === "path")
     return invalidMapping(read, "invalid_value", owned.message, {
       cause: owned,
+      ...stableArtifactInputRecovery(owned),
     });
   if (primary instanceof Error && "code" in primary) {
     if (primary.code === "EACCES" || primary.code === "EPERM")

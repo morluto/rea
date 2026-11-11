@@ -36,7 +36,10 @@ import {
   type LinuxHopperRelease,
 } from "../../../src/application/HopperReleaseFeed.js";
 import * as signatures from "../../../src/process/DetachedPgpSignature.js";
-import { downloadHopperPackage } from "../../../src/application/HopperDownload.js";
+import {
+  downloadHopperPackage,
+  HOPPER_METADATA_TIMEOUT_MS,
+} from "../../../src/application/HopperDownload.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import * as leases from "../../../src/process/HopperLease.js";
@@ -800,7 +803,9 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
     error: {
       url: "https://www.hopperapp.com/fixture",
       kind: "timeout",
+      limit: "deadline",
       timeoutMs: 10,
+      receivedBytes: 0,
     },
   });
   const controller = new AbortController();
@@ -810,6 +815,42 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
   });
   controller.abort(reason);
   await expect(pending).rejects.toBe(reason);
+});
+it("names the release feed and its limit when the metadata fetch times out", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, options: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => reject(options.signal?.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const publisher = new LinuxHopperPublisher({}, async () => "deb");
+    const pending = publisher.currentRelease("deb");
+    await vi.advanceTimersByTimeAsync(HOPPER_METADATA_TIMEOUT_MS);
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: {
+        reason: "release_metadata",
+        download: {
+          request: "release_feed",
+          kind: "timeout",
+          limit: "deadline",
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+          receivedBytes: 0,
+        },
+      },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("cancels an oversized chunked metadata response before retaining it", async () => {
   const cancelled = vi.fn();
@@ -1039,17 +1080,39 @@ portableTar(
     const metadataCloseGate = new Promise<void>((resolve) => {
       releaseMetadataClose = resolve;
     });
+    const metadataIdentity = await stat(join(f.cache, "release.json"));
+    const launcherIdentity = await stat(f.launcher);
+    let metadataOwner: OwnedFileHandle | undefined;
+    let hashOwner: OwnedFileHandle | undefined;
+    let hashActive = false;
+    let allowHashClose = false;
+    let hashCloseAttempts = 0;
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        const attempt = close.mock.calls.length;
-        if (attempt === 2) {
+        const observed = await this.handle.stat();
+        if (
+          metadataOwner === undefined &&
+          observed.dev === metadataIdentity.dev &&
+          observed.ino === metadataIdentity.ino
+        ) {
+          metadataOwner = this;
           reachedMetadataClose();
           await metadataCloseGate;
         }
-        if (attempt === 3 || attempt === 4 || attempt === 5)
-          throw new Error("Fixture descriptor close temporarily unavailable");
+        if (
+          hashActive &&
+          hashOwner === undefined &&
+          observed.dev === launcherIdentity.dev &&
+          observed.ino === launcherIdentity.ino
+        )
+          hashOwner = this;
+        if (this === hashOwner) {
+          hashCloseAttempts += 1;
+          if (!allowHashClose)
+            throw new Error("Fixture descriptor close temporarily unavailable");
+        }
         return await originalClose.apply(this);
       });
     const inspection = f.publisher.inspectLauncher(f.launcher);
@@ -1059,6 +1122,7 @@ portableTar(
         inspection,
         "metadata close",
       );
+      hashActive = true;
       const hashFailure = await f.publisher.hashLauncher(f.launcher).then(
         () => undefined,
         (cause: unknown) => cause,
@@ -1071,15 +1135,23 @@ portableTar(
         .cause.errors;
       expect(cleanupOutcomes).toHaveLength(2);
       expect(cleanupOutcomes[0]).toMatchObject({ reason: "cleanup_failed" });
+      expect(metadataOwner?.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(hashOwner?.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(hashCloseAttempts).toBeGreaterThanOrEqual(2);
+      allowHashClose = true;
       releaseMetadataClose();
       await expect(inspection).resolves.toMatchObject({
         ok: true,
         value: { source: "signed_package_cache" },
       });
       await expect(f.publisher.close()).resolves.toBeUndefined();
-      expect(close).toHaveBeenCalledTimes(9);
+      expect(metadataOwner?.handle.fd).toBe(-1);
+      expect(hashOwner?.handle.fd).toBe(-1);
     }, [
-      releaseMetadataClose,
+      () => {
+        allowHashClose = true;
+        releaseMetadataClose();
+      },
       async () => {
         await inspection;
       },

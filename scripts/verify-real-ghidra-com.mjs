@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpLifecycleResult,
@@ -7,7 +11,14 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,324 +99,404 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-com-proof", version: "1" });
-let opened = false;
 let stderr = "";
+let connected = false;
+let verifierRun;
 let report;
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
-try {
-  await client.connect(transport);
+await withVerifierCleanup(async () => {
+  try {
+    await client.connect(transport);
+    connected = true;
 
-  const untyped = await client.callTool({
-    name: "open_binary",
-    arguments: { path: targetPath, provider_id: "ghidra" },
-  });
-  assert.equal(
-    untyped.isError,
-    true,
-    "Headerless bytes were guessed as COM without explicit interpretation",
-  );
-  const target = await call("open_binary", {
-    path: targetPath,
-    provider_id: "ghidra",
-    format: "dos-com",
-  });
-  opened = true;
-  assert.equal(target.format, "dos-com");
-  assert.equal(target.architecture, "x86");
-  assert.equal(target.sha256, sha256);
-  const image = await call("inspect_native_load_image");
-  assert.equal(
-    image.status,
-    "verified",
-    JSON.stringify(image.checks?.filter((c) => !c.matched)),
-  );
-  assert.equal(image.format, "dos-com");
-  assert.equal(image.header_bytes, 0);
-  assert.equal(image.module_bytes, fixture.bytes.length);
-  assert.equal(image.entry.linear_address, fixture.entry);
-  assert.equal(image.entry.offset, 256);
-  assert.equal(image.observations.entry_context[0].registers.length, 4);
-  const memory = await call("read_bytes", {
-    address: fixture.entry,
-    length: fixture.bytes.length,
-  });
-  assert.equal(memory.bytes_hex, fixture.bytes.toString("hex"));
-  assert.equal(memory.complete, true);
-  const mapping = await call("address_to_file_offset", {
-    address: fixture.near,
-  });
-  assert.equal(mapping.file_offset, 32);
-  const psp = await call("read_bytes", { address: "0x10000", length: 16 });
-  assert.equal(psp.returned_bytes, 0);
-  assert.equal(psp.complete, false);
-  const tail = await call("read_bytes", { address: "0x1013e", length: 8 });
-  assert.equal(tail.returned_bytes, 2);
-  assert.equal(tail.complete, false);
-  const procedures = await call("list_procedures");
-  assert.ok(procedures.some((p) => p.address === fixture.entry));
-  assert.ok(procedures.some((p) => p.address === fixture.near));
-  const dossier = functionDossierSchema.parse(
-    await call("analyze_function", {
-      procedure: fixture.entry,
-      detail: "complete",
-    }),
-  );
-  assert.ok(dossier.pseudocode.trim().length > 0);
-  assert.equal(dossier.procedure.body.available, true);
-  const instruction = await call("inspect_native_instruction", {
-    address: fixture.entry,
-  });
-  assert.equal(
-    instruction.bytes.replaceAll(" ", "").toLowerCase(),
-    fixture.entry_hex,
-  );
-  // This NOP follows the entry's terminating INT 20h and is not reached by
-  // either function. It remains valid instruction bytes outside the listing.
-  const unlistedAddress = "0x1013f";
-  const unlistedBytes = await call("read_bytes", {
-    address: unlistedAddress,
-    length: 1,
-  });
-  assert.equal(unlistedBytes.bytes_hex, "90");
-  const unlistedResponse = await client.callTool({
-    name: "inspect_native_instruction",
-    arguments: { address: unlistedAddress },
-  });
-  const unlistedEvidence = parseEvidence(
-    requireMcpOutput(unlistedResponse, "inspect_native_instruction"),
-  );
-  const unlisted = unlistedEvidence.normalized_result;
-  assert.equal(unlisted.status, "not-in-listing");
-  assert.equal(unlisted.bytes, null);
-  assert.ok(
-    unlisted.limitations.some((item) =>
-      item.includes("did not attempt a decode"),
-    ),
-  );
-  const tools = (await client.listTools()).tools;
-  const advertised = tools.find(
-    (tool) => tool.name === "inspect_native_instruction",
-  );
-  assert.ok(advertised?.outputSchema);
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  assert.equal(ajv.validateSchema(advertised.outputSchema), true);
-  assert.equal(
-    ajv.validate(advertised.outputSchema, unlistedResponse.structuredContent),
-    true,
-    JSON.stringify(ajv.errors),
-  );
-  assert.ok(
-    nativeInstructionSchema.safeParse({ ...unlisted, status: "undecodable" })
-      .success,
-  );
-  const contextDefinition = tools.find(
-    (tool) => tool.name === "inspect_address_context",
-  );
-  assert.ok(contextDefinition?.outputSchema);
-  const documents = await call("list_documents");
-  assert.equal(documents.length, 1);
-  const document = documents[0];
-  for (const input of [
-    { address: fixture.entry, document: `${document}-not-a-program` },
-    { address: "not-an-address", document },
-  ]) {
-    const direct = requireMcpToolError(
-      await client.callTool({ name: "address_name", arguments: input }),
+    const untyped = await client.callTool({
+      name: "open_binary",
+      arguments: { path: targetPath, provider_id: "ghidra" },
+    });
+    assert.equal(
+      untyped.isError,
+      true,
+      "Headerless bytes were guessed as COM without explicit interpretation",
     );
-    const response = await client.callTool(
-      { name: "inspect_address_context", arguments: input },
-      { timeout: 240000, toolDefinition: contextDefinition },
+    const target = await call("open_binary", {
+      path: targetPath,
+      provider_id: "ghidra",
+      format: "dos-com",
+    });
+    assert.equal(target.format, "dos-com");
+    assert.equal(target.architecture, "x86");
+    assert.equal(target.sha256, sha256);
+    const image = await call("inspect_native_load_image");
+    assert.equal(
+      image.status,
+      "verified",
+      JSON.stringify(image.checks?.filter((c) => !c.matched)),
     );
-    const context = requireMcpLifecycleResult(
-      response,
-      "inspect_address_context",
-    );
-    assert.equal(context.name.state, "unavailable");
-    assert.equal(context.name.error.code, "invalid_request");
-    assert.deepEqual(context.name.error.details.issues, direct.details.issues);
-    assert.equal(context.name.reason, direct.message);
-    assert.equal(context.name.remediation, direct.remediation.action);
-  }
-  assert.equal(
-    (await call("resolve_native_call_targets", { address: unlistedAddress }))
-      .status,
-    "unavailable",
-  );
-  assert.deepEqual(
-    (await cli("inspect-native-instruction", unlistedAddress))
-      .normalized_result,
-    unlisted,
-  );
-  const cliImage = await cli("inspect-native-load-image");
-  const stable = (x) => ({
-    ...x,
-    observations: {
-      ...x.observations,
-      source_files: x.observations.source_files.map(
-        ({ name: _name, ...file }) => file,
-      ),
-    },
-  });
-  assert.deepEqual(stable(cliImage.normalized_result), stable(image));
-  assert.deepEqual(
-    (
-      await cli("read-bytes", fixture.entry, [
-        "--length",
-        String(fixture.bytes.length),
-      ])
-    ).normalized_result,
-    memory,
-  );
-  assert.deepEqual(
-    (await cli("address-to-file-offset", fixture.near)).normalized_result,
-    mapping,
-  );
-  const changes = {
-    procedure: fixture.entry,
-    name: "rea_entry",
-    comment: "Regular\nUnicode 註記",
-    inline_comment: "Inline finding",
-  };
-  // Prime provider inventories and the session snapshot before edits.
-  await call("list_names");
-  const updated = await call("annotate_native_function", changes);
-  assert.equal(updated.annotations.name, changes.name);
-  assert.equal(updated.annotations.comment, changes.comment);
-  assert.equal(updated.annotations.inline_comment, changes.inline_comment);
-  assert.equal(updated.dossier.procedure.name, changes.name);
-  assert.ok(updated.dossier.pseudocode.includes(changes.name));
-  assert.equal(
-    await call("procedure_address", { procedure: changes.name }),
-    fixture.entry,
-  );
-  assert.equal(
-    await call("address_name", { address: fixture.entry }),
-    changes.name,
-  );
-  assert.ok(
-    (await call("list_procedures")).some((p) => p.value === changes.name),
-  );
-  assert.ok((await call("list_names")).some((p) => p.value === changes.name));
-  assert.equal(
-    (
+    assert.equal(image.format, "dos-com");
+    assert.equal(image.header_bytes, 0);
+    assert.equal(image.module_bytes, fixture.bytes.length);
+    assert.equal(image.entry.linear_address, fixture.entry);
+    assert.equal(image.entry.offset, 256);
+    assert.equal(image.observations.entry_context[0].registers.length, 4);
+    const memory = await call("read_bytes", {
+      address: fixture.entry,
+      length: fixture.bytes.length,
+    });
+    assert.equal(memory.bytes_hex, fixture.bytes.toString("hex"));
+    assert.equal(memory.complete, true);
+    const mapping = await call("address_to_file_offset", {
+      address: fixture.near,
+    });
+    assert.equal(mapping.file_offset, 32);
+    const psp = await call("read_bytes", { address: "0x10000", length: 16 });
+    assert.equal(psp.returned_bytes, 0);
+    assert.equal(psp.complete, false);
+    const tail = await call("read_bytes", { address: "0x1013e", length: 8 });
+    assert.equal(tail.returned_bytes, 2);
+    assert.equal(tail.complete, false);
+    const procedures = await call("list_procedures");
+    assert.ok(procedures.some((p) => p.address === fixture.entry));
+    assert.ok(procedures.some((p) => p.address === fixture.near));
+    const dossier = functionDossierSchema.parse(
       await call("analyze_function", {
         procedure: fixture.entry,
         detail: "complete",
-      })
-    ).procedure.name,
-    changes.name,
-  );
-  const rejected = await client.callTool({
-    name: "annotate_native_function",
-    arguments: {
+      }),
+    );
+    assert.ok(dossier.pseudocode.trim().length > 0);
+    assert.equal(dossier.procedure.body.available, true);
+    const instruction = await call("inspect_native_instruction", {
+      address: fixture.entry,
+    });
+    assert.equal(
+      instruction.bytes.replaceAll(" ", "").toLowerCase(),
+      fixture.entry_hex,
+    );
+    // This NOP follows the entry's terminating INT 20h and is not reached by
+    // either function. It remains valid instruction bytes outside the listing.
+    const unlistedAddress = "0x1013f";
+    const unlistedBytes = await call("read_bytes", {
+      address: unlistedAddress,
+      length: 1,
+    });
+    assert.equal(unlistedBytes.bytes_hex, "90");
+    const unlistedResponse = await client.callTool({
+      name: "inspect_native_instruction",
+      arguments: { address: unlistedAddress },
+    });
+    const unlistedEvidence = parseEvidence(
+      requireMcpOutput(unlistedResponse, "inspect_native_instruction"),
+    );
+    const unlisted = unlistedEvidence.normalized_result;
+    assert.equal(unlisted.status, "not-in-listing");
+    assert.equal(unlisted.bytes, null);
+    assert.ok(
+      unlisted.limitations.some((item) =>
+        item.includes("did not attempt a decode"),
+      ),
+    );
+    const tools = (await client.listTools()).tools;
+    const advertised = tools.find(
+      (tool) => tool.name === "inspect_native_instruction",
+    );
+    assert.ok(advertised?.outputSchema);
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    assert.equal(ajv.validateSchema(advertised.outputSchema), true);
+    assert.equal(
+      ajv.validate(advertised.outputSchema, unlistedResponse.structuredContent),
+      true,
+      JSON.stringify(ajv.errors),
+    );
+    assert.ok(
+      nativeInstructionSchema.safeParse({ ...unlisted, status: "undecodable" })
+        .success,
+    );
+    const contextDefinition = tools.find(
+      (tool) => tool.name === "inspect_address_context",
+    );
+    assert.ok(contextDefinition?.outputSchema);
+    const documents = await call("list_documents");
+    assert.equal(documents.length, 1);
+    const document = documents[0];
+    for (const input of [
+      { address: fixture.entry, document: `${document}-not-a-program` },
+      { address: "not-an-address", document },
+    ]) {
+      const direct = requireMcpToolError(
+        await client.callTool({ name: "address_name", arguments: input }),
+      );
+      const response = await client.callTool(
+        { name: "inspect_address_context", arguments: input },
+        { timeout: 240000, toolDefinition: contextDefinition },
+      );
+      const context = requireMcpLifecycleResult(
+        response,
+        "inspect_address_context",
+      );
+      assert.equal(context.name.state, "unavailable");
+      assert.equal(context.name.error.code, "invalid_request");
+      assert.deepEqual(
+        context.name.error.details.issues,
+        direct.details.issues,
+      );
+      assert.equal(context.name.reason, direct.message);
+      assert.equal(context.name.remediation, direct.remediation.action);
+    }
+    assert.equal(
+      (await call("resolve_native_call_targets", { address: unlistedAddress }))
+        .status,
+      "unavailable",
+    );
+    assert.deepEqual(
+      (await cli("inspect-native-instruction", unlistedAddress))
+        .normalized_result,
+      unlisted,
+    );
+    const cliImage = await cli("inspect-native-load-image");
+    const stable = (x) => ({
+      ...x,
+      observations: {
+        ...x.observations,
+        source_files: x.observations.source_files.map(
+          ({ name: _name, ...file }) => file,
+        ),
+      },
+    });
+    assert.deepEqual(stable(cliImage.normalized_result), stable(image));
+    assert.deepEqual(
+      (
+        await cli("read-bytes", fixture.entry, [
+          "--length",
+          String(fixture.bytes.length),
+        ])
+      ).normalized_result,
+      memory,
+    );
+    assert.deepEqual(
+      (await cli("address-to-file-offset", fixture.near)).normalized_result,
+      mapping,
+    );
+    const changes = {
       procedure: fixture.entry,
-      comment: "MUST ROLL BACK",
-      name: "invalid name\n",
-    },
-  });
-  assert.equal(
-    rejected.isError,
-    true,
-    "Ghidra accepted an invalid function name",
-  );
-  const retained = await call("annotate_native_function", {
-    procedure: fixture.entry,
-    name: changes.name,
-  });
-  assert.equal(
-    retained.annotations.comment,
-    changes.comment,
-    "Failed edit leaked its earlier comment write",
-  );
-  assert.equal(retained.annotations.inline_comment, changes.inline_comment);
-  assert.equal(retained.dossier.procedure.name, changes.name);
-  await verifyGhidraAddressBoundaries(client, fixture.entry, cli);
-  const cleared = await call("annotate_native_function", {
-    procedure: fixture.entry,
-    comment: "",
-    inline_comment: "",
-  });
-  assert.equal(cleared.annotations.comment, null);
-  assert.equal(cleared.annotations.inline_comment, null);
-  assert.ok(!cleared.dossier.comments.some((c) => c.address === fixture.entry));
-  assert.equal(
-    (
-      await call("read_bytes", {
+      name: "rea_entry",
+      comment: "Regular\nUnicode 註記",
+      inline_comment: "Inline finding",
+    };
+    // Prime provider inventories and the session snapshot before edits.
+    await call("list_names");
+    const updated = await call("annotate_native_function", changes);
+    assert.equal(updated.annotations.name, changes.name);
+    assert.equal(updated.annotations.comment, changes.comment);
+    assert.equal(updated.annotations.inline_comment, changes.inline_comment);
+    assert.equal(updated.dossier.procedure.name, changes.name);
+    assert.ok(updated.dossier.pseudocode.includes(changes.name));
+    // Exercise the documented recovery through the public MCP catalog on real
+    // Ghidra, rather than assuming the provider exposes direct comment methods.
+    const contextCall = async (name, args) => {
+      const definition = tools.find((tool) => tool.name === name);
+      assert.ok(definition?.outputSchema, `${name} must be advertised`);
+      const response = await client.callTool(
+        { name, arguments: args },
+        { timeout: 240000, toolDefinition: definition },
+      );
+      return requireMcpOutput(response, name);
+    };
+    const context = (
+      await contextCall("inspect_address_context", {
         address: fixture.entry,
-        length: fixture.bytes.length,
       })
-    ).bytes_hex,
-    fixture.bytes.toString("hex"),
-  );
-  assert.equal((await call("inspect_native_load_image")).status, "verified");
-  const cliAnnotated = await cli("annotate-native-function", fixture.entry, [
-    "--name",
-    changes.name,
-    "--comment",
-    changes.comment,
-    "--inline-comment",
-    changes.inline_comment,
-  ]);
-  assert.deepEqual(cliAnnotated.normalized_result, updated);
-  if (captureDirectory !== undefined)
-    await writeFile(
-      join(captureDirectory, "image.json"),
-      JSON.stringify(image, null, 2),
-      { mode: 0o600 },
+    ).result;
+    assert.equal(context.procedure.state, "available");
+    assert.equal(context.procedure.value.found, true);
+    for (const facet of [context.comment, context.inline_comment]) {
+      assert.equal(facet.state, "unavailable");
+      assert.match(
+        facet.remediation,
+        /analyze_function.*parent_evidence_id.*inspect_analysis_view/u,
+      );
+    }
+    assert.match(context.bookmarks.remediation, /binary_session/u);
+    const summary = parseEvidence(
+      await contextCall("analyze_function", {
+        procedure: context.procedure.value.procedure.address,
+      }),
+    ).normalized_result;
+    const comments = parseEvidence(
+      await contextCall("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: { kind: "native", facet: "comments" },
+      }),
+    ).normalized_result;
+    for (const [kind, text] of [
+      ["comment", changes.comment],
+      ["inline", changes.inline_comment],
+    ])
+      assert.ok(
+        comments.item.some(
+          (item) =>
+            item.address === context.procedure.value.query_address &&
+            item.kind === kind &&
+            item.text === text,
+        ),
+      );
+    const outside = (
+      await contextCall("inspect_address_context", {
+        address: unlistedAddress,
+      })
+    ).result;
+    assert.equal(outside.procedure.state, "available");
+    assert.equal(outside.procedure.value.found, false);
+    assert.equal(outside.comment.state, "unavailable");
+    assert.match(outside.comment.remediation, /binary_session/u);
+    assert.equal(
+      await call("procedure_address", { procedure: changes.name }),
+      fixture.entry,
     );
-  await call("close_binary");
-  opened = false;
-  assert.equal(digest(await readFile(targetPath)), sha256);
-  report = {
-    ok: true,
-    mocked: false,
-    lane: "ghidra-com",
-    packaged_artifact: packageRoot !== undefined,
-    host: process.platform,
-    provider: { id: "ghidra", version: installation.providerVersion },
-    target: { format: "dos-com", sha256, bytes: fixture.bytes.length },
-    load_image: {
-      status: image.status,
-      checks: image.checks.length,
-      entry: fixture.entry,
-      entry_context: image.observations.entry_context,
-    },
-    transport: { cli: true, stdio_mcp: true },
-    memory_evidence: {
-      complete_file_read: true,
-      source_offset: 32,
-      psp_unmapped: true,
-      partial_read_bytes: 2,
-    },
-    functions: { entry: true, near: true, pseudocode_nonempty: true },
-    annotations: {
-      atomic_rollback: true,
-      fresh_inventories: true,
-      fresh_decompiler: true,
-      clear_comments: true,
-      cli_mcp_parity: true,
-    },
-    context_input_errors_preserved: true,
-    original_unchanged: true,
-    address_truncation_rejected: true,
-    limitations: image.limitations,
-  };
-} catch (error) {
-  if (stderr.trim()) process.stderr.write(stderr);
-  throw error;
-} finally {
-  if (opened)
-    await call("close_binary").catch((error) =>
-      process.stderr.write(String(error)),
+    assert.equal(
+      await call("address_name", { address: fixture.entry }),
+      changes.name,
     );
-  await client.close();
-  await transport.close();
-  await rm(workspace, { recursive: true, force: true });
-}
+    assert.ok(
+      (await call("list_procedures")).some((p) => p.value === changes.name),
+    );
+    assert.ok((await call("list_names")).some((p) => p.value === changes.name));
+    assert.equal(
+      (
+        await call("analyze_function", {
+          procedure: fixture.entry,
+          detail: "complete",
+        })
+      ).procedure.name,
+      changes.name,
+    );
+    const rejected = await client.callTool({
+      name: "annotate_native_function",
+      arguments: {
+        procedure: fixture.entry,
+        comment: "MUST ROLL BACK",
+        name: "invalid name\n",
+      },
+    });
+    assert.equal(
+      rejected.isError,
+      true,
+      "Ghidra accepted an invalid function name",
+    );
+    const retained = await call("annotate_native_function", {
+      procedure: fixture.entry,
+      name: changes.name,
+    });
+    assert.equal(
+      retained.annotations.comment,
+      changes.comment,
+      "Failed edit leaked its earlier comment write",
+    );
+    assert.equal(retained.annotations.inline_comment, changes.inline_comment);
+    assert.equal(retained.dossier.procedure.name, changes.name);
+    await verifyGhidraAddressBoundaries(client, fixture.entry, cli);
+    const cleared = await call("annotate_native_function", {
+      procedure: fixture.entry,
+      comment: "",
+      inline_comment: "",
+    });
+    assert.equal(cleared.annotations.comment, null);
+    assert.equal(cleared.annotations.inline_comment, null);
+    assert.ok(
+      !cleared.dossier.comments.some((c) => c.address === fixture.entry),
+    );
+    assert.equal(
+      (
+        await call("read_bytes", {
+          address: fixture.entry,
+          length: fixture.bytes.length,
+        })
+      ).bytes_hex,
+      fixture.bytes.toString("hex"),
+    );
+    assert.equal((await call("inspect_native_load_image")).status, "verified");
+    const cliAnnotated = await cli("annotate-native-function", fixture.entry, [
+      "--name",
+      changes.name,
+      "--comment",
+      changes.comment,
+      "--inline-comment",
+      changes.inline_comment,
+    ]);
+    assert.deepEqual(cliAnnotated.normalized_result, updated);
+    if (captureDirectory !== undefined)
+      await writeFile(
+        join(captureDirectory, "image.json"),
+        JSON.stringify(image, null, 2),
+        { mode: 0o600 },
+      );
+    await call("close_binary");
+    assert.equal(digest(await readFile(targetPath)), sha256);
+    report = {
+      ok: true,
+      mocked: false,
+      lane: "ghidra-com",
+      packaged_artifact: packageRoot !== undefined,
+      host: process.platform,
+      provider: { id: "ghidra", version: installation.providerVersion },
+      target: { format: "dos-com", sha256, bytes: fixture.bytes.length },
+      load_image: {
+        status: image.status,
+        checks: image.checks.length,
+        entry: fixture.entry,
+        entry_context: image.observations.entry_context,
+      },
+      transport: { cli: true, stdio_mcp: true },
+      memory_evidence: {
+        complete_file_read: true,
+        source_offset: 32,
+        psp_unmapped: true,
+        partial_read_bytes: 2,
+      },
+      functions: { entry: true, near: true, pseudocode_nonempty: true },
+      annotations: {
+        atomic_rollback: true,
+        fresh_inventories: true,
+        fresh_decompiler: true,
+        clear_comments: true,
+        cli_mcp_parity: true,
+        address_context_comment_recovery: true,
+      },
+      context_input_errors_preserved: true,
+      original_unchanged: true,
+      address_truncation_rejected: true,
+      limitations: image.limitations,
+    };
+  } catch (error) {
+    if (stderr.trim()) process.stderr.write(stderr);
+    throw error;
+  }
+}, [
+  async () => {
+    await closeVerifierResources([
+      async () => {
+        if (connected) await call("close_binary", {});
+      },
+      () => client.close(),
+      () => transport.close(),
+    ]);
+    assert.deepEqual(
+      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+      [],
+      "Owned Ghidra runtime survived close",
+    );
+    verifierRun = await completeVerifierRun(run);
+    assert.equal(verifierRun.process_lineage.status, "verified");
+    assert.deepEqual(verifierRun.process_lineage.descendants, []);
+    await rm(workspace, { recursive: true, force: true });
+  },
+]);
 assert.ok(report);
-const verifierRun = await completeVerifierRun(run);
+verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
 assert.deepEqual(verifierRun.process_lineage.descendants, []);
 process.stdout.write(

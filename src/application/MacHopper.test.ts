@@ -3,14 +3,13 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { err, ok } from "../domain/result.js";
-import type {
-  HopperDownload,
-  HopperDownloadFailure,
+import {
+  HOPPER_METADATA_TIMEOUT_MS,
+  type HopperDownload,
+  type HopperDownloadFailure,
 } from "./HopperDownload.js";
 import {
   installMacHopper,
-  macHopperHostVersionDetail,
-  macHopperIncomparableMinimumDetail,
   type MacHopperBundleVerification,
   type MacHopperBundleInstallResult,
   type MacHopperInstallHost,
@@ -35,8 +34,15 @@ class FakeMacHopperHost implements MacHopperInstallHost {
   installs = 0;
   opens = 0;
   replaces = false;
+  downloads: Array<{ url: string; timeoutMs: number | undefined }> = [];
+  downloadSignals: Array<AbortSignal | undefined> = [];
 
-  download = (url: string): Promise<HopperDownload> => {
+  download = (
+    url: string,
+    options?: { readonly timeoutMs?: number; readonly signal?: AbortSignal },
+  ): Promise<HopperDownload> => {
+    this.downloads.push({ url, timeoutMs: options?.timeoutMs });
+    this.downloadSignals.push(options?.signal);
     const feed = url.includes("files-api");
     if (!feed) this.packageDownloads += 1;
     const failure = feed ? this.feedFailure : this.packageFailure;
@@ -136,6 +142,21 @@ describe("macOS Hopper installation", () => {
     expect(host.opens).toBe(1);
     expect(host.unmounts).toBe(1);
     expect(host.cleanups).toBe(1);
+  });
+
+  it("bounds the release feed by the metadata limit and the package by the download bounds", async () => {
+    const host = new FakeMacHopperHost();
+    await installMacHopper({}, host);
+    expect(host.downloads).toEqual([
+      {
+        url: expect.stringContaining("request=releases"),
+        timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+      },
+      {
+        url: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+        timeoutMs: undefined,
+      },
+    ]);
   });
 
   it("preserves installation when macOS cannot open the installed app", async () => {
@@ -288,17 +309,19 @@ describe("macOS Hopper release host requirements", () => {
       host.feedBytes = macFeed(host, { deployment_target: "12.4" });
 
       const result = await installMacHopper({}, host);
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         status: "failed",
         reason: "incompatible_host_version",
-        diagnostic: macHopperHostVersionDetail({
-          source: "release_feed",
-          packageUrl: PACKAGE_URL,
-          minimumVersion: "12.4",
-          hostVersion,
-        }),
       });
-      expectNamed(result, [PACKAGE_URL, "12.4", hostVersion]);
+      expectNamed(result, [
+        PACKAGE_URL,
+        "12.4",
+        hostVersion,
+        "deployment_target",
+      ]);
+      if (result.status !== "failed")
+        throw new Error("Expected version refusal");
+      expect(result.diagnostic).toMatch(/not downloaded/i);
       expect(host.packageDownloads).toBe(0);
       expect(host.mounts).toBe(0);
       expect(host.installs).toBe(0);
@@ -332,16 +355,14 @@ describe("macOS Hopper release host requirements", () => {
       host.feedBytes = macFeed(host, fields);
 
       const result = await installMacHopper({}, host);
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         status: "failed",
         reason: "incompatible_host_version",
-        diagnostic: macHopperHostVersionDetail({
-          source: "signed_app",
-          minimumVersion: "12.4",
-          hostVersion: "12.0",
-        }),
       });
       expectNamed(result, ["LSMinimumSystemVersion", "12.4", "12.0"]);
+      if (result.status !== "failed")
+        throw new Error("Expected version refusal");
+      expect(result.diagnostic).toMatch(/nothing was copied/i);
       expect(host.packageDownloads).toBe(1);
       expect(host.installs).toBe(0);
       expect(host.opens).toBe(0);
@@ -379,12 +400,13 @@ describe("macOS Hopper release host requirements", () => {
     host.appMinimum = "12.x";
 
     const result = await installMacHopper({}, host);
-    expect(result).toEqual({
-      status: "failed",
-      reason: "bundle",
-      diagnostic: macHopperIncomparableMinimumDetail("12.x", "14.5"),
-    });
-    expectNamed(result, ['"12.x"', "14.5"]);
+    expect(result).toMatchObject({ status: "failed", reason: "bundle" });
+    if (result.status !== "failed") throw new Error("Expected bundle failure");
+    expect(result.diagnostic).toContain("LSMinimumSystemVersion");
+    expect(result.diagnostic).toContain("12.x");
+    expect(result.diagnostic).toContain("14.5");
+    expect(result.diagnostic).toMatch(/cannot compare/i);
+    expect(result.diagnostic).toMatch(/nothing was copied/i);
     expect(host.installs).toBe(0);
     expect(host.unmounts).toBe(1);
     expect(host.cleanups).toBe(1);
@@ -531,7 +553,9 @@ it.each(["feed", "package"] as const)(
     const failure = {
       url: "https://fixture.invalid/request",
       kind: "timeout",
-      timeoutMs: 120_000,
+      limit: "stalled",
+      timeoutMs: 30_000,
+      receivedBytes: 0,
     } as const;
     if (stage === "feed") host.feedFailure = failure;
     else host.packageFailure = failure;
@@ -548,3 +572,44 @@ it.each(["feed", "package"] as const)(
     expect(host.cleanups).toBe(0);
   },
 );
+
+it("stops before mounting when setup is cancelled as the package downloads", async () => {
+  const host = new FakeMacHopperHost();
+  const controller = new AbortController();
+  const download = host.download;
+  host.download = (url, options) => {
+    if (!url.includes("files-api")) controller.abort(new Error("stop setup"));
+    return download(url, options);
+  };
+
+  await expect(
+    installMacHopper({ signal: controller.signal }, host),
+  ).resolves.toMatchObject({ status: "failed", reason: "cancelled" });
+  expect(host.downloadSignals).toEqual([controller.signal, controller.signal]);
+  expect(host.mounts).toBe(0);
+  expect(host.installs).toBe(0);
+});
+
+it("retains the completed installation but skips opening when cancelled during its copy", async () => {
+  const host = new FakeMacHopperHost();
+  const controller = new AbortController();
+  const install = host.installBundle;
+  host.installBundle = async (...args) => {
+    const result = await install(...args);
+    controller.abort(new Error("stop setup"));
+    return result;
+  };
+
+  await expect(
+    installMacHopper({ signal: controller.signal }, host),
+  ).resolves.toMatchObject({
+    status: "installed",
+    launcherPath:
+      "/home/user/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+    openFailure: "Setup was cancelled before Hopper was opened",
+  });
+  expect(host.installs).toBe(1);
+  expect(host.opens).toBe(0);
+  expect(host.unmounts).toBe(1);
+  expect(host.cleanups).toBe(1);
+});

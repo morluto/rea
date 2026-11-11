@@ -220,7 +220,7 @@ and an invalid top-level semantic-module-path absence check. Both were corrected
 before their assertions were used as proof. Corrected cancellation reproduction
 shows the actual native AST scope and phantom module on the baseline. Final
 source and execution-driver versions, source pins, input digests, prior attempts
-and resource receipts are in the [compact JSON record](javascript-interruption-applicability-2026-10-15.json).
+and resource receipts are in the [compact JSON record](https://github.com/morluto/rea/blob/main/docs/verification/javascript-interruption-applicability-2026-10-15.json).
 
 Before review, `npm run check && npm run docs:check` passed, including five consistency
 tests: 165.553 s wall / 150.247257 s CPU /

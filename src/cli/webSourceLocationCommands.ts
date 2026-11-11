@@ -1,4 +1,14 @@
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import {
+  localSourceMapLimitCliOptions,
+  sourceMapLimitsFromCli,
+} from "./sourceMapLimits.js";
+import {
+  analysisEvidenceDeliveryOptions,
+  parseCliAnalysisEvidenceDelivery,
+  deliverCliAnalysisEvidence,
+} from "./analysisEvidenceDelivery.js";
+import { webSourceLocationDeliverySchema } from "../domain/analysisView/webSourceLocationView.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { z } from "incur";
 import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
 import { webSourceLocationInputSchema } from "../domain/webSourceLocation.js";
@@ -6,9 +16,10 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField, cliIntegerArgument } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+
+const sourceMapSelection = webSourceLocationInputSchema.shape.source_map;
 
 /** Expose the same explicit selected map/point contract through the CLI. */
 export const registerWebSourceLocationCommands = (
@@ -21,29 +32,41 @@ export const registerWebSourceLocationCommands = (
     description:
       "Trace one retained script position through an explicitly selected local source map",
     args: z.object({
-      manifestPath: z
-        .string()
-        .describe("Absolute export_web_scripts manifest path"),
+      manifestPath: webSourceLocationInputSchema.shape.manifest_path,
       scriptIndex: cliIntegerArgument(0).describe(
         "Zero-based manifest script index",
       ),
-      sourceMapPath: z.string().describe("Absolute local source-map path"),
-      sourceMapUrl: z
-        .string()
-        .describe("Absolute source-map URL context; no fetch"),
+      sourceMapPath: sourceMapSelection.shape.path,
+      sourceMapUrl: sourceMapSelection.shape.url,
       line: cliIntegerArgument(1).describe("One-based generated line"),
       column: cliIntegerArgument(0).describe(
         "Zero-based UTF-16 generated column",
       ),
     }),
     options: z.object({
-      decodeTimeoutMs: webSourceLocationInputSchema.shape.decode_timeout_ms,
+      ...localSourceMapLimitCliOptions,
+      ...analysisEvidenceDeliveryOptions,
+      view: z
+        .string()
+        .optional()
+        .describe(
+          "JSON source-location matches/source-text view; requires --detail summary and --evidence_output",
+        ),
+      decodeTimeoutMs: cliDecimalField(
+        webSourceLocationInputSchema.shape.decode_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.traceWebSourceLocation, () =>
-          finishAnalysisCommand(
-            () =>
+        logCliCommand(logger, CLI_COMMANDS.traceWebSourceLocation, async () => {
+          const delivery = parseCliAnalysisEvidenceDelivery(
+            "trace_web_source_location",
+            options,
+            webSourceLocationDeliverySchema,
+          );
+          if (!delivery.ok) return projectAnalysisError(delivery.error);
+          return deliverCliAnalysisEvidence({
+            run: () =>
               service.trace(
                 {
                   manifest_path: args.manifestPath,
@@ -53,6 +76,7 @@ export const registerWebSourceLocationCommands = (
                     url: args.sourceMapUrl,
                   },
                   generated_position: { line: args.line, column: args.column },
+                  ...sourceMapLimitsFromCli(options),
                   ...(options.decodeTimeoutMs === undefined
                     ? {}
                     : { decode_timeout_ms: options.decodeTimeoutMs }),
@@ -60,11 +84,16 @@ export const registerWebSourceLocationCommands = (
                 { signal },
               ),
             service,
-            "web-source-location",
-            "trace_web_source_location",
+            providerId: "web-source-location",
+            operation: "trace_web_source_location",
             signal,
-          ).then(projectCliAnalysisResult),
-        ),
+            detail: delivery.value.detail,
+            evidenceOutput: delivery.value.evidenceOutput,
+            ...(delivery.value.view === undefined
+              ? {}
+              : { view: delivery.value.view }),
+          });
+        }),
       ),
   });
 };

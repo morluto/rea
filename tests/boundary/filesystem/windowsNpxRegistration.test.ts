@@ -104,38 +104,35 @@ it.each([
   },
 );
 
-it.each(["npx", "bunx"] as const)(
-  "keeps the Windows %s launcher aligned through Codex TOML setup and removal",
-  async (runner) => {
-    const home = await createTestTempDirectory("rea-windows-codex-");
-    await mkdir(join(home, ".codex"));
-    const configPath = join(home, ".codex", "config.toml");
-    const original =
-      '\uFEFF# Keep this explanation.\nnotify = ["a", "b"]\nliteral = \'C:\\demo\\path\'\ndisabled_mcp_servers = ["rea"]\n\n[mcp_servers.other]\ncommand = "another-server"\n';
-    await writeFile(configPath, original);
-    const client = { name: "codex", configPath, format: "toml" } as const;
-    const command = currentClientRegistrationCommand({ platform: "win32" });
-    expect(
-      await configureClientConfiguration(client, {}, command),
-    ).toMatchObject({ status: "configured" });
-    expect(
-      await readClientRegistrationStatuses(home, undefined, {
-        platform: "win32",
-        environment: {},
-      }),
-    ).toContainEqual(
-      expect.objectContaining({ client: "codex", state: "aligned" }),
-    );
-    expect(await configureClientConfiguration(client, {}, command)).toEqual({
-      status: "unchanged",
-    });
-    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
-    expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
-      status: "removed",
-    });
-    expect(await readFile(configPath, "utf8")).toBe(original);
-  },
-);
+it("keeps the Windows direct launcher aligned through Codex TOML setup and removal", async () => {
+  const home = await createTestTempDirectory("rea-windows-codex-");
+  await mkdir(join(home, ".codex"));
+  const configPath = join(home, ".codex", "config.toml");
+  const original =
+    '\uFEFF# Keep this explanation.\nnotify = ["a", "b"]\nliteral = \'C:\\demo\\path\'\ndisabled_mcp_servers = ["rea"]\n\n[mcp_servers.other]\ncommand = "another-server"\n';
+  await writeFile(configPath, original);
+  const client = { name: "codex", configPath, format: "toml" } as const;
+  const command = currentClientRegistrationCommand({ platform: "win32" });
+  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
+    { status: "configured" },
+  );
+  expect(
+    await readClientRegistrationStatuses(home, undefined, {
+      platform: "win32",
+      environment: {},
+    }),
+  ).toContainEqual(
+    expect.objectContaining({ client: "codex", state: "aligned" }),
+  );
+  expect(await configureClientConfiguration(client, {}, command)).toEqual({
+    status: "unchanged",
+  });
+  expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+  expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+    status: "removed",
+  });
+  expect(await readFile(configPath, "utf8")).toBe(original);
+});
 
 it("retains rea-named custom shell registrations without writing a backup", async () => {
   const home = await createTestTempDirectory("rea-custom-shell-registration-");

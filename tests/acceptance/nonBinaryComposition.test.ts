@@ -1,3 +1,4 @@
+import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
@@ -26,9 +27,14 @@ const connect = async (environment: NodeJS.ProcessEnv) => {
   );
   const client = new Client({ name: "composition-parity", version: "1" });
   onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -241,14 +247,34 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response)).toEqual({ error: result.json });
       expect(result.json).toMatchObject({
-        code: "invalid_request",
-        details: {
-          operation: "recover_javascript_sources",
-          issues: [{ path: [field], reason: "invalid_format" }],
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: field === "path" ? "path" : "outputDirectory",
+            code: "invalid_format",
+          }),
+        ],
+      });
+      expect(parseMcpToolError(response)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          details: {
+            operation: "recover_javascript_sources",
+            issues: [
+              {
+                path: [field],
+                reason: "invalid_format",
+                expected: "regex",
+              },
+            ],
+          },
         },
       });
+      expect(JSON.stringify(result.json)).not.toContain("REA_WAKARU_COMMAND");
+      expect(JSON.stringify(parseMcpToolError(response))).not.toContain(
+        "REA_WAKARU_COMMAND",
+      );
     }
   },
 );

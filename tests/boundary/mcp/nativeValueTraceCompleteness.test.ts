@@ -2,9 +2,17 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it } from "vitest";
 import { valueTraceDiamond } from "../../../src/application/native/NativeValueTrace.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
+import { z } from "zod";
 import { nativeValueTraceSchema } from "../../../src/domain/native/nativeValueTrace.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { ok } from "../../../src/domain/result.js";
+import {
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
+import { observed } from "../../fixtures/analysisExecution.js";
 import {
   closeEnhancedToolResources,
   resources,
@@ -15,8 +23,19 @@ afterEach(closeEnhancedToolResources);
 it.each(["full", "compact"] as const)(
   "separates page omission from named traversal budgets through the advertised %s MCP contract",
   async (profile) => {
+    const [target] = await createBinarySessionTargets();
+    const analysis = valueTraceDiamond({ sessionSubject: true }).port;
+    const session = createTestBinarySession(() => ({
+      execute: (operation, parameters, options) =>
+        operation === "health"
+          ? Promise.resolve(observed(null))
+          : analysis.execute(operation, parameters, options),
+      close: async () => ok(null),
+    }));
+    const opened = await session.open(target);
+    expect(opened.ok).toBe(true);
     const server = createServer(
-      { kind: "fixed", analysis: valueTraceDiamond().port },
+      { kind: "session", session },
       { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
     );
     const client = new Client({ name: "value-trace-test", version: "1.0.0" });
@@ -59,6 +78,24 @@ it.each(["full", "compact"] as const)(
       traversal: { status: "complete" },
       truncated: false,
     });
+    const bundleReply = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: { detail: "complete" },
+    });
+    expect(bundleReply.isError).not.toBe(true);
+    const bundle = z
+      .object({ result: evidenceBundleSchema })
+      .parse(bundleReply.structuredContent).result;
+    for (const source of [
+      ...complete.procedures,
+      ...complete.nodes,
+      ...complete.edges,
+    ])
+      expect(
+        bundle.records.some(
+          (record) => record.evidence_id === source.evidence_id,
+        ),
+      ).toBe(true);
     const pages = [];
     for (let offset: number | null = 0; offset !== null;) {
       const page = await trace({ ...request, offset, limit: 4 });

@@ -8,6 +8,7 @@ import {
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
+  type AnalysisExecution,
 } from "./AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -21,9 +22,7 @@ import {
   primaryAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import type { AnalysisExecution } from "./AnalysisProvider.js";
 import type { Result } from "../domain/result.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
@@ -137,52 +136,6 @@ describe("analysis context queries: navigation", () => {
     );
   });
 
-  it.each<JsonValue>([
-    null,
-    {},
-    { found: false, procedure: null },
-    { query_address: "0x401000", found: true, procedure: null },
-  ])(
-    "keeps malformed containing-procedure output unknown: %j",
-    async (value) => {
-      const analysis: AnalysisOperationPort = {
-        execute: async (operation) =>
-          ok(
-            createAnalysisExecution(
-              operation === "resolve_containing_procedure"
-                ? value
-                : operation === "current_document"
-                  ? "fixture"
-                  : "0x401000",
-              provider,
-            ),
-          ),
-      };
-      expect(await getNavigationContext(analysis, {})).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisOutputError",
-          operation: "resolve_containing_procedure",
-        },
-      });
-    },
-  );
-
-  it("does not infer procedure absence from a provider error message", async () => {
-    const failure = new AnalysisProtocolError(
-      "not in a procedure: malformed reply",
-    );
-    const analysis: AnalysisOperationPort = {
-      execute: async (operation) =>
-        operation === "resolve_containing_procedure"
-          ? err(failure)
-          : ok(createAnalysisExecution("0x401000", provider)),
-    };
-    expect(
-      await getNavigationContext(analysis, { document: "fixture" }),
-    ).toEqual(err(failure));
-  });
-
   it("uses an explicit document without passing it to current_document and preserves procedure failures", async () => {
     const calls: string[] = [];
     const failure = new AnalysisProtocolError("provider response malformed");
@@ -209,6 +162,14 @@ describe("navigation procedure admission", () => {
   it.each([
     { condition: "missing result", value: null },
     { condition: "missing discriminator", value: {} },
+    {
+      condition: "missing absence reason",
+      value: { found: false, procedure: null },
+    },
+    {
+      condition: "found procedure is null",
+      value: { query_address: "0x401000", found: true, procedure: null },
+    },
     {
       condition: "missing query identity",
       value: { found: false, procedure: null, reason: "not_in_procedure" },
@@ -246,24 +207,25 @@ describe("navigation procedure admission", () => {
     },
   );
 
-  it.each(["no procedure exists", "not in a procedure"])(
-    "preserves a provider failure containing %s",
-    async (message) => {
-      const failure = new AnalysisProtocolError(`Provider failed: ${message}`);
-      const result = await getNavigationContext(
-        {
-          execute: async (operation) =>
-            operation === "current_address"
-              ? ok(createAnalysisExecution("0x401000", provider))
-              : err(failure),
-        },
-        { document: "fixture" },
-      );
-      expect(result).toEqual(err(failure));
-      if (result.ok) throw new Error("expected original provider failure");
-      expect(result.error).toBe(failure);
-    },
-  );
+  it.each([
+    "Provider failed: no procedure exists",
+    "Provider failed: not in a procedure",
+    "not in a procedure: malformed reply",
+  ])("preserves the original provider failure: %s", async (message) => {
+    const failure = new AnalysisProtocolError(message);
+    const result = await getNavigationContext(
+      {
+        execute: async (operation) =>
+          operation === "current_address"
+            ? ok(createAnalysisExecution("0x401000", provider))
+            : err(failure),
+      },
+      { document: "fixture" },
+    );
+    expect(result).toEqual(err(failure));
+    if (result.ok) throw new Error("expected original provider failure");
+    expect(result.error).toBe(failure);
+  });
 
   it("returns a validated containing procedure name", async () => {
     const result = await getNavigationContext(

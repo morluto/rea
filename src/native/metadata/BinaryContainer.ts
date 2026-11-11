@@ -52,7 +52,7 @@ export class BinaryStringReadLimitFailure extends BinaryFormatFailure {
     // allowing coverage-aware consumers to distinguish a limit from corruption.
     super(
       "malformed",
-      `String is unterminated or longer than ${String(maximumBytes)} bytes`,
+      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
     );
   }
 }
@@ -97,6 +97,7 @@ export type ImageSection = {
       /** Null when the ELF name table is unavailable or this name is unreadable. */
       readonly name: string | null;
       readonly type: number;
+      readonly flags: bigint;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -117,6 +118,7 @@ export type ImageSection = {
       readonly name: string;
       readonly section_name: string;
       readonly type: number;
+      readonly flags: number;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -124,6 +126,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Declared `reloff` and `nreloc`, which only object files populate. */
+      readonly relocations: { readonly offset: number; readonly count: number };
     }
 );
 

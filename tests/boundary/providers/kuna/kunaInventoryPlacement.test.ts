@@ -128,7 +128,8 @@ it("refuses overlapping sections and load commands above the limit as unclassifi
     await readKunaMachoLayout({ bytes: 32 * 1024 * 1024, prefix: head }),
   ).toEqual({
     status: "unavailable",
-    reason:
-      "its load commands occupy 16777224 bytes, above the 16777216-byte load-command limit",
+    reason: expect.stringMatching(
+      /load commands.*16777224 bytes.*16777216.byte.*limit/i,
+    ),
   });
 });

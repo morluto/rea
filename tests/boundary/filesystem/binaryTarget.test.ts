@@ -16,6 +16,7 @@ import { buildBinary } from "plist";
 import { describe, expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { espFlashSelectionError } from "../../../src/domain/firmware/espFlashSelection.js";
 import {
   resolveAppBundleExecutable,
   type AppBundleFileSystem,
@@ -446,6 +447,34 @@ describe("binary target I/O: app plist permissions and decoding", () => {
   });
 });
 
+describe("binary target I/O: OpenStep app plist escapes", () => {
+  it.each([
+    '{ CFBundleExecutable = "M\\U0061in"; }',
+    '{ CFBundleExecutable = "M\\141in"; }',
+    '{ "CFBundle\\U0045xecutable" = "Main"; }',
+  ])(
+    "resolves an OpenStep bundle executable with escaped keys or values in %s",
+    async (plistContent) => {
+      const directory = await createTestTempDirectory(
+        "rea-app-openstep-escapes-",
+      );
+      const app = join(directory, "Probe.app");
+      const programs = join(app, "Contents", "MacOS");
+      await mkdir(programs, { recursive: true });
+      await writeFile(join(app, "Contents", "Info.plist"), plistContent);
+      await writeFile(join(programs, "Main"), "binary");
+      const result = await resolveAppBundleExecutable(app);
+      expect(result).toEqual({
+        ok: true,
+        value: {
+          executable: join(programs, "Main"),
+          infoPlist: join(app, "Contents", "Info.plist"),
+        },
+      });
+    },
+  );
+});
+
 describe("binary target I/O: package classification", () => {
   it("classifies ZIP package families and text artifacts without Hopper", async () => {
     const directory = await createTestTempDirectory("rea-artifact-target-");
@@ -728,19 +757,24 @@ describe("binary target I/O: ESP flash layouts", () => {
         },
       },
     });
-    for (const [options, reason] of [
+    for (const [options, selection, facts] of [
       [
         { espFlash: { flashOffset: 0x1000 } },
-        "flash_offset and partition_table_offset apply only with format=esp-flash-image",
+        { flashOffset: 0x1000 },
+        ["flash_offset", "esp-flash-image"],
       ],
       [
         {
           formatHint: "esp-flash-image",
           espFlash: { partitionTableOffset: 0x8800 },
         },
-        "partition_table_offset must be a multiple of 0x1000, as ESP-IDF requires",
+        { format: "esp-flash-image", partitionTableOffset: 0x8800 },
+        ["partition_table_offset", "0x1000"],
       ],
-    ] as const)
+    ] as const) {
+      const reason = espFlashSelectionError(selection);
+      if (reason === undefined) throw new Error("Expected selection error");
+      for (const fact of facts) expect(reason).toContain(fact);
       expect(await parseBinaryTarget(partial, options)).toMatchObject({
         ok: false,
         error: {
@@ -749,6 +783,7 @@ describe("binary target I/O: ESP flash layouts", () => {
           reason,
         },
       });
+    }
     // Ciphertext is not recognized as a layout: unknown, not malformed.
     expect(
       await parseBinaryTarget(noise, { formatHint: "esp-flash-image" }),
@@ -1069,7 +1104,6 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       cwd: directory,
       hostArchitecture: "x64",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       format: "pe",
@@ -1098,7 +1132,6 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       cwd: directory,
       hostArchitecture: "ia32",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       format: "pe",
@@ -1123,8 +1156,7 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
     expect(result.ok).toBe(false);
     expect(result.ok ? undefined : result.error).toMatchObject({
       path,
-      reason:
-        "truncated Mach-O header: a 64-bit header needs 32 bytes; the file has 12",
+      reason: expect.stringMatching(/truncated Mach-O.*64-bit.*32 bytes.*12/i),
     });
   });
 

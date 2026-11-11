@@ -59,7 +59,6 @@ describe("JSON client configuration repeated-member edits", () => {
       removeShadowedMembersAt: [path],
     });
 
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("authorized repeats were refused");
     expect(parseStrictJson(result.value)).toEqual({
       mcpServers: {
@@ -109,7 +108,6 @@ describe("JSON client configuration repeated-member edits", () => {
     "handles %s without losing peers",
     (_label, text, expectedServers, authority) => {
       const result = removeRea(text, "json", authority);
-      expect(result.ok).toBe(true);
       if (!result.ok) throw new Error("non-shadowed removal was refused");
       expect(parseStrictJson(result.value)).toEqual({
         mcpServers: expectedServers,
@@ -127,7 +125,6 @@ describe("JSON client configuration repeated-member edits", () => {
       removeShadowedMembersAt: [["mcpServers", "rea"]],
     });
 
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("authorized escaped repeat was refused");
     expect(result.value).toContain(`"mcpServers":${inactive}`);
     expect(parseStrictJson(result.value)).toEqual({
@@ -146,7 +143,6 @@ describe("JSON client configuration repeated-member edits", () => {
       removeShadowedMembersAt: [["mcp", "rea"]],
     });
 
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("authorized JSONC repeats were refused");
     expect(result.value).toContain("// top comment");
     expect(result.value).toContain("// first");

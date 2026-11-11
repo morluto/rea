@@ -36,7 +36,7 @@ function assets({ markdownStatus = 200 } = {}) {
   };
 }
 
-test("HTML is the default and explicit Accept preferences select Markdown", async () => {
+await test("HTML is the default and explicit Accept preferences select Markdown", async () => {
   for (const [accept, markdown] of [
     [null, false],
     ["*/*", false],
@@ -75,7 +75,7 @@ test("HTML is the default and explicit Accept preferences select Markdown", asyn
   }
 });
 
-test("HEAD and validators use the selected representation", async () => {
+await test("HEAD and validators use the selected representation", async () => {
   for (const method of ["GET", "HEAD"]) {
     const response = await worker.fetch(
       new Request("https://rea.tools/guide/", {
@@ -104,7 +104,7 @@ test("HEAD and validators use the selected representation", async () => {
   }
 });
 
-test("missing Markdown keeps HTML, and asset redirects and missing routes survive", async () => {
+await test("missing Markdown keeps HTML, and asset redirects and missing routes survive", async () => {
   const html = await worker.fetch(
     new Request("https://rea.tools/guide/", {
       headers: { Accept: "text/markdown" },

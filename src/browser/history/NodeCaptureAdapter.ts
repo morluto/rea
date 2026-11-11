@@ -10,8 +10,8 @@ import {
   NODE_CAPTURE_HEAP_ENFORCED,
   captureDecoderProcessMemoryLimitBytes,
 } from "./CaptureRelease.js";
-import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import {
+  QLOG_CAPTURE_PROVIDER_IDENTITY,
   HAR_CAPTURE_PROVIDER_IDENTITY,
   SAZ_CAPTURE_PROVIDER_IDENTITY,
 } from "./CaptureProviderIdentities.js";

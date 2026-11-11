@@ -13,12 +13,10 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import {
   commandMayChangeInferiorOutput,
-  gdbErrorMessage,
   gdbOneShotCommandMayInvalidateDetachProof,
   gdbThreadGroupCount,
   GdbSessionManager,
   miStringField,
-  waitForGdbCommandTurn,
 } from "../../../src/gdb/GdbSessionManager.js";
 import type {
   OwnedProviderProcessSpawnOptions,
@@ -33,9 +31,13 @@ import { DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES } from "../../../src/domain/a
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
-import { expectGdbSessionStarted } from "./gdbTestHelpers.js";
+import {
+  createGdbFixtureOwner,
+  expectGdbSessionStarted,
+} from "./gdbTestHelpers.js";
 
 let directory: string | undefined;
+const fixtureOwner = createGdbFixtureOwner();
 const managers: GdbSessionManager[] = [];
 
 it.each([
@@ -141,11 +143,16 @@ it.each([
 it.each([
   ["show version", false],
   ["show inferior-tty", false],
+  ["  show inferior-tty  ", false],
+  ["-inferior-tty-show", false],
   ["help inferior-tty", false],
   ["show inferior-tty\nset inferior-tty /tmp/other", true],
   ["help inferior-tty; run > /tmp/other", true],
   ["set pagination off", false],
   ["set inferior-t /tmp/output", true],
+  ["set inferior-tty /tmp/output", true],
+  ["show inferior-t; set inferior-tty /tmp/output", true],
+  ["show inferior-tty; define redirect = run > /tmp/output", true],
   ["inferior-tty /tmp/output", true],
   ["tty /dev/pts/2", true],
   ["source commands.gdb", true],
@@ -173,15 +180,9 @@ it.each([
   ["so commands.gdb", true],
   ["de", true],
   ["p 1; python print(2)", true],
+  ["show inferior-tty", false],
 ] as const)("classifies one-shot GDB commands: %s", (command, expected) => {
   expect(gdbOneShotCommandMayInvalidateDetachProof(command)).toBe(expected);
-});
-
-it.each([
-  [new Error("provider failure"), "provider failure"],
-  ["non-error provider failure", "non-error provider failure"],
-] as const)("formats unknown GDB boundary failures", (cause, message) => {
-  expect(gdbErrorMessage(cause)).toBe(message);
 });
 
 it("rejects an invalid caller TTY and platforms without safe GDB ownership", async () => {
@@ -211,7 +212,10 @@ it("rejects an invalid caller TTY and platforms without safe GDB ownership", asy
     expect(macUnavailable.error.message).toContain("available only on Linux");
   expect(macSpawned).toBe(false);
 
-  const windows = new GdbSessionManager({ platform: "win32" });
+  const windows = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
+    platform: "win32",
+  });
   managers.push(windows);
   const unavailable = await windows.start();
   expect(unavailable).toMatchObject({
@@ -1540,7 +1544,7 @@ it("keeps inferior TTY readback when the caller output cap is smaller than that 
     );
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    maxCommandOutputBytes: 80,
+    environment: { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "80" },
   });
 
   const started = await manager.start(undefined, { inferiorTty: tty });
@@ -1583,10 +1587,10 @@ const managerWithFakeSpawner = (
 ): GdbSessionManager => {
   const manager = new GdbSessionManager({
     platform: "linux",
-    environment: { REA_GDB_COMMAND: "fake-gdb" },
     spawnProcess,
     verifyInferiorOutputSink: async () => undefined,
     ...options,
+    environment: { REA_GDB_COMMAND: "fake-gdb", ...options.environment },
   });
   managers.push(manager);
   return manager;
@@ -1628,6 +1632,7 @@ const managerFor = async (
   options: ConstructorParameters<typeof GdbSessionManager>[0] = {},
 ): Promise<GdbSessionManager> => {
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: await createProvider(body) },
     ...options,
@@ -1656,23 +1661,21 @@ process.stdin.on('data', (chunk) => {
 `;
 
 afterEach(async () => {
-  await Promise.all(
-    managers
-      .splice(0)
-      .map((manager) => manager.closeAll().catch(() => undefined)),
-  );
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
+  await fixtureOwner.cleanup(managers, async () => {
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    directory = undefined;
+  });
 });
 
 it("rejects a pre-cancelled GDB start and an unconfigured executable", async () => {
   const cancelled = new AbortController();
   const reason = new Error("caller cancelled before start");
   cancelled.abort(reason);
-  const startResult = await new GdbSessionManager({ platform: "linux" }).start(
-    cancelled.signal,
-  );
+  const startResult = await new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
+    platform: "linux",
+  }).start(cancelled.signal);
   expect(startResult.ok).toBe(false);
   if (!startResult.ok) {
     expect(startResult.error._tag).toBe("AnalysisCancelledError");
@@ -1682,12 +1685,14 @@ it("rejects a pre-cancelled GDB start and an unconfigured executable", async () 
   const nullReasonController = new AbortController();
   nullReasonController.abort(null);
   const nullReasonResult = await new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
   }).start(nullReasonController.signal);
   expect(nullReasonResult.ok).toBe(false);
   if (!nullReasonResult.ok) expect(nullReasonResult.error.cause).toBeNull();
 
   const missing = await new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: join(tmpdir(), "does-not-exist-gdb") },
   }).start();
@@ -1716,6 +1721,7 @@ if (process.argv.includes('--interpreter=mi3')) process.exit(0);
 ${responsiveProvider()}
 `);
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
   });
@@ -1732,6 +1738,7 @@ it("retains ownership when GDB startup fails before its prompt and stop is incom
   let retainedSessionId: string | undefined;
   const provider = await createProvider("process.exit(0);\n");
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     stopProcess: async (session, name) => {
@@ -1862,6 +1869,7 @@ it("returns startup timeout when the MI prompt never arrives", async () => {
     "process.stdin.resume(); setInterval(() => {}, 1000);\n",
   );
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     startupTimeoutMs: 20,
@@ -1897,7 +1905,7 @@ it("handles a provider with no MI stdout stream as a startup timeout", async () 
 it("preserves a timeout while startup waits for the automatic-loading response", async () => {
   const fake = createFakeSpawner((_child, _token, _command) => undefined);
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 25,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
   });
 
   const started = await manager.start();
@@ -1912,7 +1920,7 @@ it("preserves a timeout while startup waits for the automatic-loading response",
       diagnostics: {
         setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
         effective_value: 25,
-        source: "runtime",
+        source: "setting",
         unit: "ms",
         restart_required: true,
       },
@@ -1924,7 +1932,7 @@ it("preserves a timeout while startup waits for the automatic-loading response",
 it("maps an acknowledged startup-command timeout to the startup operation", async () => {
   const fake = createFakeSpawner((_child, _token, _command) => undefined);
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
     stopProcess: async () => ({ status: "stopped" }),
   });
 
@@ -1942,6 +1950,7 @@ it("retains startup timeout without partial evidence when cleanup is uncertain",
     "process.stdin.resume(); setInterval(() => {}, 1000);\n",
   );
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     startupTimeoutMs: 20,
@@ -1979,7 +1988,7 @@ it("maps startup command timeout and preserves initial no-inferior evidence when
   let retainedSessionId = "";
   const fake = createFakeSpawner((_child, _token, _command) => undefined);
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 25,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
     stopProcess: async (session) => {
       retainedSessionId = (session as typeof session & { id: string }).id;
       const debuggerSession = session as typeof session & {
@@ -2025,6 +2034,7 @@ it("handles a start signal that becomes aborted during listener registration", a
     },
   });
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
   });
@@ -2228,7 +2238,7 @@ it("rejects the command queued behind a timed-out GDB request", async () => {
       fake.children[0]?.stdout.write(`${_token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 25,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
   });
   const started = await expectGdbSessionStarted(manager);
 
@@ -2242,43 +2252,6 @@ it("rejects the command queued behind a timed-out GDB request", async () => {
 
   expect(rejected.ok).toBe(false);
   if (!rejected.ok) expect(rejected.error._tag).toBe("AnalysisInputError");
-});
-
-it("waits for the prior command and preserves cancellation and queue failures", async () => {
-  const resolved = Promise.resolve();
-  expect(waitForGdbCommandTurn(resolved)).toBe(resolved);
-
-  const preAborted = new AbortController();
-  const queueReason = "queue cancelled before admission";
-  preAborted.abort(queueReason);
-  await expect(
-    waitForGdbCommandTurn(Promise.resolve(), preAborted.signal),
-  ).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-    cause: queueReason,
-  });
-
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const controller = new AbortController();
-  const activeQueueReason = { source: "active queue cancellation" };
-  const cancelledWait = waitForGdbCommandTurn(pending, controller.signal);
-  controller.abort(activeQueueReason);
-  await expect(cancelledWait).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-    cause: activeQueueReason,
-  });
-  release();
-
-  const queueFailure = new Error("previous command queue failed");
-  await expect(
-    waitForGdbCommandTurn(
-      Promise.reject(queueFailure),
-      new AbortController().signal,
-    ),
-  ).rejects.toBe(queueFailure);
 });
 
 it("retains a multi-run console command through its completion query before dispatching a follower", async () => {
@@ -2486,14 +2459,18 @@ it("correlates command output records and reports invalid or cancelled requests"
   );
   expect(signalled.ok).toBe(true);
   const cancelled = new AbortController();
-  cancelled.abort();
+  const reason = { source: "cancelled before admission" };
+  cancelled.abort(reason);
   const rejected = await manager.execute(
     started.value.session_id,
     "info registers",
     cancelled.signal,
   );
   expect(rejected.ok).toBe(false);
-  if (!rejected.ok) expect(rejected.error._tag).toBe("AnalysisCancelledError");
+  if (!rejected.ok) {
+    expect(rejected.error._tag).toBe("AnalysisCancelledError");
+    expect(rejected.error.cause).toBe(reason);
+  }
   const closed = await manager.close(started.value.session_id);
   expect(closed.ok).toBe(false);
   expect(manager.status(started.value.session_id)).toBeDefined();
@@ -2780,6 +2757,67 @@ it.each([
   }
 });
 
+it("keeps the verified sink across the read-only show inferior-tty inspection", async () => {
+  const tty = "/dev/pts/42";
+  const commands: string[] = [];
+  let detached = false;
+  const fake = createFakeSpawner((_child, token, command) => {
+    commands.push(command);
+    if (command.includes("inferior-tty-show"))
+      fake.children[0]?.stdout.write(
+        `${token}^done,inferior_tty_terminal=${JSON.stringify(tty)}\n`,
+      );
+    else if (command.includes("list-thread-groups"))
+      fake.children[0]?.stdout.write(
+        detached
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done,groups=[{id="i1",pid="123"}]\n`,
+      );
+    else {
+      if (command.includes("target-detach")) detached = true;
+      fake.children[0]?.stdout.write(`${token}^done\n`);
+    }
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager, undefined, {
+    inferiorTty: tty,
+  });
+
+  const inspected = await manager.execute(
+    started.value.session_id,
+    "show inferior-tty",
+  );
+
+  expect(inspected.ok).toBe(true);
+  expect(manager.status(started.value.session_id)).toMatchObject({
+    inferior_tty: tty,
+    inferior_tty_verified: true,
+  });
+  expect(commands).toContain('-interpreter-exec console "show inferior-tty"');
+
+  // The MI form is a defensive exemption: REA's own MI calls do not route
+  // through this user-command gate, and the console interpreter may reject
+  // the text outright. The gate must still leave the verified flag alone.
+  const inspectedMi = await manager.execute(
+    started.value.session_id,
+    "-inferior-tty-show",
+  );
+
+  expect(inspectedMi.ok).toBe(true);
+  expect(manager.status(started.value.session_id)?.inferior_tty_verified).toBe(
+    true,
+  );
+
+  const closed = await manager.close(started.value.session_id);
+
+  expect(closed).toMatchObject({
+    ok: true,
+    value: { target_state: "unknown" },
+  });
+  expect(commands).toContain("-target-detach");
+  expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
+});
+
 it("revokes the verified sink after an abbreviated with inferior-tty run command", async () => {
   const tty = "/dev/pts/42";
   const commands: string[] = [];
@@ -2998,7 +3036,7 @@ it("retains ownership and sends no signal when MI state is saturated or unknown"
       fake.children[0]?.stdout.write(`${token}^error,msg="unknown"\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
   });
   const started = await expectGdbSessionStarted(manager);
 
@@ -3142,6 +3180,7 @@ it("retains a session when closing cannot confirm the debugger process stopped",
   let stopCalls = 0;
   const provider = await createProvider(responsiveProvider());
   const manager = new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
     environment: { REA_GDB_COMMAND: provider },
     stopProcess: async (session, name) => {
@@ -3187,34 +3226,41 @@ it("retains an exited GDB session when provider stop verification is incomplete"
   expect(manager.status(started.value.session_id)?.state).toBe("closed");
 });
 
-it("preserves a command timeout when stopping the owned process rejects", async () => {
-  let stopCalls = 0;
-  const provider = await createProvider(
-    responsiveProvider(`
+it.each([new Error("simulated stop failure"), "simulated stop failure"])(
+  "preserves a command timeout when stopping the owned process rejects: %s",
+  async (failure) => {
+    let stopCalls = 0;
+    const provider = await createProvider(
+      responsiveProvider(`
     if (match[2].includes('auto-load off')) process.stdout.write(match[1] + '^done\\n');
   `),
-  );
-  const manager = new GdbSessionManager({
-    platform: "linux",
-    environment: { REA_GDB_COMMAND: provider },
-    commandTimeoutMs: 25,
-    stopProcess: async (session, name) => {
-      stopCalls += 1;
-      if (stopCalls === 1) throw new Error("simulated stop failure");
-      return stopOwnedDebuggerProcess(session, name);
-    },
-  });
-  managers.push(manager);
-  const started = await expectGdbSessionStarted(manager);
+    );
+    const manager = new GdbSessionManager({
+      spawnProcess: fixtureOwner.spawnProcess,
+      platform: "linux",
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "25",
+      },
+      stopProcess: async (session, name) => {
+        stopCalls += 1;
+        if (stopCalls === 1) throw failure;
+        return stopOwnedDebuggerProcess(session, name);
+      },
+    });
+    managers.push(manager);
+    const started = await expectGdbSessionStarted(manager);
 
-  const timedOut = await manager.execute(started.value.session_id, "stall");
+    const timedOut = await manager.execute(started.value.session_id, "stall");
 
-  expect(timedOut.ok).toBe(false);
-  if (!timedOut.ok) {
-    expect(timedOut.error._tag).toBe("AnalysisCapabilityUnavailableError");
-    expect(timedOut.error.message).toContain("shutdown failed");
-  }
-});
+    expect(timedOut.ok).toBe(false);
+    if (!timedOut.ok) {
+      expect(timedOut.error._tag).toBe("AnalysisCapabilityUnavailableError");
+      expect(timedOut.error.message).toContain("shutdown failed");
+      expect(timedOut.error.message).toContain("simulated stop failure");
+    }
+  },
+);
 
 it("retains caller cancellation and cleanup authority after active-command stop rejects", async () => {
   const controller = new AbortController();
@@ -3306,7 +3352,7 @@ it("returns partial command evidence when the active MI request times out after 
     else _child.stdout.write(`${token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
     stopProcess: async () => ({ status: "stopped" }),
   });
   const started = await expectGdbSessionStarted(manager);
@@ -3516,6 +3562,12 @@ process.stdin.on('data', (chunk) => {
   if (result.ok) {
     expect(result.value.result.output_truncated).toBe(true);
     expect(result.value.result.records).toHaveLength(7);
+    expect(result.value.result.output_limits).toEqual([
+      { kind: "command_bytes", maximum: 16_777_216 },
+    ]);
+    expect(result.value.evidence.limitations.join(" ")).toContain(
+      "Set REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+    );
   }
   expect(
     manager.status(started.value.session_id)?.recent_mi_records_truncated,
@@ -3633,6 +3685,94 @@ process.stdin.on('data', (chunk) => {
   expect(manager.status(started.value.session_id)?.state).toBe("closed");
 });
 
+it("keeps the session usable after an oversized stream record is dropped", async () => {
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command === "-gdb-set auto-load off") {
+      child.stdout.write(`${token}^done\n`);
+      return;
+    }
+    if (command === '-interpreter-exec console "big-stream"') {
+      child.stdout.write('~"before"\n~"' + "x".repeat(16 * 1024 * 1024 + 1));
+      child.stdout.write('"\n' + token + "^done\n(gdb)\n");
+      return;
+    }
+    if (command === '-interpreter-exec console "after-drop"') {
+      child.stdout.write(token + "^done\n(gdb)\n");
+      return;
+    }
+    if (command === "-list-thread-groups --recurse 1") {
+      child.stdout.write(`${token}^done,groups=[]\n`);
+      return;
+    }
+    if (command === "-gdb-exit") {
+      child.stdout.write(`${token}^done\n`);
+      return;
+    }
+    child.stdout.write(token + '^error,msg="unmodeled request"\n');
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager);
+
+  const executed = await manager.execute(
+    started.value.session_id,
+    "big-stream",
+  );
+
+  expect(executed.ok).toBe(true);
+  if (executed.ok) {
+    expect(executed.value.result.mi).toMatch(/^\d+\^done$/);
+    expect(executed.value.result.console).toContain("before");
+    expect(executed.value.result.completion_status).toBe("complete");
+    expect(executed.value.result.output_truncated).toBe(true);
+    expect(executed.value.result.output_limits).toEqual([
+      { kind: "mi_line_bytes", maximum: 16_777_216 },
+    ]);
+    expect(executed.value.evidence.normalized_result).toMatchObject({
+      output_limits: [{ kind: "mi_line_bytes", maximum: 16_777_216 }],
+    });
+    const limitations = executed.value.evidence.limitations.join(" ");
+    expect(limitations).toContain("MI line limit");
+    expect(limitations).toContain("does not raise it");
+    expect(limitations).not.toContain(
+      "Set REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+    );
+  }
+  const second = await manager.execute(started.value.session_id, "after-drop");
+  expect(second.ok).toBe(true);
+  if (second.ok) expect(second.value.result.mi).toMatch(/^\d+\^done$/);
+  await expect(manager.close(started.value.session_id)).resolves.toMatchObject({
+    ok: true,
+  });
+});
+
+it("still stops the session for an oversized result record", async () => {
+  const manager = await managerFor(`
+process.stdout.write('(gdb)\\n');
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  input += chunk;
+  for (;;) {
+    const end = input.indexOf('\\n');
+    if (end < 0) break;
+    const line = input.slice(0, end); input = input.slice(end + 1);
+    const match = /^(\\d+)(.*)/.exec(line);
+    if (!match) continue;
+    if (match[2] === '-gdb-set auto-load off') process.stdout.write(match[1] + '^done\\n');
+    else if (match[2] === '-interpreter-exec console "bad-value"') process.stdout.write(match[1] + '^done,value="' + 'x'.repeat(16 * 1024 * 1024 + 1) + '"\\n');
+    else process.stdout.write(match[1] + '^error,msg="unmodeled request"\\n');
+  }
+});
+`);
+  const started = await expectGdbSessionStarted(manager);
+
+  const failed = await manager.execute(started.value.session_id, "bad-value");
+
+  expect(failed.ok).toBe(false);
+  if (!failed.ok)
+    expect(failed.error._tag).toBe("AnalysisCapabilityUnavailableError");
+});
+
 it("caps the number of MI records retained for a single command", async () => {
   const recordCount = 16_385;
   const manager = await managerFor(`
@@ -3663,6 +3803,14 @@ process.stdin.on('data', (chunk) => {
   if (result.ok) {
     expect(result.value.result.records).toHaveLength(16_384);
     expect(result.value.result.output_truncated).toBe(true);
+    expect(result.value.result.output_limits).toEqual([
+      { kind: "command_records", maximum: 16_384 },
+    ]);
+    const limitations = result.value.evidence.limitations.join(" ");
+    expect(limitations).toContain("16384 record cap");
+    expect(limitations).not.toContain(
+      "Set REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+    );
   }
 });
 
@@ -3817,7 +3965,7 @@ it("reports command timeout when an incomplete stop cannot confirm process exit"
     fake.children[0]?.stdout.write(`${_token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    commandTimeoutMs: 20,
+    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
     stopProcess: async (session, name) => {
       stopCalls += 1;
       if (stopCalls === 1)

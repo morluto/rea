@@ -1,10 +1,15 @@
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
+  stableArtifactInputRecovery,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -27,7 +32,11 @@ import {
 } from "../domain/analysisErrorCore.js";
 import {
   goBinarySchema,
+  goAnalysisBudgets,
+  GO_ANALYSIS_BUDGET_MAXIMA,
+  type GoAnalysisBudgets,
   type GoBinary,
+  type GoStringLiterals,
   type InspectGoBinaryInput,
 } from "../domain/go/goBinary.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -41,12 +50,19 @@ import {
 } from "../native/metadata/BinaryContainer.js";
 
 const OPERATION = "inspect_go_binary";
-const INPUT_BYTES = 256 * 1024 * 1024;
-const OUTPUT_BYTES = 8 * 1024 * 1024;
+
+const budgetRecovery = (
+  parameter: keyof GoAnalysisBudgets,
+  value: number,
+): string =>
+  value < GO_ANALYSIS_BUDGET_MAXIMA[parameter]
+    ? `Increase ${parameter} above ${String(value)} (maximum ${String(GO_ANALYSIS_BUDGET_MAXIMA[parameter])}) on the next inspect_go_binary request (CLI --${parameter.replaceAll("_", "-")}); no restart is required.`
+    : `${parameter} is at its runtime representation maximum ${String(value)}; no larger value is supported. Preserve the complete selected artifact and report this boundary rather than repeating the unchanged request.`;
 
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
+  budgets: GoAnalysisBudgets,
 ): AnalysisError => {
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
@@ -67,24 +83,36 @@ const failureForPrimary = (
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
-  if (cause instanceof BinaryResourceFailure)
+  if (cause instanceof BinaryResourceFailure) {
+    const parameter =
+      cause.boundary === "search"
+        ? "max_header_search_bytes"
+        : cause.boundary === "build-info"
+          ? "max_build_info_bytes"
+          : undefined;
     return new AnalysisResourceConstraintError(
       OPERATION,
       cause.boundary === "search" ? "cpu" : "memory",
       `Selected artifact ${path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum_bytes: cause.maximum_bytes },
+      {
+        boundary: cause.boundary,
+        maximum_bytes: cause.maximum_bytes,
+        ...(parameter === undefined ? {} : { parameter, unit: "bytes" }),
+      },
       {
         cause,
-        ...fixedAllowanceOptions(
-          cause.boundary === "search"
-            ? "The Go build-info header-search allowance"
-            : cause.boundary === "build-info"
-              ? "The Go build-info string allowance"
-              : "The Go structural decoding allowance",
-          cause.boundary === "search" ? "work" : "parser",
-        ),
+        ...(parameter === undefined
+          ? fixedAllowanceOptions(
+              "The Go structural decoding allowance",
+              "parser",
+            )
+          : {
+              retryable: false,
+              remediationAction: `${cause.boundary === "search" ? "The Go build-info header-search allowance" : "The Go build-info string allowance"} is ${String(budgets[parameter])} bytes. ${budgetRecovery(parameter, budgets[parameter])} Other byte and report budgets are independent. Repeating the unchanged request cannot raise this allowance.`,
+            }),
       },
     );
+  }
   if (cause instanceof BinaryFormatFailure)
     return cause.kind === "unsupported"
       ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
@@ -106,16 +134,23 @@ const failureForPrimary = (
         OPERATION,
         "file-size",
         cause.message,
-        { maximum_input_bytes: INPUT_BYTES },
+        {
+          maximum_input_bytes: budgets.max_input_bytes,
+          parameter: "max_input_bytes",
+          unit: "bytes",
+        },
         {
           cause,
-          remediationAction: `Select a suitable stable artifact within the reported ${String(INPUT_BYTES)}-byte input byte allowance. This release has no runtime override. Do not truncate required bytes; retrying the unchanged oversized input will fail again.`,
+          retryable: false,
+          remediationAction: `${budgetRecovery("max_input_bytes", budgets.max_input_bytes)} Report, build-info and structural allowances remain independent. Preserve the complete artifact; do not truncate required bytes.`,
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -140,56 +175,98 @@ const failureForPrimary = (
   });
 };
 
-const failureFor = (cause: unknown, path: string): AnalysisError => {
-  const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
+const failureFor = (
+  cause: unknown,
+  path: string,
+  budgets: GoAnalysisBudgets,
+  snapshot?: StableArtifactSnapshot,
+): AnalysisError => {
+  const primary = failureForPrimary(
+    artifactFilePrimaryFacts(cause),
+    path,
+    budgets,
+  );
   return projectStableArtifactFailure(
     cause,
     primary,
     path,
     GO_BINARY_PROVIDER_IDENTITY.id,
     OPERATION,
+    snapshot,
   );
 };
 
-const outputLimit = (path: string) =>
+const outputLimit = (path: string, maximumBytes: number) =>
   new AnalysisResourceConstraintError(
     OPERATION,
     "transport",
     `Complete Go metadata for ${path} exceeds the inline output budget; no partial success is returned.`,
-    { maximum_output_bytes: OUTPUT_BYTES },
-    fixedAllowanceOptions("The Go complete-report allowance", "report"),
+    {
+      maximum_output_bytes: maximumBytes,
+      parameter: "max_report_bytes",
+      unit: "bytes",
+    },
+    {
+      retryable: false,
+      remediationAction: `The Go complete-report allowance is ${String(maximumBytes)} bytes. ${budgetRecovery("max_report_bytes", maximumBytes)} This did not produce complete Evidence to page. MCP delivery limits remain independent.`,
+    },
   );
 
 /** Fixed reader boundaries plus unknowns left by the observed metadata. */
 const limitationsFor = (
-  info: GoBinaryImage["build_info"],
-  sectionNamesLimitation: string | undefined,
-): string[] => [
-  "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
-  "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
-  "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.",
-  ...(info !== null && (info.go_version === null || info.module_text === null)
-    ? [
-        "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
-      ]
-    : []),
-  ...(info === null
-    ? [
-        "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
-      ]
-    : []),
-  ...(sectionNamesLimitation === undefined ? [] : [sectionNamesLimitation]),
-  ...(info !== null && info.module.main === null
-    ? [
-        "Dependency coverage is unknown because no main-module record was decoded from the embedded module information, as in GOPATH-mode builds. Decoded dependency records remain visible; an empty list does not establish the absence of dependencies.",
-      ]
-    : []),
-  ...(info?.module.complete === false
-    ? [
-        "Some embedded module-text records could not be parsed completely; their original lines are preserved and additional metadata remains unknown.",
-      ]
-    : []),
-];
+  image: GoBinaryImage,
+  stringLiterals: GoStringLiterals | undefined,
+  budgets: GoAnalysisBudgets,
+): string[] => {
+  const {
+    build_info: info,
+    section_names_limitation: sectionNamesLimitation,
+    macho_chained_fixups: machoChainedFixups,
+  } = image;
+  return [
+    "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
+    stringLiterals === undefined
+      ? "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered."
+      : "Only Go build information and inferred static (ptr, len) string-header candidates are inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
+    `Resource guards use max_input_bytes=${String(budgets.max_input_bytes)}, max_header_search_bytes=${String(budgets.max_header_search_bytes)}, max_build_info_bytes=${String(budgets.max_build_info_bytes)} and max_report_bytes=${String(budgets.max_report_bytes)}; increase the named per-call budget for the next inspection when needed. Native structural table decoding retains its separate 16 MiB bound. These are not operating-system memory or CPU limits.`,
+    ...(info !== null && (info.go_version === null || info.module_text === null)
+      ? [
+          "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
+        ]
+      : []),
+    ...(info === null
+      ? [
+          "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
+        ]
+      : []),
+    ...(sectionNamesLimitation === undefined ? [] : [sectionNamesLimitation]),
+    ...(info !== null && info.module.main === null
+      ? [
+          "Dependency coverage is unknown because no main-module record was decoded from the embedded module information, as in GOPATH-mode builds. Decoded dependency records remain visible; an empty list does not establish the absence of dependencies.",
+        ]
+      : []),
+    ...(info?.module.complete === false
+      ? [
+          "Some embedded module-text records could not be parsed completely; their original lines are preserved and additional metadata remains unknown.",
+        ]
+      : []),
+    ...(stringLiterals === undefined
+      ? []
+      : [
+          "Recovered string_literals are inferred from pointer-aligned (ptr, len) pairs in non-executable mapped data pointing to printable UTF-8 slices within single read-only spans; compiler-inlined or stack-constructed strings without static headers, unapplied relocation addends and runtime reachability are not established.",
+          ...(machoChainedFixups === true
+            ? [
+                "This Mach-O declares LC_DYLD_CHAINED_FIXUPS; rebase-encoded pointer slots in writable data may not hold raw virtual addresses statically, so (ptr, len) recovery can miss writable-section string headers.",
+              ]
+            : []),
+          ...(stringLiterals.truncated
+            ? [
+                `Recovered string_literals were truncated at ${stringLiterals.limits_reached?.map((parameter) => `${parameter}=${String(budgets[parameter])}`).join(", ") ?? "a configured recovery budget"}; increase the named per-call budget(s), then inspect the same complete artifact again. Additional static (ptr, len) candidates may exist. No restart is required.`,
+              ]
+            : []),
+        ]),
+  ];
+};
 
 /** Locate image-relative build-info ranges in the selected file. */
 const inFile = (
@@ -209,6 +286,24 @@ const inFile = (
           ...info.module_location,
           offset: info.module_location.offset + fileOffset,
         },
+      };
+
+const inFileStringLiterals = (
+  literals: GoStringLiterals | undefined,
+  fileOffset: number,
+): GoStringLiterals | undefined =>
+  literals === undefined || fileOffset === 0
+    ? literals
+    : {
+        ...literals,
+        items: literals.items.map((item) => ({
+          ...item,
+          location: {
+            ...item.location,
+            offset: item.location.offset + fileOffset,
+          },
+          first_header_offset: item.first_header_offset + fileOffset,
+        })),
       };
 
 /** Stable in-process metadata inspection without subprocesses, temporary files or Go installation. */
@@ -233,11 +328,13 @@ export class GoBinaryProvider implements GoBinaryPort {
     input: Omit<InspectGoBinaryInput, "detail">,
     options?: ExecutionOptions,
   ): Promise<Result<GoBinary, AnalysisError>> {
+    let snapshot: StableArtifactSnapshot | undefined;
+    const budgets = goAnalysisBudgets(input);
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
-          INPUT_BYTES,
+          budgets.max_input_bytes,
           options?.signal,
           undefined,
           this.#resources,
@@ -249,12 +346,22 @@ export class GoBinaryProvider implements GoBinaryPort {
           snapshot.bytes,
           input.architecture,
         );
-        const image = readGoBinaryImage(selected.bytes);
+        const image = readGoBinaryImage(selected.bytes, {
+          includeStringLiterals: input.include_string_literals === true,
+          budgets,
+          checkActive: () => assertArtifactReadActive(options?.signal),
+        });
         const {
-          section_names_limitation: sectionNamesLimitation,
+          section_names_limitation: _sectionNamesLimitation,
+          macho_chained_fixups: _machoChainedFixups,
+          string_literals: rawStringLiterals,
           ...publicImage
         } = image;
         const info = inFile(image.build_info, selected.fileOffset);
+        const stringLiterals = inFileStringLiterals(
+          rawStringLiterals,
+          selected.fileOffset,
+        );
         const report = {
           ...publicImage,
           artifact: {
@@ -266,10 +373,16 @@ export class GoBinaryProvider implements GoBinaryPort {
             ? {}
             : { selected_slice: selected.selection }),
           build_info: info,
-          limitations: limitationsFor(info, sectionNamesLimitation),
+          ...(stringLiterals === undefined
+            ? {}
+            : { string_literals: stringLiterals }),
+          limitations: limitationsFor(image, stringLiterals, budgets),
         };
-        if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
-          throw outputLimit(input.path);
+        if (
+          jsonValueByteLength(report, budgets.max_report_bytes) >
+          budgets.max_report_bytes
+        )
+          throw outputLimit(input.path, budgets.max_report_bytes);
         const parsed = goBinarySchema.safeParse(report);
         if (!parsed.success)
           throw new AnalysisOutputError(
@@ -281,7 +394,7 @@ export class GoBinaryProvider implements GoBinaryPort {
         return ok(parsed.data);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path));
+      return err(failureFor(cause, input.path, budgets, snapshot));
     }
   }
 }
