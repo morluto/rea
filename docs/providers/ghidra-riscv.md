@@ -311,6 +311,13 @@ passes a type the prototype misplaces:
   first member are admitted. GCC 14.2 ignores the attribute whenever the first
   member would take a float register, so this also refuses some GCC images
   whose unions are placed right. Returns are not affected.
+- a `float` parameter of an old-style (K&R) C definition, such as
+  `float f(x) float x;`. Callers promote the argument to `double`, which Clang
+  19 passes in integer registers, while DWARF still declares a `float` and
+  only omits `DW_AT_prototyped`. Ghidra 12.1.4's DWARF import drops that
+  attribute, so the script reads DWARF again for it, and only when a typed
+  signature has a `float` parameter. C++ and other languages do not mark the
+  attribute and are not checked.
 
 A bit-field counts by its width, not its declared type, so a `float` beside
 `unsigned long long b : 1` takes a float and an integer register. The check

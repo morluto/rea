@@ -231,10 +231,27 @@ struct rea_riscv_abi_unnamed {
     unsigned : 1;
 };
 
-__attribute__((noinline)) float rea_riscv_abi_padded(struct rea_riscv_abi_padded value, struct rea_riscv_abi_unnamed unnamed)
+/* The unmodelled build is analysed, never run, and links without a runtime
+ * library: this stands in for compiler-rt's double-to-float conversion, which
+ * the old-style definition below calls. A double passes in a0 and a1 under
+ * the prototype and the psABI alike. */
+float __truncdfsf2(double value)
+{
+    (void)value;
+    return 0.0f;
+}
+
+/* An old-style (K&R) definition: callers promote scale to double, which
+ * Clang 19 passes in integer registers (a3 and a4 here) and narrows with
+ * __truncdfsf2, while DWARF declares a float and omits DW_AT_prototyped. Its
+ * structure parameters pass as a prototype would pass them. */
+__attribute__((noinline)) float rea_riscv_abi_padded(value, unnamed, scale)
+    struct rea_riscv_abi_padded value;
+    struct rea_riscv_abi_unnamed unnamed;
+    float scale;
 {
     rea_riscv_abi_sink = *(volatile unsigned int *)&unnamed;
-    return value.value;
+    return value.value * scale;
 }
 
 /* A GNU vector uses the integer convention, a0 and a1, but Ghidra imports it

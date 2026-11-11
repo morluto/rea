@@ -1,6 +1,15 @@
 import com.google.gson.JsonObject;
 import ghidra.app.script.GhidraScript;
+import ghidra.app.util.bin.format.dwarf.DIEAggregate;
+import ghidra.app.util.bin.format.dwarf.DWARFImportOptions;
+import ghidra.app.util.bin.format.dwarf.DWARFProgram;
+import ghidra.app.util.bin.format.dwarf.DWARFRange;
+import ghidra.app.util.bin.format.dwarf.DWARFSourceLanguage;
+import ghidra.app.util.bin.format.dwarf.DWARFTag;
+import ghidra.app.util.bin.format.dwarf.attribs.DWARFAttributeId;
 import ghidra.program.database.SpecExtension;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.data.AbstractComplexDataType;
 import ghidra.program.model.data.AbstractFloatDataType;
 import ghidra.program.model.data.Array;
@@ -124,6 +133,18 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   private final Map<DataType, Kind> parameterKinds = new HashMap<>();
   private final Map<DataType, Kind> returnKinds = new HashMap<>();
   private final Map<DataType, Boolean> erasedUnions = new HashMap<>();
+  // Entry points of old-style C definitions, read from DWARF when first needed.
+  private Set<Address> oldStyleEntries;
+
+  /** DW_AT_language values of C, where a definition may be old-style (K&R); 0x2c is C17. */
+  private static final Set<Integer> C_LANGUAGES =
+      Set.of(
+          DWARFSourceLanguage.DW_LANG_C89,
+          DWARFSourceLanguage.DW_LANG_C,
+          DWARFSourceLanguage.DW_LANG_C99,
+          DWARFSourceLanguage.DW_LANG_ObjC,
+          DWARFSourceLanguage.DW_LANG_C11,
+          0x2c);
 
   @Override
   public void run() throws Exception {
@@ -348,7 +369,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
    * gives it after flattening.
    */
   private String misplacedSignatures(
-      PrototypeModel model, Policy policy, List<Function> callables, Set<FunctionDefinition> pointed) {
+      PrototypeModel model, Policy policy, List<Function> callables, Set<FunctionDefinition> pointed)
+      throws Exception {
     // The counts cover every refusal; only the shown examples are kept.
     List<String> examples = new ArrayList<>();
     int functions = 0;
@@ -357,9 +379,12 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       List<String> misplaced = new ArrayList<>();
       DataType returned = function.getReturn().getFormalDataType();
       if (misplaced(model, returned, true)) misplaced.add("returns " + returned.getName());
-      for (Parameter parameter : function.getParameters())
-        if (misplacedParameter(model, parameter.getFormalDataType()))
-          misplaced.add(parameter.getFormalDataType().getName());
+      for (Parameter parameter : function.getParameters()) {
+        DataType type = parameter.getFormalDataType();
+        if (misplacedParameter(model, type)
+            || (promotedFloat(type) && oldStyleEntries().contains(function.getEntryPoint())))
+          misplaced.add(type.getName());
+      }
       if (misplaced.isEmpty()) continue;
       functions += 1;
       if (examples.size() < REFUSAL_EXAMPLES)
@@ -392,6 +417,42 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     return example.length() <= REFUSAL_EXAMPLE_LENGTH
         ? example
         : example.substring(0, REFUSAL_EXAMPLE_LENGTH - 3) + "...";
+  }
+
+  /**
+   * Whether an old-style definition receives a parameter of this type promoted: the caller passes
+   * a float as a double, which ilp32f places in a0 and a1, not fa0.
+   */
+  private static boolean promotedFloat(DataType type) {
+    return strip(type) instanceof AbstractFloatDataType && type.getLength() == 4;
+  }
+
+  /**
+   * Entry points of C definitions without DW_AT_prototyped: old-style (K&R) definitions. Clang 19
+   * passes their float parameters as doubles in a0 and a1, while DWARF still declares float.
+   * Ghidra's DWARF import drops the flag, so DWARF is read again here, and only when a typed
+   * signature has a float parameter. C++ and other languages never mark the attribute.
+   */
+  private Set<Address> oldStyleEntries() throws Exception {
+    if (oldStyleEntries != null) return oldStyleEntries;
+    Set<Address> entries = new HashSet<>();
+    if (DWARFProgram.isDWARF(currentProgram)) {
+      try (DWARFProgram dwarf =
+          new DWARFProgram(currentProgram, new DWARFImportOptions(), monitor)) {
+        dwarf.init(monitor);
+        for (DIEAggregate die : dwarf.allAggregates()) {
+          if (die.getTag() != DWARFTag.DW_TAG_subprogram
+              || die.getBool(DWARFAttributeId.DW_AT_prototyped, false)
+              || !C_LANGUAGES.contains(die.getCompilationUnit().getLanguage())) continue;
+          DWARFRange range = die.getPCRange();
+          if (range == null || range.isEmpty()) continue;
+          AddressRange code = dwarf.getAddressRange(range, true);
+          if (code != null) entries.add(code.getMinAddress());
+        }
+      }
+    }
+    oldStyleEntries = entries;
+    return entries;
   }
 
   /**
