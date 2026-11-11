@@ -12,6 +12,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
+import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV108.js";
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { il2cppMetadataSchema } from "../../../src/domain/il2cpp/il2cppMetadata.js";
@@ -40,6 +41,86 @@ const inspectMetadata = async (path: string, limit?: number) => {
     await provider.close();
   }
 };
+
+/** Synthetic v108 header: checks bounded observations, not record-layout compatibility. */
+const version108Header = (stringBytes: Buffer) => {
+  const header = Buffer.alloc(500);
+  header.writeUInt32LE(0xfab11baf, 0);
+  header.writeInt32LE(108, 4);
+  let cursor = header.length;
+  for (let index = 0; index < 41; index++) {
+    const size = index === 2 ? stringBytes.length : 0;
+    header.writeInt32LE(cursor, 8 + index * 12);
+    header.writeInt32LE(size, 12 + index * 12);
+    header.writeInt32LE(size, 16 + index * 12);
+    cursor += size;
+  }
+  return Buffer.concat([header, stringBytes]);
+};
+
+it("retains a bounded v108 header and string observation without claiming decoded rows", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.from("Alpha\0Beta\0")));
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      inventory_status: "not-returned-as-complete",
+      version_108_partial_inventory: {
+        metadata_version: 108,
+        header_bytes: 500,
+        coverage: "header-and-bounded-string-sample-only",
+        sections: expect.arrayContaining([
+          { name: "stringLiterals", offset: 500, size: 0, count: 0 },
+          { name: "stringLiteralData", offset: 500, size: 0, count: 0 },
+          { name: "strings", offset: 500, size: 11, count: 11 },
+        ]),
+        strings: {
+          terminated_count: 2,
+          unterminated_tail_bytes: 0,
+          sample: [
+            { offset: 0, value: "Alpha", truncated: false },
+            { offset: 6, value: "Beta", truncated: false },
+          ],
+        },
+      },
+    },
+  });
+  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+    '"images":[]',
+  );
+});
+
+it("refuses a malformed v108 section instead of publishing a partial inventory", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
+  const path = join(root, "global-metadata.dat");
+  const bytes = version108Header(Buffer.from("Name\0"));
+  bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
+  await writeFile(path, bytes);
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+    "version_108_partial_inventory",
+  );
+});
+
+it("bounds v108 string samples and preserves undecodable bytes", () => {
+  const repeated = inspectIl2cppMetadataV108(
+    version108Header(Buffer.from("x\0".repeat(20))),
+  );
+  expect(repeated?.strings.terminated_count).toBe(20);
+  expect(repeated?.strings.sample).toHaveLength(16);
+  const invalid = inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xff, 0])),
+  );
+  expect(invalid?.strings.sample).toEqual([
+    { offset: 0, value: null, value_base64: "/w==", truncated: false },
+  ]);
+});
 
 /** Version 29 file whose methods all share one long name. */
 const sharedNameMetadata = (
