@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -616,7 +617,9 @@ export const parseCodeViewData = (
     return undefined;
   const end = buffer.indexOf(0, pathOffset);
   if (end <= pathOffset || end >= sizeOfData) return undefined;
-  const pdbPath = buffer.toString("utf8", pathOffset, end);
+  const pathBytes = buffer.subarray(pathOffset, end);
+  // CodeView stores path bytes. Valid UTF-8 stays UTF-8; every other byte stays Latin-1.
+  const pdbPath = pathBytes.toString(isUtf8(pathBytes) ? "utf8" : "latin1");
   const pdbFileName = pdbPath.split(/[/\\]/u).pop() ?? pdbPath;
   if (magic === "RSDS" && sizeOfData >= 24 && buffer.length >= 24) {
     const part1 = buffer.readUInt32LE(4).toString(16).padStart(8, "0");

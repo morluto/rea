@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { peCodeViewDataRanges } from "./binaryTarget.js";
+import { parseCodeViewData, peCodeViewDataRanges } from "./binaryTarget.js";
 
 const entry = (type: number, size: number, rva: number, raw: number) => {
   const bytes = Buffer.alloc(28);
@@ -42,6 +42,40 @@ it("ignores other debug types, undersized records and incomplete trailing entrie
   expect([...peCodeViewDataRanges(directory, Buffer.alloc(0), 0, 0)]).toEqual([
     { fileOffset: 0x700, declaredSize: 16 },
   ]);
+});
+
+const codeViewRecord = (magic: "RSDS" | "NB10", path: Buffer): Buffer => {
+  const header = magic === "RSDS" ? 24 : 16;
+  const bytes = Buffer.alloc(header + path.length + 1);
+  bytes.write(magic, 0, "ascii");
+  bytes.writeUInt32LE(1, magic === "RSDS" ? 20 : 12);
+  path.copy(bytes, header);
+  return bytes;
+};
+
+it.each(["RSDS", "NB10"] as const)(
+  "preserves a non-UTF-8 %s PDB path byte",
+  (magic) => {
+    const bytes = codeViewRecord(
+      magic,
+      Buffer.from([0x43, 0x3a, 0x5c, 0xe9, 0x2e, 0x70, 0x64, 0x62]),
+    );
+    expect(parseCodeViewData(bytes, bytes.length)).toMatchObject({
+      pdbPath: "C:\\\u00e9.pdb",
+      pdbFileName: "\u00e9.pdb",
+    });
+  },
+);
+
+it("keeps a UTF-8 CodeView PDB path", () => {
+  const bytes = codeViewRecord(
+    "RSDS",
+    Buffer.from("C:\\caf\u00e9.pdb", "utf8"),
+  );
+  expect(parseCodeViewData(bytes, bytes.length)).toMatchObject({
+    pdbPath: "C:\\café.pdb",
+    pdbFileName: "café.pdb",
+  });
 });
 
 it("maps the bounded payload prefix while retaining its full declared size", () => {
