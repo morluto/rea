@@ -4,6 +4,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -25,6 +26,7 @@ export interface ReferenceSourceImportError {
   readonly cleanup?: AnalysisCleanupObservation;
   readonly partial?: ReferenceSourceRead;
   readonly cause?: unknown;
+  readonly secondaryCancellation?: { readonly cause: unknown };
 }
 
 const IMPORT_FAILURE_GUIDANCE = {
@@ -71,14 +73,16 @@ export const referenceSourceImportAnalysisError = (
           }),
     },
   };
+  let primary: AnalysisError;
   switch (error.code) {
     case "cancelled":
-      return new AnalysisCancelledError("import_reference_source", {
+      primary = new AnalysisCancelledError("import_reference_source", {
         ...options,
         userMessage: message,
       });
+      break;
     case "invalid-root":
-      return new AnalysisInputError(
+      primary = new AnalysisInputError(
         "import_reference_source",
         {
           ...options,
@@ -89,21 +93,36 @@ export const referenceSourceImportAnalysisError = (
         },
         [{ path: ["root"], reason: "invalid_value", message: error.message }],
       );
+      break;
     case "unsupported":
-      return new AnalysisCapabilityUnavailableError(
+      primary = new AnalysisCapabilityUnavailableError(
         "filesystem",
         "import_reference_source",
         error.message,
         { ...options, userMessage: message, remediationAction: guidance },
       );
+      break;
     case "io":
     case "parse":
-      return new AnalysisOutputError("import_reference_source", error.message, {
-        ...options,
-        userMessage: message,
-        remediationAction: guidance,
-      });
+      primary = new AnalysisOutputError(
+        "import_reference_source",
+        error.message,
+        {
+          ...options,
+          userMessage: message,
+          remediationAction: guidance,
+        },
+      );
+      break;
   }
+  return error.secondaryCancellation === undefined
+    ? primary
+    : analysisErrorWithCancellation(
+        primary,
+        new AnalysisCancelledError("import_reference_source", {
+          cause: error.secondaryCancellation.cause,
+        }),
+      );
 };
 
 /** Canonical CLI/MCP projection, retaining source facts under diagnostic details. */

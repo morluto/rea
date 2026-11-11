@@ -1,6 +1,7 @@
+import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
@@ -11,10 +12,14 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import {
+  primaryAnalysisError,
   resolvedAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import {
   webBundleHeapExhaustedReason,
   webBundleHeapExhaustedRemediation,
@@ -22,6 +27,7 @@ import {
 } from "../domain/webBundleAnalysis.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import {
   spawnOwnedProviderProcess,
   type ProviderProcessHandle,
@@ -296,6 +302,148 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) finish();
   });
 };
+
+it.each([false, true])(
+  "preserves physical ownership inspection failure when cancellation follows (same reason: %s)",
+  async (sameReason) => {
+    const controller = new AbortController();
+    const physical = new Error("inspection physically failed");
+    const reason = sameReason ? physical : { cancelled: "late" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw physical;
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.cause).toBe(physical);
+      expect(
+        error.secondaryFailures.some((failure) => failure.cause === reason),
+      ).toBe(true);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
+
+it.each(["reason", "normalized-exec"] as const)(
+  "retains %s cancellation from ownership inspection",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancel" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw kind === "reason"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : ProcessOwnershipInspectionCancelled.from(
+              new ExecFileOutputCancelledError(reason),
+            );
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisCancelledError);
+      expect(error.cause).toBe(reason);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
+
+it("retains ownership-helper cleanup until worker close retries it", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel" };
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
+        cancellation: { reason },
+        cleanupFailure: cleanup,
+        cleanupOwner: owner,
+      });
+    });
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(
+      makeScript("0"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it("retains failed helper cleanup without caller cancellation", async () => {
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const physical = new DarwinProcessOwnershipInspectionError(
+    "inspection failed",
+    { cleanupFailure: cleanup, cleanupOwner: owner },
+  );
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockRejectedValue(physical);
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(makeScript("0"), 5_000);
+    const error = failureOf(result);
+    expect(primaryAnalysisError(error).cause).toBe(physical);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
 
 it("reuses one real owned worker for completed facts from consecutive scripts", async () => {
   const children: ProviderProcessHandle[] = [];
@@ -1100,3 +1248,52 @@ it("retries independent browser workers once while an earlier exact owner remain
     await cleanup.retry();
   }
 });
+
+it.each(["typed", "physical"] as const)(
+  "preserves %s ownership-admission facts from the recording worker launcher",
+  async (kind) => {
+    const controller = new AbortController();
+    const physical = new Error("physical worker admission failure");
+    const reason =
+      kind === "physical" ? physical : { caller: "cancel worker admission" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockResolvedValue();
+    const launcher = vi.fn<typeof spawnOwnedProviderProcess>(
+      async (options) => {
+        expect(options.signal).toBeDefined();
+        controller.abort(reason);
+        expect(options.signal?.reason).toBe(reason);
+        throw kind === "typed"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : physical;
+      },
+    );
+    const worker = new WebBundleAnalysisWorker(128, launcher);
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("0"), 5_000, controller.signal),
+      );
+      if (kind === "typed")
+        expect(error).toBeInstanceOf(AnalysisCancelledError);
+      else {
+        expect(error).toBeInstanceOf(AnalysisOutputError);
+        expect(
+          error.secondaryFailures.some((failure) => failure.cause === reason),
+        ).toBe(true);
+      }
+      expect(error.cause).toBe(reason);
+      expect(launcher).toHaveBeenCalledOnce();
+      launcher.mockImplementationOnce(launcherFor({ kind: "source" }));
+      const recovered = await worker.analyze(
+        makeScript("fetch('/after-admission');"),
+        5_000,
+      );
+      expect(recovered.ok).toBe(true);
+      expect(launcher).toHaveBeenCalledTimes(2);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);

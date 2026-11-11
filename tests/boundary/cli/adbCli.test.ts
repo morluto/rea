@@ -791,3 +791,42 @@ exit 0
     await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "preserves exact transport identity through CLI JSON projection",
+  async () => {
+    const workspace = await createTestWorkspace("rea-adb-identity-cli-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const line =
+      "exact-serial device model:Pixel transport_id:18446744073709551615";
+    const binary = await workspace.write(
+      "adb",
+      `#!${process.execPath}\nif(process.argv[2]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(process.argv[2]==='devices'&&process.argv[3]==='-l')process.stdout.write(${JSON.stringify(line + "\n")});\nelse throw Error('No other command authorized');\n`,
+    );
+    await chmod(binary, 0o755);
+    const result = await serve(["list-adb-devices", "--json"], {
+      REA_ADB_PATH: binary,
+    });
+    expect(result.exitCode).toBe(0);
+    const evidence = JSON.parse(result.stdout);
+    expect(evidence.normalized_result).toMatchObject({
+      devices: [
+        {
+          serial: "exact-serial",
+          model: "Pixel",
+          transport_id: null,
+          transport_id_text: "18446744073709551615",
+          transport_id_status: "reported",
+        },
+      ],
+    });
+    expect(evidence.raw_result).toMatchObject({
+      transport_id_observations: [
+        { source_line: line, source_token: "18446744073709551615" },
+      ],
+    });
+    expect(
+      toolContract("list_adb_devices").outputSchema.safeParse(evidence).success,
+    ).toBe(true);
+  },
+);

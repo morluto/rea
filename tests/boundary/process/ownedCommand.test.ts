@@ -1,4 +1,8 @@
 import { DarwinProcessOwnershipInspectionError } from "../../../src/process/DarwinProcessRunTokenReader.js";
+import {
+  assertProcessOwnershipInspectionActive,
+  waitForProcessOwnershipInspection,
+} from "../../../src/process/ProcessInspectionCancellation.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -45,7 +49,7 @@ it("includes ownership preparation in the command deadline before provider creat
       },
       {
         launcher: async (input) => {
-          await delay(80, undefined, { signal: input.signal });
+          await waitForProcessOwnershipInspection(80, input.signal);
           prepared = true;
           throw new Error(
             "Slow preparation must be aborted before provider creation",
@@ -68,7 +72,7 @@ it("passes cancellation into native ownership preparation before provider creati
         launcher: async (input) => {
           expect(input.signal?.aborted).toBe(false);
           controller.abort();
-          input.signal?.throwIfAborted();
+          assertProcessOwnershipInspectionActive(input.signal);
           throw new Error("Cancelled preparation must not launch a provider");
         },
       },
@@ -839,7 +843,14 @@ it("retains the preparation owner alongside an independent command deadline", as
     throw new Error("Expected command deadline failure");
   expect(failure.reason).toBe("timeout");
   expect(failure.preparationFailure).toBe(preparation);
-  expect(failure.preparationFailure?.cleanupFailure).toBe(marker);
+  if (
+    !(
+      failure.preparationFailure instanceof
+      DarwinProcessOwnershipInspectionError
+    )
+  )
+    throw new Error("Expected the actual Darwin preparation failure");
+  expect(failure.preparationFailure.cleanupFailure).toBe(marker);
 });
 
 it("keeps a caller-supplied preparation error opaque when it is the exact abort reason", async () => {
@@ -857,7 +868,7 @@ it("keeps a caller-supplied preparation error opaque when it is the exact abort 
       signal: controller.signal,
       launcher: async (input) => {
         controller.abort(reason);
-        input.signal?.throwIfAborted();
+        assertProcessOwnershipInspectionActive(input.signal);
         throw new Error("Unexpected completed preparation");
       },
     },
@@ -866,6 +877,11 @@ it("keeps a caller-supplied preparation error opaque when it is the exact abort 
   if (!(failure instanceof OwnedCommandFailure))
     throw new Error("Expected command cancellation");
   expect(failure.reason).toBe("cancelled");
-  expect(failure.cause).toBe(reason);
-  expect(failure.preparationFailure).toBeUndefined();
+  expect(failure.cancellation?.reason).toBe(reason);
+  expect(failure.preparationFailure).toMatchObject({
+    _tag: "ProcessOwnershipInspectionCancelled",
+    reason,
+  });
+  expect(marker.cleanupIncomplete).toBe(true);
+  expect(failure.resources).toEqual([]);
 });
