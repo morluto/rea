@@ -9,6 +9,14 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const publicationCancellation = vi.hoisted(() => ({
   controller: undefined as AbortController | undefined,
   directorySyncs: 0,
+  commitController: undefined as AbortController | undefined,
+  commitParent: undefined as string | undefined,
+  failPublishedClose: false,
+  publishedCloseAttempts: 0,
+  cleanupController: undefined as AbortController | undefined,
+  cleanupRoot: undefined as string | undefined,
+  physicalFailure: undefined as Error | undefined,
+  failRootCleanup: false,
   reportCleanup: false,
   allowCleanup: false,
   commandFailure: undefined as
@@ -22,8 +30,46 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const filesystem = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...filesystem,
+    rm: async (...args: Parameters<typeof filesystem.rm>) => {
+      if (String(args[0]) === publicationCancellation.cleanupRoot) {
+        publicationCancellation.cleanupController?.abort({
+          stage: "workspace cleanup",
+        });
+        if (publicationCancellation.failRootCleanup)
+          throw Object.assign(new Error("workspace cleanup denied"), {
+            code: "EACCES",
+          });
+      }
+      return filesystem.rm(...args);
+    },
     open: async (...args: Parameters<typeof filesystem.open>) => {
       const handle = await filesystem.open(...args);
+      if (
+        publicationCancellation.commitController !== undefined &&
+        String(args[0]) === publicationCancellation.commitParent
+      ) {
+        const sync = handle.sync.bind(handle);
+        const close = handle.close.bind(handle);
+        let synced = false;
+        handle.sync = async () => {
+          await sync();
+          synced = true;
+        };
+        handle.close = async () => {
+          if (synced) {
+            publicationCancellation.publishedCloseAttempts += 1;
+            publicationCancellation.commitController?.abort({
+              stage: "published parent close",
+            });
+            if (
+              publicationCancellation.failPublishedClose &&
+              publicationCancellation.publishedCloseAttempts === 1
+            )
+              throw Object.assign(new Error("close denied"), { code: "EIO" });
+          }
+          await close();
+        };
+      }
       if (publicationCancellation.controller !== undefined) {
         const stats = await handle.stat();
         if (stats.isDirectory()) {
@@ -80,6 +126,10 @@ vi.mock(
       prepareWakaruExecution: async (
         context: Parameters<typeof actual.prepareWakaruExecution>[0],
       ) => {
+        if (publicationCancellation.physicalFailure !== undefined) {
+          publicationCancellation.cleanupRoot = context.root;
+          throw publicationCancellation.physicalFailure;
+        }
         if (publicationCancellation.commandFailure !== undefined) {
           const { runWakaruCommand } =
             await import("../../../src/javascript/recovery/WakaruCommand.js");
@@ -345,6 +395,107 @@ it.skipIf(process.platform === "win32")(
     } finally {
       publicationCancellation.controller = undefined;
       publicationCancellation.directorySyncs = 0;
+      await provider.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "retains a physical failure and later workspace-cleanup cancellation (cleanup fails: %s)",
+  async (cleanupFails) => {
+    const root = await createTestTempDirectory("rea-recovery-late-cancel-");
+    const source = join(root, "source.js");
+    await writeFile(source, "module.exports = 42;");
+    const controller = new AbortController();
+    const physical = new Error("physical recovery failure");
+    publicationCancellation.cleanupController = controller;
+    publicationCancellation.physicalFailure = physical;
+    publicationCancellation.failRootCleanup = cleanupFails;
+    const provider = new WakaruProvider({});
+    try {
+      const result = await provider.recover(
+        {
+          path: source,
+          output_directory: join(root, "output"),
+          extraction_mode: "structural",
+          rewrite_level: "standard",
+        },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected physical failure");
+      expect(controller.signal.aborted).toBe(true);
+      const primary = primaryAnalysisError(result.error);
+      expect(primary).toMatchObject({
+        _tag: "ProviderAdapterError",
+        cause: physical,
+      });
+      expect(
+        primary.secondaryFailures.some(
+          (failure) =>
+            failure instanceof AnalysisCancelledError &&
+            failure.cause === controller.signal.reason,
+        ),
+      ).toBe(true);
+      expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      if (cleanupFails) {
+        await expect(provider.close()).rejects.toMatchObject({
+          cleanupIncomplete: true,
+        });
+        publicationCancellation.failRootCleanup = false;
+        await provider.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(resolvedAnalysisError(result.error)).toBe(primary);
+        expect(
+          primary.secondaryFailures.some(
+            (failure) =>
+              failure instanceof AnalysisCancelledError &&
+              failure.cause === controller.signal.reason,
+          ),
+        ).toBe(true);
+      }
+    } finally {
+      publicationCancellation.failRootCleanup = false;
+      publicationCancellation.cleanupController = undefined;
+      await provider.close();
+      publicationCancellation.cleanupRoot = undefined;
+      publicationCancellation.physicalFailure = undefined;
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32").each([false, true])(
+  "preserves committed recovery when cancellation arrives during parent close (first close fails: %s)",
+  async (failFirstClose) => {
+    const root = await createTestTempDirectory("rea-recovery-commit-cancel-");
+    const source = join(root, "source.js");
+    const output = join(root, "output");
+    await writeFile(source, "module.exports = 42;");
+    const controller = new AbortController();
+    publicationCancellation.commitController = controller;
+    publicationCancellation.commitParent = root;
+    publicationCancellation.failPublishedClose = failFirstClose;
+    publicationCancellation.publishedCloseAttempts = 0;
+    const provider = new WakaruProvider({});
+    try {
+      const result = await provider.recover(
+        {
+          path: source,
+          output_directory: output,
+          extraction_mode: "structural",
+          rewrite_level: "standard",
+        },
+        { signal: controller.signal },
+      );
+      if (!result.ok) throw result.error;
+      expect(controller.signal.aborted).toBe(true);
+      expect(publicationCancellation.publishedCloseAttempts).toBe(
+        failFirstClose ? 2 : 1,
+      );
+      await expect(access(join(output, "module.js"))).resolves.toBeUndefined();
+    } finally {
+      publicationCancellation.commitController = undefined;
+      publicationCancellation.commitParent = undefined;
+      publicationCancellation.failPublishedClose = false;
       await provider.close();
     }
   },
