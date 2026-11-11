@@ -120,9 +120,14 @@ export const runSourceMapCommand = async (
   } catch (cause: unknown) {
     return err(
       options?.signal?.aborted === true
-        ? new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          })
+        ? analysisErrorWithCancellation(
+            cause instanceof AnalysisError && cause !== options.signal.reason
+              ? cause
+              : undefined,
+            new AnalysisCancelledError(OPERATION, {
+              cause: options.signal.reason,
+            }),
+          )
         : cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(PROVIDER, OPERATION, {
