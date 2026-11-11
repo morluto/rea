@@ -90,6 +90,7 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
             config_path: client.configPath,
             state: "aligned",
             command,
+            command_identity: "owned",
             remediation: null,
           },
         ]);
