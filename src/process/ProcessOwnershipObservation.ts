@@ -5,7 +5,6 @@ import {
   rethrowProcessOwnershipInspectionFailure,
   waitForProcessOwnershipInspection,
 } from "./ProcessInspectionCancellation.js";
-export { isProcessOwnershipInspectionCancellation } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { open, readlink, stat as statPath } from "node:fs/promises";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
