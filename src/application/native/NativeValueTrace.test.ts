@@ -396,7 +396,6 @@ const callBindingAnalysis = (input: {
   readonly caller: ReturnType<typeof jsonValueSchema.parse>;
   readonly callee: ReturnType<typeof jsonValueSchema.parse>;
   readonly targetLimitations?: readonly string[];
-  readonly calleeSelector?: string;
 }): AnalysisOperationPort => ({
   execute: async (operation, parameters) => {
     if (operation === "resolve_native_call_targets")
@@ -410,7 +409,7 @@ const callBindingAnalysis = (input: {
             targets: [
               {
                 address: input.calleeAddress,
-                procedure: input.calleeSelector ?? input.calleeAddress,
+                procedure: input.calleeAddress,
                 status: "direct",
                 basis: "provider-reference",
                 references: [],
@@ -426,7 +425,7 @@ const callBindingAnalysis = (input: {
       throw new Error(`Unexpected native trace operation: ${operation}`);
     if (
       parameters.procedure !== input.callerAddress &&
-      parameters.procedure !== (input.calleeSelector ?? input.calleeAddress)
+      parameters.procedure !== input.calleeAddress
     )
       throw new Error(`Unexpected procedure: ${String(parameters.procedure)}`);
     return ok(
@@ -1461,38 +1460,116 @@ describe("recovered call input bindings", () => {
     expect(trace.traversal).toEqual({ status: "complete" });
   });
 
-  it("uses the analyzed callee identity for named call destinations", async () => {
-    const base = functionDossierSchema.parse(ghidraFunctionDossier());
-    const caller = nativeFlowDossier(base, {
-      address: "0x1000",
-      name: "caller",
-      operations: [node("call", "0x1010", "CALL")],
-      parameters: [],
-    });
-    const callee = nativeFlowDossier(base, {
-      address: "0x2000",
-      name: "callee",
-      operations: [node("return", "0x2010", "RETURN")],
-      parameters: [{ ordinal: 0, name: "value", data_type: "/int" }],
-    });
-    const trace = await traced(
-      callBindingAnalysis({
-        callerAddress: "0x1000",
-        calleeAddress: "0x2000",
-        calleeSelector: "callee",
-        caller,
-        callee,
-      }),
-      { procedure: "0x1000" },
+  it("keeps binding facts when a second alias resolves to an already analyzed callee", async () => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": {
+          operations: [
+            node("call", "0x1010", "CALL"),
+            node("again", "0x1020", "CALL"),
+          ],
+        },
+        "0x2000": {
+          operations: [node("return", "0x2010", "RETURN")],
+          parameters: [{ ordinal: 0, name: "value", data_type: "/int" }],
+        },
+      },
+      {
+        "0x1010": [{ destination: "callee", status: "direct" }],
+        "0x1020": [{ destination: "also_callee", status: "direct" }],
+      },
+      { procedureAliases: { callee: "0x2000", also_callee: "0x2000" } },
     );
+    const trace = await traced(graph.port, { procedure: "0x1000" });
     expect(
       trace.edges.filter(({ kind }) => kind === "argument-binding"),
     ).toMatchObject([
       { source: "0x1000/call", target: "0x2000/parameter:0", input_index: 1 },
+      { source: "0x1000/again", target: "0x2000/parameter:0", input_index: 1 },
     ]);
     expect(
       trace.edges.filter(({ kind }) => kind === "return-binding"),
-    ).toMatchObject([{ source: "0x2000/return", target: "0x1000/call" }]);
+    ).toMatchObject([
+      { source: "0x2000/return", target: "0x1000/call" },
+      { source: "0x2000/return", target: "0x1000/again" },
+    ]);
+    expect(trace.procedures.map(({ address }) => address)).toEqual([
+      "0x1000",
+      "0x2000",
+    ]);
+    expect(graph.analyzed).toEqual(["0x1000", "callee", "also_callee"]);
     expect(trace.unknowns).toEqual([]);
   });
+});
+
+it.each([
+  { max_depth: 0 },
+  { max_functions: 1 },
+  { max_nodes: 2 },
+  { max_edges: 1 },
+])(
+  "does not claim examined binding gaps after traversal refusal %j",
+  async (limits) => {
+    const trace = await traced(valueTraceUnboundArguments().port, {
+      procedure: "0x1000",
+      ...limits,
+    });
+    expect(trace.traversal.status).toBe("truncated");
+    expect(
+      trace.unknowns.some(({ call_inputs }) => call_inputs !== undefined),
+    ).toBe(false);
+  },
+);
+
+it.each([false, true])(
+  "keeps partial parameter recovery unknown (provider truncated=%s)",
+  async (truncated) => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": { operations: [node("call", "0x1010", "CALL")] },
+        "0x2000": { operations: [], pcodeTruncated: truncated },
+      },
+      { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const trace = await traced(graph.port, { procedure: "0x1000" });
+    const located = trace.unknowns.filter(
+      ({ call_inputs }) => call_inputs !== undefined,
+    );
+    expect(located).toHaveLength(truncated ? 0 : 1);
+    if (!truncated) expect(located[0]?.call_inputs?.input_indices).toEqual([1]);
+  },
+);
+
+it("does not invent a binding unknown for a fully examined zero-argument call", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": {
+        operations: [{ ...node("call", "0x1010", "CALL"), inputs: [scalar] }],
+      },
+      "0x2000": { operations: [] },
+    },
+    { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+  );
+  expect((await traced(graph.port, { procedure: "0x1000" })).unknowns).toEqual(
+    [],
+  );
+});
+
+it("retains binding-gap indices even when paging omits their call node", async () => {
+  const trace = await traced(valueTraceUnboundArguments().port, {
+    procedure: "0x1000",
+    offset: 1,
+    limit: 1,
+  });
+  expect(trace.nodes.every(({ id }) => id !== "0x1000/call")).toBe(true);
+  expect(trace.unknowns).toContainEqual(
+    expect.objectContaining({
+      call_inputs: expect.objectContaining({
+        call_node_id: "0x1000/call",
+        input_indices: [2, 3],
+      }),
+    }),
+  );
+  expect(trace.page_truncated).toBe(true);
+  expect(trace.traversal.status).toBe("complete");
 });
