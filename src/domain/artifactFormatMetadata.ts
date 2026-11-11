@@ -411,7 +411,9 @@ export const prefetchMetadataSchema = z.strictObject({
     .regex(/^[0-9a-f]{8}$/u)
     .nullable(),
   run_count: uint32.nullable(),
-  run_time_slots: uint32.nullable(),
+  // The single last-run FILETIME this reader decodes is either reachable or
+  // not; the metrics array holds more slots but their times are not decoded.
+  run_time_slots: z.literal(1).nullable(),
 });
 export type PrefetchMetadataFacts = z.infer<typeof prefetchMetadataSchema>;
 

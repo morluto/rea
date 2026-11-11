@@ -56,8 +56,12 @@ export interface PrefetchMetadata {
   readonly executablePathHash: string | null;
   /** Declared number of recorded runs; v17 files do not report one. */
   readonly runCount: number | null;
-  /** Declared count of last-run timestamp slots; the times themselves are not decoded. */
-  readonly runTimeSlots: number | null;
+  /**
+   * Declared count of last-run timestamp slots, or null when the capture ends
+   * before the metrics array. Only the first slot's FILETIME is decoded, and
+   * this reader does not report it, so a reachable array is always one slot.
+   */
+  readonly runTimeSlots: 1 | null;
   readonly limitations: readonly string[];
 }
 
@@ -175,7 +179,7 @@ export const parsePrefetchFile = (
   let runCount: number | null = null;
   // The last-run FILETIME sits at a generation-specific offset, so a capture
   // that ends inside the metrics array has no run time to report yet.
-  const runTimeSlots: number | null =
+  const runTimeSlots: 1 | null =
     end >= RUN_TIME_OFFSETS[version] + RUN_TIME_SLOT_BYTES ? 1 : null;
   // The run count sits at the same offset in both generations; only its
   // presence depends on the file reaching the end of the file-information
