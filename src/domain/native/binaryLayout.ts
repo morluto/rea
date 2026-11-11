@@ -281,7 +281,16 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
         "header_location",
       ]);
       checkName(section.name, ["sections", index, "name"]);
-      if (section.file_backing === "file")
+      const hasFileBytes =
+        section.type !== "SHT_NOBITS" && section.type !== "SHT_NULL";
+      if (section.file_backing !== (hasFileBytes ? "file" : "none"))
+        context.addIssue({
+          code: "custom",
+          path: ["sections", index, "file_backing"],
+          message:
+            "File backing must follow the reported section type; NOBITS and unused headers have no file content.",
+        });
+      if (hasFileBytes)
         check(section.offset, section.size, ["sections", index]);
     }
     for (const [index, segment] of value.segments.entries()) {
