@@ -21,6 +21,7 @@ import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapt
 import type { Evidence } from "../../domain/evidence.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
@@ -326,6 +327,134 @@ it.skipIf(process.platform === "win32")(
       await failures[0]!.lease.release();
       expect(result.cleanupIncomplete).toBe(false);
       expect(await exists(join(directory, "README.md"))).toBe(true);
+    } finally {
+      closing.mockRestore();
+      for (const failure of failures) await failure.lease.release();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "projects withheld-close cancellation beside both published cleanup owners",
+  async () => {
+    const root = await createTestTempDirectory("desktop-two-close-cancel-");
+    const directory = join(root, "bundle");
+    const withheldCopy = join(root, "withheld");
+    const controller = new AbortController();
+    const reason = new Error(
+      "cancel only while closing published withheld copy",
+    );
+    const bundleClose = new Error("bundle physical descriptor close failed");
+    const copyClose = new Error("withheld physical descriptor close failed");
+    const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
+    let isPublished = () => false;
+    let closingPublished = false;
+    let output = 0;
+    const commit = SafeOutputTree.prototype.commit;
+    vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
+      async function (this: SafeOutputTree, ...args) {
+        output += 1;
+        isPublished = () => this.published;
+        closingPublished = true;
+        try {
+          return await commit.apply(this, args);
+        } finally {
+          closingPublished = false;
+        }
+      },
+    );
+    const close = OwnedFileHandle.prototype.close;
+    const closing = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (!closingPublished || !isPublished()) return close.call(this);
+        if (output === 2) controller.abort(reason);
+        throw output === 1 ? bundleClose : copyClose;
+      });
+    const release = ArtifactResourceScope.prototype.release;
+    vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+      async function (this: ArtifactResourceScope, owner) {
+        if (owner.kind === "output-tree") {
+          const tree = owner.tree;
+          isPublished = () => tree.published;
+          closingPublished = true;
+        }
+        try {
+          const result = await release.call(this, owner);
+          if (result.kind === "failed") failures.push(result);
+          return result;
+        } finally {
+          if (owner.kind === "output-tree") closingPublished = false;
+        }
+      },
+    );
+    try {
+      const result = await exportDesktopApplication(
+        {
+          capture: await writeCaptureFolder(capture()),
+          directory,
+          withheldCopy,
+          name: undefined,
+          tasks: [],
+          withhold: { paths: [SETTINGS] },
+        },
+        readers,
+        controller.signal,
+      );
+      if (!(result instanceof AnalysisError))
+        throw new Error("expected both cleanup failures");
+      expect(output).toBe(2);
+      expect(controller.signal.aborted).toBe(true);
+      expect(failures).toHaveLength(2);
+      for (const { owner } of failures) {
+        expect(owner.kind).toBe("output-tree");
+        if (owner.kind === "output-tree")
+          expect(owner.tree.published).toBe(true);
+      }
+      for (const cause of [bundleClose, copyClose])
+        expect(
+          result.secondaryFailures.some(
+            (failure) =>
+              failure.cause instanceof AggregateError &&
+              failure.cause.errors.includes(cause),
+          ),
+        ).toBe(true);
+      expect(projectAnalysisError(result)).toMatchObject({
+        code: "cleanup_incomplete",
+        category: "execution_failure",
+        details: {
+          resources: expect.arrayContaining([directory, withheldCopy]),
+          partial_observation: { normalized_result: { directory } },
+          secondary_failures: expect.arrayContaining([
+            expect.objectContaining({ code: "cancelled" }),
+          ]),
+        },
+      });
+      const cancellation = result.secondaryFailures.filter(
+        (failure) => failure instanceof AnalysisCancelledError,
+      );
+      expect(cancellation).toHaveLength(1);
+      expect(cancellation[0]?.cause).toBe(reason);
+      const bundle = failures.find(({ owner }) => owner.resource === directory);
+      const copy = failures.find(
+        ({ owner }) => owner.resource === withheldCopy,
+      );
+      if (bundle === undefined || copy === undefined)
+        throw new Error("expected exact output owners");
+      expect(await readFile(join(withheldCopy, SETTINGS), "utf8")).toBe(
+        "[ui]\nwrap=false\n",
+      );
+      closing.mockRestore();
+      await bundle.lease.release();
+      expect(result.cleanupIncomplete).toBe(true);
+      expect(result.cleanupResources).toEqual([withheldCopy]);
+      await copy.lease.release();
+      expect(result.cleanupIncomplete).toBe(false);
+      expect(await exists(join(directory, "README.md"))).toBe(true);
+      expect(await exists(join(withheldCopy, SETTINGS))).toBe(true);
+      expect(
+        projectAnalysisError(result).details?.secondary_failures,
+      ).toContainEqual(expect.objectContaining({ code: "cancelled" }));
     } finally {
       closing.mockRestore();
       for (const failure of failures) await failure.lease.release();

@@ -558,6 +558,12 @@ const publishedExportFailure = (
   for (const failure of cleanupFailures)
     combined.retainSecondaryFailure(failure);
   combined.bindCleanupDependencies(cleanupFailures);
+  for (const cancellation of [
+    completion.cancellation,
+    copyCompletion?.cancellation,
+  ])
+    if (cancellation !== undefined)
+      analysisErrorWithCancellation(combined, cancellation);
   return combined;
 };
 
