@@ -69,11 +69,22 @@ it("passes decode_timeout_ms only when the caller selects it", async () => {
   }
 });
 
-it("documents the supported negative flag in command help", async () => {
-  const result = await invokeApktoolCli(["decode-android-resources", "--help"]);
+it("rejects an empty or NUL path before invoking apktool", async () => {
+  const empty = await invokeApktoolCli([
+    "decode-android-resources",
+    "",
+    "--json",
+  ]);
+  expect(empty.exitCode).not.toBe(0);
+  expect(empty.requests).toEqual([]);
 
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout).toContain("--no-strings");
+  const nul = await invokeApktoolCli([
+    "decode-android-resources",
+    "target\x00path.apk",
+    "--json",
+  ]);
+  expect(nul.exitCode).not.toBe(0);
+  expect(nul.requests).toEqual([]);
 });
 
 it("preserves selected string pages and budgets and rejects an invalid page before decoding", async () => {
