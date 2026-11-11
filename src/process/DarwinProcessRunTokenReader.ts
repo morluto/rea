@@ -735,7 +735,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const read = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>> => {
     signal?.throwIfAborted();
@@ -776,7 +776,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const identities = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
     if (processes.length === 0) return new Map();
