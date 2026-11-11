@@ -240,7 +240,7 @@ it("cancels a capture's start when the computer closes while it waits for the op
   expect(parseMcpToolError(await started).error.code).toBe("cancelled");
 }, 60_000);
 
-it("returns the bundle an export saved when the computer closes while it commits", async () => {
+it("reports cancellation and the published bundle when the computer closes during commit", async () => {
   const { client } = await fakes();
   const id = await startBuildComputer(client, BUILD_REQUEST);
   await captureSeedAndEnd(client, id);
@@ -255,10 +255,13 @@ it("returns the bundle an export saved when the computer closes while it commits
     tasks: [{ task: BUILD_TASK }],
     directory,
   });
-  expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
-  expect(exported.structuredContent).toMatchObject({
-    computer_id: id,
-    directory,
+  expect(parseMcpToolError(exported).error).toMatchObject({
+    code: "cancelled",
+    details: {
+      diagnostics: {
+        published_bundle: { directory, files: expect.any(Number) },
+      },
+    },
   });
   expect((await readdir(directory)).length).toBeGreaterThan(0);
   await closed;

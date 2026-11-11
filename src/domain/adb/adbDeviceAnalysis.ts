@@ -1,3 +1,7 @@
+import {
+  adbTransportIdentitySchema,
+  adbTransportIdSchema,
+} from "./adbTransportIdentity.js";
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
@@ -47,18 +51,35 @@ export const ADB_DEVICE_STATES = [
   "detached",
 ] as const;
 export const adbDeviceStateSchema = z.enum(ADB_DEVICE_STATES);
-export type AdbDeviceState = (typeof ADB_DEVICE_STATES)[number];
 
 const keyStringSchema = z.string().min(1).max(256);
 const keyPattern = /^[A-Za-z0-9._\x2d]+$/u;
 const activityExtraKeySchema = keyStringSchema
   .regex(keyPattern, "Extra keys are identifiers")
   .describe("Extra key");
+const MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH = 2048;
 const activityExtraStringValueSchema = z
   .string()
-  .max(2048)
+  .max(MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH)
   .regex(/^[^\x00]*$/u, "Extra values cannot contain NUL");
 const activityExtraNonEmptyValueSchema = activityExtraStringValueSchema.min(1);
+/** Check Java int/long range without rounding or changing the caller's text. */
+const javaDecimalExtraValueSchema = (bits: 32 | 64) => {
+  const upperBound = 1n << BigInt(bits - 1);
+  const range = `signed ${String(bits)}-bit`;
+  return z
+    .string()
+    .max(MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH, { abort: true })
+    .regex(/^-?\d+$/u, {
+      message: "Integer extra values must be signed decimal text",
+      abort: true,
+    })
+    .refine((value) => {
+      const decimal = BigInt(value);
+      return decimal >= -upperBound && decimal < upperBound;
+    }, `Integer extra value is outside the ${range} range`)
+    .describe(`Integer extra value as ${range} decimal text`);
+};
 /** Maximum typed extras admitted for one Android activity request. */
 export const MAX_ADB_ACTIVITY_EXTRAS = 16;
 // Android's `am start --ef` parses this text with Float.valueOf. Keep the
@@ -83,16 +104,12 @@ const activityExtraSchema = z.discriminatedUnion("type", [
   z.strictObject({
     key: activityExtraKeySchema,
     type: z.literal("int").describe("Integer extra value type"),
-    value: activityExtraNonEmptyValueSchema
-      .regex(/^-?\d+$/u, "Integer extra values must be an integer")
-      .describe("Integer extra value as signed decimal text"),
+    value: javaDecimalExtraValueSchema(32),
   }),
   z.strictObject({
     key: activityExtraKeySchema,
     type: z.literal("long").describe("Long extra value type"),
-    value: activityExtraNonEmptyValueSchema
-      .regex(/^-?\d+$/u, "Long extra values must be an integer")
-      .describe("Long extra value as signed decimal text"),
+    value: javaDecimalExtraValueSchema(64),
   }),
   z.strictObject({
     key: activityExtraKeySchema,
@@ -330,7 +347,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(512)
       .regex(
-        /^[A-Za-z0-9._\x2d]+(?:\/[A-Za-z0-9._$\x2d]*)?$/u,
+        /^[A-Za-z0-9._\x2d]+\/[A-Za-z0-9._$\x2d]+$/u,
         "Component must be package/activity form",
       )
       .optional()
@@ -468,14 +485,14 @@ const client = z.strictObject({
   installed_path: z.string().min(1).nullable(),
 });
 
-const device = z.strictObject({
+export const adbDeviceObservationSchema = z.strictObject({
   serial: z.string().min(1),
   state: adbDeviceStateSchema,
   transport: z.enum(["usb", "tcp", "unknown"]),
   product: z.string().nullable(),
   model: z.string().nullable(),
   device: z.string().nullable(),
-  transport_id: z.int().positive().nullable(),
+  transport_identity: adbTransportIdentitySchema,
   /**
    * Inferred device kind with its evidence basis. The serial prefix and the
    * `device:` metadata line are observations; the kind itself is derived.
@@ -483,6 +500,33 @@ const device = z.strictObject({
   kind: z.enum(["emulator", "physical", "unknown"]),
   kind_basis: z.enum(["emulator_serial_prefix", "usb_transport", "none"]),
 });
+
+export type AdbDeviceObservation = z.output<typeof adbDeviceObservationSchema>;
+
+/** Provider facts before the shared CLI/MCP numeric projection. */
+export const adbDeviceListObservationSchema = z.strictObject({
+  client,
+  devices: z.array(adbDeviceObservationSchema),
+  may_have_started_adb_server: z.boolean(),
+});
+
+const device = adbDeviceObservationSchema
+  .omit({ transport_identity: true })
+  .extend({
+    transport_id: z
+      .int()
+      .positive()
+      .nullable()
+      .describe(
+        "Exact numeric projection when safely representable; otherwise null. transport_id_text retains the full reported identity.",
+      ),
+    transport_id_text: adbTransportIdSchema
+      .nullable()
+      .describe(
+        "Canonical positive unsigned 64-bit transport ID as decimal text; null when invalid or not reported.",
+      ),
+    transport_id_status: z.enum(["reported", "not_reported", "invalid"]),
+  });
 
 const pulledArtifact = z.strictObject({
   device_path: z.string().min(1),

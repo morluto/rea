@@ -315,6 +315,7 @@ const integer = (value: string | undefined): number | null => {
 
 const CPU_TYPES: Readonly<Record<string, number>> = {
   CPU_TYPE_X86: 7,
+  CPU_TYPE_I386: 7,
   CPU_TYPE_X86_64: 0x01000007,
   CPU_TYPE_ARM: 12,
   CPU_TYPE_ARM64: 0x0100000c,
@@ -325,6 +326,7 @@ const CPU_TYPES: Readonly<Record<string, number>> = {
 
 const CPU_SUBTYPES: Readonly<Record<string, number>> = {
   CPU_SUBTYPE_X86_ALL: 3,
+  CPU_SUBTYPE_I386_ALL: 3,
   CPU_SUBTYPE_X86_64_ALL: 3,
   CPU_SUBTYPE_X86_64_H: 8,
   CPU_SUBTYPE_ARM64_ALL: 0,

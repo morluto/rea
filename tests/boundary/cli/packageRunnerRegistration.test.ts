@@ -6,6 +6,8 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
+import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";
 
 const ompConfigurationSchema = z.object({
   mcpServers: z.object({
@@ -32,7 +34,7 @@ appendFileSync(process.env.REA_TEST_RUNNER_LOG, JSON.stringify({
 console.log("controlled runner fixture");
 `,
   );
-  for (const runner of ["npx", "bunx"]) {
+  for (const runner of ["npx", "bunx", "pnpx"]) {
     await writeFile(
       join(bin, process.platform === "win32" ? `${runner}.cmd` : runner),
       process.platform === "win32"
@@ -63,17 +65,16 @@ for (const { runner, userAgent } of [
     async ({ cli }) => {
       const home = await createTestTempDirectory("rea-package-runner-");
       const controlledRunner = await controlledRunnerFixture(home);
+      const environment = await registrationEnvironment(home, {
+        ...controlledRunner.environment,
+        npm_command: "exec",
+        npm_config_user_agent: userAgent,
+      });
       const run = (arguments_: readonly string[]) =>
         cli.run({
           arguments: arguments_,
           cwd: home,
-          environment: {
-            ...controlledRunner.environment,
-            HOME: home,
-            USERPROFILE: home,
-            npm_command: "exec",
-            npm_config_user_agent: userAgent,
-          },
+          environment,
           timeoutMs: 20_000,
         });
       const setup = await run([
@@ -96,9 +97,25 @@ for (const { runner, userAgent } of [
       expect([command, ...args]).toEqual(
         currentClientRegistrationCommand({
           entrypointPath: resolve("scripts/rea.mjs"),
-          environment: controlledRunner.environment,
+          environment,
         }),
       );
+      const registration = await run([
+        "mcp",
+        "add",
+        "--agent",
+        "amp",
+        "--json",
+      ]);
+      expect(registration.exitCode, registration.stderr).toBe(0);
+      const registered = mcpRegistrationReportSchema.parse(registration.json);
+      expect([registered.command, ...registered.args]).toEqual([
+        command,
+        ...args,
+      ]);
+      expect(registered.clients).toMatchObject([
+        { client: "amp", status: "configured" },
+      ]);
       const doctor = await run(["doctor", "--client", "omp", "--json"]);
       expect(doctor.json).toMatchObject({
         identity: { registrations: [{ client: "omp", state: "aligned" }] },

@@ -1,3 +1,7 @@
+import {
+  snapshotRegexConfiguration,
+  type RegexConfigurationSnapshot,
+} from "../process/RegexMatcher.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { basename, join } from "node:path";
 import {
@@ -20,6 +24,7 @@ import {
   type RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -32,6 +37,7 @@ import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
   matchProcedureNames,
+  type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
@@ -52,7 +58,11 @@ import {
   kunaRetainedResourceCleanupError,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
-import { kunaFunctionDeadline } from "./KunaConfiguration.js";
+import {
+  kunaFunctionDeadline,
+  kunaProjectDeadline,
+  type KunaDeadline,
+} from "./KunaConfiguration.js";
 import {
   createKunaResourceScope,
   inspectKunaInstallation,
@@ -278,8 +288,9 @@ const exportUnavailableMessage = (
 /**
  * How a request that needs the export reports the export's failure. A session
  * never rebuilds a failed export, so repeating the request cannot succeed; the
- * error says what to change before reopening the target. Kuna settings are read
- * when REA starts, so changing one also needs a restart. Cancellation and
+ * error says what to change before reopening the target. A failed export is
+ * not rebuilt in the same session. The project deadline can change at runtime
+ * for the next export. Cancellation and
  * unproven cleanup keep their own errors, which callers must still observe.
  */
 const exportUnavailable = (
@@ -294,7 +305,7 @@ const exportUnavailable = (
     "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
   const next =
     failure instanceof AnalysisTimeoutError
-      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms in the environment that starts REA. ${restart}`
+      ? `To retry, set kuna.project_timeout_ms above ${String(failure.timeoutMs)} ms with update_analysis_settings. It can be changed at runtime. The launch seed is REA_KUNA_PROJECT_TIMEOUT_MS. Then reopen the target so the export runs again.`
       : failure instanceof AnalysisResourceConstraintError &&
           failure.remediationAction !== undefined
         ? // A fixed buffer (`memory`) is no setting, so a restart cannot help.
@@ -394,6 +405,8 @@ export class KunaSessionClient implements AnalysisClient {
   #installation:
     | SharedStartupAttempt<Result<KunaInstallation, AnalysisError>>
     | undefined;
+  /** Deadline the project export accepted. Not recomputed from later settings. */
+  #acceptedProjectDeadline: KunaDeadline | undefined;
   #inventory:
     | Promise<Result<readonly KunaInventoryFunction[], AnalysisError>>
     | undefined;
@@ -527,6 +540,28 @@ export class KunaSessionClient implements AnalysisClient {
           ],
         ),
       );
+    let search: AnalysisSearchQuery | undefined;
+    let regex: RegexConfigurationSnapshot | undefined;
+    if (operation === "search_strings" || operation === "search_procedures") {
+      const parsed = analysisSearchQuerySchema.safeParse(parameters);
+      if (!parsed.success)
+        return err(
+          analysisInputErrorFromIssues(
+            operation,
+            parsed.error.issues,
+            parameters,
+          ),
+        );
+      search = parsed.data;
+      if (search.mode === "regex") {
+        const admitted = snapshotRegexConfiguration(
+          this.#deadline,
+          this.#heapRequest,
+        );
+        if (!admitted.ok) return admitted;
+        regex = admitted.value;
+      }
+    }
     const installation = await this.#ensureInstallation(
       operation,
       options.signal,
@@ -561,6 +596,8 @@ export class KunaSessionClient implements AnalysisClient {
         parameters,
         installation.value,
         options,
+        search,
+        regex,
       );
       if (!answer.ok)
         return err(kunaQueryFailureForCaller(answer.error, operation));
@@ -796,6 +833,8 @@ export class KunaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     options: ExecutionOptions,
+    search: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<Result<Answer, AnalysisError>> {
     if (operation === "list_documents")
       return ok({
@@ -816,9 +855,22 @@ export class KunaSessionClient implements AnalysisClient {
         options,
       );
     if (operation === "list_strings" || operation === "search_strings")
-      return this.#stringAnswer(operation, parameters, installation, options);
+      return this.#stringAnswer(
+        operation,
+        parameters,
+        installation,
+        options,
+        search,
+        regex,
+      );
     if (operation === "list_procedures" || operation === "search_procedures")
-      return this.#procedureList(operation, parameters, installation, options);
+      return this.#procedureList(
+        operation,
+        installation,
+        options,
+        search,
+        regex,
+      );
     const index = await this.#ensureIndex(installation, options);
     if (!index.ok) return index;
     if (operation === "address_name")
@@ -936,6 +988,8 @@ export class KunaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     options: ExecutionOptions,
+    search: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<Result<Answer, AnalysisError>> {
     const answer = await this.#own(
       this.#strings.execute(
@@ -946,6 +1000,8 @@ export class KunaSessionClient implements AnalysisClient {
           this.#session.signal,
           ...(options.signal === undefined ? [] : [options.signal]),
         ]),
+        search,
+        regex,
       ),
     );
     return answer.ok
@@ -961,30 +1017,23 @@ export class KunaSessionClient implements AnalysisClient {
 
   async #procedureList(
     operation: "list_procedures" | "search_procedures",
-    parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     options: ExecutionOptions,
+    query: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<Result<Answer, AnalysisError>> {
-    const query =
-      operation === "search_procedures"
-        ? analysisSearchQuerySchema.safeParse(parameters)
-        : undefined;
-    if (query !== undefined && !query.success)
-      return err(
-        analysisInputErrorFromIssues(operation, query.error.issues, parameters),
-      );
     const index = await this.#ensureIndex(installation, options);
     if (!index.ok) return index;
     const { inventory, data, unplaced } = index.value;
     let matches: ((name: string) => boolean) | undefined;
-    if (query?.success === true) {
-      if (query.data.mode === "regex") {
+    if (query !== undefined) {
+      if (query.mode === "regex") {
         // Each distinct spelling is matched once, however many entries share it.
         let names: readonly string[] = [];
         const matched = await this.#queryWork.match({
           operation,
-          pattern: query.data.pattern,
-          caseSensitive: query.data.case_sensitive,
+          pattern: query.pattern,
+          caseSensitive: query.case_sensitive,
           values: () =>
             (names = [
               ...new Set(
@@ -992,13 +1041,14 @@ export class KunaSessionClient implements AnalysisClient {
               ),
             ]),
           signal: options.signal,
+          ...regex,
         });
         if (!matched.ok) return matched;
         const accepted = new Set(
           matched.value.map((position) => names[position]!),
         );
         matches = (name) => accepted.has(name);
-      } else matches = analysisSearchPredicate(query.data);
+      } else matches = analysisSearchPredicate(query);
     }
     // Search matches every name exact lookup accepts: the primary name and
     // Kuna's aliases. Each entry stays one row under its primary name.
@@ -1602,11 +1652,24 @@ export class KunaSessionClient implements AnalysisClient {
       return err(
         new AnalysisCancelledError(operation, { cause: signal.reason }),
       );
+    if (signal.aborted) {
+      admitted();
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
+    }
+    let deadline: KunaDeadline;
+    try {
+      deadline = kunaFunctionDeadline(installation.configuration);
+    } catch (cause: unknown) {
+      admitted();
+      throw cause;
+    }
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["decompile", input, address, "--addr"],
       operation,
-      deadline: kunaFunctionDeadline(installation.configuration),
+      deadline,
       outputBytes: KUNA_FUNCTION_TEXT_BYTES,
       signal,
       releaseRun: admitted,
@@ -2037,6 +2100,9 @@ export class KunaSessionClient implements AnalysisClient {
   }
 
   async #lookupOrBuild(installation: KunaInstallation): Promise<void> {
+    this.#acceptedProjectDeadline ??= kunaProjectDeadline(
+      installation.configuration,
+    );
     const key = kunaProjectKey({
       targetSha256: this.#target.sha256,
       targetBasename: basename(this.#target.path),
@@ -2065,6 +2131,9 @@ export class KunaSessionClient implements AnalysisClient {
         targetPath: this.#target.path,
         targetSha256: this.#target.sha256,
         signal: this.#session.signal,
+        ...(this.#acceptedProjectDeadline === undefined
+          ? {}
+          : { deadline: this.#acceptedProjectDeadline }),
         onStatus: (status) => {
           this.#status = status;
           if (status.inventory !== null) listed(status.inventory);
@@ -2120,6 +2189,7 @@ export class KunaSessionClient implements AnalysisClient {
     this.#project = undefined;
     this.#status = undefined;
     this.#exportFailure = undefined;
+    this.#acceptedProjectDeadline = undefined;
   }
 
   #adopt(project: KunaProject): void {
@@ -2327,10 +2397,18 @@ export class KunaSessionClient implements AnalysisClient {
       // The session owns the shared run; each caller only stops waiting.
       const run = this.#listInventory(installation);
       this.#inventory = run;
-      void run.then((listed) => {
-        // A failed listing is retried by the next request.
-        if (!listed.ok && this.#inventory === run) this.#inventory = undefined;
-      });
+      void run.then(
+        (listed) => {
+          // A failed listing is retried by the next request.
+          if (!listed.ok && this.#inventory === run)
+            this.#inventory = undefined;
+        },
+        () => {
+          // Unexpected rejections remain visible to waiters but cannot poison
+          // the shared cache or create a second unhandled rejection.
+          if (this.#inventory === run) this.#inventory = undefined;
+        },
+      );
     }
     return waitFor(this.#inventory, options.signal, "list_procedures");
   }
@@ -2349,11 +2427,24 @@ export class KunaSessionClient implements AnalysisClient {
     if (this.#reader !== undefined) return ok(this.#reader.project.inventory);
     const exported = await this.#exportInventory;
     if (exported !== undefined) return ok(exported);
+    if (this.#session.signal.aborted)
+      return err(
+        new AnalysisCancelledError("list_procedures", {
+          cause: this.#session.signal.reason,
+        }),
+      );
+    let deadline: KunaDeadline;
+    try {
+      deadline = kunaFunctionDeadline(installation.configuration);
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["functions", input, "--json"],
       operation: "list_procedures",
-      deadline: kunaFunctionDeadline(installation.configuration),
+      deadline,
       outputBytes: KUNA_INVENTORY_OUTPUT_BYTES,
       signal: this.#session.signal,
     });
