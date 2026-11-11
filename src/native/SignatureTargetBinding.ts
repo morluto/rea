@@ -114,10 +114,19 @@ export const withSignatureTarget = async (
         assertRegularFileActive(signal);
         root = await createRoot();
       } catch (cause: unknown) {
-        return err(
+        const failure =
           cause instanceof RegularFileOperationCancelled
             ? signatureReadFailure(target, cause)
-            : snapshotFailure(target, "create", cause),
+            : snapshotFailure(target, "create", cause);
+        return err(
+          signal?.aborted
+            ? analysisErrorWithCancellation(
+                cause === signal.reason ? undefined : failure,
+                new AnalysisCancelledError("inspect_signature", {
+                  cause: signal.reason,
+                }),
+              )
+            : failure,
         );
       }
       const children = new ArtifactResourceScope();

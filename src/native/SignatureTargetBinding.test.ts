@@ -457,6 +457,59 @@ it.each([false, true])(
   },
 );
 
+it("retains late cancellation when creating the signature root fails", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during root creation" };
+  const physical = Object.assign(new Error("denied root creation"), {
+    code: "EACCES",
+  });
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw physical;
+    },
+  );
+  if (result.ok) throw new Error("Expected root creation failure");
+  expect(result.error.cause).toBe(physical);
+  expect(result.error.secondaryFailures).toHaveLength(1);
+  expect(result.error.secondaryFailures[0]).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+  expect(result.error.cleanupIncomplete).toBe(false);
+  await resources.close();
+});
+
+it("does not adopt a typed caller abort reason as a root-creation failure", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = new ProviderCleanupError("foreign", ["unowned"], {});
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw reason;
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+  expect(result.error.cleanupResources).not.toContain("unowned");
+  await resources.close();
+});
+
 it.each([false, true])(
   "retains late cancellation after a signature failure while root cleanup fails: %s",
   async (cleanupFails) => {
