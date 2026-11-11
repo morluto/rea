@@ -45,7 +45,8 @@ settings. They are not on the restart-only list.
 | Runtime analysis settings                                             |                  17 (14 have an `REA_` seed; 3 are per-call parameters only) |
 | Per-call numeric `REA_` limits still read from the launch environment |                                                                           11 |
 | Restart-only numeric `REA_` limits                                    |                                                                           15 |
-| Numeric `REA_` names discovered in `src`                              |                                                                           40 |
+| Numeric `REA_` candidates recognized in TypeScript source             |                                                                           38 |
+| Numeric `REA_` controls with external or generated-reader provenance |                                                                            2 |
 | Non-numeric `REA_` settings kept restart-only                         | 52 caller settings, plus process-protocol names that are not caller settings |
 | Hardcoded ceilings left for follow-up                                 |                        grouped below; none converted in the inventory change |
 
