@@ -6,7 +6,10 @@ import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
-import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import {
+  analysisSettingDefinition,
+  analysisSettingLimit,
+} from "../domain/analysisSettingDefinitions.js";
 import {
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
   DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
@@ -587,6 +590,13 @@ export const createGhidraProviderClient = (input: {
         diagnostics: ghidraInstallationDiagnostics(installation),
       }),
     );
+  // An invalid decompile seed is refused only by operations that use it.
+  let launcherDecompileTimeout: number | undefined;
+  try {
+    launcherDecompileTimeout = config.ghidraDecompileTimeoutSeconds;
+  } catch (cause: unknown) {
+    if (!(cause instanceof ConfigurationError)) throw cause;
+  }
   const client = clientFactory({
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
@@ -650,9 +660,9 @@ export const createGhidraProviderClient = (input: {
       ...(config.ghidraDisabledAnalyzers === undefined
         ? {}
         : { disabledAnalyzers: config.ghidraDisabledAnalyzers }),
-      ...(config.ghidraDecompileTimeoutSeconds === undefined
+      ...(launcherDecompileTimeout === undefined
         ? {}
-        : { decompileTimeoutSeconds: config.ghidraDecompileTimeoutSeconds }),
+        : { decompileTimeoutSeconds: launcherDecompileTimeout }),
       ...(seeds === undefined ? {} : { analysisSeeds: seeds }),
       platform: installation.platform,
       ...(extensions.length === 0 ? {} : { analysisExtensions: extensions }),
@@ -989,24 +999,50 @@ export const createGhidraProviderClient = (input: {
         input = { ...parsed, namingRequest: null };
       } else input = parseGhidraInventoryInput(operation, parameters);
       if (!input.ok) return input;
+      const decompile = analysisSettingDefinition(
+        "ghidra.decompile_timeout_seconds",
+      ).operations.includes(operation);
+      const valueFlow = analysisSettingDefinition(
+        "ghidra.value_flow_max_operations",
+      ).operations.includes(operation);
+      const selectLimits = () => ({
+        ...(decompile
+          ? {
+              decompileTimeoutSeconds:
+                config.ghidraDecompileTimeoutSeconds ?? null,
+              decompileMaxPayloadMiB:
+                config.ghidraDecompileMaxPayloadMiB ?? null,
+            }
+          : {}),
+        ...(valueFlow
+          ? {
+              valueFlowLimits: {
+                max_operations:
+                  config.ghidraValueFlowMaxOperations ??
+                  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+                max_inputs_per_operation:
+                  config.ghidraValueFlowMaxInputsPerOperation ??
+                  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+                max_edges:
+                  config.ghidraValueFlowMaxEdges ??
+                  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+              },
+            }
+          : {}),
+      });
+      let operationLimits: ReturnType<typeof selectLimits>;
+      try {
+        operationLimits = selectLimits();
+      } catch (cause: unknown) {
+        if (cause instanceof ConfigurationError) return err(cause);
+        throw cause;
+      }
       // A report binds before any query runs. The client shares one startup
       // attempt, so `callTool` reuses this launch; a restart is checked again.
       const started = await startSession(operation, options);
       if (!started.ok) return started;
       const called = await client.callTool(operation, input.value, {
-        decompileTimeoutSeconds: config.ghidraDecompileTimeoutSeconds ?? null,
-        decompileMaxPayloadMiB: config.ghidraDecompileMaxPayloadMiB ?? null,
-        valueFlowLimits: {
-          max_operations:
-            config.ghidraValueFlowMaxOperations ??
-            DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
-          max_inputs_per_operation:
-            config.ghidraValueFlowMaxInputsPerOperation ??
-            DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
-          max_edges:
-            config.ghidraValueFlowMaxEdges ??
-            DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
-        },
+        ...operationLimits,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
         ...(options?.progress === undefined
           ? {}
@@ -1275,7 +1311,6 @@ const projectPrimarySessionError = (
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
 ): AnalysisError => {
-  const startupTimeoutMs = limits.ghidraStartupTimeoutMs;
   const context = {
     cause: failure,
     diagnostics: failure.diagnostics,
@@ -1494,7 +1529,7 @@ const projectPrimarySessionError = (
   if (failure.kind === "analysis_timeout")
     return new AnalysisTimeoutError(
       operation,
-      failure.timeoutMs ?? startupTimeoutMs,
+      failure.timeoutMs ?? limits.ghidraStartupTimeoutMs,
       context,
     );
   if (
@@ -1596,7 +1631,7 @@ const projectPrimarySessionError = (
   });
   if (killed !== undefined) return killed;
   if (failure.kind === "timeout") {
-    const timeoutMs = failure.timeoutMs ?? startupTimeoutMs;
+    const timeoutMs = failure.timeoutMs ?? limits.ghidraStartupTimeoutMs;
     const guidance =
       failure.message === GHIDRA_STARTUP_DEADLINE_ELAPSED
         ? ghidraStartupTimeoutGuidance(timeoutMs, source)
