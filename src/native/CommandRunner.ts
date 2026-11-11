@@ -1,3 +1,8 @@
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -7,6 +12,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
+  type ProcessOwnershipPreparationFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import type {
@@ -55,9 +61,7 @@ export class NativeCommandFailure extends Error {
   readonly cleanupFailures: readonly NativeCommandCleanupFailure[];
   readonly cleanupMarker: ProviderCleanupError | undefined;
   readonly detail: string | null;
-  readonly preparationFailure:
-    | DarwinProcessOwnershipInspectionError
-    | undefined;
+  readonly preparationFailure: ProcessOwnershipPreparationFailure | undefined;
 
   constructor(
     readonly tool: string,
@@ -83,7 +87,10 @@ export class NativeCommandFailure extends Error {
     this.cleanupFailures = options?.cleanupFailures ?? [];
     this.cleanupMarker = options?.cleanupMarker;
     this.preparationFailure =
-      options?.cause instanceof DarwinProcessOwnershipInspectionError
+      options?.cause instanceof DarwinProcessOwnershipInspectionError ||
+      options?.cause instanceof ProcessOwnershipInspectionCancelled ||
+      options?.cause instanceof ProcessOwnershipIdentityBatchFailure ||
+      options?.cause instanceof RegularFileCleanupFailure
         ? options.cause
         : options?.cause instanceof NativeCommandFailure ||
             options?.cause instanceof OwnedCommandFailure
