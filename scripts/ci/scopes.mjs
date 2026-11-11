@@ -636,7 +636,7 @@ const PATH_SCOPES = {
     "src/ghidra/GhidraJavaProperties.ts",
     "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
-    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
     ".github/workflows/ghidra-bridge-sources.yml",
