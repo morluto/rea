@@ -32,16 +32,13 @@ import {
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+  WABT_VERSION,
   MAX_WASM_COMMAND_TIMEOUT_MS,
   WASM_RESOURCE_DEFAULTS,
   WASM_RESOURCE_MAXIMUMS,
   type WasmResourceLimits,
 } from "../domain/wasm/wasmArtifact.js";
-import {
-  WABT_ACCEPTED_RANGE,
-  WABT_PROVIDER_IDENTITY,
-  WABT_VERSION,
-} from "./WabtRelease.js";
+import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 
 /** Recovery names the exhausted per-call byte owner, independently of deadlines. */

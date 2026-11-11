@@ -2076,6 +2076,9 @@ for (const {
         kind: "failed",
         cause: physicalFailure,
       });
+      if (frame.fileCleanupFailure.outcome.kind !== "failed")
+        throw new Error("Expected failed physical read");
+      expect(frame.fileCleanupFailure.outcome.cause).toBe(physicalFailure);
     } else if (readFailsAfterPrefix && selected === "stdout") {
       expect(partial.process.stdout).toMatchObject({
         text: "stdo",

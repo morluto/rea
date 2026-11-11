@@ -16,9 +16,16 @@ const control = vi.hoisted(() => ({
   read: undefined as undefined | (() => Promise<never>),
 }));
 
-it.each([false, true])(
-  "retains verified inspection evidence through close retry (late cancellation: %s)",
-  async (cancelDuringClose) => {
+it.each(
+  (["inspect_macho", "list_architectures"] as const).flatMap((operation) =>
+    [false, true].map((cancelDuringClose) => ({
+      operation,
+      cancelDuringClose,
+    })),
+  ),
+)(
+  "retains verified $operation evidence through close retry (late cancellation: $cancelDuringClose)",
+  async ({ operation, cancelDuringClose }) => {
     const root = await createTestTempDirectory("rea-macho-completed-close-");
     const path = join(root, "fixture.macho");
     await writeFile(path, inspectionImage());
@@ -60,7 +67,7 @@ it.each([false, true])(
       await client.close();
     });
     const result = await client.execute(
-      "inspect_macho",
+      operation,
       { native_command_timeout_ms: 5000 },
       { signal: controller.signal },
     );
@@ -71,7 +78,7 @@ it.each([false, true])(
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([path]);
     expect(result.error.partialObservation).toMatchObject({
-      operation: "inspect_macho",
+      operation,
       parameters: { native_command_timeout_ms: 5000 },
       subject: { local_path: path, digest: { sha256: target.sha256 } },
       normalized_result: { provenance: expect.any(Array) },
@@ -108,9 +115,13 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
-  "retains the producer outcome when cancellation arrives during successful close (producer fails: %s)",
-  async (producerFails) => {
+it.each(
+  (["inspect_macho", "list_architectures"] as const).flatMap((operation) =>
+    [false, true].map((producerFails) => ({ operation, producerFails })),
+  ),
+)(
+  "retains the $operation producer outcome when cancellation arrives during successful close (producer fails: $producerFails)",
+  async ({ operation, producerFails }) => {
     const root = await createTestTempDirectory("rea-macho-cancel-close-");
     const path = join(root, "fixture.macho");
     await writeFile(path, inspectionImage());
@@ -148,7 +159,7 @@ it.each([false, true])(
       await client.close();
     });
     const result = await client.execute(
-      "inspect_macho",
+      operation,
       {},
       { signal: controller.signal },
     );
@@ -174,7 +185,7 @@ it.each([false, true])(
       });
     } else {
       expect(result.error.partialObservation).toMatchObject({
-        operation: "inspect_macho",
+        operation,
         subject: { local_path: path, digest: { sha256: target.sha256 } },
         normalized_result: { provenance: expect.any(Array) },
       });

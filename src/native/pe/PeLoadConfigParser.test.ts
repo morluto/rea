@@ -1,3 +1,4 @@
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { describe, expect, it } from "vitest";
 import {
   inspectPeLoadConfigInputSchema,
@@ -127,14 +128,17 @@ it("preserves pointer precision and unknown flag bits", async () => {
 
 it("honors cancellation before parsing", async () => {
   const bytes = peLoadConfigImage();
-  await expect(
-    parsePeLoadConfig(
-      bytes,
-      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-      AbortSignal.abort(),
-    ),
-  ).rejects.toThrow();
+  const reason = { caller: "before PE load config parsing" };
+  const failure = await parsePeLoadConfig(
+    bytes,
+    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+    inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    AbortSignal.abort(reason),
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "cancelled" });
+  if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+  expect(failure.cause).toBe(reason);
 });
 
 it("retains a callback in virtual-only section storage with unknown file offset", async () => {

@@ -1,10 +1,11 @@
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { z } from "zod";
 
-import type {
-  ArtifactInventoryResult,
-  ArtifactNode,
-  ArtifactOccurrence,
+import {
+  artifactOccurrenceRelationshipCoverage,
+  type ArtifactInventoryResult,
+  type ArtifactNode,
+  type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import {
@@ -256,8 +257,8 @@ const compareOccurrences = (
   const rightNodes = new Map(
     right.nodes.map((item) => [item.artifact_id, item]),
   );
-  const leftRelations = relationsByPath(left);
-  const rightRelations = relationsByPath(right);
+  const leftRelationsFor = relationsForOccurrence(left);
+  const rightRelationsFor = relationsForOccurrence(right);
   const paths = [
     ...new Set([...leftByPath.keys(), ...rightByPath.keys()]),
   ].sort(compareUnicodeCodePoints);
@@ -302,8 +303,10 @@ const compareOccurrences = (
       rightOccurrence,
       leftNode: nodeFor(leftOccurrence, leftNodes),
       rightNode: nodeFor(rightOccurrence, rightNodes),
-      leftRelations: leftRelations.get(path) ?? [],
-      rightRelations: rightRelations.get(path) ?? [],
+      relations: compareRelations(
+        leftRelationsFor(leftOccurrence),
+        rightRelationsFor(rightOccurrence),
+      ),
       rootCovered: coverage.root,
       entriesCovered: coverage.entries,
       evidenceLinks,
@@ -338,8 +341,7 @@ interface ClassifyPathInput {
   readonly rightOccurrence: ArtifactOccurrence | undefined;
   readonly leftNode: ArtifactNode | undefined;
   readonly rightNode: ArtifactNode | undefined;
-  readonly leftRelations: readonly RelationProjection[];
-  readonly rightRelations: readonly RelationProjection[];
+  readonly relations: FactComparison;
   readonly rootCovered: boolean;
   readonly entriesCovered: boolean;
   readonly evidenceLinks: readonly string[];
@@ -420,7 +422,7 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
     if (known.kind) dimensions.push("kind");
     if (known.format) dimensions.push("format");
     if (known.executable) dimensions.push("executable");
-    if (known.relations) dimensions.push("relations");
+    if (input.relations === "changed") dimensions.push("relations");
     if (known.metadata || declaredDigestsDiffer(input))
       dimensions.push("metadata");
     dimensions.push("availability");
@@ -438,6 +440,7 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
     declarationUnknown(input.metadata) ||
     occurrence.kindUnknown ||
     occurrence.formatUnknown ||
+    input.relations === "unknown" ||
     differsWithUnknown(input.leftNode?.format, input.rightNode?.format) ||
     differsWithMissing(
       input.leftNode?.media_type,
@@ -466,20 +469,17 @@ type OccurrencePair = Pick<
   "leftOccurrence" | "rightOccurrence"
 >;
 
-type MetadataComparison = "unchanged" | "changed" | "unknown";
+type FactComparison = "unchanged" | "changed" | "unknown";
 
 interface OccurrenceMetadata {
   /** ASAR storage is an occurrence field, not format metadata. */
-  readonly asarPacking: MetadataComparison;
+  readonly asarPacking: FactComparison;
   /** Every occurrence records `encrypted`, so a pair's comparison is known. */
-  readonly encryption: Exclude<MetadataComparison, "unknown">;
+  readonly encryption: Exclude<FactComparison, "unknown">;
   /** Absent when neither occurrence records a compared declaration. */
-  readonly formatDeclaration: MetadataComparison | "absent";
+  readonly formatDeclaration: FactComparison | "absent";
   /** Unknown when either side could not read a compared field. */
-  readonly formatDeclarationAvailability: Exclude<
-    MetadataComparison,
-    "changed"
-  >;
+  readonly formatDeclarationAvailability: Exclude<FactComparison, "changed">;
 }
 
 /** A declaration that differs even when content is unavailable. */
@@ -513,8 +513,6 @@ const occurrenceDifferences = (input: {
   readonly metadata: OccurrenceMetadata;
   readonly leftOccurrence: ArtifactOccurrence | undefined;
   readonly rightOccurrence: ArtifactOccurrence | undefined;
-  readonly leftRelations: readonly RelationProjection[];
-  readonly rightRelations: readonly RelationProjection[];
 }) => ({
   kind:
     input.leftOccurrence?.artifact_kind !==
@@ -540,24 +538,15 @@ const occurrenceDifferences = (input: {
   ),
   executable:
     input.leftOccurrence?.executable !== input.rightOccurrence?.executable,
-  // A missing content identity prevents inventory from emitting its edges.
-  // An empty projection in that case is unknown, not evidence of no relation.
-  relations:
-    input.leftOccurrence?.artifact_id != null &&
-    input.rightOccurrence?.artifact_id != null &&
-    JSON.stringify(input.leftRelations) !==
-      JSON.stringify(input.rightRelations),
   metadata:
     declaredFactChanged(input.metadata) ||
-    input.leftOccurrence?.entry_kind !== input.rightOccurrence?.entry_kind ||
-    JSON.stringify(input.leftOccurrence?.limitations) !==
-      JSON.stringify(input.rightOccurrence?.limitations),
+    input.leftOccurrence?.entry_kind !== input.rightOccurrence?.entry_kind,
 });
 
 const compareAsarPacking = (
   left: boolean | undefined,
   right: boolean | undefined,
-): MetadataComparison =>
+): FactComparison =>
   left === right
     ? "unchanged"
     : left === undefined || right === undefined
@@ -682,8 +671,7 @@ const changedDimensions = (input: {
   readonly rightNode: ArtifactNode | undefined;
   readonly leftOccurrence: ArtifactOccurrence | undefined;
   readonly rightOccurrence: ArtifactOccurrence | undefined;
-  readonly leftRelations: readonly RelationProjection[];
-  readonly rightRelations: readonly RelationProjection[];
+  readonly relations: FactComparison;
 }): z.infer<typeof comparisonDimensionSchema>[] => {
   const left = input.leftNode;
   const right = input.rightNode;
@@ -703,7 +691,7 @@ const changedDimensions = (input: {
     ],
     ["size", left.size !== right.size],
     ["executable", occurrence.executable],
-    ["relations", occurrence.relations],
+    ["relations", input.relations === "changed"],
     ["metadata", occurrence.metadata || metadataChanged(left, right)],
   ];
   return checks
@@ -716,8 +704,7 @@ const metadataChanged = (left: ArtifactNode, right: ArtifactNode): boolean =>
     !differsWithMissing(left.media_type, right.media_type)) ||
   (left.architecture !== right.architecture &&
     !differsWithMissing(left.architecture, right.architecture)) ||
-  left.content_state !== right.content_state ||
-  JSON.stringify(left.limitations) !== JSON.stringify(right.limitations);
+  left.content_state !== right.content_state;
 
 const nodeFor = (
   occurrence: ArtifactOccurrence | undefined,
@@ -727,10 +714,16 @@ const nodeFor = (
     ? undefined
     : nodes.get(occurrence.artifact_id);
 
-const relationsByPath = (
+/** An empty projection means observed absence. Missing edges or parent facts leave it unavailable. */
+const relationsForOccurrence = (
   inventory: InventorySet,
-): ReadonlyMap<string, readonly RelationProjection[]> => {
+): ((
+  occurrence: ArtifactOccurrence | undefined,
+) => readonly RelationProjection[] | undefined) => {
+  if (inventory.edges.length !== inventory.manifest.edge_count)
+    return () => undefined;
   const output = new Map<string, RelationProjection[]>();
+  const unresolvedPaths = new Set<string>();
   const occurrences = new Map(
     inventory.occurrences.map((item) => [item.occurrence_id, item]),
   );
@@ -739,13 +732,17 @@ const relationsByPath = (
     // An incomplete inventory can omit the occurrence that names the child.
     if (occurrence?.artifact_id === null || occurrence === undefined) continue;
     const path = occurrence.logical_path;
+    const parent =
+      occurrence.parent_occurrence_id === null
+        ? null
+        : occurrences.get(occurrence.parent_occurrence_id);
+    if (parent === undefined) {
+      unresolvedPaths.add(path);
+      continue;
+    }
     const values = output.get(path);
     const projection: RelationProjection = {
-      parent_logical_path:
-        occurrence.parent_occurrence_id === null
-          ? null
-          : (occurrences.get(occurrence.parent_occurrence_id)?.logical_path ??
-            null),
+      parent_logical_path: parent?.logical_path ?? null,
       // Containment roots are path-normalized to avoid graph-wide deltas, but
       // a source map's target is a semantic content identity, not its parent
       // directory. Preserve that identity in the relation comparison.
@@ -763,7 +760,23 @@ const relationsByPath = (
     values.sort((left, right) =>
       compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
     );
-  return output;
+  return (occurrence) => {
+    if (occurrence?.artifact_id == null) return undefined;
+    if (artifactOccurrenceRelationshipCoverage(occurrence) === "unknown")
+      return undefined;
+    const path = occurrence.logical_path;
+    return unresolvedPaths.has(path) ? undefined : (output.get(path) ?? []);
+  };
+};
+
+const compareRelations = (
+  left: readonly RelationProjection[] | undefined,
+  right: readonly RelationProjection[] | undefined,
+): FactComparison => {
+  if (left === undefined || right === undefined) return "unknown";
+  return JSON.stringify(left) === JSON.stringify(right)
+    ? "unchanged"
+    : "changed";
 };
 
 interface RelationProjection {

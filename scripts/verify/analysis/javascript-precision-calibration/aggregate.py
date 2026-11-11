@@ -13,14 +13,28 @@ def main():
     parser.add_argument('inputs', type=Path)
     parser.add_argument('output', type=Path)
     options = parser.parse_args()
+    expected = {f'r{trial}-{task}-{budget}' for trial in [1, 2, 3]
+                for task in ['theme', 'ms'] for budget in ['default', 'double']}
+    paths = sorted(options.inputs.glob('*.metrics.json'))
+    observed = {path.name.removesuffix('.metrics.json') for path in paths}
+    if observed != expected:
+        raise ValueError(f'Expected the complete twelve-trial receipt set; missing={sorted(expected - observed)}, unexpected={sorted(observed - expected)}')
     encoder = tiktoken.get_encoding('cl100k_base')
     def compact(value):
         return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
     rows = []
-    for path in sorted(options.inputs.glob('*.metrics.json')):
+    for path in paths:
         metrics = json.loads(path.read_text())
+        if not (metrics['exit_code'] == 0 and metrics['stop_reason'] is None
+                and metrics['observer_error'] is None and metrics['cleanup'] == 'group_empty'
+                and metrics['remaining_group_pids'] == [] and metrics['signal_errors'] == []):
+            raise ValueError(f'Unsuccessful or unconfirmed observer receipt: {path.name}')
         record = json.loads(path.with_name(path.name.replace('.metrics.json', '.replies.json')).read_text())
         summary = json.loads(path.with_suffix('.stdout').read_text())
+        name = path.name.removesuffix('.metrics.json')
+        if (record['exit_code'] != 0 or
+                name != f"{name.split('-')[0]}-{summary['case']}-{summary['budget']}"):
+            raise ValueError(f'CLI receipt identity or completion disagrees: {path.name}')
         tokens = {
             'arguments': len(encoder.encode(compact(record['argv']))),
             'reply': len(encoder.encode(compact(json.loads(record['stdout'])))),
