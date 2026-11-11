@@ -21,20 +21,17 @@ const manifest: RecordingManifest = {
 };
 
 const witness = async (): Promise<EndedWitness> => {
-  const parsed = parseDesktopTask(
-    {
-      name: "add-eggs",
-      prompt: "Add eggs.",
-      checks: [
-        {
-          kind: "lines_present",
-          file: "Documents/today.txt",
-          lines: ["eggs"],
-        },
-      ],
-    },
-    (name) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name),
-  );
+  const parsed = parseDesktopTask({
+    name: "add-eggs",
+    prompt: "Add eggs.",
+    checks: [
+      {
+        kind: "lines_present",
+        file: "Documents/today.txt",
+        lines: ["eggs"],
+      },
+    ],
+  });
   if (!parsed.ok) throw new Error(parsed.error);
   return {
     task: parsed.value,

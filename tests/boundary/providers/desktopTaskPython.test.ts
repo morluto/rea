@@ -157,11 +157,17 @@ async def run():
         second = asyncio.create_task(other.verify("http://mcp", "http://computer:8080"))
         results, _ = await asyncio.gather(first, second)
         return results, first_error
+    if scenario.get("report_failure"):
+        try:
+            await module.verify("http://mcp", "http://computer:8080")
+        except BaseException as error:
+            return [], first_error or str(error) + " ".join(getattr(error, "__notes__", ()))
+        raise AssertionError("the controlled reader failure did not occur")
     results = await module.verify("http://mcp", "http://computer:8080")
     return results, first_error
 
 results, first_error = asyncio.run(run())
-print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs, "first_error": first_error}))
+print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs, "first_error": first_error, "pending_readers": len(module._PENDING_READERS) if hasattr(module, "_PENDING_READERS") else 0}))
 `;
 
 type VerifierOutput = {
@@ -170,6 +176,7 @@ type VerifierOutput = {
   reads: number[];
   ended: number;
   first_error: string | null;
+  pending_readers: number;
   results: {
     id: string;
     result: boolean;
@@ -194,6 +201,7 @@ const runVerifier = async (
     readonly reloadVerifier?: boolean;
     readonly concurrent?: boolean;
     readonly parallelRetry?: boolean;
+    readonly reportFailure?: boolean;
   } = {},
 ): Promise<VerifierOutput> => {
   const folder = await createTestTempDirectory("desktop-task-python-");
@@ -232,6 +240,7 @@ const runVerifier = async (
         reload_verifier: computer.reloadVerifier,
         concurrent: computer.concurrent,
         parallel_retry: computer.parallelRetry,
+        report_failure: computer.reportFailure,
       }),
       encoding: "utf8",
     }),
@@ -634,5 +643,62 @@ it.each([
         ...computer,
       }),
     ).rejects.toThrow(message);
+  },
+);
+
+it.each([
+  { transport: false, pending: 0 },
+  { transport: true, pending: 1 },
+])(
+  "preserves completed views and absence when a later reader fails (transport: $transport)",
+  async ({ transport, pending }) => {
+    const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+      readers: [READERS[0]!, READERS[3]!, READERS[2]!],
+      answers: {
+        layers: ANSWERS.layers,
+        gone: ANSWERS.gone,
+        ...(transport ? {} : { broken: "broken runner answer" }),
+      },
+      reportFailure: true,
+    });
+    expect(output.first_error).toContain("broken");
+    const facts =
+      /completed reader views: (.*); completed reader absent: (.*)$/u.exec(
+        output.first_error ?? "",
+      );
+    expect(facts).not.toBeNull();
+    expect(JSON.parse(facts![1]!)).toEqual({
+      layers: (ANSWERS.layers as { view: unknown }).view,
+    });
+    expect(JSON.parse(facts![2]!)).toEqual(["gone"]);
+    expect(output.pending_readers).toBe(pending);
+  },
+);
+
+it.each([false, true])(
+  "keeps a malformed reader answer primary alongside cleanup and retry (retry: %s)",
+  async (retry) => {
+    const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+      readers: [READERS[2]!],
+      answers: { broken: "invalid runner payload" },
+      cleanupFailures: 1,
+      reportFailure: true,
+      retry,
+    });
+    expect(output.first_error).toContain("did not answer for broken");
+    expect(output.first_error).toContain("invalid runner payload");
+    expect(output.first_error).toContain("permission denied");
+    expect(output.first_error).toContain("/tmp/rea-reader-");
+    expect(output.pending_readers).toBe(retry ? 0 : 1);
+    if (retry) {
+      const cleanups = output.execs.filter(({ request_id }) =>
+        String(request_id).startsWith("rea-reader-cleanup-"),
+      );
+      expect(cleanups).toHaveLength(3);
+      const lease = (entry: Record<string, unknown>) =>
+        JSON.parse((entry.argv as string[])[4]!);
+      expect(lease(cleanups[1]!)).toEqual(lease(cleanups[0]!));
+      expect(lease(cleanups[2]!)).not.toEqual(lease(cleanups[0]!));
+    }
   },
 );

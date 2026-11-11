@@ -53,7 +53,6 @@ POLL_S = 0.05
 DRAIN_S = 2.0
 MAX_LINES = 5000
 MAX_SAFE_INTEGER = 2**53 - 1
-LINE_BREAK = re.compile(r"\r?\n")
 SESSION = ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY")
 NEVER = ("DBUS_SESSION_BUS_ADDRESS", "SESSION_MANAGER", "XDG_RUNTIME_DIR")
 FRESH = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_CACHE_HOME", ".cache"),
@@ -167,7 +166,14 @@ def _run(arguments: dict, source: str, work: str) -> dict:
         return {"error": f"the reader ran past its {timeout} s{_tail(stderr)}"}
     if process.returncode != 0:
         return {"error": f"the reader exited {process.returncode}{_tail(stderr)}"}
-    lines = [line[len(MARKER):] for line in LINE_BREAK.split(printed.decode("utf-8", "replace")) if line.startswith(MARKER)]
+    # Unmarked startup text is not observation data. Decode only marked rows,
+    # without replacing malformed bytes with characters the reader never gave.
+    try:
+        marker = MARKER.encode("ascii")
+        lines = [line[len(marker):].removesuffix(b"\r").decode("utf-8")
+                 for line in printed.split(b"\n") if line.startswith(marker)]
+    except UnicodeDecodeError:
+        return {"error": "the reader's marked output is not valid UTF-8"}
     if not lines:
         return {"error": f"the reader printed no line starting with {json.dumps(MARKER)}{_tail(stderr)}"}
     return _view(arguments["output"], lines)
@@ -181,9 +187,9 @@ def main(arguments: dict) -> int:
     except (FileNotFoundError, NotADirectoryError):
         return _say({"absent": True})
     except OSError as error:
-        return _say({"error": f"could not inspect the reader's file: {error.strerror or error}"})
+        return _say({"error": f"cannot inspect the reader's source: {error.strerror or error}"})
     if not stat.S_ISREG(mode):
-        return _say({"absent": True})
+        return _say({"error": "the reader's source is not a regular file"})
     # A remote caller owns this exact folder before starting the command, and
     # removes it only after the command has settled.
     lease = arguments.get("lease")
@@ -397,46 +403,56 @@ async def _reader_views(env_url, card):
     if protocol.find_extension(card, EXEC) is None:
         raise RuntimeError(f"the computer at {env_url} offers no {EXEC}, which runs the task's readers")
     await _cleanup_readers(env_url, card)
-    views = {}
-    for reader in READERS:
-        token = uuid.uuid4().hex
-        lease = {"path": f"/tmp/rea-reader-{token}", "token": token}
-        arguments = json.loads("".join(reader["arguments"]))
-        arguments["lease"] = lease
-        encoded = json.dumps(arguments)
-        params = {"argv": ["python3", "-I", "-c", READER_RUNNER,
-                           *(encoded[i:i + 8192] for i in range(0, len(encoded), 8192))],
-                  "request_id": f"rea-reader-{token}",
-                  "timeout_s": reader["timeout_s"] + RUNNER_SLACK_S}
-        task = _owned_task(protocol.invoke_extension(
-            env_url, card, EXEC, params, method="run", timeout=reader["timeout_s"] + 2 * RUNNER_SLACK_S))
-        _PENDING_READERS[token] = {"env_url": env_url, "lease": lease, "task": task,
-                                   "request_id": params["request_id"], "settled": False, "abandoned": False}
-        try:
-            answer = await asyncio.shield(task)
-        except BaseException as error:
-            _PENDING_READERS[token]["abandoned"] = True
-            error.add_note(f"Reader command {params['request_id']} and folder {lease['path']} remain owned for retry.")
-            raise
-        if not isinstance(answer, dict) or answer.get("timed_out"):
-            _PENDING_READERS[token]["abandoned"] = True
-            raise RuntimeError(f"Reader {params['request_id']} may still be running; retained {lease['path']}")
-        _PENDING_READERS[token]["settled"] = True
-        try:
-            view = _reader_answer(reader["id"], answer)
-            if view is not None:
-                views[reader["id"]] = view
-        finally:
+    views, absent = {}, []
+    try:
+        for reader in READERS:
+            token = uuid.uuid4().hex
+            lease = {"path": f"/tmp/rea-reader-{token}", "token": token}
+            arguments = json.loads("".join(reader["arguments"]))
+            arguments["lease"] = lease
+            encoded = json.dumps(arguments)
+            params = {"argv": ["python3", "-I", "-c", READER_RUNNER,
+                               *(encoded[i:i + 8192] for i in range(0, len(encoded), 8192))],
+                      "request_id": f"rea-reader-{token}",
+                      "timeout_s": reader["timeout_s"] + RUNNER_SLACK_S}
+            task = _owned_task(protocol.invoke_extension(
+                env_url, card, EXEC, params, method="run", timeout=reader["timeout_s"] + 2 * RUNNER_SLACK_S))
+            _PENDING_READERS[token] = {"env_url": env_url, "lease": lease, "task": task,
+                                       "request_id": params["request_id"], "settled": False, "abandoned": False}
+            try:
+                answer = await asyncio.shield(task)
+            except BaseException as error:
+                _PENDING_READERS[token]["abandoned"] = True
+                error.add_note(f"Reader command {params['request_id']} and folder {lease['path']} remain owned for retry.")
+                raise
+            if not isinstance(answer, dict) or answer.get("timed_out"):
+                _PENDING_READERS[token]["abandoned"] = True
+                raise RuntimeError(f"Reader {params['request_id']} may still be running; retained {lease['path']}")
+            _PENDING_READERS[token]["settled"] = True
+            failure = None
+            try:
+                view = _reader_answer(reader["id"], answer)
+                if view is None:
+                    absent.append(reader["id"])
+                else:
+                    views[reader["id"]] = view
+            except BaseException as error:
+                failure = error
             try:
                 await _cleanup_readers(env_url, card, token)
-            except asyncio.CancelledError as error:
+            except BaseException as error:
                 _PENDING_READERS[token]["abandoned"] = True
-                error.add_note(f"Reader cleanup remains owned for {lease['path']}; completed reader views: {json.dumps(views)}")
+                if failure is not None:
+                    failure.add_note(f"Reader cleanup remains owned for {lease['path']}: {type(error).__name__}: {error}")
+                    raise failure from error
+                error.add_note(f"Reader cleanup remains owned for {lease['path']}")
                 raise
-            except Exception as error:
-                _PENDING_READERS[token]["abandoned"] = True
-                raise RuntimeError(f"{error}; completed reader views: {json.dumps(views)}") from error
-    return views
+            if failure is not None:
+                raise failure
+        return views
+    except BaseException as error:
+        error.add_note(f"completed reader views: {json.dumps(views)}; completed reader absent: {json.dumps(absent)}")
+        raise
 
 
 def evaluate_with_readers(checks: list, views: dict, readers: dict) -> list:
