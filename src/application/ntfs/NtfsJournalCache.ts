@@ -1,7 +1,7 @@
 import type { BigIntStats } from "node:fs";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
-import type { MftImage } from "../../domain/windows/ntfsMft.js";
+import type { MftIndex } from "../../domain/windows/ntfsMft.js";
 import { createUsnMftCorrelator } from "../../domain/windows/ntfsJournalCorrelation.js";
 
 export interface NtfsAcquisition {
@@ -12,7 +12,7 @@ export interface NtfsAcquisition {
 export interface NtfsJournalPair {
   readonly mft: NtfsAcquisition;
   readonly journal: NtfsAcquisition;
-  readonly image: MftImage;
+  readonly image: MftIndex;
   readonly correlate: ReturnType<typeof createUsnMftCorrelator>;
 }
 
@@ -43,7 +43,7 @@ export class NtfsJournalCache {
   retain(
     mft: NtfsAcquisition,
     journal: NtfsAcquisition,
-    image: MftImage,
+    image: MftIndex,
   ): NtfsJournalPair {
     const pair = {
       mft,

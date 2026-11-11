@@ -1,3 +1,9 @@
+import {
+  ntfsFileReferenceSchema,
+  ntfsFileNameSchema,
+  ntfsAttributeSchema,
+  ntfsAttributeIssueSchema,
+} from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
 import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
 
@@ -300,25 +306,6 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   last_line: offset,
 });
 
-const ntfsFileReferenceSchema = z.strictObject({
-  recordNumber: offset,
-  sequenceNumber: offset,
-});
-const unsignedDecimalSchema = z.string().regex(/^(?:0|[1-9][0-9]*)$/u);
-export const ntfsFileNameSchema = z.strictObject({
-  fileOffset: offset,
-  parent: ntfsFileReferenceSchema,
-  namespace: offset,
-  name: z.string(),
-  createdFileTime: unsignedDecimalSchema,
-  modifiedFileTime: unsignedDecimalSchema,
-  mftChangedFileTime: unsignedDecimalSchema,
-  accessedFileTime: unsignedDecimalSchema,
-  allocatedBytes: unsignedDecimalSchema,
-  dataBytes: unsignedDecimalSchema,
-  fileAttributes: offset,
-  reparseOrEa: offset,
-});
 const ntfsRecordHeaderSchema = z.strictObject({
   index: offset,
   fileOffset: offset,
@@ -341,6 +328,9 @@ const ntfsRecordHeaderSchema = z.strictObject({
   firstAttributeOffset: offset,
   nextAttributeId: offset,
   fileNames: z.array(ntfsFileNameSchema).exactOptional(),
+  attributes: z.array(ntfsAttributeSchema).exactOptional(),
+  attributeCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeIssue: ntfsAttributeIssueSchema.nullable().exactOptional(),
   fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
   fixups: z.strictObject({
     sequenceNumber: offset,
@@ -367,6 +357,7 @@ export const ntfsMftMetadataSchema = z.strictObject({
   omitted_record_headers: offset,
   file_name_count: offset.exactOptional(),
   file_name_incomplete_record_count: offset.exactOptional(),
+  attribute_incomplete_record_count: offset.exactOptional(),
 });
 
 /**

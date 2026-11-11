@@ -41,7 +41,7 @@ import {
   ntfsJournalResultSchema,
 } from "../../domain/windows/ntfsJournalQuery.js";
 import { composeNtfsJournalTimeline } from "../../domain/windows/ntfsJournalTimeline.js";
-import { parseMftImage, type MftImage } from "../../domain/windows/ntfsMft.js";
+import { parseMftIndex, type MftIndex } from "../../domain/windows/ntfsMft.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -161,7 +161,7 @@ type NtfsInput = ReturnType<typeof ntfsJournalInputSchema.parse>;
 const retainCompletedMft = (
   input: NtfsInput,
   mft: NtfsAcquisition,
-  image: MftImage,
+  image: MftIndex,
   failure: AnalysisError,
 ) => {
   const prior =
@@ -267,7 +267,7 @@ const inspectAdmittedJournal = async (
   }
   const parsed =
     retained === undefined
-      ? parseMftImage(mft.value.snapshot.bytes)
+      ? parseMftIndex(mft.value.snapshot.bytes)
       : ok(retained.image);
   if (!parsed.ok)
     return err(
