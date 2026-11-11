@@ -72,6 +72,13 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
   );
   expect(inventory.manifest.root_format).toBe("ntfs-mft");
   expect(inventory.coverage.status).toBe("complete");
+  const limitations = inventory.limitations.join(" ");
+  expect(limitations).not.toMatch(
+    /attributes, filenames.*not decoded|no path, file size/iu,
+  );
+  expect(limitations).toContain(
+    "Nonresident payloads and extension records are not assembled",
+  );
   // A record stream declares no members, so the root is its whole inventory.
   expect(inventory.occurrences.map((row) => row.logical_path)).toEqual(["."]);
   expect(inventory.occurrences[0]).toMatchObject({
@@ -85,6 +92,13 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
       extension_record_count: 0,
       fixup_mismatch_count: 0,
       fixup_unverified_record_count: 0,
+      record_headers: [
+        {
+          fileNames: [{ name: "sample" }],
+          attributes: [{ type: 0x30, storage: { kind: "resident" } }],
+        },
+        {},
+      ],
       file_name_count: 1,
       file_name_incomplete_record_count: 0,
       truncated_tail_bytes: 0,
