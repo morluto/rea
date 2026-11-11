@@ -111,6 +111,16 @@ describe("parseMftImage", () => {
     expect(parsed.value.limitations).toEqual([]);
   });
 
+  it("preserves a log sequence number above the safe integer range", () => {
+    const record = recordOf();
+    new DataView(record.buffer).setBigUint64(8, 9007199254740993n, true);
+    const parsed = parseMftImage(record);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.records[0]?.logFileSequenceNumber).toBe(
+      "9007199254740993",
+    );
+  });
+
   it("verifies the older FILE header without reading its fixup words as a record number", () => {
     const oldRecord = recordOf({ usaOffset: 42 });
     const newRecord = recordOf();
