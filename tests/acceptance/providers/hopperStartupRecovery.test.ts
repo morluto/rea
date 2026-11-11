@@ -222,6 +222,11 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
         },
       },
     });
+    expect(error.remediation.action).toContain("client developer");
+    expect(error.remediation.action).toContain("Terminal");
+    expect(error.remediation.action).toContain(
+      "Retrying from the same unauthorized client will not succeed until authorization changes",
+    );
     const bootstrap = await readFile(receipt, "utf8");
     await expect(access(dirname(bootstrap))).rejects.toMatchObject({
       code: "ENOENT",

@@ -981,8 +981,9 @@ Allow the application that starts REA under
 **System Settings → Privacy & Security → Automation** when that client can be
 authorized. A hardened-runtime application requires the
 `com.apple.security.automation.apple-events` entitlement before macOS will
-prompt; without it, grant the entitlement or start REA from a client macOS
-can authorize, such as Terminal. REA releases
+prompt; without it, ask the client developer to add the entitlement or start
+REA from a client macOS can authorize, such as Terminal. Retrying from the same
+unauthorized client will not succeed until authorization changes. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
