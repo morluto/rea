@@ -8,14 +8,16 @@ import { constants as bufferConstants } from "node:buffer";
 import type { EvidenceSubjectTarget } from "../evidence.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
-/** Release banners of the admitted WABT range, owned here so this schema stays pure. */
-const WABT_ACCEPTED_MINOR = 42;
-const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
+/** Exact upstream release whose tool profile REA verified. */
+export const WABT_VERSION = "1.0.42";
+const WABT_MINIMUM_PATCH = Number(WABT_VERSION.split(".")[2]);
+/** Upstream revision known for the verified release only. */
+export const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
 const wabtReleaseBanner = z
   .string()
   .regex(/^1\.0\.\d+$/u)
-  .refine((release) => Number(release.split(".")[2]) >= WABT_ACCEPTED_MINOR, {
-    message: `Expected one admitted WABT banner (^1.0.${String(WABT_ACCEPTED_MINOR)})`,
+  .refine((release) => Number(release.split(".")[2]) >= WABT_MINIMUM_PATCH, {
+    message: `Expected one admitted WABT banner (^1.0.${String(WABT_MINIMUM_PATCH)})`,
   });
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -226,6 +228,16 @@ export const wasmArtifactSchema = z
         "--ignore-custom-section-errors",
       );
     const releaseVersion = value.tool_profile.release;
+    if (
+      value.tool_profile.source_commit !== null &&
+      releaseVersion !== WABT_VERSION
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["tool_profile", "source_commit"],
+        message:
+          "The known WABT source revision applies only to its verified release; other releases require an unknown source commit.",
+      });
     for (const [index, command] of value.tool_profile.commands.entries()) {
       const expected = ["wasm-validate", "wasm-objdump", "wasm2wat"][index];
       const argumentsExpected =

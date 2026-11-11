@@ -14,6 +14,7 @@ import {
   type ReaderLease,
 } from "../../domain/desktop/appTaskReaders.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   AGENTENV_PROVIDER,
   type ComputerRelease,
@@ -137,7 +138,12 @@ export class DesktopRemoteTaskReaders {
           signal.aborted ? this.#cancelled(signal, views, absent) : undefined,
         );
       if (signal.aborted) throw this.#cancelled(signal, views, absent);
-      if (failure !== undefined) throw failure;
+      if (failure !== undefined)
+        throw new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
+          cause: failure,
+          userMessage: `The task reader could not complete: ${failure instanceof Error ? failure.message : String(failure)}`,
+          diagnostics: this.#facts(views, absent),
+        });
     }
     return views;
   }

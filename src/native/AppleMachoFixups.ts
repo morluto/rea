@@ -116,6 +116,8 @@ interface BindRun {
   readonly start: bigint;
   count: bigint;
   readonly stride: bigint;
+  readonly type: number;
+  readonly width: 4 | 8;
   readonly binding:
     | {
         readonly kind: "bind";
@@ -375,6 +377,28 @@ const readChainedPage = (
     failure = cause instanceof Error ? cause.message : String(cause);
   }
   return { locations, lastOffset, failure };
+};
+
+/** A known eight-byte chain word starting elsewhere overlaps this pointer read. */
+const hasPartialChainedPointer = (
+  chain: ChainedSegment,
+  within: number,
+  readPage: (page: number) => ChainedPage | null,
+): boolean => {
+  let page = -1;
+  let facts: ChainedPage | null = null;
+  for (let at = Math.max(0, within - 7); at <= within + 7; at++) {
+    if (at === within || BigInt(at) >= chain.segment.size) continue;
+    const candidatePage = Math.floor(at / chain.pageSize);
+    if (candidatePage !== page) {
+      page = candidatePage;
+      facts = readPage(page);
+    }
+    const offset = at % chain.pageSize;
+    if (((facts?.locations[offset >>> 3] ?? 0) & (1 << (offset & 7))) !== 0)
+      return true;
+  }
+  return false;
 };
 
 const chainedFixups = (
@@ -654,6 +678,45 @@ const chainedFixups = (
           raw,
           reason: `Legacy bind opcodes could overlap this rebase location: ${binds.failures.join("; ")}`,
         };
+      // Reuse one transient view within this lookup even when retained page
+      // storage is full; overlap inspection and value decoding share its facts.
+      let queried:
+        | { chain: ChainedSegment; page: number; facts: ChainedPage }
+        | undefined;
+      const queryPageFacts = (
+        chain: ChainedSegment,
+        page: number,
+        start: number,
+      ): ChainedPage => {
+        if (queried?.chain === chain && queried.page === page)
+          return queried.facts;
+        const facts = pageFacts(chain, page, start);
+        queried = { chain, page, facts };
+        return facts;
+      };
+      if (
+        ranges.some(
+          (chain) =>
+            POINTER_FORMATS[chain.format] !== undefined &&
+            address + 8n > chain.segment.address &&
+            address < chain.segment.address + chain.segment.size &&
+            hasPartialChainedPointer(
+              chain,
+              Number(address - chain.segment.address),
+              (page) => {
+                if (page >= chain.pageCount) return null;
+                const start = bytes.readUInt16LE(chain.pageStarts + page * 2);
+                return start === 0xffff
+                  ? null
+                  : queryPageFacts(chain, page, start);
+              },
+            ),
+        )
+      )
+        return {
+          kind: "unsupported",
+          reason: "A chained fixup partially overlaps the pointer slot",
+        };
       const chainIndex = ranges.findIndex(
         ({ segment }) =>
           address >= segment.address &&
@@ -675,7 +738,7 @@ const chainedFixups = (
           reason: `Unsupported chained pointer format ${chain.format}`,
         };
       try {
-        const facts = pageFacts(chain, page, start);
+        const facts = queryPageFacts(chain, page, start);
         const at = within % chain.pageSize;
         const locations = facts.locations;
         if (((locations[at >>> 3] ?? 0) & (1 << (at & 7))) !== 0) {
@@ -1022,6 +1085,7 @@ const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
 
 /** Registers of the `LC_DYLD_INFO` bind state machine. */
 interface BindState {
+  type: number;
   ordinal: number;
   ordinalFailure: string | null;
   segmentIndex: number;
@@ -1072,6 +1136,7 @@ const setBindRegister = (
       return true;
     }
     case 0x50:
+      state.type = immediate;
       return true;
     case 0x60:
       state.addend = sleb(bytes, cursor, end);
@@ -1106,6 +1171,7 @@ function* readBindStreamSteps(
     throw new RangeError("Bind opcodes exceed the target");
   const cursor = { at: range.offset };
   const state: BindState = {
+    type: range.stream === "lazy" ? 1 : 0,
     ordinal: 0,
     ordinalFailure: null,
     segmentIndex: -1,
@@ -1116,11 +1182,14 @@ function* readBindStreamSteps(
   };
   const preflightRun = (count: bigint, skip: bigint): void => {
     if (count === 0n) return;
+    if (state.type < 1 || state.type > 3)
+      throw new RangeError(`Unsupported legacy bind type ${state.type}`);
     const segment = image.segments[state.segmentIndex];
     if (segment === undefined)
       throw new RangeError("Bind location has no selected segment");
     const stride = 8n + skip;
-    const end = state.address + (count - 1n) * stride + 8n;
+    const width = state.type === 1 ? 8n : 4n;
+    const end = state.address + (count - 1n) * stride + width;
     if (state.address < segment.address || end > segment.address + segment.size)
       throw new RangeError("Bind expansion leaves its file-backed segment");
   };
@@ -1128,22 +1197,29 @@ function* readBindStreamSteps(
     if (count === 0n) return;
     preflightRun(count, skip);
     const stride = 8n + skip;
+    const width = state.type === 1 ? 8 : 4;
     let binding: BindRun["binding"];
     try {
       if (state.ordinalFailure !== null)
         throw new RangeError(state.ordinalFailure);
       const resolvedLibrary = libraryFacts(state.ordinal, image.dylibs);
-      const decoded = resolvedBind(
-        {
-          ...state.symbol,
-          binding_source: range.stream,
-          library_ordinal: state.ordinal,
-          ...(range.stream === "weak" ? { library: null } : resolvedLibrary),
-          weak: state.weak,
-          addend: state.addend,
-        },
-        0n,
-      );
+      const imported: Import = {
+        ...state.symbol,
+        binding_source: range.stream,
+        library_ordinal: state.ordinal,
+        ...(range.stream === "weak" ? { library: null } : resolvedLibrary),
+        weak: state.weak,
+        addend: state.addend,
+      };
+      const decoded =
+        state.type === 1
+          ? resolvedBind(imported, 0n)
+          : {
+              kind: "unsupported" as const,
+              reason:
+                "Legacy non-pointer bind is not a 64-bit metadata pointer",
+              binding: imported,
+            };
       binding =
         decoded.kind === "bind" ? { kind: "bind", value: decoded } : decoded;
     } catch (cause: unknown) {
@@ -1167,13 +1243,21 @@ function* readBindStreamSteps(
           : false;
     if (
       previous !== undefined &&
+      previous.type === state.type &&
       previous.stride === stride &&
       previous.start + previous.count * stride === state.address &&
       sameBinding(previous.binding, binding)
     ) {
       previous.count += count;
     } else {
-      binds.push({ start: state.address, count, stride, binding });
+      binds.push({
+        start: state.address,
+        count,
+        stride,
+        type: state.type,
+        width,
+        binding,
+      });
     }
     // The dyld bind stream advances addresses modulo 64 bits; ld uses -8 to
     // bind the current pointer slot again with DO_BIND_ADD_ADDR_ULEB.
@@ -1237,6 +1321,18 @@ const indexBindRuns = (
   };
 };
 
+/** First producer-owned bind start in an inclusive address interval. */
+const firstBindIn = (
+  run: BindRun,
+  low: bigint,
+  high: bigint,
+): bigint | undefined => {
+  const index =
+    low <= run.start ? 0n : (low - run.start + run.stride - 1n) / run.stride;
+  const address = run.start + index * run.stride;
+  return index < run.count && address <= high ? address : undefined;
+};
+
 /** Visit runs with a bind start in the inclusive interval, without expanding runs. */
 function* bindRunsIn(
   index: BindRunIndex,
@@ -1263,9 +1359,7 @@ function* bindRunsIn(
     index.remaining--;
     candidates++;
     const run = index.runs[at]!;
-    const first =
-      low <= run.start ? 0n : (low - run.start + run.stride - 1n) / run.stride;
-    if (first < run.count && run.start + first * run.stride <= high) yield run;
+    if (firstBindIn(run, low, high) !== undefined) yield run;
   }
 }
 
@@ -1318,9 +1412,11 @@ function* parseLegacyBindsSteps(
     issues.push(
       issue(
         "pointer_fixups",
-        run.binding.binding.symbol === null
-          ? "bind_symbol_text_unavailable"
-          : "bind_library_text_unavailable",
+        run.type !== 1
+          ? "non_pointer_bind"
+          : run.binding.binding.symbol === null
+            ? "bind_symbol_text_unavailable"
+            : "bind_library_text_unavailable",
         run.binding.reason,
         `0x${run.start.toString(16)}`,
       ),
@@ -1350,7 +1446,11 @@ const hasUnresolvedLegacyBytes = (
     return true;
   const first = address - 7n;
   const end = address + BigInt(size);
-  for (const _run of bindRunsIn(binds.index, first, end - 1n)) return true;
+  for (const run of bindRunsIn(binds.index, first, end - 1n))
+    if (
+      firstBindIn(run, address - BigInt(run.width) + 1n, end - 1n) !== undefined
+    )
+      return true;
   if (binds.index.exhausted) return true;
   if (rebases.membership !== null)
     for (let slot = first; slot < end; slot++) {
@@ -1376,10 +1476,13 @@ const hasPartialLegacyPointerWrite = (
   const low = address - 7n;
   const high = address + 7n;
   for (const run of bindRunsIn(binds.index, low, high)) {
-    const first =
-      low <= run.start ? 0n : (low - run.start + run.stride - 1n) / run.stride;
-    const at = run.start + first * run.stride;
-    if (at !== address || (first + 1n < run.count && at + run.stride <= high))
+    const at = firstBindIn(run, address - BigInt(run.width) + 1n, high);
+    if (at === undefined) continue;
+    if (
+      run.width !== 8 ||
+      at !== address ||
+      firstBindIn(run, at + 1n, high) !== undefined
+    )
       return true;
   }
   if (binds.index.exhausted) return true;

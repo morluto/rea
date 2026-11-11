@@ -42,6 +42,7 @@ it("preserves Ghidra relocation symbol values at the inventory boundary", () => 
     const parsed = parseGhidraInventoryResult(
       "inspect_native_load_image",
       jsonValueSchema.parse(observation),
+      null,
     );
     expect(parsed).toMatchObject({
       ok: true,
@@ -348,6 +349,7 @@ it.each(malformedCoordinates)(
       provider: parseGhidraInventoryResult(
         "inspect_native_load_image",
         jsonValueSchema.parse(observation),
+        null,
       ).ok,
     }).toEqual({ shared: false, provider: false });
   },
@@ -366,6 +368,7 @@ it("preserves zero-padded, qualified, and large observation addresses", () => {
   const parsed = parseGhidraInventoryResult(
     "inspect_native_load_image",
     jsonValueSchema.parse(observation),
+    null,
   );
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual(observation);

@@ -1,3 +1,4 @@
+import { dosMz, nonPeWindowsMz } from "../../domain/binaryTarget.fixture.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -779,3 +780,12 @@ it("keeps raw name probing separate from full resource-name alignment admission"
     message: expect.stringMatching(/unaligned.*resource name/iu),
   });
 });
+
+it.each(["DOS", "NE", "LE", "LX"] as const)(
+  "leaves %s targets outside the opportunistic PE resource probe",
+  async (format) => {
+    const bytes = format === "DOS" ? dosMz(1024) : nonPeWindowsMz(format);
+    await expect(probeSeaName(bytes)).resolves.toBe(false);
+    await expect(payloadsOf(bytes)).resolves.toEqual([]);
+  },
+);

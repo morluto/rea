@@ -34,7 +34,10 @@ import {
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/analysisErrorCore.js";
 import {
   BrowserObservationError,
   browserCleanupObservation,
@@ -209,13 +212,17 @@ const executeStep = async (input: {
       await session.perform(action, signal);
     } catch (cause: unknown) {
       outcome = {
-        status: requestCancelled() ? "cancelled" : "failed",
+        status:
+          cause instanceof AnalysisCancelledError ||
+          (cause instanceof AnalysisError && cause.userCategory === "cancelled")
+            ? "cancelled"
+            : "failed",
         error: session.redactError(cause),
       };
     }
   }
   const artifacts =
-    outcome.status === "cancelled"
+    outcome.status === "cancelled" || requestCancelled()
       ? unavailableArtifacts(requested, "scenario request cancelled")
       : await session.capture(requested, signal);
   return createStep({
@@ -496,10 +503,11 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
   }
 
   #closedError(): AnalysisError {
-    return new BrowserObservationError(OPERATION, "cleanup_failed", {
-      detail: "Browser scenario provider is closing.",
-      cleanup: { reason: "Provider is closing", resources: [] },
-    });
+    return new AnalysisCapabilityUnavailableError(
+      PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+      OPERATION,
+      "Browser scenario provider is closing.",
+    );
   }
 
   #bindCleanup(

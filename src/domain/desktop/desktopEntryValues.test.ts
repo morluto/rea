@@ -82,3 +82,16 @@ it("does not broaden Type or Terminal recognition by trimming decoded escapes", 
   if (!parsed.ok) throw new Error(parsed.error);
   expect(parsed.value).toMatchObject({ type: "Application ", terminal: false });
 });
+
+it.each([
+  [String.raw`First\\;Second;`, ["First\\", "Second"]],
+  [String.raw`First\;Second;`, ["First;Second"]],
+  [String.raw`First\\\;Second;`, ["First\\;Second"]],
+  ["First;;", ["First", ""]],
+  ["First;", ["First"]],
+  ["", []],
+])("decodes string-list escapes and terminators once: %s", (wire, expected) => {
+  const parsed = parseDesktopEntry(`[Desktop Entry]\nCategories=${wire}\n`);
+  if (!parsed.ok) throw new Error(parsed.error);
+  expect(parsed.value.categories).toEqual(expected);
+});

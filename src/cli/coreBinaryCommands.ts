@@ -247,6 +247,7 @@ const registerDecompileCommand = (
                 ? "procedure"
                 : "file-offset",
               "procedure_pseudo_code",
+              "native",
             ),
             ...(options.analysis === undefined
               ? {}
@@ -319,6 +320,7 @@ const registerXrefsCommand = (
               options.address,
               "address",
               "xrefs",
+              "native",
             ),
           },
           directAnalysisOptionsFromCli(logger, options),
@@ -443,6 +445,7 @@ const registerFunctionCommand = (
                 options.procedure,
                 "procedure",
                 "analyze_function",
+                "native",
               ),
             },
             {
@@ -494,6 +497,7 @@ const registerInstructionsCommand = (
               options.procedure,
               "procedure",
               "read_function_instructions",
+              "native",
             ),
           },
           directAnalysisOptionsFromCli(logger, options),
