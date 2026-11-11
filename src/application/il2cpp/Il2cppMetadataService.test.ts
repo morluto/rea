@@ -13,6 +13,9 @@ import { err, ok } from "../../domain/result.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { Il2cppSeedWriterPort } from "./Il2cppSeedWriterPort.js";
+import { toolContract } from "../../contracts/toolContracts.js";
+import { z } from "zod";
+import { Ajv2020 } from "ajv/dist/2020.js";
 
 const identity = {
   id: "fixture-il2cpp",
@@ -20,6 +23,29 @@ const identity = {
   version: "1",
 };
 const report = createEmptyIl2cppMetadataFixture();
+
+it.each([{ binary_architecture: "arm64" }, { generic_instances: true }])(
+  "binds binary-dependent selectors in the named input contract: %j",
+  (selection) => {
+    const schema = toolContract("inspect_il2cpp_metadata").inputSchema;
+    const validate = new Ajv2020({ strict: false }).compile(
+      z.toJSONSchema(schema, { io: "input" }),
+    );
+    const missingBinary = { path: report.artifact.path, ...selection };
+    const selectedBinary = {
+      ...missingBinary,
+      binary_path: "/artifacts/GameAssembly.dll",
+    };
+    expect(schema.safeParse(missingBinary).success).toBe(false);
+    expect(validate(missingBinary)).toBe(false);
+    expect(schema.safeParse(selectedBinary).success).toBe(true);
+    expect(validate(selectedBinary)).toBe(true);
+    expect(
+      schema.safeParse({ path: report.artifact.path, generic_instances: false })
+        .success,
+    ).toBe(true);
+  },
+);
 
 const serviceReturning = (value: Il2cppMetadata, calls = { count: 0 }) =>
   new Il2cppMetadataService({

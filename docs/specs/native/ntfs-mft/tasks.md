@@ -12,7 +12,7 @@
 - [x] Decode V3/V4 layouts, bound extent samples, and report unknown history coverage.
 - [x] Page MFT metadata independently of journal events.
 - [x] Decode resident standard information, attribute-list references and nonresident mapping metadata.
-- [ ] Assemble extension-list payloads and recover nonresident values when required.
+- [x] Resolve resident attribute-list graphs into acquired extension metadata with full ownership checks, bounded decoding and explicit partial coverage.
 - [x] Verify Windows 11 MFT records through the packaged Linux CLI, with pinned provenance and digests.
 - [x] Verify paired logical MFT/journal streams from a public NTFS volume fixture on Linux against an independent parser.
 - [ ] Verify Windows-host execution.
