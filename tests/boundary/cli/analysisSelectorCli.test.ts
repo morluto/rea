@@ -220,3 +220,45 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "compares native address values without folding symbols, spaces or text queries",
+  async ({ cli }) => {
+    for (const [command, option] of [
+      ["xrefs", "address"],
+      ["function", "procedure"],
+      ["instructions", "procedure"],
+      ["decompile", "procedure"],
+      ["inspect-native-api", "procedure"],
+    ]) {
+      for (const [left, right, code] of [
+        ["0x1a", "0x001A", "target_unavailable"],
+        ["ram:0x1", "RAM:0x1", "invalid_request"],
+        ["Symbol", "symbol", "invalid_request"],
+      ]) {
+        const result = await cli.run({
+          arguments: [
+            command!,
+            "does-not-exist",
+            left!,
+            `--${option}=${right}`,
+            "--json",
+          ],
+        });
+        expect(result.json, `${command}: ${left}/${right}`).toMatchObject({
+          code,
+        });
+      }
+    }
+    const result = await cli.run({
+      arguments: [
+        "search",
+        "does-not-exist",
+        "0x1a",
+        "--pattern=0x1A",
+        "--json",
+      ],
+    });
+    expect(result.json).toMatchObject({ code: "invalid_request" });
+  },
+);
