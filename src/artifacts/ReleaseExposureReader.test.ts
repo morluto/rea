@@ -4809,6 +4809,21 @@ it.for(["a.js", "z.js"])(
   },
 );
 
+it("keeps a distinct normalized linker map beside a page's script target", async (context) => {
+  const root = await createTestTempDirectory("rea-script-map-identities-");
+  const first = "café.map";
+  const second = "cafe\u0301.map";
+  await writeFile(join(root, first), "const value = 1;\n");
+  await writeFile(join(root, second), "linker map\n");
+  if ((await readdir(root)).length !== 2) {
+    context.skip();
+    return;
+  }
+  await writeFile(join(root, "a.html"), `<script src="${first}"></script>`);
+  const scanned = await inspect(root);
+  expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
+});
+
 it("keeps a distinct normalized sibling linker map beside a declared one", async (context) => {
   const root = await createTestTempDirectory("rea-sibling-map-identities-");
   const first = "café.map";

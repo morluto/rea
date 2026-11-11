@@ -824,8 +824,11 @@ interface ScanState {
   examinedLocations: Set<string>;
   /** Members already examined as a source map. */
   examinedMaps: Set<string>;
-  /** Local script elements' targets whose names do not say JavaScript. */
-  scriptTargets: Set<string>;
+  /**
+   * Local script elements' targets whose names do not say JavaScript, by
+   * lookup identity, each with the resolved spellings pages wrote.
+   */
+  scriptTargets: Map<string, Set<string>>;
   /** Bytes of resolved path offered to `scriptTargets`, kept or refused. */
   scriptTargetBytes: number;
   mapTargetBytes: number;
@@ -882,7 +885,7 @@ const createState = (
   claimedMapTargets: new Set(),
   examinedLocations: new Set(),
   examinedMaps: new Set(),
-  scriptTargets: new Set(),
+  scriptTargets: new Map(),
   scriptTargetBytes: 0,
   mapTargetBytes: 0,
   mapTargetsDiscarded: false,
@@ -1037,7 +1040,7 @@ const examineMember = async (
   const member =
     !map &&
     asNativeFormat(listed.format) === null &&
-    state.scriptTargets.has(key)
+    isScriptTarget(state, listed.location)
       ? { ...listed, kind: "javascript" }
       : listed;
   (map ? state.examinedMaps : state.examinedLocations).add(key);
@@ -1489,7 +1492,7 @@ const scriptHoldsMap = (
   if (!isJavaScriptMember(member)) return false;
   if (
     !member.logical.toLowerCase().endsWith(".map") &&
-    !state.scriptTargets.has(memberLocationKey(member.location))
+    !isScriptTarget(state, member.location)
   )
     return false;
   let parsed: unknown;
@@ -1949,19 +1952,35 @@ const noteScriptReference = (
  */
 const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
-  if (state.examinedScripts.has(target) || state.scriptTargets.has(target))
-    return;
-  if (state.examinedLocations.has(target) || state.examinedMaps.has(target)) {
+  if (state.examinedScripts.has(target)) return;
+  const spellings = state.scriptTargets.get(target);
+  if (
+    spellings === undefined &&
+    (state.examinedLocations.has(target) || state.examinedMaps.has(target))
+  ) {
     retractLinkerMapGuesses(state, location);
     state.skippedMaps += 1;
     return;
   }
-  state.scriptTargetBytes += Buffer.byteLength(target);
+  const spelling = resolve(location);
+  if (spellings?.has(spelling)) return;
+  state.scriptTargetBytes += Buffer.byteLength(spelling);
   if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES) {
     state.skippedMaps += 1;
     state.mapTargetsDiscarded = true;
-  } else state.scriptTargets.add(target);
+  } else if (spellings === undefined)
+    state.scriptTargets.set(target, new Set([spelling]));
+  else spellings.add(spelling);
 };
+
+/**
+ * Whether a page loaded this exact location as a script. Another spelling in
+ * the same lookup bucket is a distinct file that keeps its own role.
+ */
+const isScriptTarget = (state: ScanState, location: string): boolean =>
+  state.scriptTargets
+    .get(memberLocationKey(location))
+    ?.has(resolve(location)) === true;
 
 const examineInlineMaps = (
   state: ScanState,
@@ -2131,7 +2150,7 @@ const isDeclaredMap = (state: ScanState, member: MemberView): boolean => {
   if (member.kindStated && member.kind === "source-map") return true;
   const key = memberLocationKey(member.location);
   if (state.mapTargets.has(key)) return true;
-  if (member.kind === "javascript" || state.scriptTargets.has(key))
+  if (member.kind === "javascript" || isScriptTarget(state, member.location))
     return false;
   return isSourceMap(member.logical, member.kind);
 };
@@ -2152,7 +2171,7 @@ const noteUnreachedTargets = (state: ScanState): void => {
     state.skippedCompanions += guesses.size;
     if (examined) state.skippedMaps += guesses.size;
   }
-  for (const target of state.scriptTargets)
+  for (const target of state.scriptTargets.keys())
     if (!state.examinedScripts.has(target)) state.skippedMaps += 1;
 };
 
@@ -3209,8 +3228,7 @@ const scanSiblings = async (
     if (isJavaScriptSourceMapName(entry.name)) continue;
     // A declared map stays a source map and a loaded script stays a script,
     // and `noteUnreachedTargets` counts either one.
-    const key = memberLocationKey(sibling);
-    if (claimMapTarget(state, sibling) || state.scriptTargets.has(key))
+    if (claimMapTarget(state, sibling) || isScriptTarget(state, sibling))
       continue;
     // A link is not followed, so a linker map it names stays unread, not absent.
     if (entry.isSymbolicLink()) {
