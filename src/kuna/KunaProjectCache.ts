@@ -244,6 +244,8 @@ interface RetainedProcess {
   /** Retries stopping the process tree, when the launcher left one. */
   readonly owner: ProviderProcessSupervisor | undefined;
   readonly staging: string;
+  /** One exact owner's stop and staging retirement, shared by concurrent closes. */
+  retry: Promise<void> | undefined;
 }
 
 interface RetainedHashFile {
@@ -354,7 +356,7 @@ export class KunaProjectCache {
   #maintenance: Promise<void> | undefined;
   #maintenanceRequested = false;
   /** Builds whose process tree could not be proven stopped; their staging stays. */
-  readonly #retainedProcesses: RetainedProcess[] = [];
+  readonly #retainedProcesses = new Set<RetainedProcess>();
   /** Only resources whose process cleanup is proven may be retried as files. */
   readonly #retainedFiles = new Map<
     string,
@@ -394,7 +396,7 @@ export class KunaProjectCache {
   /** Report cleanup owners retained after failed process or file cleanup. */
   get hasPendingCleanup(): boolean {
     return (
-      this.#retainedProcesses.length > 0 ||
+      this.#retainedProcesses.size > 0 ||
       this.#retainedFiles.size > 0 ||
       this.#retainedHashFiles.size > 0
     );
@@ -631,16 +633,21 @@ export class KunaProjectCache {
   async #retryProcesses(
     selected: (retained: RetainedProcess) => boolean,
   ): Promise<void> {
-    for (const retained of this.#retainedProcesses.filter(selected)) {
-      const stopped = await retained.owner?.stop();
-      if (stopped === undefined || stopped.status === "incomplete") continue;
-      this.#retainedProcesses.splice(
-        this.#retainedProcesses.indexOf(retained),
-        1,
-      );
-      this.#resolveCleanupOwner(retained);
-      await this.#retireStaging(retained.staging, retained.key);
+    for (const retained of [...this.#retainedProcesses].filter(selected)) {
+      if (!this.#retainedProcesses.has(retained)) continue;
+      retained.retry ??= this.#retryProcess(retained).finally(() => {
+        retained.retry = undefined;
+      });
+      await retained.retry;
     }
+  }
+
+  async #retryProcess(retained: RetainedProcess): Promise<void> {
+    const stopped = await retained.owner?.stop();
+    if (stopped === undefined || stopped.status === "incomplete") return;
+    this.#resolveCleanupOwner(retained);
+    await this.#retireStaging(retained.staging, retained.key);
+    this.#retainedProcesses.delete(retained);
   }
 
   /** Retry only stopped file resources belonging to the closing task, or all. */
@@ -732,7 +739,7 @@ export class KunaProjectCache {
 
   #retainedCleanupFailures(key?: string): CleanupFailureOwner[] {
     return [
-      ...this.#retainedProcesses
+      ...[...this.#retainedProcesses]
         .filter((retained) => key === undefined || retained.key === key)
         .map((retained) => ({
           error: retained.error,
@@ -1004,8 +1011,9 @@ export class KunaProjectCache {
         error: outcome.error,
         owner: outcome.owner,
         staging,
+        retry: undefined,
       };
-      this.#retainedProcesses.push(retained);
+      this.#retainedProcesses.add(retained);
       this.#bindCleanupError(outcome.error, [
         retained,
         this.#stagingCleanupOwner(staging),
