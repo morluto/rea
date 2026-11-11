@@ -464,6 +464,26 @@ it("refuses a FAT block that the DIFAT chain already owns", () => {
   );
 });
 
+it("caps FAT cells at the blocks that can describe a sector", () => {
+  // A 20-sector file indexes 20 * 4 = 80 cells in a single 512-byte block, so
+  // only one block can describe any of its sectors. Naming a second readable
+  // block must not reserve another 128 cells for a chain nothing can reach.
+  const entriesPerSector = SECTOR / 4;
+  const blockLimit = Math.ceil(20 / entriesPerSector);
+  const bytes = compoundFile({
+    entries: root(undefined, []),
+    totalSectors: 20,
+  });
+  bytes.writeUInt32LE(0, 0x4c);
+  bytes.writeUInt32LE(3, 0x50);
+  const image = parseCompoundFile(bytes);
+  if (!image.ok) throw new Error(image.error.message);
+  expect(image.value.metadata.fat_sector_count).toBe(blockLimit);
+  expect(image.value.limitations).toContainEqual(
+    expect.stringMatching(/beyond the 1 block\(s\) that can describe/u),
+  );
+});
+
 it("refuses a directory whose root storage is not entry 0", () => {
   const bytes = compoundFile({
     entries: [

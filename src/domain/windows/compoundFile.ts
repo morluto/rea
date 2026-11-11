@@ -438,7 +438,15 @@ export const parseCompoundFile = (
         `DIFAT names ${String(fatSectorIds.length)} FAT sector(s), more than the ${String(sectorCount)} sector(s) the file holds`,
       ),
     );
-  const fat = new Uint32Array(fatSectorIds.length * entriesPerSector);
+  // Only ceil(sectorCount / entriesPerSector) blocks can describe a physical
+  // sector, so a longer list is duplicates of blocks already read. Expanding
+  // every id would allocate a cell per listed block and let a near-ceiling
+  // malformed file reserve hundreds of MiB for cells no chain can reach.
+  const fatBlockLimit = Math.ceil(sectorCount / entriesPerSector);
+  const excessFatBlocks = Math.max(0, fatSectorIds.length - fatBlockLimit);
+  const fat = new Uint32Array(
+    Math.min(fatSectorIds.length, fatBlockLimit) * entriesPerSector,
+  );
   // DIFAT order defines which FAT indexes each sector supplies, so a block is
   // kept at its declared ordinal: a repeated or out-of-file id leaves its cells
   // as markers instead of letting a later block shift one position early.
@@ -457,25 +465,35 @@ export const parseCompoundFile = (
       !seenFatSectors.has(sector);
     if (usable) {
       seenFatSectors.add(sector);
-      const offset = sectorOf(sector, sectorBytes);
-      const sectorView = new DataView(
-        bytes.buffer,
-        bytes.byteOffset + offset,
-        sectorBytes,
-      );
-      for (let index = 0; index < entriesPerSector; index += 1) {
-        fat[fatCells + index] = sectorView.getUint32(index * 4, true);
+      if (fatCells < fat.length) {
+        const offset = sectorOf(sector, sectorBytes);
+        const sectorView = new DataView(
+          bytes.buffer,
+          bytes.byteOffset + offset,
+          sectorBytes,
+        );
+        for (let index = 0; index < entriesPerSector; index += 1) {
+          fat[fatCells + index] = sectorView.getUint32(index * 4, true);
+        }
       }
     } else {
       unlistedFatSectors += 1;
-      fat.fill(CFB_FREE_SECTOR, fatCells, fatCells + entriesPerSector);
+      fat.fill(
+        CFB_FREE_SECTOR,
+        fatCells,
+        Math.min(fatCells + entriesPerSector, fat.length),
+      );
     }
-    fatCells += entriesPerSector;
+    fatCells = Math.min(fatCells + entriesPerSector, fat.length);
   }
   const table = fat.subarray(0, fatCells);
   if (fatSectorIds.length !== declaredFatSectors)
     limitations.push(
       `header declares ${String(declaredFatSectors)} FAT sector(s) but the DIFAT lists ${String(fatSectorIds.length)}`,
+    );
+  if (excessFatBlocks !== 0)
+    limitations.push(
+      `the DIFAT lists ${String(excessFatBlocks)} FAT sector(s) beyond the ${String(fatBlockLimit)} block(s) that can describe a sector of this ${String(sectorCount)}-sector file; those blocks address no physical sector and were not expanded`,
     );
   // The field counts header-declared sectors absent from the allocation
   // tables, so a declared-but-never-listed sector belongs here beside the ids
