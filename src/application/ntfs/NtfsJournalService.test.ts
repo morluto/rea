@@ -1,9 +1,15 @@
+import { createHash } from "node:crypto";
+import { lstat, open, realpath, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { expect, it, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import * as stableArtifact from "../../artifacts/readStableArtifact.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectNtfsJournalEvidence } from "./NtfsJournalService.js";
+import { parseEvidence } from "../../domain/evidence.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 it.each([
   ["EACCES", "access_denied"],
@@ -63,5 +69,84 @@ it("preserves the completed file identity when MFT interpretation fails", async 
   } finally {
     spy.mockRestore();
     await resources.close();
+  }
+});
+
+it("retains both acquisitions through a failed journal close and cleanup retry", async () => {
+  const directory = await createTestTempDirectory("rea-ntfs-partial-");
+  const mftPath = join(directory, "mft");
+  const journalPath = join(directory, "journal");
+  const mft = Buffer.alloc(1024);
+  mft.write("FILE");
+  mft.writeUInt16LE(48, 4);
+  mft.writeUInt16LE(3, 6);
+  mft.writeUInt16LE(56, 20);
+  mft.writeUInt32LE(64, 24);
+  mft.writeUInt32LE(1024, 28);
+  mft.writeUInt32LE(0xffffffff, 56);
+  for (const offset of [48, 510, 1022]) mft.writeUInt16LE(1, offset);
+  const journal = Buffer.from("acquired journal bytes");
+  await writeFile(mftPath, mft);
+  await writeFile(journalPath, journal);
+  const resources = new ArtifactResourceScope();
+  const read = stableArtifact.readStableArtifact;
+  let restoreClose: (() => void) | undefined;
+  const spy = vi
+    .spyOn(stableArtifact, "readStableArtifact")
+    .mockImplementation((path, maximumBytes, signal, fileSystem, scope) =>
+      read(
+        path,
+        maximumBytes,
+        signal,
+        path === journalPath
+          ? {
+              lstat: (selected) => lstat(selected, { bigint: true }),
+              realpath,
+              open: async (selected, flags) => {
+                const handle = await open(selected, flags);
+                const close = vi
+                  .spyOn(handle, "close")
+                  .mockRejectedValueOnce(new Error("close failed"));
+                restoreClose = () => close.mockRestore();
+                return handle;
+              },
+            }
+          : fileSystem,
+        scope,
+      ),
+    );
+  try {
+    const result = await inspectNtfsJournalEvidence(
+      {
+        mft_path: mftPath,
+        journal_path: journalPath,
+      },
+      resources,
+    );
+    if (result.ok) throw new Error("expected journal cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const partial = parseEvidence(result.error.partialObservation);
+    expect(partial.normalized_result).toMatchObject({
+      kind: "ntfs-journal-partial",
+      mft: {
+        sha256: createHash("sha256").update(mft).digest("hex"),
+        metadata: { record_count: 1 },
+      },
+      journal_observation: {
+        kind: "file-snapshot-hash",
+        path: journalPath,
+        sha256: createHash("sha256").update(journal).digest("hex"),
+        bytes: journal.length,
+      },
+    });
+    await resources.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(
+      projectAnalysisError(result.error).details?.partial_observation,
+    ).toEqual(partial);
+  } finally {
+    spy.mockRestore();
+    await resources.close();
+    restoreClose?.();
   }
 });
