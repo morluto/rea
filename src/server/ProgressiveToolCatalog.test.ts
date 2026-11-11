@@ -217,7 +217,10 @@ it("distinguishes exhausted pages from unmatched queries without loading tools",
       next_offset: null,
       next_step: expect.stringContaining("offset 0"),
     });
-    expect(reply.structuredContent?.next_step).not.toContain("No matches.");
+    expect(
+      z.object({ next_step: z.string() }).parse(reply.structuredContent)
+        .next_step,
+    ).not.toContain("No matches.");
     expect(await f.client.listTools()).toEqual(before);
   }
   const unmatched = await f.discover({

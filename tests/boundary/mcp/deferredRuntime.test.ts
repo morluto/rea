@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { spawnSync } from "node:child_process";
@@ -1095,9 +1096,9 @@ it("distinguishes an exhausted production discovery page from an unmatched query
   const discover = (arguments_: Record<string, unknown>) =>
     artifactMcpCall(client, { name: "discover_tools", arguments: arguments_ });
   const first = await discover({ query: "inspect", limit: 1 });
-  const total = first.structuredContent?.total_matches;
-  if (typeof total !== "number" || total < 1)
-    throw new Error("Expected a nonempty inspection catalog");
+  const { total_matches: total } = z
+    .object({ total_matches: z.number().int().positive() })
+    .parse(first.structuredContent);
   const last = await discover({
     query: "inspect",
     offset: total - 1,
