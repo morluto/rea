@@ -11,7 +11,11 @@ import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,
 } from "../process/ProcessInspectionCancellation.js";
-import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
+import {
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
+import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 
@@ -37,9 +41,15 @@ it.each([false, true])(
     const prepare = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockRejectedValue(cause);
-    const launcher = vi.fn(async () => {
+    // macOS prepares before launcher admission; other hosts prepare inside it.
+    // Keep that real admission step while recording that Java never starts.
+    const startJava = vi.fn(() => {
       throw new Error("Java must not start");
     });
+    const launcher = async (input: OwnedProviderProcessSpawnOptions) => {
+      await prepareProcessOwnershipInspection(input.signal);
+      return startJava();
+    };
     try {
       const result: unknown = await inspectJadxJava(
         "/selected/java",
@@ -63,7 +73,7 @@ it.each([false, true])(
         );
       expect(primary.capturedOutput).toBeUndefined();
       expect(primary.diagnostics).not.toHaveProperty("compiler_outcome");
-      expect(launcher).not.toHaveBeenCalled();
+      expect(startJava).not.toHaveBeenCalled();
       expect(result.cleanupResources).toEqual([descriptor.failure.path]);
       await expect(resources.close()).rejects.toBeInstanceOf(
         ArtifactResourceRetryFailure,
@@ -89,9 +99,13 @@ it("preserves the actual inspection cancellation record and opaque caller reason
   const prepare = vi
     .spyOn(systemProcessOwnershipHost, "prepare")
     .mockRejectedValue(inspection);
-  const launcher = vi.fn(async () => {
+  const startJava = vi.fn(() => {
     throw new Error("Java must not start");
   });
+  const launcher = async (input: OwnedProviderProcessSpawnOptions) => {
+    await prepareProcessOwnershipInspection(input.signal);
+    return startJava();
+  };
   try {
     const result: unknown = await inspectJadxJava(
       "/selected/java",
@@ -105,7 +119,7 @@ it("preserves the actual inspection cancellation record and opaque caller reason
     expect(result.cleanupResources).toEqual([]);
     expect(result.secondaryFailures).toEqual([]);
     expect(reason.cleanupIncomplete).toBe(true);
-    expect(launcher).not.toHaveBeenCalled();
+    expect(startJava).not.toHaveBeenCalled();
   } finally {
     prepare.mockRestore();
     await resources.close();

@@ -4803,9 +4803,12 @@ describe("Ghidra changed project", () => {
   it("projects a source project changed before its verified copy as artifact_changed", async () => {
     const path = "/projects/selected";
     const reason = GHIDRA_PROJECT_PROFILE_MISMATCH;
-    const { error, projected } = await launchFailure(
-      new AnalysisArtifactChangedError("open_binary", path, reason),
+    const physical = new AnalysisArtifactChangedError(
+      "open_binary",
+      path,
+      reason,
     );
+    const { error, projected } = await launchFailure(physical);
     expect(projected).toMatchObject({
       code: "artifact_changed",
       details: {
@@ -4820,7 +4823,7 @@ describe("Ghidra changed project", () => {
         new AnalysisArtifactChangedError("list_documents", path, reason),
       ).remediation.action,
     );
-    expect(error.cause).toBeInstanceOf(GhidraSessionError);
+    expect(error.cause).toBe(physical);
   });
 
   it("keeps the generic start failure for other launch failures", async () => {
