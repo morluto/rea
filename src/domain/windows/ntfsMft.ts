@@ -90,7 +90,11 @@ export interface MftRecord {
   readonly sequenceNumber: number;
   /** Hard link count as recorded; a zero count marks a record with no names. */
   readonly hardLinkCount: number;
-  readonly flags: { readonly raw: number; readonly names: readonly string[] };
+  readonly flags: {
+    readonly raw: number;
+    readonly names: readonly string[];
+    readonly unknownMask: number;
+  };
   readonly inUse: boolean;
   readonly directory: boolean;
   /** Used and allocated byte counts as declared by the FILE record. */
@@ -156,11 +160,14 @@ const limit = (
   ...(boundary === undefined ? {} : { boundary }),
 });
 
-const namesOf = (raw: number): readonly string[] => {
+const parseRecordFlags = (raw: number): MftRecord["flags"] => {
   const names: string[] = [];
-  for (const [bit, name] of FILE_RECORD_NAMES)
+  let unknownMask = raw;
+  for (const [bit, name] of FILE_RECORD_NAMES) {
     if ((raw & bit) !== 0) names.push(name);
-  return names;
+    unknownMask &= ~bit;
+  }
+  return { raw, names, unknownMask };
 };
 
 const isRecordSize = (bytes: number): boolean =>
@@ -355,7 +362,7 @@ const readRecord = (
     fileOffset,
     sequenceNumber: view.getUint16(RECORD_HEADER.sequenceNumber, true),
     hardLinkCount: view.getUint16(RECORD_HEADER.hardLinkCount, true),
-    flags: { raw: flags, names: namesOf(flags) },
+    flags: parseRecordFlags(flags),
     inUse: (flags & FILE_RECORD_IN_USE) !== 0,
     directory: (flags & FILE_RECORD_IS_DIRECTORY) !== 0,
     usedBytes,
