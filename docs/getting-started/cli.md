@@ -1293,7 +1293,7 @@ Registration command text is a launcher format, not a shell program. ASCII space
 separate words; single and double quotes delimit adjacent fragments of a word.
 Backslashes, tabs, variables and shell punctuation are literal data. Quoted empty
 arguments are preserved, including an empty argument after the executable. An
-empty executable or unfinished quote fails before registration. For example:
+empty executable, unfinished quote or NUL character fails before registration. For example:
 
 ```sh
 rea mcp add --agent cursor --command '"/path with spaces/server" "" --mcp' --json

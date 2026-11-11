@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { processArgumentSchema } from "../domain/process/processArgument.js";
 
 /** REA-owned registration options; commands are launch data, never helper acquisition. */
 export const mcpRegistrationOptionsSchema = z.object({
@@ -8,11 +9,11 @@ export const mcpRegistrationOptionsSchema = z.object({
     .describe(
       "Select client IDs or documented aliases; repeat --agent to select more than one.",
     ),
-  command: z
-    .string()
+  command: processArgumentSchema
+    .min(1)
     .optional()
     .describe(
-      "Stdio launcher text: space-separated words, single/double quote fragments, literal backslashes. Empty quoted arguments are preserved. HTTP(S) URL sources are unsupported; configure remote transports in client settings.",
+      "Stdio launcher text: space-separated words, single/double quote fragments, literal backslashes. Empty quoted arguments are preserved; NUL is rejected. HTTP(S) URL sources are unsupported; configure remote transports in client settings.",
     ),
   noGlobal: z
     .boolean()

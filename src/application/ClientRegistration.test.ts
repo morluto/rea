@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 
 import {
-  parseClientRegistration,
+  parseClientRegistrationPolicy,
+  parseClientRegistrationLauncher,
   replaceClientRegistrationLauncher,
 } from "./ClientRegistration.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -9,10 +10,30 @@ import {
   parseClientConfiguration,
   clientConfigurationRecordSchema,
 } from "./ClientConfigurationDocument.js";
-import type { SetupClient } from "./SupportedClients.js";
+import {
+  supportedClientRegistrationProfile,
+  type SetupClient,
+} from "./SupportedClients.js";
+import { mcpClientRegistrationProfile } from "./McpRegistrationCatalog.js";
+import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
+import type { ClientRegistrationTarget } from "./ClientRegistrationProfile.js";
+
+const zedTarget: ClientRegistrationTarget = {
+  dialect: "zed",
+  profile: mcpClientRegistrationProfile("zed"),
+};
+const gooseTarget: ClientRegistrationTarget = {
+  dialect: "goose",
+  profile: mcpClientRegistrationProfile("goose"),
+};
+const cursorTarget: ClientRegistrationTarget = {
+  dialect: "json",
+  profile: mcpClientRegistrationProfile("cursor"),
+};
 
 const client: SetupClient = {
   name: "opencode",
+  registrationProfile: supportedClientRegistrationProfile("opencode"),
   format: "opencode",
   configPath: "/fixture/opencode.json",
 };
@@ -21,7 +42,7 @@ it("preserves every OpenCode environment key while normalizing its launcher", ()
   const input = JSON.parse(
     '{"type":"local","command":["rea","mcp"],"environment":{"__proto__":"operator","constructor":"selected","normal":"value"}}',
   );
-  const result = parseClientRegistration(input, client);
+  const result = parseClientRegistrationPolicy(input, client);
   if (!result.ok) throw result.error;
   expect(result.value.command).toBe("rea");
   expect(result.value.args).toEqual(["mcp"]);
@@ -36,7 +57,7 @@ it.each([42, null, {}])(
   "rejects malformed OpenCode environment values at __proto__: %j",
   (value) => {
     const environment = Object.fromEntries([["__proto__", value]]);
-    const result = parseClientRegistration(
+    const result = parseClientRegistrationPolicy(
       { type: "local", command: ["rea", "mcp"], environment },
       client,
     );
@@ -53,7 +74,7 @@ it("preserves Zed source metadata while replacing its native launcher", () => {
     custom: { retained: true },
   };
   const updated = replaceClientRegistrationLauncher(
-    "zed",
+    zedTarget,
     ["fixture", ""],
     previous,
   );
@@ -64,7 +85,7 @@ it("preserves Zed source metadata while replacing its native launcher", () => {
     args: [""],
   });
   const fresh = replaceClientRegistrationLauncher(
-    "zed",
+    zedTarget,
     ["fixture"],
     undefined,
   );
@@ -85,7 +106,7 @@ it("normalizes Goose's single env alias without emitting duplicate native fields
   };
   const before = structuredClone(previous);
   const result = replaceClientRegistrationLauncher(
-    "goose",
+    gooseTarget,
     ["fixture", ""],
     previous,
   );
@@ -105,7 +126,7 @@ it.each([{ envs: { KEEP: "1" } }, {}])(
   "keeps canonical Goose environment data stable: %j",
   (previous) => {
     const result = replaceClientRegistrationLauncher(
-      "goose",
+      gooseTarget,
       ["fixture"],
       previous,
     );
@@ -121,7 +142,7 @@ it("keeps a native Goose leading-zero string when normalizing the env alias", ()
     "goose",
   );
   const result = replaceClientRegistrationLauncher(
-    "goose",
+    gooseTarget,
     ["fixture"],
     parsed.servers.rea,
   );
@@ -131,7 +152,7 @@ it("keeps a native Goose leading-zero string when normalizing the env alias", ()
 });
 
 it("normalizes an explicitly empty Goose env alias to one canonical field", () => {
-  const result = replaceClientRegistrationLauncher("goose", ["fixture"], {
+  const result = replaceClientRegistrationLauncher(gooseTarget, ["fixture"], {
     env: {},
   });
   if (!result.ok) throw result.error;
@@ -146,7 +167,7 @@ it.each([
   "refuses both Goose environment aliases even when their contents agree: %j",
   (previous) => {
     const result = replaceClientRegistrationLauncher(
-      "goose",
+      gooseTarget,
       ["fixture"],
       previous,
     );
@@ -166,7 +187,7 @@ it.each([
 it.each([null, 42, ["value"], { VALUE: 123 }])(
   "refuses a malformed Goose env alias: %j",
   (env) => {
-    const result = replaceClientRegistrationLauncher("goose", ["fixture"], {
+    const result = replaceClientRegistrationLauncher(gooseTarget, ["fixture"], {
       env,
     });
     expect(result.ok).toBe(false);
@@ -184,11 +205,60 @@ it.each([null, 42, ["value"], { VALUE: 123 }])(
 it("keeps other clients' env field in its own dialect", () => {
   const previous = { env: { KEEP: "1" }, command: "old" };
   const result = replaceClientRegistrationLauncher(
-    "json",
+    cursorTarget,
     ["fixture"],
     previous,
   );
   if (!result.ok) throw result.error;
   expect(result.value.env).toEqual({ KEEP: "1" });
   expect(result.value).not.toHaveProperty("envs");
+});
+
+it.each([
+  {
+    target: {
+      dialect: "opencode",
+      profile: mcpClientRegistrationProfile("opencode"),
+    },
+    value: {
+      type: "remote",
+      url: "https://fixture.invalid",
+      command: ["/fixture/rea", "--mcp"],
+    },
+  },
+  {
+    target: { dialect: "json", profile: mcpClientRegistrationProfile("cline") },
+    value: {
+      transport: {
+        type: "streamableHttp",
+        url: "https://fixture.invalid",
+        command: "/fixture/rea",
+        args: ["--mcp"],
+      },
+    },
+  },
+] satisfies readonly { target: ClientRegistrationTarget; value: unknown }[])(
+  "retains launcher syntax independently of a non-stdio native transport: $target.profile.nativeClient",
+  ({ target, value }) => {
+    expect(parseClientRegistrationLauncher(value, target)).toEqual({
+      ok: true,
+      value: { command: "/fixture/rea", args: ["--mcp"] },
+    });
+    expect(admitClientStdioConnection(value, target).ok).toBe(false);
+  },
+);
+
+it("retains malformed stored argv syntax for ownership while refusing launch readiness", () => {
+  const value = {
+    command: "/fixture/rea",
+    args: ["--mcp", "recorded\0argument"],
+  };
+  expect(parseClientRegistrationLauncher(value, cursorTarget)).toEqual({
+    ok: true,
+    value,
+  });
+  expect(admitClientStdioConnection(value, cursorTarget)).toMatchObject({
+    ok: false,
+    error: { kind: "invalid", cause: { _tag: "ConfigurationError" } },
+  });
 });

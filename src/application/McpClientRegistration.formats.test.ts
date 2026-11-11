@@ -7,7 +7,10 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { registerMcpClient } from "./McpClientRegistration.js";
 import { parseGooseConfigurationYaml } from "./GooseConfigurationYaml.js";
 import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
-import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
+import {
+  mcpClientRegistrationProfile,
+  type McpRegistrationClient,
+} from "./McpRegistrationCatalog.js";
 
 let resources: ArtifactResourceScope;
 beforeEach(() => {
@@ -27,6 +30,7 @@ const clientFor = (
 ): McpRegistrationClient => ({
   id,
   displayName: id,
+  registrationProfile: mcpClientRegistrationProfile(id),
   configPath: path,
   format,
   scope: "global",
@@ -79,6 +83,7 @@ it.each([
     text: '{"context_servers":{"rea":{"url":"https://fixture.invalid","type":"http","env":{"KEEP":"1"},"enabled":false}}}',
     expected: {
       source: undefined,
+      type: "http",
       command: launcher.command,
       args: launcher.args,
       env: { KEEP: "1" },
@@ -107,7 +112,6 @@ it.each([
           : "mcp";
     const entry = document[key].rea;
     expect(entry).not.toHaveProperty("url");
-    expect(entry).not.toHaveProperty("uri");
     for (const [key, value] of Object.entries(expected)) {
       if (value === undefined) expect(entry).not.toHaveProperty(key);
       else expect(entry[key]).toEqual(value);

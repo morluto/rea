@@ -21,7 +21,10 @@ import {
   registerMcpClient,
   registerMcpClients,
 } from "./McpClientRegistration.js";
-import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
+import {
+  mcpClientRegistrationProfile,
+  type McpRegistrationClient,
+} from "./McpRegistrationCatalog.js";
 import { withClientConfigurationTransaction } from "./ClientConfigurationTransaction.js";
 
 const clientFor = (
@@ -30,6 +33,7 @@ const clientFor = (
   id: McpRegistrationClient["id"] = "amp",
 ): McpRegistrationClient => ({
   id,
+  registrationProfile: mcpClientRegistrationProfile(id),
   displayName: id,
   configPath: path,
   format,

@@ -7,6 +7,7 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -83,16 +84,24 @@ const gitFailure = (
         };
   const cancellation =
     cause instanceof OwnedCommandFailure ? cause.cancellation : undefined;
-  const failure =
+  const cancelled =
     cancellation === undefined
-      ? new ConfigurationError(
-          "Kilo project root could not be established by read-only Git metadata. Repair Git or repository access, or register globally; no client settings were written.",
-          { cause, ...(cleanup === undefined ? {} : { cleanup }) },
-        )
+      ? undefined
       : new AnalysisCancelledError("Kilo project root discovery", {
           cause: cancellation.reason,
           ...(cleanup === undefined ? {} : { cleanup }),
         });
+  const failure =
+    cause instanceof OwnedCommandFailure &&
+    cause.reason === "cancelled" &&
+    cancelled !== undefined
+      ? cancelled
+      : new ConfigurationError(
+          "Kilo project root could not be established by read-only Git metadata. Repair Git or repository access, or register globally; no client settings were written.",
+          { cause, ...(cleanup === undefined ? {} : { cleanup }) },
+        );
+  if (cancelled !== undefined && failure !== cancelled)
+    analysisErrorWithCancellation(failure, cancelled);
   if (leases.length > 0) new AnalysisCleanupLeaseGroup(failure, leases);
   return failure;
 };
@@ -118,13 +127,13 @@ const gitOutput = async (
       { signal: context.signal },
     );
     if (
-      result.exitCode !== 0 ||
       result.stdout.invalidUtf8 ||
       result.diagnosticTruncated ||
       result.outputIncomplete
     )
       throw new Error(
         "Git did not provide a complete UTF-8 metadata observation.",
+        { cause: result },
       );
     return result.stdout.text;
   } catch (cause: unknown) {

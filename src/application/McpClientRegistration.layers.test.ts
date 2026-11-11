@@ -10,7 +10,10 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { mergeClientConfigurationDocuments } from "./ClientConfigurationFiles.js";
 import { registerMcpClient } from "./McpClientRegistration.js";
-import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
+import {
+  mcpClientRegistrationProfile,
+  type McpRegistrationClient,
+} from "./McpRegistrationCatalog.js";
 
 let resources: ArtifactResourceScope;
 beforeEach(() => {
@@ -32,6 +35,9 @@ const clientFor = (
   format: "kilo" | "opencode" = "kilo",
 ): McpRegistrationClient => ({
   id: format === "kilo" ? "kilo-code" : "opencode",
+  registrationProfile: mcpClientRegistrationProfile(
+    format === "kilo" ? "kilo-code" : "opencode",
+  ),
   displayName: format === "kilo" ? "Kilo Code" : "OpenCode",
   configPath,
   configPaths,

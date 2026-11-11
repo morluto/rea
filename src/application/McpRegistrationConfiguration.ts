@@ -17,10 +17,8 @@ import {
   mergeClientConfigurationDocuments,
   readConfigurationFile,
 } from "./ClientConfigurationFiles.js";
-import {
-  parseClientRegistrationLauncher,
-  replaceClientRegistrationLauncher,
-} from "./ClientRegistration.js";
+import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
+import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
 
@@ -56,7 +54,7 @@ export const prepareRegistration = async (
     layers.slice(0, targetIndex),
   );
   const desired = replaceClientRegistrationLauncher(
-    parsed.dialect,
+    { dialect: parsed.dialect, profile: client.registrationProfile },
     [launcher.command, ...launcher.args],
     clientServerForEdit(parsed, PRODUCT_IDENTITY.mcpServerKey),
     inherited === undefined
@@ -149,11 +147,14 @@ const assertEffectiveLauncher = (
   launcher: ClientRegistrationCommand,
 ): void => {
   const effective = mergeClientConfigurationDocuments(layers);
-  const admitted = parseClientRegistrationLauncher(
+  const admitted = admitClientStdioConnection(
     effective === undefined
       ? undefined
       : effectiveClientServer(effective, PRODUCT_IDENTITY.mcpServerKey),
-    effective?.dialect,
+    {
+      dialect: effective?.dialect ?? client.format,
+      profile: client.registrationProfile,
+    },
   );
   if (
     !admitted.ok ||
@@ -161,8 +162,11 @@ const assertEffectiveLauncher = (
     !clientConfigurationValuesEqual(admitted.value.args, launcher.args)
   )
     throw new ConfigurationError(
-      "A higher-priority configuration overrides the selected stdio launcher. Update that source before registering this command.",
+      admitted.ok
+        ? "A higher-priority configuration overrides the selected stdio launcher. Update that source before registering this command."
+        : admitted.error.cause.message,
       {
+        ...(admitted.ok ? {} : { cause: admitted.error.cause }),
         diagnostics: {
           settings_path: client.configPath,
           ...(client.inlineConfiguration === undefined

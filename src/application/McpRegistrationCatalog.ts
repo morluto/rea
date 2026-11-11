@@ -6,7 +6,15 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
-import { supportedClients } from "./SupportedClients.js";
+import {
+  supportedClients,
+  supportedClientRegistrationProfile,
+} from "./SupportedClients.js";
+import type {
+  ClientRegistrationConnectionProfile,
+  ClientRegistrationProfile,
+  NativeStdioIncompatibility,
+} from "./ClientRegistrationProfile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   selectedPath,
@@ -29,7 +37,7 @@ import {
   type McpRegistrationInlineConfiguration,
 } from "./McpRegistrationLocations.js";
 
-interface ClientDescriptor {
+interface ClientDescriptorBase {
   readonly displayName: string;
   readonly format: ClientConfigurationFormat;
   readonly globalLocation: (
@@ -41,72 +49,146 @@ interface ClientDescriptor {
   readonly projectFormat?: ClientConfigurationFormat;
 }
 
+type ClientDescriptor = ClientDescriptorBase &
+  (
+    | {
+        readonly registrationProfile: ClientRegistrationProfile;
+        readonly registrationConnection?: never;
+      }
+    | {
+        readonly registrationConnection: ClientRegistrationConnectionProfile;
+        readonly registrationProfile?: never;
+      }
+  );
+
+/** mcporter getUrl's native nullish priority; an empty first value suppresses later aliases. */
+const MCPORTER_URL_FIELDS = [
+  "baseUrl",
+  "base_url",
+  "url",
+  "serverUrl",
+  "server_url",
+] as const;
+const MCPORTER_STDIO_INCOMPATIBILITIES: readonly NativeStdioIncompatibility[] =
+  [
+    // RawEntrySchema admits only optional strings, including an empty string.
+    ...MCPORTER_URL_FIELDS.map((field): NativeStdioIncompatibility => ({
+      kind: "invalid-string",
+      field,
+    })),
+    ...MCPORTER_URL_FIELDS.map((field, index): NativeStdioIncompatibility =>
+      index === 0
+        ? { kind: "truthy", field }
+        : {
+            kind: "all",
+            conditions: [
+              ...MCPORTER_URL_FIELDS.slice(0, index).map(
+                (prior): NativeStdioIncompatibility => ({
+                  kind: "nullish",
+                  field: prior,
+                }),
+              ),
+              { kind: "truthy", field },
+            ],
+          },
+    ),
+  ];
+
 /** Reviewed add-mcp 2.6.1 client contracts plus Incur's separate Amp contract. */
 export const MCP_REGISTRATION_CLIENTS = {
   antigravity: {
     displayName: "Antigravity",
     format: "json",
     globalLocation: fromSetup("antigravity"),
+    registrationProfile: supportedClientRegistrationProfile("antigravity"),
   },
   cline: {
     displayName: "Cline VSCode Extension",
     format: "json",
     globalLocation: clineLocation,
+    registrationConnection: { kind: "cline" },
   },
   "cline-cli": {
     displayName: "Cline CLI",
     format: "json",
     globalLocation: clineCliLocation,
+    registrationConnection: { kind: "cline" },
   },
   "claude-code": {
     displayName: "Claude Code",
     format: "claude_code",
     globalLocation: fromSetup("claude_code"),
+    registrationProfile: supportedClientRegistrationProfile("claude_code"),
     projectLocation: fixedProjectLocation([".mcp.json"]),
   },
   "claude-desktop": {
     displayName: "Claude Desktop",
     format: "json",
     globalLocation: fromSetup("claude_desktop"),
+    registrationProfile: supportedClientRegistrationProfile("claude_desktop"),
   },
   codex: {
     displayName: "Codex",
     format: "toml",
     globalLocation: fromSetup("codex"),
+    registrationProfile: supportedClientRegistrationProfile("codex"),
     projectLocation: fixedProjectLocation([".codex/config.toml"]),
   },
   cursor: {
     displayName: "Cursor",
     format: "json",
     globalLocation: fromSetup("cursor"),
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
     projectLocation: fixedProjectLocation([".cursor/mcp.json"]),
   },
   "factory-droid": {
     displayName: "Factory Droid",
     format: "json",
     globalLocation: fromSetup("droid"),
+    registrationProfile: supportedClientRegistrationProfile("droid"),
     projectLocation: fixedProjectLocation([".factory/mcp.json"]),
   },
   fx: {
     displayName: "fx",
     format: "fx",
     globalLocation: fxLocation,
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "args"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["local", "stdio"] },
+        {
+          kind: "all",
+          conditions: [
+            { kind: "missing", field: "type" },
+            { kind: "present", field: "url" },
+          ],
+        },
+      ],
+    },
   },
   "gemini-cli": {
     displayName: "Gemini CLI",
     format: "json",
     globalLocation: fromSetup("gemini_cli"),
+    registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
     projectLocation: fixedProjectLocation([".gemini/settings.json"]),
   },
   goose: {
     displayName: "Goose",
     format: "goose",
     globalLocation: gooseLocation,
+    registrationConnection: {
+      kind: "flat",
+      fields: ["uri"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["stdio"] }],
+    },
   },
   "github-copilot-cli": {
     displayName: "GitHub Copilot CLI",
     format: "copilot_cli",
     globalLocation: fromSetup("copilot_cli"),
+    registrationProfile: supportedClientRegistrationProfile("copilot_cli"),
     projectLocation: fixedProjectLocation([".mcp.json", ".github/mcp.json"]),
     projectFormat: "copilot_cli_project",
   },
@@ -114,29 +196,42 @@ export const MCP_REGISTRATION_CLIENTS = {
     displayName: "Grok Build",
     format: "grok",
     globalLocation: fromSetup("grok_build"),
+    registrationProfile: supportedClientRegistrationProfile("grok_build"),
     projectLocation: fixedProjectLocation([".grok/config.toml"]),
   },
   hermes: {
     displayName: "Hermes Agent",
     format: "hermes",
     globalLocation: fromSetup("hermes"),
+    registrationProfile: supportedClientRegistrationProfile("hermes"),
   },
   junie: {
     displayName: "Junie",
     format: "json",
     globalLocation: junieLocation,
     projectLocation: fixedProjectLocation([".junie/mcp/mcp.json"]),
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
   },
   "kilo-code": {
     displayName: "Kilo Code",
     format: "kilo",
     globalLocation: kiloLocation,
     projectLocation: kiloProjectLocation,
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
+    },
   },
   "kimi-code": {
     displayName: "Kimi Code",
     format: "kimi",
     globalLocation: fromSetup("kimi"),
+    registrationProfile: supportedClientRegistrationProfile("kimi"),
     projectLocation: fixedProjectLocation([".kimi-code/mcp.json"]),
   },
   "kiro-cli": {
@@ -144,23 +239,42 @@ export const MCP_REGISTRATION_CLIENTS = {
     format: "json",
     globalLocation: kiroLocation,
     projectLocation: fixedProjectLocation([".kiro/settings/mcp.json"]),
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
   },
   mastracode: {
     displayName: "Mastra Code",
     format: "json",
     globalLocation: mastraLocation,
     projectLocation: fixedProjectLocation([".mastracode/mcp.json"]),
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "string", field: "url" }],
+    },
   },
   mcporter: {
     displayName: "MCPorter",
     format: "json",
     globalLocation: mcporterLocation,
     projectLocation: fixedProjectLocation(["config/mcporter.json"]),
+    registrationConnection: {
+      kind: "flat",
+      fields: [...MCPORTER_URL_FIELDS, "executable"],
+      stdio: MCPORTER_STDIO_INCOMPATIBILITIES,
+    },
   },
   opencode: {
     displayName: "OpenCode",
     format: "opencode",
     globalLocation: fromSetup("opencode"),
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
     projectLocation: fixedProjectLocation([
       "opencode.jsonc",
       "opencode.json",
@@ -172,29 +286,42 @@ export const MCP_REGISTRATION_CLIENTS = {
     displayName: "Pi",
     format: "pi",
     globalLocation: fromSetup("pi"),
+    registrationProfile: supportedClientRegistrationProfile("pi"),
     projectLocation: fixedProjectLocation([".pi/mcp.json"]),
   },
   vscode: {
     displayName: "VS Code",
     format: "vscode",
     globalLocation: fromSetup("vscode"),
+    registrationProfile: supportedClientRegistrationProfile("vscode"),
     projectLocation: fixedProjectLocation([".vscode/mcp.json"]),
   },
   windsurf: {
     displayName: "Windsurf",
     format: "json",
     globalLocation: fromSetup("windsurf"),
+    registrationProfile: supportedClientRegistrationProfile("windsurf"),
   },
   zed: {
     displayName: "Zed",
     format: "zed",
     globalLocation: zedLocation,
     projectLocation: fixedProjectLocation([".zed/settings.json"]),
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
   },
   amp: {
     displayName: "Amp",
     format: "amp",
     globalLocation: ampLocation,
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
   },
 } as const satisfies Record<string, ClientDescriptor>;
 
@@ -230,6 +357,7 @@ export const resolveMcpRegistrationClientId = (
 };
 
 export interface McpRegistrationClient {
+  readonly registrationProfile: ClientRegistrationProfile;
   readonly id: McpRegistrationClientId;
   readonly displayName: string;
   readonly configPath: string;
@@ -272,6 +400,19 @@ const selectedIds = (agents: readonly string[]): McpRegistrationClientId[] => {
   return ids;
 };
 
+/** Existing setup bindings retain their exact profile; additional clients bind the descriptor key. */
+export const mcpClientRegistrationProfile = (
+  id: McpRegistrationClientId,
+): ClientRegistrationProfile => {
+  const descriptor: ClientDescriptor = MCP_REGISTRATION_CLIENTS[id];
+  return (
+    descriptor.registrationProfile ?? {
+      nativeClient: id,
+      connection: descriptor.registrationConnection,
+    }
+  );
+};
+
 const projectTarget = async (
   id: McpRegistrationClientId,
   context: McpRegistrationLocationContext,
@@ -285,6 +426,7 @@ const projectTarget = async (
   return {
     id,
     displayName: descriptor.displayName,
+    registrationProfile: mcpClientRegistrationProfile(id),
     ...resolved,
     scope: "project",
     format: descriptor.projectFormat ?? descriptor.format,
@@ -301,6 +443,7 @@ const globalTarget = async (
     client: {
       id,
       displayName: descriptor.displayName,
+      registrationProfile: mcpClientRegistrationProfile(id),
       configPath: selectedPath(resolved.configPath, context),
       ...(resolved.configPaths === undefined
         ? {}
@@ -339,25 +482,20 @@ export const resolveMcpRegistrationClients = async (
           )
         : [],
     };
-    if (!selection.global) {
-      // Default selection also includes Amp and therefore cannot become project writes.
-      if (ids.length === 0)
-        throw new ConfigurationError(
-          "Default MCP registration includes global-only Amp. Select project-capable --agent values or remove --no-global; no settings were written.",
-        );
-      const clients: McpRegistrationClient[] = [];
-      for (const id of ids) {
-        checkCancellation(selection.signal);
-        clients.push(await projectTarget(id, context));
-      }
-      checkCancellation(selection.signal);
-      return ok(clients);
-    }
+    // Default selection includes global-only Amp and cannot become project writes.
+    if (!selection.global && ids.length === 0)
+      throw new ConfigurationError(
+        "Default MCP registration includes global-only Amp. Select project-capable --agent values or remove --no-global; no settings were written.",
+      );
     if (ids.length > 0) {
       const clients: McpRegistrationClient[] = [];
       for (const id of ids) {
         checkCancellation(selection.signal);
-        clients.push((await globalTarget(id, context)).client);
+        clients.push(
+          selection.global
+            ? (await globalTarget(id, context)).client
+            : await projectTarget(id, context),
+        );
       }
       checkCancellation(selection.signal);
       return ok(clients);

@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "./result.js";
+import { processArgumentSchema } from "./process/processArgument.js";
 
 /** Exact stdio launcher facts, independent of command-text presentation. */
 export interface ClientRegistrationCommand {
@@ -9,6 +10,7 @@ export interface ClientRegistrationCommand {
 export interface ClientRegistrationCommandIssue {
   readonly kind:
     | "invalid_type"
+    | "invalid_argument"
     | "empty_command"
     | "unterminated_quote"
     | "unsupported_transport";
@@ -44,6 +46,12 @@ export const parseClientRegistrationCommand = (
     return err({
       kind: "empty_command",
       message: "The registration command needs a nonempty executable.",
+    });
+  if (words.some((word) => !processArgumentSchema.safeParse(word).success))
+    return err({
+      kind: "invalid_argument",
+      message:
+        "The registration executable and arguments cannot contain NUL characters. Remove them before registering the client.",
     });
   const source = URL.parse(command);
   if (source?.protocol === "http:" || source?.protocol === "https:")

@@ -83,3 +83,21 @@ it("refuses HTTP transport sources without echoing URL credentials", () => {
     value: { command: "server", args: ["https://fixture.invalid/argument"] },
   });
 });
+
+it.each([
+  { input: "server\0suffix argument" },
+  { input: "server 'arg\0suffix'" },
+  { input: ["server\0suffix", "argument"] },
+  { input: ["server", "arg\0suffix"] },
+])(
+  "refuses OS-unrepresentable NUL in authored command/arguments: $input",
+  ({ input }) => {
+    const parsed = parseClientRegistrationCommand(input);
+    expect(parsed).toMatchObject({
+      ok: false,
+      error: { kind: "invalid_argument" },
+    });
+    if (parsed.ok) throw Error("Expected rejected process arguments");
+    expect(parsed.error.message).toContain("NUL");
+  },
+);

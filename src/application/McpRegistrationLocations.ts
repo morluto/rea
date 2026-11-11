@@ -3,7 +3,7 @@ import { dirname, join, win32 } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import type { SetupClient } from "./SupportedClients.js";
+import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 
@@ -40,7 +40,7 @@ export const selectedPath = (
   absoluteCallerPath(path, { cwd: context.cwd, platform: context.platform });
 
 export const fromSetup =
-  (name: string) =>
+  (name: SupportedClientName) =>
   async (
     context: McpRegistrationLocationContext,
   ): Promise<McpRegistrationGlobalLocation> => {

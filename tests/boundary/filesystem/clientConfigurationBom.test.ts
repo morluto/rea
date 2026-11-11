@@ -15,7 +15,10 @@ import {
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
-import { supportedClients } from "../../../src/application/SupportedClients.js";
+import {
+  supportedClientRegistrationProfile,
+  supportedClients,
+} from "../../../src/application/SupportedClients.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -123,7 +126,12 @@ it.each(['\uFEFF{"servers": {"rea": @}}', '\uFEFF{"setting":\uFEFFtrue}'])(
       "rea-client-config-bom-invalid-",
     );
     const configPath = join(home, "mcp.json");
-    const client = { name: "vscode", format: "vscode", configPath } as const;
+    const client = {
+      name: "vscode",
+      registrationProfile: supportedClientRegistrationProfile("vscode"),
+      format: "vscode",
+      configPath,
+    } as const;
     await writeFile(configPath, original);
     const invalidOffset = original.includes("@") ? original.indexOf("@") : 12;
     expect(() => parseClientConfiguration(original, client.format)).toThrow(
