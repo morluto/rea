@@ -256,6 +256,20 @@ it.each([
     valid: false,
   },
   {
+    type: 8,
+    backing: "none",
+    offset: "0xffffffffffffffff",
+    size: "0x2000",
+    valid: true,
+  },
+  {
+    type: 8,
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
     type: "SHT_NULL",
     backing: "none",
     offset: "0xffffffffffffffff",
@@ -264,6 +278,20 @@ it.each([
   },
   {
     type: "SHT_NULL",
+    backing: "file",
+    offset: "0x40",
+    size: "0x10",
+    valid: false,
+  },
+  {
+    type: 0,
+    backing: "none",
+    offset: "0xffffffffffffffff",
+    size: "0x2000",
+    valid: true,
+  },
+  {
+    type: 0,
     backing: "file",
     offset: "0x40",
     size: "0x10",
