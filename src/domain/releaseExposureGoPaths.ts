@@ -98,8 +98,6 @@ const GO_TOOL_PATH_FLAGS = new Map([
 ]);
 /** The one `pattern=` that `go build` allows before a setting's first flag. */
 const GO_PACKAGE_SELECTOR = /^[^\s=-][^\s=]*=(?=-)/u;
-/** `-X name=value` sets a string, which names no option. */
-const GO_LINKER_STRING_FLAG = /^-{1,2}X(?:[=\s]|$)/u;
 /**
  * `go tool link -extldflags` passes its value, split like any Go flag value, to
  * the external linker, which Go runs through the C compiler driver.
@@ -112,68 +110,41 @@ const goFields = (value: string): string[] =>
     ([field, double, single]) => double ?? single ?? field,
   );
 
-/**
- * One Go tool's flags, each `-X` kept apart from the string it sets, and the
- * values given to `-extldflags` kept apart for the external linker. `own` is
- * every flag the tool reads itself, `-X` strings included, with quoted fields intact.
- */
-const goToolFlags = (
-  value: string,
-): { flags: string[]; own: string[]; external: string[] } => {
-  const flags: string[] = [];
-  const own: string[] = [];
-  const external: string[] = [];
-  let argument: "string" | "external" | null = null;
-  for (const [index, field] of goFields(value).entries()) {
-    if (argument !== null) {
-      if (argument === "external") external.push(field);
-      else own.push(field);
-      argument = null;
-      continue;
-    }
-    const flag = index === 0 ? field.replace(GO_PACKAGE_SELECTOR, "") : field;
-    const externalFlags = GO_EXTERNAL_LINKER_FLAGS.exec(flag);
-    if (externalFlags !== null) {
-      if (externalFlags[1] === undefined) argument = "external";
-      else external.push(externalFlags[1]);
-      continue;
-    }
-    own.push(field);
-    if (GO_LINKER_STRING_FLAG.test(flag)) {
-      if (/^-{1,2}X$/u.test(flag)) argument = "string";
-      continue;
-    }
-    flags.push(flag);
-  }
-  return { flags, own, external };
-};
-
 /** Rooted paths in flags, with their `=` and `,` structure kept. */
 const flagPaths = (flags: string[]): string[] =>
   flags.flatMap((flag) =>
     [...flag.matchAll(GO_FLAG_PATH)].flatMap(([, path]) =>
-      path === undefined ? [] : [path.trimEnd()],
+      path === undefined ? [] : [path],
     ),
   );
 
-/** Whole literal linker operands, apart from runtime search lists handled below. */
-const linkerFlagPaths = (
+/** Consume each normalized linker option and its operand exactly once. */
+const linkerPaths = (
   flags: string[],
   format: NativeImageFormat,
   onAmbiguousLinkerR: () => void,
-): { paths: string[]; fields: Set<number> } => {
+): { paths: string[]; searchPaths: string[]; remaining: string[] } => {
   const paths: string[] = [];
-  const fields = new Set<number>();
-  for (const [index, flag] of flags.entries()) {
+  const searchPaths: string[] = [];
+  const remaining: string[] = [];
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
+    if (flag === undefined) continue;
     const attached = LINKER_PATH_FLAG.exec(flag)?.[1];
-    if (attached === undefined) continue;
+    if (attached === undefined) {
+      remaining.push(flag);
+      continue;
+    }
     const next = flags[index + 1];
     const fromNext =
-      attached.length === 0 && next !== undefined && !next.startsWith("-");
+      attached.length === 0 && !flag.endsWith("=") && next !== undefined;
     const argument = fromNext ? next : attached;
+    if (fromNext) index += 1;
     if (argument.length === 0) continue;
-    fields.add(index);
-    if (fromNext) fields.add(index + 1);
+    if (LINKER_SEARCH_LIST_FLAG.test(flag)) {
+      searchPaths.push(...searchListEntries(argument, format));
+      continue;
+    }
     if (
       flag.startsWith("-R") &&
       format === "elf" &&
@@ -185,7 +156,7 @@ const linkerFlagPaths = (
     if (/^-{1,2}Map(?:=|$)/u.test(flag) && argument === "-") continue;
     paths.push(argument);
   }
-  return { paths, fields };
+  return { paths, searchPaths, remaining };
 };
 
 /**
@@ -209,58 +180,14 @@ const searchListEntries = (
   format: NativeImageFormat,
 ): string[] => {
   const token = LINKER_RUNTIME_TOKENS[format];
-  return (format === "elf" ? list.split(LINKER_SEARCH_LIST_SEPARATOR) : [list])
-    .map((entry) => entry.trimEnd())
-    .filter((entry) => entry.length > 0 && token?.test(entry) !== true);
-};
-
-/**
- * A Go tool path flag's whole argument, rooted or relative, attached after `=`
- * or in the next field, with the fields it was read from. The tool takes the
- * argument as one path, so a `,` or `=` in it is a literal character.
- * `-trimpath` and the linker's `-r` search list are the lists among them.
- */
-const goToolFlagPaths = (
-  flags: string[],
-  pathFlag: RegExp,
-  format: NativeImageFormat,
-): { paths: string[]; fields: Set<string> } => {
-  const paths: string[] = [];
-  const fields = new Set<string>();
-  for (let index = 0; index < flags.length; index += 1) {
-    const flag = flags[index];
-    if (flag === undefined) continue;
-    const attached = pathFlag.exec(flag)?.[1];
-    if (attached === undefined) continue;
-    const next = flags[index + 1];
-    const fromNext =
-      attached.length === 0 && !flag.endsWith("=") && next !== undefined;
-    const argument = fromNext ? next : attached;
-    if (fromNext) index += 1;
-    if (argument.length === 0) continue;
-    if (
-      pathFlag === GO_LINKER_PATH_FLAG &&
-      /^-{1,2}libgcc(?:=|$)/u.test(flag) &&
-      argument === "none"
-    )
-      continue;
-    const list = GO_PATH_LIST_FLAG.test(flag);
-    if (list && filesystemPath(argument) !== null) continue;
-    if (GO_LINKER_SEARCH_LIST_FLAG.test(flag))
-      paths.push(...searchListEntries(argument, format));
-    else paths.push(argument);
-    // A rewrite list's rooted parts are still read by `flagPaths`.
-    if (list) continue;
-    fields.add(flag);
-    if (fromNext) fields.add(next);
-  }
-  return { paths, fields };
+  return (
+    format === "elf" ? list.split(LINKER_SEARCH_LIST_SEPARATOR) : [list]
+  ).filter((entry) => entry.length > 0 && token?.test(entry) !== true);
 };
 
 /** Consume compiler operands before interpreting any remaining forwarding syntax. */
 const splitForwardedLinkerFlags = (
   flags: string[],
-  format: NativeImageFormat,
 ): { compiler: string[]; linker: string[]; paths: string[] } => {
   const compiler: string[] = [];
   const linker: string[] = [];
@@ -273,10 +200,8 @@ const splitForwardedLinkerFlags = (
       const next = flags[index + 1];
       const fromNext =
         attached.length === 0 && !flag.endsWith("=") && next !== undefined;
-      const owned = fromNext ? [flag, next] : [flag];
-      paths.push(
-        ...goToolFlagPaths(owned, GO_COMPILER_PATH_FLAG, format).paths,
-      );
+      const argument = fromNext ? next : attached;
+      if (argument.length > 0) paths.push(argument);
       if (fromNext) index += 1;
     } else if (flag === "-Xlinker" && flags[index + 1] !== undefined) {
       const forwarded = flags[index + 1];
@@ -288,18 +213,6 @@ const splitForwardedLinkerFlags = (
   }
   return { compiler, linker, paths };
 };
-
-/** Each search list given to `-rpath` or `-rpath-link`, attached or in the next field. */
-const linkerSearchLists = (flags: string[]): string[] =>
-  flags.flatMap((flag, index) => {
-    const match = LINKER_SEARCH_LIST_FLAG.exec(flag);
-    if (match === null) return [];
-    const attached = flag.slice(match[0].length).replace(/^=/u, "").trimEnd();
-    const next = flags[index + 1];
-    const argument =
-      attached.length > 0 || next?.startsWith("-") === true ? attached : next;
-    return argument === undefined || argument.length === 0 ? [] : [argument];
-  });
 
 /**
  * Options whose separate argument is a dyld install name or path, which may
@@ -317,7 +230,7 @@ const LINKER_DYLD_VALUE_FLAG =
 const responseFilePaths = (args: string[], pathFlag: RegExp): string[] =>
   args.flatMap((arg, index) => {
     if (!arg.startsWith("@")) return [];
-    const path = arg.slice(1).trimEnd();
+    const path = arg.slice(1);
     const previous = args[index - 1];
     return path.length === 0 ||
       (previous !== undefined &&
@@ -343,49 +256,43 @@ const compilerPaths = (
 ): string[] => {
   const { compiler, linker, paths } = splitForwardedLinkerFlags(
     goFields(value),
-    format,
   );
-  const literalLinker = withoutLinkerSearchLists(linker);
-  const linkerOperands = linkerFlagPaths(
-    literalLinker,
-    format,
-    onAmbiguousLinkerR,
-  );
+  const extracted = linkerPaths(linker, format, onAmbiguousLinkerR);
   return [
-    ...flagPaths([
-      ...compiler,
-      ...literalLinker.filter((_, index) => !linkerOperands.fields.has(index)),
-    ]),
+    ...flagPaths([...compiler, ...extracted.remaining]),
     ...paths,
-    ...linkerOperands.paths,
+    ...extracted.paths,
     ...responseFilePaths(compiler, GO_COMPILER_PATH_FLAG),
-    ...responseFilePaths(literalLinker, LINKER_PATH_FLAG),
-    ...linkerSearchLists(linker).flatMap((list) =>
-      searchListEntries(list, format),
-    ),
+    ...responseFilePaths(extracted.remaining, LINKER_PATH_FLAG),
+    ...extracted.searchPaths,
   ];
 };
 
-/** Remove search-list operands from the already normalized linker argument stream. */
-const withoutLinkerSearchLists = (flags: string[]): string[] => {
-  const kept: string[] = [];
-  for (let index = 0; index < flags.length; index += 1) {
-    const flag = flags[index];
-    if (flag === undefined) continue;
-    const match = LINKER_SEARCH_LIST_FLAG.exec(flag);
-    if (match === null) {
-      kept.push(flag);
-      continue;
-    }
-    const next = flags[index + 1];
-    if (
-      flag.slice(match[0].length).length === 0 &&
-      next !== undefined &&
-      !next.startsWith("-")
-    )
-      index += 1;
-  }
-  return kept;
+/** Interpret a consumed Go path operand without treating its bytes as more flags. */
+const goToolOperandPaths = (
+  flag: string,
+  argument: string,
+  pathFlag: RegExp | undefined,
+  format: NativeImageFormat,
+): { paths: string[]; remaining: string[] } => {
+  if (
+    argument.length === 0 ||
+    (pathFlag === GO_LINKER_PATH_FLAG &&
+      /^-{1,2}libgcc(?:=|$)/u.test(flag) &&
+      argument === "none")
+  )
+    return { paths: [], remaining: [] };
+  if (GO_PATH_LIST_FLAG.test(flag))
+    return {
+      paths: filesystemPath(argument) === null ? [argument] : [],
+      remaining: [argument],
+    };
+  return {
+    paths: GO_LINKER_SEARCH_LIST_FLAG.test(flag)
+      ? searchListEntries(argument, format)
+      : [argument],
+    remaining: [],
+  };
 };
 
 /**
@@ -401,20 +308,41 @@ const goSettingPaths = (
   if (GO_COMPILER_SETTING.test(key))
     return compilerPaths(value, format, onAmbiguousLinkerR);
   const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
-  const { flags, own, external } = goToolFlags(value);
-  const whole =
-    pathFlag === undefined
-      ? { paths: [], fields: new Set<string>() }
-      : goToolFlagPaths(flags, pathFlag, format);
+  const fields = goFields(value);
+  const paths: string[] = [];
+  const external: string[] = [];
+  const remaining: string[] = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    if (field === undefined) continue;
+    const flag = index === 0 ? field.replace(GO_PACKAGE_SELECTOR, "") : field;
+    const attached = pathFlag?.exec(flag)?.[1];
+    if (attached !== undefined) {
+      const next = fields[index + 1];
+      const fromNext =
+        attached.length === 0 && !flag.endsWith("=") && next !== undefined;
+      const argument = fromNext ? next : attached;
+      if (fromNext) index += 1;
+      const operand = goToolOperandPaths(flag, argument, pathFlag, format);
+      paths.push(...operand.paths);
+      remaining.push(...operand.remaining);
+      continue;
+    }
+    const externalFlags = GO_EXTERNAL_LINKER_FLAGS.exec(flag);
+    if (externalFlags !== null) {
+      const argument = externalFlags[1] ?? fields[++index];
+      if (argument !== undefined) external.push(argument);
+      continue;
+    }
+    remaining.push(field);
+    if (/^-{1,2}X$/u.test(flag)) {
+      const argument = fields[++index];
+      if (argument !== undefined) remaining.push(argument);
+    }
+  }
   return [
-    ...flagPaths(
-      own.filter(
-        (field) =>
-          !whole.fields.has(field) &&
-          !whole.fields.has(field.replace(GO_PACKAGE_SELECTOR, "")),
-      ),
-    ),
-    ...whole.paths,
+    ...flagPaths(remaining),
+    ...paths,
     ...external.flatMap((flags) =>
       compilerPaths(flags, format, onAmbiguousLinkerR),
     ),

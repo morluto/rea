@@ -3218,3 +3218,51 @@ describe("ReleaseExposureService compiler operand ownership", () => {
     },
   );
 });
+
+describe("ReleaseExposureService linker operand ownership", () => {
+  it.each([
+    ["-Wl,-T,-rpath,private-sdk", ["-rpath"]],
+    ["-Wl,-L,-private-sdk", ["-private-sdk"]],
+    ["-Wl,-rpath=-private-sdk", ["-private-sdk"]],
+    ["-Xlinker -rpath -Xlinker '/tmp/private '", ["/tmp/private "]],
+  ])("consumes each linker operand once in %s", async (value, paths) => {
+    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+    expect(
+      report.checks.find((check) => check.id === "go.build_paths")?.observation
+        .samples,
+    ).toEqual(paths);
+  });
+});
+
+describe("ReleaseExposureService Go tool operand ownership", () => {
+  it.each([
+    ["-L -X main.name=private", "-X"],
+    ["-L -extldflags=-Lprivate", "-extldflags=-Lprivate"],
+    ["all=-L -X main.name=private", "-X"],
+  ])(
+    "consumes Go path operands before interpreting options in %s",
+    async (value, path) => {
+      const report = await goReport(goModule([{ key: "-ldflags", value }]));
+      expect(
+        report.checks.find((item) => item.id === "go.build_paths")?.observation
+          .samples,
+      ).toEqual([path]);
+    },
+  );
+});
+
+describe("ReleaseExposureService parsed field trailing characters", () => {
+  it.each([
+    ["CGO_LDFLAGS", "'-Wl,@private '", "private "],
+    ["CGO_CFLAGS", "'-DROOT=/tmp/private '", "/tmp/private "],
+  ])(
+    "preserves quoted trailing characters in %s=%s",
+    async (key, value, path) => {
+      const report = await goReport(goModule([{ key, value }]));
+      expect(
+        report.checks.find((item) => item.id === "go.build_paths")?.observation
+          .samples,
+      ).toEqual([path]);
+    },
+  );
+});
