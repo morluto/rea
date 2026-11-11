@@ -518,3 +518,26 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
     await client.close();
   }
 }, 30000);
+
+it.skipIf(process.platform === "win32")(
+  "ignores Windows ChangeTime launch settings on other hosts",
+  async () => {
+    const root = await createTestTempDirectory("rea-non-windows-change-time-");
+    const archive = join(root, "small.asar");
+    await writeFile(archive, asarHeaderBytes(JSON.stringify({ files: {} })));
+    const { client, call } = await connectLocalToolsMcp({
+      REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "invalid",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "invalid",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "invalid",
+    });
+    try {
+      const opened = await call("open_binary", { path: archive });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const inspected = await call("inspect_artifact", {});
+      expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    } finally {
+      await client.close();
+    }
+  },
+  30000,
+);
