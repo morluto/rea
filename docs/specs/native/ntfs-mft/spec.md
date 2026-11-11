@@ -65,10 +65,12 @@ Both the journal events and the MFT metadata have independent continuation
 positions. Padding, malformed records and truncation appear as coverage rows.
 Record order follows the acquisition, and history completeness remains unknown.
 
-CLI/MCP paired workflows use synthesized acquisitions. Real Windows 11 MFT
+Automated CLI/MCP workflow tests use synthesized acquisitions. Real Windows 11 MFT
 records were inspected through the packaged Linux CLI; see the
 [verification record](../../../verification/ntfs-metadata-2026-11-11.md).
-Real paired journal captures and Windows-host execution remain pending.
+Paired V2 streams from a public NTFS volume fixture also passed CLI/MCP
+verification against an independent parser. The fixture's original acquisition
+environment and Windows-host execution remain unverified.
 
 ## Page reuse lifetime
 

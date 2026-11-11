@@ -14,4 +14,5 @@
 - [x] Decode resident standard information, attribute-list references and nonresident mapping metadata.
 - [ ] Assemble extension-list payloads and recover nonresident values when required.
 - [x] Verify Windows 11 MFT records through the packaged Linux CLI, with pinned provenance and digests.
-- [ ] Verify real paired MFT/journal captures and Windows-host execution.
+- [x] Verify paired logical MFT/journal streams from a public NTFS volume fixture on Linux against an independent parser.
+- [ ] Verify Windows-host execution.
