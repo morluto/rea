@@ -9,7 +9,7 @@ export interface ConfigurationSettingIssue {
   readonly constraint: string;
   /** Whether `update_analysis_settings` can change this setting, when the producer owns that fact. */
   readonly update_mode?: "runtime" | "restart";
-  /** True when the rejected value is configured but not active in this process. */
+  /** Whether a known accepted configuration is waiting for restart, when observed. */
   readonly pending_restart?: boolean;
 }
 

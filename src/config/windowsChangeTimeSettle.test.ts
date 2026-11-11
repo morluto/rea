@@ -102,9 +102,10 @@ it.each([
     setting: bound.setting,
     constraint: message,
     update_mode: "restart" as const,
-    pending_restart: true as const,
   };
   expect(resolved.error.settings).toEqual([facts]);
+  expect(resolved.error.settings[0]).not.toHaveProperty("pending_restart");
+  expect(message).toContain("supplied");
   expect(projectAnalysisError(resolved.error)).toMatchObject({
     code: "configuration_invalid",
     details: { settings: [facts] },
@@ -112,6 +113,7 @@ it.each([
   const startup = parseEnvironment({ [bound.setting]: value });
   if (startup.ok) throw new Error(`Startup accepted ${bound.setting}=${value}`);
   expect(startup.error.settings).toContainEqual(facts);
+  expect(startup.error.settings[0]).not.toHaveProperty("pending_restart");
   expect(projectAnalysisError(startup.error).details).toMatchObject({
     settings: [facts],
   });
