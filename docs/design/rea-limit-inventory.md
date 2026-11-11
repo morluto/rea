@@ -156,7 +156,6 @@ or logger.
 | `REA_KUNA_CACHE_DIR`                 | `src/kuna/KunaConfiguration.ts`                    | Filesystem root.                            |
 | `REA_KUNA_COMMAND`                   | `src/kuna/KunaConfiguration.ts`                    | Caller-selected executable path.            |
 | `REA_LOG_LEVEL`                      | `src/config/environment.ts`                        | Logger configuration for the process.       |
-| `REA_MANAGED_LINUX_HOPPER_LAUNCHER`  | `src/application/HopperLauncherDiscovery.ts`       | Caller-selected launcher path.              |
 | `REA_MCP_INPUT_SCHEMA_PROFILE`       | `src/config/environment.ts`                        | MCP server schema shape.                    |
 | `REA_MCP_OUTPUT_SCHEMA_PROFILE`      | `src/config/environment.ts`                        | MCP server schema shape.                    |
 | `REA_MCP_TOOL_CATALOG_PROFILE`       | `src/config/environment.ts`                        | MCP server catalog shape.                   |
@@ -176,10 +175,12 @@ or logger.
 | `REA_UNBLOB_COMMAND`                 | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected command.                    |
 | `REA_WABT_BIN_DIRECTORY`             | `src/wasm/WabtArtifactProvider.ts`                 | Filesystem root of the WABT tools.          |
 | `REA_WAKARU_COMMAND`                 | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected command.                    |
-| `REA_WORKFLOW_PROVIDER`              | `src/application/DirectAnalysis.ts`                | Provider choice.                            |
 | `REA_XPROP_COMMAND`                  | `src/application/desktop/DesktopCaptureFailure.ts` | Caller-selected command.                    |
 
-Names that look like `REA_` but are process protocol, not caller settings:
+`REA_MANAGED_LINUX_HOPPER_LAUNCHER` is a fixed path constant, and
+`REA_WORKFLOW_PROVIDER` is a provider identity object. Neither is an
+environment setting. Names that look like `REA_` but are process protocol, not
+caller settings:
 `REA_BUILD_COMMIT`, `REA_BUILD_COMPUTER_REA_ARCHIVE`, `REA_INSTALL_SCRIPT`,
 `REA_OWNS_PROCESS_LIFETIME`, `REA_PAYLOAD`, `REA_PROCESS_RUN_ID`, `REA_RUN_ID`,
 `REA_SOCKET`, `REA_STATE_FORMAT`, `REA_TARGET_PATH`, `REA_TOKEN`, bridge markers
