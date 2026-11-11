@@ -18,7 +18,10 @@ import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
-import { supportedClients } from "../../../src/application/SupportedClients.js";
+import {
+  supportedClientRegistrationProfile,
+  supportedClients,
+} from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 
@@ -94,7 +97,12 @@ describe("client configuration filesystem lifecycle", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "codex", configPath, format: "toml" },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+          format: "toml",
+        },
         {
           HOPPER_LAUNCHER_PATH: "/Hopper Path",
           GHIDRA_INSTALL_DIR: "/opt/ghidra",
@@ -113,7 +121,12 @@ describe("client configuration filesystem lifecycle", () => {
     expect(configured).toContain('JAVA_HOME = "/opt/jdk-21"');
     expect(
       await configureClientConfiguration(
-        { name: "codex", configPath, format: "toml" },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+          format: "toml",
+        },
         {
           HOPPER_LAUNCHER_PATH: "/Hopper Path",
           GHIDRA_INSTALL_DIR: "/opt/ghidra",
@@ -136,7 +149,12 @@ describe("client configuration filesystem lifecycle", () => {
     const original = await readFile(configPath, "utf8");
     expect(
       await configureClientConfiguration(
-        { name: "codex", configPath, format: "toml" },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+          format: "toml",
+        },
         {
           HOPPER_LAUNCHER_PATH: "/Hopper Path",
           GHIDRA_INSTALL_DIR: "/opt/ghidra",
@@ -159,7 +177,12 @@ describe("Codex MCP tool deadlines", () => {
     await mkdir(dirname(configPath), { recursive: true });
     expect(
       await configureClientConfiguration(
-        { name: "codex", configPath, format: "toml" },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+          format: "toml",
+        },
         { REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001" },
         ["rea", "mcp"],
       ),
@@ -182,7 +205,12 @@ describe("Codex MCP tool deadlines", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "codex", configPath, format: "toml" },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+          format: "toml",
+        },
         {},
         ["rea", "mcp"],
       ),
@@ -205,7 +233,12 @@ describe("client configuration filesystem lifecycle", () => {
 
     expect(
       await configureClientConfiguration(
-        { name: "codex", configPath, format: "toml" },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+          format: "toml",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -224,6 +257,7 @@ describe("client configuration filesystem lifecycle", () => {
     expect(
       await configureClientConfiguration({
         name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
         configPath,
         format: "toml",
       }),
@@ -278,7 +312,12 @@ describe("Grok Build server table edits", () => {
     };
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         environment,
         ["rea", "mcp"],
       ),
@@ -326,7 +365,12 @@ describe("Grok Build server table edits", () => {
     });
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         environment,
         ["rea", "mcp"],
       ),
@@ -377,7 +421,12 @@ describe("Grok Build disabled server list", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -393,7 +442,12 @@ describe("Grok Build disabled server list", () => {
     });
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -401,7 +455,12 @@ describe("Grok Build disabled server list", () => {
     await writeFile(configPath, 'disabled_mcp_servers = ["rea"] # note\n');
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -434,7 +493,12 @@ describe("Grok Build disabled server list", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -447,7 +511,12 @@ describe("Grok Build disabled server list", () => {
     await writeFile(configPath, 'disabled_mcp_servers = ["""rea"""] # note\n');
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -491,7 +560,12 @@ describe("Grok Build text that resembles a server table", () => {
     await writeFile(configPath, original);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -516,7 +590,12 @@ describe("Grok Build text that resembles a server table", () => {
     });
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -558,7 +637,12 @@ describe("Grok Build text that resembles a server table", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -613,7 +697,12 @@ describe("Grok Build multiline and escaped headers", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -634,7 +723,12 @@ describe("Grok Build multiline and escaped headers", () => {
     });
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -670,7 +764,12 @@ describe("Grok Build multiline and escaped headers", () => {
     await writeFile(configPath, original);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -713,7 +812,12 @@ describe("Grok Build inline and dotted assignments", () => {
     await writeFile(configPath, inline);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -737,7 +841,12 @@ describe("Grok Build inline and dotted assignments", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -757,7 +866,12 @@ describe("Grok Build inline and dotted assignments", () => {
     expect(configuredInline).not.toContain("enabled");
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -804,7 +918,12 @@ describe("Grok Build inline and dotted assignments", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -838,7 +957,12 @@ describe("Grok Build closed inline tables", () => {
     await writeFile(configPath, original);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -859,7 +983,12 @@ describe("Grok Build closed inline tables", () => {
     });
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -886,7 +1015,12 @@ describe("Grok Build closed inline tables", () => {
     await writeFile(configPath, "mcp_servers = { }\n");
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -918,7 +1052,12 @@ describe("Grok Build closed inline tables", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -956,7 +1095,12 @@ describe("Grok Build scalar and nested values", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -981,7 +1125,12 @@ describe("Grok Build scalar and nested values", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -1024,7 +1173,12 @@ describe("Grok Build scalar and nested values", () => {
     await writeFile(configPath, original);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -1052,7 +1206,12 @@ describe("Grok Build newlines and leading marks", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -1088,7 +1247,12 @@ describe("Grok Build newlines and leading marks", () => {
     await writeFile(configPath, original);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -1119,7 +1283,12 @@ describe("Grok Build newlines and leading marks", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -1147,7 +1316,12 @@ describe("Grok Build inline comments", () => {
     await writeFile(configPath, original);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -1184,7 +1358,12 @@ describe("Grok Build inline comments", () => {
     await writeFile(configPath, original);
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         undefined,
         ["rea", "mcp"],
       ),
@@ -1220,7 +1399,12 @@ describe("Grok Build inline comments", () => {
     );
     expect(
       await configureClientConfiguration(
-        { name: "grok_build", configPath, format: "grok" },
+        {
+          name: "grok_build",
+          registrationProfile: supportedClientRegistrationProfile("grok_build"),
+          configPath,
+          format: "grok",
+        },
         { HOPPER_LAUNCHER_PATH: "/tmp/path\u007fwith-del" },
         ["rea", "mcp"],
       ),
@@ -1386,7 +1570,12 @@ describe("Codex configuration comments", () => {
 
     expect(
       await configureClientConfiguration(
-        { name: "codex", configPath, format: "toml" },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+          format: "toml",
+        },
         {},
         [PRODUCT_IDENTITY.cliBinary, "mcp"],
       ),
@@ -2186,12 +2375,19 @@ describe("client configuration filesystem failure reporting", () => {
         };
         return publication;
       },
-    }).removeClient({ name: "cursor", format: "json", configPath: config });
+    }).removeClient({
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath: config,
+    });
     expect(result.status).toBe("failed");
     expect(await readFile(config, "utf8")).toBe(current);
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(initial);
   });
+});
 
+describe("managed skill removal outcomes", () => {
   it("reports a managed-path removal failure", async () => {
     const home = await createTestTempDirectory("rea-uninstall-remove-");
     const skillRoot = join(home, ".agents/skills/reverse-engineer-anything");
