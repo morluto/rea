@@ -14,6 +14,7 @@ import {
   isNullishJavaScriptSyntax,
   isObjectPrototypeSetter,
   primitiveOwnKeys,
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   staticObjectProperty,
@@ -884,19 +885,54 @@ const rejectsSocketOptionsPort = (
   if (first === undefined || t.isSpreadElement(first)) return false;
   const options = unwrapJavaScriptExpression(first).node;
   if (!t.isObjectExpression(options)) return false;
-  // The merge in `tls` can replace the port, so an open second object decides nothing here.
+  // Only `tls` merges a later object over this one; for `net` slot 1 is an optional listener,
+  // so it cannot replace the port. Measured on Node 24.22.1, `net.connect({port: -1}, {})` and
+  // `net.connect({port: -1}, () => {})` both throw ERR_SOCKET_BAD_PORT.
+  // A getter runs while Node copies the members and can write the port first. A setter is
+  // never invoked by an `Object.assign` over a plain source, so it decides nothing on its
+  // own: measured on Node 24.22.1, `net.connect({set port(_) {}, port: -1})` throws
+  // ERR_SOCKET_BAD_PORT.
+  const accessorDecides = (value: t.ObjectExpression): boolean =>
+    value.properties.some(
+      (property) => t.isObjectMethod(property) && property.kind === "get",
+    );
+  if (accessorDecides(options)) return false;
   const second = node.arguments[1];
-  if (second !== undefined && !t.isSpreadElement(second)) {
-    const secondValue = unwrapJavaScriptExpression(second).node;
-    if (t.isObjectExpression(secondValue)) return false;
-  }
-  // A getter or setter can write the port before Node copies it.
   if (
-    options.properties.some(
-      (property) => t.isObjectMethod(property) && property.kind !== "method",
+    specifier === "tls" &&
+    second !== undefined &&
+    !t.isSpreadElement(second)
+  ) {
+    const secondValue = unwrapJavaScriptExpression(second).node;
+    // A listener is not merged. Anything else may be an options object:
+    // `const override = {port: 443}; tls.connect({port: -1}, override)` connects.
+    if (
+      !t.isObjectExpression(secondValue) &&
+      !t.isArrowFunctionExpression(secondValue) &&
+      !t.isFunctionExpression(secondValue) &&
+      !isNullishJavaScriptSyntax(secondValue) &&
+      !isUnmodifiedGlobalReference(secondValue, context.state, "undefined")
     )
-  )
-    return false;
+      return false;
+    if (t.isObjectExpression(secondValue)) {
+      // The later object replaces a member it writes, so its own `port` is the effective
+      // one. `Object.assign` reads that object, so only its getters run, and an own
+      // `__proto__` installs a prototype on the target whose setters then fire.
+      if (accessorDecides(secondValue) || installsPrototype(secondValue))
+        return false;
+      const sourcePort = staticObjectProperty(
+        secondValue,
+        "port",
+        isNullishJavaScriptSyntax,
+      );
+      if (sourcePort.status !== "explicit") return false;
+      return rejectsPortMember(
+        unwrapJavaScriptExpression(sourcePort.value).node,
+        specifier,
+        context,
+      );
+    }
+  }
   // A path that is present and not provably empty selects the Unix socket, and the port is
   // never read. A path this reader cannot price may be a real one, so it stays undecided.
   const pathMember = staticObjectProperty(
@@ -922,20 +958,11 @@ const rejectsSocketOptionsPort = (
     isNullishJavaScriptSyntax,
   );
   if (portMember.status !== "explicit") return false;
-  const writtenPort = unwrapJavaScriptExpression(portMember.value).node;
-  // The member spelling differs from the positional one for these three shapes.
-  if (t.isStringLiteral(writtenPort)) return !usablePortText(writtenPort.value);
-  if (
-    t.isTemplateLiteral(writtenPort) &&
-    writtenPort.expressions.length === 0
-  ) {
-    const cooked = writtenPort.quasis[0]?.value.cooked;
-    return cooked === null || cooked === undefined
-      ? false
-      : !usablePortText(cooked);
-  }
-  if (rejectsNonScalarPort(writtenPort)) return true;
-  return rejectsPortValueNode(writtenPort, specifier, context);
+  return rejectsPortMember(
+    unwrapJavaScriptExpression(portMember.value).node,
+    specifier,
+    context,
+  );
 };
 
 /**
@@ -950,6 +977,50 @@ const usablePortText = (text: string): boolean => {
   const value = Number(text);
   return Number.isInteger(value) && value >= 0 && value <= 65535;
 };
+
+/**
+ * Whether a value written as a `port` member is one Node rejects.
+ *
+ * The member spelling differs from the positional one in three ways, so it cannot reuse
+ * `rejectsPortValueNode` alone:
+ *
+ * - Node coerces a string with `Number`, so `"8080"` connects while `"x"` throws
+ *   `ERR_SOCKET_BAD_PORT`.
+ * - A known non-scalar value is a type error rather than a range failure:
+ *   `{port: {}}` and `{port: []}` throw `ERR_INVALID_ARG_TYPE`.
+ *
+ * Measured on Node 24.22.1.
+ */
+const rejectsPortMember = (
+  written: t.Node,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  if (t.isStringLiteral(written)) return !usablePortText(written.value);
+  if (t.isTemplateLiteral(written) && written.expressions.length === 0) {
+    const cooked = written.quasis[0]?.value.cooked;
+    return cooked === null || cooked === undefined
+      ? false
+      : !usablePortText(cooked);
+  }
+  if (rejectsNonScalarPort(written)) return true;
+  return rejectsPortValueNode(written, specifier, context);
+};
+
+/**
+ * Whether copying this object onto a merge target replaces the target's prototype.
+ *
+ * An own `__proto__` key is read by `Object.assign` as a normal key, but assigning it to the
+ * target runs the prototype accessor, so the target's prototype becomes this value and its
+ * setters fire for every remaining key.
+ */
+const installsPrototype = (options: t.ObjectExpression): boolean =>
+  options.properties.some(
+    (property) =>
+      !t.isSpreadElement(property) &&
+      semanticStaticPropertyKey(property.key, property.computed) ===
+        "__proto__",
+  );
 
 /**
  * Whether a known non-number, non-string port member is a type error.

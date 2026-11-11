@@ -69,3 +69,52 @@ it.each([[`net.connect(8080)`], [`net.connect("/tmp/x.sock")`]] as const)(
     expect(acquisitionsFor(call)).toHaveLength(1);
   },
 );
+
+it.each([
+  // `Object.assign` reads the source, so only its getters run; a source setter is never called.
+  [`tls.connect({ port: 443 }, { set side(_) {}, port: -1 })`],
+] as const)(
+  "emits no acquisition when a source setter cannot absorb the port: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  // A source getter runs during the copy and can rewrite the port.
+  [
+    `tls.connect({ port: 443 }, { get side() { this.port = 8080; }, port: -1 })`,
+  ],
+  // An own `__proto__` installs a prototype on the target whose setters then fire.
+  [
+    `tls.connect({ port: 443 }, { ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } }, port: -1 })`,
+  ],
+  // An unresolved source may be an options object: `const o = {port: 443}` connects.
+  [`const o = { port: 443 }; tls.connect({ port: -1 }, o)`],
+] as const)(
+  "keeps the acquisition for a source that may rewrite the port: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toHaveLength(1);
+  },
+);
+
+it.each([
+  // Only `tls` merges a later object; `net` reads slot 1 as an optional listener.
+  [`net.connect({ port: -1 }, {})`],
+  [`net.connect({ port: -1 }, () => {})`],
+  // A setter in the options never runs during an `Object.assign` over a plain source.
+  [`net.connect({ set port(_) {}, port: -1 })`],
+  // The later object writes its own port, which is then the effective one.
+  [`tls.connect({ port: 443 }, { port: -1 })`],
+] as const)(
+  "emits no acquisition when the effective port is rejected: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it("keeps the acquisition when the later object supplies a good port", () => {
+  expect(
+    acquisitionsFor(`tls.connect({ port: -1 }, { port: 443 })`),
+  ).toHaveLength(1);
+});
