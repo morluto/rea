@@ -9,6 +9,7 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
@@ -720,7 +721,13 @@ export class FlutterBuildProvider {
         request.operation,
       );
     } catch (cause) {
-      return err(mapOwnedIoFailure(request.operation, cause, null));
+      const failure = mapOwnedIoFailure(request.operation, cause, null);
+      const interrupted = cancellation();
+      return err(
+        interrupted === undefined
+          ? failure
+          : analysisErrorWithCancellation(failure, interrupted),
+      );
     }
     const afterCleanup = cancellation();
     if (afterCleanup !== undefined) return err(afterCleanup);
@@ -790,6 +797,15 @@ export class FlutterBuildProvider {
         }),
       );
     }
+    if (signal?.aborted === true && !result.ok)
+      result = err(
+        analysisErrorWithCancellation(
+          result.error,
+          new AnalysisCancelledError(request.operation, {
+            cause: signal.reason,
+          }),
+        ),
+      );
     if (cleanup !== undefined) {
       if (!result.ok)
         return err(this.withCleanup(result.error, cleanup, request.operation));

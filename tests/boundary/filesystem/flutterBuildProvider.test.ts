@@ -2136,6 +2136,79 @@ it("does not create a replacement snapshot when cancelled during cleanup retry",
   expect(roots.size).toBe(1);
 });
 
+it.each([false, true])(
+  "retains the exact late cancellation alongside a completed failure (cleanup fails: %s)",
+  async (cleanupFails) => {
+    const path = await buildApk("unsupported-late-cancel.apk", []);
+    const controller = new AbortController();
+    const reason = { caller: "cancel during snapshot cleanup" };
+    let refuse = cleanupFails;
+    const provider = new FlutterBuildProvider({
+      removeRoot: async (root) => {
+        controller.abort(reason);
+        if (refuse) await rmdir(root);
+        else await rm(root, { recursive: true, force: true });
+      },
+    });
+    onTestFinished(async () => {
+      refuse = false;
+      await provider.close();
+    });
+    const result = await provider.execute(
+      { operation: "inspect_dart_aot", input: { path } },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected unsupported package failure");
+    const primary = result.error.cleanupPrimary ?? result.error;
+    expect(primary).not.toBeInstanceOf(AnalysisCancelledError);
+    expect(
+      primary.secondaryFailures.some((failure) => failure.cause === reason),
+    ).toBe(true);
+    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+    refuse = false;
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+it("retains cancellation when a prior failed root cannot be retired on admission", async () => {
+  const path = await buildApk("blocked-cleanup-abort.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+  ]);
+  const controller = new AbortController();
+  const reason = { caller: "abort during failed retry" };
+  let refuse = true;
+  let attempts = 0;
+  const provider = new FlutterBuildProvider({
+    removeRoot: async (root) => {
+      attempts += 1;
+      if (refuse) {
+        if (attempts === 2) controller.abort(reason);
+        await rmdir(root);
+      } else await rm(root, { recursive: true, force: true });
+    },
+  });
+  onTestFinished(async () => {
+    refuse = false;
+    await provider.close();
+  });
+  const request = {
+    operation: "identify_flutter_build" as const,
+    input: { path },
+  };
+  const first = await provider.execute(request);
+  if (first.ok) throw new Error("Expected retained root");
+  const retry = await provider.execute(request, { signal: controller.signal });
+  if (retry.ok) throw new Error("Expected failed retry");
+  expect(retry.error.cleanupIncomplete).toBe(true);
+  expect(
+    retry.error.secondaryFailures.some((failure) => failure.cause === reason),
+  ).toBe(true);
+  refuse = false;
+  await provider.close();
+  expect(retry.error.cleanupIncomplete).toBe(false);
+});
+
 it("preserves a completed analysis failure through refused cleanup and late cancellation", async () => {
   const path = await buildApk("unsupported-cleanup.apk", []);
   const controlProvider = new FlutterBuildProvider();
@@ -2165,7 +2238,7 @@ it("preserves a completed analysis failure through refused cleanup and late canc
   );
   if (result.ok) throw new Error("Expected primary and cleanup failure");
   expect(result.error.cleanupIncomplete).toBe(true);
-  expect(projectAnalysisError(result.error.cleanupPrimary!)).toEqual(
+  expect(projectAnalysisError(result.error.cleanupPrimary!)).toMatchObject(
     projectAnalysisError(control.error),
   );
   expect(result.error.cleanupPrimary).not.toBeInstanceOf(
