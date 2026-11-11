@@ -104,11 +104,15 @@ export const referenceSourceImportAnalysisError = (
       break;
     case "io":
     case "parse":
-      primary = new AnalysisOutputError("import_reference_source", error.message, {
-        ...options,
-        userMessage: message,
-        remediationAction: guidance,
-      });
+      primary = new AnalysisOutputError(
+        "import_reference_source",
+        error.message,
+        {
+          ...options,
+          userMessage: message,
+          remediationAction: guidance,
+        },
+      );
       break;
   }
   return error.secondaryCancellation === undefined

@@ -84,6 +84,8 @@ const resolveSourceVcs = async (
             cause instanceof RegularFileReadFailure
               ? cause.operationCause
               : cause;
+          // The Git directory owner interprets absence of optional metadata.
+          if (errorCode(physical) === "ENOENT") throw physical;
           throw new ArtifactReaderFailure(
             "io",
             `Git metadata could not be read safely: ${errorMessage(physical)}`,

@@ -527,3 +527,60 @@ it("preserves physical Git failure and exact cancellation across parallel traver
     await resources.close();
   }
 });
+
+it.each(["metadata", "import"] as const)(
+  "preserves optional commondir absence when its probe coincides with cancellation (%s)",
+  async (surface) => {
+    const root = await createTestTempDirectory("rea-reference-optional-git-");
+    const gitdir = join(root, ".git");
+    await mkdir(gitdir);
+    await writeFile(
+      join(gitdir, "HEAD"),
+      "0123456789abcdef0123456789abcdef01234567\n",
+    );
+    const commondir = join(gitdir, "commondir");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { caller: "stop after optional metadata absence" };
+    let probed = false;
+    openMock.mockImplementation(async (...args) => {
+      try {
+        return await actual.open(...args);
+      } catch (cause: unknown) {
+        if (resolve(String(args[0])) === resolve(commondir)) {
+          probed = true;
+          controller.abort(reason);
+        }
+        throw cause;
+      }
+    });
+    try {
+      const result =
+        surface === "metadata"
+          ? await readReferenceSourceVcs(root, resources, controller.signal)
+          : await importReferenceSource(
+              {
+                root,
+                caller: "test",
+                policy: { secretPatterns: [] },
+                signal: controller.signal,
+              },
+              resources,
+            );
+      expect(probed).toBe(true);
+      expect(controller.signal.reason).toBe(reason);
+      if (surface === "metadata")
+        expect(result).toEqual({
+          ok: true,
+          value: { kind: "unknown", head: null, dirty: null },
+        });
+      else {
+        if (result.ok) throw new Error("Expected cancelled import");
+        expect(result.error.code).toBe("cancelled");
+        expect(result.error.cause).toBe(reason);
+      }
+    } finally {
+      await resources.close();
+    }
+  },
+);
