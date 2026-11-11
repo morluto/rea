@@ -37,10 +37,10 @@ expected 64-bit values, independent of the changed decoder. Assertions checked
 every event's USN, timestamp, file reference, parent reference, matched indices,
 name and raw reason/source flags, plus source digests and retained records.
 
-| Case | MFT | Journal | Event pages | Total calls |
-| --- | --- | --- | ---: | ---: |
-| Small | 1,024 bytes / 1 record | 192 bytes / 3 records | 3 | 5 |
-| Large | 8 MiB / 8,192 records | 1 MiB / 16,384 records | 82 | 84 |
+| Case  | MFT                    | Journal                | Event pages | Total calls |
+| ----- | ---------------------- | ---------------------- | ----------: | ----------: |
+| Small | 1,024 bytes / 1 record | 192 bytes / 3 records  |           3 |           5 |
+| Large | 8 MiB / 8,192 records  | 1 MiB / 16,384 records |          82 |          84 |
 
 Calls include catalog discovery and retained-Evidence retrieval. Inputs are
 synthesized acquisitions, not a real Windows capture. Large pages contain at
@@ -59,12 +59,12 @@ successfully, cleanup completed, and no guard stopped a reported run.
 Two alternating fresh sessions per implementation produced these large-case
 ranges:
 
-| Metric | Before | After |
-| --- | ---: | ---: |
-| Whole-family elapsed, ms | 15,279–20,460 | 11,623–12,662 |
-| Whole-family CPU, ms | 15,013–18,445 | 11,190–11,265 |
-| First page, ms | 2,929–4,128 | 3,854–4,208 |
-| Remaining 81 pages, ms | 10,412–13,831 | 5,826–5,942 |
+| Metric                       |          Before |           After |
+| ---------------------------- | --------------: | --------------: |
+| Whole-family elapsed, ms     |   15,279–20,460 |   11,623–12,662 |
+| Whole-family CPU, ms         |   15,013–18,445 |   11,190–11,265 |
+| First page, ms               |     2,929–4,128 |     3,854–4,208 |
+| Remaining 81 pages, ms       |   10,412–13,831 |     5,826–5,942 |
 | Sampled peak family RSS, KiB | 626,304–635,676 | 609,484–613,916 |
 | Sampled peak family PSS, KiB | 573,485–582,762 | 556,728–561,123 |
 
