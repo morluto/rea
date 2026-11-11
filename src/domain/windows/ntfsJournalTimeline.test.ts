@@ -60,4 +60,12 @@ it("keeps exact USN values and coverage rows on bounded source-order pages", () 
     ],
     nextFileOffset: null,
   });
+  const changedPrefix = Buffer.from(journal);
+  changedPrefix.writeUInt32LE(1, 0);
+  expect(
+    composeNtfsJournalTimeline(mft.value, changedPrefix, {
+      startFileOffset: 8,
+      maxRows: 1,
+    }),
+  ).toEqual(second);
 });

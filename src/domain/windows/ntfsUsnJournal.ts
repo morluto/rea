@@ -34,8 +34,9 @@ export type UsnRecordIssue =
 /** Walk acquired journal bytes in source order without accumulating records. */
 export function* readUsnJournal(
   bytes: Buffer,
+  startFileOffset = 0,
 ): Generator<Result<UsnRecordV2, UsnRecordIssue>> {
-  let fileOffset = 0;
+  let fileOffset = startFileOffset;
   while (fileOffset + COMMON_HEADER_BYTES <= bytes.length) {
     const length = bytes.readUInt32LE(fileOffset);
     if (length === 0 && bytes.readUInt32LE(fileOffset + 4) === 0) {

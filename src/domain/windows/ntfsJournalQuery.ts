@@ -17,7 +17,11 @@ export const ntfsJournalRowLimitSchema = z.int().min(1).max(200).default(50);
 export const ntfsJournalInputSchema = z.strictObject({
   mft_path: absoluteLocalPathStringSchema,
   journal_path: absoluteLocalPathStringSchema,
-  start_file_offset: offset.default(0),
+  start_file_offset: offset
+    .default(0)
+    .describe(
+      "Begin decoding exactly at this source offset, normally the prior nextFileOffset for unchanged input digests. Earlier bytes are not examined.",
+    ),
   max_rows: ntfsJournalRowLimitSchema,
 });
 
