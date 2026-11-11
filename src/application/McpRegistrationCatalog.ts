@@ -3,6 +3,7 @@ import {
   kiloProjectLocation,
 } from "./McpRegistrationKiloLocations.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
@@ -516,14 +517,23 @@ export const resolveMcpRegistrationClients = async (
     checkCancellation(selection.signal);
     return ok([...(detected.length === 0 ? all : detected), amp]);
   } catch (cause: unknown) {
-    return err(
+    const failure =
       cause instanceof ConfigurationError ||
-        cause instanceof AnalysisCancelledError
+      cause instanceof AnalysisCancelledError
         ? cause
         : new ConfigurationError(
             "Could not resolve MCP registration locations.",
-            { cause },
-          ),
-    );
+            {
+              cause,
+            },
+          );
+    if (selection.signal?.aborted === true)
+      analysisErrorWithCancellation(
+        failure,
+        new AnalysisCancelledError("MCP registration selection", {
+          cause: selection.signal.reason,
+        }),
+      );
+    return err(failure);
   }
 };

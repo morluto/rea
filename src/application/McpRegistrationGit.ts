@@ -258,11 +258,18 @@ export const resolveKiloRegistrationWorktree = async (
       ),
     };
   } catch (cause: unknown) {
-    if (
+    const failure =
       cause instanceof ConfigurationError ||
       cause instanceof AnalysisCancelledError
-    )
-      throw cause;
-    throw gitFailure(cause, context);
+        ? cause
+        : gitFailure(cause, context);
+    if (context.signal?.aborted === true)
+      analysisErrorWithCancellation(
+        failure,
+        new AnalysisCancelledError("Kilo project root discovery", {
+          cause: context.signal.reason,
+        }),
+      );
+    throw failure;
   }
 };

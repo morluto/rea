@@ -23,6 +23,7 @@ import {
 } from "./McpClientRegistration.js";
 import {
   mcpClientRegistrationProfile,
+  resolveMcpRegistrationClients,
   type McpRegistrationClient,
 } from "./McpRegistrationCatalog.js";
 import { withClientConfigurationTransaction } from "./ClientConfigurationTransaction.js";
@@ -51,6 +52,196 @@ const launcher = {
   command: "/fixture/server path",
   args: ["", "a'b", "--mcp"],
 };
+
+it("registers Cline CLI in the settings file selected by its environment", async () => {
+  const home = await createTestTempDirectory("rea-cline-location-");
+  const cases = [
+    {
+      environment: {
+        CLINE_MCP_SETTINGS_PATH: `  ${join(home, "selected.json")}  `,
+        CLINE_DATA_DIR: join(home, "data-ignored"),
+        CLINE_DIR: join(home, "dir-ignored"),
+      },
+      expected: join(home, "selected.json"),
+    },
+    {
+      environment: {},
+      expected: join(
+        home,
+        ".cline",
+        "data",
+        "settings",
+        "cline_mcp_settings.json",
+      ),
+    },
+    {
+      environment: {
+        CLINE_MCP_SETTINGS_PATH: " ",
+        CLINE_DATA_DIR: ` ${join(home, "custom-data")} `,
+        CLINE_DIR: join(home, "dir-ignored"),
+      },
+      expected: join(
+        home,
+        "custom-data",
+        "settings",
+        "cline_mcp_settings.json",
+      ),
+    },
+    {
+      environment: {
+        CLINE_DATA_DIR: " ",
+        CLINE_DIR: ` ${join(home, "custom-cline")} `,
+      },
+      expected: join(
+        home,
+        "custom-cline",
+        "data",
+        "settings",
+        "cline_mcp_settings.json",
+      ),
+    },
+    {
+      environment: {
+        CLINE_MCP_SETTINGS_PATH: " ",
+        CLINE_DATA_DIR: " ",
+        CLINE_DIR: " ",
+      },
+      expected: join(
+        home,
+        ".cline",
+        "data",
+        "settings",
+        "cline_mcp_settings.json",
+      ),
+      unchanged: true,
+    },
+  ];
+  for (const { environment, expected, unchanged } of cases) {
+    const resolved = await resolveMcpRegistrationClients(
+      {
+        agents: ["cline-cli"],
+        global: true,
+        home,
+        cwd: home,
+        platform: process.platform,
+        environment,
+      },
+      resources,
+    );
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw resolved.error;
+    const client = resolved.value[0];
+    expect(client?.configPath).toBe(expected);
+    if (client === undefined)
+      throw new Error("Missing selected Cline CLI client");
+    expect(
+      await registerMcpClient(client, launcher, undefined, resources),
+    ).toEqual(ok({ status: unchanged ? "unchanged" : "configured" }));
+    expect(JSON.parse(await readFile(expected, "utf8"))).toMatchObject({
+      mcpServers: { rea: launcher },
+    });
+  }
+});
+
+it("resolves Cline CLI home using its native environment precedence", async () => {
+  const cases = [
+    {
+      environment: { HOME: " C:\\home ", USERPROFILE: "D:\\profile" },
+      expected: "C:\\home\\.cline\\data\\settings\\cline_mcp_settings.json",
+    },
+    {
+      environment: { HOME: " ~ ", USERPROFILE: " D:\\profile " },
+      expected: "D:\\profile\\.cline\\data\\settings\\cline_mcp_settings.json",
+    },
+    {
+      environment: {
+        HOME: " ",
+        USERPROFILE: " ",
+        HOMEDRIVE: " E: ",
+        HOMEPATH: " \\users\\drive ",
+      },
+      expected:
+        "E:\\users\\drive\\.cline\\data\\settings\\cline_mcp_settings.json",
+    },
+    {
+      environment: { HOME: "relative-home" },
+      expected:
+        "C:\\working\\relative-home\\.cline\\data\\settings\\cline_mcp_settings.json",
+    },
+  ];
+  for (const { environment, expected } of cases) {
+    const resolved = await resolveMcpRegistrationClients(
+      {
+        agents: ["cline-cli"],
+        global: true,
+        home: "D:\\fallback",
+        cwd: "C:\\working",
+        platform: "win32",
+        environment,
+      },
+      resources,
+    );
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value[0]?.configPath).toBe(expected);
+  }
+});
+
+it("uses Cline's literal fallback for an empty POSIX HOME and refuses unknown system home", async () => {
+  const selection = {
+    agents: ["cline-cli"],
+    global: true,
+    home: "/account/home",
+    cwd: "/work",
+    platform: "linux" as const,
+  };
+  const empty = await resolveMcpRegistrationClients(
+    { ...selection, environment: { HOME: "" } },
+    resources,
+  );
+  expect(empty.ok).toBe(true);
+  if (!empty.ok) throw empty.error;
+  expect(empty.value[0]?.configPath).toBe(
+    "/work/~/.cline/data/settings/cline_mcp_settings.json",
+  );
+  const unknown = await resolveMcpRegistrationClients(
+    { ...selection, environment: { USERPROFILE: " " } },
+    resources,
+  );
+  expect(unknown.ok).toBe(false);
+  if (unknown.ok) throw new Error("Expected unknown Cline home to be rejected");
+  expect(unknown.error.message).toContain(
+    "Cannot determine Cline CLI's system home",
+  );
+  for (const environment of [
+    { HOMEDRIVE: " ", HOMEPATH: "C:\\wrong" },
+    { HOME: "~" },
+  ]) {
+    const windowsUnknown = await resolveMcpRegistrationClients(
+      {
+        ...selection,
+        platform: "win32",
+        cwd: "C:\\work",
+        home: "C:\\wrong",
+        environment,
+      },
+      resources,
+    );
+    expect(windowsUnknown.ok).toBe(false);
+  }
+  const override = await resolveMcpRegistrationClients(
+    {
+      ...selection,
+      environment: { USERPROFILE: " ", CLINE_DIR: "/selected/cline" },
+    },
+    resources,
+  );
+  expect(override.ok).toBe(true);
+  if (!override.ok) throw override.error;
+  expect(override.value[0]?.configPath).toBe(
+    "/selected/cline/data/settings/cline_mcp_settings.json",
+  );
+});
 const settingsFixture = async (original?: string) => {
   const directory = await createTestTempDirectory("rea-amp-writer-");
   const path = join(directory, "settings.json");
@@ -210,7 +401,88 @@ describe("Registration cancellation and mixed outcomes", () => {
     });
     expect(await readdir(directory)).toEqual(["settings.json"]);
   });
+});
 
+describe("Registration cancellation with independent failures", () => {
+  it("retains a physical readback failure and late cancellation before stopping siblings", async () => {
+    const first = await settingsFixture("{}");
+    const second = await settingsFixture("{}");
+    const controller = new AbortController();
+    const reason = { operator: "stop after readback" };
+    const physical = Object.assign(new Error("readback failed"), {
+      code: "EIO",
+    });
+    vi.spyOn(regularReads, "readRegularFileText").mockImplementationOnce(
+      async () => {
+        controller.abort(reason);
+        throw physical;
+      },
+    );
+    const outcomes = await registerMcpClients(
+      [clientFor(first.path), clientFor(second.path)],
+      launcher,
+      controller.signal,
+      resources,
+    );
+    const firstOutcome = outcomes[0];
+    if (firstOutcome?.status !== "completed" || firstOutcome.result.ok)
+      throw new Error("Expected a readback failure");
+    expect(firstOutcome.result.error.cause).toBe(physical);
+    expect(firstOutcome.result.error.secondaryFailures).toEqual([
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    ]);
+    expect(outcomes[1]).toMatchObject({ status: "not_started" });
+    expect(await readFile(first.path, "utf8")).toBe("{}");
+    expect(await readFile(second.path, "utf8")).toBe("{}");
+  });
+
+  it("retains cancellation and the cleanup lease when published staging cannot close", async () => {
+    const first = await settingsFixture();
+    const second = await settingsFixture("{}");
+    const controller = new AbortController();
+    const reason = { operator: "stop during staging cleanup" };
+    const cleanup = new Error("staging close denied");
+    const close = vi
+      .spyOn(OwnedStagedOutput.prototype, "close")
+      .mockImplementation(async function (this: OwnedStagedOutput) {
+        if (this.directory.startsWith(first.directory + sep)) {
+          controller.abort(reason);
+          throw cleanup;
+        }
+        throw new Error("Unexpected staging owner");
+      });
+    const outcomes = await registerMcpClients(
+      [clientFor(first.path), clientFor(second.path)],
+      launcher,
+      controller.signal,
+      resources,
+    );
+    const firstOutcome = outcomes[0];
+    if (firstOutcome?.status !== "completed" || firstOutcome.result.ok)
+      throw new Error("Expected a cleanup failure");
+    expect(firstOutcome.result.error).toMatchObject({
+      cleanupIncomplete: true,
+      diagnostics: { configured: true },
+      secondaryFailures: [{ _tag: "AnalysisCancelledError", cause: reason }],
+    });
+    expect(firstOutcome.result.error.cleanupResources).toEqual([
+      expect.stringContaining(first.directory),
+    ]);
+    expect(outcomes[1]).toMatchObject({ status: "not_started" });
+    expect(JSON.parse(await readFile(first.path, "utf8"))).toEqual({
+      "amp.mcpServers": { rea: launcher },
+    });
+    expect(await readFile(second.path, "utf8")).toBe("{}");
+    close.mockRestore();
+    await resources.close();
+    expect(firstOutcome.result.error.cleanupIncomplete).toBe(false);
+  });
+});
+
+describe("Registration cancellation and sibling outcomes", () => {
   it("cancels queued registration after the existing transaction settles", async () => {
     const { path } = await settingsFixture("{}");
     let unblock!: () => void;

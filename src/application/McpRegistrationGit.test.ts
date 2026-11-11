@@ -9,6 +9,8 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import * as owned from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { resolveKiloRegistrationWorktree } from "./McpRegistrationGit.js";
+import { resolveMcpRegistrationClients } from "./McpRegistrationCatalog.js";
+import * as locations from "./McpRegistrationLocations.js";
 import type { McpRegistrationLocationContext } from "./McpRegistrationLocations.js";
 
 let resources: ArtifactResourceScope;
@@ -118,4 +120,80 @@ it("retains the exact incomplete UTF-8 snapshot behind the Git observation failu
   if (!(observed.cause instanceof Error))
     throw new Error("Incomplete Git observation lost its immediate failure");
   expect(observed.cause.cause).toBe(snapshot);
+});
+
+it("preserves an incomplete Git observation and a late cancellation through selection", async () => {
+  const controller = new AbortController();
+  const reason = { operator: "cancel incomplete observation" };
+  const snapshot: ProviderProcessSnapshot = {
+    stdout: { text: "\uFFFD", invalidUtf8: true, bytes: 1, observedBytes: 1 },
+    stderr: { text: "native diagnostic", bytes: 17, observedBytes: 17 },
+    exitCode: 0,
+    signal: null,
+  };
+  vi.mocked(owned.runOwnedCommand).mockImplementation(async () => {
+    controller.abort(reason);
+    return snapshot;
+  });
+  const selected = await context(controller.signal);
+  const result = await resolveMcpRegistrationClients(
+    {
+      agents: ["kilo-code"],
+      global: false,
+      cwd: selected.cwd,
+      home: selected.home,
+      platform: selected.platform,
+      environment: selected.environment,
+      signal: controller.signal,
+    },
+    resources,
+  );
+  if (result.ok) throw new Error("Incomplete observation must fail");
+  expect(result.error).toBeInstanceOf(ConfigurationError);
+  expect(result.error.cause).toBeInstanceOf(Error);
+  expect((result.error.cause as Error).cause).toBe(snapshot);
+  expect(result.error.secondaryFailures).toEqual([
+    expect.objectContaining({ _tag: "AnalysisCancelledError", cause: reason }),
+  ]);
+});
+
+it("preserves a native location access failure and late cancellation through selection", async () => {
+  const controller = new AbortController();
+  const reason = { operator: "cancel location discovery" };
+  const physical = new Error("client path could not be inspected");
+  const failure = new ConfigurationError("Selected path unavailable", {
+    cause: physical,
+  });
+  const present = vi
+    .spyOn(locations, "present")
+    .mockImplementationOnce(async () => {
+      controller.abort(reason);
+      throw failure;
+    });
+  try {
+    const selected = await context(controller.signal);
+    const result = await resolveMcpRegistrationClients(
+      {
+        agents: ["kilo-code"],
+        global: true,
+        cwd: selected.cwd,
+        home: selected.home,
+        platform: selected.platform,
+        environment: selected.environment,
+        signal: controller.signal,
+      },
+      resources,
+    );
+    if (result.ok) throw new Error("Location access failure was lost");
+    expect(result.error).toBe(failure);
+    expect(result.error.cause).toBe(physical);
+    expect(result.error.secondaryFailures).toEqual([
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    ]);
+  } finally {
+    present.mockRestore();
+  }
 });

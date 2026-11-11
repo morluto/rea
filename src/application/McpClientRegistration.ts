@@ -8,6 +8,7 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientRegistrationCommand } from "../domain/clientRegistrationCommand.js";
@@ -93,7 +94,9 @@ export const registerMcpClients = async (
     }
     const result = await registerMcpClient(client, launcher, signal, resources);
     outcomes.push({ ...labels, status: "completed", result });
-    cancelled = !result.ok && result.error instanceof AnalysisCancelledError;
+    cancelled =
+      signal?.aborted === true ||
+      (!result.ok && result.error instanceof AnalysisCancelledError);
   }
   return outcomes;
 };
@@ -202,12 +205,18 @@ export const registerMcpClient = async (
     configured ||=
       cause instanceof ClientConfigurationPublicationFailure &&
       cause.outcome.kind === "completed";
-    return err(
-      await registrationFailure(cause, settingsPath, resources, {
-        backupPath,
-        configured,
-      }),
-    );
+    const failure = await registrationFailure(cause, settingsPath, resources, {
+      backupPath,
+      configured,
+    });
+    if (signal?.aborted === true)
+      analysisErrorWithCancellation(
+        failure,
+        new AnalysisCancelledError("MCP registration", {
+          cause: signal.reason,
+        }),
+      );
+    return err(failure);
   }
 };
 
