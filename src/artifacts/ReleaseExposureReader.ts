@@ -2061,6 +2061,11 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   const spellings = state.mapTargets.get(target);
   const spelling = anchoredLocation(state, location);
   if (spellings?.has(spelling)) return;
+  // A late declaration can identify an exact occurrence already examined as
+  // a linker-map candidate. Claim that identity before final target coverage
+  // considers other spellings in the normalized bucket.
+  if (state.examinedMembers.get(target)?.has(spelling) === true)
+    state.claimedMapTargets.add(target);
   // Retract once per exact declaration; repeating it must not consume peers
   // that only share its normalized lookup key.
   state.skippedMaps += retractLinkerMapGuesses(state, location);
