@@ -988,3 +988,141 @@ it("allows SDK transport-close session DELETE traffic to finish its own response
     await connection.close();
   }
 });
+
+it.each(["completed", "pending", "rejected"] as const)(
+  "cancels an acquired parked HTTP error reader at close after deadline with %s cleanup",
+  async (outcome) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rejection = new Error(
+      "controlled parked-reader cancellation failure",
+    );
+    const cancel = vi.fn(async () => {
+      if (outcome === "pending") await gate;
+      if (outcome === "rejected") throw rejection;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode("partial diagnostic"),
+                );
+              },
+              cancel,
+            }),
+            { status: 500, headers: { "content-type": "text/plain" } },
+          ),
+      ),
+    );
+    const connection = createIdaMcpConnection(
+      {
+        url: "http://127.0.0.1:12345/mcp",
+        headers: {},
+        mode: "attached",
+        timeoutMs: 30,
+      },
+      {},
+    );
+    try {
+      const failure = await connection
+        .connect()
+        .catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisTimeoutError);
+      await connection.close().catch(() => undefined);
+      await turn();
+      expect(cancel).toHaveBeenCalledOnce();
+      if (outcome === "completed")
+        await expect(connection.close()).resolves.toBeUndefined();
+      else {
+        const retained = await connection
+          .close()
+          .catch((cause: unknown) => cause);
+        expect(retained).toMatchObject({
+          cleanupIncomplete: true,
+          cleanupResources: ["IDA MCP HTTP response body"],
+        });
+        if (outcome === "rejected") {
+          expect(retained).toMatchObject({
+            cause: { cause: { errors: [rejection] } },
+          });
+          await expect(connection.close()).rejects.toMatchObject({
+            cleanupIncomplete: true,
+          });
+        } else {
+          release();
+          await turn();
+          await expect(connection.close()).resolves.toBeUndefined();
+        }
+      }
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      await turn();
+      await connection.close().catch(() => undefined);
+    }
+  },
+);
+
+it("closes an acquired parked error reader after caller abort and preserves the exact reason", async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const parked = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cancel = vi.fn(() => gate);
+  mockedHttpBoundary({
+    serverName: "parked-error-abort-fixture",
+    tools: [],
+    call: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("partial diagnostic"));
+          },
+          pull() {
+            entered();
+          },
+          cancel,
+        }),
+        { status: 500, headers: { "content-type": "text/plain" } },
+      ),
+  });
+  const connection = cleanupConnection();
+  const controller = new AbortController();
+  const reason = { caller: "parked diagnostic abort" };
+  try {
+    await connection.connect();
+    const calling = connection
+      .call("decompile", {}, { signal: controller.signal })
+      .catch((cause: unknown) => cause);
+    await parked;
+    controller.abort(reason);
+    const failure = await calling;
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({ cause: reason });
+    await connection.close().catch(() => undefined);
+    await turn();
+    expect(cancel).toHaveBeenCalledOnce();
+    await expect(connection.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: ["IDA MCP HTTP response body"],
+    });
+    release();
+    await turn();
+    await expect(connection.close()).resolves.toBeUndefined();
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally {
+    release();
+    await turn();
+    await connection.close().catch(() => undefined);
+  }
+});

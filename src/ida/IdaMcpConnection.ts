@@ -280,31 +280,43 @@ const httpErrorBody = (
 const readBoundedResponseText = async (
   response: Response,
   responses: ResponseBodyCleanup,
+  signal: AbortSignal | null | undefined,
 ): Promise<string | undefined> => {
   if (response.body === null) return "";
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let total = 0;
   let cancellationOwnsReader = false;
+  const cancel = (): void => {
+    if (cancellationOwnsReader) return;
+    cancellationOwnsReader = true;
+    responses.cancel(async () => {
+      try {
+        await reader.cancel(signal?.reason);
+      } finally {
+        reader.releaseLock();
+      }
+    });
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
   try {
     for (;;) {
+      if (signal?.aborted) {
+        cancel();
+        throw signal.reason;
+      }
       const { done, value } = await reader.read();
+      if (signal?.aborted) throw signal.reason;
       if (done) return Buffer.concat(chunks, total).toString("utf8");
       total += value.byteLength;
       if (total > IDA_DIAGNOSTIC_SOURCE_BYTES) {
-        cancellationOwnsReader = true;
-        responses.cancel(async () => {
-          try {
-            await reader.cancel();
-          } finally {
-            reader.releaseLock();
-          }
-        });
+        cancel();
         return undefined;
       }
       chunks.push(Buffer.from(value));
     }
   } finally {
+    signal?.removeEventListener("abort", cancel);
     if (!cancellationOwnsReader) reader.releaseLock();
   }
 };
@@ -349,7 +361,11 @@ const diagnosticFetch =
       if (!response.ok) {
         // Normalize before the SDK can swallow a body-consumer failure or drop
         // its format metadata. Both consumers use this one owned diagnostic.
-        const sourceBody = await readBoundedResponseText(response, responses);
+        const sourceBody = await readBoundedResponseText(
+          response,
+          responses,
+          init?.signal,
+        );
         safeBody =
           sourceBody === undefined
             ? redactor.text(
