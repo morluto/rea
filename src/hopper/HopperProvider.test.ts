@@ -481,5 +481,5 @@ it("preserves pre-abort with invalid startup seed", async () => {
     ok: false,
     error: { _tag: "ConfigurationError" },
   });
-  await client.close();
+  expect(await client.close()).toMatchObject({ ok: true });
 });

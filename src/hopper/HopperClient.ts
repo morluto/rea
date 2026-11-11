@@ -22,6 +22,7 @@ import {
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
@@ -457,14 +458,20 @@ export class HopperClient {
           new HopperProtocolError("Hopper client is already started"),
       );
     }
+    let startupTimeoutMs: number;
+    try {
+      startupTimeoutMs =
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs;
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
     this.#operationFailure = undefined;
     this.#startupFailureResult = undefined;
     this.#resources.shutdownConfirmed = false;
     this.#resources.externalApplication = undefined;
-    const deadline = new ProviderStartupDeadline(
-      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
-      signal,
-    );
+    const deadline = new ProviderStartupDeadline(startupTimeoutMs, signal);
     this.#startupOutcome = undefined;
     this.#startupSignal = deadline.signal;
     const onStartupAbort = (): void => {
