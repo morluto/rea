@@ -307,6 +307,7 @@ const swiftExternalSwiftBindingImage = (
     ...Buffer.from(
       `${boundField === "protocol" ? "_$sSQMp" : boundField === "objc-class" ? "_OBJC_CLASS_$_NSObject" : "_$sSiMn"}\0`,
     ),
+    0x51, // SET_TYPE_IMM pointer
     0x70,
     0x80,
     0x16, // SET_SEGMENT_AND_OFFSET_ULEB segment 0 + offset 0xb00
@@ -373,6 +374,7 @@ const swiftBoundWitnessSlotImage = () => {
     0x11,
     0x40,
     ...Buffer.from("_externalWitnessImpl\0"),
+    0x51, // SET_TYPE_IMM pointer
     0x70,
     0x88,
     0x1c, // SET_SEGMENT_AND_OFFSET_ULEB segment 0 + witness slot 0xe08
@@ -1107,6 +1109,7 @@ describe("Apple dispatch pointer fixup metadata", () => {
       const bindings = Buffer.from([
         0x40,
         ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
+        0x51, // SET_TYPE_IMM pointer
         0x70,
         0x88,
         0x04,
@@ -1456,6 +1459,7 @@ describe("Objective-C category class references without a class name", () => {
     const bindings = Buffer.from([
       0x40,
       ...Buffer.from("_$s4Main3FooCN\0"),
+      0x51, // SET_TYPE_IMM pointer
       0x70,
       0xc8,
       0x16,
@@ -1653,6 +1657,42 @@ describe("Objective-C category-local record-budget coverage", () => {
 });
 
 describe("malformed Objective-C property records", () => {
+  it.each(["class", "category"] as const)(
+    "retains the %s identity when its property-list pointer field is unmapped",
+    (owner) => {
+      const bytes = fixture(false, "partial-method");
+      if (owner === "class") {
+        bytes.writeBigUInt64LE(base + 0xfc0n, 0x220);
+        bytes.writeUInt32LE(2, 0xfc0);
+        bytes.writeUInt32LE(16, 0xfc8);
+        bytes.writeBigUInt64LE(base + 0x450n, 0xfd8);
+      } else {
+        bytes.writeBigUInt64LE(base + 0xfd8n, 0xb00);
+        bytes.writeBigUInt64LE(base + 0xbc0n, 0xfd8);
+        bytes.writeBigUInt64LE(base + 0x200n, 0xfe0);
+      }
+      const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+      if (owner === "class")
+        expect(result.objc_classes).toContainEqual(
+          expect.objectContaining({ name: "Fixture", is_meta_class: false }),
+        );
+      else
+        expect(result.objc_categories).toMatchObject([
+          { name: "FixtureCategory", class_name: "Fixture", properties: [] },
+        ]);
+      expect(
+        result.coverage.find(
+          ({ facet }) => facet === "objc_properties_categories",
+        ),
+      ).toMatchObject({
+        status: "partial",
+        reason: expect.stringContaining(
+          "property_decode_failed at 0x100001000",
+        ),
+      });
+    },
+  );
+
   it.each([
     ["an unmapped name", { secondNameOffset: 0x2000 }, "first", "0x100000518"],
     ["an empty name", { firstName: "" }, "second", "0x100000508"],

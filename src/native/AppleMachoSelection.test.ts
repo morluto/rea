@@ -234,6 +234,7 @@ describe("Mach-O metadata span mapping", () => {
     const opcodes = Buffer.from([
       0x40,
       ...Buffer.from("_local\0"),
+      0x51,
       0x72,
       8,
       0x90,
@@ -338,6 +339,19 @@ describe("Mach-O metadata span mapping", () => {
       ]),
     );
   });
+});
+
+it("rejects a segment command of the wrong width before claiming metadata absence", () => {
+  const segment = Buffer.alloc(56);
+  segment.writeUInt32LE(1, 0);
+  segment.writeUInt32LE(segment.length, 4);
+  const bytes = Buffer.from(machoImage({ commands: [segment] }));
+  expect(() => readMachoMetadataImage(bytes)).toThrow(
+    "Mach-O segment command does not match the header width",
+  );
+  expect(() => parseMachoLayout(bytes, "arm64")).toThrow(
+    "Mach-O segment command does not match the header width",
+  );
 });
 
 describe("native Mach-O slice selection", () => {
