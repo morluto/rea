@@ -36,9 +36,9 @@ export const composeNtfsJournalTimeline = (
   mft: MftImage,
   journal: Buffer,
   window: { readonly startFileOffset: number; readonly maxRows: number },
+  correlate = createUsnMftCorrelator(mft.records),
 ): NtfsJournalTimeline => {
   const rows: TimelineRow[] = [];
-  const correlate = createUsnMftCorrelator(mft.records);
   let nextFileOffset: number | null = null;
 
   for (const result of readUsnJournal(journal, window.startFileOffset)) {
