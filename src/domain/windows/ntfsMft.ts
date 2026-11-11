@@ -96,9 +96,10 @@ export interface MftRecord {
   readonly flags: { readonly raw: number; readonly names: readonly string[] };
   readonly inUse: boolean;
   readonly directory: boolean;
-  /** Bytes the record claims it uses, and the record size it was parsed at. */
+  /** Used and allocated byte counts as declared by the FILE record. */
   readonly usedBytes: number;
   readonly totalBytes: number;
+  readonly extentValid: boolean;
   /** The base record this is an extension of, or `null` for a base record. */
   readonly baseRecordReference: MftFileReference | null;
   /** The record number the header declares; `null` when the header predates the field. */
@@ -199,6 +200,8 @@ export const parseMftImage = (
 
   const records: MftRecord[] = [];
   let invalidSlots = 0;
+  let invalidExtents = 0;
+  let firstInvalidExtentOffset: number | undefined;
   let firstInvalidOffset: number | undefined;
   for (
     let offset = 0;
@@ -215,11 +218,21 @@ export const parseMftImage = (
       if (!isRecordSize(declaredRecordBytes)) break;
       continue;
     }
-    records.push(readRecord(bytes, offset, offset / recordBytes, recordBytes));
+    const record = readRecord(bytes, offset, offset / recordBytes, recordBytes);
+    records.push(record);
+    if (!record.extentValid) {
+      invalidExtents += 1;
+      firstInvalidExtentOffset ??= offset;
+    }
   }
   if (firstInvalidOffset !== undefined)
     limitations.push(
       `record at ${String(firstInvalidOffset)} does not begin with the FILE signature; ${String(invalidSlots)} slot(s) without a FILE signature were found`,
+    );
+
+  if (firstInvalidExtentOffset !== undefined)
+    limitations.push(
+      `${String(invalidExtents)} FILE record(s) declare inconsistent used or total byte counts, beginning at offset ${String(firstInvalidExtentOffset)}`,
     );
 
   const truncatedTailBytes = bytes.length % recordBytes;
@@ -284,6 +297,8 @@ const readRecord = (
 
   const usaOffset = view.getUint16(RECORD_HEADER.updateSequenceOffset, true);
   const fixups = verifyFixups(record, view, usaOffset);
+  const usedBytes = view.getUint32(RECORD_HEADER.usedBytes, true);
+  const totalBytes = view.getUint32(RECORD_HEADER.totalBytes, true);
 
   return {
     index,
@@ -293,8 +308,12 @@ const readRecord = (
     flags: { raw: flags, names: namesOf(flags) },
     inUse: (flags & FILE_RECORD_IN_USE) !== 0,
     directory: (flags & FILE_RECORD_IS_DIRECTORY) !== 0,
-    usedBytes: view.getUint32(RECORD_HEADER.usedBytes, true),
-    totalBytes: view.getUint32(RECORD_HEADER.totalBytes, true),
+    usedBytes,
+    totalBytes,
+    extentValid:
+      totalBytes === recordBytes &&
+      usedBytes >= NTFS_MFT_MIN_RECORD_BYTES &&
+      usedBytes <= totalBytes,
     baseRecordReference:
       baseRecordReference === 0n
         ? null

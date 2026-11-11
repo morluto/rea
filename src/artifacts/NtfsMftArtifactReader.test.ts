@@ -78,3 +78,23 @@ it("names a failed fixup in the coverage limitations", async () => {
     expect.stringMatching(/sector trailer that is not the update sequence/u),
   );
 });
+
+it("reports incomplete coverage when FILE extents contradict the record slots", async () => {
+  const usedTooLarge = recordBytes({});
+  usedTooLarge.writeUInt32LE(4096, 24);
+  const totalTooSmall = recordBytes({});
+  totalTooSmall.writeUInt32LE(512, 28);
+
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeMft("$MFT", Buffer.concat([usedTooLarge, totalTooSmall])),
+  );
+  expect(inventory.coverage.status).toBe("unknown");
+  expect(inventory.limitations).toContainEqual(
+    "2 FILE record(s) declare inconsistent used or total byte counts, beginning at offset 0",
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    record_count: 2,
+    fixup_mismatch_count: 0,
+    fixup_unverified_record_count: 0,
+  });
+});
