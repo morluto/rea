@@ -9,6 +9,8 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import * as stableFile from "../../filesystem/readStableFileBytes.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import { parseDesktopTask } from "../../domain/desktop/appTask.js";
 import {
@@ -127,7 +129,8 @@ describe("bundle task reads", () => {
   it("returns a cancelled result when reading the bundle's task is aborted", async () => {
     const bundle = await createTestTempDirectory("witness-bundle-");
     const directory = await createTestTempDirectory("witness-record-");
-    const signal = AbortSignal.abort();
+    const reason = new AnalysisInputError("caller", { userMessage: "stop" });
+    const signal = AbortSignal.abort(reason);
     const result = await witnessAt(bundle).then((witness) =>
       witness.check({ task, stage: "seed", directory }, signal),
     );
@@ -136,6 +139,7 @@ describe("bundle task reads", () => {
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     if (!(result.error instanceof AnalysisCancelledError)) return;
     expect(result.error.operation).toBe("check_build_task");
+    expect(result.error.cause).toBe(reason);
   });
 
   it("returns an adapter error when the bundle path cannot be read", async () => {
@@ -155,7 +159,56 @@ describe("bundle task reads", () => {
     if (!(result.error instanceof AnalysisInputError)) return;
     expect(result.error.userMessage).toContain(bundle);
   });
+});
 
+it("preserves a bundle read failure when cancellation follows during close", async () => {
+  const bundle = await createTestTempDirectory("witness-read-failure-");
+  const directory = await createTestTempDirectory("witness-record-");
+  const parsed = parseDesktopTask(task);
+  if (!parsed.ok) throw new Error("expected a valid task");
+  await mkdir(join(bundle, "tasks"));
+  await mkdir(join(bundle, "artifacts", taskVerifierArtifact(parsed.value)), {
+    recursive: true,
+  });
+  await writeFile(join(bundle, "tasks", `${task.name}.json`), "[]");
+  await writeFile(
+    join(bundle, "artifacts", taskVerifierArtifact(parsed.value), "verify.py"),
+    "",
+  );
+  const controller = new AbortController();
+  const reason = new Error("cancel during close");
+  const physical = Object.assign(new Error("read failed"), { code: "EIO" });
+  const read = vi
+    .spyOn(stableFile, "readStableFileBytes")
+    .mockRejectedValue(physical);
+  const close = OwnedFileHandle.prototype.close;
+  const closing = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      await close.call(this);
+      controller.abort(reason);
+    });
+  try {
+    const result = await (
+      await witnessAt(bundle)
+    ).check({ task, stage: "seed", directory }, controller.signal);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected read failure");
+    expect(result.error).toBeInstanceOf(ProviderAdapterError);
+    expect(result.error.cause).toBe(physical);
+    expect(result.error.secondaryFailures).toEqual([
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    ]);
+  } finally {
+    read.mockRestore();
+    closing.mockRestore();
+  }
+});
+
+describe("bundle task reads with large inputs", () => {
   it("reads a task whose prompt is larger than the old 1 MiB file cap", async () => {
     const prompt = `Add ${"eggs ".repeat(Math.ceil((1.1 * 1024 * 1024) / 5))}end`;
     const given = { ...task, prompt };

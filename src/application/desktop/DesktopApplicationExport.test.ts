@@ -12,6 +12,10 @@ import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { RetainedContent } from "./DesktopRetainedContent.js";
 import {
@@ -1584,14 +1588,20 @@ it("bounds download-install input and preserves cancellation", async () => {
     issues: [expect.objectContaining({ path: ["download_install"] })],
   });
   const controller = new AbortController();
-  const reason = new Error("cancelled input read");
+  const reason = new AnalysisInputError("caller", {
+    userMessage: "cancelled input read",
+  });
   controller.abort(reason);
   await expect(
     readDownloadInstall(
       join(await createTestTempDirectory("download-input-"), "file"),
       controller.signal,
     ),
-  ).rejects.toBe(reason);
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCancelledError",
+    operation: "export_desktop_application",
+    cause: reason,
+  } satisfies Partial<AnalysisCancelledError>);
 });
 
 describe("exportDesktopApplication from a download", () => {
