@@ -55,7 +55,6 @@ import {
 import {
   kunaFunctionDeadline,
   kunaProjectDeadline,
-  type KunaConfiguration,
   type KunaDeadline,
 } from "./KunaConfiguration.js";
 import {
@@ -362,24 +361,6 @@ const procedureSelectorSchema = z.string().min(1);
  * the background; assembly waits for it. Kuna always runs on a private copy
  * whose digest matches the selected target.
  */
-/**
- * Resolve the function deadline before taking a shared run slot. A throw from
- * an invalid launch seed must not leave the slot acquired.
- */
-export const reserveKunaFunctionRun = async (
-  slots: KunaRunSlots,
-  signal: AbortSignal,
-  configuration: KunaConfiguration,
-): Promise<
-  | { readonly deadline: KunaDeadline; readonly release: KunaRunRelease }
-  | undefined
-> => {
-  const deadline = kunaFunctionDeadline(configuration);
-  const release = await slots.acquire(signal);
-  if (release === undefined) return undefined;
-  return { deadline, release };
-};
-
 export class KunaSessionClient implements AnalysisClient {
   readonly #target: BinaryTarget;
   readonly #profile: AnalysisProfileCommitment | undefined;
@@ -1622,36 +1603,27 @@ export class KunaSessionClient implements AnalysisClient {
   ): Promise<SingleFunctionOutcome> {
     const prepared = await this.#commands.prepare();
     if (!prepared.ok) return prepared;
-    if (independent) {
-      const reserved = await reserveKunaFunctionRun(
-        this.#runSlots,
-        signal,
-        installation.configuration,
-      );
-      if (reserved === undefined)
-        return err(
-          new AnalysisCancelledError(operation, { cause: signal.reason }),
-        );
-      const run = await this.#commands.run({
-        installation,
-        arguments: (input) => ["decompile", input, address, "--addr"],
-        operation,
-        deadline: reserved.deadline,
-        outputBytes: KUNA_FUNCTION_TEXT_BYTES,
-        signal,
-        releaseRun: reserved.release,
-      });
-      return run.ok ? ok(run.value.stdout.text.replace(/\n+$/u, "")) : run;
-    }
-    // The shared slot is taken only after the deadline is known. A throw from
-    // a reset override must not leave that slot acquired.
-    const deadline = kunaFunctionDeadline(installation.configuration);
-    const admitted = await this.#admitSingleFunction(signal);
+    const admitted = independent
+      ? await this.#runSlots.acquire(signal)
+      : await this.#admitSingleFunction(signal);
     if (admitted === EXPORT_READY) return admitted;
     if (admitted === undefined)
       return err(
         new AnalysisCancelledError(operation, { cause: signal.reason }),
       );
+    if (signal.aborted) {
+      admitted();
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
+    }
+    let deadline: KunaDeadline;
+    try {
+      deadline = kunaFunctionDeadline(installation.configuration);
+    } catch (cause: unknown) {
+      admitted();
+      throw cause;
+    }
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["decompile", input, address, "--addr"],

@@ -23,6 +23,7 @@ import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjec
 import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
 import { KUNA_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaProviderCapabilities.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
+import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
@@ -924,6 +925,115 @@ it("retains an active request's workspace when close cannot prove its stop", asy
     await request;
     unproven.release();
     expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("preserves cancellation after a foreground slot is granted and before deadline admission", async () => {
+  const snapshot = {
+    revision: 1,
+    overrides: { "kuna.function_timeout_ms": 1_000 },
+  } as const;
+  const fixture = await runWithAnalysisOperationSnapshot(snapshot, () =>
+    session(
+      "rea-kuna-slot-cancel-",
+      {},
+      { REA_KUNA_TIMEOUT_MS: "invalid" },
+      undefined,
+      1,
+    ),
+  );
+  const client = runWithAnalysisOperationSnapshot(snapshot, () =>
+    fixture.open(),
+  );
+  const controller = new AbortController();
+  const reason = { cancelled: "after slot admission" };
+  const acquire = KunaRunSlots.prototype.acquire;
+  let intercepted = false;
+  const spy = vi
+    .spyOn(KunaRunSlots.prototype, "acquire")
+    .mockImplementation(async function (this: KunaRunSlots, signal) {
+      const release = await acquire.call(this, signal);
+      if (!intercepted && release !== undefined) {
+        intercepted = true;
+        controller.abort(reason);
+      }
+      return release;
+    });
+  try {
+    const listed = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute("list_procedures", {}),
+    );
+    expect(listed.ok).toBe(true);
+    const result = await client.execute(
+      "procedure_pseudo_code",
+      { procedure: "main", analysis: "independent_fresh" },
+      { signal: controller.signal },
+    );
+    expect(intercepted).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    spy.mockRestore();
+    const retried = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute(
+        "procedure_pseudo_code",
+        { procedure: "main", analysis: "independent_fresh" },
+        { signal: AbortSignal.timeout(3000) },
+      ),
+    );
+    expect(retried.ok).toBe(true);
+  } finally {
+    spy.mockRestore();
+    await client.close();
+  }
+});
+
+it("releases the foreground slot when a reset exposes an invalid function deadline", async () => {
+  const snapshot = {
+    revision: 1,
+    overrides: { "kuna.function_timeout_ms": 1_000 },
+  } as const;
+  const fixture = await runWithAnalysisOperationSnapshot(snapshot, () =>
+    session(
+      "rea-kuna-invalid-reset-slot-",
+      {},
+      { REA_KUNA_TIMEOUT_MS: "invalid" },
+      undefined,
+      1,
+    ),
+  );
+  const client = runWithAnalysisOperationSnapshot(snapshot, () =>
+    fixture.open(),
+  );
+  try {
+    const listed = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute("list_procedures", {}),
+    );
+    expect(listed.ok).toBe(true);
+    const invalid = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+      analysis: "independent_fresh",
+    });
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: { _tag: "ConfigurationError" },
+    });
+    const resumed = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute(
+        "procedure_pseudo_code",
+        {
+          procedure: "main",
+          analysis: "independent_fresh",
+        },
+        { signal: AbortSignal.timeout(3000) },
+      ),
+    );
+    expect(resumed).toMatchObject({ ok: true });
+  } finally {
+    await client.close();
   }
 });
 

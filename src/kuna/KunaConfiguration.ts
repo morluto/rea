@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { defaultKunaCacheDirectory } from "../config/kunaCacheDirectory.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
@@ -74,10 +75,12 @@ const kunaDeadline = (
     currentAnalysisOperationSnapshot()?.overrides[overrideSetting];
   if (override !== undefined)
     return { setting, ms: override, source: "runtime" };
-  if (launchValid === false)
-    throw new Error(
-      `${setting} is not a valid launch seed and no runtime override is active.`,
-    );
+  if (launchValid === false) {
+    const constraint = `${setting} is not a valid launch seed and no runtime override is active.`;
+    throw new ConfigurationError(constraint, {
+      settings: [{ setting, constraint }],
+    });
+  }
   return { setting, ms, source };
 };
 
