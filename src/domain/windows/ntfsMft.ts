@@ -323,13 +323,14 @@ const verifyFixups = (record: Uint8Array, view: DataView): MftRecordFixups => {
   const usaCount = view.getUint16(RECORD_HEADER.updateSequenceCount, true);
   const sectors = Math.floor(record.length / FIXUP_SECTOR_BYTES);
   // Entry 0 holds the sequence number, so sector n's saved trailer is entry n+1.
-  const coveredSectors = Math.min(sectors, Math.max(0, usaCount - 1));
+  const coveredSectors = Math.max(0, usaCount - 1);
 
   if (
     usaCount < USA_MIN_ENTRIES ||
+    coveredSectors > sectors ||
     usaOffset < RECORD_HEADER_BYTES ||
-    usaOffset + usaCount * 2 > record.length ||
-    coveredSectors === 0
+    usaOffset % 2 !== 0 ||
+    usaOffset + usaCount * 2 > FIXUP_SECTOR_BYTES - 2
   )
     return {
       sequenceNumber: 0,
