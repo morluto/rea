@@ -74,6 +74,13 @@ export const mftFileRecord = (
   record.writeUInt16LE(1, 22);
   record.writeUInt32LE(recordBytes, 28);
   record.writeBigUInt64LE(baseReference, 32);
+  record.writeUInt16LE(
+    attributes.reduce(
+      (next, attribute) => Math.max(next, attribute.readUInt16LE(14) + 1),
+      0,
+    ),
+    40,
+  );
   record.writeUInt32LE(index, 44);
   let cursor = first;
   for (const attribute of attributes) {
