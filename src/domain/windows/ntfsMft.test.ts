@@ -81,7 +81,7 @@ describe("parseMftImage", () => {
     const parsed = parseMftImage(streamOf(recordOf({ sequenceNumber: 5 })));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.value.metadata).toEqual({
+    expect(parsed.value.metadata).toMatchObject({
       kind: "ntfs-mft",
       record_bytes: MFT_DEFAULT_RECORD_BYTES,
       record_count: 1,
@@ -108,6 +108,20 @@ describe("parseMftImage", () => {
         malformed: false,
       },
     });
+    expect(parsed.value.limitations).toEqual([]);
+  });
+
+  it("keeps the inline header window separate from the parsed record count", () => {
+    const parsed = parseMftImage(
+      streamOf(...Array.from({ length: 33 }, () => recordOf())),
+    );
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.metadata).toMatchObject({
+      record_count: 33,
+      omitted_record_headers: 1,
+    });
+    expect(parsed.value.metadata.record_headers).toHaveLength(32);
+    expect(parsed.value.records).toHaveLength(33);
     expect(parsed.value.limitations).toEqual([]);
   });
 

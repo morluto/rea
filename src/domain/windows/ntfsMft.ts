@@ -29,6 +29,8 @@ const FIXUP_SECTOR_BYTES = 512;
  * smaller than a volume's MFT can be.
  */
 export const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
+/** Limit the inline header sample independently of full stream coverage. */
+export const MFT_INLINE_HEADER_LIMIT = 32;
 
 /** FILE record header fields; offsets are from the record start. */
 const RECORD_HEADER = {
@@ -126,6 +128,8 @@ export interface MftMetadata {
   readonly fixup_mismatch_count: number;
   readonly fixup_unverified_record_count: number;
   readonly truncated_tail_bytes: number;
+  readonly record_headers: readonly MftRecord[];
+  readonly omitted_record_headers: number;
 }
 
 const text = (ascii: Uint8Array): string =>
@@ -299,6 +303,11 @@ export const parseMftImage = (
     fixup_mismatch_count: mismatchCount,
     fixup_unverified_record_count: unverifiedCount,
     truncated_tail_bytes: truncatedTailBytes,
+    record_headers: records.slice(0, MFT_INLINE_HEADER_LIMIT),
+    omitted_record_headers: Math.max(
+      0,
+      records.length - MFT_INLINE_HEADER_LIMIT,
+    ),
   };
 
   return ok({ metadata, recordBytes, records, limitations });
