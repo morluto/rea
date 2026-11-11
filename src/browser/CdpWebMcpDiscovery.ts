@@ -75,6 +75,12 @@ export const discoverWebMcp = async (
     context.signal,
   );
   const initialFrame = requiredDiscoveryFrame(frameTree, origins);
+  if (initialFrame.loaderId === undefined || initialFrame.loaderId === "") {
+    completeness.attachLimited("webmcp_tools");
+    limitations.push(
+      "The initial document loader identity was unavailable, so document stability could not be verified. Retry after the page finishes loading.",
+    );
+  }
   const frameUrls = new Map<string, FrameScopeFrame>();
   const tools = new Map<string, WebMcpDiscovery["tools"]["items"][number]>();
   const frameScope = {

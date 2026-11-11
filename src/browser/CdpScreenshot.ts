@@ -98,6 +98,9 @@ export const captureCdpScreenshot = async (
     loaderId: mainFrame.loaderId,
     completeness: new CdpCaptureCompleteness(),
   };
+  const unknownInitialLoader =
+    mainFrame.loaderId === undefined || mainFrame.loaderId === "";
+  if (unknownInitialLoader) navigation.completeness.attachLimited("screenshot");
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
     observeScreenshotNavigation(event, origins, navigation);
@@ -218,6 +221,11 @@ export const captureCdpScreenshot = async (
     artifact: createWebScreenshotArtifact(screenshot.bytes),
     completeness: navigation.completeness.snapshot(),
     limitations: [
+      ...(unknownInitialLoader
+        ? [
+            "The initial document loader identity was unavailable, so document stability could not be verified. Retry after the page finishes loading.",
+          ]
+        : []),
       "The screenshot contains the visible viewport, including on-screen content.",
       "REA does not scroll, evaluate JavaScript, or capture beyond the current viewport.",
     ],

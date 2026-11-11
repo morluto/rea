@@ -182,6 +182,7 @@ it.each(
     [
       "unchanged",
       "unknown-loader",
+      "unknown-initial-loader",
       "missing-final-loader",
       "empty-final-loader",
       "frame",
@@ -211,13 +212,15 @@ it.each(
                   ? undefined
                   : trees > 1 && change === "empty-final-loader"
                     ? ""
-                    : change === "unknown-loader"
-                      ? trees > 1
-                        ? undefined
-                        : ""
-                      : trees > 1 && change === "loader"
-                        ? "replacement-loader"
-                        : "loader-main",
+                    : change === "unknown-initial-loader" && trees === 1
+                      ? undefined
+                      : change === "unknown-loader"
+                        ? trees > 1
+                          ? undefined
+                          : ""
+                        : trees > 1 && change === "loader"
+                          ? "replacement-loader"
+                          : "loader-main",
               url: `${origin}/app`,
             },
           },
@@ -242,9 +245,28 @@ it.each(
                 observation_ms: 0,
               }),
             );
-      if (change === "unchanged" || change === "unknown-loader")
-        expect(result.ok).toBe(true);
-      else
+      if (
+        change === "unchanged" ||
+        change === "unknown-loader" ||
+        change === "unknown-initial-loader"
+      ) {
+        if (!result.ok) throw result.error;
+        const unknown = change !== "unchanged";
+        expect(
+          result.value.limitations.some((value) =>
+            value.includes("initial document loader identity was unavailable"),
+          ),
+        ).toBe(unknown);
+        expect(result.value.completeness.attach_limited_sections).toEqual(
+          unknown
+            ? expect.arrayContaining([
+                operation === "screenshot" ? "screenshot" : "webmcp_tools",
+              ])
+            : expect.not.arrayContaining([
+                operation === "screenshot" ? "screenshot" : "webmcp_tools",
+              ]),
+        );
+      } else
         expect(result).toMatchObject({
           ok: false,
           error: {
