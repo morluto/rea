@@ -1,3 +1,5 @@
+import { nativeInstructionInputSchema } from "../domain/native/nativeInstruction.js";
+import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceLimitsSchema } from "../domain/native/nativeInvestigationGraph.js";
@@ -395,7 +397,9 @@ export const registerCoreNativeCommands = (
         path: localPathStringSchema.describe(
           "Local native executable or app path",
         ),
-        address: z.string().describe("Exact native address"),
+        address: nativeInstructionInputSchema.shape.address.describe(
+          "Exact native address",
+        ),
       }),
       options: z.object({
         ...nativeOpenOptionFields,
@@ -557,11 +561,9 @@ const registerAnnotationCommand = (
     description: "Edit function annotations and return refreshed analysis",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
-      procedure: z
-        .string()
-        .describe(
-          "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
-        ),
+      procedure: nativeFunctionAnnotationsInputSchema.shape.procedure.describe(
+        "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
+      ),
     }),
     options: z.object({
       name: z.string().min(1).optional().describe("Analyst function name"),

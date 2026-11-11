@@ -189,3 +189,34 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "validates native operation inputs before opening a target",
+  async ({ cli }) => {
+    for (const [selection, code] of [
+      [
+        ["inspect-native-instruction", "missing-target", ""],
+        "VALIDATION_ERROR",
+      ],
+      [
+        ["resolve-native-call-targets", "missing-target", ""],
+        "VALIDATION_ERROR",
+      ],
+      [["annotate-native-function", "missing-target", ""], "VALIDATION_ERROR"],
+      [
+        ["annotate-native-function", "missing-target", "main"],
+        "invalid_request",
+      ],
+      [
+        ["annotate-native-function", "missing-target", "main", "--comment="],
+        "target_unavailable",
+      ],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [...selection, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.json, JSON.stringify(selection)).toMatchObject({ code });
+    }
+  },
+);
