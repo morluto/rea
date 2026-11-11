@@ -476,6 +476,7 @@
 * **cli:** report incomplete debugger cleanup as typed outcomes ([#8021](https://github.com/morluto/rea/issues/8021)) ([a108a1b](https://github.com/morluto/rea/commit/a108a1b817f1cd803448f6ba756883d84c7f630c))
 * **cli:** report JSON Lines selection refusals as caller errors ([#7124](https://github.com/morluto/rea/issues/7124)) ([e06be06](https://github.com/morluto/rea/commit/e06be06530fc214e25f25f357a78d3619f75dd35))
 * **cli:** require absolute ADB device paths for file pull and push ([#9048](https://github.com/morluto/rea/issues/9048)) ([42aaef8](https://github.com/morluto/rea/commit/42aaef8bdb458105b7d7260c60fa6f5612dde51b))
+* **cli:** retain cancellation observed during final cleanup ([#9944](https://github.com/morluto/rea/issues/9944)) ([b94d811](https://github.com/morluto/rea/commit/b94d81150025582b1da82a939d33adf7e2017743))
 * **cli:** retain committed evidence receipts on output failure ([#7906](https://github.com/morluto/rea/issues/7906)) ([f9acfdc](https://github.com/morluto/rea/commit/f9acfdcf49790429f993f7c8166a0321def2de50))
 * **cli:** retain completed Evidence through finalization failures ([#9469](https://github.com/morluto/rea/issues/9469)) ([d9c9e6e](https://github.com/morluto/rea/commit/d9c9e6ea67f2054609b7323a819d662be3bf74d7))
 * **cli:** retain desktop directory selection ([#9627](https://github.com/morluto/rea/issues/9627)) ([f328b49](https://github.com/morluto/rea/commit/f328b49d229255344247ad09b03b1f5d7be66ae1))
