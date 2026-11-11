@@ -342,6 +342,104 @@ describe("server entrypoint path alignment", () => {
   );
 });
 
+describe("server entrypoint path identity boundaries", () => {
+  it("preserves 64-bit inode precision above Number.MAX_SAFE_INTEGER", () => {
+    const distinctInodes = new Map([
+      ["/overlay/expected/rea.mjs", { dev: 1n, ino: 9007199254740992n }],
+      ["/overlay/running/rea.mjs", { dev: 1n, ino: 9007199254740993n }],
+    ]);
+    const mismatch = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: "/overlay/running/rea.mjs",
+      expected: { server_path: "/overlay/expected/rea.mjs" },
+      host: {
+        platform: "linux",
+        runtime: "node",
+        stat: (path) => {
+          const entry = distinctInodes.get(path);
+          if (entry === undefined) throw new Error(`unexpected stat: ${path}`);
+          return entry;
+        },
+        realpath: (path) => path,
+        lstatIsSymbolicLink: () => false,
+      },
+    });
+    expect(mismatch.alignment).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+
+    const sameLargeInode = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: "/overlay/running/rea.mjs",
+      expected: { server_path: "/overlay/alias/rea.mjs" },
+      host: {
+        platform: "linux",
+        runtime: "node",
+        stat: () => ({ dev: 1n, ino: 9007199254740993n }),
+        realpath: (path) => path,
+        lstatIsSymbolicLink: () => false,
+      },
+    });
+    expect(sameLargeInode.alignment).toMatchObject({
+      state: "aligned",
+      reasons: [],
+      remediation: null,
+    });
+  });
+
+  it("rejects colliding Bun realpath results on POSIX traversal when stats differ or lack inodes", () => {
+    const traversal = "/work/link/../scripts/rea.mjs";
+    const lexicalSibling = "/work/scripts/rea.mjs";
+    const distinctStats = new Map([
+      [traversal, { dev: 1n, ino: 101n }],
+      [lexicalSibling, { dev: 1n, ino: 202n }],
+    ]);
+    const mismatch = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: traversal,
+      expected: { server_path: lexicalSibling },
+      host: {
+        platform: "linux",
+        runtime: "bun",
+        stat: (path) => {
+          const entry = distinctStats.get(path);
+          if (entry === undefined) throw new Error(`unexpected stat: ${path}`);
+          return entry;
+        },
+        realpath: () => lexicalSibling,
+        lstatIsSymbolicLink: () => false,
+      },
+    });
+    expect(mismatch.alignment).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+
+    const uncertain = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: traversal,
+      expected: { server_path: lexicalSibling },
+      host: {
+        platform: "linux",
+        runtime: "bun",
+        stat: () => ({ dev: 1n, ino: 0n }),
+        realpath: () => lexicalSibling,
+        lstatIsSymbolicLink: () => false,
+      },
+    });
+    expect(uncertain.alignment).toMatchObject({
+      state: "unknown",
+      reasons: [],
+      remediation: expect.stringContaining("could not be resolved"),
+    });
+  });
+});
+
 describe("provider capability inventory", () => {
   it("reports composed, host, and target-specific availability truthfully", () => {
     const policy = {

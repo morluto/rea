@@ -3,10 +3,46 @@ import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { createCatalogIdentity } from "./catalogIdentity.js";
+import {
+  javaScriptRuntime,
+  type JavaScriptRuntime,
+} from "./domain/runtimeVersion.js";
 import { absoluteCallerPath } from "./filesystem/callerPath.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
 
 type ServerPathComparison = "same" | "different" | "unknown";
+
+export interface ServerFileStat {
+  readonly dev: bigint;
+  readonly ino: bigint;
+}
+
+export interface ServerIdentityHost {
+  readonly platform?: NodeJS.Platform;
+  readonly runtime?: JavaScriptRuntime["id"];
+  readonly stat?: (path: string) => ServerFileStat;
+  readonly lstatIsSymbolicLink?: (path: string) => boolean;
+  readonly realpath?: (path: string) => string;
+}
+
+interface ResolvedServerIdentityHost {
+  readonly platform: NodeJS.Platform;
+  readonly runtime: JavaScriptRuntime["id"];
+  readonly stat: (path: string) => ServerFileStat;
+  readonly lstatIsSymbolicLink: (path: string) => boolean;
+  readonly realpath: (path: string) => string;
+}
+
+const resolveHost = (
+  host: ServerIdentityHost | undefined,
+): ResolvedServerIdentityHost => ({
+  platform: host?.platform ?? process.platform,
+  runtime: host?.runtime ?? javaScriptRuntime(process.versions).id,
+  stat: host?.stat ?? ((path) => statSync(path, { bigint: true })),
+  lstatIsSymbolicLink:
+    host?.lstatIsSymbolicLink ?? ((path) => lstatSync(path).isSymbolicLink()),
+  realpath: host?.realpath ?? realpathSync.native,
+});
 
 const errorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" &&
@@ -19,25 +55,28 @@ const errorCode = (cause: unknown): string | undefined =>
 const hasParentSegment = (path: string): boolean =>
   path.split("/").includes("..");
 
-const isSymbolicLinkPath = (path: string): boolean => {
+const isSymbolicLinkPath = (
+  path: string,
+  host: ResolvedServerIdentityHost,
+): boolean => {
   try {
-    return lstatSync(path).isSymbolicLink();
+    return host.lstatIsSymbolicLink(path);
   } catch {
     return false;
   }
 };
 
-const inspectServerFile = (path: string) => {
-  let stats: ReturnType<typeof statSync> | undefined;
+const inspectServerFile = (path: string, host: ResolvedServerIdentityHost) => {
+  let stats: ServerFileStat | undefined;
   let statError: string | undefined;
   try {
-    stats = statSync(path);
+    stats = host.stat(path);
   } catch (cause: unknown) {
     statError = errorCode(cause) ?? "unknown";
   }
   let realpath: string | undefined;
   try {
-    realpath = realpathSync.native(path);
+    realpath = host.realpath(path);
   } catch {
     // Missing or unreadable targets fall back to stat and path checks below.
   }
@@ -47,28 +86,27 @@ const inspectServerFile = (path: string) => {
 const sameExistingServerFile = (
   expected: ReturnType<typeof inspectServerFile>,
   observed: ReturnType<typeof inspectServerFile>,
+  bunPosixTraversal: boolean,
 ): ServerPathComparison | undefined => {
-  if (
-    expected.realpath !== undefined &&
-    observed.realpath !== undefined &&
-    expected.realpath === observed.realpath
-  )
-    return "same";
-  if (expected.stats === undefined || observed.stats === undefined)
-    return undefined;
-  const bothHaveInode = expected.stats.ino !== 0 && observed.stats.ino !== 0;
-  if (
-    bothHaveInode &&
-    expected.stats.dev === observed.stats.dev &&
-    expected.stats.ino === observed.stats.ino
-  )
-    return "same";
-  if (
-    bothHaveInode ||
-    (expected.realpath !== undefined && observed.realpath !== undefined)
-  )
-    return "different";
-  return "unknown";
+  if (expected.stats !== undefined && observed.stats !== undefined) {
+    const bothHaveInode =
+      expected.stats.ino !== 0n && observed.stats.ino !== 0n;
+    if (bothHaveInode) {
+      return expected.stats.dev === observed.stats.dev &&
+        expected.stats.ino === observed.stats.ino
+        ? "same"
+        : "different";
+    }
+  }
+  if (bunPosixTraversal)
+    return expected.stats !== undefined && observed.stats !== undefined
+      ? "unknown"
+      : undefined;
+  if (expected.realpath !== undefined && observed.realpath !== undefined)
+    return expected.realpath === observed.realpath ? "same" : "different";
+  if (expected.stats !== undefined && observed.stats !== undefined)
+    return "unknown";
+  return undefined;
 };
 
 const isMissingPathError = (code: string | undefined): boolean =>
@@ -77,23 +115,38 @@ const isMissingPathError = (code: string | undefined): boolean =>
 const compareServerPaths = (
   expectedPath: string,
   serverPath: string,
+  host: ResolvedServerIdentityHost,
 ): ServerPathComparison => {
   if (expectedPath === serverPath) return "same";
-  const expected = inspectServerFile(expectedPath);
-  const observed = inspectServerFile(serverPath);
-  const existing = sameExistingServerFile(expected, observed);
+  const expected = inspectServerFile(expectedPath, host);
+  const observed = inspectServerFile(serverPath, host);
+  const bunPosixTraversal =
+    host.platform !== "win32" &&
+    host.runtime === "bun" &&
+    (hasParentSegment(expectedPath) || hasParentSegment(serverPath));
+  const existing = sameExistingServerFile(
+    expected,
+    observed,
+    bunPosixTraversal,
+  );
   if (existing !== undefined) return existing;
   if (
     !isMissingPathError(expected.statError) ||
     !isMissingPathError(observed.statError)
   )
     return "unknown";
-  if (isSymbolicLinkPath(expectedPath) || isSymbolicLinkPath(serverPath))
+  if (
+    isSymbolicLinkPath(expectedPath, host) ||
+    isSymbolicLinkPath(serverPath, host)
+  )
     return "unknown";
-  if (absoluteCallerPath(expectedPath) === absoluteCallerPath(serverPath))
+  if (
+    absoluteCallerPath(expectedPath, { platform: host.platform }) ===
+    absoluteCallerPath(serverPath, { platform: host.platform })
+  )
     return "same";
   if (
-    process.platform !== "win32" &&
+    host.platform !== "win32" &&
     (hasParentSegment(expectedPath) || hasParentSegment(serverPath))
   )
     return "unknown";
@@ -141,6 +194,7 @@ const buildAlignment = (
   expected: ExpectedServerIdentity | undefined,
   serverPath: string | undefined,
   catalog: ReturnType<typeof createCatalogIdentity>,
+  host: ResolvedServerIdentityHost,
 ) => {
   const reasons: string[] = [];
   if (
@@ -158,7 +212,7 @@ const buildAlignment = (
       ? "omitted"
       : serverPath === undefined
         ? "unavailable"
-        : compareServerPaths(expected.server_path, serverPath);
+        : compareServerPaths(expected.server_path, serverPath, host);
   if (pathComparison === "different")
     reasons.push("registration_path_mismatch");
   const observedExpectation =
@@ -194,6 +248,7 @@ export const createServerIdentity = (input: {
   readonly client?: ConnectedClientIdentity;
   readonly protocolVersion?: string | undefined;
   readonly catalog: ReturnType<typeof createCatalogIdentity>;
+  readonly host?: ServerIdentityHost;
 }) => {
   const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
@@ -229,6 +284,11 @@ export const createServerIdentity = (input: {
       cancellation: true,
       elicitation: false,
     },
-    alignment: buildAlignment(input.expected, serverPath, catalog),
+    alignment: buildAlignment(
+      input.expected,
+      serverPath,
+      catalog,
+      resolveHost(input.host),
+    ),
   } as const;
 };
