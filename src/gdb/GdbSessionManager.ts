@@ -34,7 +34,9 @@ import {
 } from "../process/ProviderProcess.js";
 import {
   debuggerConstructionLimits,
-  parseDebuggerSessionLimits,
+  debuggerControlReplyOutput,
+  parseDebuggerCommandDeadline,
+  parseDebuggerCommandOutput,
   type DebuggerAdmissionLimit,
 } from "../config/debuggerSessionLimits.js";
 import {
@@ -625,9 +627,9 @@ export class GdbSessionManager {
         value: override,
         source: "runtime",
       };
-    const parsed = parseDebuggerSessionLimits(this.#environment);
+    const parsed = parseDebuggerCommandDeadline(this.#environment);
     if (!parsed.ok) throw parsed.error;
-    return parsed.value.commandDeadline;
+    return parsed.value;
   }
   get #commandTimeoutMs(): number {
     return this.#commandDeadline.value;
@@ -643,12 +645,9 @@ export class GdbSessionManager {
         value: override,
         source: "runtime",
       };
-    const parsed = parseDebuggerSessionLimits(this.#environment);
+    const parsed = parseDebuggerCommandOutput(this.#environment);
     if (!parsed.ok) throw parsed.error;
-    return parsed.value.maxCommandOutputBytes;
-  }
-  get #maxCommandOutputBytes(): number {
-    return this.#commandOutput.value;
+    return parsed.value;
   }
   #sessionReservations = 0;
   #closing = false;
@@ -2171,7 +2170,9 @@ export class GdbSessionManager {
     }
     const token = session.nextToken++;
     const acceptedDeadline = this.#commandDeadline;
-    const acceptedOutput = this.#commandOutput;
+    const acceptedOutput = command.startsWith("-interpreter-exec console ")
+      ? this.#commandOutput
+      : { ...debuggerControlReplyOutput, value: session.controlReplyBytes };
     return new Promise<GdbCommandResult>((resolve, reject) => {
       let abortListener!: () => void;
       const cleanup = (): void => {
@@ -2277,9 +2278,7 @@ export class GdbSessionManager {
         cleanup,
         timer,
         outputBytes: 0,
-        outputBudgetBytes: command.startsWith("-interpreter-exec console ")
-          ? this.#maxCommandOutputBytes
-          : session.controlReplyBytes,
+        outputBudgetBytes: acceptedOutput.value,
         outputLimits: new Set(),
         outputInvalidUtf8: false,
         terminalRecord: undefined,
@@ -2311,7 +2310,7 @@ export class GdbSessionManager {
             "The active GDB inferior identity is not established by the debugger session identifier.",
           limitations: [
             "The GDB command was cancelled; retained MI records are partial and command completion is unknown.",
-            ...gdbRetainedOutputLimitations(partial, this.#commandOutput),
+            ...gdbRetainedOutputLimitations(partial, acceptedOutput),
             "Shutdown of the owned GDB process was requested because output correlation could no longer be guaranteed.",
             "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
           ],

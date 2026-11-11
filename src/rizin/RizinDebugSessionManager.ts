@@ -39,7 +39,8 @@ import {
 import {
   debuggerControlReplyOutput,
   debuggerConstructionLimits,
-  parseDebuggerSessionLimits,
+  parseDebuggerCommandDeadline,
+  parseDebuggerCommandOutput,
   type DebuggerAdmissionLimit,
 } from "../config/debuggerSessionLimits.js";
 import {
@@ -309,9 +310,9 @@ export class RizinDebugSessionManager {
         value: override,
         source: "runtime",
       };
-    const parsed = parseDebuggerSessionLimits(this.#environment);
+    const parsed = parseDebuggerCommandDeadline(this.#environment);
     if (!parsed.ok) throw parsed.error;
-    return parsed.value.commandDeadline;
+    return parsed.value;
   }
   get #frameTimeoutMs(): number {
     return this.#commandDeadline.value;
@@ -327,9 +328,9 @@ export class RizinDebugSessionManager {
         value: override,
         source: "runtime",
       };
-    const parsed = parseDebuggerSessionLimits(this.#environment);
+    const parsed = parseDebuggerCommandOutput(this.#environment);
     if (!parsed.ok) throw parsed.error;
-    return parsed.value.maxCommandOutputBytes;
+    return parsed.value;
   }
   get #maxCommandOutputBytes(): number {
     return this.#commandOutput.value;

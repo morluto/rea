@@ -179,16 +179,32 @@ const parseOne = (
   );
 };
 
-/** Resolve every shared debugger cap from one environment. Invalid values are refused. */
-export const parseDebuggerSessionLimits = (
+/** Parse the selected runtime cap without coupling it to another setting. */
+export const parseDebuggerCommandDeadline = (
   environment: Readonly<Record<string, string | undefined>>,
-): Result<DebuggerSessionLimits, ConfigurationError> => {
-  const commandDeadline = parseOne(
+) =>
+  parseOne(
     DEFAULT_DEBUGGER_COMMAND_DEADLINE,
     debuggerCommandDeadlineMsSchema,
     debuggerCommandDeadlineConstraint,
     environment[DEBUGGER_COMMAND_DEADLINE_SETTING],
   );
+
+export const parseDebuggerCommandOutput = (
+  environment: Readonly<Record<string, string | undefined>>,
+) =>
+  parseOne(
+    DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
+    debuggerMaxCommandOutputBytesSchema,
+    debuggerMaxCommandOutputBytesConstraint,
+    environment[DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING],
+  );
+
+/** Resolve every shared debugger cap from one environment. Invalid values are refused. */
+export const parseDebuggerSessionLimits = (
+  environment: Readonly<Record<string, string | undefined>>,
+): Result<DebuggerSessionLimits, ConfigurationError> => {
+  const commandDeadline = parseDebuggerCommandDeadline(environment);
   const maxSessions = parseOne(
     DEFAULT_DEBUGGER_MAX_SESSIONS_LIMIT,
     debuggerMaxSessionsSchema,
@@ -201,12 +217,7 @@ export const parseDebuggerSessionLimits = (
     debuggerMaxPendingCommandsConstraint,
     environment[DEBUGGER_MAX_PENDING_COMMANDS_SETTING],
   );
-  const maxCommandOutputBytes = parseOne(
-    DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
-    debuggerMaxCommandOutputBytesSchema,
-    debuggerMaxCommandOutputBytesConstraint,
-    environment[DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING],
-  );
+  const maxCommandOutputBytes = parseDebuggerCommandOutput(environment);
   const settings = [
     commandDeadline,
     maxSessions,
