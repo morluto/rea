@@ -58,6 +58,7 @@ const listEntrySchema = z.strictObject({
   reference: ntfsFileReferenceSchema,
   attributeId: offset,
 });
+export type MftAttributeListEntry = z.infer<typeof listEntrySchema>;
 export const ntfsAttributeIssueSchema = z.strictObject({
   kind: z.literal("malformed"),
   fileOffset: offset,
@@ -117,7 +118,7 @@ export const ntfsAttributeListResolutionSchema = z.strictObject({
           }),
           z.strictObject({
             kind: z.literal("ambiguous"),
-            candidateCount: offset,
+            candidateCount: offset.min(2),
           }),
           z.strictObject({
             kind: z.literal("unresolved"),
