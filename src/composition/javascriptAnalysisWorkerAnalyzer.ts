@@ -34,7 +34,7 @@ export const createJavaScriptSourceWorkerAnalyzer = (
     dependencies.analyzeStaticWithBindings ??
     analyzeParsedJavaScriptStaticSourceWithBindingsSteps;
 
-  return async (file, capacity, callbacks, packageType, purpose) => {
+  return async (file, capacity, callbacks, packageType, purpose, precision) => {
     if (!file.text.included)
       throw new TypeError("JavaScript worker requires decoded source text");
     if (
@@ -61,6 +61,7 @@ export const createJavaScriptSourceWorkerAnalyzer = (
           file.text.value,
           parsed,
           staticImportResolutionMode,
+          precision,
         ),
       );
       parsed = null;
@@ -75,6 +76,7 @@ export const createJavaScriptSourceWorkerAnalyzer = (
           file.text.value,
           parsed,
           staticImportResolutionMode,
+          precision,
         ),
       ));
     const resultBudgetBytes = await callbacks.checkpoint(facts);
@@ -99,6 +101,7 @@ export const createJavaScriptSourceWorkerAnalyzer = (
         parsed,
         staticImportResolutionMode,
         capacity.nodes,
+        precision,
         sharedBindings,
       ),
     );

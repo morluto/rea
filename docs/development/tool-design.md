@@ -60,23 +60,11 @@ or ordinary script path when available. Identify the specific gap and what a
 new or extended contract would add; upstream capability alone does not require
 a new tool or equal support from every provider.
 
-Exercise the task through REA as a whole and compare relevant provider behavior
-with an independent artifact or format observation where possible. Use the
-caller's selected target and authority. Record the provider version, target and
-observed coverage, and distinguish an unsupported operation from an empty
-result or an untested path.
-
-Include the boundary cases that could change the answer: provider labels versus
-source facts, addresses versus file locations, partial results, and a useful
-recovery after failure or session close when those apply to the task. Check that
-composed results keep each observation's identity, limitations and source
-association. Existing real-provider lanes and focused tests establish their
-selected scenarios; they do not by themselves establish a different workflow or
-provider equivalence. If a provider cannot be exercised, report that limitation
-and continue with the available evidence. Measure agent tool selection only with
-an actual agent evaluation; a scripted tool sequence does not establish it. Use
-[testing guidance](testing.md#provider-backed-workflow-verification) to select
-the cases that establish the proposed contract.
+Use the caller's selected target and authority. Follow
+[provider-backed workflow verification](testing.md#provider-backed-workflow-verification)
+for independent observations, boundary controls and reporting unavailable
+provider coverage. A scripted tool sequence does not establish agent selection;
+that claim requires an actual agent evaluation.
 
 ## Audit existing tools
 
@@ -94,20 +82,48 @@ identity, session lifetime and available alternatives. Matching text between
 two renderers does not establish that their shared advice is correct or that an
 agent selected the workflow.
 
-Exercise the selected public workflows, including the steps before and after a
-tool call. Check task selection, input choices, returned facts and their source,
-partial or unsupported outcomes, and applicable session and recovery behavior.
-Compare native provider output and an independent artifact observation where
-available. Inspect existing tests and real-provider lanes for the scenario they
-actually cover; a passing test does not establish a different task or host.
-Use [workflow verification](testing.md#provider-backed-workflow-verification)
-for counterexamples and lifecycle controls relevant to the audit.
+Exercise each selected workflow before and after the tool call. Use
+[workflow verification](testing.md#provider-backed-workflow-verification) to
+check returned facts, partial outcomes, recovery and the scope of existing
+provider evidence.
 
 Report working routes as well as findings. Separate a reproduced contract bug,
 an intentional limitation, a design opportunity and an unverified hypothesis;
 include the smallest useful reproduction, impact and coverage limits. Do not
 claim autonomous-agent selection from a scripted trace. Check related reports
 before proposing another issue, and avoid treating lack of API parity as a bug.
+
+### Write descriptions for selection and a valid first call
+
+Start with the analyst task, selected source and useful result. Put material
+effects and the deciding boundary between neighboring tools early. Progressive
+discovery previews the first 240 characters, so those characters should identify
+the operation without requiring the rest of its reference documentation.
+
+Keep exact call syntax where the advertised schema cannot convey it. The compact
+input profile strips most annotation prose and can reduce nested controls to
+`{type: "object"}`. Moving selectors into parameter descriptions alone does not
+make them available to those clients. For example, retained pseudocode needs
+both `source.kind: "retained-evidence"` and `view: {kind: "native", facet:
+"pseudocode"}`; a short exact example can be more useful than many paragraphs.
+Use the producer's handoff for other supported views rather than maintaining
+another supposedly exhaustive list in the shared consumer description.
+
+Keep configuration tutorials and detailed matching algorithms with their owning
+parameter contracts, product guides and actionable failures. Retain applicability,
+source identity, uncertainty, authority and cleanup facts needed to choose or
+safely continue the operation. An unresolved symbol lookup is not a completed
+reference search; an exhausted page does not establish absence in unexamined
+source. Shorter copy must preserve these distinctions.
+
+For wording changes, use a small set of representative agent tasks at the affected
+boundaries. Hold schemas, tool order, fixtures and host configuration fixed when
+comparing copy; add repetitions only for failures or ambiguous outcomes. Score
+actual arguments, corrective calls and supported final claims separately. A
+correct eventual answer can conceal malformed-call loops, while a valid call
+can still produce an overstated answer. Report whole-task usage, including
+retries and cached input, rather than treating fewer description bytes as proof
+of lower token cost.
 
 ## Design recovery around the failure
 
@@ -182,7 +198,7 @@ does not establish another instance.
   whether applicable static relationships could have been missed by discovery;
   missing discovery is unknown. Preserve paths supported by observed edges,
   and qualify negative and shortest-path claims by discovery scope. Missing
-  relationship coverage remains `unknown`.
+  relationship coverage remains `unknown`. Computed candidates and unestablished incoming targets qualify directional discovery; they do not by themselves mean that recorded edges were omitted.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
   enforce the requested target and lifecycle.
 - Add limits only for real format, protocol, authority, or measured resource
@@ -348,13 +364,15 @@ stages that never ran.
   and resource release separate. A valid process handle, successful launcher,
   or selected target establishes only its own fact. Publish available identity
   and exit observations even when launch fails; retain unknown ownership.
-- Process exit does not establish output closure. The shared process supervisor
-  retains at most 64 KiB of additional diagnostics from owned stop entry,
-  including pending cleanup and retries, and drains for up to one second after
-  verified stop. It marks output incomplete when closure cannot be
-  observed and releases owned event-loop references without changing the proven
-  process-cleanup outcome. Failed process cleanup retains capture for retry;
-  borrowed processes and streams retain their own lifetime and reference state.
+- Process exit does not establish output closure. The
+  [shared supervisor](https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts)
+  owns diagnostic retention and bounded draining through cleanup and retries.
+  Report incomplete output separately from process cleanup. After verified stop
+  and bounded draining, release owned event-loop references even if output closure
+  stays unconfirmed. Keep the output capture owned for retry while process cleanup
+  is unresolved. Borrowed processes and streams retain their own lifetime and
+  reference state; select the matching
+  [supervision controls](testing.md#lifecycle-regressions) when changing this code.
 - Authenticate and capture identity through the same boundary on initial and
   recovery handshakes. Bound abandoned unauthenticated listeners where the
   protocol permits it; that deadline must not expire authenticated idle sessions
@@ -373,8 +391,9 @@ stages that never ran.
   analysis snapshot is part of `open_binary`; cancellation keeps that operation
   and the caller's reason through the shared JSON reader.
 - For cancellable observations, carry cancellation through result consumption
-  and awaited cleanup. Before returning success, check the signal after the
-  last awaited finalization step.
+  and awaited cleanup. Check the signal after the last awaited finalization step
+  unless the operation has passed its documented commit cutoff. Preserve the
+  owning operation's committed outcome and receipt after that cutoff.
   Retain collected observations under typed cancellation. Preserve an existing
   primary failure and let incomplete cleanup retain its own classification.
   Preserve the caller's abort reason as the typed cancellation error's cause,

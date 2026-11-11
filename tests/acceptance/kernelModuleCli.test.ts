@@ -10,6 +10,43 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
+  "honors modinfo field retention budgets through CLI flags",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-module-text-cli-");
+    const path = join(root, "text.ko");
+    const key = "k".repeat(257);
+    const value = "v".repeat(4097);
+    await writeFile(
+      path,
+      kernelModuleFixture({ modinfo: Buffer.from(`${key}=${value}\0`) }),
+    );
+    const result = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-modinfo-key-bytes",
+        "257",
+        "--max-modinfo-value-bytes",
+        "4097",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.modinfo?.entries[0]).toMatchObject({
+      key,
+      value,
+      status: "observed",
+      reason: null,
+      omitted_fields: [],
+    });
+    expect(evidence.normalized_result.coverage.status).toBe("complete");
+  },
+);
+
+cliTest(
   "reports license, duplicate aliases, and version CRCs through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-kernel-module-cli-");

@@ -421,6 +421,7 @@ export function digest(a, b, c) {
         sharedParsed,
         mode,
         budget,
+        undefined,
         sharedStatic.bindings,
       ),
     );

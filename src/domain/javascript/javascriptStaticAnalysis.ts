@@ -1,3 +1,7 @@
+import {
+  JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
+  type JavaScriptSemanticPrecisionInput,
+} from "./javascriptSemanticPrecision.js";
 import { createXhrOpenRequestQuery } from "./javascriptNetworkRequests.js";
 import { uniqueSortedBy } from "../canonicalOrdering.js";
 import * as t from "@babel/types";
@@ -21,6 +25,7 @@ import {
   resolveElectronBrowserWindowReceiver,
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
+import { finishElectronDynamicCodeSteps } from "./electronStaticAnalysisDynamicCode.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   hasPossibleCommonJsDelegateWrite,
@@ -97,6 +102,7 @@ function* prepareStaticFindingContextSteps(
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode,
   includeVitePreloadTable: boolean,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<
   void,
   {
@@ -112,6 +118,7 @@ function* prepareStaticFindingContextSteps(
     file.program,
     undefined,
     staticImportResolutionMode,
+    precision,
   );
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
@@ -153,28 +160,35 @@ function* prepareStaticFindingContextSteps(
 /** Parse one JavaScript artifact and recover static structure only. */
 export const analyzeJavaScriptStaticSource = (
   source: string,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptStaticAnalysis => {
   const file = parseJavaScriptSource(source);
   return file === null
     ? failedJavaScriptStaticAnalysis()
-    : analyzeParsedJavaScriptStaticSource(source, file);
+    : analyzeParsedJavaScriptStaticSource(source, file, precision);
 };
 
 /** Recover static structure from an already parsed JavaScript artifact. */
 export const analyzeParsedJavaScriptStaticSource = (
   source: string,
   file: ParsedJavaScriptSource,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptStaticAnalysis =>
-  completeSemanticSteps(analyzeParsedJavaScriptStaticSourceSteps(source, file));
+  completeSemanticSteps(
+    analyzeParsedJavaScriptStaticSourceSteps(source, file, precision),
+  );
 
 /** Static analysis that yields during its source traversal; results are unchanged. */
 export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptStaticAnalysis> {
   return (yield* analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
     source,
     file,
+    "import",
+    precision,
   )).analysis;
 }
 
@@ -186,6 +200,7 @@ export function* analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
   source: string,
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptStaticAnalysisWithBindings> {
   const { accumulator, index, electronIdentity, findings } =
     yield* prepareStaticFindingContextSteps(
@@ -193,6 +208,7 @@ export function* analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
       file,
       staticImportResolutionMode,
       true,
+      precision,
     );
   const { bindings } = index;
   const routeScan = yield* JavaScriptRouteScan.createSteps(
@@ -207,6 +223,7 @@ export function* analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
   finishBundlerExports(accumulator, index);
   yield* finishElectronNativeBindingsSteps(findings, index);
   yield* finishElectronBrowserWindowsSteps(findings, index);
+  yield* finishElectronDynamicCodeSteps(findings, index);
   if (accumulator.pendingModuleRequireCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();
     finishModuleRequireCalls(findings, index);
@@ -262,6 +279,7 @@ export function* discoverParsedJavaScriptBrowserWindowsSteps(
   source: string,
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const empty = failedJavaScriptStaticAnalysis();
   const candidate = yield* mayConstructElectronBrowserWindowSteps(file);
@@ -278,6 +296,7 @@ export function* discoverParsedJavaScriptBrowserWindowsSteps(
       file,
       staticImportResolutionMode,
       false,
+      precision,
     );
   const { bindings } = index;
   yield* traverseJavaScriptAstSteps(file, {
@@ -420,18 +439,21 @@ const finalizeStaticAnalysis = (
     examination: {
       status:
         resourceLimits.length > 0 ||
-        accumulator.electronCallPathLimitReached === true
+        (accumulator.electronCallPathLimits?.size ?? 0) > 0
           ? "limited"
           : "complete",
       semantic_resource_limits: resourceLimits,
+      ...(bindings.precision === JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS
+        ? {}
+        : { semantic_precision: bindings.precision }),
       electron_call_paths_limited:
-        accumulator.electronCallPathLimitReached === true,
+        (accumulator.electronCallPathLimits?.size ?? 0) > 0,
     },
     applicability: { electron: electronObserved ? "observed" : "unknown" },
   };
   const limitations = [
     ...(bindings.valueResourceLimits.has("alias-selections")
-      ? [semanticResourceLimitReason("alias-selections")]
+      ? [semanticResourceLimitReason("alias-selections", bindings.precision)]
       : []),
     ...(bindings.returnedReferenceWidenings.size > 0
       ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
@@ -441,11 +463,12 @@ const finalizeStaticAnalysis = (
           "Bundled Electron call paths use static argument and closure substitutions. Conditions, ambient helper overrides, runtime reachability and arbitrary side effects remain unproven.",
         ]
       : []),
-    ...(accumulator.electronCallPathLimitReached
-      ? [
-          "Electron wrapper expansion reached its resource budget (1000000 visits/substitutions or depth 128); additional paths remain unknown.",
-        ]
-      : []),
+    ...[...(accumulator.electronCallPathLimits ?? [])]
+      .sort()
+      .map(
+        (control) =>
+          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call (--semantic-precision JSON); no REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
+      ),
     ...(parserErrors === 0
       ? []
       : [
@@ -533,6 +556,14 @@ const finalizeStaticAnalysis = (
         accumulator.nativeAddonBindings,
         accumulator.moduleRangeIndex,
       ),
+      ...(accumulator.dynamicCode.length > 0
+        ? {
+            dynamic_code: finalizeLocatedFindings(
+              accumulator.dynamicCode,
+              accumulator.moduleRangeIndex,
+            ),
+          }
+        : {}),
       protocols: finalizeLocatedFindings(
         accumulator.protocols,
         accumulator.moduleRangeIndex,

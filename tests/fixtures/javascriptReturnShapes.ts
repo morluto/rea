@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { writeFile } from "node:fs/promises";
@@ -96,7 +97,7 @@ export const verifyJavaScriptReturnShapes = async (
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => undefined);
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport);
     const response = await client.callTool({
       name: "analyze_javascript_application",
@@ -114,9 +115,5 @@ export const verifyJavaScriptReturnShapes = async (
       ),
     );
     await client.ping();
-  } finally {
-    await client.close();
-    await transport.close();
-    validation.clear();
-  }
+  }, [() => client.close(), () => transport.close(), () => validation.clear()]);
 };

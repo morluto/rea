@@ -1037,7 +1037,122 @@ describe("serveEnvironment with a state", () => {
       expect(missing.isError).toBe(true);
     });
   });
+});
 
+describe("state response cleanup", () => {
+  it("reports pending teed response cleanup and retries after its sibling closes", async () => {
+    let sourceCancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+      cancel() {
+        sourceCancelled = true;
+      },
+    });
+    const [body, sibling] = stream.tee();
+    const environment = await serveState(
+      { source, state },
+      {
+        fetchState: async () =>
+          new Response(body, {
+            headers: { "content-length": String(STATE_INTAKE_LIMIT_BYTES + 1) },
+          }),
+      },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const response = await fetch(
+        new URL(ENVIRONMENT_RPC_PATH, environment.url),
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(addByUri(1)),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: -32602 },
+      });
+      const closing = Promise.race([
+        environment.close(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("server close waited for tee sibling")),
+            10_000,
+          );
+        }),
+      ]);
+      await expect(closing).rejects.toMatchObject({
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        diagnostics: { cleanup_stages: ["state-responses"] },
+      });
+      expect(sourceCancelled).toBe(false);
+      await sibling.cancel();
+      expect(sourceCancelled).toBe(true);
+      await expect(environment.close()).resolves.toBeUndefined();
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      await Promise.allSettled([body.cancel(), sibling.cancel()]);
+      await environment.close();
+    }
+  });
+
+  it("retains a late response cleanup after an earlier successful stop", async () => {
+    let giveResponse!: (response: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      giveResponse = resolve;
+    });
+    const held = heldFetcher(() => gate);
+    let release!: () => void;
+    let acknowledge!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const environment = await serveState(
+      { source, state },
+      { fetchState: held.fetchState },
+    );
+    const answered = fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(addByUri(1)),
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => undefined);
+    try {
+      await held.fetching;
+      await environment.close();
+      giveResponse(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              acknowledge();
+              return cleanup;
+            },
+          }),
+        ),
+      );
+      await entered;
+      await expect(environment.close()).rejects.toMatchObject({
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        diagnostics: { cleanup_stages: ["state-responses"] },
+      });
+      release();
+      await expect(environment.close()).resolves.toBeUndefined();
+    } finally {
+      release();
+      await answered;
+      await environment.close();
+    }
+  });
+});
+
+describe("serveEnvironment state file cleanup", () => {
   it("stops without waiting for a stalled download", async () => {
     const held = heldFetcher(() => new Promise<Response>(() => undefined));
     const environment = await serveState(

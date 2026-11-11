@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -144,6 +145,55 @@ const exportTask = async (folder: string, checks: unknown[]) => {
   return { result, directory };
 };
 
+it.each([
+  { seedTitle: "done", accepted: false },
+  { seedTitle: "before", accepted: true },
+])(
+  "checks the recompressed gzip archive's real seed view (accepted: $accepted)",
+  async ({ seedTitle, accepted }) => {
+    const archive = (title: string) =>
+      zipArchive([
+        { name: "state.json", data: JSON.stringify({ title }), method: 0 },
+        { name: "padding.txt", data: "x".repeat(60_000), method: 0 },
+      ]);
+    const seed = gzipSync(archive(seedTitle), { level: 9 });
+    const end = gzipSync(archive("done"), { level: 0 });
+    const folder = await archiveCapture([seed, end]);
+    const state = await inspectDesktopApplicationState(folder, readers);
+    if (!("normalized_result" in state)) throw state;
+    const versions = desktopApplicationStateSchema
+      .parse(state.normalized_result)
+      .paths.find((entry) => entry.home_path === LIST)?.versions;
+    expect(versions?.[0]).toMatchObject({
+      format: null,
+      compression: "gzip",
+    });
+    expect(versions?.at(-1)).toMatchObject({
+      format: "zip",
+      compression: "gzip",
+    });
+    const { result } = await exportTask(folder, [
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: "/entries/[name=state.json]/view/title",
+        value: "done",
+      },
+    ]);
+    if (accepted) {
+      if (result instanceof Error) throw result;
+      expect(result.normalized_result).toMatchObject({
+        tasks: [{ failing_on_seed: ["check-1"] }],
+      });
+    } else {
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error & { userMessage: string }).userMessage).toContain(
+        "already passes on the seed",
+      );
+    }
+  },
+);
+
 describe("documents saved as zip archives", () => {
   it("reads each version into its entries and lists the change by entry and element name", async () => {
     const evidence = await inspectDesktopApplicationState(
@@ -272,6 +322,57 @@ describe("documents saved as zip archives", () => {
   });
 });
 
+describe("task draft values and guards", () => {
+  /** The draft's files, checks and guards, as describe-desktop-application-task returns them. */
+  const draftOf = async (folder: string) => {
+    const drafted = await draftDesktopApplicationTask(folder, readers);
+    if (drafted instanceof Error) throw drafted;
+    return drafted.normalized_result as {
+      files: {
+        file: string;
+        values: { pointer: string; kind: string }[];
+        values_cut: boolean;
+      }[];
+      task: { checks: { id: string }[] };
+      guards: { id: string }[];
+    };
+  };
+
+  it("lists each archive's values by the pointers checks use, and guards the export accepts beside the checks", async () => {
+    const folder = await archiveCapture();
+
+    const { files, task, guards } = await draftOf(folder);
+
+    const plate = files.find(({ file }) => file === PLATE);
+    expect(plate?.values_cut).toBe(false);
+    expect(
+      plate?.values.map(({ kind, pointer }) => [kind, pointer]),
+    ).toContainEqual([
+      "added",
+      "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children/[name=Object][@name=Hole]",
+    ]);
+    expect(guards.map(({ id }) => id)).toEqual(
+      guards.map((_, index) => `guard-${String(index + 1)}`),
+    );
+    expect(guards.length).toBeGreaterThan(0);
+    // Guards hold at the seed and the end, so the task still fails on the seed only through its checks.
+    const { result } = await exportTask(folder, [...task.checks, ...guards]);
+    if (result instanceof Error) throw result;
+  });
+
+  it("points a refused check at the draft's values", async () => {
+    const folder = await archiveCapture();
+
+    const { result } = await exportTask(folder, [{ ...HOLE, value: 7 }]);
+
+    expect(result).toBeInstanceOf(Error);
+    const remediation = (result as Error & { remediationAction?: string })
+      .remediationAction;
+    for (const name of ["values", "stop_build_capture"])
+      expect(remediation).toContain(name);
+  });
+});
+
 describe("paragraphs split into runs", () => {
   it("drafts and exports a paragraph's whole text once an edit split it into runs, which its first run does not hold", async () => {
     const run = (text: string) =>
@@ -306,7 +407,7 @@ describe("paragraphs split into runs", () => {
     ]);
     if (whole.result instanceof Error) throw whole.result;
     expect(whole.result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["check-1", "check-2"] },
+      tasks: [{ failing_on_seed: ["check-1", "check-2"] }],
     });
 
     const first = await exportTask(folder, [

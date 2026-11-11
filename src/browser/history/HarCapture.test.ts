@@ -963,7 +963,10 @@ it.each([
     const enclosing = depth - 3;
     const text = `{"log":{"version":"1.2","creator":{"name":"fixture","version":"1"},"entries":[],"_extension":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}}`;
     if (accepted) expect(decodeHarCapture(text, []).total_records).toBe(0);
-    else expect(() => decodeHarCapture(text, [])).toThrow("nesting budget");
+    else
+      expect(() => decodeHarCapture(text, [])).toThrow(
+        expect.objectContaining({ reason: "input-limit" }),
+      );
   },
 );
 
@@ -975,7 +978,7 @@ it("rejects excessive extension nesting instead of returning a partial capture",
       JSON.stringify({ ...historicalHar(), _extension: extension }),
       [],
     ),
-  ).toThrow("nesting budget");
+  ).toThrow(expect.objectContaining({ reason: "input-limit" }));
 });
 
 it.each([

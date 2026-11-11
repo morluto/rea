@@ -328,12 +328,14 @@ export const projectRetainedAnalysis = (
   if (!retained.ok) return retained;
   // Duplicate semantic records retain their original ledger metadata. Detail
   // selection changes presentation, not the historical lookup or payload owner.
-  return projectResolvedAnalysisView(
+  const projected = projectResolvedAnalysisView(
     { source, view },
     prepareAnalysisViewProjection(view),
     retained.value,
     evidenceSubjectTarget(evidence.subject),
   );
+  if (!projected.ok) projected.error.retainPartialObservation(source);
+  return projected;
 };
 
 const resolveAnalysisViewSource = (
