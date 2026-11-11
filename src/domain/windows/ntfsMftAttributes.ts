@@ -58,6 +58,12 @@ const listEntrySchema = z.strictObject({
   reference: ntfsFileReferenceSchema,
   attributeId: offset,
 });
+export const ntfsAttributeIssueSchema = z.strictObject({
+  kind: z.literal("malformed"),
+  fileOffset: offset,
+  message: z.string(),
+});
+type AttributeIssue = z.infer<typeof ntfsAttributeIssueSchema>;
 export const ntfsAttributeSchema = z.strictObject({
   fileOffset: offset,
   recordBytes: offset,
@@ -72,6 +78,7 @@ export const ntfsAttributeSchema = z.strictObject({
       valueBytes: offset,
       standardInformation: standardInformationSchema.nullable(),
       listEntries: z.array(listEntrySchema).nullable(),
+      listIssue: ntfsAttributeIssueSchema.nullable(),
     }),
     z.strictObject({
       kind: z.literal("nonresident"),
@@ -90,12 +97,6 @@ export const ntfsAttributeSchema = z.strictObject({
   ]),
 });
 export type MftAttribute = z.infer<typeof ntfsAttributeSchema>;
-export const ntfsAttributeIssueSchema = z.strictObject({
-  kind: z.literal("malformed"),
-  fileOffset: offset,
-  message: z.string(),
-});
-type AttributeIssue = z.infer<typeof ntfsAttributeIssueSchema>;
 export interface MftAttributeScan {
   readonly attributeIssue: AttributeIssue | null;
   readonly fileNames: readonly MftFileName[];
@@ -134,10 +135,23 @@ const readStandardInformation = (
 const readList = (
   value: Buffer,
   fileOffset: number,
-): z.infer<typeof listEntrySchema>[] | undefined => {
+): Result<
+  z.infer<typeof listEntrySchema>[],
+  AttributeIssue & {
+    readonly partialEntries: z.infer<typeof listEntrySchema>[];
+  }
+> => {
   const entries: z.infer<typeof listEntrySchema>[] = [];
+  const malformed = (cursor: number, message: string) =>
+    err({
+      kind: "malformed" as const,
+      fileOffset: fileOffset + cursor,
+      message,
+      partialEntries: entries,
+    });
   for (let cursor = 0; cursor < value.length;) {
-    if (value.length - cursor < 26) return undefined;
+    if (value.length - cursor < 26)
+      return malformed(cursor, "Truncated attribute-list entry");
     const length = value.readUInt16LE(cursor + 4);
     const nameBytes = value[cursor + 6]! * 2;
     const nameOffset = value[cursor + 7]!;
@@ -150,7 +164,7 @@ const readList = (
           nameOffset % 2 !== 0 ||
           nameOffset + nameBytes > length))
     )
-      return undefined;
+      return malformed(cursor, "Invalid attribute-list entry length or name");
     entries.push({
       fileOffset: fileOffset + cursor,
       recordBytes: length,
@@ -169,7 +183,7 @@ const readList = (
     });
     cursor += length;
   }
-  return entries;
+  return ok(entries);
 };
 
 /** Packed runs advance only within this attribute. Sparse runs do not change LCN. */
@@ -249,6 +263,8 @@ const readAttribute = (
     name:
       nameBytes === 0 ? "" : attribute.toString("utf16le", nameOffset, nameEnd),
   };
+  if (form === 1 && (common.type === 0x10 || common.type === 0x30))
+    return malformed("Standard information and FILE_NAME must be resident");
   if (form === 0) {
     const valueBytes = attribute.readUInt32LE(16),
       valueOffset = attribute.readUInt16LE(20);
@@ -259,10 +275,20 @@ const readAttribute = (
     const value = attribute.subarray(valueOffset, valueOffset + valueBytes);
     const standardInformation =
       common.type === 0x10 ? readStandardInformation(value) : null;
-    const listEntries =
+    const list =
       common.type === 0x20 ? readList(value, fileOffset + valueOffset) : null;
-    if (standardInformation === undefined || listEntries === undefined)
-      return malformed("Invalid standard-information or attribute-list value");
+    const listEntries =
+      list === null ? null : list.ok ? list.value : list.error.partialEntries;
+    const listIssue =
+      list !== null && !list.ok
+        ? {
+            kind: list.error.kind,
+            fileOffset: list.error.fileOffset,
+            message: list.error.message,
+          }
+        : null;
+    if (standardInformation === undefined)
+      return malformed("Invalid standard-information value");
     return ok({
       ...common,
       storage: {
@@ -271,6 +297,7 @@ const readAttribute = (
         valueBytes,
         standardInformation,
         listEntries,
+        listIssue,
       },
     });
   }
@@ -333,7 +360,7 @@ export const readMftAttributes = (
     hasList = false;
   let attributeIssue: AttributeIssue | null = null;
   const malformed = (cursor: number, message: string): void => {
-    attributeIssue = {
+    attributeIssue ??= {
       kind: "malformed",
       fileOffset: fileOffset + cursor,
       message,
@@ -358,15 +385,16 @@ export const readMftAttributes = (
       fileOffset + cursor,
     );
     if (!decoded.ok) {
-      attributeIssue = decoded.error;
+      attributeIssue ??= decoded.error;
       break;
     }
     const attribute = decoded.value;
-    if (attribute.type === 0x30) {
-      if (attribute.storage.kind !== "resident") {
-        malformed(cursor, "FILE_NAME must be resident");
-        break;
-      }
+    if (
+      attribute.storage.kind === "resident" &&
+      attribute.storage.listIssue !== null
+    )
+      attributeIssue ??= attribute.storage.listIssue;
+    if (attribute.type === 0x30 && attribute.storage.kind === "resident") {
       const valueOffset = attribute.storage.valueFileOffset - fileOffset;
       const valueBytes = attribute.storage.valueBytes;
       if (valueBytes < 66) {
@@ -404,7 +432,11 @@ export const readMftAttributes = (
     fileNames,
     attributes,
     attributeIssue,
-    fileNameCoverage: complete && !hasList ? "complete" : "incomplete",
-    attributeCoverage: complete ? "complete" : "incomplete",
+    fileNameCoverage:
+      complete && attributeIssue === null && !hasList
+        ? "complete"
+        : "incomplete",
+    attributeCoverage:
+      complete && attributeIssue === null ? "complete" : "incomplete",
   };
 };

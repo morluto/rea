@@ -183,3 +183,43 @@ it.each([
     attributeIssue: { kind: "malformed" },
   });
 });
+
+it("retains completed list entries and later bounded attributes after a corrupt list suffix", () => {
+  const list = Buffer.alloc(64);
+  list.writeUInt32LE(0x30);
+  list.writeUInt16LE(32, 4);
+  list.writeUInt16LE(9, 24);
+  const result = scan(
+    resident(0x20, list),
+    resident(0x80, Buffer.from("tail")),
+  );
+  expect(result).toMatchObject({
+    attributeCoverage: "incomplete",
+    attributeIssue: { kind: "malformed", fileOffset: 4152 },
+    attributes: [
+      {
+        storage: {
+          kind: "resident",
+          listEntries: [{ type: 0x30, attributeId: 9 }],
+          listIssue: { fileOffset: 4152 },
+        },
+      },
+      { type: 0x80, storage: { kind: "resident", valueBytes: 4 } },
+    ],
+  });
+});
+
+it.each([0x10, 0x30])(
+  "refuses a nonresident form of resident-only attribute %i",
+  (type) => {
+    const attribute = nonresident();
+    attribute.writeUInt32LE(type);
+    expect(scan(attribute)).toMatchObject({
+      attributes: [],
+      attributeCoverage: "incomplete",
+      attributeIssue: {
+        message: "Standard information and FILE_NAME must be resident",
+      },
+    });
+  },
+);
