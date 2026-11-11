@@ -65,7 +65,8 @@ export const inspectWindowsNativeReadiness = (
       reason: "Windows native authority is not applicable on this host",
       proof: "not-applicable",
       code: "unsupported_host",
-      remediation: "Use a Windows x64 host for Windows native controls.",
+      remediation:
+        "Use a Windows x64 or arm64 host for Windows native controls.",
     };
   const loaded = observation ?? systemWindowsNativeAuthority();
   if (loaded.available) return { available: true };

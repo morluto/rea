@@ -26,11 +26,11 @@ export const JADX_JVM_OPTIONS_REMEDIATION =
 
 /** Remediation when the host cannot run the Android JADX subprocess. */
 export const JADX_UNSUPPORTED_HOST_REMEDIATION =
-  "Use Linux, macOS, or Windows x64 with its bundled native controls for Android JADX analysis.";
+  "Use Linux, macOS, or Windows x64/arm64 with its bundled native controls for Android JADX analysis.";
 
 /** Remediation when the Windows native backend cannot take process ownership. */
 export const JADX_WINDOWS_NATIVE_REMEDIATION =
-  "Use a matching current Windows x64 REA package with its bundled native controls. The native failure above identifies the failed constraint; Java installation or registration changes cannot enable a missing native backend.";
+  "Use a current REA package whose bundled native controls match this Windows host's architecture. The native failure above identifies the failed constraint; Java installation or registration changes cannot enable a missing native backend.";
 
 /** Remediation when the Java module-listing probe cannot establish the runtime. */
 export const JADX_JAVA_PROBE_REMEDIATION =

@@ -90,6 +90,7 @@
     "LICENSE",
     "native/windows/build/manifest.json",
     "native/windows/build/rea-windows-x64.node",
+    "native/windows/build/rea-windows-arm64.node",
     "scripts/verify-windows-native-artifact.mjs",
     "bridge/pwntools/layout.py",
     "bridge/pwntools/layout_impl.py",

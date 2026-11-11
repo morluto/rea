@@ -186,9 +186,10 @@ export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.7.1-all.jar
 export JAVA_HOME=/absolute/path/existing-jdk
 ```
 
-On Windows x64, use a REA package with its matching bundled Windows native
-controls **including owned protocol stdin support**. This Windows boundary is
-new on repository main; an older released package can still reject this host.
+On Windows x64 or ARM64, use a REA package with its matching bundled Windows
+native controls **including owned protocol stdin support**. This Windows
+boundary is new on repository main; an older released package can still reject
+this host.
 PowerShell accepts paths containing spaces without additional escaping
 inside these environment values:
 
@@ -200,8 +201,8 @@ rea inspect-android-package 'D:\targets\Example.apk'
 
 REA selects `JAVA_HOME\bin\java.exe`, or resolves `java.exe` on the selected
 Windows `PATH`. A missing or mismatched native artifact reports the package
-prerequisite rather than attempting an unowned Java launch. Windows arm64 is
-outside this provider's current native boundary.
+prerequisite rather than attempting an unowned Java launch. Windows ARM64 uses
+the same owned-process boundary when `rea-windows-arm64.node` matches the host.
 
 Readiness checks the selected JAR's ZIP directory for the classes consumed by
 REA's metadata bridge, as well as Java's compiler and version modules. It does

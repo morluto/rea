@@ -15,8 +15,13 @@ import { join, resolve } from "node:path";
 
 import { prepareWindowsNativeInspectionWorkspace } from "./lib/windows-native-inspection-workspace.mjs";
 
-if (process.platform !== "win32")
-  throw new Error("Native inspection ownership requires real Windows NTFS");
+if (
+  process.platform !== "win32" ||
+  (process.arch !== "x64" && process.arch !== "arm64")
+)
+  throw new Error(
+    "Native inspection ownership requires real Windows x64 or ARM64 NTFS",
+  );
 const root = resolve(process.argv[2] ?? ".");
 const artifact = resolve(
   process.argv[3] ?? ".cache/windows-native-inspection-fixture",
@@ -28,6 +33,14 @@ try {
     artifact,
     workspace,
   });
+  const hostAddonPath = join(
+    workspace,
+    "native",
+    "windows",
+    "build",
+    `rea-windows-${process.arch}.node`,
+  );
+  await access(hostAddonPath);
   const source = `import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,statSync,writeFileSync} from 'node:fs';
@@ -36,7 +49,7 @@ import {systemWindowsNativeAuthority} from ${JSON.stringify(loader)};
 const temp=process.env.TEMP;
 const mode=process.argv[2];
 const creation=mode.startsWith('create-');
-const native=creation?createRequire(import.meta.url)(${JSON.stringify(join(workspace, "native", "windows", "build", "rea-windows-x64.node"))}):null;
+const native=creation?createRequire(import.meta.url)(${JSON.stringify(hostAddonPath)}):null;
 if(creation){
  let failure;
  try{native.call('runtime_create',[temp,'rea-native-created-'])}catch(error){failure=error}

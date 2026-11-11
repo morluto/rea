@@ -21,7 +21,9 @@ processTest(
     await mkdir(artifact);
     // These inert bytes establish layout and import coverage, never native authority.
     const addon = "inert inspection fixture";
+    const arm64Addon = "inert arm64 inspection fixture";
     await writeFile(join(artifact, "rea-windows-x64.node"), addon);
+    await writeFile(join(artifact, "rea-windows-arm64.node"), arm64Addon);
     await writeFile(join(artifact, "manifest.json"), "{}");
     const loader = await prepareWindowsNativeInspectionWorkspace({
       root: repository,
@@ -50,6 +52,12 @@ processTest(
       "native/windows/build/rea-windows-x64.node",
     );
     expect(await readFile(isolatedAddon, "utf8")).toBe(addon);
+    expect(
+      await readFile(
+        join(workspace, "native/windows/build/rea-windows-arm64.node"),
+        "utf8",
+      ),
+    ).toBe(arm64Addon);
     await writeFile(isolatedAddon, "changed isolated fixture");
     expect(await readFile(join(artifact, "rea-windows-x64.node"), "utf8")).toBe(
       addon,
