@@ -15,8 +15,8 @@ its own.
 
 ## Requirements
 
-- Recognize a `$MFT` stream by the `FILE` signature of its first record, under
-  any file name, and route it to a dedicated artifact reader.
+- Recognize a `$MFT` stream by a plausible first `FILE` record header under
+  any file name. CLI and MCP target admission route it to the artifact reader.
 - Validate each FILE record header: the `FILE` signature, sequence number, flags,
   used and total byte counts, base record reference, and the update-sequence
   array's offset, count and array bounds.
