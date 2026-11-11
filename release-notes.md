@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **desktop:** Internal desktop readers must report cancellation with AnalysisCancelledError or ArtifactReaderFailure instead of throwing an arbitrary caller cancellation reason.
 * **cli:** own MCP client registration boundaries ([#10102](https://github.com/morluto/rea/issues/10102))
 * **settings:** replace effect with update_mode and pending_restart
 * **settings:** report when a limit change takes effect
@@ -106,6 +107,7 @@
 * **artifacts:** read Zstandard ZIP members ([#7780](https://github.com/morluto/rea/issues/7780)) ([fc24b08](https://github.com/morluto/rea/commit/fc24b08851f32eb7d42733ef5c786840d31a4d5f))
 * **artifacts:** report MFT file-name coverage ([a3ff69f](https://github.com/morluto/rea/commit/a3ff69f5ba57f238ab651185a8fc98b33e82ad68))
 * **artifacts:** select extraction entries and output destination ([#4031](https://github.com/morluto/rea/issues/4031)) ([ad518cf](https://github.com/morluto/rea/commit/ad518cff65cc71564f678b26bcae4a3862689ad4))
+* **audit:** report what a shipped app exposes to static analysis ([#8525](https://github.com/morluto/rea/issues/8525)) ([7aca4ce](https://github.com/morluto/rea/commit/7aca4cef640b571f0063a4c2c5736a5b20fdd8ba))
 * **binary-layout:** admit ELF64 AArch64 and name the refused host ([#8711](https://github.com/morluto/rea/issues/8711)) ([6442ea0](https://github.com/morluto/rea/commit/6442ea02cbdabd8cbaa4106bdbe934ea07d0dcef))
 * **browser:** import saved Playwright v10 trace evidence ([#9127](https://github.com/morluto/rea/issues/9127)) ([985b9ea](https://github.com/morluto/rea/commit/985b9eae962e561c2e02c01fbe8cbfea9478c100))
 * **browser:** retain compact scenario summaries and selected views ([#7120](https://github.com/morluto/rea/issues/7120)) ([fc43e28](https://github.com/morluto/rea/commit/fc43e285eaae2155d32e2ca0ab5d2181a4e2f1b5))
@@ -597,6 +599,7 @@
 * **desktop:** preserve capture evidence and output ownership ([#9899](https://github.com/morluto/rea/issues/9899)) ([9f5f9c1](https://github.com/morluto/rea/commit/9f5f9c1289f453afbb462bc9d38106b0e3a2a1e8))
 * **desktop:** preserve escaped xprop text ([#9652](https://github.com/morluto/rea/issues/9652)) ([24053f7](https://github.com/morluto/rea/commit/24053f7ee2aa19f34c89d9ccadb7023ddf12c39f))
 * **desktop:** preserve exported SQLite text encoding ([#9123](https://github.com/morluto/rea/issues/9123)) ([f3d6f45](https://github.com/morluto/rea/commit/f3d6f45315b854406a9066cf9ce3ccfdf1ad390d))
+* **desktop:** preserve failure origins through cleanup ([#10109](https://github.com/morluto/rea/issues/10109)) ([5fde394](https://github.com/morluto/rea/commit/5fde39454e5457448c87b107c0fc034d1674a74b))
 * **desktop:** preserve nullable SQLite row identity ([#8999](https://github.com/morluto/rea/issues/8999)) ([aefd903](https://github.com/morluto/rea/commit/aefd903adb96bd2967388a73f79a66f03bd35c87))
 * **desktop:** preserve reader source inspection failures ([#9773](https://github.com/morluto/rea/issues/9773)) ([9dfec80](https://github.com/morluto/rea/commit/9dfec80e935b9ac74f68a354aa5a570ec4bab461))
 * **desktop:** preserve significant keyfile value whitespace ([#9077](https://github.com/morluto/rea/issues/9077)) ([c92cbca](https://github.com/morluto/rea/commit/c92cbcaf281bea28e16146c3555d58a2d62edf03))
