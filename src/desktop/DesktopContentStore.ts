@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
-import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
+  withOwnedFileHandle,
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -45,8 +46,8 @@ export class DesktopContentStore {
   readonly #omissions: Omission[] = [];
   /** Handles whose close failed; kept owned so `close` can retry them. */
   readonly #unclosed = new ArtifactResourceScope();
-  /** The partial file being written, removed by `discard` if it was left. */
-  #writing: string | undefined;
+  /** Every partial file this store created but has not published or removed. */
+  readonly #unpublished = new Set<string>();
   #remainingBytes: number;
 
   constructor(
@@ -94,8 +95,10 @@ export class DesktopContentStore {
    * when the directory holds anything else or a removal fails.
    */
   async discard(): Promise<void> {
-    if (this.#writing !== undefined) await rm(this.#writing, { force: true });
-    this.#writing = undefined;
+    for (const path of this.#unpublished) {
+      await rm(path, { force: true });
+      this.#unpublished.delete(path);
+    }
     for (const sha256 of this.#stored.keys()) {
       await rm(join(this.#directory, sha256), { force: true });
       this.#stored.delete(sha256);
@@ -139,10 +142,24 @@ export class DesktopContentStore {
       return { kind: "omitted", reason: "budget_exhausted" };
     const target = join(this.#directory, sha256);
     const partial = `${target}.partial`;
-    this.#writing = partial;
-    await writeFile(partial, bytes, { mode: 0o600, flag: "wx" });
+    const owner = new OwnedFileHandle(await open(partial, "wx", 0o600));
+    this.#unpublished.add(partial);
+    await withOwnedFileHandle(
+      partial,
+      owner,
+      {
+        retainFailedClose: (handle) => {
+          this.#unclosed.retain({
+            kind: "file-handle",
+            resource: partial,
+            handle,
+          });
+        },
+      },
+      (file) => file.writeFile(bytes),
+    );
     await rename(partial, target);
-    this.#writing = undefined;
+    this.#unpublished.delete(partial);
     this.#stored.set(sha256, size);
     this.#storedSizes.add(size);
     this.#remainingBytes -= size;

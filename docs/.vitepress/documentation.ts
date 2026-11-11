@@ -68,6 +68,11 @@ export const documentationSections = [
         source: "guides/native/windows-shortcut.md",
         route: "/windows-shortcut",
       },
+      {
+        source: "guides/native/ntfs-metadata.md",
+        route: "/ntfs-metadata",
+        text: "Acquired NTFS metadata",
+      },
     ],
   },
   {

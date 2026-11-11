@@ -324,7 +324,8 @@ export type BinaryTarget =
           | "esp-image"
           | "uf2"
           | "dfuse"
-          | "fit";
+          | "fit"
+          | "ntfs-mft";
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

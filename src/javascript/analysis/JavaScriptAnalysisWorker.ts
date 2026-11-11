@@ -348,6 +348,9 @@ export class JavaScriptAnalysisWorker {
         id,
         node_budget: capacity.nodes,
         unknown_budget: capacity.unknowns,
+        ...(this.limits.semanticPrecision === undefined
+          ? {}
+          : { semantic_precision: this.limits.semanticPrecision }),
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
         package_type: packageType,
@@ -398,12 +401,15 @@ export class JavaScriptAnalysisWorker {
               OPERATION,
               "JavaScript worker emitted a duplicate static checkpoint",
             );
+          const previousPhase = this.#phase;
+          this.#phase = "checkpoint-read";
           javascript = await this.#readCheckpoint(
             id,
             file.path,
             sourceIndex,
             response,
           );
+          this.#phase = previousPhase;
           const exhausted = this.#parentCapacityFailure(file.path);
           if (exhausted !== undefined) throw exhausted;
           offeredResultBudget =
@@ -1273,6 +1279,7 @@ export class JavaScriptAnalysisWorker {
     signal: AbortSignal | undefined,
   ): AnalysisError {
     if (
+      this.#phase !== "checkpoint-read" &&
       deadline?.interruption === "cancelled" &&
       cause === deadline.signal.reason
     )
@@ -1296,8 +1303,13 @@ export class JavaScriptAnalysisWorker {
       cause.bindCleanupFailure(error);
       return error;
     }
-    // Ownership preparation is abortable before the worker deadline exists.
-    if (deadline?.interruption !== undefined)
+    // Checkpoint reads do not receive an AbortSignal. A rejected physical
+    // read or validation owns its failure even if the caller cancelled later.
+    // Ownership preparation remains abortable before the deadline exists.
+    if (
+      this.#phase !== "checkpoint-read" &&
+      deadline?.interruption !== undefined
+    )
       return this.#interruptionFailure(path, deadline);
     if (
       deadline === undefined &&

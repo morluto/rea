@@ -183,15 +183,7 @@ const moduleItem = (node: ApplicationNode, path: string | null): JsonValue => ({
   hashes: [...nodeHashes(node)],
   exports: [...exportNames(node)],
   source_ranges: [...sourceRanges(node)],
-  observations: node.observations.map((observation) => ({
-    observation_id: observation.observation_id,
-    label: observation.label,
-    properties: observation.properties,
-    evidence: {
-      ...observation.evidence,
-      location: observation.evidence.location,
-    },
-  })),
+  observations: node.observations,
 });
 
 const moduleReference = ({

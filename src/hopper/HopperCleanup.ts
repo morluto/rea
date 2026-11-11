@@ -435,12 +435,14 @@ const report = async (
   message: string,
 ): Promise<void> => {
   // best-effort cleanup: progress reporting must not fail session cleanup.
-  await progress
-    ?.report({
+  try {
+    await progress?.report({
       phase: "hopper_cleanup",
       completed,
       total: 1,
       message,
-    })
-    .catch(() => undefined);
+    });
+  } catch {
+    // Observer failures cannot prevent release of the session's owned resources.
+  }
 };

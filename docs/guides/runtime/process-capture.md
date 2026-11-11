@@ -757,7 +757,8 @@ and cache settings.
 Symlink observations preserve their stored target bytes in `symlink_target_hex`
 (lowercase hexadecimal). `symlink_target` retains valid UTF-8 text and is `null`
 when the target bytes cannot be decoded as UTF-8. Filesystem effects compare
-these exact bytes without resolving the link. Older captures without the hex
-field still parse; a legacy target containing U+FFFD has ambiguous byte identity,
-so matching target text alone produces an `unknown` effect. Symlink descendants
-remain outside filesystem observation regardless of target encoding.
+these exact bytes without resolving the link. Every retained symlink requires
+the hex field; captures without it must be captured again before comparison.
+Saved Evidence remains unchanged, and target bytes are never inferred from
+display text. Unreadable targets remain explicit enumeration omissions. Symlink
+descendants remain outside filesystem observation regardless of target encoding.

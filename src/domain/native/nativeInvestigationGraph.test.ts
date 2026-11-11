@@ -191,6 +191,24 @@ describe("native investigation graph traces", () => {
       truncated: false,
     });
   });
+
+  it.each([
+    { start: "a", limits: {}, reason: "source_graph_truncated" },
+    { start: "missing", limits: {}, reason: "start_node_missing" },
+    { start: "a", limits: { max_depth: 0 }, reason: "max_depth_reached" },
+  ])(
+    "retains source truncation alongside $reason",
+    ({ start, limits, reason }) => {
+      const trace = traceNativeInvestigationGraph(
+        { ...graph, truncated: true },
+        { start, limits },
+      );
+      expect(trace).toMatchObject({ truncated: true, reason });
+      expect(trace.limitations).toContain(
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      );
+    },
+  );
 });
 
 describe("Interface Builder dispatch joins", () => {

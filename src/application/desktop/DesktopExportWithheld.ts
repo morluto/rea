@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { isPathWithinRoot } from "../../domain/localPath.js";
 import {
   consentFileSchema,
   MAX_WITHHELD_BYTES,
@@ -24,7 +24,12 @@ import {
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type { SeedVersion } from "./DesktopExportFiles.js";
-import { writeOutputTree, type FailedRelease } from "./DesktopOutputTree.js";
+import {
+  planOutputTree,
+  writeOutputTree,
+  type DesktopOutputPlan,
+  type FailedRelease,
+} from "./DesktopOutputTree.js";
 import {
   withRetainedContent,
   type RetainedContent,
@@ -262,7 +267,7 @@ const readWithheld = async (
 
 /** Write the withheld files, by home path, into a new or empty folder outside the bundle; a failed release of a written copy is returned. */
 const writeWithheldCopy = (
-  directory: string,
+  directory: DesktopOutputPlan,
   files: ReadonlyMap<string, Buffer>,
   signal: AbortSignal | undefined,
 ): Promise<FailedRelease | undefined> =>
@@ -284,32 +289,18 @@ const writeWithheldCopy = (
     signal,
   );
 
-/** A path with every link in its existing part resolved, so two spellings of one folder compare equal. */
-const resolvedPath = async (path: string): Promise<string> => {
-  const rest: string[] = [];
-  for (let current = resolve(path); ; current = dirname(current)) {
-    try {
-      return join(await realpath(current), ...rest);
-    } catch {
-      if (dirname(current) === current) return resolve(path);
-      rest.unshift(basename(current));
-    }
-  }
-};
-
-const isWithin = (path: string, root: string) =>
-  path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
-
 /** Refuse a copy folder that is the bundle's, inside it or holding it, also through a link, before either is written. */
-const refuseCopyInBundle = async (copy: string, bundle: string) => {
-  const [copied, bundled] = await Promise.all([
-    resolvedPath(copy),
-    resolvedPath(bundle),
-  ]);
-  if (isWithin(copied, bundled) || isWithin(bundled, copied))
+const refuseCopyInBundle = (
+  copy: DesktopOutputPlan,
+  bundle: DesktopOutputPlan,
+) => {
+  if (
+    isPathWithinRoot(bundle.physical, copy.physical) ||
+    isPathWithinRoot(copy.physical, bundle.physical)
+  )
     throw refused(
       "withheld_copy",
-      `The withheld copy ${copy} lies in the bundle ${bundle}, or holds it, so the withheld files would ship with it.`,
+      `The withheld copy ${copy.requested} lies in the bundle ${bundle.requested}, or holds it, so the withheld files would ship with it.`,
       "Name a copy folder outside the bundle's folder.",
     );
 };
@@ -325,22 +316,35 @@ export const withheldCopy = async (
   captured: ReadonlyMap<string, SeedVersion>,
   signal: AbortSignal | undefined,
 ): Promise<{
+  readonly bundle: DesktopOutputPlan;
   readonly write: () => Promise<FailedRelease | undefined>;
 }> => {
   const directory = request.withheldCopy;
   const withheld = plan.withheld ?? [];
-  if (directory !== undefined)
-    await refuseCopyInBundle(directory, request.directory);
-  if (withheld.length === 0) return { write: () => Promise.resolve(undefined) };
+  const bundle = await planOutputTree(request.directory, {
+    operation: OPERATION,
+    field: "directory",
+  });
+  const copy =
+    directory === undefined
+      ? undefined
+      : await planOutputTree(directory, {
+          operation: OPERATION,
+          field: "withheld_copy",
+        });
+  if (copy !== undefined) refuseCopyInBundle(copy, bundle);
+  if (withheld.length === 0)
+    return { bundle, write: () => Promise.resolve(undefined) };
   const files = await withRetainedContent(
     request.capture,
     (content) => readWithheld(content, withheld, captured, signal),
     SEED_MAX_BYTES,
   );
   return {
+    bundle,
     write: () =>
-      directory === undefined
+      copy === undefined
         ? Promise.resolve(undefined)
-        : writeWithheldCopy(directory, files, signal),
+        : writeWithheldCopy(copy, files, signal),
   };
 };

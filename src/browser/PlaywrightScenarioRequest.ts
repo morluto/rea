@@ -1,5 +1,3 @@
-import { constants as bufferConstants } from "node:buffer";
-import { getHeapStatistics } from "node:v8";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -24,6 +22,11 @@ import {
   type BrowserScenarioSaveResponse,
 } from "../domain/browserScenarioValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import {
+  scenarioSerializationAllowance,
+  scenarioQueryLength,
+  uriComponentLength,
+} from "./BrowserScenarioSerialization.js";
 
 type RequestAction = Extract<BrowserScenarioAction, { action: "request" }>;
 
@@ -160,18 +163,12 @@ const headerValue = async (
   return readPageValue(step, value, label);
 };
 
-/** Append declared query entries after any literal query the path carries, leaving that query as written. */
+/** Append admitted query entries after any literal query the path carries, leaving that query as written. */
 const withQuery = (
   url: URL,
   entries: readonly (readonly [string, string])[],
 ): string => {
   if (entries.length === 0) return url.href;
-  const added = entries
-    .map(
-      ([name, value]) =>
-        `${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
-    )
-    .join("&");
   // fetch drops the fragment; cut it at its "#" even when nothing follows it.
   const hash = url.href.indexOf("#");
   const base = hash < 0 ? url.href : url.href.slice(0, hash);
@@ -180,6 +177,16 @@ const withQuery = (
     : base.endsWith("?") || base.endsWith("&")
       ? ""
       : "&";
+  const budget =
+    scenarioSerializationAllowance() - base.length - separator.length;
+  if (scenarioQueryLength(entries, budget, "uri-component") > budget)
+    throw requestEnvelopeError();
+  const added = entries
+    .map(
+      ([name, value]) =>
+        `${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
+    )
+    .join("&");
   return `${base}${separator}${added}`;
 };
 
@@ -315,7 +322,7 @@ export const performScenarioRequest = async (input: {
   );
   const step = { page, url, stepId: action.step_id, secrets };
   const headers: [string, string][] = [];
-  const envelopeLimit = requestSerializationAllowance();
+  const envelopeLimit = scenarioSerializationAllowance();
   let headerBytes = 2;
   const headerValues = new Map<string, number>();
   const appendHeader = (name: string, value: string): void => {
@@ -466,6 +473,7 @@ export const performScenarioRequest = async (input: {
     }
   }
   if (action.save.length > 0) {
+    assertResponseSaveActive(action.step_id, deadline, signal);
     saveValues(action.step_id, response.body, action.save, secrets);
     if (observedRequest !== undefined && !ambiguousRequest)
       secrets.markResponseSecretsReady(observedRequest);
@@ -481,7 +489,7 @@ export const withSavedPlaceholders = (
   secrets: BrowserScenarioSecrets,
   placeholder: RegExp = SAVED_PLACEHOLDER,
 ): string => {
-  const limit = requestSerializationAllowance();
+  const limit = scenarioSerializationAllowance();
   let expandedUnits = text.length;
   if (expandedUnits > limit)
     throw new ScenarioRequestError(
@@ -493,8 +501,7 @@ export const withSavedPlaceholders = (
       let replacement = encoded.get(name);
       if (replacement === undefined) {
         const raw = String(secrets.savedValue(name));
-        // A UTF-16 unit needs at most nine ASCII characters under URI encoding.
-        if (raw.length * 9 > limit)
+        if (uriComponentLength(raw, limit) > limit)
           throw new ScenarioRequestError(
             "Saved URL encoding exceeds the current heap/string serialization allowance.",
           );
@@ -551,6 +558,21 @@ const namesResponse = (
     segments.length === pattern.length &&
     pattern.every((part, index) => part === "{*}" || part === segments[index])
   );
+};
+
+/** Publication must still belong to the step after its last asynchronous boundary. */
+const assertResponseSaveActive = (
+  stepId: string,
+  deadline: number | undefined,
+  signal: AbortSignal | undefined,
+): void => {
+  if (
+    signal?.aborted === true ||
+    (deadline !== undefined && Date.now() >= deadline)
+  )
+    throw new ScenarioRequestError(
+      `Step ${stepId} ended before its saved response was read, so nothing was saved.`,
+    );
 };
 
 /** Settle as the work does, or fail the step once its deadline passes or it is cancelled, so late work saves nothing. */
@@ -647,9 +669,11 @@ export const awaitSavedResponse = (
     let response: Awaited<typeof waiting>;
     try {
       response = await beforeStepEnds(waiting, stepId, deadline, signal);
-    } catch {
+    } catch (cause: unknown) {
+      if (cause instanceof ScenarioRequestError) throw cause;
       throw new ScenarioRequestError(
-        `Step ${stepId}: no ${spec.method} ${spec.path} response arrived before the step's timeout, so nothing was saved.`,
+        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${cause instanceof Error ? cause.message : String(cause)}`,
+        { cause },
       );
     }
     const assertUnambiguous = (): void => {
@@ -672,6 +696,7 @@ export const awaitSavedResponse = (
     if (!body.ok)
       throw new ScenarioRequestError(`Step ${stepId}: ${body.error.message}`);
     assertUnambiguous();
+    assertResponseSaveActive(stepId, deadline, signal);
     saveValues(stepId, body.value, spec.save, secrets);
     secrets.markResponseSecretsReady(response.request());
   };
@@ -683,22 +708,12 @@ const requestEnvelopeError = (): ScenarioRequestError =>
     "Expanded request envelope exceeds the current heap/string serialization allowance; reduce repeated values or raise the parent Node heap and restart.",
   );
 
-/** Allow for the expanded tree, stringify, Playwright transport and browser-side copies. */
-const REQUEST_JSON_ALLOCATION_FACTOR = 16;
-const requestSerializationAllowance = (): number =>
-  Math.min(
-    bufferConstants.MAX_STRING_LENGTH,
-    Math.floor(
-      getHeapStatistics().total_available_size / REQUEST_JSON_ALLOCATION_FACTOR,
-    ),
-  );
-
 /** Count serialization expansion without allocating substituted strings or their serialized copies. */
 const admitSavedJson = (
   value: JsonValue,
   secrets: BrowserScenarioSecrets,
 ): void => {
-  const limit = requestSerializationAllowance();
+  const limit = scenarioSerializationAllowance();
   let bytes = 0;
   const savedSizes = new Map<string, number>();
   const charge = (size: number): void => {

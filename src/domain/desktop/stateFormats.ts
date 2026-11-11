@@ -1,7 +1,12 @@
 import type { Element, Node } from "@xmldom/xmldom";
 
 import { isExactJsonNumber } from "../exactJsonNumber.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewByteDisplay,
+  type DesktopViewPolicy,
+} from "./desktopViewPolicy.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
 import {
@@ -39,14 +44,6 @@ export const XML_POLICY = {
   lineEndings: "normalize",
   nameSupported: expatXmlName,
 } as const;
-const MAX_TEXT_LINES = 5000;
-const MAX_XML_NODES = 5000;
-const MAX_XML_DEPTH = 64;
-/** Half of Evidence's nesting limit, leaving room for the result around a view. */
-const MAX_JSON_VIEW_DEPTH = MAX_JSON_DEPTH / 2;
-const MIB = 1024 * 1024;
-/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
-const MAX_PARSED_VIEW_BYTES = 4 * MIB;
 
 type KeyfileLine =
   | { readonly kind: "skip" }
@@ -337,6 +334,7 @@ export const textSyntaxFormat = (
 export const detectStateFormat = (
   path: string,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): DesktopStateFormat => {
   const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
@@ -348,7 +346,7 @@ export const detectStateFormat = (
   if (
     namedJson(path, trimmed) &&
     // JSON too large for a view is told apart without building its value.
-    (bytes.length > MAX_PARSED_VIEW_BYTES
+    (bytes.length > policy.parsed_bytes
       ? isJsonText(text)
       : safeParseJson(text).ok)
   )
@@ -384,7 +382,10 @@ export const deeperThan = (root: JsonValue, limit: number): boolean => {
 };
 
 /** A JSON file's value, refused when a number would be rounded or it nests too deeply. */
-export const jsonView = (text: string): Result<JsonValue, string> => {
+export const jsonView = (
+  text: string,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+): Result<JsonValue, string> => {
   let rounded = false;
   const parsed = safeParseJson(text, (_key, value, context) => {
     if (typeof value === "number" && !isExactJsonNumber(value, context?.source))
@@ -397,21 +398,24 @@ export const jsonView = (text: string): Result<JsonValue, string> => {
       "a number in it cannot be read exactly, such as an integer above 2^53",
     );
   const value = parsed.value as JsonValue;
-  return deeperThan(value, MAX_JSON_VIEW_DEPTH)
+  return deeperThan(value, policy.json_depth)
     ? err(
-        `nested deeper than the ${String(MAX_JSON_VIEW_DEPTH)} levels a JSON view keeps`,
+        `nested deeper than the ${String(policy.json_depth)} levels a JSON view keeps`,
       )
     : ok(value);
 };
 
 /** A text file as lines, bounded. */
-export const textView = (text: string): JsonValue => {
+export const textView = (
+  text: string,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+): JsonValue => {
   const lines = text.split(/\r?\n/u);
   if (lines.at(-1) === "") lines.pop();
   return {
-    lines: lines.slice(0, MAX_TEXT_LINES),
+    lines: lines.slice(0, policy.text_lines),
     line_count: lines.length,
-    truncated: lines.length > MAX_TEXT_LINES,
+    truncated: lines.length > policy.text_lines,
   };
 };
 
@@ -480,8 +484,9 @@ const xmlNode = (
   depth: number,
   budget: XmlBudget,
   scope: XmlScope,
+  policy: DesktopViewPolicy,
 ): JsonValue | undefined => {
-  if (budget.remaining <= 0 || depth > MAX_XML_DEPTH) {
+  if (budget.remaining <= 0 || depth > policy.xml_depth) {
     budget.truncated = true;
     return undefined;
   }
@@ -511,7 +516,7 @@ const xmlNode = (
     child !== null;
     child = child.nextSibling
   ) {
-    const value = xmlNode(child, depth + 1, budget, inner);
+    const value = xmlNode(child, depth + 1, budget, inner, policy);
     if (value !== undefined) children.push(value);
   }
   return { name: element.tagName, attributes, children };
@@ -522,15 +527,24 @@ const xmlNode = (
  * is recorded as `doctype`, its DTD never read; one with an internal subset is
  * refused, as is a reference to any entity but XML's five.
  */
-export const xmlView = (text: string): JsonValue | undefined => {
+export const xmlView = (
+  text: string,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+): JsonValue | undefined => {
   const parsed = parseXmlDocument(text, XML_POLICY);
   const root = parsed.ok ? parsed.value.documentElement : null;
   if (!parsed.ok || root === null) return undefined;
-  const budget: XmlBudget = { remaining: MAX_XML_NODES, truncated: false };
-  const tree = xmlNode(root, 0, budget, {
-    preserve: false,
-    elementContent: false,
-  });
+  const budget: XmlBudget = { remaining: policy.xml_nodes, truncated: false };
+  const tree = xmlNode(
+    root,
+    0,
+    budget,
+    {
+      preserve: false,
+      elementContent: false,
+    },
+    policy,
+  );
   if (tree === undefined) return undefined;
   const doctype = declaredDocumentType(parsed.value);
   return {
@@ -564,24 +578,25 @@ export const isTextualFormat = (
 export const textualView = (
   format: TextualStateFormat,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): Result<JsonValue, string> => {
   if (
     (format === "json" || format === "keyfile") &&
-    bytes.length > MAX_PARSED_VIEW_BYTES
+    bytes.length > policy.parsed_bytes
   )
     return err(
-      `larger than the ${String(MAX_PARSED_VIEW_BYTES / MIB)} MiB limit for JSON and key file views`,
+      `larger than the ${desktopViewByteDisplay(policy.parsed_bytes)} limit for JSON and key file views`,
     );
   const text = decodeStateText(bytes) ?? "";
   switch (format) {
     case "text":
-      return ok(textView(text));
+      return ok(textView(text, policy));
     case "json":
-      return jsonView(text);
+      return jsonView(text, policy);
     case "keyfile":
       return ok({ groups: keyfileView(text) });
     case "xml": {
-      const tree = xmlView(text);
+      const tree = xmlView(text, policy);
       return tree === undefined
         ? err("not well-formed XML, or its DOCTYPE has an internal subset")
         : ok(tree);

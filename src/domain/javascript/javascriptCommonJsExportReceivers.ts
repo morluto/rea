@@ -24,7 +24,6 @@ import {
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const exportInvocations = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -92,7 +91,7 @@ const copiedOwnFields = (
   while (pending.length > 0) {
     const node = unwrapJavaScriptExpression(pending.pop()!).node;
     if (seen.has(node)) continue;
-    if (seen.size >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (seen.size >= state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return unknown;
     }
@@ -132,7 +131,7 @@ const copiedOwnFields = (
         return unknown;
       if (
         seen.size + pending.length + selected.length >
-        SEMANTIC_ALIAS_SELECTION_LIMIT
+        state.precision.alias_selections
       ) {
         state.valueResourceLimits.add("alias-selections");
         return unknown;
