@@ -488,7 +488,7 @@ const readSymlinkTarget = async (
       status: "read",
       kind: "symlink",
       path,
-      target: await missingSymlinkPath(root, nativeTarget),
+      target: await missingSymlinkPath(root, nativeTarget, code === "ENOENT"),
       targetState: "missing",
     };
   }
@@ -506,6 +506,7 @@ const readSymlinkTarget = async (
 const missingSymlinkPath = async (
   root: string,
   target: string,
+  missingFinalComponent: boolean,
 ): Promise<string> => {
   if (basename(target) === "..") return target;
   let parent: string;
@@ -519,11 +520,11 @@ const missingSymlinkPath = async (
     throw cause;
   }
   const candidate = appendCallerPath(parent, basename(target));
-  // A trailing separator requires a directory; relative() would erase it.
-  if (target.endsWith(sep)) return `${candidate}${sep}`;
-  return isPathWithinRoot(root, candidate)
-    ? pathFromRoot(root, candidate)
-    : candidate;
+  const directoryRequired = target.endsWith(sep);
+  if (directoryRequired && !missingFinalComponent) return `${candidate}${sep}`;
+  const internal = isPathWithinRoot(root, candidate);
+  const scoped = internal ? pathFromRoot(root, candidate) : candidate;
+  return directoryRequired ? `${scoped}${internal ? "/" : sep}` : scoped;
 };
 
 const applyExclusion = (
