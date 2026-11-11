@@ -22,9 +22,9 @@ server-identity alignment state in `src/serverIdentity.ts`, not a setting field.
 Two numeric limits are absent from this tree and are being moved into the
 runtime system on their own PRs. This audit does not change them:
 
-| Name                          | Tracking |
-| ----------------------------- | -------- |
-| `REA_NTFS_MFT_MAX_FILE_BYTES` | #9868    |
+| Name                           | Tracking |
+| ------------------------------ | -------- |
+| `REA_NTFS_MFT_MAX_FILE_BYTES`  | #9868    |
 | `REA_REGF_HIVE_MAX_FILE_BYTES` | #9865    |
 
 `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` is the launch seed of

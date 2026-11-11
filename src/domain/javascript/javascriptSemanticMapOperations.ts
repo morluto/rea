@@ -24,8 +24,7 @@ export const isIntrinsicMapLookup = (
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return false;
   const method = semanticStaticPropertyName(callee.property, callee.computed);
-  if (method !== "get" && method !== "delete" && method !== "has")
-    return false;
+  if (method !== "get" && method !== "delete" && method !== "has") return false;
   const prototypeMemberMayHaveChanged = (member: string): boolean =>
     ["Map", "Object"].some((owner) => {
       const path = ["global", owner, "prototype", member];
