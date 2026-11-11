@@ -80,7 +80,11 @@ mcpTest(
     expect(expected).toMatchObject({
       mft: { path: mftPath, bytes: 33792 },
       journal: { path: journalPath, bytes: 224 },
-      mftMetadata: { record_count: 33, next_record_header_index: 32 },
+      mftMetadata: {
+        record_count: 33,
+        record_headers: [],
+        next_record_header_index: 0,
+      },
       rows: [
         {
           kind: "event",
@@ -148,6 +152,7 @@ mcpTest(
       mftPath,
       journalPath,
       "--mftRecordStart=32",
+      "--mftRecordLimit=1",
       "--startFileOffset=224",
       "--json",
     ]);
@@ -171,6 +176,7 @@ mcpTest(
         mft_path: mftPath,
         journal_path: journalPath,
         mft_record_start: 32,
+        mft_record_limit: 1,
         start_file_offset: 224,
       },
     });

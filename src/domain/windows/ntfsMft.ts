@@ -232,6 +232,7 @@ export const parseMftImage = (
 export const parseMftIndex = (
   bytes: Uint8Array,
   startRecord = 0,
+  recordLimit = MFT_INLINE_HEADER_LIMIT,
 ): Result<MftIndex, RegionDecodeFailure> => {
   const records: MftRecordHeader[] = [];
   const inventory = scanMft(
@@ -244,7 +245,7 @@ export const parseMftIndex = (
       attributeIssue: _issue,
       ...header
     }) => records.push(header),
-    startRecord,
+    { startRecord, recordLimit },
   );
   return inventory.ok ? ok({ ...inventory.value, records }) : inventory;
 };
@@ -252,7 +253,7 @@ export const parseMftIndex = (
 const scanMft = (
   bytes: Uint8Array,
   retainRecord?: (record: MftRecord) => void,
-  startRecord = 0,
+  window = { startRecord: 0, recordLimit: MFT_INLINE_HEADER_LIMIT },
 ): Result<MftInventory, RegionDecodeFailure> => {
   if (bytes.length < NTFS_MFT_MIN_RECORD_BYTES)
     return err(
@@ -310,9 +311,8 @@ const scanMft = (
     retainRecord?.(record);
     fileNameCount += record.fileNames.length;
     if (record.attributeCoverage === "incomplete") incompleteAttributes += 1;
-    if (record.index >= startRecord) {
-      if (recordHeaders.length < MFT_INLINE_HEADER_LIMIT)
-        recordHeaders.push(record);
+    if (record.index >= window.startRecord) {
+      if (recordHeaders.length < window.recordLimit) recordHeaders.push(record);
       else nextRecordHeaderIndex ??= record.index;
     }
     recordCount += 1;
@@ -380,7 +380,7 @@ const scanMft = (
     truncated_tail_bytes: truncatedTailBytes,
     record_headers: recordHeaders,
     omitted_record_headers: recordCount - recordHeaders.length,
-    record_header_start_index: startRecord,
+    record_header_start_index: window.startRecord,
     next_record_header_index: nextRecordHeaderIndex,
     file_name_count: fileNameCount,
     file_name_incomplete_record_count: incompleteNames,

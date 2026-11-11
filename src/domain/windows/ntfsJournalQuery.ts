@@ -1,3 +1,4 @@
+import { MFT_INLINE_HEADER_LIMIT } from "./ntfsMft.js";
 import { ntfsMftMetadataSchema } from "../artifactFormatMetadata.js";
 import { USN_INLINE_EXTENT_LIMIT } from "./ntfsUsnJournal.js";
 import { z } from "zod";
@@ -32,10 +33,18 @@ export const ntfsJournalInputSchema = z.strictObject({
       "Begin decoding exactly at this source offset, normally the prior nextFileOffset for unchanged input digests. Earlier bytes are not examined.",
     ),
   max_rows: ntfsJournalRowLimitSchema,
+  mft_record_limit: z
+    .int()
+    .min(0)
+    .max(MFT_INLINE_HEADER_LIMIT)
+    .default(0)
+    .describe(
+      "MFT record details to include (0–32). Default 0 returns inventory counts; select 1–32 to inspect names and attributes.",
+    ),
   mft_record_start: offset
     .default(0)
     .describe(
-      "First MFT stream slot in the fixed 32-record metadata page; use next_record_header_index with unchanged acquisition digests.",
+      "First MFT stream slot in the requested detail page; use next_record_header_index with unchanged acquisition digests.",
     ),
 });
 
