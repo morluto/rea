@@ -29,7 +29,7 @@ it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
   },
 );
 
-it("names pwntools_timeout_ms and leaves cpuSeconds and byte allowances fixed", () => {
+it("distinguishes the wall deadline from caller-selected producer resource budgets", () => {
   const projected = projectAnalysisError(
     pwntoolsDecoderFailure(
       new OwnedCommandFailure("timeout", "deadline expired"),
@@ -48,8 +48,9 @@ it("names pwntools_timeout_ms and leaves cpuSeconds and byte allowances fixed", 
   expect(projected.message).toContain("4500 ms");
   expect(projected.message).toContain("pwntools_timeout_ms");
   expect(projected.remediation.action).toContain("--pwntools-timeout-ms");
-  expect(projected.remediation.action).toContain("cpuSeconds is 30");
-  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected.remediation.action).toContain("cpu_seconds=30");
+  expect(projected.remediation.action).toContain("producer_limits");
+  expect(projected.remediation.action).toContain("no REA restart");
   expect(projected.remediation.action).toContain("67108864");
 });
 
@@ -80,12 +81,12 @@ it("names the reported file-size allowance instead of address space", () => {
   expect(projected.code).toBe("resource_constraint");
   expect(projected.message).toContain("file_size_bytes");
   expect(projected.message).toContain("4096");
-  expect(projected.message).toContain("outputBytes");
+  expect(projected.message).toContain("producer_limits.file_bytes");
   expect(projected.message).toContain("67108864");
   expect(projected.remediation.action).toContain("4096");
   expect(projected.remediation.action).toContain("67108864");
   expect(projected.remediation.action).toContain("tighter inherited limit");
-  expect(projected.remediation.action).not.toContain("address-space");
+  expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("1111");
   expect(projected.remediation.action).not.toContain("3221225472");
 });
@@ -105,12 +106,12 @@ it("names the file-size cap when SIGXFSZ has no reported limit", () => {
       { marker: { resource: "file-size", failure: null } },
     ),
   );
-  expect(projected.remediation.action).toContain("outputBytes");
+  expect(projected.remediation.action).toContain("producer_limits.file_bytes");
   expect(projected.remediation.action).toContain("67108864");
   expect(projected.remediation.action).toContain("file_size_bytes");
   expect(projected.remediation.action).toContain("not reported");
   expect(projected.remediation.action).toContain("tighter inherited limit");
-  expect(projected.remediation.action).not.toContain("address-space");
+  expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("3221225472");
 });
 
@@ -132,7 +133,7 @@ it("names memory in the marker recovery for an allocation failure", () => {
   expect(projected.code).toBe("resource_constraint");
   expect(projected.details).toMatchObject({ resource: "memory" });
   expect(projected.remediation.action).toContain("memory");
-  expect(projected.remediation.action).toContain("address-space");
+  expect(projected.remediation.action).toContain("address_space_bytes");
   expect(projected.remediation.action).toContain("3221225472");
 });
 

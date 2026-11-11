@@ -3,14 +3,16 @@
 Run REA, connect your selected agents, and check the tools needed for your task.
 Setup previews configuration changes and asks for approval before applying them.
 
-| Task                               | Section                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Connect an agent                   | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
-| Install a Claude Code/Codex plugin | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
-| Diagnose one task                  | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
-| Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
-| Update or remove REA               | [Maintenance](#diagnose-update-and-remove)                                                                          |
-| Resolve a client-specific problem  | [Client configuration](client-configuration.md)                                                                     |
+| Task                                  | Section                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
+| Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
+| Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                           |
+| Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
+| Diagnose one task                     | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
+| Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
+| Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                          |
+| Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                     |
 
 ## Start setup
 
@@ -384,14 +386,22 @@ Select the part you want to check:
 | One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
 | Installed workflow instructions     | `rea doctor --skill --json`                                                |
+| Desktop app environment builds      | `rea doctor --provider desktop_build --client claude_code --json`          |
 
 A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
-Provider checks read the terminal running doctor. A client-started server may
-receive a different environment, and doctor cannot observe it. When an available
+With one selected client, Ghidra, IDA, JADX and Kuna provider checks use the
+client's recorded environment over the terminal it inherits. If that registration
+cannot be read or a setting a provider needs cannot be resolved, its available
+value is `null` and its check is `unknown`; its configured value is also `null`
+when the configuration setting itself is unknown. Doctor does not infer
+readiness from the terminal. A missing registration still uses terminal settings
+for setup. Other checks, including Hopper, use the terminal running doctor. A
+client-started server may receive a different environment, and doctor cannot
+observe it. When an available
 provider relies on a setting that a registration's file does not record, or
 records with other text, doctor adds a non-blocking
 `registration_environment:<client>` check with `classification: "unknown"`. The
@@ -472,6 +482,12 @@ updated stops the remaining removals. Uninstall reports each candidate
 their individual `actions` alongside its aggregate status and detail,
 including earlier removals when a later file fails. The paths name
 the discovered configuration candidates, not resolved physical file identities.
+If resource cleanup remains incomplete, uninstall reports a failed
+`uninstall_cleanup` item alongside the completed removals, with a structured
+`cleanup` observation naming the outstanding resources. An embedded host retains
+the exact cleanup owners: retrying that host's `close()` updates previously
+returned cleanup observations when release is confirmed. A new CLI invocation
+does not inherit those owners; inspect the reported resources before proceeding.
 For JSON clients, uninstall removes every repeated `rea` member in the effective
 server table only when each registration is REA-owned. An unowned earlier
 member, or an unowned OpenCode V1 entry that removing V2 would expose, stops
@@ -594,6 +610,36 @@ Use the connected server's actual tool list and advertised input schemas for
 feature selection. The same package version string in a development checkout
 does not establish that its bytes match the npm tarball. Update a registration
 through a reviewed, scoped setup plan, then restart/reconnect the agent.
+
+### Run REA from a checkout
+
+To run code that is not released yet, build a checkout with the Node.js
+version in `.nvmrc`:
+
+```bash
+git clone https://github.com/morluto/rea.git
+cd rea
+npm ci
+npm run build:cached
+```
+
+Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
+wherever these docs say `rea …`, run
+`node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
+the checkout's `scripts/rea.mjs` with your agents.
+
+After `git pull`, run `npm ci` and `npm run build:cached` again. If the
+checkout's skill changed, refresh each installed copy before restarting its
+agent. For example, preview and review the Claude Code skill changes:
+
+```bash
+rea setup --skill-client claude_code --dry-run --json
+```
+
+Then apply the reviewed changes with `rea setup --skill-client claude_code --yes --json`.
+Substitute the relevant skill client; use the checkout's
+`node /absolute/path/to/rea/scripts/rea.mjs` form if `rea` is not linked. For desktop builds, also pack the [build computer's runtime
+archive](../desktop-build-computer.md#requirements) again.
 
 ## Skill-only installation
 
@@ -1789,13 +1835,12 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 
 ## Agent plugins and marketplaces
 
-REA's npm package is the shared Claude Code, Codex and Cursor plugin artifact. It
-contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
-`.cursor-plugin/plugin.json`, and the canonical generated `skills/` tree. All three manifests select `./skills` and run a plain Node bootstrap pinned to
+REA's npm package is the shared Claude Code and Codex plugin artifact. It
+contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
+canonical generated `skills/` tree. Both manifests select `./skills` and run a plain Node bootstrap pinned to
 that exact package version. The client must have a supported standalone `node`
 on its PATH. Claude expands its documented `CLAUDE_PLUGIN_ROOT` in the script
-argument; Cursor expands `CURSOR_PLUGIN_ROOT` in its separate
-`.cursor-plugin/mcp.json` declaration. Codex resolves `cwd: "."` from the installed plugin root before
+argument; Codex resolves `cwd: "."` from the installed plugin root before
 launching the relative script. The bootstrap verifies the package version and runs its bundled runtime in
 the same process, preserving stdio and REA's provider/worker cleanup. It does
 not start another package runner or download a different runtime. The existing release skill
@@ -1805,7 +1850,10 @@ The repository's single-plugin marketplaces are declared in
 `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
 Both select an exact `rea-agents` npm version instead of mutable source-checkout
 contents. Release Please updates their selectors alongside the plugin manifests.
-No plugin-only publication or generated skill files committed to Git are needed.
+Claude Code and Codex do not need plugin-only publication or generated skill
+files committed to Git. The Cursor Marketplace plugin is the exception in
+[Cursor Marketplace](#cursor-marketplace): its skill copy is committed because
+that install is a Git checkout.
 The qualified release archive contains a runtime-only manifest and
 `npm-shrinkwrap.json` plus bundled runtime dependencies, including PTY packages
 for each supported OS and CPU; development dependencies and development-only overrides
@@ -1835,16 +1883,7 @@ codex plugin marketplace add morluto/rea
 codex plugin add rea@rea
 ```
 
-Cursor uses the same built plugin directory, shared icon and generated skill.
-Build a source checkout before loading it in Cursor; cloning the Git repository
-alone does not supply `dist/` or `skills/`. Cursor marketplace publication is a
-separate maintainer step; its Git index is not assumed to build source repositories.
-Follow [Cursor's plugin installation and submission documentation](https://cursor.com/docs/reference/plugins)
-for client loading and publication. No extra `rea setup` command is needed to add
-the skill when the plugin is installed. For a setup-owned integration instead,
-use `rea setup --client cursor` without enabling the plugin.
-
-Each release updates all three manifest versions and their pinned server version
+Each release updates both manifest versions and their pinned server version
 together, which is when installed copies refresh the bundled skill and move to
 the new server. A plugin does not run `rea setup`, so provider
 configuration still follows the sections above. Use the plugin or a
@@ -1855,7 +1894,8 @@ only the registrations and skill locations that `rea setup` manages, so for a
 plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
 `missing` and recommend `rea setup`. Do not follow that remediation. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
-Code, `codex plugin list` in Codex).
+Code, `codex plugin list` in Codex, Cursor's plugin settings for a Marketplace
+install).
 
 For analysis engines, ask the connected server: have the agent call
 `binary_session` and read `result.tool_availability`, which reports what the
@@ -1877,6 +1917,66 @@ If your installed plugin is older, use the version in its manifest instead.
 That report describes the terminal's environment, not the plugin server's.
 The server inherits the client's environment, so a setting such as
 `GHIDRA_INSTALL_DIR` that exists only in your terminal does not reach it.
+
+### Cursor Marketplace
+
+Cursor's Marketplace installs this public repository as one plugin. The
+install includes both the `reverse-engineer-anything` skill and the `rea` MCP
+server. REA does not publish an MCP-only "Add to Cursor" install link, because
+that link would register the server without the skill.
+
+The manifest is `.cursor-plugin/plugin.json`. Cursor discovers `mcp.json` at
+the repository root and the skill directory named by `skills`. The committed
+skill is `.cursor-plugin/skills/reverse-engineer-anything`, a copy of the
+authored skill at `.agents/skills/reverse-engineer-anything`.
+`node scripts/generate-cursor-plugin-skill.mjs --check` fails when that copy
+drifts, including in `npm run docs:check` and package prepack. Marketplace
+installs are a Git checkout and do not contain `dist/`. The server entry
+therefore runs the published package instead of a local build:
+
+<!-- x-release-please-start-version -->
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@6.8.0", "mcp"]
+    }
+  }
+}
+```
+
+<!-- x-release-please-end -->
+
+Release Please updates that pin with `.cursor-plugin/plugin.json` and
+`package.json`. The skill text can describe capabilities newer than the pinned
+server until the next release; follow the connected server's tool list. The
+same pin is what `rea doctor --provider <id>` should use when you inspect an
+engine from a terminal, as shown above.
+
+A Marketplace install gives you:
+
+- the `reverse-engineer-anything` skill and its references
+- an `rea` MCP server launched with `npx -y rea-agents@<pinned version> mcp`
+  (Cursor shows it as `plugin-rea-rea`)
+- the shared plugin logo at `assets/rea-plugin.png`
+
+It does not install analysis engines, put `rea` on `PATH`, or write
+`~/.cursor/mcp.json`. `rea setup --client cursor` remains the direct
+registration path and still writes that file plus the setup-owned skill. Use
+the Marketplace plugin or that registration, not both, so Cursor does not
+start two `rea` servers.
+
+Node.js and npm must be available to Cursor. The plugin does not install them.
+Restart Cursor after the plugin is listed. If tools stay missing, read the
+plugin server's launch error. `rea doctor --client cursor` does not see
+Marketplace state and can report `missing`; do not run setup to repair a
+plugin-only install.
+
+Publishing the listing is a separate maintainer step at
+[cursor.com/marketplace/publish](https://cursor.com/marketplace/publish).
+This repository change does not submit the plugin.
 
 ## MCP Registry
 

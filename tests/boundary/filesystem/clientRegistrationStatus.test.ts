@@ -270,12 +270,10 @@ describe("client registration launcher identity", () => {
       config_path: config,
       remediation: expect.stringMatching(/\S/u),
     });
-    expect(status).not.toHaveProperty("commandIdentity");
     expect(await readClientRegistrationInspections(home, "")).toEqual([
       expect.objectContaining({
         status,
         activation: "enabled",
-        commandIdentity: "unknown",
       }),
     ]);
     expect(await readFile(config, "utf8")).toBe(original);

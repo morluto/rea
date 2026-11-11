@@ -29,6 +29,39 @@ export const processRunIdFromEnvironment = (
     ? environment.REA_PROCESS_RUN_ID
     : undefined;
 
+/** Read a selected PID's environment token without requiring process-table relations. */
+export const readProcessRunToken = async (
+  host: ProcessOwnershipHost,
+  pid: number,
+  signal?: AbortSignal,
+): Promise<ProcessRunTokenObservation> => {
+  signal?.throwIfAborted();
+  try {
+    const environment =
+      signal === undefined
+        ? await host.environment(pid)
+        : await host.environment(pid, signal);
+    signal?.throwIfAborted();
+    return {
+      state: "readable",
+      runId: processRunIdFromEnvironment(environment),
+    };
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    const code =
+      cause instanceof Error &&
+      "code" in cause &&
+      typeof cause.code === "string"
+        ? cause.code
+        : undefined;
+    return {
+      state: "unavailable",
+      ...(code === undefined ? {} : { code }),
+      reason: errorMessage(cause),
+    };
+  }
+};
+
 /** Read only ownership tokens, using per-process fallback for missing batch rows. */
 export async function* readProcessRunTokens(
   host: ProcessOwnershipHost,
@@ -57,33 +90,12 @@ export async function* readProcessRunTokens(
     signal?.throwIfAborted();
     let observation = batch?.get(process.pid);
     if (observation === undefined) {
-      try {
-        const environment =
-          signal === undefined
-            ? await host.environment(process.pid)
-            : await host.environment(process.pid, signal);
+      observation = await readProcessRunToken(host, process.pid, signal);
+      if (observation.state === "unavailable" && batchFailure !== undefined)
         observation = {
-          state: "readable",
-          runId: processRunIdFromEnvironment(environment),
+          ...observation,
+          reason: `${observation.reason}; run-token batch failed: ${batchFailure}`,
         };
-      } catch (cause: unknown) {
-        signal?.throwIfAborted();
-        const reason = errorMessage(cause);
-        const code =
-          cause instanceof Error &&
-          "code" in cause &&
-          typeof cause.code === "string"
-            ? cause.code
-            : undefined;
-        observation = {
-          state: "unavailable",
-          ...(code === undefined ? {} : { code }),
-          reason:
-            batchFailure === undefined
-              ? reason
-              : `${reason}; run-token batch failed: ${batchFailure}`,
-        };
-      }
     }
     signal?.throwIfAborted();
     yield { process, observation };

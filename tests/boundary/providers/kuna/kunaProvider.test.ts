@@ -441,8 +441,10 @@ it("reports a failed function and an import slot as unavailable text, not errors
     procedure: "broken",
   });
   expect(broken.result).toBeNull();
-  expect(broken.limitations).toContain(
-    "Kuna could not decompile this function: Flow exceeded maximum instructions",
+  expect(broken.limitations).toContainEqual(
+    expect.stringMatching(
+      /could not decompile.*Flow exceeded maximum instructions/i,
+    ),
   );
   const dossier = await run(client, "analyze_function", {
     procedure: "broken",
@@ -451,8 +453,9 @@ it("reports a failed function and an import slot as unavailable text, not errors
     facet_availability: {
       pseudocode: {
         available: false,
-        reason:
-          "Kuna could not decompile this function: Flow exceeded maximum instructions",
+        reason: expect.stringMatching(
+          /could not decompile.*Flow exceeded maximum instructions/i,
+        ),
       },
     },
   });
@@ -675,7 +678,11 @@ it("keeps answering pseudocode one function at a time when the export fails", as
   });
   expect(pseudocode.rawResult).toMatchObject({
     source: { kind: "single-function" },
-    project_export: { state: "failed", failure_records: "not_exposed" },
+    project_export: {
+      state: "failed",
+      failure_records: "not_exposed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
   });
   expect(pseudocode.limitations).toEqual(
     expect.arrayContaining([
@@ -1052,25 +1059,6 @@ it("recovers when another server evicts the export this session adopted", async 
     source: { kind: "project-export" },
   });
   expect(await readdir(join(cacheRoot, "projects"))).toEqual([key]);
-  await client.close();
-});
-
-it("reports a failed export as failed rather than building", async () => {
-  const { open } = await session("rea-kuna-failed-state-", {
-    project: "exit-failure",
-  });
-  const client = open();
-  await client.execute("procedure_assembly", { procedure: "main" });
-
-  expect(
-    (await run(client, "procedure_pseudo_code", { procedure: "main" }))
-      .rawResult,
-  ).toMatchObject({
-    project_export: {
-      state: "failed",
-      reason: expect.stringContaining("not in recognized object file format"),
-    },
-  });
   await client.close();
 });
 

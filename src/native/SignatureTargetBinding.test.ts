@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import {
   chmod,
@@ -19,7 +20,12 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ok, err } from "../domain/result.js";
-import type { NativeCommandRunner } from "./CommandRunner.js";
+import {
+  NativeCommandFailure,
+  XcrunCommandRunner,
+  type NativeCommandRunner,
+} from "./CommandRunner.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import {
@@ -27,7 +33,10 @@ import {
   withSignatureTarget,
 } from "./SignatureTargetBinding.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  primaryAnalysisError,
+  resolvedAnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { signatureInspectionFixture } from "../../tests/fixtures/nativeCommands.js";
@@ -645,3 +654,180 @@ it("does not adopt an inspection's arbitrary thrown cleanup marker", async () =>
   expect(result.error.cleanupResources).toEqual([]);
   await resources.close();
 });
+
+it.each(["io", "cancelled"] as const)(
+  "preserves a codesign %s failure when later target verification observes cancellation",
+  async (kind) => {
+    const target = await createTarget("registered source bytes");
+    const controller = new AbortController();
+    const reason = { caller: "cancel after codesign result", kind };
+    const output = {
+      stdout: "physical output",
+      stderr: "physical diagnostic",
+      stdoutBytes: 15,
+      stderrBytes: 19,
+      exitCode: null,
+      signal: null,
+      truncated: false,
+    };
+    const failure = new NativeCommandFailure(
+      "codesign",
+      kind,
+      null,
+      { cancellation: { reason } },
+      output,
+      "command cleanup remains unknown",
+      ["command-owner"],
+    );
+    const runner: NativeCommandRunner = {
+      run: async () => {
+        controller.abort(reason);
+        return err(failure);
+      },
+    };
+    const client = new NativeMacOSProvider(
+      {},
+      runner,
+      "darwin",
+      () => unusedTracer,
+      createRoot,
+    ).createClient(target);
+    try {
+      const result = await client.execute(
+        "inspect_signature",
+        {},
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected codesign failure");
+      expect(result.error._tag).toBe(
+        kind === "cancelled"
+          ? "AnalysisCancelledError"
+          : "ProviderAdapterError",
+      );
+      expect(result.error.capturedOutput).toMatchObject({
+        stdout: output.stdout,
+        stderr: output.stderr,
+      });
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual(["command-owner"]);
+      if (kind === "cancelled") expect(result.error.cause).toBe(reason);
+      else {
+        expect(result.error.cause).toBe(failure);
+        expect(result.error.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+it.each(["unchanged", "cancelled", "changed"] as const)(
+  "keeps a codesign cleanup marker live after %s target verification",
+  async (outcome) => {
+    const target = await createTarget("registered source bytes");
+    const controller = new AbortController();
+    const reason = { request: "cancel after native command failure" };
+    const process = Object.assign(new EventEmitter(), {
+      exitCode: 1,
+      signalCode: null,
+      stdout: null,
+      stderr: null,
+      kill: () => {
+        throw new Error("Exited fixture must not be signalled");
+      },
+    });
+    let mayClean = false;
+    let cleanupAttempts = 0;
+    const owner = new ProviderProcessSupervisor({
+      process,
+      ownsProcessLifetime: true,
+      cleanup: async () => {
+        cleanupAttempts++;
+        return mayClean
+          ? { cleaned: true, signaled: false }
+          : { cleaned: false, reason: "codesign worker remains owned" };
+      },
+    });
+    process.emit("close", 1, null);
+    const failure = new NativeCommandFailure(
+      "codesign",
+      "io",
+      1,
+      { cleanupOwner: owner },
+      {
+        stdout: "physical output",
+        stderr: "physical diagnostic",
+        stdoutBytes: 15,
+        stderrBytes: 19,
+        exitCode: 1,
+        signal: null,
+        truncated: false,
+      },
+      "codesign worker remains owned",
+      ["native-command-process"],
+    );
+    const runner = new XcrunCommandRunner({}, async () => {
+      if (outcome === "cancelled") controller.abort(reason);
+      if (outcome === "changed")
+        await writeFile(target.path, "changed source bytes");
+      return err(failure);
+    });
+    const client = new NativeMacOSProvider(
+      {},
+      runner,
+      "darwin",
+      () => unusedTracer,
+      createRoot,
+    ).createClient(target);
+    onTestFinished(async () => {
+      mayClean = true;
+      expect((await client.close()).ok).toBe(true);
+    });
+    const result = await client.execute(
+      "inspect_signature",
+      {},
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected codesign failure");
+    const primary = primaryAnalysisError(result.error);
+    expect(primary._tag).toBe(
+      outcome === "changed"
+        ? "AnalysisArtifactChangedError"
+        : "ProviderAdapterError",
+    );
+    if (outcome !== "changed") {
+      if (!(primary.cause instanceof NativeCommandFailure))
+        throw new Error("Expected physical codesign failure");
+      expect(primary.cause.cause).toBe(failure);
+      expect(primary.capturedOutput).toMatchObject({
+        stdout: "physical output",
+        stderr: "physical diagnostic",
+      });
+    }
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["native-command-process"]);
+    expect(primary.secondaryFailures).toEqual(
+      outcome === "cancelled"
+        ? [
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          ]
+        : [],
+    );
+    expect((await client.close()).ok).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(cleanupAttempts).toBe(1);
+    mayClean = true;
+    expect((await client.close()).ok).toBe(true);
+    expect(cleanupAttempts).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  },
+);

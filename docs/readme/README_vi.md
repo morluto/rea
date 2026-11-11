@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Kỹ thuật dịch ngược cho mọi thứ
 
@@ -84,6 +84,10 @@ Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Gro
 
 MCP mặc định dùng schema đầu vào gọn. Để có hướng dẫn đầy đủ về trường và xác thực lồng nhau, đặt `REA_MCP_INPUT_SCHEMA_PROFILE=full` trong đăng ký MCP. Cả hai cấu hình giữ toàn bộ công cụ và cùng xác thực chuẩn ở máy chủ; xem hướng dẫn hợp đồng MCP.
 
+Thiết lập đăng ký trực tiếp runtime đã chọn và script khởi chạy REA. Khi dùng trình chạy gói, hãy giữ mục cache và runtime đó; tải gói từ một thư mục đáng tin cậy bên ngoài dự án đích. Xem hướng dẫn cài đặt.
+
+Schema đầu ra đầy đủ được công bố theo mặc định. Nếu client giới hạn `tools/list`, hãy đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` hoặc `off` trong cấu hình MCP. Xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
+
 ### Hỏi tác nhân
 
 ```text
@@ -159,6 +163,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | Rust binaries                     | Embedded cargo-auditable dependency list                                                                        | [Rust binaries](../rust-binaries.md)                                                                                                                                     |
 | PE certificates                   | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                                  |
 | PE imports                        | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                            |
+| Windows shortcuts                 | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                    | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                                |
 | ELF notes                         | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                             |
 | Binary hardening                  | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                            |
 | Linux kernel modules              | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                   |
@@ -182,6 +187,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | Gói và tài nguyên                 | Danh sách tệp, giá trị băm, plist, cấu trúc bundle Apple và tài nguyên được trích xuất                          | [Hướng dẫn hiện vật phần mềm và JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [ứng dụng Apple](../guides/apple/apple-application-analysis.md) |
 | Hành vi tiến trình                | Đầu ra terminal, tương tác, quan sát khi thoát và hệ thống tệp, cùng so sánh các lần chạy                       | Linux/macOS có PTY gốc; [ghi lại tiến trình](../guides/runtime/process-capture.md)                                                                                       |
 | PyInstaller                       | CArchive, PYZ, Python bytecode                                                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                    |
+| Deno compile binaries             | Virtual files, entry point, recorded options, npm snapshot length                                               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                     |
 | Tệp nhị phân Go                   | Phiên bản trình biên dịch nhúng, mô-đun, thay thế và thiết lập build                                            | Kiểm tra tĩnh tích hợp ELF/PE/thin Mach-O; Không cần cài Go                                                                                                              |
 | Cơ sở dữ liệu SQLite              | Bảng, cột, chỉ mục, view, trigger và hàng được chọn từ bảng thông thường                                        | Ảnh chụp cơ sở dữ liệu/WAL cục bộ; Node.js 24.x >=24.15 hoặc 26+ có giới hạn SQLite native                                                                               |
 | Đối tượng mã GPU                  | Đích CUDA/HIP, tham số và tài nguyên kernel được chọn, văn bản PTX được giữ lại                                 | Kiểm tra tĩnh tích hợp ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                            |
@@ -272,6 +278,12 @@ REA xuất môi trường chạy được cùng bài kiểm tra cơ bản để 
 [Hướng dẫn xây dựng môi trường](https://rea.tools/guides/rl-environments/) ·
 [Tài liệu tham chiếu môi trường](../agent-environments.md) ·
 [Xem bản demo trên X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Môi trường ứng dụng desktop
+
+REA cũng có thể xây dựng môi trường cho một ứng dụng desktop Linux mà tác tử dùng qua ảnh chụp màn hình, chuột và bàn phím. Từ một yêu cầu một dòng, chẳng hạn "Tạo cho tôi một môi trường Gnote trong đó tác tử thêm dầu ô liu vào ghi chú danh sách mua sắm", tác tử của bạn cài ứng dụng trên một máy tính dựng cục bộ, viết tác vụ, xuất môi trường và kiểm tra tác vụ trên một máy tính mới. Máy dựng môi trường cần Linux trên amd64 hoặc arm64, Docker và phiên bản framework agentenv mà hướng dẫn chỉ định.
+
+[Thiết lập môi trường ứng dụng desktop](../desktop-build-computer.md)
 
 ## Câu hỏi thường gặp
 

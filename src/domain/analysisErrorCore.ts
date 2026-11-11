@@ -256,12 +256,16 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
 /** Caller cancellation won before provider-neutral work completed. */
 export class AnalysisCancelledError extends AnalysisError {
   readonly _tag = "AnalysisCancelledError";
+  override readonly userMessage: string | undefined;
 
   constructor(
     readonly operation: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+    },
   ) {
     super(`Analysis operation was cancelled: ${operation}`, options);
+    this.userMessage = options?.userMessage;
   }
 }
 

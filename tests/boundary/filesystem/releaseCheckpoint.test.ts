@@ -22,7 +22,6 @@ const verifier = fileURLToPath(
 const pluginManifestPaths = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
-  ".cursor-plugin/plugin.json",
 ] as const;
 
 const pluginManifest = (version: string, launch = version) => ({
@@ -54,7 +53,7 @@ async function metadata(
 ) {
   await mkdir(join(directory, "docs"), { recursive: true });
   await mkdir(join(directory, "src"), { recursive: true });
-  for (const path of pluginManifestPaths)
+  for (const path of [...pluginManifestPaths, ".cursor-plugin/plugin.json"])
     await mkdir(join(directory, dirname(path)), { recursive: true });
   const files = {
     ".claude-plugin/plugin.json": pluginManifest(version),
@@ -63,18 +62,12 @@ async function metadata(
       mcpServers: "./.codex-plugin/mcp.json",
     },
     ".codex-plugin/mcp.json": codexServerConfig(version),
-    ".cursor-plugin/plugin.json": {
-      version,
-      mcpServers: "./.cursor-plugin/mcp.json",
-    },
-    ".cursor-plugin/mcp.json": {
+    ".cursor-plugin/plugin.json": { version },
+    "mcp.json": {
       mcpServers: {
         rea: {
-          command: "node",
-          args: [
-            "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
-            version,
-          ],
+          command: "npx",
+          args: ["-y", `rea-agents@${version}`, "mcp"],
         },
       },
     },
@@ -622,9 +615,7 @@ it.each(
     manifest:
       path === ".codex-plugin/plugin.json"
         ? { version: "5.1.0", mcpServers: "./.codex-plugin/mcp.json" }
-        : path === ".cursor-plugin/plugin.json"
-          ? { version: "5.1.0", mcpServers: "./.cursor-plugin/mcp.json" }
-          : pluginManifest("5.1.0"),
+        : pluginManifest("5.1.0"),
     failure: "declares 5.1.0; release branch requires 6.0.0",
   })),
 )("rejects a plugin $stale in $path", async ({ path, manifest, failure }) => {
@@ -648,20 +639,6 @@ it.each([
     path: ".codex-plugin/mcp.json",
     manifest: codexServerConfig("6.0.0", "5.1.0"),
   },
-  {
-    path: ".cursor-plugin/mcp.json",
-    manifest: {
-      mcpServers: {
-        rea: {
-          command: "node",
-          args: [
-            "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
-            "5.1.0",
-          ],
-        },
-      },
-    },
-  },
 ])("reads the release pin from $path", async ({ path, manifest }) => {
   const f = await fixture();
   await candidate(f, "6.0.0");
@@ -672,6 +649,47 @@ it.each([
     code: 1,
     stderr: expect.stringContaining(
       `launches version 5.1.0; release branch requires 6.0.0`,
+    ),
+  });
+});
+
+it("rejects a stale Cursor Marketplace plugin version", async () => {
+  const f = await fixture();
+  await candidate(f, "6.0.0");
+  await writeFile(
+    join(f.directory, ".cursor-plugin/plugin.json"),
+    JSON.stringify({ version: "5.1.0" }),
+  );
+  await git(f.directory, ["add", "."]);
+  await git(f.directory, ["commit", "-m", "chore: stale cursor plugin"]);
+  await expect(verify(f)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(
+      "declares 5.1.0; release branch requires 6.0.0",
+    ),
+  });
+});
+
+it("rejects a stale Cursor Marketplace server pin", async () => {
+  const f = await fixture();
+  await candidate(f, "6.0.0");
+  await writeFile(
+    join(f.directory, "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", "rea-agents@5.1.0", "mcp"],
+        },
+      },
+    }),
+  );
+  await git(f.directory, ["add", "."]);
+  await git(f.directory, ["commit", "-m", "chore: stale cursor server"]);
+  await expect(verify(f)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(
+      "launches rea-agents@5.1.0; release branch requires rea-agents@6.0.0",
     ),
   });
 });

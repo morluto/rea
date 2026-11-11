@@ -215,6 +215,8 @@ describe("application workflow MCP parity", () => {
       const validate = new Ajv2020({
         strict: false,
         validateFormats: false,
+        inlineRefs: false,
+        code: { optimize: false },
       }).compile(
         z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
       );
@@ -316,6 +318,7 @@ describe("repeated partial export comparisons", () => {
         const evidence = parseEvidence(response.structuredContent);
         expect(evidence.normalized_result).toMatchObject({
           changes: [],
+          summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
           coverage: { status: "partial" },
         });
         return evidence.evidence_id;
@@ -364,6 +367,13 @@ describe("repeated partial export comparisons", () => {
           true,
         );
       const retained = session.exportEvidenceBundle();
+      for (const id of evidenceIds)
+        expect(retained.unknowns).toContainEqual(
+          expect.objectContaining({
+            domain: "javascript-export-shape",
+            supporting_evidence_ids: [id],
+          }),
+        );
       await Promise.all(pairs.map((pair) => compare(pair)));
       expect(session.exportEvidenceBundle()).toEqual(retained);
     },
@@ -371,50 +381,6 @@ describe("repeated partial export comparisons", () => {
 });
 
 describe("source-produced export comparison inventories", () => {
-  it("records partial comparison coverage even when matching unknown projections produce no changes", async () => {
-    const source = `export default function make() {
-      const result = { kind: "record", count: 1 };
-      delete result.count;
-      return result;
-    }`;
-    const [left, right] = await Promise.all([
-      analyzeSourceEvidence(source),
-      analyzeSourceEvidence(source),
-    ]);
-    const { client, session, close } = await createApplicationMcpHarness();
-    onTestFinished(close);
-    const response = await client.callTool({
-      name: "compare_javascript_export_shapes",
-      arguments: {
-        left,
-        right,
-        left_module_path: "parser.mjs",
-        left_export_name: "default",
-        right_module_path: "parser.mjs",
-        right_export_name: "default",
-      },
-    });
-    expect(response.isError).not.toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      normalized_result: {
-        changes: [],
-        summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
-        coverage: { status: "partial" },
-      },
-    });
-    const { evidence_id: evidenceId } = z
-      .object({ evidence_id: z.string() })
-      .parse(response.structuredContent);
-    expect(session.exportEvidenceBundle().unknowns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          domain: "javascript-export-shape",
-          supporting_evidence_ids: [evidenceId],
-        }),
-      ]),
-    );
-  });
-
   it("retains large source-produced export inventories through comparison schemas", async () => {
     const fields = Array.from(
       { length: 64 },

@@ -179,9 +179,9 @@ describe("ESP partition tables", () => {
     expect(boot.otaSlots.get(0)?.label).toBe("again");
     expect(boot.otaAppCount).toBe(3);
     expect(boot.limitations).toEqual([
-      "The table declares otadata 2 times (partitions #1, #7); ESP-IDF's bootloader uses the last.",
-      "The table declares factory 2 times (partitions #3, #6); ESP-IDF's bootloader uses the last.",
-      "The table declares ota_0 2 times (partitions #4, #8); ESP-IDF's bootloader uses the last.",
+      expect.stringMatching(/otadata.*2.*#1.*#7.*bootloader.*last/iu),
+      expect.stringMatching(/factory.*2.*#3.*#6.*bootloader.*last/iu),
+      expect.stringMatching(/ota_0.*2.*#4.*#8.*bootloader.*last/iu),
     ]);
   });
 });

@@ -1,4 +1,8 @@
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
+import {
+  resolveArtifactReaderLimits,
+  type ArtifactReaderLimitsInput,
+} from "../domain/artifactReaderLimits.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
@@ -102,6 +106,31 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 }
 
+/** Project both artifact clients' shutdown through the exact retained cleanup owner. */
+const closeArtifactResources = (
+  resources: ArtifactResourceScope,
+  fallbackResource: string,
+): Promise<Result<null, AnalysisError>> =>
+  resources.close().then(
+    () => ok(null),
+    (cause: unknown) => {
+      const failure =
+        cause instanceof ArtifactReaderFailure ? cause : undefined;
+      const error = new ProviderCleanupError(
+        ARTIFACT_GRAPH_PROVIDER.id,
+        failure?.cleanup?.resources ?? [fallbackResource],
+        {
+          reason:
+            failure?.cleanup?.reason ??
+            (cause instanceof Error ? cause.message : String(cause)),
+        },
+        { cause, operation: "close_binary" },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
+    },
+  );
+
 const serializedResourceRoot = (
   root: ResolvedAppBundleResourceRoot,
 ): BundleResourceRoot => ({
@@ -194,17 +223,9 @@ class BundleResourceArtifactClient implements AnalysisClient {
   }
 
   close(): Promise<Result<null, AnalysisError>> {
-    return this.#resourceScope.close().then(
-      () => ok(null),
-      (cause: unknown) =>
-        err(
-          new ProviderCleanupError(
-            ARTIFACT_GRAPH_PROVIDER.id,
-            ["app bundle resource reader"],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
-            { cause, operation: "close_binary" },
-          ),
-        ),
+    return closeArtifactResources(
+      this.#resourceScope,
+      "app bundle resource reader",
     );
   }
 }
@@ -348,6 +369,13 @@ class ArtifactClient implements AnalysisClient {
               this.settings,
             ),
             integrityPolicy: parsed.integrity_policy,
+            ...(parsed.artifact_limits === undefined
+              ? {}
+              : {
+                  readerLimits: resolveArtifactReaderLimits(
+                    parsed.artifact_limits,
+                  ),
+                }),
             resourceScope: this.#resourceScope,
           },
           options?.signal,
@@ -387,25 +415,7 @@ class ArtifactClient implements AnalysisClient {
   }
 
   close(): Promise<Result<null, AnalysisError>> {
-    return this.#resourceScope.close().then(
-      () => ok(null),
-      (cause: unknown) => {
-        const failure =
-          cause instanceof ArtifactReaderFailure ? cause : undefined;
-        const error = new ProviderCleanupError(
-          ARTIFACT_GRAPH_PROVIDER.id,
-          failure?.cleanup?.resources ?? ["artifact resources"],
-          {
-            reason:
-              failure?.cleanup?.reason ??
-              (cause instanceof Error ? cause.message : String(cause)),
-          },
-          { cause, operation: "close_binary" },
-        );
-        bindArtifactFileCleanup(cause, error);
-        return err(error);
-      },
-    );
+    return closeArtifactResources(this.#resourceScope, "artifact resources");
   }
 
   /** The active target's kind is outside this operation's supported targets. */
@@ -487,6 +497,9 @@ class ArtifactClient implements AnalysisClient {
     const parsed = artifactInventoryInputSchema.parse(parameters);
     const inventoryParameters = {
       integrity_policy: parsed.integrity_policy,
+      ...(parsed.artifact_limits === undefined
+        ? {}
+        : { artifact_limits: parsed.artifact_limits }),
     };
     await options?.progress?.report({
       phase: "inspect_artifact.inventory",
@@ -536,6 +549,7 @@ class ArtifactClient implements AnalysisClient {
   private inventory(
     parsed: {
       readonly integrity_policy: "fail" | "record-and-continue";
+      readonly artifact_limits?: ArtifactReaderLimitsInput | undefined;
     },
     options?: ExecutionOptions,
   ) {
@@ -554,6 +568,11 @@ class ArtifactClient implements AnalysisClient {
       espFlashSelection: espFlashSelection(this.target),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
       integrity: parsed.integrity_policy,
+      ...(parsed.artifact_limits === undefined
+        ? {}
+        : {
+            readerLimits: resolveArtifactReaderLimits(parsed.artifact_limits),
+          }),
     });
   }
 }

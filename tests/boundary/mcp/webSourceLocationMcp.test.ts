@@ -146,3 +146,43 @@ it("preserves missing Linux ps capability and recovery through source-map tracin
   expect(createRuntime).not.toHaveBeenCalled();
   expect(launcher).not.toHaveBeenCalled();
 });
+
+it("rejects malformed delivery controls before acquiring source-map artifacts", async () => {
+  const load = vi.fn(async () => ok(webSourceLocationFixture()));
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      webSourceLocation: new WebSourceLocationService(
+        { load },
+        {
+          trace: async (input) =>
+            ok(traceSourceMap(input.text, input.url, input.position)),
+        },
+      ),
+    },
+  });
+  for (const delivery of [
+    {
+      detail: "complete",
+      view: { kind: "source-location", collection: "matches" },
+    },
+    {
+      detail: "summary",
+      view: {
+        kind: "source-location",
+        collection: "source-text",
+        match_index: -1,
+      },
+    },
+    {
+      detail: "summary",
+      view: { kind: "source-location", collection: "matches", limit: 0 },
+    },
+  ]) {
+    const result = await harness.client.callTool({
+      name: "trace_web_source_location",
+      arguments: { ...args, ...delivery },
+    });
+    expect(parseMcpToolError(result).error.code).toBe("invalid_request");
+  }
+  expect(load).not.toHaveBeenCalled();
+});

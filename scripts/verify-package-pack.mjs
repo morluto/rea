@@ -191,6 +191,8 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     throw new Error("package did not expose both rea command entry points");
   if (!packedFiles.includes("package/scripts/lib/cli-process-environment.mjs"))
     throw new Error("package omitted the CLI process environment owner");
+  if (!packedFiles.includes("package/scripts/lib/runtime-admission.mjs"))
+    throw new Error("package omitted the CLI runtime admission owner");
   if (packedFiles.some((path) => path.startsWith("package/.agents/")))
     throw new Error(
       "package included authored skill sources instead of only the generated bundle",
@@ -220,30 +222,23 @@ export async function verifyPackagePack({ root, workspace, commands }) {
   for (const path of [
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
-    ".cursor-plugin/plugin.json",
   ]) {
     const manifest = JSON.parse(
       (await commands.exec("tar", ["-xOf", tarball, `package/${path}`])).stdout,
     );
-    const externalServerPath = path.startsWith(".codex")
-      ? ".codex-plugin/mcp.json"
-      : path.startsWith(".cursor")
-        ? ".cursor-plugin/mcp.json"
-        : undefined;
-    const serverConfig =
-      externalServerPath !== undefined
-        ? JSON.parse(
-            (
-              await commands.exec("tar", [
-                "-xOf",
-                tarball,
-                `package/${externalServerPath}`,
-              ])
-            ).stdout,
-          )
-        : manifest;
+    const serverConfig = path.startsWith(".codex")
+      ? JSON.parse(
+          (
+            await commands.exec("tar", [
+              "-xOf",
+              tarball,
+              "package/.codex-plugin/mcp.json",
+            ])
+          ).stdout,
+        )
+      : manifest;
     const expectedArgs = [
-      `${path.startsWith(".claude") ? "${CLAUDE_PLUGIN_ROOT}/" : path.startsWith(".cursor") ? "${CURSOR_PLUGIN_ROOT}/" : "./"}scripts/plugin-mcp-launcher.mjs`,
+      `${path.startsWith(".claude") ? "${CLAUDE_PLUGIN_ROOT}/" : "./"}scripts/plugin-mcp-launcher.mjs`,
       packedManifest.version,
     ];
     if (
@@ -253,9 +248,7 @@ export async function verifyPackagePack({ root, workspace, commands }) {
         ? manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
           serverConfig.mcpServers?.rea?.cwd !== "." ||
           serverConfig.mcpServers?.rea?.startup_timeout_sec !== 30
-        : path.startsWith(".cursor")
-          ? manifest.mcpServers !== "./.cursor-plugin/mcp.json"
-          : false) ||
+        : false) ||
       serverConfig.mcpServers?.rea?.command !== "node" ||
       JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
         JSON.stringify(expectedArgs)
@@ -265,9 +258,7 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       );
     const icons = path.startsWith(".codex")
       ? [manifest.interface?.logo, manifest.interface?.composerIcon]
-      : path.startsWith(".cursor")
-        ? [manifest.logo]
-        : [manifest.icon];
+      : [manifest.icon];
     for (const icon of icons)
       if (
         icon !== "./assets/rea-plugin.png" ||
@@ -275,6 +266,39 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       )
         throw new Error(`Packaged plugin ${path} is missing its shared icon`);
   }
+  const cursorManifest = JSON.parse(
+    (
+      await commands.exec("tar", [
+        "-xOf",
+        tarball,
+        "package/.cursor-plugin/plugin.json",
+      ])
+    ).stdout,
+  );
+  const cursorServer = JSON.parse(
+    (await commands.exec("tar", ["-xOf", tarball, "package/mcp.json"])).stdout,
+  );
+  const cursorLogo = String(cursorManifest.logo ?? "").replace(/^\.\//u, "");
+  const cursorSkill =
+    "package/.cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
+  if (
+    cursorManifest.version !== packedManifest.version ||
+    cursorManifest.skills !== ".cursor-plugin/skills" ||
+    cursorLogo !== "assets/rea-plugin.png" ||
+    cursorManifest.mcpServers !== undefined ||
+    cursorServer.mcpServers?.rea?.command !== "npx" ||
+    JSON.stringify(cursorServer.mcpServers?.rea?.args) !==
+      JSON.stringify([
+        "-y",
+        `${packedManifest.name}@${packedManifest.version}`,
+        "mcp",
+      ]) ||
+    !packedFiles.includes(`package/${cursorLogo}`) ||
+    !packedFiles.includes(cursorSkill)
+  )
+    throw new Error(
+      "Packaged Cursor plugin does not ship the pinned server, skill, and logo",
+    );
   if (packedFiles.includes("package/.mcp.json"))
     throw new Error("Plugin metadata must not register a project MCP server");
   if (!packedFiles.includes("package/.codex-plugin/mcp.json"))

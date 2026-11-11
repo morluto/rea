@@ -82,11 +82,13 @@ const awaitExit = async (
   }
 };
 
-const send = (deliver: () => void): void => {
+const send = (deliver: () => void): boolean => {
   try {
     deliver();
+    return true;
   } catch {
-    // A process that exited first has nothing left to stop.
+    // Exit or a failed delivery does not establish that SIGTERM was sent.
+    return false;
   }
 };
 
@@ -113,16 +115,20 @@ export const terminateTokenOwnedProcesses = async (
   }
   const inGroup = (fact: ProcessOwnershipFact) =>
     processGroupOf(fact) === ownership.processGroupId;
-  const launchGroupSignalled = owned.some(inGroup);
-  if (launchGroupSignalled)
+  const launchGroupSignalled =
+    owned.some(inGroup) &&
     send(() => {
       host.ownership.signalGroup(ownership.processGroupId, "SIGTERM");
     });
+  const signalled = launchGroupSignalled ? owned.filter(inGroup) : [];
   for (const fact of owned)
-    if (!inGroup(fact))
+    if (
+      !inGroup(fact) &&
       send(() => {
         host.signalProcess(fact.process.pid, "SIGTERM");
-      });
-  await awaitExit(owned, deadline, host.ownership);
+      })
+    )
+      signalled.push(fact);
+  await awaitExit(signalled, deadline, host.ownership);
   return { launchGroupSignalled };
 };

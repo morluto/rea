@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
 import {
@@ -5,8 +9,6 @@ import {
   createFileMappingIndex,
   isZeroFilledSpan,
   type ElfDynamicSegment,
-  type FileMapping,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 
 /** Shared loader interpretation; language adapters choose their public errors. */
@@ -34,6 +36,10 @@ export interface ElfPointerWrite {
   readonly value: bigint | null;
   readonly file_offset: number | null;
   readonly source: ElfPointerRelocationSource;
+  /** Decoded REL/RELA `r_sym`; null for RELR. */
+  readonly symbol_index: number | null;
+  /** Decoded RELA `r_addend`; null for REL (implicit in place) and RELR. */
+  readonly addend: bigint | null;
 }
 export interface ElfOverlayPointer {
   readonly value: bigint;
@@ -98,6 +104,7 @@ const RELOCATION_KINDS = new Map([
   [
     183,
     {
+      absolute: 257,
       bits: 64,
       relative: 1027,
       widths: new Map([
@@ -119,6 +126,7 @@ const RELOCATION_KINDS = new Map([
   [
     62,
     {
+      absolute: 1,
       bits: 64,
       relative: 8,
       widths: new Map([
@@ -139,6 +147,7 @@ const RELOCATION_KINDS = new Map([
   [
     40,
     {
+      absolute: 2,
       bits: 32,
       relative: 23,
       widths: new Map([
@@ -156,6 +165,7 @@ const RELOCATION_KINDS = new Map([
   [
     3,
     {
+      absolute: 1,
       bits: 32,
       relative: 8,
       widths: new Map([
@@ -188,6 +198,23 @@ const RELOCATION_KINDS = new Map([
     },
   ],
 ]);
+
+/** R_*_RELATIVE type for a supported ELF machine, or undefined when unsupported. */
+export const elfRelativeRelocationType = (
+  machine: number,
+): number | undefined => RELOCATION_KINDS.get(machine)?.relative;
+
+/** Word-sized absolute (S + A) relocation type for a supported ELF machine. */
+export const elfAbsoluteRelocationType = (
+  machine: number,
+): number | undefined => RELOCATION_KINDS.get(machine)?.absolute;
+
+/** Bytes written by a relocation; type zero is a no-op and unknown types remain undefined. */
+export const elfRelocationWidth = (
+  machine: number,
+  type: number,
+): number | undefined =>
+  type === 0 ? 0 : RELOCATION_KINDS.get(machine)?.widths.get(type);
 
 function* dynamicTags(
   bytes: Buffer,
@@ -314,14 +341,14 @@ export function* readElfRelocationWritesSteps(
     address: bigint,
     width: number,
     value: bigint | null,
-    source: ElfPointerRelocationSource,
+    record: Pick<ElfPointerWrite, "source" | "symbol_index" | "addend">,
   ): ElfPointerWrite => ({
     address,
     width,
     value,
     file_offset:
       value === null ? fileOffset(address, width) : target(address, width),
-    source,
+    ...record,
   });
   if (PACKED_TAGS.some((tag) => tags.has(tag)))
     unsupported(
@@ -369,30 +396,35 @@ export function* readElfRelocationWritesSteps(
             );
       if (!parsed.ok) return malformed(parsed.error.message);
       const { type: kind, offset: destination, symbolIndex } = parsed.value;
-      if (kind === 0) continue;
+      if (elfRelocationWidth(input.machine, kind) === 0) continue;
       const source = { encoding, record_file_offset: at, kind };
-      if (kind !== relative || symbolIndex !== 0) {
-        const width = unknownWidths.get(kind);
-        if (width === undefined) {
-          unsupported(`ELF relocation kind ${kind} is not decoded`);
-          continue;
-        }
-        yield write(destination, width, null, source);
-        continue;
-      }
-      const slot = target(destination, word);
       const explicitAddend =
         "addend" in parsed.value && typeof parsed.value.addend === "bigint"
           ? parsed.value.addend
           : undefined;
       if (encoding === "rela" && explicitAddend === undefined)
         return malformed("RELA relocation has no decoded addend");
+      const record = {
+        source,
+        symbol_index: symbolIndex,
+        addend: explicitAddend ?? null,
+      };
+      if (kind !== relative || symbolIndex !== 0) {
+        const width = unknownWidths.get(kind);
+        if (width === undefined) {
+          unsupported(`ELF relocation kind ${kind} is not decoded`);
+          continue;
+        }
+        yield write(destination, width, null, record);
+        continue;
+      }
+      const slot = target(destination, word);
       const addend = explicitAddend ?? (slot === null ? 0n : rawWord(slot));
       yield write(
         destination,
         word,
         BigInt.asUintN(input.bits, addend),
-        source,
+        record,
       );
     }
   }
@@ -455,9 +487,9 @@ export function* readElfRelocationWritesSteps(
           malformed("RELR destination overflows the ELF address space");
         const slot = target(address, word);
         return write(address, word, slot === null ? 0n : rawWord(slot), {
-          encoding: "relr",
-          record_file_offset: at,
-          kind: null,
+          source: { encoding: "relr", record_file_offset: at, kind: null },
+          symbol_index: null,
+          addend: null,
         });
       };
       if ((entry & 1n) === 0n) {

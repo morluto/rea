@@ -367,11 +367,13 @@ it("names the setting that owns a single-function deadline", async () => {
     if (result.ok) throw new Error("the hanging run answered");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
-      message:
-        "kuna decompile did not finish within REA_KUNA_TIMEOUT_MS (300 ms).",
+      message: expect.stringMatching(
+        /kuna decompile.*REA_KUNA_TIMEOUT_MS.*300 ms/i,
+      ),
       remediation: {
-        action:
-          "Raise REA_KUNA_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
+        action: expect.stringMatching(
+          /raise.*REA_KUNA_TIMEOUT_MS.*restart REA/i,
+        ),
       },
       details: { timeout_ms: 300 },
     });

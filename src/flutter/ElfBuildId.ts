@@ -123,7 +123,7 @@ export const readElfBuildIds = async (
       )
         return failure("ELF note range is not file-backed");
       if ("size" in record) {
-        if ((record.flags & 0x800n) !== 0n) {
+        if (record.compressed) {
           if (!compressedNotes) {
             failures.push({
               reason: "Compressed ELF note sections are unsupported",
@@ -169,6 +169,8 @@ export const readElfBuildIds = async (
       if (!parsedHeader.ok) return failure(parsedHeader.error.message);
       const { namesz, descsz, type } = parsedHeader.value;
       const layout = elfNoteLayout(namesz, descsz, range.alignment);
+      if (layout.next > notes.length - at)
+        return failure("ELF note entry exceeds its declared note range");
       const descriptor = at + layout.descriptor;
       const end = descriptor + descsz;
       if (end > notes.length)

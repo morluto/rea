@@ -7,7 +7,6 @@ const manifestSchema = z.object({ ".": z.string() });
 const PLUGIN_MANIFEST_PATHS = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
-  ".cursor-plugin/plugin.json",
 ];
 const inlinePluginManifestSchema = versionSchema.extend({
   mcpServers: z.object({
@@ -23,20 +22,6 @@ const inlinePluginManifestSchema = versionSchema.extend({
 const codexPluginManifestSchema = versionSchema.extend({
   mcpServers: z.literal("./.codex-plugin/mcp.json"),
 });
-const cursorPluginManifestSchema = versionSchema.extend({
-  mcpServers: z.literal("./.cursor-plugin/mcp.json"),
-});
-const cursorServerConfigSchema = z.object({
-  mcpServers: z.object({
-    rea: z.object({
-      command: z.literal("node"),
-      args: z.tuple([
-        z.literal("${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs"),
-        z.string(),
-      ]),
-    }),
-  }),
-});
 const codexServerConfigSchema = z.object({
   mcpServers: z.object({
     rea: z.object({
@@ -47,6 +32,16 @@ const codexServerConfigSchema = z.object({
       ]),
       cwd: z.literal("."),
       startup_timeout_sec: z.number().int().positive(),
+    }),
+  }),
+});
+const cursorPluginManifest = ".cursor-plugin/plugin.json";
+const cursorPluginServer = "mcp.json";
+const cursorServerConfigSchema = z.object({
+  mcpServers: z.object({
+    rea: z.object({
+      command: z.literal("npx"),
+      args: z.tuple([z.literal("-y"), z.string(), z.literal("mcp")]),
     }),
   }),
 });
@@ -242,9 +237,7 @@ async function validateCandidate(git, sha, version, commits) {
     const manifest =
       path === ".codex-plugin/plugin.json"
         ? await readJson(git, sha, path, codexPluginManifestSchema)
-        : path === ".cursor-plugin/plugin.json"
-          ? await readJson(git, sha, path, cursorPluginManifestSchema)
-          : await readJson(git, sha, path, inlinePluginManifestSchema);
+        : await readJson(git, sha, path, inlinePluginManifestSchema);
     versions.push([path, manifest.version]);
     const server =
       path === ".codex-plugin/plugin.json"
@@ -254,16 +247,23 @@ async function validateCandidate(git, sha, version, commits) {
             ".codex-plugin/mcp.json",
             codexServerConfigSchema,
           )
-        : path === ".cursor-plugin/plugin.json"
-          ? await readJson(
-              git,
-              sha,
-              ".cursor-plugin/mcp.json",
-              cursorServerConfigSchema,
-            )
-          : manifest;
+        : manifest;
     launches.push([path, server.mcpServers.rea.args[1]]);
   }
+  const cursorManifest = await readJson(
+    git,
+    sha,
+    cursorPluginManifest,
+    versionSchema,
+  );
+  versions.push([cursorPluginManifest, cursorManifest.version]);
+  const cursorServer = await readJson(
+    git,
+    sha,
+    cursorPluginServer,
+    cursorServerConfigSchema,
+  );
+  const cursorPin = cursorServer.mcpServers.rea.args[1];
   // Catalogs are generated and checked from this candidate by the release job;
   // they are not version authority stored in the immutable source tree.
   const generated = await git([
@@ -286,6 +286,13 @@ async function validateCandidate(git, sha, version, commits) {
     }
   }
   // The launcher checks the scalar pin against the runtime in its own package.
+  // Compare manifest versions first so a wholly stale candidate reports the
+  // shared version authority before this Marketplace package specifier.
+  if (cursorPin !== `rea-agents@${version}`) {
+    throw new Error(
+      `${cursorPluginServer}@${sha} launches ${cursorPin}; release branch requires rea-agents@${version}.`,
+    );
+  }
   for (const [location, launched] of launches) {
     if (launched !== version) {
       throw new Error(
