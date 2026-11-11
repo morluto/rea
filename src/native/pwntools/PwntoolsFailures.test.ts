@@ -54,7 +54,7 @@ it("keeps the caller-selected pwntools input-limit source", () => {
     setting: "pwntools.max_input_bytes",
     effective_value: 4096,
     source: "request",
-    update_mode: "runtime",
+    update_mode: "parameter",
     pending_restart: false,
   });
 });
