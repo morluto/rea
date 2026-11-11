@@ -54,7 +54,7 @@ const FILE_RECORD_IS_DIRECTORY = 0x0002;
 const FILE_RECORD_NAMES = new Map<number, string>([
   [FILE_RECORD_IN_USE, "in-use"],
   [FILE_RECORD_IS_DIRECTORY, "directory"],
-  [0x0004, "extension"],
+  [0x0004, "system"],
   [0x0008, "view-index"],
 ]);
 
