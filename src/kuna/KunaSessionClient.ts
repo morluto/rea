@@ -24,6 +24,7 @@ import {
   type RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -2405,10 +2406,18 @@ export class KunaSessionClient implements AnalysisClient {
       // The session owns the shared run; each caller only stops waiting.
       const run = this.#listInventory(installation);
       this.#inventory = run;
-      void run.then((listed) => {
-        // A failed listing is retried by the next request.
-        if (!listed.ok && this.#inventory === run) this.#inventory = undefined;
-      });
+      void run.then(
+        (listed) => {
+          // A failed listing is retried by the next request.
+          if (!listed.ok && this.#inventory === run)
+            this.#inventory = undefined;
+        },
+        () => {
+          // Unexpected rejections remain visible to waiters but cannot poison
+          // the shared cache or create a second unhandled rejection.
+          if (this.#inventory === run) this.#inventory = undefined;
+        },
+      );
     }
     return waitFor(this.#inventory, options.signal, "list_procedures");
   }
@@ -2427,11 +2436,24 @@ export class KunaSessionClient implements AnalysisClient {
     if (this.#reader !== undefined) return ok(this.#reader.project.inventory);
     const exported = await this.#exportInventory;
     if (exported !== undefined) return ok(exported);
+    if (this.#session.signal.aborted)
+      return err(
+        new AnalysisCancelledError("list_procedures", {
+          cause: this.#session.signal.reason,
+        }),
+      );
+    let deadline: KunaDeadline;
+    try {
+      deadline = kunaFunctionDeadline(installation.configuration);
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["functions", input, "--json"],
       operation: "list_procedures",
-      deadline: kunaFunctionDeadline(installation.configuration),
+      deadline,
       outputBytes: KUNA_INVENTORY_OUTPUT_BYTES,
       signal: this.#session.signal,
     });
