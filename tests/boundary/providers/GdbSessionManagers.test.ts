@@ -185,3 +185,35 @@ process.stdin.on("data", (chunk) => {
       );
   });
 });
+
+it("starts GDB without applying an invalid console output limit", async () => {
+  const owner = createGdbFixtureOwner();
+  const directory = await mkdtemp(join(tmpdir(), "rea-gdb-start-output-"));
+  const provider = join(directory, "fake-gdb.mjs");
+  await writeFile(provider, gdbSettingsFixture);
+  await chmod(provider, 0o700);
+  const environment = {
+    REA_GDB_COMMAND: provider,
+    REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "invalid",
+  };
+  const manager = new GdbSessionManager({
+    spawnProcess: owner.spawnProcess,
+    platform: "linux",
+    environment,
+  });
+  try {
+    const started = await manager.start();
+    if (!started.ok) throw started.error;
+    expect(
+      await manager.execute(started.value.session_id, "show version"),
+    ).toMatchObject({ ok: false, error: { _tag: "ConfigurationError" } });
+    expect(await manager.close(started.value.session_id)).toMatchObject({
+      ok: true,
+      value: { target_state: "none_observed" },
+    });
+  } finally {
+    await owner.cleanup([manager], () =>
+      rm(directory, { recursive: true, force: true }),
+    );
+  }
+});
