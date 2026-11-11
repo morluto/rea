@@ -106,6 +106,7 @@ export type ClientConfigurationInspection =
 /** Effects required by the idempotent, non-blocking setup workflow. */
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
   readonly homeDirectory: string;
   readonly linuxHopperReleaseCache?: Result<string, HopperReleaseError>;
   skillDestinations(clientIds: readonly string[]): readonly SkillDestination[];
@@ -151,6 +152,16 @@ export interface SetupHost {
   /** Present where setup can prepare this host for desktop builds. */
   readonly desktopBuild?: DesktopBuildSetupHost;
 }
+/** Host diagnosis for an unavailable automatic Hopper installation. */
+export interface SetupHopperInstallUnavailable {
+  readonly architecture: NodeJS.Architecture;
+  readonly distribution: {
+    readonly id: string;
+    readonly version: string | null;
+  } | null;
+  readonly remediation: string;
+}
+
 /** Structured setup outcome carrying remediation instead of prompting. */
 export interface SetupResult {
   readonly status:
@@ -165,6 +176,7 @@ export interface SetupResult {
   readonly doctor: SetupDoctorSummary;
   /** Supported-client discovery state captured before setup mutations. */
   readonly clientStates: readonly SetupClientState[];
+  readonly hopperInstallUnavailable?: SetupHopperInstallUnavailable;
   readonly remediation?: string;
   readonly code?: SetupFailureCode;
   /** The Hopper vendor request (stage, URL and observed outcome) whose failure stopped installation. */

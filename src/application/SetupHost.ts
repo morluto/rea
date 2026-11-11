@@ -171,6 +171,7 @@ export const systemSetupHost = (
   ]);
   return {
     platform,
+    architecture: doctorHost.architecture,
     homeDirectory,
     ...(platform === "linux"
       ? {

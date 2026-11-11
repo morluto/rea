@@ -563,6 +563,49 @@ describe("interactive setup journey", () => {
   });
 });
 
+it("shows an unsupported Linux Hopper host in the terminal plan", async () => {
+  const result: SetupResult = {
+    status: "planned",
+    plannedActions: [],
+    appliedActions: [],
+    clients: {},
+    clientStates: [],
+    doctor: {
+      healthy: false,
+      environment_healthy: true,
+      availableProviders: [],
+      scope: {
+        mode: "explicit",
+        clients: [],
+        providers: [],
+        skill: false,
+        target: null,
+      },
+    },
+    hopperInstallUnavailable: {
+      distribution: { id: "bazzite", version: "43" },
+      architecture: "x64",
+      remediation: "Configure an existing supported provider instead.",
+    },
+  };
+  const { stdout, stderr } = await execute(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      'import { renderSetupDryRun } from "./dist/cli/interactiveSetup.js";\n' +
+        `renderSetupDryRun(${JSON.stringify(result)});`,
+    ],
+    { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
+  );
+  expect(stdout).toBe("");
+  expect(stderr).toContain(
+    'Automatic Hopper installation is unavailable on "bazzite 43" (x64).',
+  );
+  expect(stderr).toContain(result.hopperInstallUnavailable?.remediation);
+  expect(stderr).toContain("Dry run complete");
+});
+
 describe("interactive setup completion", () => {
   it.each([
     { npmCommand: "", userAgent: "", launcher: "rea" },

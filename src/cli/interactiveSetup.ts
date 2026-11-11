@@ -90,9 +90,10 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
 };
 
 /** Show the resolved dry-run plan to a human at an interactive terminal. */
-export const renderSetupDryRun = (actions: readonly SetupAction[]): void => {
+export const renderSetupDryRun = (result: SetupResult): void => {
   intro("REA setup plan", promptStreams);
-  renderPreflight(actions);
+  renderHopperInstallUnavailable(result);
+  renderPreflight(result.plannedActions);
   outro("Dry run complete. No changes were made.", promptStreams);
 };
 
@@ -101,6 +102,7 @@ export const renderInteractiveSetupResult = (
   result: SetupResult,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): void => {
+  renderHopperInstallUnavailable(result);
   if (result.status === "ready") {
     const changedClients = Object.entries(result.clients)
       .filter(([, client]) => client.status === "configured")
@@ -123,6 +125,23 @@ export const renderInteractiveSetupResult = (
     `Run \`${cliInvocation(environment)} doctor\` for the remaining checks.`,
     promptStreams,
   );
+};
+
+const renderHopperInstallUnavailable = (result: SetupResult): void => {
+  const unavailable = result.hopperInstallUnavailable;
+  if (unavailable === undefined) return;
+  const { architecture, distribution, remediation } = unavailable;
+  const host =
+    distribution === null
+      ? "an unidentified Linux distribution"
+      : JSON.stringify(
+          [distribution.id, distribution.version].filter(Boolean).join(" "),
+        );
+  writeLine(
+    `!  Automatic Hopper installation is unavailable on ${host} (${architecture}).`,
+  );
+  if (result.remediation?.includes(remediation) !== true)
+    writeLine(`   ${remediation}`);
 };
 
 const selectSetupActions = async (
