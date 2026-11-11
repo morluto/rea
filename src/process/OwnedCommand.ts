@@ -19,6 +19,7 @@ import type {
   ProviderProcessSnapshot,
   ProcessDiagnosticBudget,
   ProviderProcessStopResult,
+  ProviderProcessInspectionCleanup,
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
@@ -48,6 +49,8 @@ export class OwnedCommandFailure extends Error {
   readonly cleanupResult: ProcessCleanupFailure | undefined;
   readonly collectionFailure: boolean;
   readonly preparationFailure: ProcessInspectionFailure | undefined;
+  /** Failure-time inspection facts remain available after cleanup releases their owners. */
+  readonly inspectionCleanup: ProviderProcessInspectionCleanup | undefined;
 
   constructor(
     readonly reason: "cancelled" | "timeout" | "output-limit" | "process",
@@ -60,6 +63,7 @@ export class OwnedCommandFailure extends Error {
       readonly cleanupResult?: ProcessCleanupFailure;
       readonly collectionFailure?: boolean;
       readonly preparationFailure?: ProcessInspectionFailure;
+      readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
     },
     readonly resources: readonly string[] = [],
     readonly cleanupOwner?: ProviderProcessSupervisor,
@@ -73,6 +77,7 @@ export class OwnedCommandFailure extends Error {
     this.cleanupResult = options?.cleanupResult;
     this.collectionFailure = options?.collectionFailure ?? false;
     this.preparationFailure = options?.preparationFailure;
+    this.inspectionCleanup = options?.inspectionCleanup;
   }
 }
 
@@ -498,6 +503,9 @@ const collectOwnedCommand = async (
         ...(stopped.cleanupResult === undefined
           ? {}
           : { cleanupResult: stopped.cleanupResult }),
+        ...(stopped.inspectionCleanup === undefined
+          ? {}
+          : { inspectionCleanup: stopped.inspectionCleanup }),
         ...(failure?.collectionFailure === true
           ? { collectionFailure: true }
           : {}),
@@ -518,6 +526,9 @@ const collectOwnedCommand = async (
         ...(failure.cleanupResult === undefined
           ? {}
           : { cleanupResult: failure.cleanupResult }),
+        ...(failure.inspectionCleanup === undefined
+          ? {}
+          : { inspectionCleanup: failure.inspectionCleanup }),
         ...(failure.collectionFailure ? { collectionFailure: true } : {}),
       },
       failure.resources,

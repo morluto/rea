@@ -3,7 +3,6 @@ import {
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
-import { OwnedCommandFailure } from "./OwnedCommand.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -29,10 +28,6 @@ export const processInspectionCleanupFailures = (
   const visit = (failure: unknown): void => {
     if (visited.has(failure)) return;
     visited.add(failure);
-    if (failure instanceof OwnedCommandFailure) {
-      visit(failure.preparationFailure);
-      return;
-    }
     if (failure instanceof ProcessOwnershipIdentityBatchFailure) {
       for (const entry of failure.failures) visit(entry.cause);
       for (const entry of failure.physicalFailures) visit(entry.cause);
@@ -74,16 +69,19 @@ export const processInspectionCancellations = (
   const visit = (failure: unknown): void => {
     if (visited.has(failure)) return;
     visited.add(failure);
-    if (failure instanceof OwnedCommandFailure) {
-      visit(failure.preparationFailure);
-    } else if (failure instanceof ProcessOwnershipIdentityBatchFailure) {
+    if (failure instanceof ProcessOwnershipIdentityBatchFailure) {
       for (const entry of failure.cancellations) visit(entry.cancellation);
       for (const entry of failure.physicalFailures) visit(entry.cause);
     } else if (failure instanceof DarwinProcessOwnershipInspectionError)
       add(failure.cancellation);
-    else if (failure instanceof RegularFileCleanupFailure)
+    else if (failure instanceof RegularFileCleanupFailure) {
       add(regularFileCancellation(failure));
-    else if (failure instanceof ProcessOwnershipInspectionCancelled)
+      if (
+        failure.operationFailure === undefined &&
+        failure.outcome.kind === "failed"
+      )
+        add(ProcessOwnershipInspectionCancelled.from(failure.outcome.cause));
+    } else if (failure instanceof ProcessOwnershipInspectionCancelled)
       add(failure);
   };
   visit(cause);

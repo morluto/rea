@@ -18,7 +18,9 @@ export class RetainedCommandCleanup {
   ) {
     this.#owner =
       cause instanceof OwnedCommandFailure ? cause.cleanupOwner : undefined;
-    this.#preparation = processInspectionCleanupFailures(cause);
+    this.#preparation = processInspectionCleanupFailures(
+      cause instanceof OwnedCommandFailure ? cause.preparationFailure : cause,
+    );
     this.#processResources =
       cause instanceof OwnedCommandFailure ? cause.resources : [];
     this.#stopped = this.#owner === undefined;
