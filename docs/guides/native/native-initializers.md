@@ -87,12 +87,22 @@ relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
 also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
 
+A `COPY` relocation writes as many bytes as the image's own dynamic symbol
+records, and a TLS descriptor relocation writes two words. A slot outside
+those bytes keeps its stored word, so a non-PIE executable that copies `stdout`
+or `environ` into `.bss` still lists its `init_array` targets as `raw`. When a
+`COPY` symbol's size cannot be read, or the `COPY` sizes add up to more than
+the file's byte count, relocation coverage is unknown and stored words are
+`unresolved`.
+
 Section `REL` / `RELA` tables are applied to slots that no dynamic relocation
 covers. When such a table is skipped for an unexpected entry size, cannot be
 read, or lies past the record budget, every slot it could reach that has no
 relocation found is `unresolved`, and a `.ctors` slot is not dropped as a
 sentinel. A section record that writes only part of a slot, starts inside it,
-or repeats it also leaves the slot `unresolved`. In a relocatable object a
+or repeats it also leaves the slot `unresolved`. In a linked image, a record
+that writes memory with no file bytes, such as zero-fill `.bss`, changes only
+the slots it overlaps in memory. In a relocatable object a
 table reaches only the section named by its `sh_info`. In a linked image, a relocation section without `SHF_ALLOC`
 (such as one kept by `--emit-relocs`) was already applied by the static
 linker, so the slot's stored word is used rather than applying the record

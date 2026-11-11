@@ -950,6 +950,109 @@ describe("ELF relocation coverage", () => {
   });
 });
 
+describe("ELF COPY relocations and writes without file bytes", () => {
+  it.each([
+    ["file-backed bytes", 0x700n],
+    ["zero-fill memory", 0xc10n],
+  ])(
+    "keeps a stored word when a COPY relocation writes %s elsewhere",
+    async (_where, destination) => {
+      const base = elf64PieInitializers();
+      const bytes = Buffer.from(base);
+      // The load segment gains a zero-fill tail from 0xc00, as .bss does.
+      bytes.writeBigUInt64LE(0xd00n, 64 + 40);
+      // The leading null RELA record becomes R_X86_64_COPY of dynamic symbol
+      // 1, which now records an 8-byte object.
+      bytes.writeBigUInt64LE(destination, 0x480);
+      bytes.writeBigUInt64LE((1n << 32n) | 5n, 0x488);
+      bytes.writeBigUInt64LE(8n, 0x538 + 16);
+      const report = await read(bytes);
+      expect(row(report)).toEqual(row(await read(base)));
+      expect(report.status).toBe("parsed");
+      expect(report.limitations).toEqual((await read(base)).limitations);
+    },
+  );
+
+  it("keeps a slot inside the bytes a COPY relocation writes unresolved", async () => {
+    const bytes = elf64PieInitializers();
+    // A 16-byte COPY at 0x238 runs through the preinit_array slot at 0x240.
+    bytes.writeBigUInt64LE(0x238n, 0x480);
+    bytes.writeBigUInt64LE((1n << 32n) | 5n, 0x488);
+    bytes.writeBigUInt64LE(16n, 0x538 + 16);
+    const report = await read(bytes);
+    expect(
+      report.entries.map((entry) => [entry.slot_va, entry.resolution]),
+    ).toEqual([
+      ["0x240", "unresolved"],
+      ["0x308", "raw"],
+      ["0x200", "relative_addend"],
+      ["0x208", "relative_addend"],
+      ["0x210", "unresolved_import"],
+      ["0x318", "raw"],
+      ["0x220", "relr"],
+    ]);
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "1 initializer slot(s) are partly overwritten or written more than once by dynamic relocations and are listed as unresolved.",
+    );
+  });
+
+  it("keeps stored words unresolved when a COPY relocation's size is unreadable", async () => {
+    const bytes = elf64PieInitializers();
+    bytes.writeBigUInt64LE(0x700n, 0x480);
+    bytes.writeBigUInt64LE((1n << 32n) | 5n, 0x488);
+    bytes.writeBigUInt64LE(8n, 0x538 + 16);
+    // DT_SYMENT is the eighteenth dynamic entry; 16 is not an ELF64 symbol size.
+    bytes.writeBigUInt64LE(16n, 0x300 + 17 * 16 + 8);
+    const report = await read(bytes);
+    expect(report.entries[0]).toMatchObject({
+      kind: "preinit_array",
+      value_va: null,
+      resolution: "unresolved",
+    });
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "ELF COPY relocation write size is not established",
+    );
+  });
+
+  it.each([
+    ["an 8-byte write that runs into the slot", 1n, "unresolved", "incomplete"],
+    ["a 4-byte write that ends at the slot", 10n, "raw", "parsed"],
+  ] as const)(
+    "judges a section record without file bytes by the memory it overlaps: %s",
+    async (_case, kind, resolution, status) => {
+      const bytes = elf64PieInitializers();
+      // Split the load at the preinit_array slot, so the first segment ends
+      // in four zero-fill bytes at 0x23c.
+      bytes.writeUInt16LE(3, 56);
+      bytes.writeBigUInt64LE(0x23cn, 64 + 32);
+      bytes.writeBigUInt64LE(0x240n, 64 + 40);
+      bytes.writeUInt32LE(1, 176);
+      bytes.writeUInt32LE(6, 180);
+      for (const field of [184, 192, 200])
+        bytes.writeBigUInt64LE(0x240n, field);
+      for (const field of [208, 216])
+        bytes.writeBigUInt64LE(BigInt(bytes.length - 0x240), field);
+      bytes.writeBigUInt64LE(1n, 224);
+      // DT_RELA drops the leading record, which stays in .rela.dyn as a
+      // symbolic write at 0x23c, just below the slot at 0x240.
+      bytes.writeBigUInt64LE(0x498n, 0x300 + 8 * 16 + 8);
+      bytes.writeBigUInt64LE(72n, 0x300 + 9 * 16 + 8);
+      bytes.writeBigUInt64LE(0x23cn, 0x480);
+      bytes.writeBigUInt64LE((1n << 32n) | kind, 0x488);
+      const report = await read(bytes);
+      expect(report.entries[0]).toMatchObject({
+        kind: "preinit_array",
+        slot_va: "0x240",
+        value_va: resolution === "raw" ? "0x100" : null,
+        resolution,
+      });
+      expect(report.status).toBe(status);
+    },
+  );
+});
+
 describe("Unreadable symbol names", () => {
   it("reports an ELF name offset outside its string table as incomplete", async () => {
     const bytes = elf64PieInitializers();

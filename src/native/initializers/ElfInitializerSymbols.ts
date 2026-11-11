@@ -320,6 +320,8 @@ interface SectionRelocInput extends ImageFacts {
   readonly notes: InitializerNotes;
   /** File offset of `width` bytes at a linked-image address. */
   readonly fileOffset: (address: bigint, width: number) => number | null;
+  /** Linked images: whether `span` bytes written at `address` overlap a wanted slot in memory. */
+  readonly overlapsWanted: (address: bigint, span: number) => boolean;
   readonly signal?: AbortSignal | undefined;
 }
 
@@ -491,7 +493,13 @@ export const sectionRelocations = async (
       if (span === 0) continue;
       const written = recordTarget(input, target, parsed.value.offset, 1);
       if (written === null) {
-        skip(section);
+        // A linked image's write to memory without file bytes, such as COPY
+        // into .bss, cannot change a slot it does not overlap.
+        if (
+          input.relocatable ||
+          input.overlapsWanted(parsed.value.offset, span)
+        )
+          skip(section);
         continue;
       }
       const fullWrite =

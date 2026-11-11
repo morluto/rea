@@ -1011,18 +1011,20 @@ export const readElfInitializers = async (
   assertArtifactReadActive(signal);
   const symbols = loadElfSymbolIndex(scan, directory.sections, scan.notes);
   if (symbols.incomplete) scan.incomplete = true;
-  const uncovered = new Set(
-    sources.flatMap((source) =>
-      source.slots.flatMap((slot) =>
-        slot.direct === undefined &&
-        slot.fileOffset !== null &&
-        (scan.relocatable ||
-          (!loaded.writes.has(slot.va) && !loaded.clobbered.has(slot.va)))
-          ? [slot.fileOffset]
-          : [],
-      ),
+  const uncoveredSlots = sources.flatMap((source) =>
+    source.slots.flatMap((slot) =>
+      slot.direct === undefined &&
+      slot.fileOffset !== null &&
+      (scan.relocatable ||
+        (!loaded.writes.has(slot.va) && !loaded.clobbered.has(slot.va)))
+        ? [{ va: slot.va, fileOffset: slot.fileOffset }]
+        : [],
     ),
   );
+  const uncovered = new Set(uncoveredSlots.map((slot) => slot.fileOffset));
+  const uncoveredAddresses = uncoveredSlots
+    .map((slot) => slot.va)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   const notesBeforeRelocs = scan.notes.recorded;
   const sectionRels = await sectionRelocations({
     ...scan,
@@ -1032,6 +1034,13 @@ export const readElfInitializers = async (
     notes: scan.notes,
     fileOffset: (address, width) =>
       fileOffsetFor(scan, mappings, index, address, width),
+    overlapsWanted: (address, span) => {
+      const slot =
+        uncoveredAddresses[
+          firstOverlap(uncoveredAddresses, address, wordOf(scan.bits))
+        ];
+      return slot !== undefined && slot < address + BigInt(span);
+    },
     signal,
   });
   if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)

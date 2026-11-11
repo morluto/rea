@@ -4,6 +4,7 @@ import type {
 } from "../../domain/virtualFileMapping.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
+import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   BinaryMappingFailure,
   createFileMappingIndex,
@@ -79,6 +80,8 @@ const DT_PLTRELSZ = 2n,
 const DT_RELRSZ = 35n,
   DT_RELR = 36n,
   DT_RELRENT = 37n;
+const DT_SYMTAB = 6n,
+  DT_SYMENT = 11n;
 const PACKED_TAGS = [0x6000000fn, 0x60000010n, 0x60000011n, 0x60000012n];
 const ANDROID_RELR_TAGS = [0x6fffe000n, 0x6fffe001n, 0x6fffe003n];
 const UNIQUE_TAGS = new Set([
@@ -97,6 +100,9 @@ const UNIQUE_TAGS = new Set([
   ...PACKED_TAGS,
   ...ANDROID_RELR_TAGS,
 ]);
+// Only COPY extents read the dynamic symbol table, so a redeclared tag leaves
+// those extents unknown without rejecting unambiguous relocation tables.
+const SYMBOL_TABLE_TAGS = new Set([DT_SYMTAB, DT_SYMENT]);
 const malformed = (message: string): never => {
   throw new ElfPointerRelocationFailure("malformed-container", message);
 };
@@ -107,6 +113,7 @@ const RELOCATION_KINDS = new Map([
       absolute: 257,
       bits: 64,
       relative: 1027,
+      copy: 1024,
       widths: new Map([
         [257, 8],
         [258, 4],
@@ -119,6 +126,7 @@ const RELOCATION_KINDS = new Map([
         [1028, 8],
         [1029, 8],
         [1030, 8],
+        [1031, 16],
         [1032, 8],
       ]),
     },
@@ -129,6 +137,7 @@ const RELOCATION_KINDS = new Map([
       absolute: 1,
       bits: 64,
       relative: 8,
+      copy: 5,
       widths: new Map([
         [1, 8],
         [2, 4],
@@ -140,6 +149,7 @@ const RELOCATION_KINDS = new Map([
         [17, 8],
         [18, 8],
         [24, 8],
+        [36, 16],
         [37, 8],
       ]),
     },
@@ -150,9 +160,11 @@ const RELOCATION_KINDS = new Map([
       absolute: 2,
       bits: 32,
       relative: 23,
+      copy: 20,
       widths: new Map([
         [2, 4],
         [3, 4],
+        [13, 8],
         [17, 4],
         [18, 4],
         [19, 4],
@@ -168,6 +180,7 @@ const RELOCATION_KINDS = new Map([
       absolute: 1,
       bits: 32,
       relative: 8,
+      copy: 5,
       widths: new Map([
         [1, 4],
         [2, 4],
@@ -192,6 +205,7 @@ const RELOCATION_KINDS = new Map([
         [36, 4],
         [37, 4],
         [38, 4],
+        [41, 8],
         [42, 4],
         [43, 4],
       ]),
@@ -238,6 +252,7 @@ function* dynamicTags(
   )
     malformed("PT_DYNAMIC is truncated or outside the file");
   const tags = new Map<bigint, bigint>();
+  const redeclared = new Set<bigint>();
   const start = Number(declaration.offset),
     end = start + Number(declaration.size);
   for (let at = start; at < end; at += width) {
@@ -249,7 +264,15 @@ function* dynamicTags(
     );
     if (!parsed.ok) return malformed(parsed.error.message);
     const { tag, value } = parsed.value;
-    if (tag === 0n) return tags;
+    if (tag === 0n) {
+      for (const symbolTag of redeclared) tags.delete(symbolTag);
+      return tags;
+    }
+    if (SYMBOL_TABLE_TAGS.has(tag)) {
+      if (tags.has(tag)) redeclared.add(tag);
+      else tags.set(tag, value);
+      continue;
+    }
     if (UNIQUE_TAGS.has(tag) && tags.has(tag))
       malformed(`duplicate dynamic tag ${tag}`);
     if (UNIQUE_TAGS.has(tag)) tags.set(tag, value);
@@ -283,6 +306,7 @@ export function* readElfRelocationWritesSteps(
       "ELF relative pointers require a matching AArch64, x86-64, ARM or i386 image",
     );
   const relative = kinds.relative;
+  const copy = kinds.copy;
   const unknownWidths = kinds.widths;
   if (options.requireDynamic === true && input.dynamicSegments.length === 0)
     throw new ElfPointerRelocationFailure(
@@ -350,6 +374,46 @@ export function* readElfRelocationWritesSteps(
       value === null ? fileOffset(address, width) : target(address, width),
     ...record,
   });
+  const symbolBytes = input.bits === 64 ? 24 : 16;
+  const symbolTable =
+    tags.get(DT_SYMENT) === BigInt(symbolBytes)
+      ? tags.get(DT_SYMTAB)
+      : undefined;
+  /**
+   * Bytes a COPY relocation can write: the loader copies at most the size this
+   * image's own dynamic symbol records. Undefined when that size is unreadable
+   * or the span leaves the address space.
+   */
+  const copyWidth = (
+    destination: bigint,
+    symbolIndex: number,
+  ): number | undefined => {
+    if (symbolTable === undefined || symbolIndex === 0) return undefined;
+    let at: number;
+    try {
+      at = index.offset(
+        symbolTable + BigInt(symbolIndex) * BigInt(symbolBytes),
+        symbolBytes,
+      );
+    } catch (cause) {
+      if (cause instanceof BinaryMappingFailure) return undefined;
+      throw cause;
+    }
+    const symbol = readElfSymbol(
+      bytes.subarray(at, at + symbolBytes),
+      input.bits,
+      input.little,
+    );
+    if (!symbol.ok) return undefined;
+    const { size } = symbol.value;
+    return size <= BigInt(Number.MAX_SAFE_INTEGER) &&
+      destination + size <= 1n << BigInt(input.bits)
+      ? Number(size)
+      : undefined;
+  };
+  // Consumers do work across each COPY span, which repeated or overlapping
+  // records would multiply, so the spans together are limited to the file size.
+  let copyAllowance = bytes.length;
   if (PACKED_TAGS.some((tag) => tags.has(tag)))
     unsupported(
       "Android packed APS2 relocation write locations and addends are not decoded",
@@ -409,6 +473,20 @@ export function* readElfRelocationWritesSteps(
         symbol_index: symbolIndex,
         addend: explicitAddend ?? null,
       };
+      if (kind === copy) {
+        const width = copyWidth(destination, symbolIndex);
+        if (width === undefined)
+          unsupported("ELF COPY relocation write size is not established");
+        else if (width > copyAllowance)
+          unsupported(
+            "ELF COPY relocation sizes exceed the file byte count allowance",
+          );
+        else if (width > 0) {
+          copyAllowance -= width;
+          yield write(destination, width, null, record);
+        }
+        continue;
+      }
       if (kind !== relative || symbolIndex !== 0) {
         const width = unknownWidths.get(kind);
         if (width === undefined) {
