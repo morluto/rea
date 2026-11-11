@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -243,6 +243,103 @@ describe("server and catalog identity", () => {
       remediation: expect.stringContaining("entrypoint path is unavailable"),
     });
   });
+});
+
+describe("server entrypoint path alignment", () => {
+  it("aligns same-file aliases and detects distinct entrypoints", async () => {
+    const root = await createTestTempDirectory("rea-server-identity-alias-");
+    const scriptsDir = join(root, "pkg", "scripts");
+    const workDir = join(root, "work");
+    await mkdir(scriptsDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    const canonical = join(scriptsDir, "rea.mjs");
+    const other = join(workDir, "other.mjs");
+    await writeFile(canonical, "// canonical entrypoint\n");
+    await writeFile(other, "// different entrypoint\n");
+    const dirAlias = join(workDir, "scripts-link");
+    await symlink(
+      scriptsDir,
+      dirAlias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const hardlinkAlias = join(workDir, "rea-hardlink.mjs");
+    await link(canonical, hardlinkAlias);
+
+    for (const alias of [join(dirAlias, "rea.mjs"), hardlinkAlias]) {
+      const aligned = createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: canonical,
+        expected: { server_path: alias },
+      });
+      expect(aligned.alignment).toMatchObject({
+        state: "aligned",
+        reasons: [],
+        remediation: null,
+      });
+    }
+
+    for (const mismatched of [other, join(workDir, "missing-rea.mjs")]) {
+      const mismatch = createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: canonical,
+        expected: { server_path: mismatched },
+      });
+      expect(mismatch.alignment).toMatchObject({
+        state: "mcp_server_restart_required",
+        reasons: ["registration_path_mismatch"],
+      });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "aligns symlink-parent traversal to the same entrypoint and preserves unknown when unresolved",
+    async () => {
+      const root = await createTestTempDirectory("rea-server-identity-dotdot-");
+      const scriptsDir = join(root, "pkg", "scripts");
+      const workDir = join(root, "work");
+      await mkdir(scriptsDir, { recursive: true });
+      await mkdir(join(workDir, "scripts"), { recursive: true });
+      const canonical = join(scriptsDir, "rea.mjs");
+      const unrelated = join(workDir, "scripts", "rea.mjs");
+      await writeFile(canonical, "// canonical entrypoint\n");
+      await writeFile(unrelated, "// unrelated entrypoint\n");
+      await symlink(scriptsDir, join(workDir, "link"));
+      const traversal = `${workDir}/link/../scripts/rea.mjs`;
+
+      for (const [commandPath, expectedPath] of [
+        [canonical, traversal],
+        [traversal, canonical],
+      ] as const) {
+        const aligned = createServerIdentity({
+          catalog: DEFAULT_CATALOG_IDENTITY,
+          startedAt: "2026-07-13T00:00:00.000Z",
+          commandPath,
+          expected: { server_path: expectedPath },
+        });
+        expect(aligned.alignment).toMatchObject({
+          state: "aligned",
+          reasons: [],
+          remediation: null,
+        });
+      }
+
+      const unresolved = createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: unrelated,
+        expected: {
+          server_path: `${workDir}/missing-link/../scripts/rea.mjs`,
+        },
+      });
+      expect(unresolved.alignment).toMatchObject({
+        state: "unknown",
+        reasons: [],
+        remediation: expect.stringContaining("could not be resolved"),
+      });
+    },
+  );
 });
 
 describe("provider capability inventory", () => {
