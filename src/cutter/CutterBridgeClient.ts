@@ -359,8 +359,9 @@ export class CutterBridgeClient {
   async listSessions(
     options: CutterDiscoveryOptions = {},
   ): Promise<CutterBridgeDiscovery> {
-    this.#requestLimit();
     const { signal } = options;
+    assertBridgeActive(signal, "list_cutter_sessions");
+    this.#requestLimit();
     const mismatches: number[] = [];
     const loaded = await this.#readDescriptors("list_cutter_sessions", signal);
     if (loaded.error !== undefined)
@@ -463,9 +464,9 @@ export class CutterBridgeClient {
     readonly json: boolean;
     readonly signal?: AbortSignal;
   }): Promise<CutterBridgeExecution> {
-    this.#requestLimit();
     try {
       assertBridgeActive(input.signal, "cutter_command");
+      this.#requestLimit();
       const descriptor = await this.#find(input.sessionId, input.signal);
       assertBridgeActive(input.signal, "cutter_command");
       const advertised =
