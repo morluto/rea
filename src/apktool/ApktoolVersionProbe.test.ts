@@ -36,9 +36,11 @@ const owner = {
 it("runs the version probe as an owned interpreter-script process group", async () => {
   vi.mocked(runOwnedCommand).mockImplementationOnce(async (_spawn, limits) => {
     const output = {
-      stdout: { text: "2.9.3\n" },
-      stderr: { text: "" },
-    } as Awaited<ReturnType<typeof runOwnedCommand>>;
+      stdout: { text: "2.9.3\n", bytes: 6, observedBytes: 6 },
+      stderr: { text: "", bytes: 0, observedBytes: 0 },
+      exitCode: 0,
+      signal: null,
+    };
     limits.observeCompleted?.(output);
     return output;
   });
@@ -152,8 +154,8 @@ it("keeps unresolved probe cleanup typed when the launcher overflows its output"
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(overflow());
   const result = await provider.execute({
     operation: "decode_android_resources",
-    input: {},
-  } as never);
+    input: { path: "/fixture/input.apk", include_strings: false },
+  });
   expect(result.ok ? null : result.error.cleanupIncomplete).toBe(true);
   expect(result.ok ? null : projectAnalysisError(result.error)).toMatchObject({
     code: "cleanup_incomplete",
@@ -169,9 +171,11 @@ it.each(["linux", "win32"] as const)(
     vi.mocked(runOwnedCommand).mockImplementationOnce(
       async (_spawn, limits) => {
         const output = {
-          stdout: { text: "2.9.2\n" },
-          stderr: { text: "" },
-        } as Awaited<ReturnType<typeof runOwnedCommand>>;
+          stdout: { text: "2.9.2\n", bytes: 6, observedBytes: 6 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: 0,
+          signal: null,
+        };
         limits.observeCompleted?.(output);
         return output;
       },

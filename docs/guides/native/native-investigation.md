@@ -100,6 +100,36 @@ body are excluded. `procedure_references` returns internal and external edges;
 The reference collector's semantics participate in the analysis profile, so
 older snapshots cannot replay the former incomplete results under this profile.
 
+For a bounded handoff, request `procedure_references` with `detail: "summary"`.
+The summary retains the complete observation and reports the selected procedure,
+direction and counts. Page it with `inspect_analysis_view`, using the summary's
+`normalized_result.parent_evidence_id` and a view such as
+`{"kind":"native-procedure-references","collection":"references","source_address":"0x1234","offset":0,"limit":64}`.
+The optional exact source and target filters apply before paging. A row's
+`source_index` identifies it in the original retained collection, including
+duplicates. Endpoint `kind: "selected-procedure"` refers to the full procedure
+in the page summary; `kind: "null"` preserves the original null without asserting
+why it was unavailable. `kind: "shared"` carries an index into `items.endpoints`,
+where each other procedure object is stored once per page. Use collection
+`unresolved_calls` for paged unresolved call sites and their original reasons.
+Page coverage describes retained rows, not complete provider discovery or runtime
+execution. A 1 MiB projection allowance, also used by other bounded analysis views, can
+shorten a requested page; `byte_limited: true` and `coverage.next_offset` identify the
+continuation. A single row or summary that cannot fit returns a resource error;
+retrieve or export the complete parent Evidence. This allowance has no runtime
+override. Omit detail to receive the complete observation inline.
+
+For a one-shot CLI handoff, save the complete Evidence and its linked sources:
+
+```bash
+rea procedure-references /absolute/path/to/program my_function --provider ghidra \
+  --direction incoming --detail summary --evidence_output /absolute/path/to/references.json
+```
+
+Use `rea inspect-analysis-view` with that bundle as an `evidence-file` source to
+page it without reopening the target. This command requires a provider supporting
+`procedure_references`; Kuna currently reports that capability unavailable.
+
 Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify
@@ -302,6 +332,10 @@ crashed run can be recovered by the next run. Failed descriptor or staging clean
 could not be written or read, for example on a full disk, the export stops with
 an error instead of decompiling the rest. Files and records already committed
 stay, `decompile-index.json` is still written, and a later resume continues.
+If the index was published before cancellation or a later failure, the error's
+`diagnostics.published_output` retains its `output_directory` and `index_path`.
+This receipt confirms publication, not completion of every selected function.
+Failed staging cleanup retains the same receipt through cleanup retry.
 
 Type inspection selects one exact database pathname or typed data address.
 Struct/union fields, enums, pointers, arrays, typedefs, size, alignment, packing
@@ -428,7 +462,9 @@ most 64 procedures and retains at most 4 MiB of encoded scan results. A composed
 workflow reuses its own index and clears it when the workflow finishes. The
 default cooperative scan budget is
 2,000 ms; set `REA_HOPPER_CALLER_SCAN_BUDGET_MS` to a positive integer number of
-milliseconds before starting REA to change it. The default limits additional
+milliseconds before starting REA to change the launch value, or use
+`update_analysis_settings` with `hopper.caller_scan_budget_ms` for newly accepted
+operations. The default limits additional
 work on the serial Hopper bridge; larger documents may need a higher setting.
 Results report the examined procedure count and any budget interruption.
 An individual page, native caller list, and target instruction list each have
@@ -497,6 +533,24 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+After fully examining and retaining a callee's parameters, an unmatched
+recovered CALL operand is reported at the caller's call-site address in
+`unknowns[].call_inputs`. One group lists its `input_indices` (positive p-code
+input positions; input 0 is the destination), `call_node_id`, exact resolved
+`destination` selector and caller `evidence_id`. The operands themselves stay
+in the retained call node and source Evidence. For example, a three-argument
+call with only parameter ordinal 0 recovered retains the index-1 binding and
+reports indices `[2, 3]` together. This does not establish a variadic signature
+or invent formal parameters.
+
+A depth, function, node or edge refusal, unavailable value flow, or truncated
+callee recovery does not establish such an examined gap. Those conditions
+keep their existing unknowns and traversal reasons. Call-input groups remain
+available when paging omits their call node; follow `call_node_id` in subsequent
+pages or the source Evidence. Older traces may omit `call_inputs`. Parameter
+and return bindings use canonical procedure addresses established by analyzed
+dossiers while preserving the provider's destination selector.
+
 Procedure, node and edge `evidence_id` values identify the source function
 observations used by the trace. In an MCP session, retrieve them from the
 Evidence bundle for inspection or export. A replayed source keeps the original
@@ -544,8 +598,17 @@ The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
 
 The provider dossier itself retains up to 3,000 p-code operations, 64 inputs per
-operation and 12,000 def-use edges, with explicit omitted counts. A `STORE`
-may describe stack memory and does not itself prove persistent state.
+operation and 12,000 def-use edges, with explicit omitted counts. Memory effects
+cover high-p-code `LOAD` and `STORE` operations; direct memory address varnodes
+in other operations are excluded, so an empty effect list does not establish
+that the function accesses no memory. `procedure_references` can supply
+complementary recorded instruction references, with its own coverage limits. A
+`STORE` may describe stack memory and does not itself prove persistent state.
+The Ghidra analysis profile commits to this effect scope. Snapshots from before
+that commitment are rejected; analyze without the snapshot and save a fresh one.
+To keep historical Evidence, copy the old snapshot's `evidence_bundle` object to
+a separate JSON file and import that bundle. Import validates the Evidence; it
+does not replay the old provider analysis.
 
 Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
 backing `data_sources` separate. A null case value denotes an unresolved
@@ -635,11 +698,12 @@ node of the decoder's DOM at a measured upper bound, so a plist made of many
 small elements reaches it at a few MiB of source. JSON decode memory has not
 been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
-Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
-derived from the existing 1000-level JSON result capacity by reserving one level
-for typed scalar fields and one for the result's `value` field. Deeper input reports
-`resource_constraint` with `reported_limits.maximum_nesting_depth: 998` and names
-the fixed nesting allowance. XML admission also requires native validation, which
+Ordinary direct-source decoding has a ceiling of 997 source nesting levels,
+derived from the existing 1000-level JSON result capacity. Three levels are
+reserved for typed scalar fields, the report value and its Evidence envelope.
+Deeper input reports `resource_constraint` with
+`reported_limits.maximum_nesting_depth: 997` and names the fixed nesting allowance.
+XML admission also requires native validation, which
 can refuse input below this decoding ceiling. Compatibility conversions can
 likewise encounter an earlier native utility refusal; both retain native
 diagnostics. Archive and Interface Builder decoding retain their separate
@@ -987,6 +1051,11 @@ complete observation.
     arm64e formats;
   - legacy `LC_DYLD_INFO` rebase and bind opcodes.
 
+  Text relocation records retain their import identity without claiming a
+  pointer value. Bind types are explicit: a non-lazy binding with no declared
+  type is invalid. Reads that overlap only part of an encoded chained-fixup word remain
+  unresolved rather than treating those stored bytes as an ordinary pointer.
+
   [dyld symbol names are byte strings](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L203-L208),
   compared with [`strcmp`](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L42-L56).
   Dependent library install names likewise originate as
@@ -1091,6 +1160,9 @@ original JSON scalar types. Values that JSON cannot represent faithfully,
 including unsafe integers, negative zero and non-finite numbers, remain null
 with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
+Failed role, title, value or action reads add a path-specific gap and mark the
+capture truncated. An empty `actions` array with an action-read gap means the
+available actions are unknown.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
 `window_id` and leaves provider availability intact. A selected window that
@@ -1200,7 +1272,7 @@ resource, REA releases that runtime and admits the next observation.
 Cancellation observed while output and Evidence are finalized returns partial
 cancellation Evidence, even if the target has already exited.
 
-- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream
+- the outcome, exit status and captured stdout/stderr (1 MiB by default kept per stream
   while excess bytes are drained and counted without growing capture files).
   Each stream reports `complete`; when draining could not finish, its byte
   count is an observed lower bound and truncation is explicit;
@@ -1213,16 +1285,32 @@ cancellation Evidence, even if the target has already exited.
   code makes coverage partial;
 - limitations.
 
-The bridge limits retained event JSON to 8 MiB and caller frames to 65,536
-across the run. It checks admission before retaining another complete event;
+The bridge defaults to 8 MiB retained event JSON and 65,536 caller frames
+across the run. Select `capture_limits` before launch to adjust `trace_bytes`,
+`trace_frames`, `breakpoint_location_bytes`, `other_stops`, `selector_bytes`,
+and `output_bytes`. Defaults are respectively 8388608, 65536, 8388608, 256,
+1024, and 1048576. Byte budgets accept positive safe integers up to the smaller of the running
+Node Buffer and single-string representation ceilings; counts are positive safe
+integers. These representability ceilings do not establish available memory or
+raise complete Evidence/transport admission. Omitted fields keep their defaults. The journal shares
+`trace_bytes`; completed and partial capture readers use the selected budgets.
+For example, `"capture_limits":{"trace_bytes":16777216,"output_bytes":2097152}`
+selects 16 MiB trace/journal and 2 MiB retained output per stream. These choices
+do not extend `duration_ms`, `max_events`, the outer client deadline or MCP
+receive allowance, and require no REA restart. A larger budget applies to a new
+authorized observation; it cannot recover facts omitted from an earlier run. It checks admission before retaining another complete event;
 `resource-limit` reports which observations could not be completed without
 silently changing the requested event or frame settings.
-Resolved breakpoint locations have a separate aggregate 8 MiB metadata budget.
+Resolved breakpoint locations have a separate aggregate metadata budget,
+default 8 MiB (`capture_limits.breakpoint_location_bytes`).
 If their details exceed it, `location_count` retains the full observed match
 count, coverage is partial, and `breakpoint_locations_truncated` is true. This
 post-run metadata limit does not imply that the target was killed.
 
-Accepted entries and signal stops are also flushed to a bounded 8 MiB journal.
+Accepted entries and signal stops are also flushed to the bounded trace journal.
+When event admission stops, `coverage.capture_limit` identifies `trace_bytes`
+or `trace_frames` when the bridge supplied that fact; historical reports that
+lack it retain the combined limitation without guessing the exhausted resource.
 If cancellation, timeout, capture failure, or a later bridge error prevents a
 full result, the error retains this evidence in `details.partial_observation`
 with partial coverage. Available output prefixes remain inline; their byte

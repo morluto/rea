@@ -1,4 +1,4 @@
-import { objcClassSymbol } from "./objcClassSymbol.js";
+import { objcClassSymbol, objcSymbolLeaf } from "./objcClassSymbol.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AddressedName } from "./native/nativeInventory.js";
 import type {
@@ -14,11 +14,8 @@ import {
 /** Local class records emitted by Apple's fragile Objective-C ABI. */
 const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
 
-/**
- * Objective-C protocol declaration marker. `PROTOCOL_REFERENCE` slots
- * share the substring but are uses, not definitions.
- */
-const OBJC_PROTOCOL_MARKER = "OBJC_PROTOCOL_$_" as const;
+/** Objective-C protocol declaration labels with their object-file prefixes. */
+const OBJC_PROTOCOL_SYMBOL = /^_{0,2}OBJC_PROTOCOL_\$_[^\s]+$/u;
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];
@@ -66,7 +63,7 @@ export const discoverObjcProtocols = (
   const protocols = uniqueByName(
     names.filter(
       ({ name }) =>
-        name.includes(OBJC_PROTOCOL_MARKER) ||
+        OBJC_PROTOCOL_SYMBOL.test(objcSymbolLeaf(name)) ||
         classifySwiftSymbol(name)?.protocolIdentity === true,
     ),
   );

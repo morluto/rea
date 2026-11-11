@@ -71,3 +71,16 @@ it("normalizes separator spellings of absolute Windows paths (#4707)", () => {
   ])
     expect(absoluteCallerPath(spelling, win32)).toBe("C:\\Users\\u\\h.exe");
 });
+
+it("keeps unselected Windows share paths lexical", () => {
+  expect(
+    absoluteCallerPath("\\\\unselected-server\\share\\Source.JS", {
+      platform: "win32",
+    }),
+  ).toBe("\\\\unselected-server\\share\\Source.JS");
+  expect(
+    absoluteCallerPath("C:\\CaseSensitive\\Different.js", {
+      platform: "win32",
+    }),
+  ).toBe("C:\\CaseSensitive\\Different.js");
+});

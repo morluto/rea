@@ -138,7 +138,7 @@ export const limitationsFor = (
     case "search_bytes":
       return [
         ...common,
-        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Unbounded searches separately list skipped unloaded blocks and loaded overlays; use an overlay address-space bound to search it. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
@@ -234,14 +234,23 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
     return Object.freeze({
       provider: GHIDRA_PROVIDER_IDENTITY,
       operation,
+      ...(operation === "analyze_function"
+        ? { nativeValueFlow: { status: "supported" as const } }
+        : {}),
       available: true,
       reason: null,
-      // Project writes are private import machinery. Analysis reads are bound
-      // to the artifact/profile; session annotations disable snapshot replay.
+      // Dossier projections consume runtime budgets. Reobserve even an imported
+      // snapshot so a raised or lowered budget cannot replay stale flow coverage.
+      // Ghidra retains its own native decompiler cache.
       ...(GHIDRA_MUTATING_OPERATIONS.has(operation) ||
       operation === "list_documents"
         ? {}
-        : { cachePolicy: "snapshot" as const }),
+        : {
+            cachePolicy:
+              operation === "analyze_function"
+                ? ("live" as const)
+                : ("snapshot" as const),
+          }),
       effects: Object.freeze({
         mutatesArtifact: GHIDRA_MUTATING_OPERATIONS.has(operation),
         launchesProcess: true,

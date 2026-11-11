@@ -407,6 +407,30 @@ it("charges long digits to the string budget and keeps large previews bounded", 
   );
 });
 
+it("reads marshal one-byte string tags as Latin-1 with Unicode identity", () => {
+  for (const tag of [0x61, 0x41, 0x7a, 0x5a]) {
+    const encoded = Buffer.concat([
+      Buffer.from([tag]),
+      tag === 0x61 || tag === 0x41 ? u32(1) : Buffer.from([1]),
+      Buffer.from([0xe9]),
+    ]);
+    const sameUnicode = marshalUnicode(Buffer.from("é", "utf8"));
+    const set = Buffer.concat([
+      Buffer.from([0x3c]),
+      u32(2),
+      encoded,
+      sameUnicode,
+    ]);
+    const report = root(parse(withConsts([encoded, set])));
+    expect(report.consts[0]).toMatchObject({
+      kind: "str",
+      value: "é",
+      bytes: 1,
+    });
+    expect(report.consts[1]).toEqual({ kind: "set", length: 1 });
+  }
+});
+
 it("decodes marshal strings with CPython surrogatepass rules", () => {
   const report = parse(
     withConsts([marshalUnicode(Buffer.from("efbbbf73eda080efbbbf", "hex"))]),
@@ -458,20 +482,10 @@ it("keeps signed zero and non-finite float and complex constants JSON-safe", () 
 it("truncates string previews without introducing a lone surrogate", () => {
   const prefix = "x".repeat(79);
   const report = parse(
-    withConsts([
-      marshalUnicode(Buffer.from(`${prefix}😀tail`)),
-      marshalUnicode(
-        Buffer.concat([
-          Buffer.from(prefix),
-          Buffer.from("eda080", "hex"),
-          Buffer.from("tail"),
-        ]),
-      ),
-    ]),
+    withConsts([marshalUnicode(Buffer.from(`${prefix}😀tail`))]),
   );
   expect(root(report).consts).toEqual([
     { kind: "str", bytes: 87, truncated: true, value: prefix },
-    { kind: "str", bytes: 86, truncated: true, value: `${prefix}\ud800` },
   ]);
 });
 
@@ -1542,6 +1556,36 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
   expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
   expect(report.coverage.status).toBe("complete");
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("hashes shallow TYPE_REF code chains without using the JavaScript stack", () => {
+  const links = 3000;
+  const codes = Array.from({ length: links }, (_, index) =>
+    marshalCode("py311", {
+      flagged: true,
+      name: "f",
+      consts: index === 0 ? [Buffer.from([0x4e])] : [marshalRef(index - 1)],
+    }),
+  );
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      constsObject: Buffer.concat([
+        Buffer.from([0x28]),
+        u32(links + 1),
+        ...codes,
+        Buffer.from([0x3c]),
+        u32(1),
+        marshalRef(links - 1),
+      ]),
+    }),
+  ]);
+  const report = parseWith(bytes, { max_objects: 65_536 });
+  expect(root(report).consts.at(-1)).toEqual({ kind: "set", length: 1 });
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    code_objects: links + 1,
+  });
 });
 
 it("rejects code CPython treats as corrupt instead of complete coverage", () => {

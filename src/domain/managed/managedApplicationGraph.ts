@@ -94,48 +94,65 @@ const managedGraphRequestSchema = getEvidenceInputContract(
 ).frameSchema;
 
 /** Managed-code projection result containing a validated application graph. */
-export const managedApplicationGraphResultSchema = z.strictObject({
-  projection_id: prefixedDigestSchema("magp"),
-  root_artifact_sha256: digestSchema,
-  source_evidence: z.strictObject({
-    managed_artifact_evidence_id: evidenceIdSchema.nullable(),
-    managed_members_evidence_id: evidenceIdSchema.nullable(),
-    managed_native_boundaries_evidence_id: evidenceIdSchema.nullable(),
-  }),
-  summary: z.strictObject({
-    graph_nodes: z.int().min(0),
-    graph_edges: z.int().min(0),
-    assemblies: z.int().min(0),
-    modules: z.int().min(0),
-    types: z.int().min(0),
-    methods: z.int().min(0),
-    fields: z.int().min(0),
-    pinvoke_imports: z.int().min(0),
-    native_implementations: z.int().min(0),
-    // Graphs projected before call and field-access edges existed omit these
-    // counters; null means those relations were not projected, not zero.
-    calls: z
-      .int()
-      .min(0)
-      .nullable()
-      .default(null)
-      .describe("calls edges; null for graphs projected before calls edges"),
-    field_accesses: z
-      .int()
-      .min(0)
-      .nullable()
-      .default(null)
-      .describe(
-        "accesses edges; null for graphs projected before accesses edges",
-      ),
-  }),
-  graph: javascriptApplicationGraphSchema,
-  coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
-  }),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(3),
-  limitations: z.array(textSchema),
-});
+export const managedApplicationGraphResultSchema = z
+  .strictObject({
+    projection_id: prefixedDigestSchema("magp"),
+    root_artifact_sha256: digestSchema,
+    source_evidence: z.strictObject({
+      managed_artifact_evidence_id: evidenceIdSchema.nullable(),
+      managed_members_evidence_id: evidenceIdSchema.nullable(),
+      managed_native_boundaries_evidence_id: evidenceIdSchema.nullable(),
+    }),
+    summary: z.strictObject({
+      graph_nodes: z.int().min(0),
+      graph_edges: z.int().min(0),
+      assemblies: z.int().min(0),
+      modules: z.int().min(0),
+      types: z.int().min(0),
+      methods: z.int().min(0),
+      fields: z.int().min(0),
+      pinvoke_imports: z.int().min(0),
+      native_implementations: z.int().min(0),
+      // Graphs projected before call and field-access edges existed omit these
+      // counters; null means those relations were not projected, not zero.
+      calls: z
+        .int()
+        .min(0)
+        .nullable()
+        .default(null)
+        .describe("calls edges; null for graphs projected before calls edges"),
+      field_accesses: z
+        .int()
+        .min(0)
+        .nullable()
+        .default(null)
+        .describe(
+          "accesses edges; null for graphs projected before accesses edges",
+        ),
+    }),
+    graph: javascriptApplicationGraphSchema,
+    coverage: z.strictObject({
+      status: z.enum(["complete-within-inputs", "partial"]),
+    }),
+    evidence_links: z.array(evidenceIdSchema).min(1).max(3),
+    limitations: z.array(textSchema),
+  })
+  .superRefine((result, context) => {
+    const [rootId] = result.graph.root_node_ids;
+    const root = result.graph.nodes.find(({ node_id }) => node_id === rootId);
+    if (
+      result.graph.root_node_ids.length !== 1 ||
+      root?.kind !== "artifact" ||
+      root.identity.strategy !== "content-digest" ||
+      root.identity.sha256 !== result.root_artifact_sha256
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["root_artifact_sha256"],
+        message:
+          "Managed graph root must identify the declared root artifact SHA-256.",
+      });
+  });
 
 export type ManagedApplicationGraphResult = z.infer<
   typeof managedApplicationGraphResultSchema

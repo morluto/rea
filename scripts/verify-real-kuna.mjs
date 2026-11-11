@@ -26,6 +26,11 @@ import { parseArgs, promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
+import {
+  KUNA_RELEASE_VERIFICATION_EXPLANATION,
+  KUNA_UNVERIFIED_VERSION_REMEDIATION,
+  KUNA_VERIFIED_VERSION,
+} from "../dist/kuna/KunaRelease.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
 import {
@@ -42,7 +47,6 @@ import {
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
-import { MULTI_MODE_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -281,6 +285,38 @@ const openServer = async (provider, kunaSettings = {}) => {
       path: provider.path,
       provider_id: provider.id,
     });
+    const session = (await call("binary_session")).value;
+    assert.equal(
+      session.analysis_provider_candidates_observed,
+      "target_selection",
+    );
+    if (provider.id === "kuna") {
+      const binding = session.analysis_provider_binding;
+      const verification = binding.release_verification;
+      assert.equal(verification.basis, "reported_version");
+      assert.equal(verification.verified_version, KUNA_VERIFIED_VERSION);
+      assert.equal(
+        verification.reported_version,
+        binding.analysis_profile.parameters.kuna_version,
+      );
+      assert.equal(
+        verification.status,
+        binding.analysis_profile.parameters.kuna_version ===
+          KUNA_VERIFIED_VERSION
+          ? "verified"
+          : "unverified",
+      );
+      assert.equal(
+        verification.explanation,
+        KUNA_RELEASE_VERIFICATION_EXPLANATION,
+      );
+      if (verification.status === "unverified")
+        assert.equal(
+          verification.remediation,
+          KUNA_UNVERIFIED_VERSION_REMEDIATION,
+        );
+      else assert.equal(verification.remediation, null);
+    }
   } catch (cause) {
     // A rejected connection/target still owns its transport and workspace.
     await close(cause);
@@ -382,6 +418,8 @@ const verifyKuna = async (
         false,
       );
       if (process.platform === "darwin") {
+        const { MULTI_MODE_REMEDIATION } =
+          await import("../dist/application/CapabilityInventory.js");
         const authored = trace?.modes?.find(
           ({ name }) => name === "authored_ui_dispatch",
         );

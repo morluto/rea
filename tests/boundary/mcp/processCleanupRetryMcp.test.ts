@@ -1,9 +1,13 @@
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../../scripts/lib/verifier-cleanup.mjs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -53,6 +57,7 @@ const connectSession = async () => {
   const client = new Client({ name: "process-cleanup-retry", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
+  onTestFinished(() => closeSession({ client, server, session }));
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   return { client, server, session };
@@ -61,10 +66,14 @@ const connectSession = async () => {
 const closeSession = async (
   resources: Awaited<ReturnType<typeof connectSession>>,
 ): Promise<void> => {
-  await resources.client.close();
-  await resources.server.close();
-  const closed = await resources.session.close();
-  if (!closed.ok) throw closed.error;
+  await closeVerifierResources([
+    () => resources.client.close(),
+    () => resources.server.close(),
+    async () => {
+      const closed = await resources.session.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 };
 
 const captureCleanupRetry = (root: string, isDenied: () => boolean) => {
@@ -116,7 +125,7 @@ it("projects the retained process root through close_binary and resolves its ret
   const callClose = () =>
     resources.client.callTool({ name: "close_binary", arguments: {} });
 
-  try {
+  await withVerifierCleanup(async () => {
     const failed = parseMcpToolError(await callClose());
     const firstWire = JSON.stringify(failed);
     expect(failed.error).toMatchObject({
@@ -143,12 +152,20 @@ it("projects the retained process root through close_binary and resolves its ret
     );
     expect(JSON.stringify(failed)).toBe(firstWire);
     await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    denyRemoval = false;
-    fault.retry.mockRestore();
-    await closeSession(resources);
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [
+    async () => {
+      denyRemoval = false;
+    },
+    async () => {
+      fault.retry.mockRestore();
+    },
+    async () => {
+      await closeSession(resources);
+    },
+    async () => {
+      await rm(root, { recursive: true, force: true });
+    },
+  ]);
 });
 
 it.each(["returned", "thrown", "synchronous"] as const)(
@@ -176,7 +193,7 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       resources.client.callTool({ name: "close_binary", arguments: {} });
     const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
 
-    try {
+    await withVerifierCleanup(async () => {
       const failed = parseMcpToolError(await callClose());
       const firstWire = JSON.stringify(failed);
       const delivered = delivery.mock.calls.at(-1)?.[0];
@@ -230,13 +247,25 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       expect(JSON.stringify(failed)).toBe(firstWire);
       expect(primary.cleanupIncomplete).toBe(false);
       await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      denyRemoval = false;
-      closeSpy.mockRestore();
-      delivery.mockRestore();
-      fault.retry.mockRestore();
-      await closeSession(resources);
-      await rm(root, { recursive: true, force: true });
-    }
+    }, [
+      async () => {
+        denyRemoval = false;
+      },
+      async () => {
+        closeSpy.mockRestore();
+      },
+      async () => {
+        delivery.mockRestore();
+      },
+      async () => {
+        fault.retry.mockRestore();
+      },
+      async () => {
+        await closeSession(resources);
+      },
+      async () => {
+        await rm(root, { recursive: true, force: true });
+      },
+    ]);
   },
 );

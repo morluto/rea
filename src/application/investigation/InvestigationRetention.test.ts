@@ -11,6 +11,11 @@ import {
   updateUnknownInputSchema,
   type ResidualUnknown,
 } from "../../domain/residualUnknown.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
+import { ok } from "../../domain/result.js";
+import { admitCompletedAnalysis } from "./admitCompletedAnalysis.js";
+import { recordEvidenceSources } from "./recordEvidenceSources.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
 import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 
@@ -329,4 +334,65 @@ it("reads statistics without asking either bundle-export path to copy retained f
   });
   expect(detached).not.toHaveBeenCalled();
   expect(borrowed).not.toHaveBeenCalled();
+});
+
+it("preserves the completed observation's path when a retained semantic ID has different display metadata", () => {
+  const earlier = observe(7, "/original/file");
+  const current = observe(7, "/selected/file");
+  expect(current.evidence_id).toBe(earlier.evidence_id);
+  const records = new InvestigationRecords({
+    maximumRepresentationBytes: recordCost(earlier),
+  });
+  expect(records.recordEvidence(earlier).ok).toBe(true);
+  const result = recordEvidenceSources(
+    records.recordEvidence.bind(records),
+    [observe(8)],
+    {
+      evidence: current,
+      evidenceForAnalysis: records.evidenceForAnalysis.bind(records),
+    },
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected source publication failure");
+  expect(result.error.sourcePublicationRecovery?.completed).toMatchObject({
+    kind: "unretained-evidence",
+    evidence: {
+      evidence_id: current.evidence_id,
+      subject: { local_path: "/selected/file" },
+    },
+  });
+});
+
+it("accounts for the generated subject limitation before admitting a subjectless observation", () => {
+  const observation = {
+    provider,
+    result: { value: 1 },
+    rawResult: null,
+    limitations: ["source limit"],
+    locations: [],
+    subject: null,
+  } as const;
+  let admitted: ReturnType<typeof estimateJsonStorage> | undefined;
+  const result = admitCompletedAnalysis(
+    "health",
+    {},
+    observation,
+    (input, _operation, additional) => {
+      const estimate = estimateJsonStorage(input);
+      admitted = {
+        valueBytes: estimate.valueBytes + additional.valueBytes,
+        serializedUtf16Bytes:
+          estimate.serializedUtf16Bytes + additional.serializedUtf16Bytes,
+      };
+      return ok(undefined);
+    },
+  );
+  expect(result.ok).toBe(true);
+  const actual = estimateJsonStorage(
+    createAnalysisExecutionEvidence("health", {}, observation, "observed"),
+  );
+  expect(admitted?.valueBytes).toBeGreaterThanOrEqual(actual.valueBytes);
+  expect(admitted?.serializedUtf16Bytes).toBeGreaterThanOrEqual(
+    actual.serializedUtf16Bytes,
+  );
 });

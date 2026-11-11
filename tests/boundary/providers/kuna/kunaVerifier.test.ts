@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url";
 
 import { expect, it as test } from "vitest";
 
+import { KUNA_VERIFIED_VERSION } from "../../../../src/kuna/KunaRelease.js";
+
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
@@ -88,7 +90,9 @@ it("accepts requested functions distributed across caller targets", async () => 
     ],
     {
       encoding: "utf8",
-      timeout: 10_000,
+      // The verifier's version probe alone permits 10s; this outer deadline
+      // also covers startup, symbol selection and owned cleanup/reporting.
+      timeout: 30_000,
       env: {
         PATH: process.env.PATH,
         HOME: root,
@@ -105,7 +109,7 @@ it("accepts requested functions distributed across caller targets", async () => 
     cleanup: "complete",
     caller_target_selection: expectedCallerSelection(targets),
   });
-});
+}, 45_000);
 
 test.skipIf(
   process.platform === "win32" || process.env.REA_KUNA_COMMAND === undefined,
@@ -377,36 +381,42 @@ it.each([
     rejectRead: true,
     wrongXrefs: false,
     wrongStrings: false,
+    version: KUNA_VERIFIED_VERSION,
   },
   {
     rejectClose: true,
     rejectRead: false,
     wrongXrefs: false,
     wrongStrings: false,
+    version: "1.833",
   },
   {
     rejectClose: true,
     rejectRead: true,
     wrongXrefs: false,
     wrongStrings: false,
+    version: "1.833",
   },
   {
     rejectClose: false,
     rejectRead: false,
     wrongXrefs: true,
     wrongStrings: false,
+    version: "1.833",
   },
   {
     rejectClose: false,
     rejectRead: false,
     wrongXrefs: false,
     wrongStrings: true,
+    version: "1.833",
   },
 ])(
   "reports failure-path lineage (cleanup: $rejectClose, read: $rejectRead, wrong xrefs: $wrongXrefs, wrong strings: $wrongStrings)",
-  async ({ rejectClose, rejectRead, wrongXrefs, wrongStrings }) => {
+  async ({ rejectClose, rejectRead, wrongXrefs, wrongStrings, version }) => {
     const root = await createTestTempDirectory("rea-kuna-verifier-cleanup-");
     const kuna = await writeFakeKuna(root, {
+      version: { stdout: `kuna ${version}\n` },
       extraXrefSources: [4104],
       stringRows: [
         { address: 12288, text: "REA fixture prompt" },

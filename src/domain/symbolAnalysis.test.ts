@@ -282,3 +282,23 @@ it("distinguishes protocol identity from protocol member contexts", () => {
     unclassified: [],
   });
 });
+
+it("selects exact Objective-C protocol symbol leaves", () => {
+  const declarations = [
+    "OBJC_PROTOCOL_$_Runnable",
+    "_OBJC_PROTOCOL_$_Runnable",
+    "__OBJC_PROTOCOL_$_Runnable",
+    "Framework::__OBJC_PROTOCOL_$_Runnable",
+  ].map((name, index) => ({ address: `0x${index}`, name }));
+  const otherNames = [
+    "s__OBJC_PROTOCOL_$_Runnable_1000",
+    "PTR__OBJC_PROTOCOL_$_Runnable_1000",
+    "-[Example useOBJC_PROTOCOL_$_Runnable]",
+    "__OBJC_PROTOCOL_REFERENCE_$_Runnable",
+    "__OBJC_PROTOCOL_$_",
+  ].map((name, index) => ({ address: `0x${index + 4}`, name }));
+  expect(discoverObjcProtocols([...otherNames, ...declarations])).toEqual({
+    count: declarations.length,
+    protocols: declarations,
+  });
+});

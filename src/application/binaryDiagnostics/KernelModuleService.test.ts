@@ -67,7 +67,7 @@ const report: KernelModule = {
   limitations: ["Kernel module metadata was not executed."],
 };
 
-it("rejects a relative path and extra arguments before reading", async () => {
+it("rejects relative paths, extra arguments and invalid field budgets before reading", async () => {
   let calls = 0;
   const service = new KernelModuleService({
     identity,
@@ -85,6 +85,20 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(extra.ok).toBe(false);
   if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
   if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
+  for (const budget of ["max_modinfo_key_bytes", "max_modinfo_value_bytes"]) {
+    for (const value of [0, 536870913]) {
+      const invalid = await service.inspect({
+        path: report.artifact.path,
+        [budget]: value,
+      });
+      expect(invalid.ok).toBe(false);
+      if (!invalid.ok)
+        expect(invalid.error).toMatchObject({
+          _tag: "AnalysisInputError",
+          issues: [expect.objectContaining({ path: [budget] })],
+        });
+    }
+  }
   expect(calls).toBe(0);
 });
 

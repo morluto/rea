@@ -4,6 +4,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
 import {
   RegularFileCleanupFailure,
+  regularFileCancellation,
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -44,6 +45,8 @@ export const readHostFile = async (
   path: string,
   maximumBytes: number,
   signal: AbortSignal | undefined,
+  preserveCapacity = false,
+  cancellationFailure?: (reason: unknown) => Error,
 ): Promise<Buffer | "missing" | "unreadable"> => {
   const options = {
     symlinks: "follow" as const,
@@ -56,6 +59,14 @@ export const readHostFile = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure)
       throw hostCloseFailure(cause);
+    if (preserveCapacity && cause instanceof RegularFileCapacityError)
+      throw cause;
+    if (cancellationFailure !== undefined) {
+      const cancellation = regularFileCancellation(cause);
+      if (cancellation !== undefined)
+        throw cancellationFailure(cancellation.reason);
+      if (signal?.aborted === true) throw cause;
+    }
     signal?.throwIfAborted();
     if (!isRefusedRead(cause)) throw cause;
     return (cause as NodeJS.ErrnoException).code === "ENOENT"

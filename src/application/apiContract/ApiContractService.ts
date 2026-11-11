@@ -1,4 +1,3 @@
-import { isAbsolute } from "node:path";
 import { getHeapStatistics } from "node:v8";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -12,6 +11,8 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   API_CONTRACT_OPERATION as operation,
   API_CONTRACT_PROVIDER,
+  apiContractSchema,
+  type ApiContract,
   type ApiContractArtifact,
 } from "../../domain/apiContract/apiContract.js";
 import {
@@ -71,8 +72,32 @@ function* documentSteps(document: unknown, artifact: ApiContractArtifact) {
   return yield* parseApiContractSteps(document, artifact);
 }
 
+type OpenApiInput = Extract<
+  InspectApiContractInput,
+  { format: "openapi-json" }
+>;
+
+const documentEvidence = (input: OpenApiInput, result: ApiContract): Evidence =>
+  createEvidence(
+    { path: input.path, format: "file", sha256: result.artifact.sha256 },
+    API_CONTRACT_PROVIDER,
+    {
+      operation,
+      predicateType: "rea.api-contract-inventory",
+      parameters: {
+        path: input.path,
+        format: input.format,
+        max_file_bytes: input.max_file_bytes,
+      },
+      result,
+      confidence: "observed",
+      limitations: result.limitations,
+      locations: [{ kind: "artifact-path", path: input.path }],
+    },
+  );
+
 const importDocument = async (
-  input: Extract<InspectApiContractInput, { format: "openapi-json" }>,
+  input: OpenApiInput,
   bytes: Buffer,
   sha256: string,
   signal?: AbortSignal,
@@ -87,26 +112,16 @@ const importDocument = async (
     }),
     signal,
   );
-  if (!parsed.ok) return parsed;
-  const result = parsed.value;
+  if (!parsed.ok) {
+    const partial = apiContractSchema.safeParse(
+      parsed.error.partialObservation,
+    );
+    if (partial.success)
+      parsed.error.partialObservation = documentEvidence(input, partial.data);
+    return parsed;
+  }
   return completeProviderEvidence(
-    createEvidence(
-      { path: input.path, format: "file", sha256 },
-      API_CONTRACT_PROVIDER,
-      {
-        operation,
-        predicateType: "rea.api-contract-inventory",
-        parameters: {
-          path: input.path,
-          format: input.format,
-          max_file_bytes: input.max_file_bytes,
-        },
-        result,
-        confidence: "observed",
-        limitations: result.limitations,
-        locations: [{ kind: "artifact-path", path: input.path }],
-      },
-    ),
+    documentEvidence(input, parsed.value),
     signal,
   );
 };
@@ -125,10 +140,6 @@ export const inspectApiContractEvidence = async (
   );
   if (!admitted.ok) return admitted;
   const input = admitted.value;
-  if (!isAbsolute(input.path))
-    return err(
-      inputFailure("Expected an absolute filesystem path on this host."),
-    );
   if (input.format === "graphql-sdl") {
     const { importGraphqlContract } =
       await import("./GraphqlContractImport.js");

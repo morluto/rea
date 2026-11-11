@@ -82,6 +82,7 @@ it("keeps a realpath I/O failure primary when cancellation is observed before re
     reason: "io",
     cancellation: { reason: cancellationReason },
   });
+  expect(result.error.cancellation?.reason).toBe(cancellationReason);
   expect(result.error.cause).toBe(ioFailure);
 });
 
@@ -147,5 +148,8 @@ it.skipIf(process.platform === "win32")(
       code: "ABORT_ERR",
       cause: cancellationReason,
     });
+    expect(result.error.cancellation?.reason).toBe(cancellationReason);
+    expect(result.error.cause).toBeInstanceOf(Error);
+    expect((result.error.cause as Error).cause).toBe(cancellationReason);
   },
 );

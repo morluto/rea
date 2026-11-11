@@ -1098,9 +1098,53 @@ describe("GhidraClient", () => {
       client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({
       ok: true,
-      value: [{ address: "0x2000", value: "fixture 雪🦊" }],
+      value: [{ address: "0x2000", value: "fixture �雪🦊" }],
     });
   });
+
+  it.each(["valid_then_invalid", "valid_then_invalid_split"] as const)(
+    "retains a complete reply before later malformed bytes (%s)",
+    async (mode) => {
+      const client = clientFor(new FixtureLauncher(mode));
+      expect((await client.start()).ok).toBe(true);
+      const completed = client.callTool("list_strings", { document: null });
+      const later = client.callTool("list_procedures", { document: null });
+      await expect(completed).resolves.toEqual({
+        ok: true,
+        value: "completed",
+      });
+      await expect(later).resolves.toMatchObject({
+        ok: false,
+        error: { kind: "protocol" },
+      });
+    },
+  );
+
+  it("keeps a valid UTF-8 EOF without a newline distinct from malformed bytes", async () => {
+    const client = clientFor(new FixtureLauncher("valid_utf8_end"));
+    await expect(
+      client.callTool("list_strings", { document: null }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "process" },
+    });
+  });
+
+  it.each(["invalid_utf8", "invalid_utf8_split", "invalid_utf8_end"] as const)(
+    "rejects malformed response bytes (%s) instead of replacement-decoding string evidence",
+    async (mode) => {
+      const client = clientFor(new FixtureLauncher(mode));
+      await expect(
+        client.callTool("list_strings", { document: null }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: {
+          kind: "protocol",
+          message: "Ghidra bridge response is not valid UTF-8",
+        },
+      });
+    },
+  );
 
   it("accepts an owned-socket result above the former 64 MiB ceiling", async () => {
     const client = clientFor(new FixtureLauncher("oversized_result"));
