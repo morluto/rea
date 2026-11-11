@@ -1931,8 +1931,10 @@ occurrence fields, except Godot PCK source paths, which
 <!-- END:compare-artifacts:compared-format-metadata-kinds -->
 
 Every occurrence records `entry_kind`, `executable` and `encrypted`. A
-different entry kind, `encrypted` value or occurrence limitation text is a
-`metadata` difference, and a different `executable` value is an `executable`
+different entry kind or `encrypted` value is a `metadata` difference, and a
+different `executable` value is an `executable` difference. Occurrence and node
+limitation text describes diagnostic caveats, which remain in the source
+inventories; changing those caveats alone does not create a `metadata`
 difference. A symlink's own permission bits never mark it `executable`,
 because running a symlink runs its target. When either side's content is
 unavailable, `compare_artifacts` lists the differences that it can still

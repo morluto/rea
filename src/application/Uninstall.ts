@@ -241,20 +241,22 @@ const removeAll = async (
   host: UninstallHost,
 ): Promise<UninstallItem[]> => {
   const items: UninstallItem[] = [];
+  const stopped = (): UninstallItem[] => [
+    ...items,
+    item(
+      "uninstall",
+      "skipped",
+      "Uninstall stopped at this failure; the items above report what changed. Repair the failed removal, then rerun uninstall.",
+    ),
+  ];
   for (const client of clients) {
     const removed = await host.removeClient(client);
     items.push({ ...removed, configuration_path: client.configPath });
-    if (removed.status === "failed")
-      return [
-        ...items,
-        item(
-          "uninstall",
-          "skipped",
-          "Uninstall stopped at this failure; the items above report what changed. Repair the failed configuration, then rerun uninstall.",
-        ),
-      ];
+    if (removed.status === "failed") return stopped();
   }
-  items.push(await host.removeSkill());
+  const skill = await host.removeSkill();
+  items.push(skill);
+  if (skill.status === "failed") return stopped();
   if (purgeData) items.push(...(await host.purgeData()));
   return items;
 };

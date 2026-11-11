@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { processArgumentSchema } from "../process/processArgument.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
@@ -10,11 +11,7 @@ import {
 } from "../producerResourceLimits.js";
 
 // These strings are single sigrok arguments, never shell fragments.
-const selection = z
-  .string()
-  .min(1)
-  .max(8192)
-  .refine((value) => !value.includes("\0"), "NUL is not an argument character");
+const selection = processArgumentSchema.min(1).max(8192);
 const signalInputShape = z.strictObject({
   producer_limits: boundedProducerLimitsSchema,
   path: localPathStringSchema.describe("Absolute local recording path"),

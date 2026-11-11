@@ -108,3 +108,75 @@ it("takes no nested member for a counter unless it equals the number listed", ()
     },
   );
 });
+
+it.each([{ nextCursor: "cursor-2" }, { has_more: true }, { nextPage: 2 }])(
+  "keeps membership recorded when paging metadata says more items follow: %j",
+  (pageInfo) => {
+    const state = environmentStateViewOf(
+      timedCaptureEvidence([
+        ["GET", "/api/records", { list: SEEDED, pageInfo }],
+        ...SEEDED.map((item): TimedCaptureRow => [
+          "GET",
+          `/api/records/${String(item["Id"])}`,
+          item,
+        ]),
+      ]),
+    );
+    expect(
+      state.views.find((view) => view.tool === "get_records"),
+    ).toMatchObject({
+      shape: "list",
+      membership: "recorded",
+    });
+  },
+);
+
+it("keeps completed paging envelopes whole and does not read entity fields as continuation metadata", () => {
+  const items = SEEDED.map((item): JsonObject => ({
+    ...item,
+    nextCursor: "entity-value",
+  }));
+  const state = environmentStateViewOf(
+    timedCaptureEvidence([
+      [
+        "GET",
+        "/api/records",
+        { list: items, pageInfo: { nextCursor: null, has_more: false } },
+      ],
+      ...items.map((item): TimedCaptureRow => [
+        "GET",
+        `/api/records/${String(item["Id"])}`,
+        item,
+      ]),
+    ]),
+  );
+  expect(state.views.find((view) => view.tool === "get_records")).toMatchObject(
+    {
+      shape: "list",
+      membership: "all",
+    },
+  );
+});
+
+it("keeps a direction-only recording on its recorded members instead of learning an unused direction", () => {
+  const state = environmentStateViewOf(
+    timedCaptureEvidence([
+      ["GET", "/api/records", SEEDED],
+      ["GET", "/api/records?direction=desc", SEEDED],
+      ...SEEDED.map((item): TimedCaptureRow => [
+        "GET",
+        `/api/records/${String(item["Id"])}`,
+        item,
+      ]),
+    ]),
+  );
+  const view = state.views.find(
+    (candidate) => candidate.tool === "get_records",
+  );
+  expect(view).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+    checked_record_ordinals: [0, 1],
+  });
+  expect(view).not.toHaveProperty("query.parameters.direction");
+});
