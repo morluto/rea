@@ -58,6 +58,7 @@ const listEntrySchema = z.strictObject({
   reference: ntfsFileReferenceSchema,
   attributeId: offset,
 });
+export type MftAttributeListEntry = z.infer<typeof listEntrySchema>;
 export const ntfsAttributeIssueSchema = z.strictObject({
   kind: z.literal("malformed"),
   fileOffset: offset,
@@ -97,10 +98,61 @@ export const ntfsAttributeSchema = z.strictObject({
   ]),
 });
 export type MftAttribute = z.infer<typeof ntfsAttributeSchema>;
+
+/** Per selected record; each additional decoded record is bounded to 64 KiB. */
+export const MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT = 32;
+export const ntfsAttributeListResolutionSchema = z.strictObject({
+  coverage: z.enum(["complete", "incomplete"]),
+  knownEntryCount: offset,
+  omittedKnownEntries: offset,
+  unreadListAttributeOffsets: z.array(offset),
+  incompleteRecordIndices: z.array(offset),
+  references: z
+    .array(
+      z.strictObject({
+        listEntryFileOffset: offset,
+        result: z.discriminatedUnion("kind", [
+          z.strictObject({
+            kind: z.literal("resolved"),
+            attributeFileOffset: offset,
+          }),
+          z.strictObject({
+            kind: z.literal("ambiguous"),
+            candidateCount: offset.min(2),
+          }),
+          z.strictObject({
+            kind: z.literal("unresolved"),
+            reason: z.enum([
+              "unverified-base",
+              "record-unavailable",
+              "unverified-record",
+              "sequence-mismatch",
+              "base-reference-mismatch",
+              "attribute-unavailable",
+              "capacity",
+            ]),
+          }),
+        ]),
+      }),
+    )
+    .max(MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT),
+  /** Additional facts only; local physical-record attributes remain unchanged. */
+  linkedAttributes: z
+    .array(ntfsAttributeSchema)
+    .max(MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT),
+  linkedFileNames: z
+    .array(ntfsFileNameSchema)
+    .max(MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT),
+});
+export type MftAttributeListResolution = z.infer<
+  typeof ntfsAttributeListResolutionSchema
+>;
+
 export interface MftAttributeScan {
   readonly attributeIssue: AttributeIssue | null;
   readonly fileNames: readonly MftFileName[];
   readonly attributes: readonly MftAttribute[];
+  /** Physical-record walk; linked names have independent attribute-list coverage. */
   readonly fileNameCoverage: "complete" | "incomplete";
   /** Local attribute walk only; extension references are retained, never followed. */
   readonly attributeCoverage: "complete" | "incomplete";
