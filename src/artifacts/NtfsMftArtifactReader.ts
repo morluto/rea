@@ -5,7 +5,10 @@ import {
   type ArtifactFormatMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
-import { createMftDecoder, type MftImage } from "../domain/windows/ntfsMft.js";
+import {
+  createMftDecoder,
+  type MftInventory,
+} from "../domain/windows/ntfsMft.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -128,7 +131,7 @@ export class NtfsMftArtifactReader implements ArtifactReader {
     this.#limitations = image.limitations;
   }
 
-  async #decode(signal?: AbortSignal): Promise<MftImage> {
+  async #decode(signal?: AbortSignal): Promise<MftInventory> {
     const { handle, initial } = await this.#source.read(signal);
     const decoder = createMftDecoder(initial.size);
     if (!decoder.ok) throw this.#failure(decoder.error);
