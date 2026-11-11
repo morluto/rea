@@ -140,3 +140,28 @@ await test("a Markdown-preferring client keeps the HTML validator when the sidec
   assert.equal(response.status, 304);
   assert.equal(requests.length, 3, "reevaluate the original HTML validator");
 });
+
+await test("Markdown preferences preserve validators for static assets", async () => {
+  for (const [path, fetches] of [
+    ["/styles.css", 1],
+    ["/non-html/", 2],
+  ]) {
+    const request = new Request(`https://rea.tools${path}`, {
+      headers: { Accept: "text/markdown", "If-None-Match": '"css"' },
+    });
+    const requests = [];
+    const response = await worker.fetch(request, {
+      ASSETS: {
+        async fetch(assetRequest) {
+          requests.push(assetRequest);
+          const headers = { "Content-Type": "text/css", ETag: '"css"' };
+          if (assetRequest.headers.get("If-None-Match") === headers.ETag)
+            return new Response(null, { headers, status: 304 });
+          return new Response("body {}", { headers });
+        },
+      },
+    });
+    assert.equal(response.status, 304);
+    assert.equal(requests.length, fetches);
+  }
+});
