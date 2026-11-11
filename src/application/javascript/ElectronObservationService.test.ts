@@ -274,3 +274,77 @@ it.each([
     );
   },
 );
+
+it.each([
+  { ...inspection, target: { ...inspection.target, target_id: "other-page" } },
+  {
+    ...inspection,
+    capture_window: { ...inspection.capture_window, observation_ms: 1 },
+  },
+])(
+  "refuses to attest a different selected page or capture window",
+  async (report) => {
+    const provider = pageProvider(
+      new AnalysisCancelledError("inspect_electron_page"),
+    );
+    const result = await inspectElectronPage(
+      { ...provider, inspectPage: async () => ok(report) },
+      input,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError", partialObservation: report },
+    });
+    const failure = new AnalysisCancelledError("inspect_electron_page", {
+      partialObservation: {
+        kind: "electron-page-observation",
+        inspection: report,
+        cleanup: "transport-closed",
+      },
+    });
+    const partial = failure.partialObservation;
+    const cancelled = await inspectElectronPage(pageProvider(failure), input);
+    expect(cancelled).toMatchObject({ ok: false, error: failure });
+    expect(failure.partialObservation).toEqual(partial);
+    expect(failure.secondaryFailures).toMatchObject([
+      { _tag: "AnalysisOutputError" },
+    ]);
+  },
+);
+
+it.each(["completed", "partial"] as const)(
+  "does not invoke hidden provider getters in a %s page report",
+  async (phase) => {
+    const report = { ...inspection };
+    let getterCalls = 0;
+    Object.defineProperty(report, "target", {
+      enumerable: false,
+      get() {
+        getterCalls += 1;
+        throw new Error("Hidden target getter must not run");
+      },
+    });
+    const failure = new AnalysisCancelledError("inspect_electron_page", {
+      partialObservation: {
+        kind: "electron-page-observation",
+        inspection: report,
+        cleanup: "transport-closed",
+      },
+    });
+    const provider = pageProvider(failure);
+    const result = inspectElectronPage(
+      phase === "partial"
+        ? provider
+        : { ...provider, inspectPage: async () => ok(report) },
+      input,
+    );
+    await expect(result).resolves.toMatchObject({
+      ok: false,
+      error:
+        phase === "partial"
+          ? { _tag: "AnalysisCancelledError" }
+          : { _tag: "AnalysisOutputError" },
+    });
+    expect(getterCalls).toBe(0);
+  },
+);
