@@ -143,7 +143,7 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
     path: artifact,
     command: "e asm.arch; e asm.bits; e asm.cpu; oml",
     asm_arch: "arm",
-    asm_bits: 16,
+    asm_bits: 16 as const,
     asm_cpu: "cortexm",
     base_address: "0x08000000",
   };
@@ -189,6 +189,23 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
   const { tools } = await client.listTools();
   const listed = tools.find((tool) => tool.name === rizinContract.name);
   expect(listed?.description).toBe(rizinContract.description);
+  // Rizin applies any width that shares a bit with a declared one, so the
+  // contract advertises the declared widths.
+  expect(listed?.inputSchema.properties?.asm_bits).toMatchObject({
+    enum: [4, 8, 16, 32, 64],
+  });
+  const undeclared = await client.callTool({
+    name: "execute_rizin_command",
+    arguments: { ...input, asm_bits: 17 },
+  });
+  expect(undeclared.isError).toBe(true);
+  expect(parseMcpToolError(undeclared as CallToolResult).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "execute_rizin_command",
+      issues: [{ path: ["asm_bits"], reason: "invalid_value" }],
+    },
+  });
 
   const refused = await client.callTool({
     name: "execute_rizin_command",

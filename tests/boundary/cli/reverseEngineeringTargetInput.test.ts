@@ -150,3 +150,39 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "rejects a Rizin width that no arch plugin declares",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rizin-invalid-bits-");
+    const artifact = join(root, "flash.bin");
+    await writeFile(artifact, "flash");
+    const result = await cli.run({
+      arguments: [
+        "execute-rizin-command",
+        artifact,
+        "e asm.bits",
+        "--asm-arch",
+        "arm",
+        "--asm-bits",
+        "17",
+        "--format",
+        "json",
+      ],
+      cwd: root,
+      environment: { REA_RIZIN_COMMAND: join(root, "no-rizin") },
+    });
+    // Rizin would apply 17 on ARM and decode as ARM32. REA rejects it before
+    // it looks for Rizin.
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          path: "asmBits",
+          message: "Expected one of 4, 8, 16, 32, 64",
+        }),
+      ],
+    });
+  },
+);

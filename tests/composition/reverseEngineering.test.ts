@@ -576,7 +576,7 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
     path,
     command: "pi 1",
     asm_arch: "arm",
-    asm_bits: 16,
+    asm_bits: 16 as const,
     asm_cpu: "cortexm",
     base_address: "0x08000000",
   };
@@ -625,7 +625,7 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
   }
 });
 
-it("checks only the spelling and range of decoder and map inputs", async () => {
+it("checks the spelling of decoder and map inputs and the declared Rizin widths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-rizin-load-input-"));
   const path = join(directory, "image.bin");
   await writeFile(path, "image");
@@ -645,7 +645,9 @@ it("checks only the spelling and range of decoder and map inputs", async () => {
       [{ asm_cpu: "c55x+" }, ["-e", "asm.cpu=c55x+"]],
       [{ asm_cpu: "c166-generic" }, ["-e", "asm.cpu=c166-generic"]],
       [{ asm_cpu: "ATxmega128a4u" }, ["-e", "asm.cpu=ATxmega128a4u"]],
-      [{ asm_bits: 1 }, ["-b", "1"]],
+      // i4004 is the one 4-bit plugin.
+      [{ asm_arch: "i4004", asm_bits: 4 }, ["-a", "i4004", "-b", "4"]],
+      [{ asm_bits: 32 }, ["-b", "32"]],
       [{ base_address: "0x0" }, ["-n", "-m", "0x0"]],
       [
         { base_address: "0xFFFFFFFFFFFFFFFF" },
@@ -679,6 +681,10 @@ it("checks only the spelling and range of decoder and map inputs", async () => {
       ["asm_cpu", "?"],
       ["asm_cpu", "cortex=m"],
       ["asm_bits", 0],
+      ["asm_bits", 1],
+      // Rizin would apply these on ARM and decode as ARM32.
+      ["asm_bits", 17],
+      ["asm_bits", 48],
       ["asm_bits", 65],
       ["asm_bits", 16.5],
       ["asm_bits", "16"],

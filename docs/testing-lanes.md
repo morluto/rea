@@ -25,10 +25,12 @@ decodes. It also reads bytes below the base address, at it, at the end of the
 image and past it, and checks a call with only `base_address`. Two of the images are ones that Rizin's AVR and
 BIOS loaders claim without `-n`. It also selects an arch that no host uses by
 default, an arch plugin that Rizin does not have, and a bits value that the
-arch lacks. The test names the Rizin version it ran. It skips when no Rizin is
+arch lacks. It checks that REA rejects a width that no plugin declares, such
+as 17, which Rizin would apply, and that Rizin applies the declared ARM widths
+as given. The test names the Rizin version it ran. It skips when no Rizin is
 on `PATH`; to check another build, put its directory first on `PATH`. It has
 passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin 0.7.4 (official static
-build, Linux x86_64).
+build, Linux x86_64). The width case has run only with Rizin 0.9.1.
 
 Each real-toolchain command must require only the host tools needed to prove
 its stated claim. Use a host-native fixture for host/provider acceptance, and

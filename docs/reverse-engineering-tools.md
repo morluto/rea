@@ -168,22 +168,38 @@ its defaults unless the call selects them. A Thumb image opened with only
 and `asm_bits` with `base_address`, and for a big-endian image start the command
 with `e cfg.bigendian=true`.
 
-REA checks only the spelling. Arch and CPU names contain letters, digits, `_`,
-`.`, `+` and `-`, and start with a letter or a digit. `asm_bits` is an integer
-from 1 to 64. `base_address` is `0x` followed by 1 to 16 hexadecimal digits.
-Rizin owns the names, and its builds differ: for example, the Homebrew build of
-Rizin 0.9.1 has no `xtensa` or `riscv` plugin, while the official static Linux
-build of Rizin 0.7.4 has both. The commands `e asm.arch=?` and `e asm.cpu=?`
-list what the installed Rizin supports. To use another build, set
-`REA_RIZIN_COMMAND`. When Rizin cannot apply an arch or bits value, it uses
-another value and exits with status 0. Rizin 0.9.1 keeps its default and
-reports the value on stderr. Rizin 0.7.4 reports an unknown arch on stderr, but
-for `arm` it used 16 bits instead of 8 without a message. Both accept any
-`asm.cpu` value, and `e asm.cpu` then echoes it, so compare it with
-`e asm.cpu=?`, which lists the CPUs of the selected arch. Evidence therefore
-states that REA does not confirm the decoder that Rizin used. To check the
-decoder and the map, start the command with
-`e asm.arch; e asm.bits; e asm.cpu; e cfg.bigendian; oml`.
+REA checks the spelling of names and addresses, and the set of widths. Arch and
+CPU names contain letters, digits, `_`, `.`, `+` and `-`, and start with a
+letter or a digit. `asm_bits` is 4, 8, 16, 32 or 64. `base_address` is `0x`
+followed by 1 to 16 hexadecimal digits. Rizin owns the names, and its builds
+differ: for example, the Homebrew build of Rizin 0.9.1 has no `xtensa` or
+`riscv` plugin, while the official static Linux build of Rizin 0.7.4 has both.
+The commands `e asm.arch=?` and `e asm.cpu=?` list what the installed Rizin
+supports, `La` lists each arch plugin with its widths, and `e asm.bits=?` lists
+the widths of the selected arch. To use another build, set `REA_RIZIN_COMMAND`.
+
+In the Homebrew build of Rizin 0.9.1, each of the 63 arch plugins declares its
+widths from 4, 8, 16, 32 and 64. Only `i4004` declares 4, and Rizin selects it
+only with `asm_bits` 4. Rizin applies any `-b` value that shares a bit with a
+declared width. On ARM, Rizin 0.9.1 accepts 17 or 48, `e asm.bits` echoes the
+value, and Thumb code decodes as ARM32, with no message and exit status 0. The
+Rizin 0.7.4 source has the same check; this was not run on 0.7.4. REA
+therefore accepts only the five widths.
+
+When Rizin cannot apply an arch or bits value, it uses another value and exits
+with status 0. For an arch plugin that it does not have, Rizin 0.9.1 keeps its
+default arch and reports the value on stderr. For one of the five widths that
+the selected plugin does not declare, such as 8 for `arm`, Rizin 0.9.1 keeps
+its default width and reports the value on stderr. In an earlier check, Rizin
+0.7.4 reported an unknown arch on stderr, but for `arm` it used 16 bits instead
+of 8 without a message. Both accept any `asm.cpu` value, and `e asm.cpu` then
+echoes it, so compare it with `e asm.cpu=?`, which lists the CPUs of the
+selected arch. The `e asm.*`
+commands show Rizin's settings, not how it decodes, so Evidence states that REA
+does not confirm the decoder that Rizin used. To check the settings and the
+map, start the command with
+`e asm.arch; e asm.bits; e asm.cpu; e cfg.bigendian; oml`, and to check the
+decoder, disassemble bytes whose decoding you know.
 
 This call reads a Cortex-M flash dump at its address, in Thumb state:
 

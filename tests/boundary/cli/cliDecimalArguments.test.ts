@@ -26,6 +26,16 @@ const bounds = (schema: unknown): Array<{ min: number; max: number }> => {
     Array.isArray(schema[key]) ? schema[key].flatMap(bounds) : [],
   );
   if (schema.type !== "integer" && schema.type !== "number") return nested;
+  if (Array.isArray(schema.enum)) {
+    const members = schema.enum.filter(Number.isSafeInteger) as number[];
+    const preferred =
+      typeof schema.default === "number" && members.includes(schema.default)
+        ? schema.default
+        : members[0];
+    return preferred === undefined
+      ? nested
+      : [...nested, { min: preferred, max: preferred }];
+  }
   const min =
     typeof schema.exclusiveMinimum === "number"
       ? schema.exclusiveMinimum + 1
@@ -68,7 +78,47 @@ const REQUIRED_NUMERIC_FIELDS = [
   "inspect-web-page options.observationMs",
   "observe-web-execution options.observationMs",
   "extract-firmware options.maxDepth",
+  "execute-rizin-command options.asmBits",
 ] as const;
+
+/** The first non-negative integer outside a numeric enum, if the schema has one. */
+const nonMember = (schema: unknown): number | undefined => {
+  if (!isRecord(schema)) return undefined;
+  for (const key of ["anyOf", "oneOf", "allOf"]) {
+    const branches = schema[key];
+    if (!Array.isArray(branches)) continue;
+    for (const branch of branches) {
+      const found = nonMember(branch);
+      if (found !== undefined) return found;
+    }
+  }
+  if (!Array.isArray(schema.enum)) return undefined;
+  const members = new Set(schema.enum);
+  let value = 0;
+  while (members.has(value)) value += 1;
+  return value;
+};
+
+/** A literal set must not advertise or parse a decimal token outside it. */
+const nonMemberFailures = (
+  label: string,
+  property: unknown,
+  validate: (value: unknown) => boolean,
+  read: (token: string) => unknown,
+): readonly string[] => {
+  const outside = nonMember(property);
+  if (outside === undefined) return [];
+  const failures: string[] = [];
+  if (validate(String(outside)) || validate(outside))
+    failures.push(`${label}: advertised schema accepts non-member ${outside}`);
+  try {
+    read(String(outside));
+    failures.push(`${label}: Parser.parse accepts non-member ${outside}`);
+  } catch {
+    // Only the declared members parse.
+  }
+  return failures;
+};
 
 describe("decimal integer CLI admission", () => {
   it("rejects 0x10 and 1e3 for every numeric input and keeps an in-range decimal", () => {
@@ -156,6 +206,7 @@ describe("decimal integer CLI admission", () => {
             failures.push(
               `${label}: advertised schema rejects in-range ${decimal}`,
             );
+          failures.push(...nonMemberFailures(label, property, validate, read));
           checked.push(label);
         }
       }

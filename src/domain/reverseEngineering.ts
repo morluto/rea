@@ -100,6 +100,12 @@ const rizinNameSchema = z
     "must be a Rizin name: letters, digits, '_', '.', '+' or '-', starting with a letter or digit",
   );
 
+// Rizin 0.9.1's arch plugins declare their widths from these. Rizin applies
+// any -b value that shares a bit with a declared width, so on ARM it accepts
+// 17 or 48, echoes it in e asm.bits and decodes as ARM32, with no message. The
+// Rizin 0.7.4 source has the same check. REA admits only these widths.
+const RIZIN_ASM_BITS = [4, 8, 16, 32, 64] as const;
+
 /** Caller-selected Rizin command against one local artifact. */
 export const rizinInputSchema = z
   .object({
@@ -116,15 +122,11 @@ export const rizinInputSchema = z
       .describe(
         "Rizin arch plugin, passed as -a, such as arm. Plugins differ between builds; e asm.arch=? lists them.",
       ),
-    // Rizin's widest decoders are 64-bit.
     asm_bits: z
-      .number()
-      .int()
-      .min(1)
-      .max(64)
+      .literal(RIZIN_ASM_BITS)
       .exactOptional()
       .describe(
-        "Rizin asm.bits, passed as -b, such as 16 for Thumb. Omitted, Rizin's default applies.",
+        "Rizin asm.bits, passed as -b: 4, 8, 16, 32 or 64, such as 16 for Thumb. Omitted, Rizin's default applies.",
       ),
     asm_cpu: rizinNameSchema
       .exactOptional()
