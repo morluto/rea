@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { Readable } from "node:stream";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -467,31 +467,56 @@ it.each([
   },
 );
 
-it.each(["close", "elf", "pool", "cleanup"] as const)(
+it.each(["close", "elf", "pool", "zip-library", "cleanup"] as const)(
   "honors cancellation during final %s work",
   async (stage) => {
     const path = await buildApk("late-cancellation.apk", [
       { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
     ]);
     const controller = new AbortController();
-    const originalClose = OwnedFileHandle.prototype.close;
-    let closed = 0;
-    vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(
-      async function (this: OwnedFileHandle) {
-        await originalClose.call(this);
-        if (++closed === 4) {
-          if (stage === "close") controller.abort();
-          if (stage === "elf") setImmediate(() => controller.abort());
-        }
-      },
-    );
+    const reason = { caller: `stop during ${stage}` };
+    let imageWriter: Awaited<ReturnType<typeof fsPromises.open>> | undefined;
+    let writerCloseObserved = false;
+    if (stage === "close" || stage === "elf") {
+      const originalOpen = fsPromises.open;
+      vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+        const handle = await originalOpen(...args);
+        if (
+          typeof args[0] === "string" &&
+          args[0].endsWith(`${sep}libapp.so`) &&
+          args[1] === "wx"
+        )
+          imageWriter = handle;
+        return handle;
+      });
+      const originalClose = OwnedFileHandle.prototype.close;
+      vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(
+        async function (this: OwnedFileHandle) {
+          await originalClose.call(this);
+          if (this.handle === imageWriter && !writerCloseObserved) {
+            writerCloseObserved = true;
+            if (stage === "close") controller.abort(reason);
+            else setImmediate(() => controller.abort(reason));
+          }
+        },
+      );
+    }
     if (stage === "pool") {
       const original = dartElf.readElfSymbols;
       vi.spyOn(dartElf, "readElfSymbols").mockImplementation(
         async (...args) => {
           const value = await original(...args);
-          setImmediate(() => controller.abort());
+          setImmediate(() => controller.abort(reason));
           return value;
+        },
+      );
+    }
+    if (stage === "zip-library") {
+      const original = ZipArtifactReader.prototype.open;
+      vi.spyOn(ZipArtifactReader.prototype, "open").mockImplementation(
+        async function (this: ZipArtifactReader, ...args) {
+          controller.abort(reason);
+          return original.call(this, ...args);
         },
       );
     }
@@ -501,7 +526,7 @@ it.each(["close", "elf", "pool", "cleanup"] as const)(
     const provider = new FlutterBuildProvider({
       removeRoot: async (root) => {
         await rm(root, { recursive: true, force: true });
-        if (stage === "cleanup") controller.abort();
+        if (stage === "cleanup") controller.abort(reason);
       },
     });
     onTestFinished(() => provider.close());
@@ -511,6 +536,9 @@ it.each(["close", "elf", "pool", "cleanup"] as const)(
     );
     if (result.ok) throw new Error("late cancellation must prevent success");
     expect(projectAnalysisError(result.error).code).toBe("cancelled");
+    expect(result.error.cause).toBe(reason);
+    if (stage === "close" || stage === "elf")
+      expect(writerCloseObserved).toBe(true);
   },
 );
 
@@ -1635,39 +1663,158 @@ it("refuses truncated hash-candidate evidence and includes five-character tokens
   expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
 });
 
-it("stops a cancelled descriptor copy before writing its next chunk and releases every owner", async () => {
-  const path = await buildApk("copy-cancel.apk", [
-    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
-  ]);
-  const controller = new AbortController();
-  const nativeAdmission = regularFile.openRegularFile;
-  const admitted = vi
-    .spyOn(regularFile, "openRegularFile")
-    .mockImplementation(async (...args) => {
-      const descriptor = await nativeAdmission(...args);
-      const { handle } = descriptor;
-      const nativeRead = handle.read.bind(handle);
-      vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
-        const result = await nativeRead(...readArgs);
-        controller.abort(new Error("cancelled while copy read was pending"));
-        return result;
-      });
-      return descriptor;
+it.each([
+  { outcome: "fulfilled", reason: { caller: "stop during source copy" } },
+  { outcome: "rejected", reason: { caller: "stop during source copy" } },
+  { outcome: "fulfilled", reason: Number.NaN },
+  { outcome: "rejected", reason: Number.NaN },
+  { outcome: "rejected", reason: 0 },
+] as const)(
+  "preserves a $outcome source copy outcome when cancellation arrives in flight (reason=$reason)",
+  async ({ outcome, reason }) => {
+    const path = await buildApk("copy-cancel.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+    ]);
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("source read failed"), {
+      code: "EIO",
     });
-  onTestFinished(() => admitted.mockRestore());
-  const removeRoot = vi.fn((root: string) =>
-    rm(root, { recursive: true, force: true }),
-  );
-  const provider = new FlutterBuildProvider({ removeRoot });
-  onTestFinished(() => provider.close());
-  const result = await provider.execute(
-    { operation: "identify_flutter_build", input: { path } },
-    { signal: controller.signal },
-  );
-  if (result.ok) throw new Error("Cancelled copying must fail");
-  expect(projectAnalysisError(result.error).code).toBe("cancelled");
-  expect(removeRoot).toHaveBeenCalledTimes(1);
-});
+    const nativeAdmission = regularFile.openRegularFile;
+    const admitted = vi
+      .spyOn(regularFile, "openRegularFile")
+      .mockImplementation(async (...args) => {
+        const descriptor = await nativeAdmission(...args);
+        const { handle } = descriptor;
+        const nativeRead = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+          const result = await nativeRead(...readArgs);
+          controller.abort(reason);
+          if (outcome === "rejected") throw physical;
+          return result;
+        });
+        return descriptor;
+      });
+    onTestFinished(() => admitted.mockRestore());
+    const removeRoot = vi.fn((root: string) =>
+      rm(root, { recursive: true, force: true }),
+    );
+    const provider = new FlutterBuildProvider({ removeRoot });
+    onTestFinished(() => provider.close());
+    const result = await provider.execute(
+      { operation: "identify_flutter_build", input: { path } },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Cancelled copying must fail");
+    if (outcome === "rejected") {
+      expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(physical);
+      const primaryCode = projectAnalysisError(result.error).code;
+      const finalize = (signal: AbortSignal) =>
+        finishAnalysisCommand(
+          async () => result,
+          { close: () => provider.close() },
+          "flutter",
+          "identify_flutter_build",
+          signal,
+        );
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const finalized = await finalize(controller.signal);
+        expect(finalized).toMatchObject({
+          ok: false,
+          error: {
+            code: primaryCode,
+            details: { secondary_failures: [{ code: "cancelled" }] },
+          },
+        });
+        expect(result.error.cause).toBe(physical);
+        expect(result.error.secondaryFailures).toHaveLength(1);
+        expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
+      }
+      if (Object.is(reason, 0)) {
+        const otherCaller = new AbortController();
+        otherCaller.abort(-0);
+        await finalize(otherCaller.signal);
+        expect(result.error.secondaryFailures).toHaveLength(2);
+        expect(Object.is(result.error.secondaryFailures[0]?.cause, 0)).toBe(
+          true,
+        );
+        expect(Object.is(result.error.secondaryFailures[1]?.cause, -0)).toBe(
+          true,
+        );
+        expect(result.error.cause).toBe(physical);
+      }
+    } else {
+      expect(projectAnalysisError(result.error).code).toBe("cancelled");
+      expect(result.error.cause).toBe(reason);
+    }
+    expect(removeRoot).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each(["source", "image"] as const)(
+  "preserves a rejected %s read when the exact physical error is also the abort reason",
+  async (stage) => {
+    const path = await buildApk("same-physical-reason.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+    ]);
+    const originalBytes = await readFile(path);
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("physical read failed"), {
+      code: "EIO",
+    });
+    const rejectRead = (
+      handle: Awaited<ReturnType<typeof fsPromises.open>>,
+    ) => {
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (...args) => {
+        await read(...args);
+        controller.abort(physical);
+        throw physical;
+      });
+    };
+    if (stage === "source") {
+      const original = regularFile.openRegularFile;
+      vi.spyOn(regularFile, "openRegularFile").mockImplementation(
+        async (...args) => {
+          const admitted = await original(...args);
+          rejectRead(admitted.handle);
+          return admitted;
+        },
+      );
+    } else {
+      const original = fsPromises.open;
+      vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+        const handle = await original(...args);
+        if (
+          typeof args[0] === "string" &&
+          args[0].endsWith(`${sep}libapp.so`) &&
+          args[1] === "r"
+        )
+          rejectRead(handle);
+        return handle;
+      });
+    }
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const removeRoot = vi.fn((root: string) =>
+      rm(root, { recursive: true, force: true }),
+    );
+    const provider = new FlutterBuildProvider({ removeRoot });
+    onTestFinished(() => provider.close());
+    const result = await provider.execute(
+      { operation: "inspect_dart_aot", input: { path } },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected a physical read failure");
+    expect(controller.signal.reason).toBe(physical);
+    expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(physical);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(removeRoot).toHaveBeenCalledOnce();
+    expect(await readFile(path)).toEqual(originalBytes);
+  },
+);
 
 it.each([false, true])(
   "reports actual nonempty-root removal failure and resolves its exact error after retry (cancel=%s)",

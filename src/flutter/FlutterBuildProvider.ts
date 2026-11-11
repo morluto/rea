@@ -1,4 +1,8 @@
 import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
+import {
+  artifactFileCancellationCause,
+  assertArtifactReadActive,
+} from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
@@ -158,15 +162,25 @@ const emptyFacts = (): LibraryFacts => ({
   },
 });
 
-/** Translate a ZIP reader rejection into the typed analysis error algebra. */
-const isCancellation = (cause: unknown): boolean =>
-  cause instanceof AnalysisCancelledError ||
-  (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
-  (cause instanceof Error && cause.name === "AbortError") ||
-  (typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR");
+/** Use the producing reader's cancellation facts rather than its wrapper error. */
+const observedCancellation = (
+  cause: unknown,
+  signal?: AbortSignal,
+): { readonly reason: unknown } | undefined => {
+  const file = regularFileCancellation(cause);
+  if (file !== undefined) return file;
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+    return { reason: artifactFileCancellationCause(cause) };
+  if (
+    (cause instanceof Error && cause.name === "AbortError") ||
+    (typeof cause === "object" &&
+      cause !== null &&
+      "code" in cause &&
+      cause.code === "ABORT_ERR")
+  )
+    return { reason: signal?.aborted === true ? signal.reason : cause };
+  return undefined;
+};
 
 const mapInputFailure = (
   operation: string,
@@ -174,13 +188,11 @@ const mapInputFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cancellation = regularFileCancellation(cause);
+  const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
       cause: cancellation.reason,
     });
-  if (isCancellation(cause))
-    return new AnalysisCancelledError(operation, { cause });
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -232,15 +244,14 @@ const mapOwnedIoFailure = (
   operation: string,
   cause: unknown,
   workspacePath: string | null,
+  signal?: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cancellation = regularFileCancellation(cause);
+  const cancellation = observedCancellation(cause, signal);
   if (cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
       cause: cancellation.reason,
     });
-  if (isCancellation(cause))
-    return new AnalysisCancelledError(operation, { cause });
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -396,7 +407,7 @@ export class FlutterBuildProvider {
       root = await mkdtemp(join(tmpdir(), "rea-flutter-"));
     } catch (cause) {
       // No workspace exists yet; the errno path names the attempted template.
-      throw mapOwnedIoFailure(operation, cause, null);
+      throw mapOwnedIoFailure(operation, cause, null, signal);
     }
     this.ownedRoots.set(root, new Set());
     this.rootLeases.set(
@@ -445,7 +456,7 @@ export class FlutterBuildProvider {
       const chunk = Buffer.alloc(64 * 1024);
       let copiedBytes = 0;
       while (copiedBytes <= Number(before.size)) {
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         const { bytesRead } = await readSource(() =>
           source.handle.read(
             chunk,
@@ -454,7 +465,7 @@ export class FlutterBuildProvider {
             copiedBytes,
           ),
         );
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         if (bytesRead === 0) break;
         copiedBytes += bytesRead;
         if (BigInt(copiedBytes) > before.size)
@@ -499,10 +510,7 @@ export class FlutterBuildProvider {
       const sha256 = await sha256File(operation, snapshotPath, signal);
       return { root, path: snapshotPath, bytes: info.size, sha256 };
     } catch (cause) {
-      const primary =
-        signal?.aborted === true
-          ? new AnalysisCancelledError(operation, { cause: signal.reason })
-          : mapOwnedIoFailure(operation, cause, root);
+      const primary = mapOwnedIoFailure(operation, cause, root, signal);
       const released = await this.discardRoot(root);
       if (!released)
         throw this.withCleanup(
@@ -681,7 +689,9 @@ export class FlutterBuildProvider {
         this.executeOwned(request, options),
       );
     } catch (cause) {
-      return err(mapOwnedIoFailure(request.operation, cause, null));
+      return err(
+        mapOwnedIoFailure(request.operation, cause, null, options?.signal),
+      );
     }
   }
 
@@ -742,7 +752,12 @@ export class FlutterBuildProvider {
             );
     } catch (cause) {
       result = err(
-        mapOwnedIoFailure(request.operation, cause, snapshot?.root ?? null),
+        mapOwnedIoFailure(
+          request.operation,
+          cause,
+          snapshot?.root ?? null,
+          signal,
+        ),
       );
     }
     const cleanup =
@@ -1145,7 +1160,11 @@ export class FlutterBuildProvider {
       let total = 0;
       for await (const chunk of stream) {
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError("inspect_dart_aot"));
+          return err(
+            new AnalysisCancelledError("inspect_dart_aot", {
+              cause: signal.reason,
+            }),
+          );
         const view = chunk as Buffer;
         total += view.byteLength;
         if (total > LIBRARY_MAX_BYTES)
@@ -1175,20 +1194,24 @@ export class FlutterBuildProvider {
       );
       while (imageLength < image.length) {
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError("inspect_dart_aot"));
+          return err(
+            new AnalysisCancelledError("inspect_dart_aot", {
+              cause: signal.reason,
+            }),
+          );
         const result = await file.handle.read(
           image,
           imageLength,
           image.length - imageLength,
           null,
         );
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         if (result.bytesRead === 0) break;
         imageLength += result.bytesRead;
       }
       await this.releaseResource(snapshot.root, file);
     }
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const bounded = image.subarray(0, imageLength);
     const symbolNames = [
       "_kDartVmSnapshotData",
@@ -1468,7 +1491,7 @@ const projectStringPool = async (
     let overflowed = false;
     for (let start = 0; start < section.length; start += 64 * 1024) {
       await yieldToEventLoop();
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       for (const byte of section.subarray(start, start + 64 * 1024)) {
         if (byte >= 0x20 && byte < 0x7f) {
           // A single unbounded run (an adversarial NUL-free section) never
@@ -1490,7 +1513,7 @@ const projectStringPool = async (
     }
     if (!overflowed) consider(run);
   }
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   return {
     packageUris: [...packages].sort(),
     packageUriCount: packages.size,
