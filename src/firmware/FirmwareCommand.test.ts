@@ -475,29 +475,31 @@ test.each([
         throw refused;
       },
     );
-    await expect(
-      runFirmwareCommand({
-        resources: createTestArtifactResourceScope(),
-        engine: "unblob",
-        operation: "extract_firmware",
-        command: "/synthetic/unblob",
-        limiter: "/synthetic/prlimit",
-        fileSizeCeiling: inherited,
-        args: [],
-        cwd: root,
-        environment: {},
+    const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      engine: "unblob",
+      operation: "extract_firmware",
+      command: "/synthetic/unblob",
+      limiter: "/synthetic/prlimit",
+      fileSizeCeiling: inherited,
+      args: [],
+      cwd: root,
+      environment: {},
+      signal: new AbortController().signal,
+      deadline: {
+        phase: "analysis",
         signal: new AbortController().signal,
-        deadline: {
-          phase: "analysis",
-          signal: new AbortController().signal,
-          timeoutMs: 120_000,
-          expiresAtMs: performance.now() + 120_000,
-        },
-        launcher,
-        outputBudget: { root, bytes: selected, entries: 10 },
-        retainCleanup: vi.fn(),
-      }),
-    ).rejects.toBe(refused);
+        timeoutMs: 120_000,
+        expiresAtMs: performance.now() + 120_000,
+      },
+      launcher,
+      outputBudget: { root, bytes: selected, entries: 10 },
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ _tag: "ProviderAdapterError" });
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure.cause).toBe(refused);
+    expect(failure.cleanupResources).toEqual([]);
     expect(launcher).toHaveBeenCalledOnce();
   },
 );

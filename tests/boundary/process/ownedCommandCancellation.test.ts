@@ -1,3 +1,4 @@
+import { assertProcessOwnershipInspectionActive } from "../../../src/process/ProcessInspectionCancellation.js";
 import { expect, it } from "vitest";
 import {
   OwnedCommandFailure,
@@ -34,7 +35,7 @@ it.each(
           launches++;
           expect(options.signal?.aborted).toBe(false);
           controller.abort(reason);
-          options.signal?.throwIfAborted();
+          assertProcessOwnershipInspectionActive(options.signal);
           throw new Error("Cancelled preparation must not launch");
         },
       },
