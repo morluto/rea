@@ -943,3 +943,24 @@ it("retains safe auxiliary paths when the direct caller path is unavailable", ()
     }),
   ).toThrow();
 });
+
+describe("evidence authority binding", () => {
+  it("derives missing authority from artifact binding instead of claiming a shipped artifact", () => {
+    const observation = {
+      operation: "procedure_info",
+      parameters: { procedure: "main" },
+      result: { name: "main" },
+    } as const;
+    const unbound = createEvidence(undefined, PROVIDER, observation);
+    expect(unbound.subject).toBeNull();
+    expect(unbound.authority).toBe("analyst-inference");
+    expect(unbound.limitations).toContain(
+      "Artifact identity is unavailable for this observation.",
+    );
+    const declared = createEvidence(undefined, PROVIDER, {
+      ...observation,
+      authority: "external-service",
+    });
+    expect(declared.authority).toBe("external-service");
+  });
+});

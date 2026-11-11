@@ -489,6 +489,12 @@ export function* createImmutableEvidenceSteps(
   });
 }
 
+/** An unbound observation cannot claim a shipped artifact as its authority. */
+const defaultAuthority = (
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+): EvidenceAuthority =>
+  target === undefined ? "analyst-inference" : "shipped-artifact";
+
 /** Borrow input collections for admission; callers account for a missing-subject limitation separately. */
 export const evidenceEnvelopeForAdmission = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
@@ -522,7 +528,7 @@ export const evidenceEnvelopeForAdmission = (
     raw_result: observation.rawResult ?? null,
     normalized_result: observation.result,
     confidence: observation.confidence ?? "observed",
-    authority: observation.authority ?? "shipped-artifact",
+    authority: observation.authority ?? defaultAuthority(target),
     environment: observation.environment ?? null,
     limitations: observation.limitations ?? [],
     ...(observation.relationshipCoverage === undefined
