@@ -1,3 +1,5 @@
+import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
+import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
 import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import type { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
 import type { ProcessSamplingCoverage } from "../../domain/process/processCaptureCoverage.js";
@@ -383,6 +385,8 @@ export const startProcessSampler = (options: {
   const lastObservations = new Map<number, string>();
   let pending: Promise<void> | undefined;
   let stopped = false;
+  const shutdownReason = Symbol("process sampler shutdown");
+  let stopRequested = false;
   let abortCurrent: (() => void) | undefined;
   let limitReached = false;
   let samplingFailures = 0;
@@ -395,7 +399,7 @@ export const startProcessSampler = (options: {
     if (stopped || pending !== undefined) return;
 
     const controller = new AbortController();
-    abortCurrent = () => controller.abort();
+    abortCurrent = () => controller.abort(shutdownReason);
     pending = (async () => {
       let diagnostics = mergeSamplingDiagnostics();
       if (!rootInitialized) {
@@ -449,6 +453,18 @@ export const startProcessSampler = (options: {
       .catch((cause: unknown) => {
         const inspection = options.resourceScope.retainInspectionFailure(cause);
         if (inspection !== undefined) {
+          if (
+            stopRequested &&
+            isProcessOwnershipInspectionCancellation(
+              inspection.inspectionFailure,
+            ) &&
+            processInspectionCancellations(inspection.inspectionFailure).every(
+              (fact) => fact.reason === shutdownReason,
+            )
+          ) {
+            samplingWasInterrupted = true;
+            return;
+          }
           inspectionFailure = inspection;
           stopped = true;
           clearInterval(timer);
@@ -476,6 +492,7 @@ export const startProcessSampler = (options: {
   sample();
 
   return async () => {
+    stopRequested = true;
     stopped = true;
     clearInterval(timer);
     abortCurrent?.();
