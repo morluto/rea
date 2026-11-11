@@ -699,6 +699,33 @@ it("says why no MetadataRegistration or inferred type table was accepted", () =>
   ).toContain("no single code-loaded run of Il2CppType pointers");
 });
 
+it("ignores an unrelated unaligned Mach-O bind during module-array fallback", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.fill(0, 0x600, 0x610);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  const linked = link(bytes);
+  expect(linked.code_gen_modules_field).toBeNull();
+  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+  expect(linked.method_addresses).toEqual(expectedAddresses);
+});
+
+it("ignores an unrelated unaligned Mach-O bind during type-table fallback", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.fill(0, 0x800, 0x880);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});
+
 it("does not let a dyld-bound slot's placeholder decide the type-table run", () => {
   const outcome = (placeholder: bigint) => {
     // The last table slot (0x918) is bound by dyld; its stored word is only a
@@ -1115,6 +1142,11 @@ it.each([0n, FIXTURE_BINARY_BASE + 0x210n])(
     expect(linked.method_addresses[4]).toEqual(expectedAddress("no-body"));
   },
 );
+
+it("ignores unrelated unaligned Mach-O binds while finding module records", () => {
+  const linked = link(createIl2cppDyldBindFixture(0n, 0x704));
+  expect(linked.method_addresses).toEqual(expectedAddresses);
+});
 
 it("keeps unbound Mach-O method words classified from their values", () => {
   const linked = link(createIl2cppBinaryFixture());

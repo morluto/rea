@@ -142,6 +142,13 @@ export function* findModules(
       if ((at & 0xffff) < 8) yield;
       const offset = mapping.offset + at;
       const address = mapping.address + BigInt(at);
+      // Non-ELF images retain their stored bytes. Nominate before decoding so
+      // unrelated partial fixups do not invalidate the module search.
+      if (
+        image.elfPointerOverlay === undefined &&
+        !names.has(image.bytes.readBigUInt64LE(offset))
+      )
+        continue;
       const target = readPointer(image, address);
       if (target === null) continue;
       const indices = names.get(target);
@@ -291,7 +298,11 @@ function* findModuleArrayByCode(
     const lastPosition = new Map<bigint, number>();
     for (let at = start; at + 8 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
-      const value = readPointer(image, mapping.address + BigInt(at));
+      const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
+      const value =
+        image.elfPointerOverlay !== undefined || expected.has(raw)
+          ? readPointer(image, mapping.address + BigInt(at))
+          : null;
       if (value === null || !expected.has(value)) {
         runStart = at + 8;
         lastPosition.clear();
@@ -561,6 +572,17 @@ function* findTypeTableByCode(
       throw cause;
     }
   };
+  const rawTypeCandidate = (address: bigint): boolean => {
+    if (address === 0n || (address & 7n) !== 0n) return false;
+    const offset = recordOffset(address);
+    if (offset < 0) return false;
+    const kind = il2cppTypeKind(image.bytes.readUInt32LE(offset + 8));
+    return (
+      isDefinedTypeKind(kind) &&
+      (!isDefinitionTypeKind(kind) ||
+        image.bytes.readBigUInt64LE(offset) < BigInt(typeDefinitions))
+    );
+  };
   // A run that touches either end of its mapping may continue in a
   // neighbouring one, so its length and start are unknown; it still counts as
   // a candidate but cannot be chosen.
@@ -601,21 +623,26 @@ function* findTypeTableByCode(
       const address = mapping.address + BigInt(at);
       let endUnknown = at + 8 > mapping.size;
       if (!endUnknown) {
-        const slot = readSlot(image, address);
-        const state =
-          typeof slot === "bigint"
-            ? recordState(slot)
-            : slot === "unknown"
-              ? "unknown"
-              : "other";
-        if (state === "type") {
-          if (runStart < 0) {
-            runStart = at;
-            startUnknown = at === start || unresolved(address - 8n);
+        const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
+        if (image.elfPointerOverlay === undefined && !rawTypeCandidate(raw)) {
+          if (runStart >= 0) endUnknown = unresolved(address);
+        } else {
+          const slot = readSlot(image, address);
+          const state =
+            typeof slot === "bigint"
+              ? recordState(slot)
+              : slot === "unknown"
+                ? "unknown"
+                : "other";
+          if (state === "type") {
+            if (runStart < 0) {
+              runStart = at;
+              startUnknown = at === start || unresolved(address - 8n);
+            }
+            continue;
           }
-          continue;
+          endUnknown = state === "unknown";
         }
-        endUnknown = state === "unknown";
       }
       if (runStart >= 0 && (at - runStart) / 8 >= requiredTypes) {
         runs.set(
