@@ -2,6 +2,8 @@ import { unlink, writeFile } from "node:fs/promises";
 import { expect, it as test, vi } from "vitest";
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
+import { systemProcessOwnershipHost } from "../../../../src/process/ProcessOwnershipObservation.js";
+import { ExecFileOutputCancelledError } from "../../../../src/process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -263,9 +265,14 @@ it("keeps caller attribution and the selected path through workspace rollback re
   }
 });
 
-it.each(["clean", "refuse"] as const)(
-  "preserves workspace cancellation and retries its rollback: %s",
-  async (mode) => {
+it.each([
+  { stage: "copy", mode: "clean" },
+  { stage: "copy", mode: "refuse" },
+  { stage: "inspection", mode: "clean" },
+  { stage: "inspection", mode: "refuse" },
+] as const)(
+  "preserves workspace $stage cancellation and retries its $mode rollback",
+  async ({ stage, mode }) => {
     const fixture = await session("rea-kuna-workspace-cancel-");
     const lifetime = new AbortController();
     const reason = { caller: "cancel target copy" };
@@ -285,6 +292,16 @@ it.each(["clean", "refuse"] as const)(
         lifetime.abort(reason);
         return root;
       });
+    const prepare = systemProcessOwnershipHost.prepare;
+    const inspection = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockImplementation(async (signal) => {
+        if (stage === "inspection" && signal === lifetime.signal) {
+          lifetime.abort(reason);
+          throw new ExecFileOutputCancelledError(reason);
+        }
+        await prepare?.(signal);
+      });
     try {
       const result = await commands.prepare();
       if (result.ok) throw new Error("Expected cancelled workspace admission");
@@ -302,6 +319,7 @@ it.each(["clean", "refuse"] as const)(
         expect(result.error.cleanupPrimary).toBe(primary);
       }
     } finally {
+      inspection.mockRestore();
       roots.mockRestore();
       rootClose?.mockRestore();
       expect((await commands.close()).ok).toBe(true);
