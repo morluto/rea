@@ -23,11 +23,12 @@ skipped Python test leaves its behavior unverified.
 
 `update_mode` is `runtime` when `update_analysis_settings` can change the active
 value, `restart` when this process keeps the value it started with, and
-`parameter` when this call supplied the value.
-`pending_restart` is true only when a configured value is not the one this
-process is using. A rejected Windows ChangeTime launch value is not active, so
-that failure reports `pending_restart: true`. Every other value reported here
-is the one in force, so `pending_restart` is false. Prose that only says to
+`parameter` when the budget is adjustable through a per-call argument; `source`
+separately identifies where the reported value came from.
+`pending_restart` is true only when an accepted configured value is not the one
+this process is using. A rejected Windows ChangeTime launch value does not
+establish an accepted configuration, so that failure omits `pending_restart`.
+The other values reported here are in force, so `pending_restart` is false. Prose that only says to
 restart REA is marked `prose`. `mcp_server_restart_required` is a
 server-identity alignment state in `src/serverIdentity.ts`, not a setting field.
 
@@ -94,19 +95,19 @@ floor, and maximum, and the migration reads the accepted snapshot instead of a
 value copied at process start. Until that lands they are `policy: "per-call"` in
 the registry so the static check still requires a reason.
 
-| Environment                                | Owner                                       |                 Default | Floor |    Maximum | Read today                                                                            | Restart field                                                                   |
-| ------------------------------------------ | ------------------------------------------- | ----------------------: | ----: | ---------: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `REA_BRIDGE_MAX_REQUEST_BYTES`             | `src/config/bridgeMaxRequestBytes.ts`       |                16777216 |  7464 |  536870887 | each bridge request, from the launch value                                            | prose                                                                           |
-| `REA_DEBUGGER_COMMAND_DEADLINE_MS`         | `src/domain/analysisResourceLimits.ts`      |                  120000 |     1 | 2147483647 | copied when the debugger manager is constructed; applied to each command              | `update_mode: "restart"` and `pending_restart: false`                           |
-| `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`    | `src/domain/analysisResourceLimits.ts`      |                16777216 |     1 |   89303718 | copied when the debugger manager is constructed; applied to each command              | `update_mode: "restart"` and `pending_restart: false`                           |
-| `REA_HOPPER_CALLER_SCAN_BUDGET_MS`         | `src/domain/analysisResourceLimits.ts`      |                    2000 |     1 | 2147483647 | each caller-scan operation, from config resolved at launch                            | prose                                                                           |
-| `REA_JEB_MCP_TIMEOUT_MS`                   | `src/jeb/JebMcpConnection.ts`               | 60000 (MCP SDK default) |     1 | 2147483647 | captured when the JEB connection is created; applied to discovery and each tools/call | prose                                                                           |
-| `REA_KUNA_PROJECT_TIMEOUT_MS`              | `src/kuna/KunaConfiguration.ts`             |                 1800000 |     1 | 2147483647 | project export and whole-program scans, from the launch configuration                 | prose                                                                           |
-| `REA_KUNA_TIMEOUT_MS`                      | `src/kuna/KunaConfiguration.ts`             |                  120000 |     1 | 2147483647 | each function decompile, from the launch configuration                                | prose                                                                           |
-| `REA_PWNTOOLS_MAX_INPUT_BYTES`             | `src/native/pwntools/PwntoolsInputLimit.ts` |                33554432 |     1 | 1073741824 | each pwntools decode, unless the call passes `producer_limits.input_bytes`            | prose                                                                           |
-| `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`         | `src/config/windowsChangeTimeSettle.ts`     |                    2000 |     1 |      60000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart: true` on an invalid launch value |
-| `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`   | `src/config/windowsChangeTimeSettle.ts`     |                      25 |     1 |       1000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart: true` on an invalid launch value |
-| `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS` | `src/config/windowsChangeTimeSettle.ts`     |                      40 |     1 |       1000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart: true` on an invalid launch value |
+| Environment                                | Owner                                       |                 Default | Floor |    Maximum | Read today                                                                            | Restart field                                                                     |
+| ------------------------------------------ | ------------------------------------------- | ----------------------: | ----: | ---------: | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `REA_BRIDGE_MAX_REQUEST_BYTES`             | `src/config/bridgeMaxRequestBytes.ts`       |                16777216 |  7464 |  536870887 | each bridge request, from the launch value                                            | prose                                                                             |
+| `REA_DEBUGGER_COMMAND_DEADLINE_MS`         | `src/domain/analysisResourceLimits.ts`      |                  120000 |     1 | 2147483647 | copied when the debugger manager is constructed; applied to each command              | `update_mode: "restart"` and `pending_restart: false`                             |
+| `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`    | `src/domain/analysisResourceLimits.ts`      |                16777216 |     1 |   89303718 | copied when the debugger manager is constructed; applied to each command              | `update_mode: "restart"` and `pending_restart: false`                             |
+| `REA_HOPPER_CALLER_SCAN_BUDGET_MS`         | `src/domain/analysisResourceLimits.ts`      |                    2000 |     1 | 2147483647 | each caller-scan operation, from config resolved at launch                            | prose                                                                             |
+| `REA_JEB_MCP_TIMEOUT_MS`                   | `src/jeb/JebMcpConnection.ts`               | 60000 (MCP SDK default) |     1 | 2147483647 | captured when the JEB connection is created; applied to discovery and each tools/call | prose                                                                             |
+| `REA_KUNA_PROJECT_TIMEOUT_MS`              | `src/kuna/KunaConfiguration.ts`             |                 1800000 |     1 | 2147483647 | project export and whole-program scans, from the launch configuration                 | prose                                                                             |
+| `REA_KUNA_TIMEOUT_MS`                      | `src/kuna/KunaConfiguration.ts`             |                  120000 |     1 | 2147483647 | each function decompile, from the launch configuration                                | prose                                                                             |
+| `REA_PWNTOOLS_MAX_INPUT_BYTES`             | `src/native/pwntools/PwntoolsInputLimit.ts` |                33554432 |     1 | 1073741824 | each pwntools decode, unless the call passes `producer_limits.input_bytes`            | prose                                                                             |
+| `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`         | `src/config/windowsChangeTimeSettle.ts`     |                    2000 |     1 |      60000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart` omitted on an invalid launch value |
+| `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`   | `src/config/windowsChangeTimeSettle.ts`     |                      25 |     1 |       1000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart` omitted on an invalid launch value |
+| `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS` | `src/config/windowsChangeTimeSettle.ts`     |                      40 |     1 |       1000 | each ChangeTime observation                                                           | `update_mode: "restart"` and `pending_restart` omitted on an invalid launch value |
 
 ## Restart-only numeric limits
 
