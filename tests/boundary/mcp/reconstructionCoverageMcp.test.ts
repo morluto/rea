@@ -19,6 +19,27 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 
+it("rejects malformed boundary identifiers at the MCP request boundary", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const result = await client.callTool({
+      name: "evaluate_reconstruction_coverage",
+      arguments: {
+        coverage: currentFixtureCoverage(),
+        boundary_id: "replacement cli",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [{ path: ["boundary_id"], reason: "invalid_format" }],
+        },
+      },
+    });
+  });
+});
+
 it("uses the latest listed unknown revision when evaluating a boundary", async () => {
   await withCoverageMcp(async ({ client }) => {
     const base = currentFixtureCoverage();

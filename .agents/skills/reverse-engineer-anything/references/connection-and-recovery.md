@@ -118,19 +118,22 @@ is not a recommendation to change it. Do not invent a setting. Host memory and
 
 ## REA installed as a client plugin
 
-A Claude Code or Codex plugin owns its `rea` server and this skill. Doctor's
-`--client` and `--skill` checks and `rea setup` read and write only
-setup-owned state, so for a plugin-only install they report `missing`, and
-applying setup would add a second `rea` server. If this skill was loaded from
-a plugin, or the client lists a `rea` plugin, do not prepare a setup plan for
-missing tools. Instead:
+A Claude Code, Codex, or Cursor Marketplace plugin owns its `rea` server and
+this skill. Doctor's `--client` and `--skill` checks and `rea setup` read and
+write only setup-owned state, so for a plugin-only install they report
+`missing`, and applying setup would add a second `rea` server. If this skill
+was loaded from a plugin, or the client lists a `rea` plugin, do not prepare a
+setup plan for missing tools. Instead:
 
 - Check that the plugin is installed and enabled with the client's own
   listing: `claude plugin list` and `/mcp` in Claude Code, `codex plugin list`
-  in Codex.
+  in Codex, and Cursor's plugin settings for a Marketplace install.
 - Restart or reconnect the client, then read its launch error for the `rea`
-  server if tools are still absent. The plugin starts its bundled runtime; a missing build or version mismatch
-  requires a reinstall, or a fresh build when developing from source.
+  server if tools are still absent. Claude Code and Codex start the plugin's
+  bundled runtime; a missing build or version mismatch requires a reinstall,
+  or a fresh build when developing from source. A Cursor Marketplace install
+  starts `npx` at the version pinned in the plugin's `mcp.json`. A failed
+  download needs network access to that published version.
 - Check analysis engines through the connected server's
   `binary_session.result.tool_availability`. `rea doctor --provider <id> --json`
   from a shell reports that shell's environment, which can differ from the

@@ -49,7 +49,7 @@ import {
   type FridaOwnedCaptureLimit,
 } from "./fridaCaptureLimits.js";
 import {
-  fridaCapturePolicySchema,
+  resolveFridaCapturePolicy,
   type FridaCapturePolicy,
 } from "../domain/fridaCapturePolicy.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -305,9 +305,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   async #startSession(
     input: StartFridaSessionInput,
   ): Promise<Result<FridaSessionObservation, AnalysisError>> {
-    const policy = fridaCapturePolicySchema.safeParse(
-      input.captureLimits ?? {},
-    );
+    const policy = resolveFridaCapturePolicy(input.captureLimits ?? {});
     if (!policy.success)
       return err(
         analysisInputErrorFromIssues(

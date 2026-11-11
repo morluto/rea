@@ -13,6 +13,7 @@ import {
   type CreateEvidence,
 } from "./environmentStateWriteExplain.js";
 import type { UpdateEvidence } from "./environmentStateWriteChanges.js";
+import { writtenResponse } from "./environmentStateWriteApply.js";
 import {
   callRenewal,
   unexplainedRenewals,
@@ -503,6 +504,35 @@ it.each<[string, string[]]>([
 );
 
 type Shaped = [WriteResponse["shape"], string | null];
+
+it.each([false, true])(
+  "keeps response entity selection distinct from repeated envelope metadata, ambiguous=%s",
+  (ambiguous) => {
+    const recorded = {
+      request_id: "42",
+      data: { id: "42", title: "Captured title" },
+      ...(ambiguous ? { other: { id: "42", title: "Another entity" } } : {}),
+    };
+    const shape = responseShapeOf(3, recorded, false, {
+      idField: "id",
+      id: "42",
+    });
+    expect(
+      writtenResponse(shape, recorded, {
+        id: "43",
+        fields: { id: "43", title: "Authored title" },
+      }),
+    ).toEqual({
+      ok: true,
+      value: ambiguous
+        ? recorded
+        : {
+            request_id: "42",
+            data: { id: "43", title: "Authored title" },
+          },
+    });
+  },
+);
 
 it.each<[string, JsonValue | undefined, boolean, Shaped]>([
   ["no body", undefined, true, ["empty", null]],
