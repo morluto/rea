@@ -157,7 +157,9 @@ export class AnalysisSettings {
       maximum: definition.maximum,
       applies_at: definition.appliesAt,
       update_mode: definition.updateMode,
-      pending_restart: false as const,
+      ...(override === undefined && !launch.ok
+        ? {}
+        : { pending_restart: false as const }),
       provider: definition.provider,
       operations: [...definition.operations],
       ...(definition.environment === undefined
