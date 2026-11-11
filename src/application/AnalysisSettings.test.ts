@@ -14,6 +14,7 @@ import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSna
 import {
   runtimeAnalysisConfig,
   runtimeAsarHeaderAdmission,
+  runtimeCaptureDecoderHeap,
 } from "../config/runtimeAnalysisSettings.js";
 import { parseConfig } from "../config/parseConfig.js";
 
@@ -390,4 +391,76 @@ it("keeps the Hopper startup deadline source through a runtime override", () => 
     expect(live.hopperStartupTimeoutMs).toBe(8000);
     expect(live.hopperStartupTimeoutSource).toBe("runtime");
   });
+});
+
+it("retains invalid ASAR seeds across long-lived views and override resets", async () => {
+  const environment = {
+    REA_ASAR_MAX_HEADER_BYTES: "invalid",
+    REA_ASAR_MAX_LISTING_BYTES: "invalid",
+  };
+  const store = new AnalysisSettings(environment);
+  const admission = runtimeAsarHeaderAdmission(environment, store.read);
+  expect(() => admission.maximumBytes).toThrow("REA_ASAR_MAX_HEADER_BYTES");
+  expect(() => admission.listing?.source).toThrow("REA_ASAR_MAX_LISTING_BYTES");
+  store.update({
+    changes: [
+      { setting: "asar.max_header_bytes", action: "set", value: 8192 },
+      { setting: "asar.max_listing_bytes", action: "set", value: 4096 },
+    ],
+  });
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const accepted = store.run(async () => {
+    await barrier;
+    expect(admission).toMatchObject({
+      maximumBytes: 8192,
+      source: "runtime",
+      listing: { maximumBytes: 4096, source: "runtime" },
+    });
+  });
+  store.update({
+    changes: [
+      { setting: "asar.max_header_bytes", action: "reset" },
+      { setting: "asar.max_listing_bytes", action: "reset" },
+    ],
+  });
+  release();
+  await accepted;
+  for (const read of [() => admission.maximumBytes, () => admission.source])
+    expect(read).toThrow("REA_ASAR_MAX_HEADER_BYTES");
+  for (const read of [
+    () => admission.listing?.maximumBytes,
+    () => admission.listing?.source,
+  ])
+    expect(read).toThrow("REA_ASAR_MAX_LISTING_BYTES");
+});
+
+it("retains an invalid capture heap seed through override and reset", () => {
+  const environment = { REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "invalid" };
+  const store = new AnalysisSettings(environment);
+  const heap = runtimeCaptureDecoderHeap(environment, store.read);
+  expect(() => heap.oldGenerationMiB).toThrow(
+    "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
+  );
+  store.update({
+    changes: [
+      {
+        setting: "capture.decoder_old_generation_mib",
+        action: "set",
+        value: 64,
+      },
+    ],
+  });
+  expect(heap).toMatchObject({ oldGenerationMiB: 64, source: "runtime" });
+  store.update({
+    changes: [
+      { setting: "capture.decoder_old_generation_mib", action: "reset" },
+    ],
+  });
+  expect(() => heap.oldGenerationMiB).toThrow(
+    "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
+  );
+  expect(() => heap.source).toThrow("REA_CAPTURE_DECODER_OLD_GENERATION_MIB");
 });

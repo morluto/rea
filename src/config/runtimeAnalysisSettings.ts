@@ -11,17 +11,13 @@ import {
   DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
   DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
 } from "../domain/analysisResourceLimits.js";
+import { parseAsarListingAdmission } from "./asarListingAdmission.js";
 import {
-  parseAsarListingAdmission,
-  DEFAULT_ASAR_LISTING_ADMISSION,
-} from "./asarListingAdmission.js";
-import {
-  DEFAULT_ASAR_HEADER_ADMISSION,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
 } from "./asarHeaderAdmission.js";
 import {
-  resolveCaptureDecoderHeap,
+  parseCaptureDecoderHeap,
   type CaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
 import {
@@ -172,78 +168,70 @@ export const runtimeAsarHeaderAdmission = (
   const parsed = parseAsarHeaderAdmission(
     environment.REA_ASAR_MAX_HEADER_BYTES,
   );
-  const headerOverride =
-    read?.().overrides["asar.max_header_bytes"] ??
-    currentAnalysisSettingOverride("asar.max_header_bytes");
-  if (!parsed.ok && headerOverride === undefined) throw parsed.error;
   const listing = parseAsarListingAdmission(
     environment.REA_ASAR_MAX_LISTING_BYTES,
   );
-  const listingOverride =
-    read?.().overrides["asar.max_listing_bytes"] ??
-    currentAnalysisSettingOverride("asar.max_listing_bytes");
-  if (!listing.ok && listingOverride === undefined) throw listing.error;
-  const baseline = parsed.ok ? parsed.value : DEFAULT_ASAR_HEADER_ADMISSION;
-  const listingBaseline = listing.ok
-    ? listing.value
-    : DEFAULT_ASAR_LISTING_ADMISSION;
-  return read === undefined
-    ? {
-        maximumBytes: headerOverride ?? baseline.maximumBytes,
-        source: headerOverride === undefined ? baseline.source : "runtime",
-        listing: {
-          maximumBytes: listingOverride ?? listingBaseline.maximumBytes,
-          source:
-            listingOverride === undefined ? listingBaseline.source : "runtime",
-        },
-      }
-    : {
-        listing: {
-          get maximumBytes() {
-            return (
-              read().overrides["asar.max_listing_bytes"] ??
-              listingBaseline.maximumBytes
-            );
-          },
-          get source() {
-            return read().overrides["asar.max_listing_bytes"] === undefined
-              ? listingBaseline.source
-              : "runtime";
-          },
-        },
-        get maximumBytes() {
-          return (
-            read().overrides["asar.max_header_bytes"] ?? baseline.maximumBytes
-          );
-        },
-        get source() {
-          return read().overrides["asar.max_header_bytes"] === undefined
-            ? baseline.source
-            : "runtime";
-        },
-      };
+  const header = () => {
+    const override =
+      read?.().overrides["asar.max_header_bytes"] ??
+      currentAnalysisSettingOverride("asar.max_header_bytes");
+    if (override !== undefined)
+      return { maximumBytes: override, source: "runtime" as const };
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
+  };
+  const expandedListing = () => {
+    const override =
+      read?.().overrides["asar.max_listing_bytes"] ??
+      currentAnalysisSettingOverride("asar.max_listing_bytes");
+    if (override !== undefined)
+      return { maximumBytes: override, source: "runtime" as const };
+    if (!listing.ok) throw listing.error;
+    return listing.value;
+  };
+  if (read === undefined) return { ...header(), listing: expandedListing() };
+  return {
+    get maximumBytes() {
+      return header().maximumBytes;
+    },
+    get source() {
+      return header().source;
+    },
+    listing: {
+      get maximumBytes() {
+        return expandedListing().maximumBytes;
+      },
+      get source() {
+        return expandedListing().source;
+      },
+    },
+  };
 };
 export const runtimeCaptureDecoderHeap = (
   environment: Readonly<Record<string, string | undefined>>,
   read?: AnalysisSettingsReader,
 ): CaptureDecoderHeap => {
-  const baseline = resolveCaptureDecoderHeap(environment);
-  return read === undefined
-    ? baseline
-    : {
-        get oldGenerationMiB() {
-          return (
-            read().overrides["capture.decoder_old_generation_mib"] ??
-            baseline.oldGenerationMiB
-          );
-        },
-        get source() {
-          return read().overrides["capture.decoder_old_generation_mib"] ===
-            undefined
-            ? baseline.source
-            : "runtime";
-        },
-      };
+  const parsed = parseCaptureDecoderHeap(
+    environment.REA_CAPTURE_DECODER_OLD_GENERATION_MIB,
+  );
+  const effective = () => {
+    const override =
+      read?.().overrides["capture.decoder_old_generation_mib"] ??
+      currentAnalysisSettingOverride("capture.decoder_old_generation_mib");
+    if (override !== undefined)
+      return { oldGenerationMiB: override, source: "runtime" as const };
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
+  };
+  if (read === undefined) return effective();
+  return {
+    get oldGenerationMiB() {
+      return effective().oldGenerationMiB;
+    },
+    get source() {
+      return effective().source;
+    },
+  };
 };
 /**
  * Resolve the accepted operation's allowance on each call. An invalid launch
