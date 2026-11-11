@@ -1,3 +1,4 @@
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { dirname } from "node:path";
 import { expect, it } from "vitest";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
@@ -12,9 +13,10 @@ import {
 } from "../process/ProcessInspectionCancellation.js";
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 
-it.each([false, true])(
-  "retains exact descriptor cleanup and its workspace association (batch: %s)",
-  async (batch) => {
+it.each(["direct", "batch", "command"] as const)(
+  "retains exact descriptor cleanup and its workspace association (boundary: %s)",
+  async (boundary) => {
+    const batch = boundary === "batch";
     const descriptor = await failedInspectionDescriptor();
     const commands = new ApktoolCommandCleanup();
     const root = dirname(descriptor.failure.path);
@@ -31,7 +33,11 @@ it.each([false, true])(
           ],
           new Map(),
         )
-      : descriptor.failure;
+      : boundary === "command"
+        ? new OwnedCommandFailure("process", "inspection failed", null, null, {
+            preparationFailure: descriptor.failure,
+          })
+        : descriptor.failure;
     const primary = new ProviderAdapterError(
       "apktool",
       "decode_android_resources",

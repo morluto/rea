@@ -1,4 +1,7 @@
-import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
+import {
+  bindProcessInspectionCancellations,
+  processInspectionFailure,
+} from "../providers/OwnedCommandCleanup.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -61,7 +64,9 @@ export class ApktoolCommandCleanup {
   ): AnalysisError {
     const retained: CommandOwner[] = [];
     const command = cause instanceof OwnedCommandFailure ? cause : undefined;
-    for (const preparation of processInspectionCleanupFailures(cause)) {
+    for (const preparation of processInspectionCleanupFailures(
+      processInspectionFailure(cause),
+    )) {
       if (preparation instanceof RegularFileCleanupFailure) {
         const cleanup = new ProviderCleanupError(
           "apktool",

@@ -114,7 +114,7 @@ it("drains every exact mixed-batch owner and keeps partial observations and phys
   expect(error.cleanupIncomplete).toBe(false);
 });
 
-it.each(["descriptor", "batch", "darwin"] as const)(
+it.each(["descriptor", "batch", "darwin", "command"] as const)(
   "retains a scratch folder until its %s inspection owner confirms close",
   async (kind) => {
     const root = await createTestTempDirectory("rea-inspection-scratch-");
@@ -124,19 +124,30 @@ it.each(["descriptor", "batch", "darwin"] as const)(
     const failure =
       kind === "descriptor"
         ? file.failure
-        : kind === "batch"
-          ? new ProcessOwnershipIdentityBatchFailure(
-              [{ pid: 42, requestIndex: 0, cause: file.failure }],
-              new Map(),
+        : kind === "command"
+          ? new OwnedCommandFailure(
+              "process",
+              "inspection failed",
+              null,
+              null,
+              { preparationFailure: file.failure },
             )
-          : new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
-              cleanupOwner: file.failure.owner,
-              cleanupFailure: new ProviderCleanupError(
-                "fixture",
-                [file.path],
-                {},
-              ),
-            });
+          : kind === "batch"
+            ? new ProcessOwnershipIdentityBatchFailure(
+                [{ pid: 42, requestIndex: 0, cause: file.failure }],
+                new Map(),
+              )
+            : new DarwinProcessOwnershipInspectionError(
+                "helper cleanup failed",
+                {
+                  cleanupOwner: file.failure.owner,
+                  cleanupFailure: new ProviderCleanupError(
+                    "fixture",
+                    [file.path],
+                    {},
+                  ),
+                },
+              );
     const owner = new RetainedCommandCleanup(folder, failure);
     expect(owner.hasPendingCommandResources).toBe(true);
     await expect(owner.close()).rejects.toBeDefined();
