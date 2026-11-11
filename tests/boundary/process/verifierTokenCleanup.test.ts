@@ -14,7 +14,7 @@ import type {
   ProcessTableEntry,
 } from "../../../src/process/ProcessOwnership.js";
 
-it("rejects a token-owned survivor after it is reparented outside the verifier tree", async () => {
+it("checks registered runs before and after live ownership is retained", async () => {
   const launcher: ProcessTableEntry = {
     pid: 100,
     parentPid: 50,
@@ -36,6 +36,17 @@ it("rejects a token-owned survivor after it is reparented outside the verifier t
     state: "S",
     command: "unrelated",
   };
+  const wrapper: ProcessTableEntry = {
+    ...launcher,
+    pid: 101,
+    parentPid: launcher.pid,
+    command: "MCP wrapper",
+  };
+  const tokens = new Map([
+    [orphan.pid, "provider-run"],
+    [foreign.pid, "foreign-run"],
+    [wrapper.pid, "owned-run"],
+  ]);
   let rows = [launcher];
   const close = vi.fn();
   const host: ProcessOwnershipHost = {
@@ -44,21 +55,12 @@ it("rejects a token-owned survivor after it is reparented outside the verifier t
     close,
     captureBaseline: async () => [{ pid: launcher.pid, identity: "start:100" }],
     listProcesses: async () => rows,
-    environment: async (pid) =>
-      pid === orphan.pid ? { REA_PROCESS_RUN_ID: "provider-run" } : {},
+    environment: async () => ({}),
     runTokens: async (selected) =>
       new Map(
         selected.map(({ pid }) => [
           pid,
-          {
-            state: "readable",
-            runId:
-              pid === orphan.pid
-                ? "provider-run"
-                : pid === foreign.pid
-                  ? "foreign-run"
-                  : undefined,
-          } as const,
+          { state: "readable", runId: tokens.get(pid) } as const,
         ]),
       ),
     processIdentities: async (selected) =>
@@ -88,18 +90,39 @@ it("rejects a token-owned survivor after it is reparented outside the verifier t
     { run_id: "owned-run", verifier_pid: 100, parent_pid: 50 },
     host,
   );
-  await expect(cleanup.retainProviderRun("owned-run")).rejects.toThrow(
-    "its own run",
-  );
-  await expect(cleanup.retainProviderRun("")).rejects.toThrow(
+  expect(() => cleanup.registerProviderRun("owned-run")).toThrow("its own run");
+  expect(() => cleanup.registerProviderRun("")).toThrow(
     "receipt is unavailable",
   );
+  await expect(cleanup.retainProviderRun("provider-run")).rejects.toThrow(
+    "was not registered",
+  );
+  cleanup.registerProviderRun("provider-run");
+  expect(() => cleanup.registerProviderRun("provider-run")).toThrow(
+    "already registered",
+  );
+  rows = [launcher, wrapper, foreign];
+  expect((await cleanup.verify()).runs).toMatchObject([
+    { run_id: "owned-run", result: { cleaned: false } },
+    { run_id: "provider-run", result: { cleaned: true } },
+  ]);
   rows = [launcher, orphan, foreign];
   expect(rows.filter(({ parentPid }) => parentPid === launcher.pid)).toEqual(
     [],
   );
-  // The old outer-token-only sweep misses the real provider token.
-  expect(await cleanup.verify()).toMatchObject({ cleaned: true });
+  expect(await cleanup.verify()).toMatchObject({
+    cleaned: false,
+    runs: [
+      { run_id: "owned-run", result: { cleaned: true } },
+      {
+        run_id: "provider-run",
+        result: {
+          cleaned: false,
+          reason: "token-owned process remained after cleanup",
+        },
+      },
+    ],
+  });
   await cleanup.retainProviderRun("provider-run");
   expect(await cleanup.verify()).toMatchObject({
     cleaned: false,
@@ -107,9 +130,14 @@ it("rejects a token-owned survivor after it is reparented outside the verifier t
   });
   rows = [launcher, foreign];
   expect(await cleanup.verify()).toMatchObject({ cleaned: true });
+  cleanup.registerProviderRun("unobserved-provider-run");
   await expect(
     cleanup.retainProviderRun("unobserved-provider-run"),
   ).rejects.toThrow("No token-verified process ownership");
+  expect((await cleanup.verify()).runs).toContainEqual({
+    run_id: "unobserved-provider-run",
+    result: { cleaned: true, signaled: false },
+  });
   await cleanup.close();
   expect(close).toHaveBeenCalledOnce();
   expect(host.signalGroup).not.toHaveBeenCalled();
@@ -133,7 +161,7 @@ it("closes the inspection host when baseline ownership cannot be established", a
 });
 
 it.runIf(process.platform !== "win32")(
-  "retains the token installed by the production provider launcher after its parent exits",
+  "detects a predeclared provider orphan without capturing live ownership",
   async () => {
     const run = {
       run_id: randomUUID(),
@@ -142,10 +170,19 @@ it.runIf(process.platform !== "win32")(
     };
     const providerRun = randomUUID();
     const host = createSystemProcessOwnershipHost();
-    const cleanup = await prepareVerifierTokenCleanup(run, host);
     let orphanPid: number | undefined;
+    const cleanup = await prepareVerifierTokenCleanup(run, {
+      ...host,
+      // Isolate the fixture's rows from unrelated host churn while retaining
+      // the real baseline and native identity and token observations.
+      listProcesses: async (signal) =>
+        (await host.listProcesses(signal)).filter(
+          ({ pid }) => pid === run.verifier_pid || pid === orphanPid,
+        ),
+    });
     let orphanIdentity: ProcessIdentityObservation | undefined;
     try {
+      cleanup.registerProviderRun(providerRun);
       const code = `const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setTimeout(()=>{},15000)'],{detached:true,stdio:'ignore',env:process.env});process.stdout.write(JSON.stringify({run_id:process.env.REA_PROCESS_RUN_ID,pid:child.pid}));child.unref();`;
       const launched = await spawnOwnedProviderProcess({
         command: process.execPath,
@@ -169,15 +206,13 @@ it.runIf(process.platform !== "win32")(
       expect(receipt.run_id).toBe(providerRun);
       expect(receipt.run_id).not.toBe(run.run_id);
       expect(orphanIdentity?.state).toBe("readable");
-      // This is the original false green: the wrapper token is absent, but
-      // the reparented provider process still owns its distinct native token.
-      expect(await cleanup.verify()).toMatchObject({ cleaned: true });
-      await cleanup.retainProviderRun(receipt.run_id, {
-        leaderPid: launched.ownership.leaderPid,
-        processGroupId: launched.ownership.processGroupId,
-      });
+      // No live retention: the first provider operation can fail before the
+      // verifier can capture process coordinates or retain native identities.
       const result = await cleanup.verify();
       expect(result).toMatchObject({ cleaned: false });
+      expect(
+        result.runs.find(({ run_id }) => run_id === run.run_id)?.result,
+      ).toMatchObject({ cleaned: true });
       expect(
         result.runs.find(({ run_id }) => run_id === providerRun)?.result,
       ).toMatchObject({

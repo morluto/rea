@@ -16,12 +16,13 @@ Ghidra dossiers and exact loaded bytes. The verifier checks the imported
 `MIPS:LE:32:default` and `MIPS:BE:32:default` language IDs through
 `inspect_native_load_image` and records the observed ID for each control.
 MIPS I instruction-subset and load-delay semantics remain unverified. Supply
-existing Ghidra/Java and GNU readelf (`REA_READELF`). Source hashes are checked
-after inspection, and no target is executed. Cleanup checks process lineage and
-an independent run-token sweep using each provider run ID retained from
-`binary_session` before closing the target. Ghidra overrides the outer verifier
-token with that session ID; checking the outer token alone cannot detect a
-reparented engine.
+existing Ghidra/Java and GNU readelf (`REA_MIPS_READELF`). Source hashes are
+checked after inspection, and no target is executed. Cleanup checks process
+lineage and an independent run-token sweep. The verifier registers each provider
+run ID from `binary_session` before the first analysis call and retains live
+ownership facts after successful analysis. Ghidra uses that session ID as its
+process token, so the sweep can detect a reparented engine even when analysis
+fails.
 
 ELF `EM_MIPS` is retained as the provider-neutral `mips` family. The target also
 retains class, byte order, `e_type`, raw `e_flags`, and inspected ABI declarations.

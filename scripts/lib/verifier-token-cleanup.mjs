@@ -19,30 +19,33 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
     );
     if (launcher === undefined)
       throw new Error("Verifier launcher is absent from the process snapshot");
-    const relations = new Map();
-    const retain = (runId, providerScope) => {
-      if (typeof runId !== "string" || runId.length === 0)
-        throw new Error("Provider run ownership receipt is unavailable");
-      if (!relations.has(runId))
-        relations.set(runId, {
-          leaderPid: providerScope?.leaderPid ?? run.verifier_pid,
-          processGroupId:
-            providerScope?.processGroupId ?? launcher.processGroupId,
-          ...(providerScope?.sampledProcessGroupIds === undefined
-            ? {}
-            : { sampledProcessGroupIds: providerScope.sampledProcessGroupIds }),
+    const relations = new Map([
+      [
+        run.run_id,
+        {
+          leaderPid: run.verifier_pid,
+          processGroupId: launcher.processGroupId,
           evidenceOwner: new ProcessOwnershipEvidenceOwner(),
-        });
-    };
-    retain(run.run_id);
+        },
+      ],
+    ]);
     return {
-      retainProviderRun: async (runId, providerScope) => {
+      registerProviderRun: (runId) => {
         if (typeof runId !== "string" || runId.length === 0)
           throw new Error("Provider run ownership receipt is unavailable");
         if (runId === run.run_id)
           throw new Error(
             "Provider receipt must identify its own run, not the verifier run",
           );
+        if (relations.has(runId))
+          throw new Error(`Provider run ${runId} is already registered`);
+        // The run can be known before its lazy launcher starts. An unscoped
+        // canonical sweep checks its token without assuming wrapper ancestry.
+        relations.set(runId, undefined);
+      },
+      retainProviderRun: async (runId, providerScope) => {
+        if (!relations.has(runId) || runId === run.run_id)
+          throw new Error(`Provider run ${runId} was not registered`);
         if (providerScope === undefined) {
           // Discovery proves presence only. Identity/token/identity reads then
           // establish scope anchors; the final canonical sweep proves cleanup.
@@ -73,8 +76,11 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
             ],
           };
         }
-        retain(runId, providerScope);
-        const relation = relations.get(runId);
+        const relation = relations.get(runId) ?? {
+          ...providerScope,
+          evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+        };
+        relations.set(runId, relation);
         const active = await verifyNoTokenOwnedProcesses(
           runId,
           host,

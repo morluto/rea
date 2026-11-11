@@ -89,7 +89,7 @@ try {
     const gnuPath = join(root, `gnu-fp-${byteOrder}.elf`);
     await writeFile(gnuPath, gnu);
     const { stdout: attributes } = await execute(
-      process.env.REA_READELF ?? "readelf",
+      process.env.REA_MIPS_READELF ?? "readelf",
       ["-A", gnuPath],
       { env: { PATH: env.PATH, LC_ALL: "C" } },
     );
@@ -105,6 +105,16 @@ try {
       client.callTool({ name, arguments: args }, { timeout: 240_000 });
     const call = async (name, args = {}) =>
       requireMcpOperationResult(await invoke(name, args), name);
+    const currentGhidraRun = async () => {
+      const status = await call("binary_session");
+      assert.equal(status.open, true);
+      assert.equal(status.analysis_provider_binding?.provider.id, "ghidra");
+      assert.ok(
+        status.analysis_run,
+        "Ghidra session run receipt is unavailable",
+      );
+      return status.analysis_run;
+    };
     try {
       await client.connect(transport);
       for (const [path, pattern] of [
@@ -149,7 +159,10 @@ try {
         [recordlessMips1Path, recordlessMips1],
       ]) {
         await call("open_binary", { path, provider_id: "ghidra" });
-        // Composite open/health does not launch Ghidra; analyze_function does.
+        // The session ID is authoritative before analyze_function can launch
+        // Ghidra. Its token stays in the sweep even if that first call fails.
+        const providerRunId = (await currentGhidraRun()).run_id;
+        cleanup.registerProviderRun(providerRunId);
         const dossier = functionDossierSchema.parse(
           await call("analyze_function", {
             procedure: original.entry,
@@ -157,16 +170,11 @@ try {
           }),
         );
         assert.ok(dossier.pseudocode.length > 0);
-        const status = await call("binary_session");
-        assert.equal(status.analysis_provider_binding?.provider.id, "ghidra");
-        assert.equal(typeof status.analysis_run?.run_id, "string");
-        // The session owner generated this ID, and the launcher installs it on
-        // Ghidra in place of the surrounding verifier's process-run token.
-        assert.equal(status.open, true);
-        const providerLineage =
-          status.analysis_run.process_lineage.snapshots?.find(
-            ({ provider }) => provider.id === "ghidra",
-          )?.observation;
+        const activeRun = await currentGhidraRun();
+        assert.equal(activeRun.run_id, providerRunId);
+        const providerLineage = activeRun.process_lineage.snapshots?.find(
+          ({ provider }) => provider.id === "ghidra",
+        )?.observation;
         const providerScope =
           providerLineage?.status === "verified"
             ? {
@@ -179,16 +187,13 @@ try {
             : undefined;
         // Capture native token-verified identities while the provider is live;
         // A public lineage snapshot is optional; native ownership is mandatory.
-        await cleanup.retainProviderRun(
-          status.analysis_run.run_id,
-          providerScope,
-        );
+        await cleanup.retainProviderRun(providerRunId, providerScope);
         const image = await call("inspect_native_load_image");
         assertMipsLoadedImage(image.observations, byteOrder, digest(expected));
         providerRuns.push({
           control:
             path === legacyPath ? "recordless_mips32" : "recordless_mips1",
-          run_id: status.analysis_run.run_id,
+          run_id: providerRunId,
           language_id: image.observations.language_id,
           ...(providerScope === undefined
             ? { public_lineage: "not_observed" }

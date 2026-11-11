@@ -9,7 +9,9 @@ export function prepareVerifierTokenCleanup(
   run: VerifierRunStart,
   suppliedHost?: ProcessOwnershipHost,
 ): Promise<{
-  /** Retain a validated provider-owned receipt before closing its session. */
+  /** Register a validated provider run ID before any operation can start it. */
+  registerProviderRun(runId: string): void;
+  /** Retain verified live ownership for a registered provider run. */
   retainProviderRun(
     runId: string,
     providerScope?: {
