@@ -114,11 +114,13 @@ it("retries after final source verification fails without publishing its metadat
     })
     .mockRejectedValueOnce(new Error("final source verification failed"));
   try {
-    await expect(reader.entries().next()).rejects.toThrow(
-      "final source verification failed",
-    );
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toThrow("final source verification failed");
     expect(reader.formatMetadata()).toBeUndefined();
-    await expect(reader.entries().next()).resolves.toMatchObject({
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).resolves.toMatchObject({
       done: true,
     });
     expect(reader.formatMetadata()).toMatchObject({
