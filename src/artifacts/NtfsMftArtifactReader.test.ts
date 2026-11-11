@@ -106,7 +106,7 @@ it("reports incomplete coverage when FILE extents contradict the record slots", 
   );
   expect(inventory.coverage.status).toBe("unknown");
   expect(inventory.limitations).toContainEqual(
-    "2 FILE record(s) declare inconsistent used or total byte counts, beginning at offset 0",
+    "2 FILE record(s) declare inconsistent record extents, beginning at offset 0",
   );
   expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
     record_count: 2,

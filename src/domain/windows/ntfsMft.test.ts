@@ -56,9 +56,11 @@ const recordOf = (options: RecordOptions = {}): Uint8Array => {
 
   view.setUint16(16, sequenceNumber, true);
   view.setUint16(18, options.hardLinkCount ?? 1, true);
-  view.setUint16(20, 56, true);
+  const firstAttributeOffset =
+    Math.ceil((48 + Math.max(0, usaEntries) * 2) / 8) * 8;
+  view.setUint16(20, firstAttributeOffset, true);
   view.setUint16(22, options.flags ?? 0x0001, true);
-  view.setUint32(24, 56, true);
+  view.setUint32(24, firstAttributeOffset, true);
   view.setUint32(28, recordBytes, true);
   view.setBigUint64(32, options.baseRecordReference ?? 0n, true);
   view.setUint16(40, 0, true);
@@ -120,6 +122,18 @@ describe("MFT header facts", () => {
       unknownMask: 0x8000,
     });
   });
+
+  it.each([0, 49, 64])(
+    "reports an invalid first attribute offset %i",
+    (offset) => {
+      const record = recordOf();
+      new DataView(record.buffer).setUint16(20, offset, true);
+      const parsed = parseMftImage(record);
+      if (!parsed.ok) throw new Error(parsed.error.message);
+      expect(parsed.value.records[0]?.extentValid).toBe(false);
+      expect(parsed.value.limitations.join(" ")).toContain("inconsistent");
+    },
+  );
 
   it("keeps the inline header window separate from the parsed record count", () => {
     const parsed = parseMftImage(
