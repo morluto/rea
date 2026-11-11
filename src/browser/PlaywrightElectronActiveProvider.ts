@@ -4,6 +4,7 @@ import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -20,7 +21,10 @@ import type {
   ElectronActiveObservationPort,
 } from "../application/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -220,11 +224,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         options.signal,
       );
       capture = projectElectronActiveCapture(paths, actions, state);
-      // Preserve a cancellation already observed before finalization so a
-      // later cleanup failure keeps its cause. Late cancellation is checked below.
-      outcome = options.signal?.aborted
-        ? err(cancelledCapture(capture, options.signal.reason))
-        : ok(capture);
+      outcome = ok(capture);
     } catch (cause: unknown) {
       if (paths !== undefined && initialState !== undefined) {
         const retainedCapture = projectElectronActiveCapture(
@@ -240,43 +240,30 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         };
       }
-      if (cause instanceof AnalysisError && cause.cleanupIncomplete) {
-        if (capture !== undefined)
-          cause.retainPartialObservation({
-            kind: "electron-active-observation",
-            capture,
-          });
-        outcome = err(cause);
-      } else if (options.signal?.aborted === true)
-        outcome = err(
-          new BrowserObservationError(OPERATION, "cancelled", {
-            ...cancellationCause(cause, options.signal),
-            ...(capture === undefined
-              ? {}
-              : {
-                  partialObservation: {
-                    kind: "electron-active-observation" as const,
-                    capture,
-                  },
-                }),
-          }),
-        );
-      else {
-        const error = providerError(cause);
-        if (capture !== undefined)
-          error.retainPartialObservation({
-            kind: "electron-active-observation",
-            capture,
-          });
-        outcome = err(error);
-      }
+      const error =
+        options.signal?.aborted === true &&
+        cause instanceof AnalysisError &&
+        !cause.cleanupIncomplete &&
+        (cause instanceof AnalysisCancelledError ||
+          cause.userCategory === "cancelled")
+          ? new BrowserObservationError(OPERATION, "cancelled", {
+              cause: options.signal.reason,
+              diagnostics: cause.diagnostics,
+              capturedOutput: cause.capturedOutput,
+            })
+          : providerError(cause);
+      if (capture !== undefined)
+        error.retainPartialObservation({
+          kind: "electron-active-observation",
+          capture,
+        });
+      outcome = err(error);
     }
     if (application !== undefined) {
       const owner = new ElectronCaptureCleanup(application, ownership, lineage);
       const released = await owner.release(this.#resources);
       const cleanup = owner.processResult;
-      if (outcome.ok && options.signal?.aborted === true)
-        outcome = err(cancelledCapture(outcome.value, options.signal.reason));
+      outcome = captureOutcomeWithCancellation(outcome, options.signal);
       if (
         released.processes.kind === "failed" ||
         released.transport.kind === "failed"
@@ -347,11 +334,27 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     }
     // Cleanup failures returned above keep precedence; a completed capture
     // observed under late cancellation is retained as partial Evidence.
-    if (outcome.ok && options.signal?.aborted === true)
-      return err(cancelledCapture(outcome.value, options.signal.reason));
-    return outcome;
+    return captureOutcomeWithCancellation(outcome, options.signal);
   }
 }
+
+/** Keep existing failures and their cleanup owners when cancellation arrives later. */
+const captureOutcomeWithCancellation = (
+  outcome: Result<ElectronActiveObservationResult, AnalysisError>,
+  signal: AbortSignal | undefined,
+): Result<ElectronActiveObservationResult, AnalysisError> => {
+  if (signal?.aborted !== true) return outcome;
+  if (outcome.ok) return err(cancelledCapture(outcome.value, signal.reason));
+  const primary = primaryAnalysisError(outcome.error);
+  if (primary.userCategory === "cancelled" && primary.cause === signal.reason)
+    return outcome;
+  return err(
+    analysisErrorWithCancellation(
+      outcome.error,
+      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+    ),
+  );
+};
 
 const cancelledCapture = (
   capture: ElectronActiveObservationResult,
@@ -361,28 +364,6 @@ const cancelledCapture = (
     cause: reason,
     partialObservation: { kind: "electron-active-observation", capture },
   });
-
-/**
- * A cancellation wrapper stands in for the caller's abort reason and keeps its
- * producer diagnostics; any other failure observed with cancellation stays the
- * primary cause.
- */
-const cancellationCause = (
-  cause: unknown,
-  signal: AbortSignal,
-): {
-  readonly cause: unknown;
-  readonly diagnostics?: AnalysisError["diagnostics"];
-} =>
-  cause instanceof AnalysisCancelledError ||
-  (cause instanceof AnalysisError && cause.userCategory === "cancelled")
-    ? {
-        cause: signal.reason,
-        ...(cause.diagnostics === undefined
-          ? {}
-          : { diagnostics: cause.diagnostics }),
-      }
-    : { cause };
 
 export const safeElectronEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
