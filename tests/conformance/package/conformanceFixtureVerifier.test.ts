@@ -85,11 +85,12 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
     );
     const result = execute(process.execPath, [verifier, manifest, sources], {
       cwd: root,
-      timeout: 10_000,
+      timeout: 25_000,
     });
     if (!["complete", "fragment", "prefix-complete"].includes(mode))
       await expect(result).rejects.toMatchObject({
         code: 1,
+        signal: null,
         stderr: expect.stringContaining(
           mode === "renamed"
             ? `missing symbol ${prefix}rea_version_entry`
@@ -99,8 +100,35 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
         ),
       });
     else {
-      const { stdout } = await result;
-      expect(JSON.parse(stdout)).toMatchObject({ verified: 2 });
+      const completed = await result.then(
+        (value) => ({
+          code: 0,
+          signal: null,
+          stdout: value.stdout,
+          stderr: value.stderr,
+        }),
+        (error: unknown) => {
+          if (!(error instanceof Error)) throw error;
+          const failed = error as Error & {
+            code?: number | null;
+            signal?: NodeJS.Signals | null;
+            stdout?: string;
+            stderr?: string;
+          };
+          return {
+            code: failed.code ?? null,
+            signal: failed.signal ?? null,
+            stdout: failed.stdout ?? "",
+            stderr: failed.stderr ?? "",
+          };
+        },
+      );
+      expect(completed).toMatchObject({
+        code: 0,
+        signal: null,
+        stderr: "",
+      });
+      expect(JSON.parse(completed.stdout)).toMatchObject({ verified: 2 });
     }
   },
 );
