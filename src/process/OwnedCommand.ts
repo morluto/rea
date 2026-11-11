@@ -1,3 +1,4 @@
+import type { ProcessInspectionFailure } from "./ProcessInspectionCleanup.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   assertProcessOwnershipInspectionActive,
@@ -35,13 +36,6 @@ import {
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
 
-/** Preparation retains explicit inspection cancellation and native/file owners. */
-export type ProcessOwnershipPreparationFailure =
-  | ProcessOwnershipInspectionCancelled
-  | DarwinProcessOwnershipInspectionError
-  | RegularFileCleanupFailure
-  | ProcessOwnershipIdentityBatchFailure;
-
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
   readonly #cancellation: { readonly reason: unknown } | undefined;
@@ -53,7 +47,7 @@ export class OwnedCommandFailure extends Error {
   readonly processError: Error | undefined;
   readonly cleanupResult: ProcessCleanupFailure | undefined;
   readonly collectionFailure: boolean;
-  readonly preparationFailure: ProcessOwnershipPreparationFailure | undefined;
+  readonly preparationFailure: ProcessInspectionFailure | undefined;
 
   constructor(
     readonly reason: "cancelled" | "timeout" | "output-limit" | "process",
@@ -65,7 +59,7 @@ export class OwnedCommandFailure extends Error {
       readonly processError?: Error | undefined;
       readonly cleanupResult?: ProcessCleanupFailure;
       readonly collectionFailure?: boolean;
-      readonly preparationFailure?: ProcessOwnershipPreparationFailure;
+      readonly preparationFailure?: ProcessInspectionFailure;
     },
     readonly resources: readonly string[] = [],
     readonly cleanupOwner?: ProviderProcessSupervisor,

@@ -1,3 +1,4 @@
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { processInspectionFailure } from "../providers/OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -8,7 +9,6 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
-  type ProcessOwnershipPreparationFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import type {
@@ -57,7 +57,7 @@ export class NativeCommandFailure extends Error {
   readonly cleanupFailures: readonly NativeCommandCleanupFailure[];
   readonly cleanupMarker: ProviderCleanupError | undefined;
   readonly detail: string | null;
-  readonly preparationFailure: ProcessOwnershipPreparationFailure | undefined;
+  readonly preparationFailure: ProcessInspectionFailure | undefined;
 
   constructor(
     readonly tool: string,
