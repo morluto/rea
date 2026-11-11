@@ -417,7 +417,8 @@ function* readVersionNames(
     textBytes = nextTextBytes;
   };
   const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
-  if (verneed !== undefined) {
+  // An empty requirement region contributes no names or unresolved records.
+  if (verneed !== undefined && verneed.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
