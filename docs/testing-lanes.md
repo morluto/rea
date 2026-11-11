@@ -34,8 +34,7 @@ on `PATH`; to check another build, put its directory first on `PATH`. Set
 `REA_REQUIRE_RIZIN` to a version, such as `0.9.1`, to make a missing Rizin, or a
 Rizin on `PATH` that reports another version, fail the suite instead of
 skipping it. It has passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin
-0.7.4 (official static build, Linux x86_64). The width case has run only with
-Rizin 0.9.1.
+0.7.4 (official static build, Linux x86_64).
 
 `.github/workflows/real-rizin.yml` runs both gates on `ubuntu-24.04`
 (x86_64). It runs on manual dispatch and on pull requests that change

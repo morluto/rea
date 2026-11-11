@@ -183,8 +183,9 @@ widths from 4, 8, 16, 32 and 64. Only `i4004` declares 4, and Rizin selects it
 only with `asm_bits` 4. Rizin applies any `-b` value that shares a bit with a
 declared width. On ARM, Rizin 0.9.1 accepts 17 or 48, `e asm.bits` echoes the
 value, and Thumb code decodes as ARM32, with no message and exit status 0. The
-Rizin 0.7.4 source has the same check; this was not run on 0.7.4. REA
-therefore accepts only the five widths.
+70 arch plugins of the official static Linux build of Rizin 0.7.4 also declare
+only these widths, and its source has the same check, but the 17 and 48 case
+was not run on 0.7.4. REA therefore accepts only the five widths.
 
 When Rizin cannot apply an arch or bits value, it uses another value and exits
 with status 0. For an arch plugin that it does not have, Rizin 0.9.1 keeps its
