@@ -21,7 +21,7 @@ import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessR
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 
 /** Transfer exact helper and command cleanup capabilities to the caller's scope. */
-const retainCommandCleanup = (
+export const retainOwnedCommandCleanup = (
   cause: unknown,
   resourceOwner: RetainedResourceScope,
   providerId: string,
@@ -121,15 +121,6 @@ const retainCommandCleanup = (
   return cleanups;
 };
 
-/** Transfer exact helper and command cleanup capabilities to the caller's scope. */
-export const retainOwnedCommandCleanup = (
-  cause: unknown,
-  resourceOwner: RetainedResourceScope,
-  providerId: string,
-  operation: string,
-): readonly AnalysisError[] =>
-  retainCommandCleanup(cause, resourceOwner, providerId, operation);
-
 /** A cancellation keeps its exact inspection record without exposing machine observations. */
 export class ProcessInspectionAnalysisCancelledError extends AnalysisCancelledError {
   constructor(
@@ -201,7 +192,7 @@ export const retainProcessInspectionCleanup = (
   resources: ArtifactResourceScope,
   operation: string,
 ): AnalysisError => {
-  const failures = retainCommandCleanup(
+  const failures = retainOwnedCommandCleanup(
     cause,
     {
       retain: (owner, resource) =>
