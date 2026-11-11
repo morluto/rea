@@ -69,8 +69,6 @@ export const traverseDirectory = async (
     current.path,
     state.signal,
   );
-  if (isAborted(state.signal))
-    return { ok: false, error: cancelled(state.signal) };
   if (!before.ok) {
     recordDirectoryFailure(
       state,
@@ -79,10 +77,25 @@ export const traverseDirectory = async (
       before.message,
       before.localDiagnostic,
     );
-    return { ok: true, value: undefined };
+    return isAborted(state.signal)
+      ? err(cancelled(state.signal))
+      : ok(undefined);
   }
+  if (isAborted(state.signal)) return err(cancelled(state.signal));
   const directories: PendingDirectory[] = [];
   let readFailure: FilesystemFailureDetail | undefined;
+  const recordReadFailure = (
+    detail: FilesystemFailureDetail,
+  ): FilesystemFailureDetail => {
+    recordDirectoryFailure(
+      state,
+      current.path,
+      "io",
+      detail.message,
+      detail.localDiagnostic,
+    );
+    return detail;
+  };
   let unrepresentableNameCount = 0;
   let firstUnrepresentableNameHex: string | undefined;
   let handle: Dir | undefined;
@@ -94,7 +107,7 @@ export const traverseDirectory = async (
       encoding: "buffer" as BufferEncoding,
     });
   } catch (cause: unknown) {
-    readFailure = directoryReadFailure(cause);
+    readFailure = recordReadFailure(directoryReadFailure(cause));
   }
   if (handle !== undefined) {
     const owner = new OwnedDirectoryHandle(handle);
@@ -115,14 +128,14 @@ export const traverseDirectory = async (
         try {
           child = await handle.read();
         } catch (cause: unknown) {
-          readFailure = directoryReadFailure(cause);
+          readFailure = recordReadFailure(directoryReadFailure(cause));
           break;
         }
         if (child === null) break;
         if (!Buffer.isBuffer(child.name)) {
-          readFailure = {
+          readFailure = recordReadFailure({
             message: "Directory entry name was not returned as raw bytes",
-          };
+          });
           break;
         }
         const decoded = decodeDirectoryEntryName(child.name);
@@ -141,28 +154,20 @@ export const traverseDirectory = async (
       });
     }
     if (cleanup.kind === "failed") {
-      if (result.ok && !isAborted(state.signal) && readFailure !== undefined)
-        recordDirectoryFailure(
-          state,
-          current.path,
-          "io",
-          readFailure.message,
-          readFailure.localDiagnostic,
-        );
       const observation = ArtifactReaderFailure.cleanupObservation(
         cleanup.cause,
         current.path,
       );
       const previous = result.ok ? undefined : result.error.cleanup;
       const primary = result.ok
-        ? isAborted(state.signal)
-          ? cancelled(state.signal)
-          : failure(
-              "io",
-              readFailure?.localDiagnostic ??
-                readFailure?.message ??
+        ? readFailure !== undefined
+          ? failure("io", readFailure.localDiagnostic ?? readFailure.message)
+          : isAborted(state.signal)
+            ? cancelled(state.signal)
+            : failure(
+                "io",
                 `Reference directory cleanup failed: ${current.path}`,
-            )
+              )
         : result.error;
       return err({
         ...primary,
@@ -180,27 +185,19 @@ export const traverseDirectory = async (
     }
     if (!result.ok) return result;
   }
-  if (isAborted(state.signal))
-    return { ok: false, error: cancelled(state.signal) };
   if (readFailure !== undefined) {
-    recordDirectoryFailure(
-      state,
-      current.path,
-      "io",
-      readFailure.message,
-      readFailure.localDiagnostic,
-    );
     scheduleObservedDirectories(state, directories);
-    return { ok: true, value: undefined };
+    return isAborted(state.signal)
+      ? err(failure("io", readFailure.localDiagnostic ?? readFailure.message))
+      : ok(undefined);
   }
+  if (isAborted(state.signal)) return err(cancelled(state.signal));
   const after = await validateDirectory(
     state.root,
     state.rootIdentity,
     current.path,
     state.signal,
   );
-  if (isAborted(state.signal))
-    return { ok: false, error: cancelled(state.signal) };
   if (!after.ok || !sameFile(before.stats, after.stats)) {
     recordDirectoryFailure(
       state,
@@ -210,8 +207,11 @@ export const traverseDirectory = async (
       after.ok ? undefined : after.localDiagnostic,
     );
     scheduleObservedDirectories(state, directories);
-    return { ok: true, value: undefined };
+    return isAborted(state.signal)
+      ? err(cancelled(state.signal))
+      : ok(undefined);
   }
+  if (isAborted(state.signal)) return err(cancelled(state.signal));
   if (unrepresentableNameCount > 0) {
     recordDirectoryFailure(
       state,
@@ -272,8 +272,6 @@ const processEntry = async (
   const absolute = join(current.path, name);
   const path = pathFromRoot(state.root, absolute);
   const metadata = await readMetadata(absolute);
-  if (isAborted(state.signal))
-    return { ok: false, error: cancelled(state.signal) };
   if (!metadata.ok) {
     const excluded = applyExclusion(state.shouldExclude, path, "unknown");
     if (!excluded.ok)
@@ -295,8 +293,11 @@ const processEntry = async (
         metadata.localDiagnostic,
       ),
     );
-    return { ok: true, value: undefined };
+    return isAborted(state.signal)
+      ? err(cancelled(state.signal))
+      : ok(undefined);
   }
+  if (isAborted(state.signal)) return err(cancelled(state.signal));
   const kind = metadata.value.isSymbolicLink()
     ? "symlink"
     : metadata.value.isDirectory()
@@ -400,6 +401,7 @@ export const readStableSymlinkTarget = async (
     if (!before.isSymbolicLink() || !sameFile(expected, before))
       return changedSymlink(path);
     const observed = await readTarget();
+    if (observed.status === "failed") return observed;
     if (isAborted(signal)) return cancelledSymlink(path);
     const after = await bigLstat(absolute);
     if (isAborted(signal)) return cancelledSymlink(path);
@@ -407,7 +409,6 @@ export const readStableSymlinkTarget = async (
       return changedSymlink(path);
     return observed;
   } catch (cause: unknown) {
-    if (isAborted(signal)) return cancelledSymlink(path);
     const code =
       cause instanceof Error ? Reflect.get(cause, "code") : undefined;
     if (code === "ENOENT" || code === "ENOTDIR") return changedSymlink(path);
