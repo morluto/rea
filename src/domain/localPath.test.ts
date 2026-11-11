@@ -1,6 +1,7 @@
 import { isAbsolute, win32 } from "node:path";
 
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   absoluteLocalPathStringSchema,
@@ -76,4 +77,14 @@ it("rejects unpaired surrogates while preserving representable Unicode paths", (
       true,
     );
   }
+});
+
+it("advertises no code-unit escapes that strict schema consumers reject", () => {
+  // DeepSeek rejects `\uNNNN` escapes in advertised patterns and fails the
+  // whole tool request, so the surrogate check must stay runtime-only.
+  const advertised = z.toJSONSchema(
+    z.strictObject({ path: absoluteLocalPathStringSchema }),
+    { io: "input" },
+  );
+  expect(JSON.stringify(advertised)).not.toMatch(/\\u[0-9a-f]{4}/iu);
 });

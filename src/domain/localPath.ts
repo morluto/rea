@@ -16,11 +16,20 @@ export const nulFreeStringSchema = z
   .string()
   .regex(/^[^\x00]*$/u, "Local filesystem paths cannot contain NUL");
 
-/** A selected local filesystem path: nonempty, NUL-free, and representable without replacement. */
+/**
+ * A selected local filesystem path: nonempty, NUL-free, and representable
+ * without replacement.
+ *
+ * The surrogate check stays a refinement rather than an advertised `.regex()`.
+ * ECMA-262 can only spell the surrogate range as `\uD800-\uDFFF`, an escape
+ * strict schema consumers reject; losing the compilable pattern keeps the
+ * whole tool request acceptable while runtime validation still refuses lone
+ * surrogates.
+ */
 export const localPathStringSchema = nulFreeStringSchema
   .min(1)
-  .regex(
-    /^[^\uD800-\uDFFF]*$/u,
+  .refine(
+    (value) => !/[\uD800-\uDFFF]/u.test(value),
     "Local filesystem paths must contain well-formed Unicode",
   );
 
