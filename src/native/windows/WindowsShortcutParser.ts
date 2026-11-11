@@ -295,22 +295,86 @@ const isFullPath = (path: string): boolean =>
 const hasUnexpandedVariable = (path: string): boolean =>
   /%[^%\\/]+%/u.test(path);
 
+/**
+ * A recorded path and where its non-ASCII text came from. Every ANSI code page
+ * agrees with ASCII, so only non-ASCII characters depend on the encoding. A
+ * non-ASCII ANSI byte is a character from the unobserved system code page,
+ * which its Latin1 projection does not name.
+ */
+type RecordedPath = {
+  readonly path: string;
+  /** Holds non-ASCII text projected from ANSI bytes. */
+  readonly ansi: boolean;
+  /** Holds non-ASCII UTF-16 text. */
+  readonly unicode: boolean;
+};
+
+const isAscii = (text: string): boolean =>
+  [...text].every((char) => char <= "\u007f");
+
+const recorded = (path: string, ansi: boolean): RecordedPath => {
+  const nonAscii = !isAscii(path);
+  return { path, ansi: ansi && nonAscii, unicode: !ansi && nonAscii };
+};
+
+/** Two paths compare as text only when their non-ASCII parts share one encoding. */
+const comparableText = (left: RecordedPath, right: RecordedPath): boolean =>
+  !((left.ansi || right.ansi) && (left.unicode || right.unicode));
+
 const iconDiffersFromTarget = (
-  icon: string | undefined,
-  targets: readonly string[],
+  icon: WindowsShortcut["string_data"]["icon_location"],
+  targets: readonly RecordedPath[],
 ): boolean | null => {
-  if (icon === undefined || !isFullPath(icon) || hasUnexpandedVariable(icon))
-    return null;
-  const location = normalizePath(icon);
-  const fixedTargets = targets.filter(
-    (target) => isFullPath(target) && !hasUnexpandedVariable(target),
+  if (icon === null) return null;
+  const text = icon.value;
+  if (!isFullPath(text) || hasUnexpandedVariable(text)) return null;
+  const iconPath = recorded(text, icon.encoding === "ansi");
+  const location = normalizePath(text);
+  const fullTargets = targets.filter((target) => isFullPath(target.path));
+  const fixedTargets = fullTargets.filter(
+    (target) =>
+      !hasUnexpandedVariable(target.path) && comparableText(target, iconPath),
   );
-  if (fixedTargets.some((target) => normalizePath(target) === location))
+  if (fixedTargets.some((target) => normalizePath(target.path) === location))
     return false;
-  // A variable-bearing target could name the icon's file, so no difference is claimed.
-  if (targets.some((t) => isFullPath(t) && hasUnexpandedVariable(t)))
-    return null;
+  // A variable-bearing target, or one whose ANSI bytes the icon text cannot be
+  // compared with, could name the icon's file, so no difference is claimed.
+  if (fullTargets.length > fixedTargets.length) return null;
   return fixedTargets.length === 0 ? null : true;
+};
+
+/** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
+const linkInfoTargets = (
+  info: NonNullable<WindowsShortcut["link_info"]>,
+): RecordedPath[] => {
+  const suffixText = info.common_path_suffix_unicode ?? info.common_path_suffix;
+  const suffix =
+    suffixText === null || suffixText.length === 0
+      ? null
+      : recorded(suffixText, info.common_path_suffix_unicode === null);
+  // Each part keeps its own encoding, so an ASCII ANSI part never hides a
+  // comparable Unicode part.
+  const withSuffix = (base: RecordedPath): RecordedPath =>
+    suffix === null
+      ? base
+      : {
+          path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
+          ansi: base.ansi || suffix.ansi,
+          unicode: base.unicode || suffix.unicode,
+        };
+  const values: RecordedPath[] = [];
+  const local = info.local_base_path_unicode ?? info.local_base_path;
+  if (local !== null && (suffix !== null || local.length > 0))
+    values.push(
+      withSuffix(recorded(local, info.local_base_path_unicode === null)),
+    );
+  const net = info.common_network_relative_link;
+  if (net !== null) {
+    const share = net.net_name_unicode ?? net.net_name;
+    if (share !== null)
+      values.push(withSuffix(recorded(share, net.net_name_unicode === null)));
+  }
+  return values;
 };
 
 const targetPaths = (report: {
@@ -318,43 +382,30 @@ const targetPaths = (report: {
   readonly string_data: WindowsShortcut["string_data"];
   readonly id_list: WindowsShortcut["id_list"];
   readonly extra_data: WindowsShortcut["extra_data"];
-}): string[] => {
-  const values: string[] = [];
-  const info = report.link_info;
-  if (info !== null) {
-    const local = info.local_base_path_unicode ?? info.local_base_path;
-    const suffix = info.common_path_suffix_unicode ?? info.common_path_suffix;
-    if (local !== null && suffix !== null && suffix.length > 0)
-      values.push(
-        `${local.replace(/\\$/u, "")}\\${suffix.replace(/^\\/u, "")}`,
-      );
-    else if (local !== null && local.length > 0) values.push(local);
-    const net = info.common_network_relative_link;
-    if (net !== null) {
-      const share = net.net_name_unicode ?? net.net_name;
-      if (share !== null && suffix !== null && suffix.length > 0)
-        values.push(
-          `${share.replace(/\\$/u, "")}\\${suffix.replace(/^\\/u, "")}`,
-        );
-      else if (share !== null) values.push(share);
-    }
-  }
-  if (report.string_data.relative_path !== null)
-    values.push(report.string_data.relative_path.value);
+}): RecordedPath[] => {
+  const values: RecordedPath[] =
+    report.link_info === null ? [] : linkInfoTargets(report.link_info);
+  const relative = report.string_data.relative_path;
+  if (relative !== null)
+    values.push(recorded(relative.value, relative.encoding === "ansi"));
   if (report.id_list !== null) {
     const lastFile = [...report.id_list.items]
       .reverse()
       .find((item) => item.kind === "file_entry");
-    if (lastFile?.kind === "file_entry") values.push(lastFile.short_name);
+    // Type bit 0x04 marks a UTF-16LE name; otherwise the name is ANSI.
+    if (lastFile?.kind === "file_entry")
+      values.push(
+        recorded(lastFile.short_name, (lastFile.type_byte & 0x04) === 0),
+      );
   }
   // A stored literal target, never expanded: `%VAR%` text stays as written.
   for (const block of report.extra_data.blocks) {
     if (block.decoded.kind !== "environment_variable") continue;
-    const stored =
-      block.decoded.target_unicode.length > 0
-        ? block.decoded.target_unicode
-        : block.decoded.target_ansi;
-    if (stored.length > 0) values.push(stored);
+    const unicode = block.decoded.target_unicode.length > 0;
+    const stored = unicode
+      ? block.decoded.target_unicode
+      : block.decoded.target_ansi;
+    if (stored.length > 0) values.push(recorded(stored, !unicode));
   }
   return values;
 };
@@ -389,7 +440,7 @@ const observationsOf = (
     {
       kind: "target_extension",
       evidence_kind: "derived",
-      extension: extensionOf(targets[0] ?? null),
+      extension: extensionOf(targets[0]?.path ?? null),
     },
     {
       kind: "show_command_minimized",
@@ -399,10 +450,7 @@ const observationsOf = (
     {
       kind: "icon_location_differs_from_target",
       evidence_kind: "derived",
-      value: iconDiffersFromTarget(
-        report.string_data.icon_location?.value,
-        targets,
-      ),
+      value: iconDiffersFromTarget(report.string_data.icon_location, targets),
     },
   ];
 };

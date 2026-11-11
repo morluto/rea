@@ -215,6 +215,7 @@ export class IsolatedWebBundleAnalyzer {
           script,
           input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
           deadline.signal,
+          input.semantic_precision,
         );
         if (analyzed.ok) results.push(analyzed.value);
         else {

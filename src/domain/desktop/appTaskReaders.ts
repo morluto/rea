@@ -36,6 +36,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -52,7 +53,7 @@ POLL_S = 0.05
 DRAIN_S = 2.0
 MAX_LINES = 5000
 MAX_SAFE_INTEGER = 2**53 - 1
-LINE_BREAK = re.compile(r"\r?\n")
+LINE_BREAK = re.compile(rb"\r?\n")
 SESSION = ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY")
 NEVER = ("DBUS_SESSION_BUS_ADDRESS", "SESSION_MANAGER", "XDG_RUNTIME_DIR")
 FRESH = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_CACHE_HOME", ".cache"),
@@ -168,7 +169,7 @@ def _run(arguments: dict, source: str, work: str) -> dict:
         return {"error": f"the reader exited {process.returncode}{_tail(stderr)}"}
     marker = MARKER.encode("ascii")
     try:
-        lines = [line[len(marker):].decode("utf-8") for line in re.split(rb"\r?\n", printed) if line.startswith(marker)]
+        lines = [line[len(marker):].decode("utf-8") for line in LINE_BREAK.split(printed) if line.startswith(marker)]
     except UnicodeDecodeError:
         return {"error": "the reader's marked output is not valid UTF-8"}
     if not lines:
@@ -179,7 +180,13 @@ def _run(arguments: dict, source: str, work: str) -> dict:
 def main(arguments: dict) -> int:
     home = os.path.expanduser("~")
     source = arguments["path"] if os.path.isabs(arguments["path"]) else os.path.join(home, arguments["path"])
-    if not os.path.isfile(source):
+    try:
+        mode = os.stat(source).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return _say({"absent": True})
+    except OSError as error:
+        return _say({"error": f"could not inspect the reader's file: {error.strerror or error}"})
+    if not stat.S_ISREG(mode):
         return _say({"absent": True})
     # A remote caller owns this exact folder before starting the command, and
     # removes it only after the command has settled.

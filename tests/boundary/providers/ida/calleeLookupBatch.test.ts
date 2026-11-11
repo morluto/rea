@@ -12,7 +12,7 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 const queriesSchema = z.object({ queries: z.array(z.string()) });
-/** All observed edges are returned; discovery of other call targets stays unknown. */
+/** An uncapped inventory still cannot establish every possible callee. */
 const uncappedCalleeCoverage = {
   status: "complete",
   discovery: {

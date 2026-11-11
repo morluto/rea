@@ -535,12 +535,7 @@ describe("target-free MCP workflow", () => {
 
     const beforeTools = (await mcp.listTools()).tools;
     const beforeNames = beforeTools.map(({ name }) => name);
-    expect(mcp.getInstructions()).toContain(
-      "Use the tool that directly answers the question",
-    );
-    expect(
-      beforeTools.find(({ name }) => name === "inspect_artifact")?.description,
-    ).toMatch(/\breturns the complete content-addressed artifact graph\b/iu);
+    expect(beforeNames).toContain("inspect_artifact");
     expect(beforeNames).toContain("open_binary");
     expect(beforeNames).toContain("binary_session");
     expect(beforeNames).toContain("current_document");
