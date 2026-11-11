@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -87,7 +88,7 @@ it.each(["before", "during"] as const)(
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockImplementation(async () => {
         controller.abort(reason);
-        throw reason;
+        throw new ProcessOwnershipInspectionCancelled(reason);
       });
     if (phase === "before") controller.abort(reason);
     let observed: unknown;
@@ -138,8 +139,13 @@ it("preserves exact cancelled preparation cleanup capabilities", async () => {
   if (!(observed instanceof OwnedCommandFailure)) throw observed;
   expect(observed.cancellation?.reason).toBe(reason);
   expect(observed.preparationFailure).toBe(failure);
-  if (observed.preparationFailure === undefined)
-    throw new Error("Expected retained preparation failure");
+  if (
+    !(
+      observed.preparationFailure instanceof
+      DarwinProcessOwnershipInspectionError
+    )
+  )
+    throw new Error("Expected retained Darwin preparation failure");
   expect(observed.preparationFailure.cleanupOwner).toBe(owner);
   expect(observed.preparationFailure.cleanupFailure).toBe(cleanup);
   await observed.preparationFailure.cleanupOwner!.close();
@@ -153,9 +159,13 @@ it("bounds simulated Linux preparation by the command deadline before launch", a
     .spyOn(systemProcessOwnershipHost, "prepare")
     .mockImplementation(async (signal) => {
       await new Promise<void>((_resolve, reject) =>
-        signal?.addEventListener("abort", () => reject(signal.reason), {
-          once: true,
-        }),
+        signal?.addEventListener(
+          "abort",
+          () => reject(new ProcessOwnershipInspectionCancelled(signal.reason)),
+          {
+            once: true,
+          },
+        ),
       );
     });
   await prepareOwnedCommand();
@@ -240,7 +250,10 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
         await new Promise<void>((_resolve, reject) =>
           input.signal?.addEventListener(
             "abort",
-            () => reject(input.signal?.reason),
+            () =>
+              reject(
+                new ProcessOwnershipInspectionCancelled(input.signal?.reason),
+              ),
             {
               once: true,
             },

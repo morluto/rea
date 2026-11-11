@@ -1,3 +1,4 @@
+import { assertProcessOwnershipInspectionActive } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
@@ -259,9 +260,9 @@ const incompleteCleanup = (
 export const spawnOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
 ): Promise<SpawnedOwnedProviderProcess> => {
-  options.signal?.throwIfAborted();
+  assertProcessOwnershipInspectionActive(options.signal);
   await prepareProcessOwnershipInspection(options.signal);
-  options.signal?.throwIfAborted();
+  assertProcessOwnershipInspectionActive(options.signal);
   const platform = options.platform ?? process.platform;
   const sweepTokenOwnedProcesses =
     options.sweepTokenOwnedProcesses === true && platform !== "win32";
@@ -271,7 +272,7 @@ export const spawnOwnedProviderProcess = async (
     if (capture === undefined)
       throw new ProcessAdmissionError("baseline_unavailable");
     captureBaseline = await capture(options.signal);
-    options.signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(options.signal);
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const selectedEnvironment = mergeEnvironmentOverrides(

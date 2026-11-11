@@ -1,3 +1,9 @@
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import {
+  assertProcessOwnershipInspectionActive,
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "./ProcessInspectionCancellation.js";
 import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
@@ -29,6 +35,12 @@ import {
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
 
+/** Preparation transfers only explicit native/file owner protocols. */
+export type ProcessOwnershipPreparationFailure =
+  | DarwinProcessOwnershipInspectionError
+  | RegularFileCleanupFailure
+  | ProcessOwnershipIdentityBatchFailure;
+
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
   readonly #cancellation: { readonly reason: unknown } | undefined;
@@ -40,9 +52,7 @@ export class OwnedCommandFailure extends Error {
   readonly processError: Error | undefined;
   readonly cleanupResult: ProcessCleanupFailure | undefined;
   readonly collectionFailure: boolean;
-  readonly preparationFailure:
-    | DarwinProcessOwnershipInspectionError
-    | undefined;
+  readonly preparationFailure: ProcessOwnershipPreparationFailure | undefined;
 
   constructor(
     readonly reason: "cancelled" | "timeout" | "output-limit" | "process",
@@ -54,7 +64,7 @@ export class OwnedCommandFailure extends Error {
       readonly processError?: Error | undefined;
       readonly cleanupResult?: ProcessCleanupFailure;
       readonly collectionFailure?: boolean;
-      readonly preparationFailure?: DarwinProcessOwnershipInspectionError;
+      readonly preparationFailure?: ProcessOwnershipPreparationFailure;
     },
     readonly resources: readonly string[] = [],
     readonly cleanupOwner?: ProviderProcessSupervisor,
@@ -109,12 +119,11 @@ export const prepareOwnedCommand = async (
 ): Promise<void> => {
   if (systemProcessOwnershipHost.platform !== "darwin") return;
   try {
-    signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     await prepareProcessOwnershipInspection(signal);
   } catch (cause: unknown) {
     throwCommandPreparationFailure(
       cause,
-      signal,
       signal?.aborted === true ? "cancelled" : undefined,
     );
   }
@@ -123,36 +132,49 @@ export const prepareOwnedCommand = async (
 /** Both preparation stages preserve physical failures, opaque cancellation and exact owners. */
 function throwCommandPreparationFailure(
   cause: unknown,
-  signal: AbortSignal | undefined,
   interruption: "cancelled" | "timeout" | undefined,
 ): never {
   // A caller's raw abort reason remains opaque even if it is a typed error.
   const preparationFailure =
-    cause instanceof DarwinProcessOwnershipInspectionError &&
-    !(signal?.aborted === true && cause === signal.reason)
+    cause instanceof DarwinProcessOwnershipInspectionError ||
+    cause instanceof RegularFileCleanupFailure ||
+    cause instanceof ProcessOwnershipIdentityBatchFailure
       ? cause
       : undefined;
   // Preparation owns its physical outcome and any retained helper resources.
   if (
-    preparationFailure !== undefined &&
-    preparationFailure.cancellation === undefined
+    preparationFailure instanceof RegularFileCleanupFailure ||
+    (preparationFailure instanceof ProcessOwnershipIdentityBatchFailure &&
+      preparationFailure.origin === "physical") ||
+    (preparationFailure instanceof DarwinProcessOwnershipInspectionError &&
+      preparationFailure.cancellation === undefined)
   )
     throw preparationFailure;
-  if (interruption !== undefined)
+  const cancellation = ProcessOwnershipInspectionCancelled.from(cause);
+  const preparationCancellation =
+    preparationFailure instanceof DarwinProcessOwnershipInspectionError
+      ? preparationFailure.cancellation
+      : undefined;
+  if (cancellation !== undefined || preparationCancellation !== undefined)
     throw new OwnedCommandFailure(
-      interruption,
-      interruption === "cancelled"
+      interruption ?? "cancelled",
+      interruption !== "timeout"
         ? "Command cancelled during ownership preparation."
         : "Command deadline elapsed during ownership preparation.",
       null,
       null,
       {
         cause,
-        ...(interruption === "cancelled"
-          ? {
-              cancellation: { reason: signal?.reason },
-            }
-          : {}),
+        ...(interruption === "timeout"
+          ? {}
+          : {
+              cancellation: {
+                reason:
+                  cancellation === undefined
+                    ? preparationCancellation?.reason
+                    : cancellation.reason,
+              },
+            }),
         ...(preparationFailure === undefined ? {} : { preparationFailure }),
       },
     );
@@ -233,7 +255,7 @@ const collectOwnedCommand = async (
       signal,
     });
   } catch (cause: unknown) {
-    throwCommandPreparationFailure(cause, signal, deadline.interruption);
+    throwCommandPreparationFailure(cause, deadline.interruption);
   }
   let exceeded = false;
   let outputLimitObservedBeforeInterruption = false;
