@@ -1150,11 +1150,12 @@ const LINKER_SEARCH_LIST_FLAG = /^-{1,2}(?:rpath|rpath-link)(?==|$)/u;
 const LINKER_SEARCH_LIST_SEPARATOR = /(?<!(?:^|:)[A-Za-z]):/u;
 /**
  * The options `go tool link -h` documents as taking a directory, path or file,
- * as `-L dir` or `-L=dir`, never attached. `-extld`, `-extar` and `-libgcc`
- * name a program or `none`, so only their rooted values read as paths.
+ * as `-L dir` or `-L=dir`, never attached. `-extld` and `-extar` name
+ * programs, so only their rooted values read as paths. `-libgcc` takes a file
+ * or the disabling sentinel `none`.
  */
 const GO_LINKER_PATH_FLAG =
-  /^-{1,2}(?:I|L|benchmarkprofile|capturehostobjs|cpuprofile|fipso|importcfg|memprofile|o|r|tmpdir)(?:=|$)(.*)$/su;
+  /^-{1,2}(?:I|L|benchmarkprofile|capturehostobjs|cpuprofile|fipso|importcfg|libgcc|memprofile|o|r|tmpdir)(?:=|$)(.*)$/su;
 /** The options `go tool compile -h` documents as taking a directory, path or file. */
 const GO_COMPILE_PATH_FLAG =
   /^-{1,2}(?:D|I|asmhdr|bench|blockprofile|coveragecfg|cpuprofile|embedcfg|importcfg|linkobj|memprofile|mutexprofile|o|pgoprofile|symabis|traceprofile|trimpath)(?:=|\s+|$)(.*)$/su;
@@ -1228,41 +1229,37 @@ const flagPaths = (flags: string[]): string[] =>
     ),
   );
 
-/**
- * A path flag's relative argument, attached or in the next field. A rooted
- * argument belongs to `flagPaths`, which keeps its `=` and `,` structure.
- */
-const goRelativeFlagPaths = (
+/** Whole literal linker operands, apart from runtime search lists handled below. */
+const linkerFlagPaths = (
   flags: string[],
-  pathFlag: RegExp,
   format: NativeImageFormat,
   onAmbiguousLinkerR: () => void,
-): string[] =>
-  flags.flatMap((flag, index) => {
-    const attached = pathFlag.exec(flag)?.[1]?.trimEnd();
-    if (attached === undefined) return [];
+): { paths: string[]; fields: Set<string> } => {
+  const paths: string[] = [];
+  const fields = new Set<string>();
+  for (const [index, flag] of flags.entries()) {
+    const attached = LINKER_PATH_FLAG.exec(flag)?.[1];
+    if (attached === undefined) continue;
     const next = flags[index + 1];
-    const argument =
-      attached.length > 0 || next?.startsWith("-") === true ? attached : next;
+    const fromNext =
+      attached.length === 0 && next !== undefined && !next.startsWith("-");
+    const argument = fromNext ? next : attached;
+    if (argument.length === 0) continue;
+    fields.add(flag);
+    if (fromNext) fields.add(next);
     if (
-      argument !== undefined &&
-      pathFlag === LINKER_PATH_FLAG &&
       flag.startsWith("-R") &&
       format === "elf" &&
       LINKER_RUNTIME_TOKENS.elf?.test(argument) === true
     ) {
       onAmbiguousLinkerR();
-      return [];
+      continue;
     }
-    return argument === undefined ||
-      argument.length === 0 ||
-      (pathFlag === LINKER_PATH_FLAG &&
-        /^-{1,2}Map(?:=|$)/u.test(flag) &&
-        argument === "-") ||
-      filesystemPath(argument) !== null
-      ? []
-      : [argument];
-  });
+    if (/^-{1,2}Map(?:=|$)/u.test(flag) && argument === "-") continue;
+    paths.push(argument);
+  }
+  return { paths, fields };
+};
 
 /**
  * `-trimpath` takes `prefix=replacement` rewrites separated by `;`, so its
@@ -1303,14 +1300,23 @@ const goToolFlagPaths = (
 ): { paths: string[]; fields: Set<string> } => {
   const paths: string[] = [];
   const fields = new Set<string>();
-  for (const [index, flag] of flags.entries()) {
-    const attached = pathFlag.exec(flag)?.[1]?.trimEnd();
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
+    if (flag === undefined) continue;
+    const attached = pathFlag.exec(flag)?.[1];
     if (attached === undefined) continue;
     const next = flags[index + 1];
     const fromNext =
-      attached.length === 0 && next !== undefined && !next.startsWith("-");
+      attached.length === 0 && !flag.endsWith("=") && next !== undefined;
     const argument = fromNext ? next : attached;
+    if (fromNext) index += 1;
     if (argument.length === 0) continue;
+    if (
+      pathFlag === GO_LINKER_PATH_FLAG &&
+      /^-{1,2}libgcc(?:=|$)/u.test(flag) &&
+      argument === "none"
+    )
+      continue;
     const list = GO_PATH_LIST_FLAG.test(flag);
     if (list && filesystemPath(argument) !== null) continue;
     if (GO_LINKER_SEARCH_LIST_FLAG.test(flag))
@@ -1393,23 +1399,25 @@ const compilerPaths = (
   const flags = goFlags(value);
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
   const literal = withoutLinkerSearchLists(flags);
-  const literalLinker = splitForwardedLinkerFlags(literal).linker;
+  const { compiler: literalCompiler, linker: literalLinker } =
+    splitForwardedLinkerFlags(literal);
+  const linkerOperands = linkerFlagPaths(
+    literalLinker,
+    format,
+    onAmbiguousLinkerR,
+  );
   const compilerOperands = goToolFlagPaths(
     compiler,
     GO_COMPILER_PATH_FLAG,
     format,
   );
   return [
-    ...flagPaths(
-      literal.filter((field) => !compilerOperands.fields.has(field)),
-    ),
+    ...flagPaths([
+      ...literalCompiler.filter((field) => !compilerOperands.fields.has(field)),
+      ...literalLinker.filter((field) => !linkerOperands.fields.has(field)),
+    ]),
     ...compilerOperands.paths,
-    ...goRelativeFlagPaths(
-      literalLinker,
-      LINKER_PATH_FLAG,
-      format,
-      onAmbiguousLinkerR,
-    ),
+    ...linkerOperands.paths,
     ...responseFilePaths(compiler, GO_COMPILER_PATH_FLAG),
     ...responseFilePaths(literalLinker, LINKER_PATH_FLAG),
     ...linkerSearchLists(linker).flatMap((list) =>

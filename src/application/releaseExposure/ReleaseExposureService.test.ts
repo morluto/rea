@@ -2203,6 +2203,14 @@ describe("ReleaseExposureService Go linker path options", () => {
     ["-importcfg private.cfg", "private.cfg"],
     ["-o out/app", "out/app"],
     ["-r private-lib", "private-lib"],
+    ["-r -private", "-private"],
+    ["-L -private", "-private"],
+    ["-r -L", "-L"],
+    ["-r= -L private-sdk", "private-sdk"],
+    ["'-L=/tmp/private '", "/tmp/private "],
+    ["-libgcc -private.a", "-private.a"],
+    ["-s -w -libgcc=private-toolchain/libgcc.a", "private-toolchain/libgcc.a"],
+    ["-libgcc private-toolchain/libgcc.a", "private-toolchain/libgcc.a"],
   ])("keeps the relative linker path in %s", async (value, path) => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
@@ -2212,6 +2220,7 @@ describe("ReleaseExposureService Go linker path options", () => {
 
   it.each([
     "-extld clang -extar ar -libgcc none",
+    "-libgcc=none",
     "-buildmode pie -linkmode external -installsuffix race",
   ])("does not read the program or mode in %s as a path", async (value) => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
@@ -2221,11 +2230,11 @@ describe("ReleaseExposureService Go linker path options", () => {
 });
 
 describe("ReleaseExposureService compiler path separators", () => {
-  it.each(["/tmp/private,sdk", "/tmp/private=sdk"])(
+  it.each(["/tmp/private,sdk", "/tmp/private=sdk", "/tmp/private "])(
     "preserves a literal compiler argument %s",
     async (path) => {
       const report = await goReport(
-        goModule([{ key: "CGO_CFLAGS", value: `-I ${path}` }]),
+        goModule([{ key: "CGO_CFLAGS", value: `'-I${path}'` }]),
       );
       const check = report.checks.find((item) => item.id === "go.build_paths");
       expect(check?.observation.samples).toEqual([path]);
@@ -3165,5 +3174,26 @@ describe("ReleaseExposureService unnamed Electron hosts", () => {
 
   it("settles safe fuses when every possible host reports them", async () => {
     expect(await nodeStatus([1, 1])).toBe("not_observed");
+  });
+});
+
+describe("ReleaseExposureService forwarded linker path operands", () => {
+  it.each([
+    ["-Wl,-T,/tmp/private=sdk/link.ld", "/tmp/private=sdk/link.ld"],
+    [
+      "-Wl,--version-script=/tmp/private=sdk/exports",
+      "/tmp/private=sdk/exports",
+    ],
+    [
+      "-Xlinker -T -Xlinker /tmp/private,sdk/link.ld",
+      "/tmp/private,sdk/link.ld",
+    ],
+    ["-Xlinker -L -Xlinker /tmp/private=sdk", "/tmp/private=sdk"],
+    ["'-Wl,-L/tmp/private '", "/tmp/private "],
+    ["-Xlinker -L -Xlinker '/tmp/private '", "/tmp/private "],
+  ])("preserves the complete forwarded path in %s", async (value, path) => {
+    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.observation.samples).toEqual([path]);
   });
 });
