@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -162,15 +163,17 @@ export const runSourceMapCommand = async (
   }
   const cleanup = await command.close();
   const observation = result.ok ? result.value : undefined;
-  const completed =
-    result.ok && options?.signal?.aborted
-      ? err(
+  const completed = options?.signal?.aborted
+    ? err(
+        analysisErrorWithCancellation(
+          result.ok ? undefined : result.error,
           new AnalysisCancelledError(OPERATION, {
             cause: options.signal.reason,
             partialObservation: observation,
           }),
-        )
-      : result;
+        ),
+      )
+    : result;
   if (cleanup === undefined) return completed;
   if (observation !== undefined) cleanup.retainPartialObservation(observation);
   retainedCleanup.owner = command;

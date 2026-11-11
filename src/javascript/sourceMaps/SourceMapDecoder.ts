@@ -8,6 +8,7 @@ import type { WebSourceMapPort } from "../../application/WebSourceLocationPorts.
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -23,7 +24,6 @@ import {
   type SourceMapCleanupRetention,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
 const OPERATION = "trace_web_source_location";
 
@@ -43,22 +43,20 @@ export class SourceMapDecoder implements WebSourceMapPort {
     if (this.#closing)
       return Promise.resolve(
         err(
-          new ProviderCleanupError(
+          new AnalysisCapabilityUnavailableError(
             "source-map-decoder",
-            [],
-            { reason: "Provider is closing" },
-            { operation: OPERATION },
+            OPERATION,
+            "Provider is closing",
           ),
         ),
       );
     const operation = this.#tail.then(() =>
       this.#closing
         ? err(
-            new ProviderCleanupError(
+            new AnalysisCapabilityUnavailableError(
               "source-map-decoder",
-              [],
-              { reason: "Provider is closing" },
-              { operation: OPERATION },
+              OPERATION,
+              "Provider is closing",
             ),
           )
         : this.#trace(input, options),

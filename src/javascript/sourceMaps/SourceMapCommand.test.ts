@@ -270,6 +270,11 @@ it("preserves an observed nonzero exit before caller cancellation during output 
     output_complete: false,
   });
   expect(result.error.capturedOutput?.truncated).toBe(true);
+  expect(
+    result.error.secondaryFailures.find(
+      (failure) => failure instanceof AnalysisCancelledError,
+    )?.cause,
+  ).toBe(reason);
   if (runtimePath === undefined) throw new Error("runtime was not acquired");
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
 });
