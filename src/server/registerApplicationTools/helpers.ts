@@ -25,7 +25,10 @@ export const recordResult = (
   unknownKind?: UnknownKind,
 ) => {
   const recorded = recordApplicationResult(options, evidence, unknownKind);
-  return options.delivery.toEvidenceToolResult(evidence, contract, recorded);
+  // Recording stamps the active session's provider selection, and serializing
+  // the caller's own copy would omit it while the ledger and exports carry it.
+  const retained = options.evidenceById?.(evidence.evidence_id) ?? evidence;
+  return options.delivery.toEvidenceToolResult(retained, contract, recorded);
 };
 
 /**

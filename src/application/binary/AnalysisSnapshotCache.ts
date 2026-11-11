@@ -1,7 +1,10 @@
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
+import {
+  isImmutableEvidenceBundle,
+  type EvidenceBundle,
+} from "../../domain/evidenceBundle.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -434,7 +437,9 @@ export class AnalysisSnapshotCache {
           readonly profile: AnalysisProfileCommitment;
         }
       | undefined,
-    mergeEvidence: (bundle: EvidenceBundle) => Result<number, AnalysisError>,
+    mergeEvidence: (
+      bundle: EvidenceBundle,
+    ) => Result<EvidenceBundle | unknown, AnalysisError>,
   ): Result<number, AnalysisError> {
     let validated: AnalysisSnapshot;
     try {
@@ -461,7 +466,15 @@ export class AnalysisSnapshotCache {
         );
     }
     const importedEvidence = mergeEvidence(validated.evidence_bundle);
-    return importedEvidence.ok ? ok(this.stage(validated)) : importedEvidence;
+    if (!importedEvidence.ok) return importedEvidence;
+    // The stage's replay bindings are rebuilt from the records it is given.
+    // Staging the snapshot's own bundle would bind replays to the evidence
+    // identity the merge replaced with an attributed record.
+    const bundle = importedEvidence.value;
+    const staged = isImmutableEvidenceBundle(bundle)
+      ? immutableAnalysisSnapshot({ ...validated, evidence_bundle: bundle })
+      : validated;
+    return ok(this.stage(staged));
   }
 
   /** Return canonical entries for persistence. */

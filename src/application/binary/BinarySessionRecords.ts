@@ -391,7 +391,7 @@ export abstract class BinarySessionRecords {
         const imported = this.#records.mergeEvidenceBundle(importable.value);
         if (!imported.ok) return imported;
         this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
-        return ok(imported.value.recordsAdded);
+        return ok(importable.value);
       },
     );
     if (imported.ok) this.#emitSnapshotChanged();
@@ -554,8 +554,12 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("record_unknown"));
-    const target = this.activeAnalysisBinding()?.target;
-    const recorded = this.#records.recordUnknown(input, target);
+    const binding = this.activeAnalysisBinding();
+    const recorded = this.#records.recordUnknown(
+      input,
+      binding?.target,
+      binding?.providerSelection,
+    );
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
   }
@@ -576,8 +580,12 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("update_unknown"));
-    const target = this.activeAnalysisBinding()?.target;
-    const updated = this.#records.updateUnknown(input, target);
+    const binding = this.activeAnalysisBinding();
+    const updated = this.#records.updateUnknown(
+      input,
+      binding?.target,
+      binding?.providerSelection,
+    );
     if (updated.ok) this.#emitSnapshotChanged();
     return updated;
   }

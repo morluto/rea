@@ -1,5 +1,8 @@
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import type { Evidence } from "../../domain/evidence.js";
+import type {
+  Evidence,
+  ProviderSelectionProvenance,
+} from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
@@ -134,6 +137,7 @@ export class InvestigationRecords
   recordUnknown(
     input: RecordUnknownInput,
     target?: BinaryTarget,
+    providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
     const admitted = admitInvestigationAuthentication(
       input,
@@ -143,7 +147,11 @@ export class InvestigationRecords
     if (!admitted.ok) return admitted;
     return this.#evidence.recordUnknown(
       input,
-      unknownMutationEvidence(target, { operation: "record_unknown", input }),
+      unknownMutationEvidence(
+        target,
+        { operation: "record_unknown", input },
+        providerSelection,
+      ),
     );
   }
 
@@ -172,6 +180,7 @@ export class InvestigationRecords
   updateUnknown(
     input: UpdateUnknownInput,
     target?: BinaryTarget,
+    providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
     const admitted = admitInvestigationAuthentication(
       input,
@@ -179,10 +188,11 @@ export class InvestigationRecords
       this.retentionPolicy,
     );
     if (!admitted.ok) return admitted;
-    const evidence = unknownMutationEvidence(target, {
-      operation: "update_unknown",
-      input,
-    });
+    const evidence = unknownMutationEvidence(
+      target,
+      { operation: "update_unknown", input },
+      providerSelection,
+    );
     return this.#evidence.updateUnknown(input, evidence);
   }
 
