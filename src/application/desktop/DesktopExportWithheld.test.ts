@@ -164,7 +164,7 @@ const evidence = (result: Evidence | Error): Evidence => {
   return result;
 };
 
-it("reports the published bundle when the withheld copy destination is occupied", async () => {
+it("refuses an occupied withheld copy destination before writing the bundle", async () => {
   const root = await createTestTempDirectory("desktop-copy-refusal-");
   const occupied = join(root, "occupied");
   await mkdir(occupied);
@@ -173,21 +173,31 @@ it("reports the published bundle when the withheld copy destination is occupied"
     withhold: { paths: [SETTINGS] },
     withheldCopy: occupied,
   });
-  expect(result).toMatchObject({
-    partialObservation: {
-      operation: "export_desktop_application",
-      normalized_result: { directory },
-    },
-  });
-  expect(await exists(join(directory, "README.md"))).toBe(true);
+  expect(result).toBeInstanceOf(AnalysisError);
+  expect(await exists(directory)).toBe(false);
   expect(await readFile(join(occupied, "keep"), "utf8")).toBe("existing");
+  const occupiedFile = join(root, "file");
+  await writeFile(occupiedFile, "existing file");
+  const file = await exportWithheld({
+    withhold: { paths: [SETTINGS] },
+    withheldCopy: occupiedFile,
+  });
+  expect(file.result).toBeInstanceOf(AnalysisError);
+  expect(await exists(file.directory)).toBe(false);
+  expect(await readFile(occupiedFile, "utf8")).toBe("existing file");
 });
 
 it("retains the bundle cleanup owner when a later withheld copy fails", async () => {
   const root = await createTestTempDirectory("desktop-copy-close-");
   const occupied = join(root, "occupied");
   await mkdir(occupied);
-  await writeFile(join(occupied, "keep"), "existing");
+  const commit = SafeOutputTree.prototype.commit;
+  vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementationOnce(
+    async function (this: SafeOutputTree, signal) {
+      await commit.call(this, signal);
+      await writeFile(join(occupied, "keep"), "existing");
+    },
+  );
   const original = SafeOutputTree.prototype.closeHandles;
   const release = ArtifactResourceScope.prototype.release;
   const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
@@ -562,7 +572,9 @@ describe("exportDesktopApplication of withheld paths and copies", () => {
     ).toContain("49152");
     expect(await exists(directory)).toBe(false);
   });
+});
 
+describe("exportDesktopApplication withheld copy destinations", () => {
   it("refuses a withheld copy inside the bundle, also through a link, and writes neither", async () => {
     const root = await createTestTempDirectory("desktop-withheld-inside-");
     const directory = join(root, "bundle");
@@ -581,6 +593,38 @@ describe("exportDesktopApplication of withheld paths and copies", () => {
       withheldCopy: join(root, "alias", "private"),
     });
     expect(linked.result).toBeInstanceOf(Error);
+    expect(await readdir(directory)).toEqual([]);
+    await mkdir(join(root, "outside"));
+    await symlink(directory, join(root, "outside", "link"));
+    const parentTraversal = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory,
+      withheldCopy: `${root}/outside/link/../bundle/private`,
+    });
+    expect(parentTraversal.result).toBeInstanceOf(Error);
+    expect(await readdir(directory)).toEqual([]);
+    const unresolved = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory: join(root, "new-bundle"),
+      withheldCopy: `${root}/missing/../private`,
+    });
+    expect(unresolved.result).toBeInstanceOf(Error);
+    expect(await exists(join(root, "missing"))).toBe(false);
+    expect(await exists(join(root, "new-bundle"))).toBe(false);
+    await symlink(join(root, "absent"), join(root, "dangling"));
+    const dangling = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory: join(root, "new-bundle"),
+      withheldCopy: join(root, "dangling", "private"),
+    });
+    expect(dangling.result).toBeInstanceOf(AnalysisError);
+    expect(await exists(join(root, "new-bundle"))).toBe(false);
+    const leafLink = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory: `${root}/alias//`,
+      withheldCopy: join(root, "outside-copy"),
+    });
+    expect(leafLink.result).toBeInstanceOf(Error);
     expect(await readdir(directory)).toEqual([]);
   });
 

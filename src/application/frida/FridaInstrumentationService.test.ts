@@ -68,6 +68,49 @@ const createProvider = (
   ...overrides,
 });
 
+it.each(["startSession", "instrument"] as const)(
+  "retains cancellation beside a physical failed %s handshake",
+  async (method) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancelled during failed start" };
+    const primary = new AnalysisCapabilityUnavailableError(
+      "frida",
+      "start_frida_session",
+      "native attach failed",
+    );
+    let closes = 0;
+    const service = new FridaInstrumentationService(
+      createProvider({
+        async startSession() {
+          controller.abort(reason);
+          return { ok: false, error: primary };
+        },
+        async closeSession() {
+          closes++;
+          return { ok: true, value: { targetResumeObserved: false } };
+        },
+      }),
+    );
+    const input = { mode: "attach" as const, deviceId: "local", pid: 10 };
+    const result =
+      method === "startSession"
+        ? await service.startSession(input, controller.signal)
+        : await service.instrument(
+            {
+              ...input,
+              source: { sourceKind: "inline", source: "unused" },
+              durationMs: 0,
+            },
+            controller.signal,
+          );
+    if (result.ok) throw new Error("Expected failed start");
+    expect(result.error).toBe(primary);
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+    expect(closes).toBe(0);
+  },
+);
+
 it("keeps default Frida status identity and messages and refreshes every summary", () => {
   let reads = 0;
   const provider = createProvider({
@@ -514,6 +557,8 @@ it.each([false, true])(
     } else {
       expect(result.error).toBe(primary);
     }
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]?.cause).toBe(abortReason);
     expect(closes).toBe(1);
   },
 );
@@ -1162,6 +1207,8 @@ it.each([
     } else {
       expect(result.error).toBe(primary);
     }
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]?.cause).toBe(abortReason);
     expect(closes).toBe(1);
   },
 );

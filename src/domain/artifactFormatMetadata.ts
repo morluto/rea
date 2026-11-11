@@ -3,6 +3,7 @@ import {
   ntfsFileNameSchema,
   ntfsAttributeSchema,
   ntfsAttributeIssueSchema,
+  ntfsAttributeListResolutionSchema,
 } from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
 import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
@@ -332,6 +333,7 @@ const ntfsRecordHeaderSchema = z.strictObject({
   attributeCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
   attributeIssue: ntfsAttributeIssueSchema.nullable().exactOptional(),
   fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeListResolution: ntfsAttributeListResolutionSchema.exactOptional(),
   fixups: z.strictObject({
     sequenceNumber: offset,
     entries: offset,

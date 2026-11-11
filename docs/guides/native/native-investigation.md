@@ -531,6 +531,24 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+After fully examining and retaining a callee's parameters, an unmatched
+recovered CALL operand is reported at the caller's call-site address in
+`unknowns[].call_inputs`. One group lists its `input_indices` (positive p-code
+input positions; input 0 is the destination), `call_node_id`, exact resolved
+`destination` selector and caller `evidence_id`. The operands themselves stay
+in the retained call node and source Evidence. For example, a three-argument
+call with only parameter ordinal 0 recovered retains the index-1 binding and
+reports indices `[2, 3]` together. This does not establish a variadic signature
+or invent formal parameters.
+
+A depth, function, node or edge refusal, unavailable value flow, or truncated
+callee recovery does not establish such an examined gap. Those conditions
+keep their existing unknowns and traversal reasons. Call-input groups remain
+available when paging omits their call node; follow `call_node_id` in subsequent
+pages or the source Evidence. Older traces may omit `call_inputs`. Parameter
+and return bindings use canonical procedure addresses established by analyzed
+dossiers while preserving the provider's destination selector.
+
 Procedure, node and edge `evidence_id` values identify the source function
 observations used by the trace. In an MCP session, retrieve them from the
 Evidence bundle for inspection or export. A replayed source keeps the original

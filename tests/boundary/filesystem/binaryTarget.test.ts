@@ -178,20 +178,44 @@ it.each([{ cpus: [0x0100000c] }, { cpus: [0x01000007, 0x0100000c] }])(
   },
 );
 
-it("refuses ambiguous host subtypes even when a foreign family is selectable", async () => {
-  const directory = await createTestTempDirectory("rea-ambiguous-host-fat-");
+it("selects the preferred arm64 subtype when arm64e and a foreign slice are present", async () => {
+  const directory = await createTestTempDirectory("rea-preferred-host-fat-");
   const path = join(directory, "image");
   const bytes = fat([0x0100000c, 0x0100000c, 0x01000007]);
-  bytes.writeUInt32BE(2, 8 + 20 + 4);
-  bytes.writeUInt32BE(2, bytes.readUInt32BE(8 + 20 + 8) + 8);
+  // The earlier host-family slice is arm64e. Admission still selects arm64.
+  bytes.writeUInt32BE(2, 8 + 4);
+  bytes.writeUInt32BE(2, bytes.readUInt32BE(8 + 8) + 8);
   await writeFile(path, bytes);
+  const resolved = await parseBinaryTarget(path, { hostArchitecture: "arm64" });
+  if (!resolved.ok) throw resolved.error;
+  expect(resolved.value).toMatchObject({
+    kind: "executable",
+    format: "mach-o-universal",
+    architecture: "arm64",
+    availableArchitectures: ["arm64", "x86_64"],
+  });
+  expect(resolved.value.format).toBe("mach-o-universal");
+  if (resolved.value.format !== "mach-o-universal") return;
+  const target = resolved.value;
+  expect(
+    target.universalSlices?.find(
+      (slice) => slice.offset === target.universalSlice.offset,
+    ),
+  ).toMatchObject({ cpuType: 0x0100000c, cpuSubtype: 0 });
+});
+
+it("refuses identical host subtypes even when a foreign family is selectable", async () => {
+  const directory = await createTestTempDirectory("rea-ambiguous-host-fat-");
+  const path = join(directory, "image");
+  await writeFile(path, fat([0x0100000c, 0x0100000c, 0x01000007]));
   expect(
     await parseBinaryTarget(path, { hostArchitecture: "arm64" }),
   ).toMatchObject({
     ok: false,
     error: {
       _tag: "BinaryTargetError",
-      reason: expect.stringContaining("several arm64 slices"),
+      constraint: "file_format_rejected",
+      reason: "FAT binary declares several arm64 slices; no slice was selected",
     },
   });
 });

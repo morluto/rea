@@ -190,6 +190,33 @@ describe("relative ESM URL separators", () => {
 });
 
 describe("literal POSIX inventory base segments", () => {
+  it.each([
+    ["app/\ud800/main.js", "./dep.js", null],
+    ["app/\udfff/main.js", "./dep.js", null],
+    ["app/\ud800/main.js", "../dep.js", "app/dep.js"],
+    ["app/\ud800.js", "./dep.js", "app/dep.js"],
+    ["app/😀%literal/main.js", "./dep.js", "app/😀%literal/dep.js"],
+    ["app/%2F/main.js", "./dep.js", "app/%2F/dep.js"],
+  ] as const)(
+    "preserves URL-reference base uncertainty for %j with %s",
+    (sourcePath, declaredPath, target) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath,
+          context: "url-reference",
+          files: fileMap([
+            file(sourcePath, "root"),
+            file(target ?? "app/�/dep.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolved_path: target,
+        resolution_status: target === null ? "unavailable" : "resolved",
+      });
+    },
+  );
   it("validates the final URL after a parent reference removes the encoded base segment", () => {
     expect(
       resolve({

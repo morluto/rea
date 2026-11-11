@@ -11,6 +11,7 @@ import {
   assertArtifactReadActive,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { isUtf8 } from "node:buffer";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -917,7 +918,8 @@ export class CutterBridgeClient {
             bytes = boundedBytes;
           }
           assertArtifactReadActive(signal);
-          if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
+          if (bytes.byteLength > MAX_DESCRIPTOR_BYTES || !isUtf8(bytes))
+            return undefined;
           const parsed = descriptorSchema.safeParse(
             JSON.parse(bytes.toString("utf8")) as unknown,
           );

@@ -45,8 +45,21 @@ export class WorkerCleanupRegistry {
   }
 
   async retry(except?: RetainedWorkerCleanup): Promise<void> {
-    for (const owner of [...this.#pending])
-      if (owner !== except) await owner.retryRetainedCleanup();
+    const failures: unknown[] = [];
+    for (const owner of [...this.#pending]) {
+      if (owner === except) continue;
+      try {
+        await owner.retryRetainedCleanup();
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "Owned worker cleanup remains incomplete",
+      );
   }
 }
 
