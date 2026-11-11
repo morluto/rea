@@ -11,6 +11,7 @@ type CorrelatableRecord = RecordIdentity &
     MftRecord,
     | "baseRecordReference"
     | "declaredRecordNumber"
+    | "recordNumberMatchesSlot"
     | "fixups"
     | "totalBytes"
     | "extentValid"
@@ -40,12 +41,7 @@ export const createUsnMftCorrelator = (
       record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES !== record.totalBytes
     )
       continue;
-    if (
-      record.declaredRecordNumber !== null &&
-      record.declaredRecordNumber !== 0 &&
-      record.declaredRecordNumber !== record.index
-    )
-      continue;
+    if (record.recordNumberMatchesSlot === false) continue;
 
     const reference =
       (BigInt(record.sequenceNumber) << 48n) | BigInt(record.index);
