@@ -481,11 +481,18 @@ export const parseElfUnwindRanges = (
     while (pos < end && pos < bytes.length && shift <= 63n) {
       byte = bytes[pos] ?? 0;
       pos += 1;
-      result |= BigInt(byte & 0x7f) << shift;
+      // At bit 63 only one value bit remains; signed padding repeats that bit.
+      const payload = byte & 0x7f;
+      if (
+        shift === 63n &&
+        (signed ? payload !== 0 && payload !== 0x7f : payload > 1)
+      )
+        return null;
+      result |= BigInt(payload) << shift;
       shift += 7n;
       if ((byte & 0x80) === 0) {
-        if (signed && shift < 64n && (byte & 0x40) !== 0)
-          result |= -1n << shift;
+        // Ten-byte signed operands have 70 encoded bits, including sign padding.
+        if (signed && (byte & 0x40) !== 0) result |= -1n << shift;
         return { value: result, next: pos };
       }
     }

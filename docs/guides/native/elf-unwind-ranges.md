@@ -74,6 +74,12 @@ A record whose length word is `0xffffffff` uses the 64-bit extended length
 that follows it. In `.eh_frame` the CIE ID and CIE pointer after that length
 stay 4 bytes wide.
 
+LEB128 operands retain their signed or unsigned 64-bit value, including valid
+ten-byte sign padding. An overflowing or unterminated operand is not wrapped
+into a function address: its affected record is omitted, coverage is incomplete,
+and other decodable records remain available. A negative FDE range is likewise
+omitted rather than interpreted as a positive size.
+
 `DW_EH_PE_datarel` fields in `.eh_frame_hdr` are relative to the header
 address. In `.eh_frame` they are relative to the GOT: `DT_PLTGOT` when the
 dynamic table names it, otherwise the `.got.plt` or `.got` section address.
