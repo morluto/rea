@@ -96,3 +96,17 @@ it("keeps duplicates ambiguous and skips extensions and unverified records", () 
     }),
   ).toEqual({ file: { kind: "ambiguous" }, parent: { kind: "unresolved" } });
 });
+
+it("leaves opaque 128-bit IDs unresolved even when their numeric value resembles a 64-bit MFT reference", () => {
+  const correlate = createUsnMftCorrelator([baseRecord]);
+  expect(
+    correlate({
+      fileReference: 0x0002_0000_0000_0007n,
+      parentReference: 0x0002_0000_0000_0007n,
+      referenceBytes: 16,
+    }),
+  ).toEqual({
+    file: { kind: "unresolved" },
+    parent: { kind: "unresolved" },
+  });
+});

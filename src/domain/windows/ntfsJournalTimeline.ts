@@ -6,11 +6,11 @@ import {
 import {
   readUsnJournal,
   type UsnRecordIssue,
-  type UsnRecordV2,
+  type UsnRecord,
 } from "./ntfsUsnJournal.js";
 
 type JournalEvent = Omit<
-  UsnRecordV2,
+  UsnRecord,
   "fileReference" | "parentReference" | "usn" | "timestampFileTime"
 > & {
   readonly fileReference: string;
