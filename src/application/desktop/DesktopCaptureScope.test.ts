@@ -171,6 +171,38 @@ describe("captureScope", () => {
     expect(scope.excluded).toContain(join(root, "physical", "selected"));
     expect(scope.excluded).not.toContain(join(root, "named", "selected"));
   });
+
+  it("keeps discovered state directories whose physical path cannot be established", async () => {
+    const root = await realpath(
+      await createTestTempDirectory("desktop-scope-unknown-"),
+    );
+    const home = join(root, "home");
+    const dangling = join(home, ".config/notes-link");
+    const file = join(root, "outside/not-a-directory");
+    const throughFile = join(file, "child");
+    await mkdir(dirname(dangling), { recursive: true });
+    await symlink(join(home, "missing-notes"), dangling);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, "not a directory");
+    const { scope } = await captureScope(
+      request([]),
+      inventory({
+        state_directories: [
+          { path: dangling, exists_at_start: true },
+          {
+            path: throughFile,
+            exists_at_start: null,
+            existence_error: "ENOTDIR",
+          },
+        ],
+      }),
+      home,
+      join(root, "out"),
+    );
+    expect(scope.stateDirectories).toEqual([dangling, throughFile]);
+    expect(scope.contentRoots).toEqual([dangling, throughFile]);
+    expect(scope.roots).toEqual([home, throughFile]);
+  });
 });
 
 describe("applicationWindowMatching", () => {

@@ -11,6 +11,32 @@ import type { CheckpointScope } from "./DesktopCheckpointRecorder.js";
 
 const unique = (paths: readonly string[]) => [...new Set(paths)];
 
+/** A discovered state path whose physical file cannot be established. */
+const unresolvedStateDirectory = (cause: unknown): boolean => {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return (
+    code === "ENOENT" ||
+    code === "EACCES" ||
+    code === "EPERM" ||
+    code === "ENOTDIR" ||
+    code === "ELOOP"
+  );
+};
+
+/**
+ * Canonicalize a discovered state directory when the filesystem can. An
+ * unreadable path or dangling symlink stays the discovered absolute path so
+ * the capture can publish that unknown instead of aborting.
+ */
+const canonicalStateDirectory = async (path: string): Promise<string> => {
+  try {
+    return await canonicalCallerPath(path);
+  } catch (cause: unknown) {
+    if (!unresolvedStateDirectory(cause)) throw cause;
+    return absoluteCallerPath(path);
+  }
+};
+
 /** Whether the walked path is a directory. A missing path is not one, matching the sidecar decision. */
 const pathKind = async (path: string): Promise<"file" | "directory"> =>
   (await lstat(path).then(
@@ -67,8 +93,10 @@ export const captureScope = async (
         physical: await canonicalCallerPath(path),
       })),
     );
-  const stateDirectories = await canonical(
-    inventory.state_directories.map((entry) => entry.path),
+  const stateDirectories = await Promise.all(
+    inventory.state_directories.map((entry) =>
+      canonicalStateDirectory(entry.path),
+    ),
   );
   const argumentPaths = await named(
     request.arguments.filter((value) => isAbsolute(value)),
