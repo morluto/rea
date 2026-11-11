@@ -1849,6 +1849,7 @@
 * **cli:** cover Frida argument admission and spawn ordering ([#3356](https://github.com/morluto/rea/issues/3356)) ([c7fce66](https://github.com/morluto/rea/commit/c7fce66035a4eba490157b4ec3f43b1a7515aa99))
 * **cli:** cover literal Markdown heading output ([#7866](https://github.com/morluto/rea/issues/7866)) ([c2cc7e6](https://github.com/morluto/rea/commit/c2cc7e6eb0979303ae78c7146b2705b7181e8dd6))
 * **cli:** cover production doctor output option ordering ([#6683](https://github.com/morluto/rea/issues/6683)) ([1d4e9f3](https://github.com/morluto/rea/commit/1d4e9f31c344d9dde1fdbfed0fbae61a3d48a3ca))
+* **cli:** expect a failed exit for an unavailable Cutter session ([#10117](https://github.com/morluto/rea/issues/10117)) ([c5c1ff4](https://github.com/morluto/rea/commit/c5c1ff45faf58d4e0aaa696f87f28cd0293a9016))
 * **cli:** place selector regressions in the discovered adapter suite ([ff86e19](https://github.com/morluto/rea/commit/ff86e19e23a8b0a51849fa839698fb65230afc8a))
 * **cli:** select shutdown budgets for worker lifecycle scenarios ([#9170](https://github.com/morluto/rea/issues/9170)) ([39bd0cc](https://github.com/morluto/rea/commit/39bd0cc625be27da810d4ec4444770236aa30647))
 * **cli:** verify native equality and exact text through public commands ([574aca1](https://github.com/morluto/rea/commit/574aca127fe9946a86b59ffd8f232e5c233a305a))
