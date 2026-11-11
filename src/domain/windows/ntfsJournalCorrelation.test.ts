@@ -10,6 +10,7 @@ const baseRecord = {
   extentValid: true,
   baseRecordReference: null,
   declaredRecordNumber: 7,
+  recordNumberMatchesSlot: true,
   fixups: {
     sequenceNumber: 5,
     entries: 3,
@@ -34,6 +35,22 @@ it("keeps a reused record number unresolved while resolving a full parent refere
       record: { index: 7, sequenceNumber: 2, fileOffset: 7168 },
     },
   });
+});
+
+it("uses the MFT decoder's record identity verdict", () => {
+  const correlate = createUsnMftCorrelator([
+    {
+      ...baseRecord,
+      declaredRecordNumber: 0,
+      recordNumberMatchesSlot: false,
+    },
+  ]);
+  expect(
+    correlate({
+      fileReference: 0x0002_0000_0000_0007n,
+      parentReference: 0n,
+    }).file,
+  ).toEqual({ kind: "unresolved" });
 });
 
 it("keeps duplicates ambiguous and skips extensions and unverified records", () => {
