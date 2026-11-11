@@ -34,7 +34,7 @@ settings. They are not on the restart-only list.
 | Per-call numeric `REA_` limits still read from the launch environment |                                                                           11 |
 | Restart-only numeric `REA_` limits                                    |                                                                           15 |
 | Numeric `REA_` names discovered in `src`                              |                                                                           40 |
-| Non-numeric `REA_` settings kept restart-only                         | 53 caller settings, plus process-protocol names that are not caller settings |
+| Non-numeric `REA_` settings kept restart-only                         | 52 caller settings, plus process-protocol names that are not caller settings |
 | Hardcoded ceilings left for follow-up                                 |                        grouped below; none converted in the inventory change |
 
 ## Runtime analysis settings
@@ -136,7 +136,6 @@ or logger.
 | `REA_DARWIN_SWIFTC_PATH`             | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected compiler path.              |
 | `REA_DCONF_COMMAND`                  | `src/desktop/DconfDatabaseReader.ts`               | Caller-selected command.                    |
 | `REA_DOCKER_COMMAND`                 | `src/application/DesktopBuildDoctor.ts`            | Caller-selected command.                    |
-| `REA_ELECTRON_CAPTURE_ARGV`          | `src/browser/PlaywrightElectronActiveProvider.ts`  | Caller-selected process arguments.          |
 | `REA_EVM_PRLIMIT_COMMAND`            | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected command.                    |
 | `REA_FIRMWARE_PRLIMIT_COMMAND`       | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected command.                    |
 | `REA_GDB_COMMAND`                    | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected debugger binary.            |
@@ -181,7 +180,7 @@ or logger.
 `REA_WORKFLOW_PROVIDER` is a provider identity object. Neither is an
 environment setting. Names that look like `REA_` but are process protocol, not
 caller settings:
-`REA_BUILD_COMMIT`, `REA_BUILD_COMPUTER_REA_ARCHIVE`, `REA_INSTALL_SCRIPT`,
+`REA_ELECTRON_CAPTURE_ARGV`, `REA_BUILD_COMMIT`, `REA_BUILD_COMPUTER_REA_ARCHIVE`, `REA_INSTALL_SCRIPT`,
 `REA_OWNS_PROCESS_LIFETIME`, `REA_PAYLOAD`, `REA_PROCESS_RUN_ID`, `REA_RUN_ID`,
 `REA_SOCKET`, `REA_STATE_FORMAT`, `REA_TARGET_PATH`, `REA_TOKEN`, bridge markers
 such as `REA_COMMAND_COMPLETE_`, and the `ERR_REA_WINDOWS_NATIVE` code.
