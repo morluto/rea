@@ -159,15 +159,14 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       !isShellCompletion &&
       builtinArguments.isProjectScopedAmpRegistration(cliArgs)
     ) {
-      // Incur's Amp writer ignores --no-global and always writes the global
-      // settings file, so fail closed before it runs rather than reporting
-      // a project registration that never happened.
+      // Amp has global settings only. Share the parsed scope fact with the
+      // registration workflow and refuse before loading the command runtime.
       //
       // A caller that asked for a structured document gets the refusal in
       // that document, through the same pre-execution error renderer the
       // output-argument branch uses; anything else keeps the plain message.
       const refusalMessage =
-        "Amp does not support project-scoped registration: 'rea mcp add --no-global' with Amp would write the global Amp settings file instead of a project file. Run without --no-global to register Amp globally.";
+        "Amp does not support project-scoped registration. Run without --no-global to register Amp globally, or select a client with project settings. No client settings were changed.";
       const refusalFormat = outputOptions.format;
       if (
         refusalFormat === "json" ||

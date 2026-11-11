@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Where a data-plane file part names its path in the home. */
-const DATA_OBJECTS = "urn:agentenv:data-objects/v1";
+export const DATA_OBJECTS = "urn:agentenv:data-objects/v1";
 /** A `data/get` answer: file parts, each naming its home path, or an error. */
 export const dataGetSchema = z.union([
   z.object({
@@ -74,7 +74,7 @@ export const readHomeFiles = async (
       ? []
       : [
           {
-            path: Object.values(part.metadata ?? {})[0]?.path,
+            path: part.metadata?.[DATA_OBJECTS]?.path,
             bytes: Buffer.from(encoded, "base64"),
           },
         ];

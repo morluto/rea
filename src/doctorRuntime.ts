@@ -164,7 +164,7 @@ const readSelectedRegistration = async (
   if (configuration.value.document === undefined) return undefined;
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
-    client.name,
+    client,
     {},
     "effective",
     platform,

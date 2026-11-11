@@ -868,6 +868,7 @@ class NativeMacOSClient implements AnalysisClient {
       executablePaths,
     );
     const displayFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       display.value,
       binding.snapshotPath,
       executablePaths,
@@ -881,6 +882,7 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!requirements.ok) return requirements;
     const requirementsFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       requirements.value,
       binding.snapshotPath,
       executablePaths,
@@ -894,6 +896,7 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!entitlements.ok) return entitlements;
     const entitlementsFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       entitlements.value,
       binding.snapshotPath,
       executablePaths,
@@ -1004,6 +1007,7 @@ class NativeMacOSClient implements AnalysisClient {
       captures.push(slice.value);
       if (slice.value.exitCode === 0) continue;
       const failure = codeSignCaptureFailure(
+        this.#signatureResources,
         slice.value,
         binding.snapshotPath,
         executablePaths,
@@ -1637,6 +1641,7 @@ class NativeMacOSClient implements AnalysisClient {
                 truncated: false,
               },
             ),
+            this.#machoOperandResources,
           ),
         );
       return captured;
@@ -1645,6 +1650,7 @@ class NativeMacOSClient implements AnalysisClient {
       translateNativeCommandFailure(
         operation,
         captured.error,
+        this.#machoOperandResources,
         options.timeoutMs,
       ),
     );
@@ -1985,6 +1991,7 @@ const isNativeOperation = (
 
 const translateCodeSignExitFailure = (
   capture: NativeCommandCapture,
+  resources: ArtifactResourceScope,
 ): AnalysisError =>
   translateNativeCommandFailure(
     "inspect_signature",
@@ -1996,6 +2003,7 @@ const translateCodeSignExitFailure = (
       // Accepted output stays complete until the provider decides it failed.
       failureCapture(capture, false),
     ),
+    resources,
   );
 
 /**
@@ -2040,6 +2048,7 @@ const canonicalPath = async (path: string): Promise<string[]> => {
 };
 
 const codeSignCaptureFailure = (
+  resources: ArtifactResourceScope,
   capture: NativeCommandCapture,
   snapshotPath: string,
   executablePaths: readonly string[],
@@ -2047,7 +2056,7 @@ const codeSignCaptureFailure = (
   capture.exitCode === 0 ||
   isNonzeroUnsignedObservation(capture, snapshotPath, executablePaths)
     ? null
-    : translateCodeSignExitFailure(capture);
+    : translateCodeSignExitFailure(capture, resources);
 
 const codeSignArchitectures = (
   format: string | null,

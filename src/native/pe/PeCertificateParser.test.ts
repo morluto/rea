@@ -748,30 +748,38 @@ it.each(
   );
 });
 
-it("preserves multiple attributes in a nonempty RDN", () => {
-  const multiple = derSeq(
-    derSet(
-      derSeq(cn, der(0x0c, Buffer.from("A"))),
-      derSeq(
-        Buffer.from([0x06, 0x03, 0x55, 0x04, 0x0a]),
-        der(0x0c, Buffer.from("B")),
-      ),
-    ),
+it.each([true, false])("preserves RDN boundaries (one set: %s)", (oneSet) => {
+  const commonName = derSeq(cn, der(0x0c, Buffer.from("A")));
+  const organization = derSeq(
+    Buffer.from([0x06, 0x03, 0x55, 0x04, 0x0a]),
+    der(0x0c, Buffer.from("B")),
   );
+  const name = oneSet
+    ? derSeq(derSet(commonName, organization))
+    : derSeq(derSet(commonName), derSet(organization));
   const payload = pkcs7SignedDataFixture(
     undefined,
     undefined,
     undefined,
     undefined,
-    { issuer: multiple, subject: multiple, signerIssuer: multiple },
+    { issuer: name, subject: name, signerIssuer: name },
   );
   const pkcs7 = parse(peCertificateFixture(true, payload)).entries[0]?.pkcs7;
-  for (const name of [
+  for (const decoded of [
     pkcs7?.certificates[0]?.issuer,
     pkcs7?.certificates[0]?.subject,
     pkcs7?.signers[0]?.issuer,
-  ])
-    expect(name?.attributes.map(({ value }) => value)).toEqual(["A", "B"]);
+  ]) {
+    expect(decoded?.attributes).toMatchObject([
+      { value: "A", rdn_index: 0 },
+      { value: "B", rdn_index: oneSet ? 0 : 1 },
+    ]);
+    expect(decoded?.text).toBe(
+      oneSet
+        ? "commonName=A+organizationName=B"
+        : "commonName=A, organizationName=B",
+    );
+  }
 });
 
 it("distinguishes an empty RDNSequence from an empty RDN", () => {

@@ -43,6 +43,37 @@ does not establish broader Pi compatibility. See the pinned upstream
 [`declarations.ts`](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/src/declarations.ts)
 and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/README.md#declarations-for-the-model).
 
+## Cline
+
+The original contributor reported a run on 2026-11-11 on Linux (Fedora 45),
+using Cline CLI 3.0.74 and the integration based on REA `main` at `9924bf344`.
+That run checked client config listing and a direct registered-server MCP
+handshake (254 tools on that build). It predates the verifier lifecycle changes
+below and does not establish their real-client behavior.
+
+`npm run verify:cline-client` creates its sandbox home before launching commands
+and removes inherited `CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR` and `CLINE_DIR`.
+Setup therefore exercises the default
+`~/.cline/data/settings/cline_mcp_settings.json` path under the sandboxed home.
+Cline's CLI must list that registration using the sandbox's explicit
+`--data-dir`; this checks the file parser, not independent default-home discovery.
+The exact registered launcher then
+completes SDK initialization and tool discovery through REA's owned stdio
+transport. Stdin stays open until discovery finishes. Command and transport
+cleanup completes before the verifier records lineage or reports success.
+
+The updated orchestration has recording-port coverage for delayed discovery,
+failed server identification and failed cleanup. These tests use the installed
+SDK and verifier lifecycle owner, but do not execute Cline or a real REA server.
+The updated real-client lane has not been rerun during this reconciliation.
+
+Not covered by the lane: a model-driven tool call inside Cline. Cline's provider
+configuration (`providers.json`) is versioned and auth-shaped, and the CLI ignores
+`OPENAI_BASE_URL`, so the loopback model fixture cannot drive it without depending
+on that private schema. The IDE extension is not covered either: its MCP settings are
+UI-managed and live under editor-specific `globalStorage` roots, which `rea setup`
+does not write in this release.
+
 <a id="llamacpp"></a>
 
 ## llama.cpp
