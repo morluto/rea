@@ -14,6 +14,8 @@ import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRoo
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { admitWabtVersion, WABT_ACCEPTED_RANGE } from "./WabtRelease.js";
 
 // Admission must not outrun the `1.0.x` banners wasmArtifactSchema accepts.
@@ -88,6 +90,8 @@ const outcomeModes = [
   "snapshot-close-failure",
   "snapshot-read-failure-late-abort",
   "malformed",
+  "malformed-close",
+  "malformed-close-failure",
   "timeout",
   "cancelled",
   "cancelled-close",
@@ -112,6 +116,8 @@ const failureTags: Readonly<Record<Exclude<OutcomeMode, "success">, string>> = {
   "changed-snapshot": "AnalysisArtifactChangedError",
   cleanup: "ProviderAdapterError",
   malformed: "AnalysisOutputError",
+  "malformed-close": "AnalysisOutputError",
+  "malformed-close-failure": "ProviderAdapterError",
   "malformed-wat": "AnalysisOutputError",
   "wat-warning": "AnalysisOutputError",
 };
@@ -503,20 +509,27 @@ const assertModeOutcome = (
     });
 };
 
-const assertValidationCleanupRecovery = async (
+const assertFailedInspectionCleanupRecovery = async (
   provider: WabtArtifactProvider,
   result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
   cleanupAttempts: () => number,
+  mode: OutcomeMode,
 ): Promise<void> => {
   expect(result).toMatchObject({ error: { cleanupIncomplete: true } });
   await provider.close();
   expect(cleanupAttempts()).toBe(2);
-  if (result.ok) throw new Error("Expected validation failure");
+  if (result.ok) throw new Error("Expected inspection failure");
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
+    code:
+      mode === "invalid-close-failure"
+        ? "invalid_request"
+        : "unreadable_output",
     details: {
-      captured_output: { stderr: "module.wasm: invalid bytes\n" },
+      captured_output:
+        mode === "invalid-close-failure"
+          ? { stderr: "module.wasm: invalid bytes\n" }
+          : { stdout: "unexpected producer output" },
       cleanup_history: expect.any(Object),
     },
   });
@@ -994,7 +1007,7 @@ const launchWabtOutcome = async (
   const stdout = version
     ? "1.0.42\n"
     : input.command.includes("objdump")
-      ? mode === "malformed"
+      ? mode === "malformed" || mode.startsWith("malformed-close")
         ? "unexpected producer output"
         : dump
       : input.command.includes("wasm2wat")
@@ -1153,9 +1166,38 @@ const assertSnapshotCleanupOutcome = async (
   }
 };
 
+const assertFailedInspectionCancellation = (
+  mode: OutcomeMode,
+  result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
+  cancellationReason: unknown,
+): void => {
+  if (
+    [
+      "invalid-close",
+      "invalid-close-failure",
+      "malformed-close",
+      "malformed-close-failure",
+    ].includes(mode)
+  ) {
+    if (result.ok) throw new Error("Expected retained inspection failure");
+    const primary = primaryAnalysisError(result.error);
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]).toBeInstanceOf(AnalysisCancelledError);
+    expect(primary.secondaryFailures[0]?.cause).toBe(cancellationReason);
+    expect(primary.partialObservation).toBeDefined();
+    expect(primary.capturedOutput).toMatchObject(
+      mode.startsWith("invalid")
+        ? { stderr: "module.wasm: invalid bytes\n" }
+        : { stdout: "unexpected producer output" },
+    );
+  }
+};
+
 const runOwnedArtifactOutcome = async (
   mode: OutcomeMode,
-  cancellationReason: unknown = "authored finalization cancellation",
+  cancellationReason: unknown = {
+    source: "authored finalization cancellation",
+  },
 ): Promise<void> => {
   const { selectedRoot, path, bytes, dump } = await createWabtArtifactFixture();
   let runtimePath = "";
@@ -1204,12 +1246,22 @@ const runOwnedArtifactOutcome = async (
             if (++cleanupAttempts === 1)
               throw new Error("Source-owned cleanup uncertainty");
           }
-          if (mode === "invalid-close-failure" && ++cleanupAttempts === 1)
-            throw new Error("Source-owned cleanup uncertainty");
+          if (
+            mode === "invalid-close-failure" ||
+            mode === "malformed-close-failure"
+          ) {
+            controller.abort(cancellationReason);
+            if (++cleanupAttempts === 1)
+              throw new Error("Source-owned cleanup uncertainty");
+          }
           if (mode === "cleanup" && ++cleanupAttempts <= 2)
             throw new Error("Source-owned cleanup uncertainty");
           await root.close();
-          if (mode === "cancelled-close" || mode === "invalid-close")
+          if (
+            mode === "cancelled-close" ||
+            mode === "invalid-close" ||
+            mode === "malformed-close"
+          )
             controller.abort(cancellationReason);
         },
       };
@@ -1256,12 +1308,14 @@ const runOwnedArtifactOutcome = async (
       cleanupAttempts: () => cleanupAttempts,
       cancellationReason: controller.signal.reason,
     });
-  if (mode === "invalid-close-failure")
-    await assertValidationCleanupRecovery(
+  if (mode === "invalid-close-failure" || mode === "malformed-close-failure")
+    await assertFailedInspectionCleanupRecovery(
       provider,
       result,
       () => cleanupAttempts,
+      mode,
     );
+  assertFailedInspectionCancellation(mode, result, controller.signal.reason);
   await assertSnapshotCleanupOutcome(mode, result, provider, runtimePath);
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
