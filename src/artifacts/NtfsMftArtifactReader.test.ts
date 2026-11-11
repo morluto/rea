@@ -16,6 +16,7 @@ const recordBytes = (options: {
   readonly sequenceNumber?: number;
   readonly flags?: number;
   readonly index?: number;
+  readonly name?: string;
 }): Buffer => {
   const record = Buffer.alloc(MFT_DEFAULT_RECORD_BYTES);
   record.write("FILE", 0, "latin1");
@@ -30,8 +31,22 @@ const recordBytes = (options: {
   record.writeUInt32LE(options.index ?? 0, 44);
   record.writeUInt16LE(56, 20);
   record.writeUInt16LE(options.flags ?? 0x0001, 22);
-  record.writeUInt32LE(64, 24);
-  record.writeUInt32LE(0xffff_ffff, 56);
+  const attribute = 56;
+  let end = attribute;
+  if (options.name !== undefined) {
+    const valueBytes = 66 + Buffer.byteLength(options.name, "utf16le");
+    const length = Math.ceil((24 + valueBytes) / 8) * 8;
+    record.writeUInt32LE(0x30, attribute);
+    record.writeUInt32LE(length, attribute + 4);
+    record.writeUInt32LE(valueBytes, attribute + 16);
+    record.writeUInt16LE(24, attribute + 20);
+    const value = attribute + 24;
+    record.writeUInt8(options.name.length, value + 64);
+    record.write(options.name, value + 66, "utf16le");
+    end += length;
+  }
+  record.writeUInt32LE(end + 8, 24);
+  record.writeUInt32LE(0xffff_ffff, end);
   record.writeUInt32LE(MFT_DEFAULT_RECORD_BYTES, 28);
   record.writeUInt16LE(sequenceNumber, 510);
   record.writeUInt16LE(sequenceNumber, 1022);
@@ -50,7 +65,7 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
     await writeMft(
       "$MFT",
       Buffer.concat([
-        recordBytes({}),
+        recordBytes({ name: "sample" }),
         recordBytes({ flags: 0x0003, index: 1 }),
       ]),
     ),
@@ -70,6 +85,8 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
       extension_record_count: 0,
       fixup_mismatch_count: 0,
       fixup_unverified_record_count: 0,
+      file_name_count: 1,
+      file_name_incomplete_record_count: 0,
       truncated_tail_bytes: 0,
     },
   });
