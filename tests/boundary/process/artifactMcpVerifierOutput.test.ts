@@ -124,3 +124,15 @@ it.each(["duplicate-first", "duplicate-last"])(
     expect(result.error?.message).toMatch(/Duplicate MCP tool/u);
   },
 );
+
+it("preserves cancellation received during final transport cleanup", async () => {
+  const result = await probe("cancel-finalization");
+  expect(result.accepted).toBe(false);
+  expect(result.error?.message).toBe("cancelled during final cleanup");
+});
+
+it("retains a work failure when cancellation arrives during cleanup", async () => {
+  const result = await probe("failure-cancel-finalization");
+  expect(result.accepted).toBe(false);
+  expect(result.error?.message).toBe("work failed before cancellation");
+});

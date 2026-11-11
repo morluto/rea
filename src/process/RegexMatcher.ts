@@ -15,12 +15,14 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   REGEX_MATCHING_DEADLINE_SETTING,
+  regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
   type RegexMatchingDeadline,
 } from "../config/regexMatchingDeadline.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
+  regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
@@ -404,8 +406,8 @@ const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
 const heapBound = (
   heap: RegexWorkerHeapLimit,
   request: RegexWorkerHeapRequest,
+  recovery = regexWorkerHeapRequestRecovery(request),
 ): string => {
-  const recovery = regexWorkerHeapRequestRecovery(request);
   if (heap.kind === "unknown")
     return `The worker requests ${String(request.heapMiB)} MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size, --max-old-space-size-percentage, --max-heap-size, --env-file, --env-file-if-exists, --experimental-config-file, and --experimental-default-config-file can change that request. ${recovery}`;
   const override = `A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the ${String(request.heapMiB)} MiB worker request`;
@@ -476,7 +478,7 @@ export const regexMatchingDeadlineError = (
       // A one-shot invocation has ended its session before the caller retries.
       continuingCallerGuidance: {
         userMessage: "The service remains available.",
-        remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
+        remediationAction: `${regexMatchingDeadlineContinuingRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
       },
     },
   );
@@ -515,9 +517,33 @@ export const regexWorkerHeapError = (
             ),
           }
         : {}),
-      remediationAction: `${heapBound(heap, request)} Use update_analysis_settings with setting regex.worker_heap_request_mib to change the request for the next worker; launch heap flags can override it. Restart REA after changing --max-old-space-size or ${REGEX_WORKER_HEAP_REQUEST_SETTING} in the launch environment. A launch --max-old-space-size-percentage takes precedence over that flag in either order. Simplify the pattern or use literal mode.`,
+      remediationAction: `${heapBound(heap, request)} Set ${REGEX_WORKER_HEAP_REQUEST_SETTING} in the environment that starts the next REA invocation. Restart REA after changing --max-old-space-size. A launch --max-old-space-size-percentage takes precedence over that flag in either order. Simplify the pattern or use literal mode.`,
+      continuingCallerGuidance: {
+        remediationAction: `${heapBound(heap, request, regexWorkerHeapRequestContinuingRecovery(request))} Call update_analysis_settings with setting regex.worker_heap_request_mib to change the request for the next worker in this session. Launch heap flags can still override it. The launch seed remains ${REGEX_WORKER_HEAP_REQUEST_SETTING}. A launch --max-old-space-size-percentage takes precedence over --max-old-space-size in either order. Simplify the pattern or use literal mode.`,
+      },
     },
   );
+/**
+ * A pattern the regex engine rejects. The caller sees the engine's syntax
+ * error on `pattern` and can retry in literal mode. Providers that check the
+ * pattern before starting share this result with the worker.
+ */
+export const invalidRegexPatternError = (
+  operation: string,
+  reason: string,
+  cause?: unknown,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    {
+      cause,
+      userMessage: `Invalid regex pattern: ${reason}`,
+      remediationAction:
+        "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
+    },
+    [{ path: ["pattern"], reason: "invalid_format", message: reason }],
+  );
+
 const replySchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("matched"),
@@ -621,23 +647,7 @@ export const matchRegexValues = async (input: {
           );
         if (reply.data.status === "invalid_pattern")
           return finish(
-            err(
-              new AnalysisInputError(
-                input.operation,
-                {
-                  userMessage: `Invalid regex pattern: ${reply.data.reason}`,
-                  remediationAction:
-                    "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
-                },
-                [
-                  {
-                    path: ["pattern"],
-                    reason: "invalid_format",
-                    message: reply.data.reason,
-                  },
-                ],
-              ),
-            ),
+            err(invalidRegexPatternError(input.operation, reply.data.reason)),
           );
         if (
           reply.data.indices.some(

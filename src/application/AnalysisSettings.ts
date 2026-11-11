@@ -134,7 +134,7 @@ export class AnalysisSettings {
         };
       }),
       active_work_changed: false as const,
-      rea_restart_required: false as const,
+      pending_restart: false as const,
     });
   }
   #describe(setting: AnalysisSettingId) {
@@ -156,6 +156,10 @@ export class AnalysisSettings {
       minimum: definition.minimum,
       maximum: definition.maximum,
       applies_at: definition.appliesAt,
+      update_mode: definition.updateMode,
+      ...(override === undefined && !launch.ok
+        ? {}
+        : { pending_restart: false as const }),
       provider: definition.provider,
       operations: [...definition.operations],
       ...(definition.environment === undefined

@@ -25,7 +25,10 @@ while differing in supported options and output.
 Failure to launch the selected executable reports provider unavailability, the
 configured command and the host error under `boundary: "provider-launch"`.
 Recovery concerns `REA_OBJDUMP_COMMAND`, PATH and execution permission, including
-for target-free architecture listing. Artifact admission keeps separate input
+for target-free architecture listing. In MCP discovery (`binary_session`), an
+unprobed executable is reported available; observing a launch failure marks the
+operation unavailable with its remediation until a later dispatched request
+succeeds. Artifact admission keeps separate input
 and filesystem-read diagnostics. Invalid operation/selector combinations retain
 their rejected fields in input issues before artifact reads or provider launch.
 
@@ -40,13 +43,21 @@ rea inspect-with-objdump ./program dwarf
 rea inspect-with-objdump ./program dwarf --follow-debug-links
 ```
 
-Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. That cap has no runtime override.
+Captured stdout and stderr share `max_output_bytes` (CLI: `--max-output-bytes`), default 16777216 bytes (16 MiB). Select an integer from 1 to 44651859 bytes. The maximum leaves room for worst-case JSON escaping of both Evidence output mirrors under Node's single-string ceiling. The selected budget applies on the next call without a restart; `output_budget_bytes` reports it and `output_budget_source` distinguishes a default from an explicit request. On exhaustion REA retains a prefix, requests provider termination, and marks `output_truncated` with unknown completion. Narrow or page the native command, or raise the selected budget. Verify command effects and outstanding cleanup before deciding whether repeating it is safe. Client deadlines and receive buffers remain separate. Concurrent one-shot captures reserve their selected budgets within a 128 MiB aggregate admission and eight-operation capacity; wait for active work or select a smaller output budget when that capacity is occupied.
 
-`inspect_with_objdump`, `rea list-objdump-architectures`, and one-shot `execute_rizin_command` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. Target preflight shares one budget across stat and digest. The one-shot command receives that budget again. It applies on the next call; no restart is required. It does not raise the 16 MiB cap, a Ghidra or Hopper startup deadline, or a debugger session deadline.
+`inspect_with_objdump`, `rea list-objdump-architectures`, and one-shot `execute_rizin_command` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. Target preflight shares one budget across stat and digest. The one-shot command receives that budget again. It applies on the next call; no restart is required. It does not raise the separately selected `max_output_bytes`, a Ghidra or Hopper startup deadline, or a debugger session deadline.
 
 ## GDB
 
 Persistent GDB sessions, including the MCP workflow and one-shot `rea debug-with-gdb` CLI, are available only on Linux. REA verifies a live inferior's output descriptors through `/proc` before detaching it; it does not claim equivalent descriptor verification on macOS. Windows is also unsupported because owned Job Object cleanup can terminate debugger inferiors. On supported Linux hosts, `start_gdb_session`, `gdb_console`, `gdb_session_status`, and `close_gdb_session` manage a persistent GDB/MI session in MCP. The one-shot CLI requires a caller-selected durable TTY: `rea debug-with-gdb --inferior-tty /dev/pts/7 'file ./program'`. The TTY must remain available after GDB exits so a detached inferior can continue writing. MCP starts GDB with `--nx --quiet --interpreter=mi3`, retries initialization with MI2 if MI3 initialization returns an error and cleanup succeeds, waits for its prompt, and disables auto-loading. Pass optional `inferior_tty` to select the terminal that future inferior runs use; REA configures it before the session becomes ready and checks the exact value with GDB/MI. `gdb_session_status` reports the selected path, whether REA still considers the configuration verified, and whether invalid UTF-8 has been observed in MI bytes (`mi_invalid_utf8`) or stderr (`stderr_invalid_utf8`). Commands that can change the inferior TTY or redirect a run revoke that verification permanently for the session, so close retains GDB ownership if a live inferior remains. The complete built-in inspections `show inferior-tty` and `help inferior-tty` preserve verification; compound commands still use the conservative mutation checks. Closing a session with one live inferior and a verified TTY automatically detaches the target, which can resume execution; MCP clients receive destructive-operation annotations for this behavior. The console remains unrestricted and can run shell commands, change target state, access files, and use network in the REA process user's security context. Raw MI records and console/target/log streams are returned with Evidence; command output is retained up to the configured budget (16 MiB by default) and explicitly marked when truncated. A single console, target or log record over the 16 MiB MI line limit is dropped and the command is marked truncated, while an oversized result or async record still stops the session. GDB startup waits 10000 ms with no runtime override. Each MI command defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). `command_timeout_ms` does not change a persistent debugger session.
+
+A truncated GDB command capture includes `output_limits` with the exact causes
+and effective maxima: `command_bytes`, `command_records`, or `mi_line_bytes`.
+Only byte-budget exhaustion recommends raising
+`REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`. The 16384-record retention ceiling and
+16 MiB single-line protocol ceiling stay fixed; select a command with fewer or
+smaller records when either is reached. These cause facts survive timeout,
+cancellation and process-exit captures as well as successful commands.
 
 With multiple live inferiors, or a live inferior without a verified TTY, manual
 close requests an explicit disposition and keeps the session ready. Use
@@ -122,7 +133,121 @@ rea debug-with-rizin --inferior-tty /dev/pts/7 ./program dr
 rea execute-rizin-command ./program iI
 ```
 
-Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override.
+Captured stdout and stderr use the same `max_output_bytes` (CLI: `--max-output-bytes`) admission and recovery described above, default 16 MiB. One-shot commands independently use `command_timeout_ms`. Raising output admission cannot recover an earlier capture; command effects and cleanup must be checked before another invocation.
+
+### Decoder and map inputs
+
+Four optional inputs select how Rizin decodes the artifact and where it maps
+it. REA passes each one to Rizin before the artifact path:
+
+| Input          | CLI option       | Rizin argument | Example              |
+| -------------- | ---------------- | -------------- | -------------------- |
+| `asm_arch`     | `--asm-arch`     | `-a`           | `arm`, `x86`, `6502` |
+| `asm_bits`     | `--asm-bits`     | `-b`           | `16` for Thumb       |
+| `asm_cpu`      | `--asm-cpu`      | `-e asm.cpu=`  | `cortexm`            |
+| `base_address` | `--base-address` | `-n -m`        | `0x08000000`         |
+
+Rizin 0.9.1 refuses `-e asm.arch=` and `-e asm.bits=` at startup, and Rizin
+0.7.4 accepts them, so REA uses `-a` and `-b`, which both accept. Rizin applies
+`-e` settings after `-a` and `-b`, so `asm_cpu` applies to the selected arch.
+
+`base_address` is the address of file offset 0, as in REA's raw-binary inputs.
+REA passes it as `-m` together with `-n`, so Rizin maps the whole file there as
+a raw image and loads no format information, such as sections, symbols or an
+entry point, even from an ELF file. Without `-n`, a Rizin format loader can
+claim a raw image and give wrong reads with no error. In Rizin 0.9.1 the AVR
+loader turns `io.va` off, so every read at the mapped address returns `0xff`.
+In Rizin 0.7.4 and 0.9.1 the BIOS loader maps the file at another address.
+A loader can also claim a raw image that you open with only `asm_*` inputs, so
+pass `base_address`, `0x0` if the image has no known address. Evidence records
+each input and the complete argument list.
+
+With `-n`, Rizin has no headers to read, so arch, bits and byte order stay at
+its defaults unless the call selects them. A Thumb image opened with only
+`base_address` decodes as plausible AArch64 on an arm64 host. Pass `asm_arch`
+and `asm_bits` with `base_address`, and for a big-endian image start the command
+with `e cfg.bigendian=true`.
+
+REA checks only the spelling. Arch and CPU names contain letters, digits, `_`,
+`.`, `+` and `-`, and start with a letter or a digit. `asm_bits` is an integer
+from 1 to 64. `base_address` is `0x` followed by 1 to 16 hexadecimal digits.
+Rizin owns the names, and its builds differ: for example, the Homebrew build of
+Rizin 0.9.1 has no `xtensa` or `riscv` plugin, while the official static Linux
+build of Rizin 0.7.4 has both. The commands `e asm.arch=?` and `e asm.cpu=?`
+list what the installed Rizin supports. To use another build, set
+`REA_RIZIN_COMMAND`. When Rizin cannot apply an arch or bits value, it uses
+another value and exits with status 0. Rizin 0.9.1 keeps its default and
+reports the value on stderr. Rizin 0.7.4 reports an unknown arch on stderr, but
+for `arm` it used 16 bits instead of 8 without a message. Both accept any
+`asm.cpu` value, and `e asm.cpu` then echoes it, so compare it with
+`e asm.cpu=?`, which lists the CPUs of the selected arch. Evidence therefore
+states that REA does not confirm the decoder that Rizin used. To check the
+decoder and the map, start the command with
+`e asm.arch; e asm.bits; e asm.cpu; e cfg.bigendian; oml`.
+
+This call reads a Cortex-M flash dump at its address, in Thumb state:
+
+```sh
+rea execute-rizin-command ./flash.bin "e asm.arch; e asm.bits; oml; pxw 8 @ 0x08000000" --asm-arch arm --asm-bits 16 --asm-cpu cortexm --base-address 0x08000000
+```
+
+Through MCP, the same call is:
+
+```json
+{
+  "path": "/firmware/flash.bin",
+  "command": "e asm.arch; e asm.bits; oml; pxw 8 @ 0x08000000",
+  "asm_arch": "arm",
+  "asm_bits": 16,
+  "asm_cpu": "cortexm",
+  "base_address": "0x08000000"
+}
+```
+
+`pxw 8` prints the initial stack pointer and the Reset vector. The Reset vector
+is a Thumb address with its low bit set. Disassemble the handler at the even
+address, for example `pd 16 @ 0x08000108` for a Reset vector of `0x08000109`.
+
+### Multi-segment ESP images
+
+An app or bootloader image of the ESP32 family (the ESP32, ESP32-S, ESP32-C,
+ESP32-H and ESP32-P series) starts with the magic byte `0xE9` and holds several
+segments. ESP8266 images use a different header, and this recipe does not
+cover them. Each segment loads at its own address, so one `base_address` cannot
+map the image. Instead, remove the default map and add one `om` map for each
+segment, in the same command:
+
+1. Find the load address and the length of each segment, and the file offset
+   of its data. The image header is 24 bytes. Each segment starts with an
+   8-byte header that holds the load address and the data length, both 32-bit
+   little-endian, and its data follows. So the data of the first segment
+   starts at file offset `0x20`, and each later segment header follows the
+   data of the segment before it. `esptool image-info` lists the same
+   segments; esptool v4 spells it `image_info --version 2`. Its `File offs`
+   column is the offset of the 8-byte segment header, so the data starts 8
+   bytes later. A padding segment carries no code or data, and you can skip
+   it.
+2. Start the command with `e io.va=true`. Reads use the maps only while
+   `io.va` is on, and a Rizin format loader can turn it off.
+3. Rizin opens the image as file descriptor 3, which `ol` shows. For each
+   segment, add this map, with `r-x` for code and `r--` for data:
+   `om 3 <load address> <length> <data offset> <permissions> <name>`. A map
+   cannot have more permissions than the opened file, which is read-only.
+4. Select the decoder with `asm_arch` and set `asm_bits` to 32. ESP32, ESP32-S2
+   and ESP32-S3 use Xtensa. The ESP32-C and ESP32-H series and ESP32-P4 use
+   RISC-V. Use the plugin name that `e asm.arch=?` lists for the installed
+   Rizin.
+
+For example, for an image with an IRAM segment of 8 bytes at `0x40080000` and
+a DRAM segment of 16 bytes at `0x3ffb0000`:
+
+```sh
+rea execute-rizin-command ./app.bin "e io.va=true; om-*; om 3 0x40080000 0x8 0x20 r-x iram0; om 3 0x3ffb0000 0x10 0x30 r-- dram0; oml; pd 4 @ 0x40080000" --asm-arch xtensa --asm-bits 32
+```
+
+`om-*` removes the maps that Rizin made when it opened the file, such as the
+default map of the whole file at address 0. The entry address is the 32-bit
+little-endian value at file offset 4.
 
 ## Cutter bridge
 
@@ -203,4 +328,4 @@ generation error.
 
 The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
 
-Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](./mcp-contracts.md#tool-results).
+Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](reference/mcp-contracts.md#tool-results).

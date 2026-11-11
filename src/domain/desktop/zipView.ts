@@ -9,15 +9,11 @@ import {
 } from "./stateFormats.js";
 import { locatePointer } from "./viewPointer.js";
 
-const MIB = 1024 * 1024;
-/** Entries a zip view lists; past them it counts entries and is truncated. */
-export const MAX_ZIP_ENTRIES = 1000;
-/** Largest entry read, uncompressed. */
-const MAX_ZIP_ENTRY_BYTES = 16 * MIB;
-/** Uncompressed bytes read from one archive, the same as the largest file the state view reads. */
-const MAX_ZIP_BYTES = 64 * MIB;
-/** Most an entry may expand over its compressed size; a zip bomb expands about a thousand times. */
-const MAX_ZIP_RATIO = 100;
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewByteDisplay,
+  type DesktopViewPolicy,
+} from "./desktopViewPolicy.js";
 
 /** Why an archive has no view; the exported reader words it the same. */
 export const UNREADABLE_ZIP = "not a readable zip archive";
@@ -37,16 +33,17 @@ export interface ZipEntryHeader {
 export const zipEntryRefusal = (
   header: ZipEntryHeader,
   spent: number,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): string | undefined => {
   if (header.encrypted) return "encrypted, so it is not read";
   if (header.method !== 0 && header.method !== 8)
     return `compressed with method ${String(header.method)}, which the view does not read`;
-  if (header.size > MAX_ZIP_ENTRY_BYTES)
-    return `larger than the ${String(MAX_ZIP_ENTRY_BYTES / MIB)} MiB an entry's view reads`;
-  if (header.size > MAX_ZIP_RATIO * header.compressedSize)
-    return `expands more than ${String(MAX_ZIP_RATIO)} times, so it is not read`;
-  if (spent + header.size > MAX_ZIP_BYTES)
-    return `past the ${String(MAX_ZIP_BYTES / MIB)} MiB read from one archive`;
+  if (header.size > policy.zip_entry_bytes)
+    return `larger than the ${desktopViewByteDisplay(policy.zip_entry_bytes)} an entry's view reads`;
+  if (header.size > policy.zip_ratio * header.compressedSize)
+    return `expands more than ${String(policy.zip_ratio)} times, so it is not read`;
+  if (spent + header.size > policy.zip_bytes)
+    return `past the ${desktopViewByteDisplay(policy.zip_bytes)} read from one archive`;
   return undefined;
 };
 
@@ -67,13 +64,14 @@ export const unreadZipEntry = (
 const entryView = (
   format: DesktopStateFormat,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy,
 ): Result<JsonValue, string> => {
   switch (format) {
     case "text":
     case "json":
     case "keyfile":
     case "xml":
-      return textualView(format, bytes);
+      return textualView(format, bytes, policy);
     case "sqlite":
       return err("a SQLite database inside an archive is not read");
     case "dconf":
@@ -89,9 +87,10 @@ const entryView = (
 export const zipEntry = (
   header: ZipEntryHeader,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const format = detectStateFormat(header.name, bytes);
-  const read = entryView(format, bytes);
+  const format = detectStateFormat(header.name, bytes, policy);
+  const read = entryView(format, bytes, policy);
   return {
     name: header.name,
     size: header.size,
@@ -138,7 +137,7 @@ export const zipEntryAt = (
 ): Record<string, JsonValue> | "none" | undefined => {
   const [first, second] = pointer.slice(1).split("/");
   if (first !== "entries" || second === undefined) return undefined;
-  const entry = locatePointer(view, `/entries/${second}`);
+  const entry = locatePointer(view, `/entries/${second}`, "zip");
   if (entry.kind !== "value") return "none";
   return isRecord(entry.value) ? entry.value : undefined;
 };
@@ -161,18 +160,27 @@ export const entryWithoutView = (
   return VIEW_FORMATS.has(entry.format ?? null) ? undefined : "has no view";
 };
 
-/** The entry whose view a pointer goes into when it has none, so its `view` of `null` is no JSON value, and why. */
+/**
+ * The entry whose view a pointer goes into when it has none, so its `view` of
+ * `null` is no JSON value, and why; `unread` when reading its view failed.
+ */
 export const viewlessEntryAt = (
   view: JsonValue | null,
   pointer: string,
-): { readonly name: string; readonly reason: string } | undefined => {
+):
+  | { readonly name: string; readonly reason: string; readonly unread: boolean }
+  | undefined => {
   const entry = zipEntryAt(view, pointer);
   if (typeof entry !== "object" || pointer.split("/")[3] !== "view")
     return undefined;
   const reason = entryWithoutView(entry);
   return reason === undefined
     ? undefined
-    : { name: typeof entry.name === "string" ? entry.name : "", reason };
+    : {
+        name: typeof entry.name === "string" ? entry.name : "",
+        reason,
+        unread: typeof entry.view_error === "string",
+      };
 };
 
 /**

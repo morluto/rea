@@ -1,4 +1,10 @@
-import { mkdir, open as fsOpen, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open as fsOpen,
+  opendir as fsOpendir,
+  stat as fsStat,
+  writeFile,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
@@ -11,10 +17,17 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, open: vi.fn(actual.open) };
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    stat: vi.fn(actual.stat),
+    opendir: vi.fn(actual.opendir),
+  };
 });
 
 const openMock = vi.mocked(fsOpen);
+const opendirMock = vi.mocked(fsOpendir);
+const statMock = vi.mocked(fsStat);
 let actual: typeof import("node:fs/promises");
 
 beforeEach(async () => {
@@ -23,9 +36,15 @@ beforeEach(async () => {
       "node:fs/promises",
     );
   openMock.mockImplementation((...args) => actual.open(...args));
+  opendirMock.mockImplementation((...args) => actual.opendir(...args));
+  statMock.mockImplementation((...args) => actual.stat(...args));
 });
 
-afterEach(() => openMock.mockReset());
+afterEach(() => {
+  openMock.mockReset();
+  opendirMock.mockReset();
+  statMock.mockReset();
+});
 
 const failCloseUntilAllowed = (
   target: string,
@@ -315,3 +334,253 @@ it("keeps a later packed-ref read error primary over earlier loose-ref cleanup",
     Array.from({ length: looseCloseCalls.size }, () => 3),
   );
 });
+
+it("preserves a physical root admission failure when cancellation arrives during stat", async () => {
+  const root = await createTestTempDirectory("rea-reference-root-eio-");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  const physical = Object.assign(new Error("root stat failed"), {
+    code: "EIO",
+  });
+  statMock.mockImplementation(async (...args) => {
+    if (String(args[0]) !== root) return actual.stat(...args);
+    controller.abort(reason);
+    throw physical;
+  });
+  try {
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "test",
+        policy: { secretPatterns: [] },
+        signal: controller.signal,
+      },
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "io",
+        cause: physical,
+        secondaryCancellation: { cause: reason },
+      },
+    });
+  } finally {
+    await resources.close();
+  }
+});
+
+it.each([false, true])(
+  "retains a physical Git metadata read failure and late cancellation through cleanup (close fails: %s)",
+  async (closeFails) => {
+    const root = await createTestTempDirectory("rea-reference-vcs-eio-");
+    const gitdir = join(root, ".git");
+    await mkdir(gitdir);
+    const head = join(gitdir, "HEAD");
+    await writeFile(head, "ref: refs/heads/main\n");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { source: "caller" };
+    const physical = Object.assign(new Error("metadata read failed"), {
+      code: "EIO",
+    });
+    let allowClose = false;
+    openMock.mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      if (resolve(String(args[0])) !== resolve(head)) return handle;
+      vi.spyOn(handle, "read").mockImplementation(async () => {
+        throw physical;
+      });
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        controller.abort(reason);
+        if (closeFails && !allowClose) throw new Error("close failed");
+        await close();
+      });
+      return handle;
+    });
+    try {
+      const result = await readReferenceSourceVcs(
+        root,
+        resources,
+        controller.signal,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "io",
+          secondaryCancellation: { cause: reason },
+          ...(closeFails ? { cleanup: { resources: [head] } } : {}),
+        },
+      });
+    } finally {
+      allowClose = true;
+      await resources.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves a policy read failure and later cancellation (close fails: %s)",
+  async (closeFails) => {
+    const root = await createTestTempDirectory("rea-reference-policy-eio-");
+    const policyPath = join(root, ".gitignore");
+    await writeFile(policyPath, "ignored\n");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { source: "caller" };
+    const physical = Object.assign(new Error("policy read failed"), {
+      code: "EIO",
+    });
+    let allowClose = false;
+    openMock.mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      if (resolve(String(args[0])) !== resolve(policyPath)) return handle;
+      vi.spyOn(handle, "read").mockImplementation(async () => {
+        throw physical;
+      });
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        controller.abort(reason);
+        if (closeFails && !allowClose) throw new Error("close failed");
+        await close();
+      });
+      return handle;
+    });
+    try {
+      const result = await importReferenceSource(
+        {
+          root,
+          caller: "test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "io", secondaryCancellation: { cause: reason } },
+      });
+      if (result.ok) throw new Error("Policy failure was ignored");
+      expect(result.error.message).toContain("policy read failed");
+      expect(resources.cleanupResources).toEqual(
+        closeFails ? [policyPath] : [],
+      );
+    } finally {
+      allowClose = true;
+      await resources.close();
+    }
+  },
+);
+
+it("preserves physical Git failure and exact cancellation across parallel traversal", async () => {
+  const root = await createTestTempDirectory("rea-reference-parallel-abort-");
+  const gitdir = join(root, ".git");
+  await mkdir(gitdir);
+  const head = join(gitdir, "HEAD");
+  await writeFile(head, "ref: refs/heads/main\n");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancel while Git metadata fails" };
+  const physical = Object.assign(new Error("HEAD read EIO"), { code: "EIO" });
+  let entered!: () => void;
+  let release!: () => void;
+  const opendirEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  opendirMock.mockImplementation(async (...args) => {
+    entered();
+    await gate;
+    return actual.opendir(...args);
+  });
+  openMock.mockImplementation(async (...args) => {
+    const handle = await actual.open(...args);
+    if (resolve(String(args[0])) === resolve(head))
+      vi.spyOn(handle, "read").mockImplementation(async () => {
+        await opendirEntered;
+        controller.abort(reason);
+        release();
+        throw physical;
+      });
+    return handle;
+  });
+  try {
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "test",
+        policy: { secretPatterns: [] },
+        signal: controller.signal,
+      },
+      resources,
+    );
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("io");
+    expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    expect(((result.error.cause as Error).cause as Error).cause).toBe(physical);
+  } finally {
+    release();
+    await resources.close();
+  }
+});
+
+it.each(["metadata", "import"] as const)(
+  "preserves optional commondir absence when its probe coincides with cancellation (%s)",
+  async (surface) => {
+    const root = await createTestTempDirectory("rea-reference-optional-git-");
+    const gitdir = join(root, ".git");
+    await mkdir(gitdir);
+    await writeFile(
+      join(gitdir, "HEAD"),
+      "0123456789abcdef0123456789abcdef01234567\n",
+    );
+    const commondir = join(gitdir, "commondir");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { caller: "stop after optional metadata absence" };
+    let probed = false;
+    openMock.mockImplementation(async (...args) => {
+      try {
+        return await actual.open(...args);
+      } catch (cause: unknown) {
+        if (resolve(String(args[0])) === resolve(commondir)) {
+          probed = true;
+          controller.abort(reason);
+        }
+        throw cause;
+      }
+    });
+    try {
+      const result =
+        surface === "metadata"
+          ? await readReferenceSourceVcs(root, resources, controller.signal)
+          : await importReferenceSource(
+              {
+                root,
+                caller: "test",
+                policy: { secretPatterns: [] },
+                signal: controller.signal,
+              },
+              resources,
+            );
+      expect(probed).toBe(true);
+      expect(controller.signal.reason).toBe(reason);
+      if (surface === "metadata")
+        expect(result).toEqual({
+          ok: true,
+          value: { kind: "unknown", head: null, dirty: null },
+        });
+      else {
+        if (result.ok) throw new Error("Expected cancelled import");
+        expect(result.error.code).toBe("cancelled");
+        expect(result.error.cause).toBe(reason);
+      }
+    } finally {
+      await resources.close();
+    }
+  },
+);

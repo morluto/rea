@@ -12,13 +12,40 @@ import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const PACKAGE_LINE = "package:/data/app/example/base.apk=com.example.app";
 
-cliTest.for([
+interface AdbSelectorCase {
+  readonly command: string;
+  readonly field: string;
+  readonly valid: string;
+  readonly invalid: string;
+  readonly constraint: Readonly<Record<string, unknown>>;
+  /** Positional arguments between the serial and the checked field. */
+  readonly between?: Readonly<Record<string, string>>;
+  readonly options?: readonly string[];
+}
+
+cliTest.for<AdbSelectorCase>([
   {
     command: "list-adb-directory",
     field: "device-path",
     valid: "/sdcard",
     invalid: "sdcard",
     constraint: { expected: "regex" },
+  },
+  {
+    command: "pull-adb-file",
+    field: "device-path",
+    valid: "/sdcard/notes.txt",
+    invalid: "sdcard/notes.txt",
+    constraint: { expected: "regex" },
+    options: ["--output-directory", "pulled"],
+  },
+  {
+    command: "push-adb-file",
+    field: "device-path",
+    valid: "/data/local/tmp/payload.bin",
+    invalid: "data/local/tmp/payload.bin",
+    constraint: { expected: "regex" },
+    between: { "local-path": "payload.bin" },
   },
   {
     command: "resolve-adb-packages",
@@ -29,18 +56,27 @@ cliTest.for([
   },
 ])(
   "publishes the enforced ADB selector constraint for $command",
-  async ({ command, field, valid, invalid, constraint }, { cli }) => {
+  async (
+    { command, field, valid, invalid, constraint, between = {}, options = [] },
+    { cli },
+  ) => {
     const schema = await cli.run({
       arguments: [command, "--schema", "--json"],
     });
     expect(schema.exitCode, schema.stderr).toBe(0);
     const output = schema.json as { args: Parameters<Ajv2020["compile"]>[0] };
     const validate = new Ajv2020({ strict: false }).compile(output.args);
-    const serial = "emulator-5554";
-    expect(validate({ serial, [field]: valid })).toBe(true);
-    expect(validate({ serial, [field]: invalid })).toBe(false);
+    const leading = { serial: "emulator-5554", ...between };
+    expect(validate({ ...leading, [field]: valid })).toBe(true);
+    expect(validate({ ...leading, [field]: invalid })).toBe(false);
     const result = await cli.run({
-      arguments: [command, serial, invalid, "--json"],
+      arguments: [
+        command,
+        ...Object.values(leading),
+        invalid,
+        ...options,
+        "--json",
+      ],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

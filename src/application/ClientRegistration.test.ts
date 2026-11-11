@@ -14,7 +14,6 @@ it("preserves every OpenCode environment key while normalizing its launcher", ()
     '{"type":"local","command":["rea","mcp"],"environment":{"__proto__":"operator","constructor":"selected","normal":"value"}}',
   );
   const result = parseClientRegistration(input, client);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.command).toBe("rea");
   expect(result.value.args).toEqual(["mcp"]);

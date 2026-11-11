@@ -3,28 +3,26 @@ import { describe, expect, it } from "vitest";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   BUILD_NODE_VERSION,
+  BUILD_PACKAGE_FILE,
   buildSourceSchema,
+  extraPackagesOf,
   renderBuildBundle,
-  type BuildBundleFile,
-  type BuildRequest,
 } from "./appBuild.js";
-
-const request = (install: BuildRequest["install"]): BuildRequest => ({
-  kind: "request",
-  desktop_entry: "org.xfce.mousepad.desktop",
-  install,
-});
-const localPayload = { kind: "file", path: "/builds/rea-prod.tar.xz" } as const;
-const text = (files: readonly BuildBundleFile[], path: string): string => {
-  const content = files.find((file) => file.path === path)?.content;
-  if (typeof content !== "string") throw new Error(`no text file ${path}`);
-  return content;
-};
+import {
+  request,
+  localPayload,
+  text,
+  DRAWIO_URL,
+  DRAWIO_SHA256,
+  NOTES_URL,
+  appImageRequest,
+  tarballRequest,
+} from "./appBuild.fixture.js";
 
 describe("build bundle renderer", () => {
   it("installs an archive package, opens it on demand and adds REA in a build-only layer", () => {
     const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
+      request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
     );
     expect(bundle.name).toBe("mousepad");
@@ -41,10 +39,10 @@ describe("build bundle renderer", () => {
     ).toEqual({ copyFrom: "/builds/rea-prod.tar.xz" });
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["mousepad", "libgtk-3-bin"])',
+      'packages=Packages(apt=["mousepad", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "org.xfce.mousepad"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'org.xfce.mousepad'"]),`,
     );
     expect(module).toContain('"arch": ["amd64", "arm64"]');
     expect(module).toContain(
@@ -67,6 +65,7 @@ describe("build bundle renderer", () => {
     expect(script).toContain(
       `/opt/rea/node-v${BUILD_NODE_VERSION}-linux-*/bin/node`,
     );
+    expect(script).toContain("exec /usr/local/bin/node /opt/rea/rea.mjs");
   });
 
   it("pins the Node.js release REA itself pins", () => {
@@ -108,6 +107,20 @@ describe("build bundle install sources", () => {
     expect(copied instanceof Uint8Array && key.equals(copied)).toBe(true);
   });
 
+  it("installs an archive package's extra packages beside it", () => {
+    const bundle = renderBuildBundle(
+      request({
+        kind: "archive",
+        package: "freeplane",
+        extra_packages: ["openjdk-17-jre"],
+      }),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/mousepad/mousepad_app.py")).toContain(
+      'packages=Packages(apt=["freeplane", "openjdk-17-jre", "libgtk-3-bin", "dconf-cli"])',
+    );
+  });
+
   it("downloads a .deb for its architecture and installs it after its dependencies", () => {
     const sha256 = "a".repeat(64);
     const bundle = renderBuildBundle(
@@ -126,7 +139,7 @@ describe("build bundle install sources", () => {
     );
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["libgl1", "libgtk-3-bin"])',
+      'packages=Packages(apt=["libgl1", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
       `Download(url="https://downloads.example.com/varicad.deb", sha256="${sha256}", to="vendor/package.deb", arch="amd64")`,
@@ -136,9 +149,14 @@ describe("build bundle install sources", () => {
     );
     expect(module).toContain('"arch": ["amd64"]');
     expect(module).not.toContain('to="node-arm64.tar.xz"');
+    // REA's layer keeps the .deb for the capture before the install removes it.
     expect(module).toContain(
-      'run=[RunScript(script="install-package.sh"), RunScript(script="install-rea.sh")]',
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-package.sh")]',
     );
+    expect(text(bundle.files, "envs/mousepad/install-rea.sh")).toContain(
+      `cp vendor/package.deb ${BUILD_PACKAGE_FILE}`,
+    );
+    expect(BUILD_PACKAGE_FILE).toBe("/opt/rea/package.deb");
     expect(text(bundle.files, "envs/mousepad/install-package.sh")).toContain(
       "dpkg -i 'vendor/package.deb'",
     );
@@ -185,5 +203,121 @@ describe("build bundle install sources", () => {
       false,
     );
     expect(parse({ kind: "bundle", path: "/tmp/bundle" }).success).toBe(true);
+  });
+});
+
+describe("build bundle download installs", () => {
+  it("downloads an AppImage for its architecture and extracts it after REA's layer and before the Electron rewrite", () => {
+    const source = appImageRequest("drawio");
+    const bundle = renderBuildBundle(source, localPayload);
+    const module = text(bundle.files, "envs/drawio/drawio_app.py");
+    expect(module).toContain(
+      'packages=Packages(apt=["libasound2t64", "libgtk-3-bin", "dconf-cli"])',
+    );
+    expect(module).toContain(
+      `Download(url="${DRAWIO_URL}", sha256="${DRAWIO_SHA256}", to="vendor/app.AppImage", arch="arm64")`,
+    );
+    expect(module).toContain('"arch": ["arm64"]');
+    expect(module).not.toContain('to="node-amd64.tar.xz"');
+    // The Electron rewrite edits the desktop entry the extract step installs.
+    expect(module).toContain(
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-download.sh"), RunScript(script="prepare-electron-launch.sh")]',
+    );
+    expect(module).toContain("exec gtk-launch 'drawio'");
+    expect(text(bundle.files, "envs/drawio/install-download.sh")).toContain(
+      "--appimage-extract",
+    );
+    expect(extraPackagesOf(source)).toEqual(["libasound2t64"]);
+  });
+
+  it("downloads a tarball and ships the desktop entry REA writes for its program", () => {
+    const bundle = renderBuildBundle(
+      tarballRequest("notes-2.0/bin/notes"),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/notes/notes_app.py")).toContain(
+      `Download(url="${NOTES_URL}", sha256="${"c".repeat(64)}", to="vendor/app.tar", arch="arm64")`,
+    );
+    expect(
+      text(bundle.files, "envs/notes/applications/org.example.Notes.desktop"),
+    ).toBe(
+      "[Desktop Entry]\nType=Application\nName=Example Notes\nExec=/opt/rea-apps/org.example.Notes/notes-2.0/bin/notes %F\nTerminal=false\n",
+    );
+  });
+
+  it("admits a download only by an http or https URL, its SHA-256 and a program inside the archive", () => {
+    const install = (fields: Record<string, unknown>) =>
+      buildSourceSchema.safeParse({
+        kind: "request",
+        desktop_entry: "org.example.Notes",
+        install: {
+          kind: "tarball",
+          url: NOTES_URL,
+          sha256: "c".repeat(64),
+          architecture: "arm64",
+          program: "notes-2.0/bin/notes",
+          ...fields,
+        },
+      }).success;
+    expect(install({})).toBe(true);
+    expect(install({ url: "not-a-url" })).toBe(false);
+    expect(install({ url: "https://" })).toBe(false);
+    expect(install({ program: "../bin/sh" })).toBe(false);
+    expect(install({ program: "/usr/bin/notes" })).toBe(false);
+    expect(install({ program: "notes//notes" })).toBe(false);
+    expect(install({ sha256: "C".repeat(64) })).toBe(false);
+    expect(install({ url: "ftp://downloads.example.com/notes.tar.xz" })).toBe(
+      false,
+    );
+    expect(install({ name: "Notes\nExec=/bin/sh" })).toBe(false);
+    expect(install({ architecture: "armhf" })).toBe(false);
+    expect(
+      buildSourceSchema.safeParse({
+        kind: "request",
+        desktop_entry: "drawio",
+        install: {
+          kind: "appimage",
+          url: "https://user:secret@example.com/drawio.AppImage",
+          sha256: DRAWIO_SHA256,
+          architecture: "arm64",
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("Electron launch rendering", () => {
+  it("rewrites an Electron desktop command with the shared launch policy", async () => {
+    const bundle = renderBuildBundle(
+      {
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
+        desktop_entry: "typora.desktop",
+        electron: true,
+      },
+      localPayload,
+    );
+    expect(bundle.files.map((file) => file.path).sort()).toContain(
+      "envs/typora/prepare-electron-launch.sh",
+    );
+    const module = text(bundle.files, "envs/typora/typora_app.py");
+    expect(module).toContain(
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'typora'"]),`,
+    );
+    expect(module).toContain(
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="prepare-electron-launch.sh")]',
+    );
+    const plain = renderBuildBundle(
+      {
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
+        desktop_entry: "typora",
+        electron: false,
+      },
+      localPayload,
+    );
+    expect(
+      plain.files.some((file) =>
+        file.path.endsWith("prepare-electron-launch.sh"),
+      ),
+    ).toBe(false);
   });
 });

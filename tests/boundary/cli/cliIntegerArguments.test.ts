@@ -250,6 +250,58 @@ describe("byte-entropy window options", () => {
   );
 });
 
+describe("pyc and BEAM limit options", () => {
+  // One option takes every malformed spelling. Each sibling takes one
+  // spelling that numeric coercion admits within the field's bounds.
+  for (const [command, flag, field, values] of [
+    ["inspect-python-pyc", "--max-depth", "maxDepth", NON_INTEGER_OPTION_TEXT],
+    ["inspect-python-pyc", "--max-file-bytes", "maxFileBytes", ["0x10"]],
+    ["inspect-python-pyc", "--max-objects", "maxObjects", ["1e2"]],
+    ["inspect-python-pyc", "--max-string-bytes", "maxStringBytes", ["0x1"]],
+    ["inspect-erlang-beam", "--max-file-bytes", "maxFileBytes", ["0x10"]],
+    ["inspect-erlang-beam", "--max-chunks", "maxChunks", ["1e1"]],
+    ["inspect-erlang-beam", "--max-atoms", "maxAtoms", ["0b1"]],
+    [
+      "inspect-go-binary",
+      "--max-string-literals",
+      "maxStringLiterals",
+      ["", "0x10", "1e2"],
+    ],
+  ] as const) {
+    cliTest.for(values)(
+      `rejects %j as ${command} ${flag}`,
+      async (value, { cli }) => {
+        const result = await runFileCli(cli, {
+          arguments: [
+            command,
+            "/nonexistent/missing-artifact",
+            `${flag}=${value}`,
+            "--json",
+          ],
+        });
+
+        expectCliValidationError(result, field);
+      },
+    );
+  }
+
+  cliTest.for([
+    ["inspect-python-pyc", "--max-depth=016"],
+    ["inspect-erlang-beam", "--max-chunks=016"],
+  ] as const)("keeps a decimal %s limit", async ([command, flag], { cli }) => {
+    const result = await runFileCli(cli, {
+      arguments: [command, "/nonexistent/missing-artifact", flag, "--json"],
+    });
+
+    // The limit is admitted; the missing file is refused afterwards.
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [expect.objectContaining({ path: ["path"] })] },
+    });
+  });
+});
+
 describe("artifact decimal options", () => {
   // Same admission as byte-entropy windows. One option takes every malformed
   // spelling; siblings in artifactCommands.ts take one coercion each.

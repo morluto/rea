@@ -56,7 +56,11 @@ describe("rea mcp --http", () => {
         { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
       );
       const first = await openSession(started.url, "hot-cold-first");
-      expect((await first.client.listTools()).tools).toHaveLength(6);
+      const initialNames = (await first.client.listTools()).tools.map(
+        ({ name }) => name,
+      );
+      expect(initialNames).not.toContain("inspect_analysis_view");
+      expect(initialNames).not.toContain("list_unknowns");
       let changed = 0;
       first.client.setNotificationHandler(
         "notifications/tools/list_changed",
@@ -87,8 +91,7 @@ describe("rea mcp --http", () => {
       const second = await openSession(started.url, "hot-cold-second");
       expect(
         (await second.client.listTools()).tools.map(({ name }) => name),
-      ).not.toContain("list_unknowns");
-      expect((await second.client.listTools()).tools).toHaveLength(6);
+      ).toEqual(initialNames);
       await expectIdentity(second);
       await second.transport.terminateSession();
     },

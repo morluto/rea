@@ -4,11 +4,87 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
-import { JSON_LINES_SELECTION_REMEDIATION } from "../../src/cli/jsonLines.js";
 import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "recovers the same managed artifact through decimal CLI budgets and retains caller choices",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cli-budgets-");
+    const path = join(root, "fixture.dll");
+    const bytes = buildManagedPeFixture();
+    await writeFile(path, bytes);
+    const command = ["inspect-managed-artifact", path];
+    const refused = await cli.run({
+      arguments: [
+        ...command,
+        "--max-snapshot-bytes",
+        String(bytes.length - 1),
+        "--json",
+      ],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: { max_snapshot_bytes: bytes.length - 1 } },
+    });
+    const admitted = ["--max-snapshot-bytes", String(bytes.length)];
+    const partial = await cli.run({
+      arguments: [
+        ...command,
+        ...admitted,
+        "--max-metadata-representation-bytes",
+        "1",
+        "--json",
+      ],
+    });
+    expect(partial.exitCode, partial.stderr).toBe(0);
+    expect(partial.json).toMatchObject({
+      parameters: {
+        max_snapshot_bytes: bytes.length,
+        max_metadata_representation_bytes: 1,
+      },
+      normalized_result: {
+        coverage: {
+          state: "partial",
+          issues: [expect.objectContaining({ code: "resource-limit" })],
+        },
+      },
+    });
+    const complete = await cli.run({
+      arguments: [
+        ...command,
+        ...admitted,
+        "--max-metadata-representation-bytes",
+        "1048576",
+        "--json",
+      ],
+    });
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    expect(complete.json).toMatchObject({
+      subject: {
+        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+      },
+      parameters: {
+        max_snapshot_bytes: bytes.length,
+        max_metadata_representation_bytes: 1048576,
+      },
+      normalized_result: { coverage: { state: "complete", issues: [] } },
+    });
+    for (const flag of [
+      "--max-snapshot-bytes",
+      "--max-metadata-representation-bytes",
+    ]) {
+      const malformed = await cli.run({
+        arguments: [...command, flag, "1e3", "--json"],
+      });
+      expect(malformed.exitCode).toBe(1);
+      expect(malformed.json).toMatchObject({ code: "VALIDATION_ERROR" });
+    }
+  },
+);
 
 cliTest(
   "managed CLI preserves malformed prefix evidence without a complete CIL fingerprint",
@@ -44,7 +120,9 @@ cliTest(
                   status === "malformed" ? null : expect.any(String),
                 issue:
                   status === "malformed"
-                    ? "CIL prefix chain at IL offset 0 has no following instruction"
+                    ? expect.stringMatching(
+                        /CIL prefix.*offset 0.*no following instruction/iu,
+                      )
                     : null,
               }),
             }),
@@ -404,7 +482,11 @@ cliTest(
       result: {
         code: "invalid_request",
         category: "invalid_input",
-        remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
+        remediation: {
+          action: expect.stringMatching(
+            /--format json.*record collection.*--filter-output/iu,
+          ),
+        },
         details: {
           issues: [
             {

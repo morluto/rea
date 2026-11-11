@@ -31,7 +31,7 @@ import {
   withProcessCaptureFile,
   type ProcessCaptureCleanupRetainer,
 } from "./ProcessCaptureRead.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 
 const hasSameIdentity = (
@@ -76,10 +76,9 @@ const readEntryObservation = async <T>(
   signal?: AbortSignal,
 ): Promise<Result<T, EntryOmission>> => {
   signal?.throwIfAborted();
+  let value: T;
   try {
-    const value = await read();
-    signal?.throwIfAborted();
-    return ok(value);
+    value = await read();
   } catch (cause: unknown) {
     const code = filesystemSystemCode(cause);
     // readlink reports EINVAL if the observed symlink was replaced by a file.
@@ -88,9 +87,10 @@ const readEntryObservation = async <T>(
       (!unavailableSystemCodes.has(code) && code !== "EINVAL")
     )
       throw cause;
-    signal?.throwIfAborted();
     return err({ reason: "entry_unavailable", system_code: code });
   }
+  signal?.throwIfAborted();
+  return ok(value);
 };
 
 const observeSymlink = async (
@@ -148,6 +148,43 @@ const lookupPath = async (
   }
   signal?.throwIfAborted();
   return { state: "present", stats };
+};
+
+/** Admit selected observation roots without allocating or walking a snapshot. */
+export const admitFilesystemObservationRoots = async (
+  scenario: Pick<ProcessScenario, "filesystem_observation_paths">,
+  signal?: AbortSignal,
+): Promise<Result<void, AnalysisError>> => {
+  try {
+    for (const root of scenario.filesystem_observation_paths) {
+      const lookup = await lookupPath(root, signal);
+      if (lookup.state === "present") continue;
+      if (lookup.system_code === "ENOENT") continue;
+      if (lookup.system_code === "EACCES" || lookup.system_code === "EPERM")
+        return err(
+          new AnalysisAccessDeniedError(
+            "capture_process_scenario",
+            root,
+            lookup.system_code,
+            { cause: lookup.cause },
+          ),
+        );
+      throw lookup.cause;
+    }
+    return ok(undefined);
+  } catch (cause: unknown) {
+    const normalized =
+      cause instanceof AnalysisError
+        ? cause
+        : normalizeCaptureFailure(cause, signal);
+    return err(
+      normalized instanceof AnalysisError
+        ? normalized
+        : new ProcessCaptureError("filesystem observation admission failed", {
+            cause,
+          }),
+    );
+  }
 };
 
 /** Reports a complete digest or an explicit per-file reason hashing was omitted. */
@@ -757,6 +794,7 @@ export const snapshotRoots = async (
       if (await visit(root, alias, root, 0, lookup.stats))
         completeRoots.push(alias);
     }
+    signal?.throwIfAborted();
     const snapshot = buildSnapshot();
     if (closeFailures.length > 0) {
       const causes = closeFailures.map(({ cleanupCause }) => cleanupCause);

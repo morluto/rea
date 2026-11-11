@@ -5,6 +5,7 @@ import {
   regexMatchingDeadlineRecovery,
 } from "../config/regexMatchingDeadline.js";
 import {
+  regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
@@ -394,10 +395,6 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(limitation.length).toBeLessThan(700);
     if (heap.kind === "effective")
       expect(limitation).toContain(`${String(heap.mib)} MiB`);
-    expect(
-      projectAnalysisError(regexMatchingDeadlineError("search_procedures"))
-        .remediation.action,
-    ).toContain(regexMatchingDeadlineRecovery(DEFAULT_REGEX_MATCHING_DEADLINE));
     const projected = projectAnalysisError(
       regexWorkerHeapError("search_procedures", new Error("heap"), heap),
     );
@@ -411,9 +408,6 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(projected.remediation.action).toContain("--max-old-space-size");
     expect(projected.remediation.action).toContain(
       "--max-old-space-size-percentage",
-    );
-    expect(projected.remediation.action).toContain(
-      regexWorkerHeapRequestRecovery(DEFAULT_REGEX_WORKER_HEAP_REQUEST),
     );
     if (heap.kind === "unknown") {
       expect(projected.remediation.action).toContain(
@@ -483,7 +477,7 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
     },
   });
   expect(projected.remediation.action).toContain(
-    regexWorkerHeapRequestRecovery(request),
+    regexWorkerHeapRequestContinuingRecovery(request),
   );
   expect(projected.details?.limit).toBeUndefined();
 });

@@ -536,6 +536,7 @@ it("reports DEX static values of static final fields without a static initialize
 
 it.each([
   { type: "long", value: -9223372036854775808 },
+  { type: "long", value: "1.5" },
   { type: "int", value: "1024" },
   { type: "double", value: 0.5 },
   { type: "enum", value: "fixture.Mode.ON" },
@@ -553,7 +554,13 @@ it.each([
           dex_static_value,
         },
       ]),
-    ).rejects.toThrow("JADX class summary failed or was malformed");
+    ).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "inspect_android_class",
+      message: expect.stringContaining(
+        "JADX class summary failed or was malformed",
+      ),
+    });
   },
 );
 

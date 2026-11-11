@@ -20,7 +20,7 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaSessionClient.js";
+import { KUNA_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaProviderCapabilities.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
@@ -441,9 +441,24 @@ it("reports a failed function and an import slot as unavailable text, not errors
     procedure: "broken",
   });
   expect(broken.result).toBeNull();
-  expect(broken.limitations.at(-1)).toBe(
-    "Kuna could not decompile this function: Flow exceeded maximum instructions",
+  expect(broken.limitations).toContainEqual(
+    expect.stringMatching(
+      /could not decompile.*Flow exceeded maximum instructions/i,
+    ),
   );
+  const dossier = await run(client, "analyze_function", {
+    procedure: "broken",
+  });
+  expect(dossier.result).toMatchObject({
+    facet_availability: {
+      pseudocode: {
+        available: false,
+        reason: expect.stringMatching(
+          /could not decompile.*Flow exceeded maximum instructions/i,
+        ),
+      },
+    },
+  });
   const imported = await run(client, "procedure_pseudo_code", {
     procedure: "puts",
   });
@@ -512,7 +527,7 @@ it("builds a dossier with text and call relationships, leaving unsupported facet
     assembly: ["main:  ; 0x1000", "  00001000: c3     RET"],
     native_value_flow: {
       available: false,
-      reason: KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE,
+      reason: KUNA_VALUE_FLOW_UNAVAILABLE,
     },
     facet_availability: {
       pseudocode: { available: true },
@@ -663,13 +678,31 @@ it("keeps answering pseudocode one function at a time when the export fails", as
   });
   expect(pseudocode.rawResult).toMatchObject({
     source: { kind: "single-function" },
-    project_export: { state: "failed", failure_records: "not_exposed" },
+    project_export: {
+      state: "failed",
+      failure_records: "not_exposed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
   });
   expect(pseudocode.limitations).toEqual(
     expect.arrayContaining([
       expect.stringContaining("The project export failed"),
       "REA does not expose per-function records from a failed project export.",
     ]),
+  );
+  const fresh = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+    analysis: "independent_fresh",
+  });
+  expect(fresh.rawResult).toMatchObject({
+    source: { kind: "single-function" },
+    project_export: {
+      state: "failed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
+  });
+  expect(fresh.limitations).toContainEqual(
+    expect.stringContaining("fresh independent single-function"),
   );
   expect(pseudocode.limitations.join(" ")).not.toContain("still building");
   expect(pseudocode.limitations.join(" ")).toContain(
@@ -1026,25 +1059,6 @@ it("recovers when another server evicts the export this session adopted", async 
     source: { kind: "project-export" },
   });
   expect(await readdir(join(cacheRoot, "projects"))).toEqual([key]);
-  await client.close();
-});
-
-it("reports a failed export as failed rather than building", async () => {
-  const { open } = await session("rea-kuna-failed-state-", {
-    project: "exit-failure",
-  });
-  const client = open();
-  await client.execute("procedure_assembly", { procedure: "main" });
-
-  expect(
-    (await run(client, "procedure_pseudo_code", { procedure: "main" }))
-      .rawResult,
-  ).toMatchObject({
-    project_export: {
-      state: "failed",
-      reason: expect.stringContaining("not in recognized object file format"),
-    },
-  });
   await client.close();
 });
 

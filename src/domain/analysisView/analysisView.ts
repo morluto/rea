@@ -1,8 +1,13 @@
+import { projectWebSourceLocationView } from "./webSourceLocationView.js";
+import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
+import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
+import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectRecordedArrayView } from "./recordedArrayView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
@@ -19,6 +24,7 @@ import {
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
+import { projectEndpointComparisonView } from "./endpointComparisonView.js";
 import { projectFeatureTraceView } from "./featureTraceView.js";
 import { projectNativeFeatureTraceView } from "./nativeFeatureTraceView.js";
 import { projectBatchDecompileView } from "./batchDecompileView.js";
@@ -47,7 +53,7 @@ import {
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
@@ -101,6 +107,9 @@ import {
   type InspectAnalysisViewInput,
 } from "./analysisViewRequest.js";
 import {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
@@ -150,11 +159,19 @@ import {
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
+  apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
+  endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
@@ -170,6 +187,9 @@ export {
   type AnalysisViewParent,
 };
 export {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   nativeFeatureTraceSummaryViewResultSchema,
@@ -219,11 +239,19 @@ export {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
+  apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
+  endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
@@ -241,7 +269,7 @@ export const sealAnalysisView = (
     view_digest: digestCanonicalValue(projection, "Analysis view"),
   });
 
-const parentDigest = (evidenceId: string): string => evidenceId.slice(3);
+const parentEvidenceIdSchema = prefixedDigestSchema("ev");
 
 const parseJavaScriptParent = (
   input: unknown,
@@ -318,6 +346,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("procedure_references", projectNativeProcedureReferencesView),
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
@@ -351,11 +380,18 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
+  retain("inspect_api_contract", projectApiContractView),
+  retain("inspect_playwright_trace", projectPlaywrightTraceView),
+  retain(
+    "compare_static_and_observed_endpoints",
+    projectEndpointComparisonView,
+  ),
   retain("trace_application_feature", projectFeatureTraceView),
   retain("batch_decompile", projectBatchDecompileView),
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
 /** Budgets retained across source admission and the selected grouping projection. */
@@ -437,8 +473,7 @@ export const projectAnalysisView = (
   view: AnalysisViewRequest,
   accumulators: AnalysisViewAccumulators = {},
 ): Result<AnalysisViewResult, AnalysisError> => {
-  const digest = parentDigest(parent.evidenceId);
-  if (!digestSchema.safeParse(digest).success)
+  if (!parentEvidenceIdSchema.safeParse(parent.evidenceId).success)
     return err(
       analysisViewInputError([
         {
@@ -452,6 +487,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_references" ||
           parent.operation === "procedure_pseudo_code" ||
           parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
@@ -474,6 +510,9 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "recorded-array") {
+    return sealProjected(projectRecordedArrayView(parent, view));
+  }
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

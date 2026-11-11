@@ -1,4 +1,4 @@
-import { BOUNDED_PRODUCER_LIMITS } from "../process/LinuxResourceLimits.js";
+import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
 
 /** Resource policy for this Linux integration, not a claim of aggregate containment. */
 export const FIRMWARE_LIMITS = {

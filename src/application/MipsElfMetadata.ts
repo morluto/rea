@@ -181,6 +181,14 @@ export const readMipsElfMetadata = async (
       const declaredSize = Number(
         "fileSize" in declaration ? declaration.fileSize : declaration.size,
       );
+      if (
+        "compressed" in declaration &&
+        declaration.compressed &&
+        (type === table.recordType || type === SHT_GNU_ATTRIBUTES)
+      )
+        return err(
+          `MIPS section header ${i} declares compressed ${type === SHT_GNU_ATTRIBUTES ? "GNU attributes" : "ABI flags"} at file offset ${declaredOffset}; decoded declarations are unavailable`,
+        );
       if (table.optional && type === SHT_GNU_ATTRIBUTES) {
         if (gnuAttributes !== null)
           return err("duplicate MIPS GNU attribute sections");
@@ -210,6 +218,7 @@ export const readMipsElfMetadata = async (
           offset: declaredOffset,
           size: declaredSize,
           entrySize: Number(declaration.entrySize),
+          compressed: declaration.compressed,
         });
       if (type !== table.recordType) continue;
       if (found) return err(`duplicate MIPS ABI records in ${table.label}`);

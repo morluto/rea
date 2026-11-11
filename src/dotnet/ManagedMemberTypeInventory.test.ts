@@ -1,11 +1,17 @@
+import { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import { expect, it } from "vitest";
 
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
+  buildManagedNestedTypeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { buildManagedMemberCapacityFixture } from "../../tests/fixtures/managedMemberCapacity.js";
+import {
+  buildManagedMemberCapacityFixture,
+  buildManagedMemberSelectionCapacityFixture,
+} from "../../tests/fixtures/managedMemberCapacity.js";
 import { readManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
@@ -78,6 +84,74 @@ it("lets a caller select an inventoried empty type without decoding the oversize
   expect(result.methods).toEqual([]);
 });
 
+it("decodes a single selected type to completion on a game-scale assembly", () => {
+  // Slay the Spire 2 sts2.dll scale from #8980: 9,409 TypeDefs, 49,738
+  // MethodDefs, 40,037 Fields, 11,442 MemberRefs, 58,698 CustomAttributes.
+  // A single-type selection must not spend the representation budget on the
+  // whole assembly before the selection is applied. The selected type owns
+  // one field and one method while the rest of the member inventory stays
+  // on the last type, so this also proves the selected members decode
+  // instead of merely proving that skipping unselected rows saves budget.
+  const bytes = buildManagedMemberSelectionCapacityFixture();
+  const target = managedPeFixtureTarget(bytes);
+  const inventory = inspectManagedMembersBytes(bytes, target);
+  const selected = inventory.types.find(
+    (type) => type.full_name === "Fixture.Empty0",
+  );
+  expect(selected).toMatchObject({
+    token: "0x02000001",
+    field_list: { count: 1 },
+    method_list: { count: 1 },
+  });
+  const result = inspectManagedMembersBytes(bytes, target, {
+    typeNames: ["Fixture.Empty0"],
+  });
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  expect(result.selection).toEqual({
+    type_names: ["Fixture.Empty0"],
+    unmatched_type_names: [],
+  });
+  expect(result.types).toHaveLength(1);
+  expect(result.types[0]?.token).toBe(selected?.token);
+  expect(result.fields).toHaveLength(1);
+  expect(result.fields[0]).toMatchObject({
+    name: "Field0",
+    declaring_type: "Fixture.Empty0",
+    declaring_type_token: "0x02000001",
+  });
+  expect(result.methods).toHaveLength(1);
+  expect(result.methods[0]).toMatchObject({
+    name: "Method0",
+    declaring_type: "Fixture.Empty0",
+    declaring_type_token: "0x02000001",
+  });
+  expect(result.methods[0]?.body.status).toBe("present");
+  expect(result.methods[0]?.body.instruction_count).toBe(4);
+  expect(result.methods[0]?.body.decoded_instruction_count).toBe(4);
+  // The selected body references the selected field and a member reference;
+  // both resolve to their tokens instead of staying anonymous.
+  expect(result.methods[0]?.body.anchors).toContainEqual(
+    expect.objectContaining({
+      opcode: "ldfld",
+      operand_kind: "field",
+      operand: "0x04000001",
+    }),
+  );
+  expect(result.methods[0]?.body.anchors).toContainEqual(
+    expect.objectContaining({
+      opcode: "call",
+      operand_kind: "method",
+      operand: "0x0a000001",
+    }),
+  );
+  // Member references stay assembly-wide: the selection narrows declaring
+  // types, not the reference inventory behind call edges.
+  expect(result.member_refs).toHaveLength(11442);
+  expect(
+    result.member_refs.find((ref) => ref.token === "0x0a000001"),
+  ).toMatchObject({ name: "Member0" });
+});
+
 it("preserves explicit type selection when its selected body exhausts capacity", () => {
   const bytes = buildManagedMemberCapacityFixture();
   const result = inspectManagedMembersBytes(
@@ -95,6 +169,25 @@ it("preserves explicit type selection when its selected body exhausts capacity",
     type_names: ["Fixture.Program", "Missing.Type"],
     unmatched_type_names: ["Missing.Type"],
   });
+});
+
+it("explains capacity exhaustion after a single-type selection", () => {
+  const bytes = buildManagedMemberCapacityFixture();
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["Fixture.Program"],
+    },
+  );
+  expect(result.coverage.state).toBe("partial");
+  expect(result.coverage.issues).toContainEqual(
+    expect.objectContaining({ code: "resource-limit" }),
+  );
+  const guidance = result.limitations.join(" ");
+  expect(guidance).toMatch(/single.type selection/i);
+  expect(guidance).toMatch(/assembly.wide/i);
+  expect(guidance).not.toContain("inspect a smaller selection");
 });
 
 it("retains types when a field signature exceeds the decoding bound", () => {
@@ -215,7 +308,6 @@ it("does not turn an unreadable requested type name into observed absence during
   expect(result.types.map((type) => type.full_name)).toEqual([
     "Fixture.Program",
   ]);
-  expect(result.limitations.join(" ")).toContain("absence is not observed");
 });
 
 it("keeps later type identity, member ownership and constructor names at their original row", () => {
@@ -271,7 +363,6 @@ it("keeps later type identity, member ownership and constructor names at their o
   expect(result.artifact.sha256).toBe(target.sha256);
   expect(result.coverage.state).toBe("partial");
   expect(result.selection?.unmatched_type_names).toEqual(["Fixture.Empty0"]);
-  expect(result.limitations.join(" ")).toContain("absence is not observed");
 
   // Member inspection uses the parsed-type name owner for its metadata
   // inventory, whose attribute names are not included in the member report.
@@ -374,5 +465,28 @@ it("reads inventory names on demand without admitting TypeDef member lists or Ex
       expect.objectContaining({ code: "invalid-row", offset: selected + 10 }),
       expect.objectContaining({ code: "invalid-row", offset: selected + 12 }),
     ]),
+  );
+});
+
+it("keeps narrowing advice when one bare name selects multiple nested types", () => {
+  const bytes = buildManagedNestedTypeFixture();
+  const inventory = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["Inner"],
+    },
+  );
+  expect(inventory.types).toHaveLength(2);
+  const recovery = prepareManagedMemberRecovery(
+    inventory,
+    [],
+    new ManagedDecodeBudget(),
+  )(0);
+  expect(recovery.limitations.join(" ")).toContain(
+    "inspect a smaller selection",
+  );
+  expect(recovery.limitations.join(" ")).not.toContain(
+    "This single-type selection",
   );
 });

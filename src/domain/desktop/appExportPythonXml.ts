@@ -1,14 +1,52 @@
 /** The generated module's XML reader: REA's XML view of a document, built with expat. */
-export const PYTHON_XML_READER = String.raw`def _expat(namespaces: bool):
-    """An expat parser that refuses DOCTYPEs as REA does; with namespaces it also enforces their rules, as REA's
-    parser does, and without them it reports names as the document spells them."""
+export const PYTHON_XML_READER = String.raw`#: XML's whitespace, which alone can be formatting between elements; Unicode's wider set is text.
+XML_WHITESPACE = " \t\r\n"
+PREDEFINED_ENTITIES = ("amp", "lt", "gt", "apos", "quot")
+ENTITY_REFERENCE = re.compile(r"&([^#;][^;]*);")
+#: A line ending as XML normalizes it before parsing; expat leaves a DOCTYPE's system literal as written.
+XML_LINE_ENDING = re.compile(r"\r\n?")
+
+
+def _expat(namespaces: bool, doctype=None):
+    """An expat parser that reads a DOCTYPE as REA does: one with an internal subset, which could declare entities,
+    is refused, the DTD it names is never read, and a reference to an entity other than XML's five is refused where
+    expat would skip it. With namespaces it also enforces their rules, as REA's parser does, and without them it
+    reports names as the document spells them. doctype, when given, receives the declared name and identifiers."""
     parser = expat.ParserCreate(namespace_separator=" " if namespaces else None)
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
 
-    def doctype(*_) -> None:
-        raise ValueError("the document declares a DOCTYPE")
+    def declared(name: str, system_id, public_id, internal_subset: bool) -> None:
+        if internal_subset:
+            raise ValueError("the document's DOCTYPE has an internal subset")
+        if doctype is not None:
+            if system_id is not None:
+                system_id = XML_LINE_ENDING.sub("\n", system_id)
+            doctype({"name": name, "public_id": public_id, "system_id": system_id})
 
-    parser.StartDoctypeDeclHandler = doctype
+    def undeclared(name: str, _parameter: bool) -> None:
+        raise ValueError(f"the document refers to the undeclared entity {name}")
+
+    def external(*_) -> None:
+        raise ValueError("the document refers to an external entity")
+
+    parser.StartDoctypeDeclHandler = declared
+    parser.SkippedEntityHandler = undeclared
+    parser.ExternalEntityRefHandler = external
     return parser
+
+
+def _check_tag(markup: str) -> None:
+    """expat leaves an undeclared entity out of an attribute value without a word when a DOCTYPE names a DTD; REA's
+    parser refuses it. With text taken by its own handler, a start tag is the only markup expat passes here that
+    starts with < and a name, and it passes it whole."""
+    if markup[:1] == "<" and markup[1:2] not in ("!", "?", "/"):
+        for name in ENTITY_REFERENCE.findall(markup):
+            if name not in PREDEFINED_ENTITIES:
+                raise ValueError(f"the document refers to the undeclared entity {name}")
+
+
+def _ignore_text(_text: str) -> None:
+    pass
 
 
 class _XmlReader:
@@ -16,20 +54,24 @@ class _XmlReader:
     splits it (an empty CDATA section joins the text around it), and each node counted against REA's limits."""
 
     def __init__(self) -> None:
-        self.remaining, self.truncated, self.root = MAX_XML_NODES, False, None
-        #: Per open element: its view or None when left out, whether xml:space="preserve" applies inside it, and
-        #: whether it holds an element, which makes whitespace-only text in it formatting.
+        self.remaining, self.truncated, self.root, self.doctype = MAX_XML_NODES, False, None, None
+        #: Per open element: its view or None when left out, whether xml:space="preserve" applies inside it, whether
+        #: it holds an element, and whether it holds text other than whitespace: whitespace-only text is formatting
+        #: only in an element that holds elements and no such text.
         self.open = []
         self.text, self.cdata = [], None
 
     def read(self, text: str) -> None:
-        parser = _expat(False)
+        parser = _expat(False, self._doctype)
         parser.buffer_text = True
         parser.StartElementHandler, parser.EndElementHandler = self._start, self._end
         parser.CharacterDataHandler = self._data
         parser.StartCdataSectionHandler, parser.EndCdataSectionHandler = self._cdata_start, self._cdata_end
         parser.CommentHandler = parser.ProcessingInstructionHandler = self._other
         parser.Parse(text, True)
+
+    def _doctype(self, declared: dict) -> None:
+        self.doctype = declared
 
     def _admit(self) -> bool:
         """Whether the next node inside a kept element is kept, within the node and depth limits; one past them
@@ -43,6 +85,8 @@ class _XmlReader:
         return True
 
     def _text_node(self, text: str) -> None:
+        if self.open and text.strip(XML_WHITESPACE):
+            self.open[-1][3] = True
         if self._admit():
             self.open[-1][0]["children"].append(text)
 
@@ -71,31 +115,35 @@ class _XmlReader:
 
     def _start(self, name: str, attributes: dict) -> None:
         self._flush()
-        parent = self.open[-1] if self.open else [None, False, False]
+        parent = self.open[-1] if self.open else [None, False, False, False]
         parent[2] = True
         view = {"name": name, "attributes": attributes, "children": []} if self._admit() else None
         if view is not None and parent[0] is not None:
             parent[0]["children"].append(view)
         space = attributes.get(XML_SPACE)
-        self.open.append([view, space == "preserve" if space else parent[1], False])
+        self.open.append([view, space == "preserve" if space else parent[1], False, False])
 
     def _end(self, _name: str) -> None:
         self._flush()
-        view, preserve, holds_element = self.open.pop()
-        if view is not None and holds_element and not preserve:
-            view["children"] = [child for child in view["children"] if not isinstance(child, str) or child.strip()]
+        view, preserve, holds_element, holds_text = self.open.pop()
+        if view is not None and holds_element and not holds_text and not preserve:
+            view["children"] = [child for child in view["children"]
+                                if not isinstance(child, str) or child.strip(XML_WHITESPACE)]
         if not self.open:
             self.root = view
 
 
 def _xml_view(text: str):
     """REA's XML view, or None for a document REA's parser refuses: a pass with namespaces checks the document as REA's
-    parser does, then a pass without them reads names as spelled, as REA's view keeps them."""
+    parser does, then a pass without them reads names as spelled, as REA's view keeps them, and the DOCTYPE."""
     reader = _XmlReader()
     try:
-        _expat(True).Parse(text, True)
+        check = _expat(True)
+        check.CharacterDataHandler, check.DefaultHandler = _ignore_text, _check_tag
+        check.Parse(text, True)
         reader.read(text)
     except (expat.ExpatError, ValueError):
         return None
-    return {"root": reader.root, "truncated": reader.truncated}
+    view = {"root": reader.root, "truncated": reader.truncated}
+    return view if reader.doctype is None else {"doctype": reader.doctype, **view}
 `;

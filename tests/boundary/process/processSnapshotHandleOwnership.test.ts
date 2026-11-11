@@ -1,12 +1,26 @@
 import { createHash } from "node:crypto";
 import { Dir, type Dirent } from "node:fs";
-import { mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { requirePermissionDenial } from "../../fixtures/permissionDenial.js";
 
 const injected = vi.hoisted(() => ({
+  readlinkPath: "",
+  beforeReadlink: undefined as (() => Promise<void>) | undefined,
+  afterReadlink: undefined as (() => Promise<void>) | undefined,
+  afterReadlinkFailure: undefined as ((cause: unknown) => void) | undefined,
   filePath: "",
   fileCloseFailure: undefined as Error | undefined,
   fileCloseRejectionEnabled: false,
@@ -65,6 +79,18 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         };
       return handle;
     },
+    readlink: async (...args: Parameters<typeof original.readlink>) => {
+      const selected = String(args[0]) === injected.readlinkPath;
+      if (selected) await injected.beforeReadlink?.();
+      try {
+        return await original.readlink(...args);
+      } catch (cause: unknown) {
+        if (selected) injected.afterReadlinkFailure?.(cause);
+        throw cause;
+      } finally {
+        if (selected) await injected.afterReadlink?.();
+      }
+    },
     opendir: async (...args: Parameters<typeof original.opendir>) => {
       const directory = await original.opendir(...args);
       if (args[0] === injected.directoryPath) injected.directory = directory;
@@ -81,7 +107,12 @@ import {
   ProcessCaptureSnapshotFailure,
 } from "../../../src/process/capture/FilesystemSnapshot.js";
 import { ProcessCaptureReadFailure } from "../../../src/process/capture/ProcessCaptureRead.js";
-import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  ProcessCaptureResourceScope,
+  prepareProcessCapture,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
+import { classifyFilesystemEffects } from "../../../src/process/capture/ProcessFilesystemEffects.js";
 
 const roots: string[] = [];
 const trackedRoot = async (): Promise<string> => {
@@ -142,6 +173,10 @@ afterEach(async () => {
   injected.restoreFileHandle = undefined;
   injected.nativeFileClose = undefined;
   injected.nativeFileStat = undefined;
+  injected.readlinkPath = "";
+  injected.beforeReadlink = undefined;
+  injected.afterReadlink = undefined;
+  injected.afterReadlinkFailure = undefined;
   injected.filePath = "";
   injected.fileCloseFailure = undefined;
   injected.fileCloseRejectionEnabled = false;
@@ -769,5 +804,171 @@ it.each([false, true])(
     injected.fileCloseFailure = undefined;
     await scope.close();
     expect(injected.fileHandle?.fd).toBe(-1);
+  },
+);
+
+it.skipIf(process.platform === "win32").for([
+  { outcome: "readlink EINVAL", code: "EINVAL", abort: false },
+  {
+    outcome: "readlink EINVAL with later cancellation",
+    code: "EINVAL",
+    abort: true,
+  },
+  { outcome: "readlink EACCES", code: "EACCES", abort: false },
+  {
+    outcome: "readlink EACCES with later cancellation",
+    code: "EACCES",
+    abort: true,
+  },
+  {
+    outcome: "successful readlink with an EACCES cancellation reason",
+    code: null,
+    abort: true,
+  },
+] as const)(
+  "retains symlink observation provenance through $outcome and observer cleanup",
+  async ({ code, abort }, context) => {
+    if (code === "EACCES")
+      await requirePermissionDenial(context, "directory-search");
+    const fixture = await trackedRoot();
+    const selected = join(fixture, "selected");
+    await mkdir(selected, { mode: 0o700 });
+    const known = join(selected, "a-known");
+    const interrupted = join(selected, "b-interrupted");
+    await symlink(Buffer.from([0x61, 0xff]), known);
+    await symlink("original-target", interrupted);
+    const scenario = scenarioFor(selected);
+    const before = await snapshotRoots(scenario);
+    const controller = new AbortController();
+    const reason = Object.assign(
+      new Error("caller stopped symlink observation"),
+      {
+        code: "EACCES",
+      },
+    );
+    const genuineCancellation = code === null;
+    let nativeFailure: unknown;
+    injected.readlinkPath = interrupted;
+    injected.beforeReadlink = async () => {
+      if (genuineCancellation) {
+        controller.abort(reason);
+      } else if (code === "EACCES") {
+        // Enumeration and leaf metadata succeeded before search permission is removed.
+        await chmod(selected, 0o444);
+      } else {
+        // Produce EINVAL after symlink metadata was read.
+        await rm(interrupted);
+        await writeFile(interrupted, "replacement regular file");
+      }
+    };
+    injected.afterReadlink = async () => {
+      if (code === "EACCES") await chmod(selected, 0o700);
+    };
+    injected.afterReadlinkFailure = (cause) => {
+      nativeFailure = cause;
+      if (abort) controller.abort(reason);
+    };
+    let temporaryRoot: string | undefined;
+    const removed: string[] = [];
+    const cleanup = async (path: string) => {
+      await rm(path, { recursive: true, force: true });
+      removed.push(path);
+    };
+    const result = await prepareProcessCapture(
+      scenario,
+      controller.signal,
+      snapshotRoots,
+      {
+        createTemporaryRoot: async () => {
+          temporaryRoot = await mkdtemp(join(fixture, "observer-"));
+          return temporaryRoot;
+        },
+        cleanup,
+      },
+    ).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    try {
+      let after: typeof before;
+      if (abort) {
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error("Expected cancelled preparation");
+        expect(result.error).toBeInstanceOf(ProcessCaptureError);
+        if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+        expect(result.error.cause).toBe(reason);
+        expect(result.error.userCategory).toBe("cancelled");
+        expect(result.error.cleanupIncomplete).toBe(false);
+        const partial = result.error.partialObservation;
+        if (partial === undefined || !("observations" in partial))
+          throw new Error("Expected an incomplete process capture observation");
+        const snapshot = partial.observations.filesystem_snapshots.before;
+        expect(snapshot?.state).toBe("available");
+        if (snapshot?.state !== "available")
+          throw new Error("Expected retained partial filesystem snapshot");
+        after = snapshot.value;
+        expect(removed).toEqual([temporaryRoot]);
+        if (temporaryRoot === undefined)
+          throw new Error("Observer root was not allocated");
+        await expect(stat(temporaryRoot)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } else {
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw result.error;
+        after = result.value.before;
+      }
+      if (genuineCancellation) expect(nativeFailure).toBeUndefined();
+      else
+        expect(nativeFailure).toMatchObject({
+          code,
+          syscall: "readlink",
+          path: interrupted,
+        });
+      expect(after.files).toContainEqual(
+        expect.objectContaining({
+          path: "root_0:a-known",
+          type: "symlink",
+          symlink_target: null,
+          symlink_target_hex: "61ff",
+        }),
+      );
+      expect(after.files).not.toContainEqual(
+        expect.objectContaining({ path: "root_0:b-interrupted" }),
+      );
+      expect(after.completeRoots).toEqual([]);
+      expect(after.coverage.enumeration_truncated).toBe(true);
+      expect(after.coverage.enumeration_omissions).toContainEqual({
+        path: "root_0:a-known",
+        reason: "symlink_not_followed",
+        system_code: null,
+      });
+      const leafOmissions = after.coverage.enumeration_omissions.filter(
+        ({ path }) => path === "root_0:b-interrupted",
+      );
+      expect(leafOmissions).toEqual(
+        genuineCancellation
+          ? []
+          : [
+              {
+                path: "root_0:b-interrupted",
+                reason: "entry_unavailable",
+                system_code: code,
+              },
+            ],
+      );
+      expect(
+        classifyFilesystemEffects(before, after).find(
+          ({ path }) => path === "root_0:b-interrupted",
+        ),
+      ).toMatchObject({
+        status: "unknown",
+        before: { type: "symlink" },
+        after: null,
+      });
+    } finally {
+      if (result.ok) await cleanup(result.value.temporaryRoot);
+    }
+    expect(removed).toEqual([temporaryRoot]);
   },
 );

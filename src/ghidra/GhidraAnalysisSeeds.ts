@@ -37,19 +37,33 @@ export const ghidraSeedCommitmentSchema = z.strictObject({
 export type GhidraSeedCommitment = z.infer<typeof ghidraSeedCommitmentSchema>;
 
 /** What the pre-analysis script applied, as reported by the bridge handshake. */
-export const ghidraSeedReportSchema = z.strictObject({
-  format: z.literal(GHIDRA_SEED_FORMAT),
-  sha256: digest,
-  entries: count,
-  function_created: count,
-  function_existing: count,
-  function_failed: count,
-  code_decoded: count,
-  code_failed: count,
-  label_applied: count,
-  label_failed: count,
-  unmapped: count,
-});
+export const ghidraSeedReportSchema = z
+  .strictObject({
+    format: z.literal(GHIDRA_SEED_FORMAT),
+    sha256: digest,
+    entries: count,
+    function_created: count,
+    function_existing: count,
+    function_failed: count,
+    code_decoded: count,
+    code_failed: count,
+    label_applied: count,
+    label_failed: count,
+    unmapped: count,
+  })
+  .refine(
+    (report) =>
+      report.function_created +
+        report.function_existing +
+        report.function_failed +
+        report.code_decoded +
+        report.code_failed +
+        report.label_applied +
+        report.label_failed +
+        report.unmapped ===
+      report.entries,
+    { message: "Seed outcomes must account for exactly the reported entries." },
+  );
 export type GhidraSeedReport = z.infer<typeof ghidraSeedReportSchema>;
 
 type SeedKind = "function" | "code" | "label";
@@ -267,7 +281,15 @@ export const ghidraSeedFailure = (
       : report === undefined
         ? "The Ghidra session did not report the committed analysis seeds."
         : report.sha256 !== commitment.sha256 ||
-            report.entries !== totalEntries(commitment)
+            report.entries !== totalEntries(commitment) ||
+            report.function_created +
+              report.function_existing +
+              report.function_failed >
+              commitment.entries.function ||
+            report.code_decoded + report.code_failed >
+              commitment.entries.code ||
+            report.label_applied + report.label_failed >
+              commitment.entries.label
           ? "The Ghidra session applied analysis seeds that differ from the committed profile."
           : undefined;
   return reason === undefined

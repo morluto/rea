@@ -25,11 +25,12 @@ const procedureRows = [
     procedure: { external: false, thunk: false, thunk_target: null },
   },
 ];
-// Ghidra 12.1.4 search_procedures capture from the source-owned PowerPC DOL.
+// Symbols came from the source-owned PowerPC DOL capture; classification models the updated bridge output.
 const searchProcedureRows = [
   {
     address: "0x80003100",
     value: "FUN_80003100",
+    procedure: { external: false, thunk: false, thunk_target: null },
     symbol: {
       primary: true,
       dynamic: false,
@@ -41,6 +42,7 @@ const searchProcedureRows = [
   {
     address: "0x80003130",
     value: "__start",
+    procedure: { external: false, thunk: false, thunk_target: null },
     symbol: {
       primary: true,
       dynamic: false,
@@ -82,9 +84,7 @@ it("shares complete/summary source identity and advertised contracts across all 
       if (operation === "search_procedures")
         return Promise.resolve(ok(searchProcedureRows));
       if (operation === "search_strings")
-        return Promise.resolve(
-          ok(stringRows.map(({ address, value }) => ({ address, value }))),
-        );
+        return Promise.resolve(ok(stringRows));
       const result =
         operation === "list_names"
           ? nameRows
@@ -133,6 +133,8 @@ it("shares complete/summary source identity and advertised contracts across all 
     expect(complete.normalized_result.length).toBeGreaterThan(0);
     if (operation === "search_procedures")
       expect(complete.normalized_result).toEqual(searchProcedureRows);
+    if (operation === "search_strings")
+      expect(complete.normalized_result).toEqual(stringRows);
     expect(complete.parameters).not.toHaveProperty("detail");
     const summaryReply = await harness.mcp.callTool({
       name: operation,

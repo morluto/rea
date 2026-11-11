@@ -935,6 +935,7 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
+  throwIfScenarioCancelled(options.signal);
   if (scenario.browser.mode === "launch")
     await publishAndroidPlaywrightBrowsersPath(
       androidScenarioTempDirectory(environment),
@@ -953,6 +954,7 @@ export const openPlaywrightScenarioBrowser = async (
       commandTimeoutMs,
     );
 
+  throwIfScenarioCancelled(options.signal);
   const launchedBrowser = scenario.browser;
   const preferredTemp = androidScenarioTempDirectory(environment);
   if (preferredTemp !== undefined)
@@ -970,6 +972,7 @@ export const openPlaywrightScenarioBrowser = async (
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    throwIfScenarioCancelled(options.signal);
     launchStarted = true;
     context = await withAndroidHostTempDirectory(preferredTemp, () =>
       withScenarioCommandDeadline(
@@ -1048,10 +1051,12 @@ export const openPlaywrightScenarioBrowser = async (
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
   try {
+    throwIfScenarioCancelled(options.signal);
     const browser = context.browser();
     if (browser === null)
       throw new BrowserObservationError(OPERATION, "protocol_error");
     const page = context.pages()[0] ?? (await context.newPage());
+    throwIfScenarioCancelled(options.signal);
     return {
       context,
       page,

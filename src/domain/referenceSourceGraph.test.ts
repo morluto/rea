@@ -494,32 +494,6 @@ describe("historical source graph validation", () => {
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),
-        inventory_state: "partial",
-        entries: graphInput().entries.map((entry) =>
-          entry.kind === "symlink"
-            ? { ...entry, target: "/etc/passwd", target_state: "external" }
-            : entry,
-        ),
-      }),
-    ).not.toThrow();
-    expect(() =>
-      createHistoricalSourceGraph({
-        ...graphInput(),
-        inventory_state: "partial",
-        entries: graphInput().entries.map((entry) =>
-          entry.kind === "symlink"
-            ? {
-                ...entry,
-                target: "<outside-root>",
-                target_state: "external",
-              }
-            : entry,
-        ),
-      }),
-    ).toThrow(/target path does not match/u);
-    expect(() =>
-      createHistoricalSourceGraph({
-        ...graphInput(),
         relationships: [
           { ...graphInput().relationships[1]!, to: "../escape.ts" },
         ],

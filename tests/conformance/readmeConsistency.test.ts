@@ -17,8 +17,11 @@ const shellExamples = (content: string): string[] =>
 
 describe("onboarding documentation product facts", () => {
   it.each([
-    ["docs/native-investigation.md", "raw-binary.md#nmos-6502"],
-    ["docs/ghidra-riscv.md", "raw-binary.md"],
+    [
+      "docs/guides/native/native-investigation.md",
+      "../../providers/raw-binary.md#nmos-6502",
+    ],
+    ["docs/providers/ghidra-riscv.md", "raw-binary.md"],
   ])(
     "routes raw admission guidance in %s to the owning guide",
     async (path, target) => {
@@ -31,7 +34,10 @@ describe("onboarding documentation product facts", () => {
   );
 
   it("documents manual MCP registration with an absolute runtime and entry script", async () => {
-    const content = await readFile(resolve("docs/installation.md"), "utf8");
+    const content = await readFile(
+      resolve("docs/getting-started/installation.md"),
+      "utf8",
+    );
     expect(jsonExamples(content)).toContainEqual(
       expect.objectContaining({
         mcpServers: expect.objectContaining({

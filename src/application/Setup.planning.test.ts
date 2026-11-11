@@ -252,6 +252,7 @@ describe("setup workflow", () => {
       {
         client: "cursor",
         config_path: "/cursor.json",
+        command_identity: "unknown",
         command: [process.execPath, "./rea.mjs", "mcp"],
         state: "stale",
         remediation: "Run rea setup to refresh this registration.",
@@ -481,7 +482,7 @@ describe("setup plan application", () => {
     expect(host.doctorCalls).toBe(1);
   });
 
-  it("treats an empty interactive selection as cancellation", async () => {
+  it("completes an empty interactive selection without changes", async () => {
     const host = new FakeSetupHost();
     host.clients = [{ name: "codex", configPath: "/codex.toml" }];
 
@@ -590,6 +591,7 @@ describe("setup workflow lifecycle and provider planning", () => {
       {
         client: "codex",
         config_path: "/codex.toml",
+        command_identity: "owned",
         command: ["rea", "mcp"],
         state: "aligned",
         remediation: null,
@@ -716,4 +718,33 @@ describe("setup workflow lifecycle and provider planning", () => {
     expect(applied.remediation).toContain("hosted computer");
     expect(host.configurations).toBe(0);
   });
+});
+
+it("records verified skill installation while its staging cleanup remains incomplete", async () => {
+  const host = new FakeSetupHost();
+  host.hopper = "/Applications/Hopper";
+  host.installSkill = async () =>
+    err(
+      new SetupSkillInstallError({
+        path: "/fixture/home/.agents/skills/reverse-engineer-anything/SKILL.md",
+        stage: "readback",
+        reason: "Skill publication cleanup incomplete",
+        completed: true,
+        rollbackFailures: [
+          { path: "/fixture/staging", reason: "close failed" },
+        ],
+        recoveryBackupPaths: [],
+        cause: new Error("close failed"),
+      }),
+    );
+  const result = await runSetup(
+    { ...options(true), clientIds: [], installSkill: true },
+    host,
+  );
+  expect(result).toMatchObject({
+    status: "needs_human",
+    code: "skill_install_failed",
+    appliedActions: ["installed_skill"],
+  });
+  expect(result.remediation).toContain("close failed");
 });

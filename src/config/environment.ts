@@ -6,7 +6,10 @@ import { z } from "zod";
 import { mcpInputBudgetSchema } from "./mcpInputBudget.js";
 import { isAbsolute } from "node:path";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  ConfigurationError,
+  type ConfigurationSettingIssue,
+} from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import {
@@ -29,6 +32,11 @@ import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
 import { mcpToolCatalogProfileSchema } from "./mcpToolCatalogProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
+import { asarMaxListingBytesSchema } from "./asarListingAdmission.js";
+import {
+  ghidraValueFlowCountSchema,
+  ghidraDecompilePayloadMiBSchema,
+} from "./ghidraValueFlowLimits.js";
 import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
 import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { debuggerSessionLimitEnvironmentShape } from "./debuggerSessionLimits.js";
@@ -57,6 +65,13 @@ const environmentSchema = z.object({
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
   REA_MCP_MAX_INPUT_ELEMENTS: mcpInputBudgetSchema.optional(),
   REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema.optional(),
+  REA_ASAR_MAX_LISTING_BYTES: asarMaxListingBytesSchema.optional(),
+  REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: ghidraValueFlowCountSchema.optional(),
+  REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION:
+    ghidraValueFlowCountSchema.optional(),
+  REA_GHIDRA_VALUE_FLOW_MAX_EDGES: ghidraValueFlowCountSchema.optional(),
+  REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB:
+    ghidraDecompilePayloadMiBSchema.optional(),
   REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
     captureDecoderOldGenerationMiBSchema.optional(),
   REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema.optional(),
@@ -123,6 +138,14 @@ const environmentSchema = z.object({
   ),
   REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: ghidraDecompileTimeoutSchema.optional(),
   REA_GHIDRA_PROJECT_PATH: ghidraProjectPathSchema.optional(),
+  REA_GHIDRA_CHECKPOINT_DIR: z
+    .string()
+    .min(1)
+    .refine(
+      (value) => value.startsWith("/") && !value.includes("\0"),
+      "must be an absolute POSIX directory path",
+    )
+    .optional(),
   REA_GHIDRA_PROGRAM_NAME: ghidraProgramNameSchema.optional(),
   REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
   REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
@@ -144,6 +167,31 @@ const environmentSchema = z.object({
   REA_LOG_LEVEL: processStartConfigurationSchema.shape.REA_LOG_LEVEL,
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
+
+/** Copy producer-owned update facts from a Zod issue without inventing them. */
+const configurationSettingFromIssue = (issue: {
+  readonly path: readonly PropertyKey[];
+  readonly message: string;
+  readonly code: string;
+  readonly params?: Readonly<Record<string, unknown>> | undefined;
+}): ConfigurationSettingIssue => {
+  const setting = String(issue.path[0] ?? "environment");
+  const constraint = issue.message;
+  if (issue.code !== "custom" || issue.params === undefined)
+    return { setting, constraint };
+  const updateMode = issue.params.update_mode;
+  const pendingRestart = issue.params.pending_restart;
+  return {
+    setting,
+    constraint,
+    ...(updateMode === "runtime" || updateMode === "restart"
+      ? { update_mode: updateMode }
+      : {}),
+    ...(typeof pendingRestart === "boolean"
+      ? { pending_restart: pendingRestart }
+      : {}),
+  };
+};
 
 /** Parse the JEB-only timeout at its isolated provider-composition boundary. */
 export const parseJebMcpTimeoutMs = (
@@ -180,20 +228,22 @@ export const parseEnvironmentValues = (
   unresolvedSettings: ReadonlySet<string> = new Set(),
 ): Result<Environment, ConfigurationError> => {
   // Unknown client-specific entries are preserved by registration owners and
-  // still cross the child-process boundary. Check their byte admission before
+  // still cross the child-process boundary. Check names and byte admission before
   // the known-setting schema strips them; never include rejected values.
   // Cordis expression values stay unknown, but their literal names are known.
   const keys = new Set([...Object.keys(environment), ...unresolvedSettings]);
   const invalidEntries = [...keys]
     .filter(
       (key) =>
+        key.includes("=") ||
         key.includes("\0") ||
         (Object.hasOwn(environment, key) && environment[key]?.includes("\0")),
     )
     .map((setting) => ({
       setting,
-      constraint:
-        "Environment variable names and values must not contain NUL bytes",
+      constraint: setting.includes("=")
+        ? "Environment variable names must not contain '='"
+        : "Environment variable names and values must not contain NUL bytes",
     }));
   if (invalidEntries.length > 0)
     return err(
@@ -201,13 +251,18 @@ export const parseEnvironmentValues = (
         settings: invalidEntries,
       }),
     );
-  const parsed = environmentSchema.safeParse(environment);
+  // An expression has no known runtime value to validate or default. Its
+  // original text was checked for invalid bytes above and remains with its owner.
+  const literals = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !unresolvedSettings.has(key)),
+  );
+  const parsed = environmentSchema.safeParse(literals);
   if (!parsed.success) {
     // Zod messages name the constraint, never the rejected value.
-    const settings = parsed.error.issues.map((issue) => ({
-      setting: String(issue.path[0] ?? "environment"),
-      constraint: issue.message,
-    }));
+    // A producer may attach update_mode and pending_restart on a custom issue.
+    const settings = parsed.error.issues.map((issue) =>
+      configurationSettingFromIssue(issue),
+    );
     return err(
       new ConfigurationError("Invalid REA environment configuration", {
         cause: parsed.error,
@@ -243,6 +298,27 @@ export const parseEnvironment = (
   const parsed = parseEnvironmentValues(environment, unresolvedSettings);
   if (!parsed.ok) return parsed;
   const env = parsed.value;
+  if (env.REA_GHIDRA_CHECKPOINT_DIR !== undefined) {
+    const conflicts = [
+      "REA_GHIDRA_PROJECT_PATH",
+      "REA_GHIDRA_SEED_FILE",
+      "REA_GHIDRA_NATIVEAOT_JAR",
+      "REA_GHIDRA_LANGUAGE_ID",
+      "REA_GHIDRA_DISABLED_ANALYZERS",
+    ].filter((key) => Reflect.get(env, key) !== undefined);
+    if (conflicts.length > 0)
+      return err(
+        new ConfigurationError(
+          "Ghidra checkpoints currently support stock fresh-import analysis only",
+          {
+            settings: conflicts.map((setting) => ({
+              setting,
+              constraint: "cannot be combined with REA_GHIDRA_CHECKPOINT_DIR",
+            })),
+          },
+        ),
+      );
+  }
   const project = env.REA_GHIDRA_PROJECT_PATH;
   const incompatible =
     project === undefined

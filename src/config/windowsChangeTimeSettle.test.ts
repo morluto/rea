@@ -4,14 +4,10 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEnvironment } from "./environment.js";
 import {
-  DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS,
   WINDOWS_CHANGE_TIME_DRIFT_MS,
   WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   resolveWindowsChangeTimeSettle,
-  windowsChangeTimeSettleRecovery,
-  windowsChangeTimeSettingFailure,
-  windowsChangeTimeSettingMessage,
 } from "./windowsChangeTimeSettle.js";
 
 const requiredFacts = (
@@ -31,13 +27,20 @@ const requiredFacts = (
   expect(message).toContain(String(fact.defaultValue));
   expect(message).toContain(String(fact.floor));
   expect(message).toContain(String(fact.maximum));
-  expect(message).toContain("restart REA");
+  expect(message).toContain("positive decimal integer");
 };
 
 it("keeps today's settle defaults when the settings are unset", () => {
   expect(resolveWindowsChangeTimeSettle({})).toEqual({
     ok: true,
-    value: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS,
+    value: {
+      driftMs: 2_000,
+      driftSource: "default",
+      pollMs: 25,
+      pollSource: "default",
+      maxPolls: 40,
+      maxPollsSource: "default",
+    },
   });
   const startup = parseEnvironment({});
   if (!startup.ok) throw new Error("unset settle settings were rejected");
@@ -46,17 +49,6 @@ it("keeps today's settle defaults when the settings are unset", () => {
   expect(
     startup.value.REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   ).toBeUndefined();
-  requiredFacts(
-    windowsChangeTimeSettleRecovery(DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS),
-    {
-      setting: WINDOWS_CHANGE_TIME_DRIFT_MS.setting,
-      currentValue: "2000",
-      source: "default",
-      defaultValue: 2_000,
-      floor: 1,
-      maximum: 60_000,
-    },
-  );
 });
 
 it("uses valid settle overrides", () => {
@@ -100,33 +92,29 @@ it.each([
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "0"],
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "1001"],
 ] as const)("rejects %s=%j", (bound, value) => {
-  const failure = windowsChangeTimeSettingFailure(bound, value);
-  expect(failure).toEqual({
-    setting: bound.setting,
-    currentValue: value,
-    source: "setting",
-    defaultValue: bound.defaultValue,
-    floor: bound.floor,
-    maximum: bound.maximum,
-    unit: bound.unit,
-    restartRequired: true,
-  });
-  const message = windowsChangeTimeSettingMessage(failure);
-  requiredFacts(message, failure);
   const resolved = resolveWindowsChangeTimeSettle({ [bound.setting]: value });
   if (resolved.ok) throw new Error(`Accepted ${bound.setting}=${value}`);
   expect(resolved.error).toBeInstanceOf(ConfigurationError);
-  expect(resolved.error.settings).toEqual([
-    { setting: bound.setting, constraint: message },
-  ]);
+  const message = resolved.error.settings[0]?.constraint;
+  if (message === undefined) throw new Error("Missing configuration guidance");
+  requiredFacts(message, { ...bound, currentValue: value, source: "setting" });
+  const facts = {
+    setting: bound.setting,
+    constraint: message,
+    update_mode: "restart" as const,
+  };
+  expect(resolved.error.settings).toEqual([facts]);
+  expect(resolved.error.settings[0]).not.toHaveProperty("pending_restart");
+  expect(message).toContain("supplied");
   expect(projectAnalysisError(resolved.error)).toMatchObject({
     code: "configuration_invalid",
-    details: { settings: [{ setting: bound.setting, constraint: message }] },
+    details: { settings: [facts] },
   });
   const startup = parseEnvironment({ [bound.setting]: value });
   if (startup.ok) throw new Error(`Startup accepted ${bound.setting}=${value}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: bound.setting,
-    constraint: message,
+  expect(startup.error.settings).toContainEqual(facts);
+  expect(startup.error.settings[0]).not.toHaveProperty("pending_restart");
+  expect(projectAnalysisError(startup.error).details).toMatchObject({
+    settings: [facts],
   });
 });

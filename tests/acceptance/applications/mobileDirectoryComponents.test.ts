@@ -19,7 +19,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../src/domain/harmony/harmonyApplication.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const harmony = {
   family: "HarmonyOS",
@@ -146,6 +146,11 @@ cliTest.for(fixtures)(
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const mode of ["directories", "files", "nested"] as const) {
+      // Keep one fresh dispatcher check per family; reuse later commands.
+      const run =
+        mode === "directories"
+          ? cli.run.bind(cli)
+          : runFileCli.bind(undefined, cli);
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const path of fixture.paths) {
         if (mode !== "files")
@@ -168,7 +173,7 @@ cliTest.for(fixtures)(
       const path = join(root, `${mode}.${fixture.extension}`);
       await writeFile(path, bytes);
 
-      const inspected = await cli.run({
+      const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
         environment,
       });
@@ -194,7 +199,7 @@ cliTest.for(fixtures)(
 
       const input = { inventory_evidence: [inventoryEvidence] };
       const originalInput = JSON.stringify(input);
-      const projected = await cli.run({
+      const projected = await run({
         arguments: [fixture.command, originalInput, "--json"],
         environment,
       });
@@ -321,6 +326,9 @@ cliTest.for([
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const encrypted of [false, true]) {
+      const run = encrypted
+        ? runFileCli.bind(undefined, cli)
+        : cli.run.bind(cli);
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const member of fixture.paths)
         await writer.add(
@@ -331,14 +339,14 @@ cliTest.for([
       const bytes = await writer.close();
       const path = join(root, `${encrypted}.${fixture.extension}`);
       await writeFile(path, bytes);
-      const inspected = await cli.run({
+      const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const inventory = parseEvidence(inspected.json);
       const input = { inventory_evidence: [inventory] };
-      const projected = await cli.run({
+      const projected = await run({
         arguments: [fixture.command, JSON.stringify(input), "--json"],
         environment,
       });

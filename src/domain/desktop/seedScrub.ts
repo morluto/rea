@@ -1,11 +1,21 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  gunzip,
+  gzipDeterministic,
+  hasExtraField,
+  isGzip,
+} from "./gzipDocument.js";
+import {
   identityLeftIn,
   identitySpellings,
   scrubHostIdentity,
   type HostIdentity,
 } from "./hostIdentity.js";
-import { isTextualFormat, textSyntaxFormat } from "./stateFormats.js";
+import {
+  detectStateFormat,
+  isTextualFormat,
+  textSyntaxFormat,
+} from "./stateFormats.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -13,6 +23,8 @@ export interface SeedScrub {
   readonly bytes: Buffer | undefined;
   /** Whether what it ships still holds the captured home, `user@host` or the host name, its escapes decoded. */
   readonly holdsIdentity: boolean;
+  /** The bytes are a gzip file compressed again only to clear its header: its document is as captured. */
+  readonly recompressed?: true;
 }
 
 /** Seeds up to this size are decoded, well inside a JavaScript string; a larger one is only searched byte for byte. */
@@ -95,8 +107,12 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
 const referenced = (whole: string, point: number): string =>
   point <= 0x10ffff ? String.fromCodePoint(point) : whole;
 
-const decodeXml = (text: string): string =>
-  text.replace(
+const decodeXml = (text: string, quote?: string): string => {
+  const normalized =
+    quote !== undefined
+      ? text.replace(/\r\n|[\r\n\t]/gu, " ")
+      : text.replace(/\r\n|\r/gu, "\n");
+  return normalized.replace(
     XML_REFERENCE,
     (whole, hex?: string, decimal?: string, name?: string) =>
       hex !== undefined
@@ -105,6 +121,7 @@ const decodeXml = (text: string): string =>
           ? referenced(whole, Number(decimal))
           : (XML_ENTITIES[name ?? ""] ?? whole),
   );
+};
 
 /** Character data, or an attribute value in the given quote, escaped so XML reads it back as written. */
 const encodeXml = (text: string, quote: string | undefined): string =>
@@ -127,7 +144,7 @@ const encodeXml = (text: string, quote: string | undefined): string =>
  */
 const scrubXml = (text: string, identity: HostIdentity): TextScrub => {
   const data = (raw: string, quote?: string) => {
-    const value = decodeXml(raw);
+    const value = decodeXml(raw, quote);
     const clean = scrubHostIdentity(value, identity);
     return clean === value ? raw : encodeXml(clean, quote);
   };
@@ -327,7 +344,11 @@ const utf16Text = (bytes: Buffer) => {
   if (order.swap && little.length % 2 === 0) little.swap16();
   try {
     return {
-      text: new TextDecoder("utf-16le", { fatal: true }).decode(little),
+      // The signature is already removed; a leading U+FEFF here is content.
+      text: new TextDecoder("utf-16le", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(little),
       encode: (scrubbed: string) => {
         const encoded = Buffer.from(scrubbed, "utf16le");
         if (order.swap) encoded.swap16();
@@ -359,13 +380,15 @@ const seedText = (bytes: Buffer, { home, format }: Seed) => {
       : { ...utf16, format: textSyntaxFormat(home, utf16.text) };
   }
   try {
+    const text = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes);
     return {
       // The byte-order mark is kept, as Python's utf-8 codec keeps it.
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes,
-      ),
+      text,
       encode: (scrubbed: string) => Buffer.from(scrubbed, "utf8"),
-      format,
+      format: format === "text" ? textSyntaxFormat(home, text) : format,
     };
   } catch {
     return undefined;
@@ -397,7 +420,7 @@ const holdsIdentity = (bytes: Buffer, identity: HostIdentity): boolean => {
  * syntax changes. Other bytes ship as captured. Either way what ships is
  * searched, its escapes decoded, for what is left.
  */
-export const scrubSeed = (
+const scrubDocument = (
   bytes: Buffer,
   seed: Seed,
   identity: HostIdentity,
@@ -414,5 +437,45 @@ export const scrubSeed = (
   return {
     bytes: scrub.text === decoded.text ? undefined : decoded.encode(scrub.text),
     holdsIdentity: identityLeftIn(scrub.decoded, identity) !== undefined,
+  };
+};
+
+/**
+ * Scrub a seed as `scrubDocument` does; a gzip file's document uses its
+ * captured format, or the format detected from decoded bytes when unknown,
+ * then is compressed again alike on every host whether or not it changed, so no file name, comment or time in the
+ * captured header ships. One already so ships as captured, as do one that
+ * does not decompress within the size decoded and one whose document needs no
+ * edit but a member of which has an extra field, where BGZF and dictzip index
+ * their blocks; both are searched as their bytes.
+ */
+export const scrubSeed = (
+  bytes: Buffer,
+  seed: Seed,
+  identity: HostIdentity,
+): SeedScrub => {
+  if (!isGzip(bytes)) return scrubDocument(bytes, seed, identity);
+  const document = gunzip(bytes, MAX_SCRUBBED_BYTES);
+  if (!document.ok)
+    return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
+  // The captured gzip may have exceeded the view's expansion-ratio limit;
+  // once decoded for shipping, detect its document format at this boundary.
+  const documentSeed =
+    seed.format === null
+      ? { ...seed, format: detectStateFormat(seed.home, document.value) }
+      : seed;
+  const scrub = scrubDocument(document.value, documentSeed, identity);
+  if (scrub.bytes === undefined && hasExtraField(bytes))
+    return {
+      bytes: undefined,
+      holdsIdentity: scrub.holdsIdentity || holdsIdentity(bytes, identity),
+    };
+  const shipped = gzipDeterministic(scrub.bytes ?? document.value);
+  if (shipped.equals(bytes))
+    return { bytes: undefined, holdsIdentity: scrub.holdsIdentity };
+  return {
+    bytes: shipped,
+    holdsIdentity: scrub.holdsIdentity,
+    ...(scrub.bytes === undefined ? { recompressed: true as const } : {}),
   };
 };

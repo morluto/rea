@@ -212,7 +212,7 @@ it("redacts Markdown punctuation in validation fields before presentation", asyn
 });
 
 it("retains upstream Markdown literal-cell protections after redaction", async () => {
-  const value = "\t:smile: secret|token # {x}\t";
+  const value = "\u00a0\t:smile: secret|token # {x}\t\u202f";
   const secret = "secret|token";
   const cli = Cli.create("literal-validation-fixture", { sync: false });
   cli.command("inspect", {
@@ -265,7 +265,8 @@ it("retains upstream Markdown literal-cell protections after redaction", async (
   const redactedMd = await run("md", true);
   const json = JSON.parse(await run("json", false));
   const redactedJson = JSON.parse(await run("json", true));
-  expect(md).toContain("&#9;");
+  expect(md).toContain("&#160;&#9;");
+  expect(md).toContain("&#9;&#8239;");
   expect(md).toContain("&#58;smile&#58;");
   expect(md).toContain("secret\\|token");
   expect(redactedMd).not.toContain("secret\\|token");
