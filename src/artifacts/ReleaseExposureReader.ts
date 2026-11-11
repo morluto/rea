@@ -830,10 +830,8 @@ interface ScanState {
    * other spelling in the same lookup bucket is a distinct occurrence.
    */
   claimedMapTargets: Set<string>;
-  /** Members already examined as something other than a source map. */
-  examinedLocations: Set<string>;
-  /** Members already examined as a source map. */
-  examinedMaps: Set<string>;
+  /** Completion per source occurrence, indexed by exact resolved spelling. */
+  examinedMembers: Map<string, Map<string, Set<MemberCompletion>>>;
   /**
    * Local script elements' targets whose names do not say JavaScript, by
    * lookup identity, each with the resolved spellings pages wrote.
@@ -847,8 +845,6 @@ interface ScanState {
    * `.map` may be that target, so it can no longer settle as a linker map.
    */
   mapTargetsDiscarded: boolean;
-  /** Members already examined as a script. */
-  examinedScripts: Set<string>;
   visitText: ReleaseExposureTextVisitor;
   readonly asarHeaderAdmission: AsarHeaderAdmission;
   /**
@@ -901,17 +897,21 @@ const createState = (
   mapsRead: 0,
   mapTargets: new Map(),
   claimedMapTargets: new Set(),
-  examinedLocations: new Set(),
-  examinedMaps: new Set(),
+  examinedMembers: new Map(),
   scriptTargets: new Map(),
   scriptTargetBytes: 0,
   mapTargetBytes: 0,
   mapTargetsDiscarded: false,
-  examinedScripts: new Set(),
   visitText,
 });
 
+interface MemberCompletion {
+  map: boolean;
+  script: boolean;
+}
+
 interface MemberView {
+  readonly completion: MemberCompletion;
   readonly logical: string;
   readonly format: string;
   readonly kind: string;
@@ -1075,21 +1075,23 @@ const examineSelectedFile = async (
 const examineMember = async (
   state: ScanState,
   context: ScanContext,
-  listed: MemberView,
+  listed: Omit<MemberView, "completion">,
 ): Promise<void> => {
+  const completion: MemberCompletion = { map: false, script: false };
+  const source = { ...listed, completion };
+  recordMemberCompletion(state, listed.location, completion);
   const { packageFormat } = listed;
   if (packageFormat !== null) state.formats.add(packageFormat);
   let readable = false;
-  const key = memberLocationKey(state, listed.location);
-  const map = isDeclaredMap(state, listed);
+  const map = isDeclaredMap(state, source);
   const member =
     !map &&
     asNativeFormat(listed.format) === null &&
     isScriptTarget(state, listed.location)
-      ? { ...listed, kind: "javascript" }
-      : listed;
-  (map ? state.examinedMaps : state.examinedLocations).add(key);
-  if (!map && isJavaScriptMember(member)) state.examinedScripts.add(key);
+      ? { ...source, kind: "javascript" }
+      : source;
+  completion.map = map;
+  completion.script = !map && isJavaScriptMember(member);
   // An owner's native format outranks anything the member's name suggests,
   // for a packaged member and for a selected or listed native image alike.
   const native = asNativeFormat(member.format) !== null;
@@ -1279,10 +1281,8 @@ const examineShebangMap = (
   loaded: MemberRead,
   bytesReadBefore: number,
 ): boolean => {
-  const key = memberLocationKey(state, member.location);
-  state.examinedMaps.delete(key);
-  state.examinedLocations.add(key);
-  state.examinedScripts.add(key);
+  member.completion.map = false;
+  member.completion.script = true;
   const remaining = MAX_RELEASE_EXPOSURE_TEXT_BYTES - state.textBytes;
   if (
     loaded.kind === "bytes" &&
@@ -1623,7 +1623,7 @@ const examineTextMember = async (
     noteUndecidedPe(state, member, loaded.prefix);
   return examineLoadedText(
     state,
-    scriptRoleOfRead(state, member, loaded),
+    scriptRoleOfRead(member, loaded),
     loaded,
     bytesReadBefore,
   );
@@ -1635,14 +1635,13 @@ const examineTextMember = async (
  * into the text reader gives such a file its JavaScript role.
  */
 const scriptRoleOfRead = (
-  state: ScanState,
   member: MemberView,
   loaded: MemberRead,
 ): MemberView => {
   if (holdsScripts(member)) return member;
   const header = headerOfRead(loaded);
   if (header === null || !hasNodeShebang(header)) return member;
-  state.examinedScripts.add(memberLocationKey(state, member.location));
+  member.completion.script = true;
   return { ...member, kind: "javascript" };
 };
 
@@ -1930,7 +1929,7 @@ const examineProbedText = async (
   } else if (hasNodeShebang(prefix)) {
     // The probe already read the header, so the role holds even when the
     // text allowance is spent before the text reader reads it again.
-    state.examinedScripts.add(memberLocationKey(state, member.location));
+    member.completion.script = true;
     await examineTextMember(state, { ...member, kind: "javascript" }, context);
   } else if (
     prefix.length > 0 &&
@@ -1997,16 +1996,8 @@ const noteScriptReference = (
  */
 const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
-  if (state.examinedScripts.has(target)) return;
   const spellings = state.scriptTargets.get(target);
-  if (
-    spellings === undefined &&
-    (state.examinedLocations.has(target) || state.examinedMaps.has(target))
-  ) {
-    retractLinkerMapGuesses(state, location);
-    state.skippedMaps += 1;
-    return;
-  }
+  retractLinkerMapGuesses(state, location);
   const spelling = anchoredLocation(state, location);
   if (spellings?.has(spelling)) return;
   state.scriptTargetBytes += Buffer.byteLength(spelling);
@@ -2122,12 +2113,7 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   // A map read before its declaration may have settled as a linker map.
   state.skippedMaps += retractLinkerMapGuesses(state, location);
-  if (state.examinedMaps.has(target)) return;
   const spellings = state.mapTargets.get(target);
-  if (spellings === undefined && state.examinedLocations.has(target)) {
-    state.skippedMaps += 1;
-    return;
-  }
   const spelling = anchoredLocation(state, location);
   if (spellings?.has(spelling)) return;
   state.mapTargetBytes += Buffer.byteLength(spelling);
@@ -2218,14 +2204,49 @@ const isDeclaredMap = (state: ScanState, member: MemberView): boolean => {
   return isSourceMap(member.logical, member.kind);
 };
 
+/** Keep normalized lookup separate from exact spelling and source occurrence. */
+const recordMemberCompletion = (
+  state: ScanState,
+  location: string,
+  completion: MemberCompletion,
+): void => {
+  const key = memberLocationKey(state, location);
+  const bucket =
+    state.examinedMembers.get(key) ?? new Map<string, Set<MemberCompletion>>();
+  const spelling = anchoredLocation(state, location);
+  const members = bucket.get(spelling) ?? new Set<MemberCompletion>();
+  members.add(completion);
+  bucket.set(spelling, members);
+  state.examinedMembers.set(key, bucket);
+};
+
+/** A path reference is complete only when every exact matching source occurrence was examined in that role. */
+const completedTarget = (
+  state: ScanState,
+  location: string,
+  role: keyof MemberCompletion,
+): boolean => {
+  const bucket = state.examinedMembers.get(memberLocationKey(state, location));
+  const exact = bucket?.get(anchoredLocation(state, location));
+  // Inventory normalizes some package paths. Without an exact spelling,
+  // completion holds only if every candidate in that lookup bucket has it.
+  const candidates =
+    exact === undefined
+      ? [...(bucket?.values() ?? [])].flatMap((members) => [...members])
+      : [...exact];
+  return candidates.length > 0 && candidates.every((member) => member[role]);
+};
+
 /**
  * A declared map or script target that was never reached was not assessed.
  * When no declared spelling was reached, another spelling of the target may
  * be the declared map, so its linker-map guess is no companion evidence.
  */
 const noteUnreachedTargets = (state: ScanState): void => {
-  for (const target of state.mapTargets.keys()) {
-    const examined = state.examinedMaps.has(target);
+  for (const [target, spellings] of state.mapTargets) {
+    const examined = [...spellings].every((spelling) =>
+      completedTarget(state, spelling, "map"),
+    );
     if (!examined) state.skippedMaps += 1;
     if (state.claimedMapTargets.has(target)) continue;
     const guesses = state.linkerMapGuesses.get(target);
@@ -2234,8 +2255,13 @@ const noteUnreachedTargets = (state: ScanState): void => {
     state.skippedCompanions += guesses.size;
     if (examined) state.skippedMaps += guesses.size;
   }
-  for (const target of state.scriptTargets.keys())
-    if (!state.examinedScripts.has(target)) state.skippedMaps += 1;
+  for (const spellings of state.scriptTargets.values())
+    if (
+      ![...spellings].every((spelling) =>
+        completedTarget(state, spelling, "script"),
+      )
+    )
+      state.skippedMaps += 1;
 };
 
 /** Text decoded from a member; `complete` is false when part of it went unread. */
@@ -3438,9 +3464,7 @@ const noteUnfollowedMapLink = (
     !canDeclareMap({ kind: "file", logical })
   )
     return;
-  const key = memberLocationKey(state, location);
-  state.examinedMaps.add(key);
-  state.examinedScripts.add(key);
+  recordMemberCompletion(state, location, { map: true, script: true });
   state.skippedMaps += 1;
   // A generic `.map` link may name a linker map, as an unread map may.
   if (isSourceMap(logical, "file") && !isJavaScriptSourceMapName(logical))

@@ -4895,3 +4895,52 @@ describe("ReleaseExposureReader expanded package member identity", () => {
     expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
   });
 });
+
+it.each([
+  ["duplicate", "a.html"],
+  ["duplicate", "z.html"],
+  ["unicode", "a.html"],
+  ["unicode", "z.html"],
+] as const)(
+  "keeps script completion separate for %s source occurrences with page at %s",
+  async (scenario, pageName) => {
+    const root = await createTestTempDirectory("rea-script-completion-");
+    const first = scenario === "duplicate" ? "boot.map" : "cafe\u0301.map";
+    const second = scenario === "duplicate" ? "boot.map" : "café.map";
+    const inline = `const value = 1;\n//# ${"sourceMappingURL"}=data:application/json;base64,${embeddedSourceMap().toString("base64")}\n`;
+    const path = join(root, "application");
+    const members = [
+      {
+        name: first,
+        typeCode: "x",
+        compress: false,
+        payload: Buffer.from("#!/usr/bin/env node\nconsole.log('launcher');\n"),
+      },
+      {
+        name: second,
+        typeCode: "x",
+        compress: false,
+        payload: Buffer.from(inline),
+      },
+    ];
+    members.push({
+      name: pageName,
+      typeCode: "x",
+      compress: false,
+      payload: Buffer.from(`<script src="${second}"></script>`),
+    });
+    await writeFile(
+      path,
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 310,
+        members,
+      }),
+    );
+    const scanned = await inspect(path);
+    expect(sourceMapSourcesStatus(scanned)).toBe(
+      pageName === "z.html" ? "unknown" : "exposed",
+    );
+    expect(scanned.debug_companions.paths).toEqual([]);
+  },
+);
