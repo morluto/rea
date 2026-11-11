@@ -102,7 +102,7 @@ const temporaryDirectoryCheck = (
         name: "temp_directory",
         ok: false,
         code: "temp_directory_unwritable",
-        detail: `REA could not ${probe.stage === "write" ? "write" : "delete"} a probe file under the Ghidra session root ${probe.directory}, where session runtimes are created${probe.code === undefined ? "" : ` (${probe.code})`}: ${probe.message}${probe.retainedPath === undefined ? "" : `. The probe file ${probe.retainedPath} remains; REA retains its cleanup and retries removal when doctor finishes.`}`,
+        detail: `REA could not ${probe.stage === "write" ? "write" : "clean up"} a probe file under the Ghidra session root ${probe.directory}, where session runtimes are created${probe.code === undefined ? "" : ` (${probe.code})`}: ${probe.message}${probe.retainedPath === undefined ? "" : `. The probe file ${probe.retainedPath} remains; REA retains its cleanup and retries removal when doctor finishes.`}`,
         remediation: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
         classification: "runtime_failure",
         details: {
