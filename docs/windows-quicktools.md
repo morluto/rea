@@ -22,7 +22,7 @@
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | เวอร์ชัน REA CLI                    | `rea --version`                                                                                                  |
 | Native Decompiler Engine (Ghidra) | ตั้งค่าตัวแปร `GHIDRA_INSTALL_DIR` ชี้ไปที่โฟลเดอร์ Ghidra ที่ติดตั้ง (เช่น `C:	ools\ghidra_12.1.4_PUBLIC`) แล้วรัน `rea doctor` |
-| Java Runtime                      | ตั้งค่าตัวแปร `JAVA_HOME` ชี้ไปที่ JDK ที่ติดตั้ง (Ghidra 12.x ต้องการ JDK 22+)                                                |
+| Java Runtime                      | ตั้งค่าตัวแปร `JAVA_HOME` ชี้ไปที่ JDK ที่ติดตั้ง (Ghidra 12.1 ต้องการ JDK 21+, Ghidra 12.2 ต้องการ JDK 25+)                    |
 | สถานะรวมทั้งระบบ                    | `rea doctor --client codex --client hermes`                                                                      |
 | MCP Server                        | `rea mcp doctor`                                                                                                 |
 

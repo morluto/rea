@@ -294,6 +294,11 @@ export const documentationSections = [
         route: "/windows-ghidra-p0",
       },
       {
+        text: "Windows quick tools launcher",
+        source: "windows-quicktools.md",
+        route: "/windows-quicktools",
+      },
+      {
         text: "Headerless raw-binary analysis with Ghidra",
         source: "providers/raw-binary.md",
         route: "/raw-binary",

@@ -149,9 +149,13 @@ goto FILE_DROPPED
 set "FUNC_NAME="
 set /p FUNC_NAME="พิมพ์ชื่อฟังก์ชันหรือ Memory Address (เช่น FUN_1400021b4): "
 if not defined FUNC_NAME goto FILE_DROPPED
+:: A leading-dash symbol would parse as an option; the decompile contract's
+:: --procedure=<value> selector routes it as the function name.
+set "FUNC_FLAG=!FUNC_NAME!"
+if "!FUNC_NAME:~0,1!"=="-" set "FUNC_FLAG=--procedure=!FUNC_NAME!"
 cls
 echo [กำลัง Decompile ฟังก์ชันตามชื่อที่ระบุ...]
-set "REA_ARGS=decompile "!TARGET!" "!FUNC_NAME!" --provider ghidra"
+set "REA_ARGS=decompile "!TARGET!" !FUNC_FLAG! --provider ghidra"
 call :RUN_REA
 pause
 goto FILE_DROPPED
@@ -220,8 +224,17 @@ goto MENU
 :: once here keeps operator and percent characters inside the value literal;
 :: analyst input never travels through the parse-time %* expansion.
 :RUN_REA
-:: REA_ARGS is built with delayed expansion at the action sites. Expanding it
-:: once here keeps operator and percent characters inside the value literal;
-:: analyst input never travels through the parse-time %* expansion.
-"%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!
+:: REA_ARGS is built with delayed expansion at the action sites: operator and
+:: percent characters stay inside the value literal and analyst input never
+:: travels through the parse-time %* expansion. NODE_EXE and REA_ENTRY were
+:: captured before delayed expansion was enabled, so their ! characters
+:: survive; the exec line runs after endlocal, where ! has no special
+:: meaning again. The argument line crosses the endlocal boundary through a
+:: temp file, because %-bridges would re-parse & inside the value.
+set "REA_ARGS_FILE=%TEMP%\rea_quicktools_args_%RANDOM%.tmp"
+> "!REA_ARGS_FILE!" echo(!REA_ARGS!
+endlocal & set "NEX=%NODE_EXE%" & set "REN=%REA_ENTRY%" & set "ARGS_FILE=%REA_ARGS_FILE%"
+set /p RARGS=<"%ARGS_FILE%"
+del "%ARGS_FILE%" >nul 2>&1
+"%NEX%" "%REN%" %RARGS%
 goto :eof

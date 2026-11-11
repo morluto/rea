@@ -27,6 +27,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 
@@ -45,6 +46,15 @@ NODE_RECORD_STUB = base64.b64decode(
 ).decode("utf-8")
 
 FEED_DELAY_S = 0.2
+PROMPT_TIMEOUT_S = 20.0
+
+
+def _safe_close(proc):
+    """Close the child's stdin, tolerating an already-broken pipe."""
+    try:
+        proc.stdin.close()
+    except (OSError, ValueError):
+        pass
 
 
 def windows_only(test):
@@ -90,7 +100,9 @@ class LauncherStructureTests(unittest.TestCase):
         content = BAT_PATH.read_text(encoding="utf-8")
         # A .cmd shim fallback would re-expand analyst text through CALL.
         self.assertNotIn("REA_CMD", content)
-        self.assertIn('"%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!', content)
+        # The dispatch runs after endlocal with %NEX% %REN%: paths containing !
+        # survive because delayed expansion is no longer active on that line.
+        self.assertIn('"%NEX%" "%REN%" %RARGS%', content)
 
     def test_leading_dash_terms_use_the_pattern_selector(self):
         content = BAT_PATH.read_text(encoding="utf-8")
@@ -143,7 +155,12 @@ class LauncherBehaviorTests(unittest.TestCase):
                     break
                 time.sleep(FEED_DELAY_S)
             if not proc.stdin.closed:
-                proc.stdin.close()
+                # Detach in a helper thread: closing synchronously and then
+                # calling communicate() races its own flush of the closed
+                # stream (ValueError) on Windows.
+                closer = threading.Thread(target=_safe_close, args=(proc,))
+                closer.start()
+                closer.join(timeout=10)
             out = proc.communicate(timeout=timeout)[0].decode("utf-8", "replace")
         except subprocess.TimeoutExpired:
             proc.kill()
