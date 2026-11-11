@@ -898,16 +898,11 @@ const limitNativeSample = (
   );
   // An asar: false build names no layout, so a native image outside every
   // found layout that the sample dropped may be another build's unread host.
-  // Its name does not rule it out: a host can be named `My.App`. Unless the
-  // read root is itself a found layout, an incomplete inventory may have
-  // stopped before listing such an image.
-  const rootIsLayout = basisPaths.some(
-    (basis) =>
-      basis.electronArchive &&
-      (basis.layout === "." || basis.layout === "Contents"),
-  );
+  // Its name does not rule it out: a host can be named `My.App`. An incomplete
+  // inventory may have stopped before listing such an image, even when the
+  // read root is itself a found layout: a build nested below it is outside it.
   const missedOutsideHost =
-    (scan.coverage === "unknown" && !rootIsLayout) ||
+    scan.coverage === "unknown" ||
     scan.native_images.some(
       (image) =>
         !keptPaths.has(image.path) &&

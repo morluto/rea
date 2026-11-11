@@ -1321,7 +1321,20 @@ describe("ReleaseExposureService partial inventory beside an ASAR layout", () =>
 });
 
 describe("ReleaseExposureService Electron host identity", () => {
-  it("keeps safe fuses decided when inventory stopped after the named executable", async () => {
+  it("keeps safe fuses decided when complete inventory lists only the named executable", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan(["/work/app/app.exe"]),
+    );
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+  });
+
+  it("keeps safe fuses unknown when inventory stopped after the named root host", async () => {
+    // A second asar: false build under b/ names no layout, so an inventory
+    // that stopped after the root host may never have listed its launcher.
     const { service, desktop, electronFuses } = owners({
       ...directoryScan(["/work/app/app.exe"]),
       coverage: "unknown",
@@ -1330,7 +1343,7 @@ describe("ReleaseExposureService Electron host identity", () => {
     electronFuses.inspect.mockResolvedValue(
       ok(evidence(fuseReport([slice(0)]))),
     );
-    expect((await runAsNode(service))?.status).toBe("not_observed");
+    expect((await runAsNode(service))?.status).toBe("unknown");
   });
 
   it("keeps safe fuses unknown when inventory stopped after an unnamed sibling", async () => {
