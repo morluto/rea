@@ -260,11 +260,11 @@ describe("source-map artifact relationships", () => {
       );
       sourceMap.artifact_id = contentId("3");
 
-      const result = createArtifactEdges(contentId("4"), [
-        directory,
-        ...targets,
-        sourceMap,
-      ]);
+      const result = createArtifactEdges(
+        contentId("4"),
+        [directory, ...targets, sourceMap],
+        "complete",
+      );
       const edge = result.edges.find(
         ({ occurrence_id }) => occurrence_id === sourceMap.occurrence_id,
       );
@@ -298,11 +298,11 @@ describe("source-map artifact relationships", () => {
     );
     directory.artifact_id = contentId("3");
 
-    const { edges, limitations } = createArtifactEdges(contentId("4"), [
-      archive,
-      script,
-      directory,
-    ]);
+    const { edges, limitations } = createArtifactEdges(
+      contentId("4"),
+      [archive, script, directory],
+      "complete",
+    );
 
     expect(directory).toMatchObject({
       artifact_kind: "container",
@@ -574,6 +574,28 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   expect(
     classifyArtifactContent("firmware/update.bin", partial, dfu.length + 1),
   ).toMatchObject({ format: "file" });
+});
+
+it("classifies a $MFT stream by its FILE record header, under any name", () => {
+  const mft = Buffer.alloc(2_048);
+  mft.write("FILE", 0, "latin1");
+  mft.writeUInt32LE(1024, 28);
+  for (const path of ["evidence/$MFT", "evidence/mft.raw", "evidence/records"])
+    expect(classifyArtifactBytesAtPath(path, mft)).toEqual({
+      kind: "executable",
+      format: "ntfs-mft",
+    });
+});
+
+it("leaves plain content beginning with FILE unclassified as MFT", () => {
+  const text = Buffer.from(
+    "FILE is a plain text prefix, not an NTFS record header",
+  );
+  expect(
+    classifyArtifactBytesAtPath("evidence/readme.txt", text),
+  ).toMatchObject({
+    format: "file",
+  });
 });
 
 it("classifies a FIT by a /images node within the first 4 KiB", () => {

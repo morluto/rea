@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { err, ok, type Result } from "./result.js";
 
 export interface ReferenceSourcePathLookup {
@@ -60,4 +61,13 @@ export const decodeReferenceSourceModuleUrlPath = (
       "The historical module URL path contains malformed percent encoding.",
     );
   }
+};
+
+/** Rebase a portable target without discarding its directory-required suffix. */
+export const rebaseReferenceSourceTarget = (
+  linkPath: string,
+  target: string,
+): string => {
+  const relative = posix.relative(posix.dirname(linkPath), target) || ".";
+  return target.endsWith("/") ? `${relative}/` : relative;
 };

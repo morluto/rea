@@ -40,6 +40,7 @@ import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
+import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
@@ -464,6 +465,14 @@ const NON_ZIP_FORMATS = {
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options)),
+  }),
+  "ntfs-mft": described("ntfs-mft", {
+    ...plain,
+    retainClassifiedSource: true,
+    readerLimitation:
+      "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
+    createReader: (path, options) =>
+      new NtfsMftArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<
