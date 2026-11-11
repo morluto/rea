@@ -1,3 +1,9 @@
+import { normalizeCaptureFailure } from "./ProcessCaptureError.js";
+import {
+  samplingInspectionFailures,
+  settleSamplingReads,
+  SamplingReadBatchFailure,
+} from "./ProcessSamplingObservation.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { writeFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -48,84 +54,116 @@ vi.mock("./ProcessSampling.js", () => ({
   startProcessSampler: (options: {
     resourceScope: ProcessCaptureResourceScope;
   }) => {
-    const failure = options.resourceScope.retainInspectionFailure(
-      control.inspection,
-    );
-    if (failure === undefined)
-      throw new Error("Expected actual inspection descriptor failure");
+    for (const leaf of samplingInspectionFailures(control.inspection))
+      options.resourceScope.retainInspectionFailure(leaf);
     return async () => {
-      throw failure;
+      throw control.inspection;
     };
   },
 }));
 
-it("finishes capture cleanup when sampler stop rejects without replacing an earlier physical failure", async () => {
-  const file = await failedInspectionDescriptor();
-  control.inspection = file.failure;
-  const root = await createTestTempDirectory("rea-capture-stop-failure-");
-  const path = join(root, "selected");
-  await writeFile(path, "inert selected executable bytes", { mode: 0o755 });
-  const resources = new ProcessCaptureResourceScope();
-  let observerRoot: string | undefined;
-  onTestFinished(async () => {
-    file.allow();
-    await resources.close();
-    if (observerRoot !== undefined)
-      await rm(observerRoot, { recursive: true, force: true });
-  });
-  const query = vi.fn(async () => ({
-    cleaned: true as const,
-    signaled: false,
-  }));
-  const removed: string[] = [];
-  const result = await captureProcessScenario(
-    processScenarioSchema.parse({
-      executable: path,
-      working_directory: root,
-      settle_ms: 0,
-      normalization: { pids: false },
-    }),
-    undefined,
-    "linux",
-    {},
-    async (_scenario, _signal, _before, observer) => {
-      if (observer?.observerPaths?.length !== 1)
-        throw new Error(
-          "Expected this capture's exact allocated observer root",
-        );
-      observerRoot = observer.observerPaths[0];
-      return {
-        files: [],
-        truncated: false,
-        completeRoots: [],
-        coverage: emptyProcessCapture().truncation_details.filesystem_before,
-      };
-    },
-    {
-      platform: "linux",
-      cleanupProcessGroup: query,
-      removeTemporaryRoot: async (path) => {
-        await rm(path, { recursive: true, force: true });
-        removed.push(path);
+it.each([false, true])(
+  "finishes capture cleanup without replacing a physical failure (settled peers: %s)",
+  async (peers) => {
+    const file = await failedInspectionDescriptor();
+    const second = peers ? await failedInspectionDescriptor() : undefined;
+    control.inspection =
+      second === undefined
+        ? normalizeCaptureFailure(file.failure)
+        : await settleSamplingReads([
+            Promise.reject(normalizeCaptureFailure(file.failure)),
+            Promise.resolve("completed sampling sibling"),
+            Promise.reject(normalizeCaptureFailure(second.failure)),
+          ]).catch((cause: unknown) => cause);
+    const root = await createTestTempDirectory("rea-capture-stop-failure-");
+    const path = join(root, "selected");
+    await writeFile(path, "inert selected executable bytes", { mode: 0o755 });
+    const resources = new ProcessCaptureResourceScope();
+    let observerRoot: string | undefined;
+    onTestFinished(async () => {
+      file.allow();
+      second?.allow();
+      await resources.close();
+      if (observerRoot !== undefined)
+        await rm(observerRoot, { recursive: true, force: true });
+    });
+    const query = vi.fn(async () => ({
+      cleaned: true as const,
+      signaled: false,
+    }));
+    const removed: string[] = [];
+    const result = await captureProcessScenario(
+      processScenarioSchema.parse({
+        executable: path,
+        working_directory: root,
+        settle_ms: 0,
+        normalization: { pids: false },
+      }),
+      undefined,
+      "linux",
+      {},
+      async (_scenario, _signal, _before, observer) => {
+        if (observer?.observerPaths?.length !== 1)
+          throw new Error(
+            "Expected this capture's exact allocated observer root",
+          );
+        observerRoot = observer.observerPaths[0];
+        return {
+          files: [],
+          truncated: false,
+          completeRoots: [],
+          coverage: emptyProcessCapture().truncation_details.filesystem_before,
+        };
       },
-    },
-    undefined,
-    resources,
-  );
-  if (result.ok) throw new Error("Expected controlled finalization failure");
-  expect(primaryAnalysisError(result.error).cause).toBe(control.physical);
-  expect(result.error.cleanupResources).toContain(file.path);
-  expect(result.error.partialObservation).toMatchObject({
-    observations: { target_pid: { state: "available", value: 321 } },
-  });
-  expect(query).not.toHaveBeenCalled();
-  expect(removed).toEqual([]);
-  expect(file.handle.fd).not.toBe(-1);
-  file.allow();
-  await resources.close();
-  expect(query).toHaveBeenCalledOnce();
-  expect(file.handle.fd).toBe(-1);
-  expect(removed).toEqual([observerRoot]);
-  await expect(stat(removed[0]!)).rejects.toMatchObject({ code: "ENOENT" });
-  expect(result.error.cleanupIncomplete).toBe(false);
-});
+      {
+        platform: "linux",
+        cleanupProcessGroup: query,
+        removeTemporaryRoot: async (path) => {
+          await rm(path, { recursive: true, force: true });
+          removed.push(path);
+        },
+      },
+      undefined,
+      resources,
+    );
+    if (result.ok) throw new Error("Expected controlled finalization failure");
+    expect(primaryAnalysisError(result.error).cause).toBe(control.physical);
+    expect(result.error.cleanupResources).toContain(file.path);
+    expect(result.error.partialObservation).toMatchObject({
+      observations: { target_pid: { state: "available", value: 321 } },
+    });
+    expect(query).not.toHaveBeenCalled();
+    expect(removed).toEqual([]);
+    expect(file.handle.fd).not.toBe(-1);
+    file.allow();
+    if (second !== undefined) {
+      await expect(resources.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+      expect(file.handle.fd).toBe(-1);
+      expect(second.handle.fd).not.toBe(-1);
+      expect(query).not.toHaveBeenCalled();
+      expect(removed).toEqual([]);
+      if (!(control.inspection instanceof SamplingReadBatchFailure))
+        throw new Error("Expected actual settled sampling batch");
+      expect(control.inspection.inspectionFailures[0]?.inspectionFailure).toBe(
+        file.failure,
+      );
+      expect(control.inspection.inspectionFailures[1]?.inspectionFailure).toBe(
+        second.failure,
+      );
+      expect(control.inspection.outcomes[1]).toEqual({
+        status: "fulfilled",
+        value: "completed sampling sibling",
+      });
+      second.allow();
+    }
+    await resources.close();
+    expect(second?.handle.fd ?? -1).toBe(-1);
+    expect(query).toHaveBeenCalledOnce();
+    expect(file.handle.fd).toBe(-1);
+    expect(removed).toEqual([observerRoot]);
+    await expect(stat(removed[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);

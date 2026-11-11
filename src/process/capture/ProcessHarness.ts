@@ -1,3 +1,4 @@
+import { samplingInspectionFailures } from "./ProcessSamplingObservation.js";
 import { ProcessAdmissionError } from "../ProcessAdmissionError.js";
 import type { IPty } from "@lydell/node-pty";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
@@ -407,11 +408,11 @@ const startCaptureRuntime = async (
     };
   } catch (cause: unknown) {
     for (const timer of options.timers) timer.cancel();
-    let failure =
-      options.resourceScope.retainInspectionFailure(cause) ??
-      normalizeCaptureFailure(cause);
-    if (failure instanceof ProcessCaptureInspectionFailure)
-      options.inspectionFailures.add(failure);
+    let failure = retainRunInspectionFailures(
+      cause,
+      options.resourceScope,
+      options.inspectionFailures,
+    );
     try {
       await stopSampler?.();
     } catch (samplingCause: unknown) {
@@ -443,6 +444,20 @@ const startCaptureRuntime = async (
   }
 };
 
+/** Adopt only this run's parsed leaf vector, including settled sampling peers. */
+const retainRunInspectionFailures = (
+  cause: unknown,
+  resources: ProcessCaptureResourceScope,
+  inspections: Set<ProcessCaptureInspectionFailure>,
+): unknown => {
+  const failure = normalizeCaptureFailure(cause);
+  for (const inspection of samplingInspectionFailures(failure)) {
+    resources.retainInspectionFailure(inspection);
+    inspections.add(inspection);
+  }
+  return failure;
+};
+
 /** A sampler's final rejection cannot skip cleanup or replace an earlier physical failure. */
 const retainSamplingFailure = (
   primary: unknown,
@@ -450,10 +465,10 @@ const retainSamplingFailure = (
   resources: ProcessCaptureResourceScope,
   inspections: Set<ProcessCaptureInspectionFailure>,
 ): unknown => {
-  const failure =
-    resources.retainInspectionFailure(cause) ?? normalizeCaptureFailure(cause);
-  if (failure instanceof ProcessCaptureInspectionFailure)
-    inspections.add(failure);
+  const failure = retainRunInspectionFailures(cause, resources, inspections);
+  if (failure instanceof AnalysisError)
+    for (const inspection of samplingInspectionFailures(failure))
+      retainCaptureInspectionCancellations(failure, inspection);
   if (primary === undefined || primary === failure) return failure;
   const error =
     primary instanceof AnalysisError
@@ -463,8 +478,8 @@ const retainSamplingFailure = (
     failure instanceof AnalysisError
       ? failure
       : new ProcessCaptureError("process sampling failed", { cause: failure });
-  if (failure instanceof ProcessCaptureInspectionFailure)
-    retainCaptureInspectionCancellations(error, failure);
+  for (const inspection of samplingInspectionFailures(failure))
+    retainCaptureInspectionCancellations(error, inspection);
   if (error.secondaryFailures.includes(secondary)) return error;
   if (secondary.cleanupIncomplete)
     return analysisErrorWithCleanupFailure(error, secondary, "capture_process")
@@ -932,10 +947,11 @@ const runProcessScenario = async (
       ...(progress === undefined ? {} : { onLiveProgress: reportSettling }),
     });
   } catch (cause: unknown) {
-    executionFailure = normalizeCaptureFailure(cause);
-    resourceScope.retainInspectionFailure(executionFailure);
-    if (executionFailure instanceof ProcessCaptureInspectionFailure)
-      inspectionFailures.add(executionFailure);
+    executionFailure = retainRunInspectionFailures(
+      cause,
+      resourceScope,
+      inspectionFailures,
+    );
   }
   return finishProcessRun({
     runtime,
