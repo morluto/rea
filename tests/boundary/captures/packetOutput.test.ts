@@ -17,7 +17,7 @@ it("preserves repeated field values and missing fields while discarding export i
     },
     { _source: { layers: { "frame.number": ["7"] } } },
   ]);
-  expect(parsePacketOutput(output)).toEqual([
+  expect(parsePacketOutput(output, 7)).toEqual([
     { "frame.number": ["2"], "ip.addr": ["192.0.2.1", "192.0.2.2"] },
     { "frame.number": ["7"] },
   ]);
@@ -49,7 +49,7 @@ it.each([
 ])("rejects malformed producer fields: $layers", ({ layers, issue }) => {
   let failure: unknown;
   try {
-    parsePacketOutput(JSON.stringify([{ _source: { layers } }]));
+    parsePacketOutput(JSON.stringify([{ _source: { layers } }]), null);
   } catch (error) {
     failure = error;
   }
@@ -72,6 +72,7 @@ it.each([
           _source: { layers: { "frame.number": frame } },
         })),
       ),
+      null,
     );
   } catch (error) {
     failure = error;
@@ -88,7 +89,18 @@ it("preserves canonical field names emitted for a selected alias", () => {
       },
     },
   ]);
-  expect(parsePacketOutput(output)).toEqual([
+  expect(parsePacketOutput(output, null)).toEqual([
     { "frame.number": ["1"], "dhcp.type": ["1"] },
   ]);
+});
+
+it("validates every frame against the input read limit while allowing filtered gaps", () => {
+  const output = JSON.stringify(
+    [2, 7].map((frame) => ({
+      _source: { layers: { "frame.number": [String(frame)] } },
+    })),
+  );
+  expect(parsePacketOutput(output, 7)).toHaveLength(2);
+  expect(() => parsePacketOutput(output, 6)).toThrow(AnalysisOutputError);
+  expect(parsePacketOutput(output, null)).toHaveLength(2);
 });

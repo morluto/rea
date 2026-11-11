@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · **日本語** · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA：あらゆるものをリバースエンジニアリング
 
@@ -84,6 +84,10 @@ npx rea-agents setup
 
 MCP は既定でコンパクトな入力スキーマを使用します。完全なフィールド説明と入れ子の検証情報が必要な場合は、MCP 登録に `REA_MCP_INPUT_SCHEMA_PROFILE=full` を設定してください。どちらも全ツールと同じ正規サーバー検証を維持します。詳細は MCP 契約ガイドを参照してください。
 
+セットアップは選択したランタイムと REA のエントリースクリプトを直接登録します。パッケージランナーを使う場合は、そのキャッシュ項目とランタイムを残し、対象プロジェクト外の信頼できるディレクトリからパッケージを取得してください。 インストールガイドを参照してください。
+
+出力スキーマはデフォルトで完全なものが公開されます。クライアントが `tools/list` を制限する場合は、MCP 登録で `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` または `off` を設定してください。サーバー側の検証と構造化結果は完全なままです。 MCP 契約ガイドの「Output schemas」を参照してください。
+
 ### エージェントに依頼する
 
 ```text
@@ -157,6 +161,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補      | Linux x64 で利用者が用意する pwntools；[バイナリ診断](../guides/native/binary-diagnostics.md)                                                                                 |
 | PE certificates                  | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                                       |
 | PE imports                       | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                                 |
+| Windows shortcuts                | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                                     |
 | EVM バイトコード                 | ディスパッチセレクター、バイトオフセット、推定された引数と状態変更の可否                    | Linux x64 上のローカルの生バイト／16 進数の入力ファイル；[オフライン EVM ガイド](../guides/evm/evm-bytecode.md)                                                               |
 | Rust binaries                    | Embedded cargo-auditable dependency list                                                    | [Rust binaries](../rust-binaries.md)                                                                                                                                          |
 | ELF notes                        | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                                  |
@@ -172,6 +177,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | パケットキャプチャ               | エンドポイント、DNS、TLS SNI、プロトコル分布、HTTPリクエスト                                | 呼び出し側が用意した tshark と capinfos；[pcapガイド](../guides/data/pcap-analysis.md)                                                                                        |
 | .NET アセンブリ                  | メタデータ、CIL 命令、宣言されたネイティブ依存関係、ビルドの比較                            | 静的な検査；[マネージドコードのガイド](../guides/managed/managed-code-analysis.md)                                                                                            |
 | PyInstaller                      | CArchive, PYZ, Python bytecode                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                         |
+| Deno compile binaries            | Virtual files, entry point, recorded options, npm snapshot length                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                          |
 | Android APK                      | マニフェストの宣言、クラス、逆コンパイルされたメソッド、参照                                | Linux/macOS/Windows x64 上のヘッドレス JADX と完全な JDK；[Android ガイド](../guides/android/android-analysis.md)                                                             |
 | Android デバイス                 | デバイス、パッケージ、プロセス、ログ、ダンプ、スクリーンキャプチャ、APK/ファイル転送        | 呼び出し側が用意した adb（エミュレーターまたは実機）；[ADB ガイド](../guides/android/adb-device-analysis.md)                                                                  |
 | JEBプロジェクト                  | エンジンによるプロジェクトユニット、アーティファクトのダイジェスト、型/メソッドの擬似コード | 呼び出し側が起動し MCP を提供する JEB クライアント（REA_JEB_MCP_URL で選択）；[JEB ガイド](../providers/jeb-analysis.md)                                                      |
@@ -274,6 +280,12 @@ REA は実行可能な環境と、起動して応答することを確認する�
 [環境構築ガイド](https://rea.tools/guides/rl-environments/) ·
 [環境リファレンス](../agent-environments.md) ·
 [X でデモを見る](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### デスクトップアプリの環境
+
+REA は、エージェントがスクリーンショット、マウス、キーボードで操作する Linux デスクトップアプリの環境も構築できます。「エージェントが買い物リストのメモにオリーブオイルを追加する Gnote 環境を作って」のような 1 行の依頼から、エージェントがローカルのビルド用コンピューターにアプリをインストールし、タスクを書き、環境をエクスポートし、新しいコンピューターでタスクを確認します。構築するマシンには、amd64 または arm64 の Linux、Docker、ガイドが指定するバージョンの agentenv フレームワークが必要です。
+
+[デスクトップアプリ環境を設定する](../desktop-build-computer.md)
 
 ## よくある質問
 

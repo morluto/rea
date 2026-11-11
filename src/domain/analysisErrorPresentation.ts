@@ -73,7 +73,8 @@ export const analysisErrorRemediationAction = (
   error = resolvedAnalysisError(error);
   const continuing =
     callerLifetime === "continuing"
-      ? error.continuingCallerGuidance?.remediationAction
+      ? (error.continuingCallerGuidance?.remediationAction ??
+        hopperContinuingRecovery(error)?.remediationAction)
       : undefined;
   if (continuing !== undefined) return continuing;
   if (
@@ -145,6 +146,16 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisTimeoutError) return timeoutRemediation(error);
   if (
     error instanceof ArtifactOperationError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
+  if (
+    error instanceof ArtifactOperationError &&
+    error.readerLimit !== undefined
+  )
+    return error.userMessage ?? error.detail ?? error.message;
+  if (
+    error instanceof ArtifactOperationError &&
     error.reason === "limit" &&
     error.boundary === "capacity"
   )
@@ -152,11 +163,13 @@ export const analysisErrorRemediationAction = (
   if (error instanceof HopperTimeoutError)
     return error.operation === undefined
       ? HOPPER_STARTUP_TIMEOUT_REMEDIATION
-      : error.providerState === "busy"
-        ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
-        : "Check binary_session for Hopper health, then retry the operation.";
+      : RERUN_HOPPER_INVOCATION;
   if (error instanceof HopperProcessError)
-    return hopperProcessRemediation(error);
+    return error.failureCode !== undefined && error.userMessage !== undefined
+      ? error.userMessage
+      : error.stage === "launch"
+        ? "Review the captured launcher diagnostics and Hopper setup, then retry opening the target."
+        : RERUN_HOPPER_INVOCATION;
   if (error instanceof HopperStartError)
     return error.ownerRunId === undefined
       ? "Check the Hopper launcher and target details, then retry opening the target."
@@ -417,9 +430,18 @@ const analysisErrorUserMessageParts = (
 ): { readonly outcome: string; readonly continuing?: string } => {
   error = resolvedAnalysisError(error);
   const outcome = outcomeUserMessage(error);
-  const continuing = error.continuingCallerGuidance?.userMessage;
+  const continuing =
+    error.continuingCallerGuidance?.userMessage ??
+    hopperContinuingRecovery(error)?.userMessage;
   return continuing === undefined ? { outcome } : { outcome, continuing };
 };
+
+/** Whether a child diagnostic needs a distinct continuing guidance snapshot. */
+export const hasAnalysisContinuingCallerGuidance = (
+  error: AnalysisError,
+): boolean =>
+  error.continuingCallerGuidance !== undefined ||
+  hopperContinuingRecovery(error) !== undefined;
 
 /**
  * Re-attribute one failure's message and another's remediation to a composed
@@ -540,8 +562,8 @@ const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
       return "REA timed out waiting for Hopper bridge readiness, which includes initial analysis. Hopper may still be analyzing the target or waiting for a loader, demo, or license dialog. Review the captured launcher outcome and resolve retained cleanup before retrying.";
     const request = error.operation;
     return error.providerState === "busy"
-      ? `Hopper timed out during ${request} while the provider remained busy. Check binary_session.analysis_activity, wait for the active request to finish, then retry.`
-      : `Hopper timed out during ${request} before it started. Check binary_session for provider health, then retry.`;
+      ? `Hopper timed out during ${request} while the provider remained busy.`
+      : `Hopper timed out during ${request} before it started.`;
   }
   if (error instanceof HopperProcessError) return hopperProcessMessage(error);
   if (error instanceof HopperStartError)
@@ -557,16 +579,38 @@ const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
 const RESTART_OWNED_PROVIDER =
   "Restart the owned provider by calling close_binary, then open the target again and retry.";
 const RESTART_UNREACHABLE_HOPPER = `${RESTART_OWNED_PROVIDER} close_binary preserves retained Evidence and Unknown history on this connection; export_evidence_bundle before ending the REA process if you need to resume later.`;
+const RERUN_HOPPER_INVOCATION =
+  "Review the reported Hopper state and resolve any incomplete cleanup before rerunning the command.";
 
-const hopperProcessRemediation = (error: HopperProcessError): string => {
-  if (error.failureCode !== undefined && error.userMessage !== undefined)
-    return error.userMessage;
-  if (error.stage === "launch")
-    return "Review the captured launcher diagnostics and Hopper setup, then retry opening the target.";
-  if (error.providerState === "unreachable") return RESTART_UNREACHABLE_HOPPER;
-  if (providerRetryAction(error.providerState) === "restart_provider")
-    return RESTART_OWNED_PROVIDER;
-  return "Read binary_session.provider_operation_health for this request before retrying or restarting the owned provider.";
+const hopperContinuingRecovery = (
+  error: AnalysisError,
+): AnalysisContinuingCallerGuidance | undefined => {
+  if (error instanceof HopperTimeoutError && error.operation !== undefined) {
+    const action =
+      error.providerState === "busy"
+        ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
+        : "Check binary_session for Hopper health, then retry the operation.";
+    return { userMessage: action, remediationAction: action };
+  }
+  if (!(error instanceof HopperProcessError)) return undefined;
+  if (
+    error.providerState === "exited" &&
+    (error.stage === "launch" || error.failureCode !== undefined)
+  )
+    return undefined;
+  const action =
+    error.providerState === "unreachable"
+      ? RESTART_UNREACHABLE_HOPPER
+      : providerRetryAction(error.providerState) === "restart_provider"
+        ? RESTART_OWNED_PROVIDER
+        : "Read binary_session.provider_operation_health for this request before retrying or restarting the owned provider.";
+  return {
+    userMessage: action,
+    ...(error.stage === "launch" ||
+    (error.failureCode !== undefined && error.userMessage !== undefined)
+      ? {}
+      : { remediationAction: action }),
+  };
 };
 
 const hopperProcessMessage = (error: HopperProcessError): string => {
@@ -586,15 +630,11 @@ const hopperProcessMessage = (error: HopperProcessError): string => {
           ? "no exit code was observed"
           : `signal ${signal}`
         : `exit code ${String(error.exitCode)}`;
-    const recovery =
-      error.failureCode === undefined && stage !== "launch"
-        ? ` ${RESTART_OWNED_PROVIDER}`
-        : "";
-    return `Hopper exited during ${where} (${exit}).${startup}${recovery}${request}`;
+    return `Hopper exited during ${where} (${exit}).${startup}${request}`;
   }
   if (error.providerState === "unreachable")
-    return `Hopper became unreachable during ${where}; its process exit was not observed. ${RESTART_UNREACHABLE_HOPPER}${startup}${request}`;
-  return `Hopper failed during ${where} and REA could not determine whether the provider is busy, exited, or unreachable.${startup} Read binary_session.provider_operation_health for this request before retrying or restarting.${request}`;
+    return `Hopper became unreachable during ${where}; its process exit was not observed.${startup}${request}`;
+  return `Hopper failed during ${where} and REA could not determine whether the provider is busy, exited, or unreachable.${startup}${request}`;
 };
 
 const standardErrorMessage = (tag: AnalysisErrorTag): string | undefined => {

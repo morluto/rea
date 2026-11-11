@@ -31,6 +31,8 @@ export interface StateRecordFacts {
     readonly start:
       | { readonly instant: OffsetDateTimeInstant; readonly ms: number }
       | undefined;
+    /** Exact completion, independent of the millisecond chronology policy. */
+    readonly end: OffsetDateTimeInstant | undefined;
     readonly endMs: number | undefined;
   };
 }
@@ -630,19 +632,22 @@ export const replaceAt = (
 const matchingKeys = (object: JsonObject, value: string): string[] =>
   Object.keys(object).filter((key) => scalarText(object[key]) === value);
 
-/** The entity object an item response carries with the keys repeating its path value: at the root or in one wrapper member, else as the element of a one-element array there. */
-export const locateItem = (
+/** Candidate entity objects at the first matching envelope tier. A known identity field constrains admission before choosing a tier; multiple candidates remain ambiguous. */
+export const locateItems = (
   body: JsonValue,
   value: string,
-): { readonly pointer: string; readonly keys: string[] } | undefined => {
+  idField?: string,
+): readonly { readonly pointer: string; readonly keys: string[] }[] => {
   const located = (
     object: JsonValue | undefined,
     pointer: string,
     named = false,
   ) => {
     const keys = isObject(object)
-      ? matchingKeys(object, value).filter(
-          (key) => !named || IDENTITY_NAMES.includes(key),
+      ? matchingKeys(object, value).filter((key) =>
+          idField !== undefined
+            ? key === idField
+            : !named || IDENTITY_NAMES.includes(key),
         )
       : [];
     return keys.length > 0 ? [{ pointer, keys }] : [];
@@ -658,8 +663,17 @@ export const locateItem = (
       located(soleElement(item), `${pointerTo(name)}/0`, true),
     ),
   ];
-  const chosen = tiers.find((tier) => tier.length > 0);
-  return chosen?.length === 1 ? chosen[0] : undefined;
+  return tiers.find((tier) => tier.length > 0) ?? [];
+};
+
+/** The unique entity object at the first matching envelope tier; absent or ambiguous otherwise. */
+export const locateItem = (
+  body: JsonValue,
+  value: string,
+  idField?: string,
+): { readonly pointer: string; readonly keys: string[] } | undefined => {
+  const candidates = locateItems(body, value, idField);
+  return candidates.length === 1 ? candidates[0] : undefined;
 };
 
 /** Whether every item carries `name` as a distinct string or number. */

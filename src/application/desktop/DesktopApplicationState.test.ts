@@ -1,10 +1,17 @@
-import { readFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
+import { EvidenceFileError } from "../../domain/evidenceErrors.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import type {
   DesktopApplicationCapture,
   DesktopCheckpoint,
@@ -12,6 +19,7 @@ import type {
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
 import {
   inspectDesktopApplicationState,
+  readDesktopCapture,
   type DesktopStateReaders,
 } from "./DesktopApplicationState.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
@@ -26,6 +34,49 @@ import {
   retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+
+it("retains invalid capture JSON and the descriptor owner through failed final cleanup", async () => {
+  const root = await createTestTempDirectory("rea-capture-read-cleanup-");
+  await writeFile(join(root, "capture.json"), '{"broken":');
+  await expect(readDesktopCapture(root, undefined)).rejects.toMatchObject({
+    _tag: "EvidenceFileError",
+    reason: "invalid-json",
+  });
+  const scopes = new Set<ArtifactResourceScope>();
+  const originalClose = ArtifactResourceScope.prototype.close;
+  const scopeClose = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementation(function (this: ArtifactResourceScope) {
+      scopes.add(this);
+      return originalClose.call(this);
+    });
+  const fileClose = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValue(new Error("descriptor close remains unavailable"));
+  let failure: AnalysisError | undefined;
+  try {
+    const reported = await readDesktopCapture(root, undefined).catch(
+      (cause: unknown) => cause,
+    );
+    expect(reported).toBeInstanceOf(AnalysisError);
+    if (!(reported instanceof AnalysisError)) throw reported;
+    failure = reported;
+    expect(primaryAnalysisError(failure)).toBeInstanceOf(EvidenceFileError);
+    expect(primaryAnalysisError(failure)).toMatchObject({
+      reason: "invalid-json",
+    });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual([join(root, "capture.json")]);
+  } finally {
+    fileClose.mockRestore();
+    scopeClose.mockRestore();
+    for (const scope of scopes) await scope.close();
+  }
+  expect(failure?.cleanupIncomplete).toBe(false);
+  expect(primaryAnalysisError(failure!)).toMatchObject({
+    reason: "invalid-json",
+  });
+});
 
 /** The fixture capture with extra files at the baseline and the second checkpoint. */
 const extended = (extra: {
@@ -59,6 +110,74 @@ const statePathsOf = async (folder: string, using = readers) => {
   const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
   return new Map(state.paths.map((entry) => [entry.home_path, entry]));
 };
+
+it("treats both explicitly selected files as documents when one ends in -journal", async () => {
+  const report = `${HOME}/Documents/report`;
+  const journal = `${report}-journal`;
+  const base = extended({
+    baseline: [
+      retained(report, "old report"),
+      retained(journal, "old journal"),
+    ],
+    changes: [
+      change(report, { before: "old report", after: "new report" }),
+      change(journal, { before: "old journal", after: "new journal" }),
+    ],
+    later: [retained(report, "new report"), retained(journal, "new journal")],
+  });
+  const folder = await writeCaptureFolder(
+    {
+      ...base,
+      state: {
+        ...base.state,
+        content_roots: [...base.state.content_roots, report, journal],
+        selected_paths: [report, journal].map((path) => ({
+          path,
+          physical: path,
+          kind: "file" as const,
+        })),
+      },
+    },
+    undefined,
+    ["old report", "old journal", "new report", "new journal"],
+  );
+  const byPath = await statePathsOf(folder);
+  for (const file of ["Documents/report", "Documents/report-journal"])
+    expect(byPath.get(file)).toMatchObject({
+      role: "document",
+      reasons: ["selected_path"],
+    });
+});
+
+describe("desktop state view admission", () => {
+  it.each([{ text_lines: 0 }, { xml_depth: 495 }, { json_depth: 992 }])(
+    "rejects an invalid view policy before reading a capture: %j",
+    async (viewPolicy) => {
+      const refused = await inspectDesktopApplicationState(
+        "/must-not-read",
+        readers,
+        undefined,
+        { viewPolicy },
+      );
+      expect(refused).toMatchObject({ _tag: "AnalysisInputError" });
+    },
+  );
+
+  it("preserves an unresolved captured path instead of reading the current file", async () => {
+    const folder = await writeCaptureFolder(capture());
+    const missing = `${HOME}/Documents/missing.txt`;
+    const refused = await inspectDesktopApplicationState(
+      folder,
+      readers,
+      undefined,
+      { paths: [missing] },
+    );
+    expect(refused).toMatchObject({
+      _tag: "AnalysisInputError",
+      userMessage: expect.stringContaining(missing),
+    });
+  });
+});
 
 describe("inspectDesktopApplicationState", () => {
   it("assigns roles and reads each version into typed views and changes", async () => {
@@ -842,6 +961,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
 
   it("reports cancellation during the last database read instead of Evidence", async () => {
     const controller = new AbortController();
+    const reason = { stage: "last database read" };
     let reads = 0;
     const folder = await writeCaptureFolder(
       extended({
@@ -857,7 +977,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
         ...readers,
         sqlite: async (database, signal) => {
           reads += 1;
-          if (reads === 3) controller.abort(new Error("stopped"));
+          if (reads === 3) controller.abort(reason);
           return readers.sqlite(database, signal);
         },
       },
@@ -866,6 +986,9 @@ describe("inspectDesktopApplicationState database sidecars", () => {
 
     expect(reads).toBe(3);
     expect(result).toBeInstanceOf(AnalysisCancelledError);
+    expect(result instanceof AnalysisCancelledError && result.cause).toBe(
+      reason,
+    );
   });
 });
 
@@ -1007,4 +1130,155 @@ describe("inspectDesktopApplicationState view bounds", () => {
     expect(names).not.toContain("settings");
     expect(names).toEqual(expect.arrayContaining(["notes", "noteswindow"]));
   });
+});
+
+it("preserves failure and late cancellation when capture input cleanup finishes", async () => {
+  const root = await createTestTempDirectory("rea-capture-late-cancel-");
+  await writeFile(join(root, "capture.json"), '{"broken":');
+  const controller = new AbortController();
+  const reason = { cause: "during close" };
+  const close = ArtifactResourceScope.prototype.close;
+  const spy = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementation(async function (this: ArtifactResourceScope) {
+      await close.call(this);
+      controller.abort(reason);
+    });
+  try {
+    const failure: unknown = await readDesktopCapture(
+      root,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisError);
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure).toMatchObject({
+      _tag: "EvidenceFileError",
+      reason: "invalid-json",
+    });
+    expect(failure.secondaryFailures).toContainEqual(
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    );
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it.each([false, true])(
+  "retains completed capture and cancellation after cleanup (close fails: %s)",
+  async (closeFails) => {
+    const folder = await writeCaptureFolder(capture());
+    const controller = new AbortController();
+    const reason = { cause: "during final close" };
+    const scopes = new Set<ArtifactResourceScope>();
+    const originalClose = ArtifactResourceScope.prototype.close;
+    const extra = closeFails
+      ? new OwnedFileHandle(await open(join(folder, "capture.json"), "r"))
+      : undefined;
+    const originalFileClose = OwnedFileHandle.prototype.close;
+    const fileClose = closeFails
+      ? vi
+          .spyOn(OwnedFileHandle.prototype, "close")
+          .mockImplementation(function (this: OwnedFileHandle) {
+            return this === extra
+              ? Promise.reject(new Error("descriptor close failed"))
+              : originalFileClose.call(this);
+          })
+      : undefined;
+    const scopeClose = vi
+      .spyOn(ArtifactResourceScope.prototype, "close")
+      .mockImplementation(async function (this: ArtifactResourceScope) {
+        scopes.add(this);
+        if (extra !== undefined)
+          this.retain({
+            kind: "file-handle",
+            resource: "final descriptor",
+            handle: extra,
+          });
+        try {
+          await originalClose.call(this);
+        } finally {
+          controller.abort(reason);
+        }
+      });
+    let failure: AnalysisError | undefined;
+    try {
+      const result: unknown = await readDesktopCapture(
+        folder,
+        controller.signal,
+      ).catch((cause: unknown) => cause);
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError)) throw result;
+      failure = result;
+      expect(primaryAnalysisError(result)).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(result.partialObservation).toMatchObject({
+        operation: "capture_desktop_application",
+      });
+      expect(result.cleanupIncomplete).toBe(closeFails);
+      if (extra !== undefined) {
+        expect(result.cleanupResources).toEqual(["final descriptor"]);
+        expect(extra.handle.fd).toBeGreaterThanOrEqual(0);
+      }
+    } finally {
+      fileClose?.mockRestore();
+      scopeClose.mockRestore();
+      for (const scope of scopes) await scope.close();
+    }
+    expect(failure?.cleanupIncomplete).toBe(false);
+    if (extra !== undefined) expect(extra.handle.fd).toBe(-1);
+  },
+);
+
+it("retains a failed input, cancellation and failed descriptor cleanup together", async () => {
+  const folder = await createTestTempDirectory("rea-capture-mixed-final-");
+  await writeFile(join(folder, "capture.json"), '{"broken":');
+  const controller = new AbortController();
+  const reason = { cause: "during failed close" };
+  const scopes = new Set<ArtifactResourceScope>();
+  const originalClose = ArtifactResourceScope.prototype.close;
+  const scopeClose = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementation(async function (this: ArtifactResourceScope) {
+      scopes.add(this);
+      try {
+        await originalClose.call(this);
+      } finally {
+        controller.abort(reason);
+      }
+    });
+  const fileClose = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValue(new Error("descriptor close failed"));
+  let failure: AnalysisError | undefined;
+  try {
+    const result: unknown = await readDesktopCapture(
+      folder,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(result).toBeInstanceOf(AnalysisError);
+    if (!(result instanceof AnalysisError)) throw result;
+    failure = result;
+    const primary = primaryAnalysisError(result);
+    expect(primary).toMatchObject({
+      _tag: "EvidenceFileError",
+      reason: "invalid-json",
+    });
+    expect(primary.secondaryFailures).toContainEqual(
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    );
+    expect(result.cleanupIncomplete).toBe(true);
+  } finally {
+    fileClose.mockRestore();
+    scopeClose.mockRestore();
+    for (const scope of scopes) await scope.close();
+  }
+  expect(failure?.cleanupIncomplete).toBe(false);
 });

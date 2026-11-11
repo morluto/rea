@@ -10,6 +10,7 @@ import { execFileOutput } from "../process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   downloadHopperPackage,
+  isHopperRequestCancellation,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
@@ -489,19 +490,14 @@ export const installLinuxHopper = async (
       return { status: "installed", launcherPath };
     })();
   } catch (cause: unknown) {
+    const cancelled = isHopperRequestCancellation(cause, options.signal);
     result = {
       status: "failed",
-      reason:
-        isAborted(options.signal) || isAbortCause(cause) ? "cancelled" : stage,
+      reason: cancelled ? "cancelled" : stage,
       operationFailure: operationFailure(stage, cause, operationPath),
+      ...(cancelled ? { cancellationReason: options.signal?.reason } : {}),
     };
   }
-  if (
-    result.status === "failed" &&
-    result.reason === "cancelled" &&
-    isAborted(options.signal)
-  )
-    result = { ...result, cancellationReason: options.signal?.reason };
   if (temporary === undefined) return result;
   try {
     await host.cleanup(temporary);
@@ -745,6 +741,7 @@ const publisherFailure = (
   ...(error.launcherDigestMismatch === undefined
     ? {}
     : { launcherDigestMismatch: error.launcherDigestMismatch }),
+  ...(reason === "cancelled" ? { cancellationReason: error.cause } : {}),
   ...(error.download === undefined ? {} : { download: error.download }),
 });
 
@@ -874,5 +871,3 @@ const versionAtLeast = (
 ): boolean =>
   version !== undefined &&
   Number.parseInt(version.split(".")[0] ?? "0", 10) >= minimum;
-const isAbortCause = (cause: unknown): boolean =>
-  cause instanceof Error && cause.name === "AbortError";

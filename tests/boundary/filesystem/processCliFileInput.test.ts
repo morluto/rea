@@ -1,20 +1,23 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
 } from "../../../src/application/process/ProcessCli.js";
+import * as scenarioPreparation from "../../../src/application/process/ProcessScenarioPreparation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import {
   analysisCliErrorEnvelopeSchema,
   analysisErrorProjectionSchema,
 } from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { err } from "../../../src/domain/result.js";
 import * as jsonFiles from "../../../src/application/JsonFiles.js";
 
@@ -410,6 +413,94 @@ describe("process CLI input diagnostics", () => {
   });
 });
 
+describe("process CLI final cleanup cancellation", () => {
+  it.each([
+    { kind: "plan", cancel: false },
+    { kind: "comparison", cancel: false },
+    { kind: "plan", cancel: true },
+    { kind: "comparison", cancel: true },
+    { kind: "invalid-scenario", cancel: true },
+  ] as const)(
+    "preserves the $kind outcome through final input cleanup (cancelled: $cancel)",
+    async ({ kind, cancel }) => {
+      const root = await createTestTempDirectory(
+        "rea-process-cli-final-close-",
+      );
+      const path = join(root, "input.json");
+      await writeFile(
+        path,
+        JSON.stringify(
+          kind === "comparison"
+            ? processCaptureEvidence()
+            : kind === "plan"
+              ? {
+                  executable: process.execPath,
+                  working_directory: root,
+                  dry_run: true,
+                }
+              : {},
+        ),
+      );
+      const controller = new AbortController();
+      const reason = { phase: "final-input-close" };
+      const realClose = ArtifactResourceScope.prototype.close;
+      const close = vi
+        .spyOn(ArtifactResourceScope.prototype, "close")
+        .mockImplementation(async function (this: ArtifactResourceScope) {
+          await realClose.call(this);
+          if (cancel) controller.abort(reason);
+        });
+      try {
+        const result =
+          kind === "comparison"
+            ? await compareProcessEvidenceFiles(
+                path,
+                path,
+                undefined,
+                controller.signal,
+              )
+            : await captureProcessScenarioFile(
+                path,
+                process.env,
+                controller.signal,
+              );
+        expect(controller.signal.aborted).toBe(cancel);
+        if (!cancel) {
+          expect(result).toMatchObject({
+            operation:
+              kind === "plan"
+                ? "capture_process_scenario"
+                : "compare_process_captures",
+          });
+          return;
+        }
+        expect(controller.signal.reason).toBe(reason);
+        expect(result).toMatchObject({
+          error: "Process command failed",
+          code: kind === "invalid-scenario" ? "invalid_request" : "cancelled",
+        });
+        if (kind !== "invalid-scenario")
+          expect(result).toMatchObject({
+            details: {
+              partial_observation: {
+                operation:
+                  kind === "plan"
+                    ? "capture_process_scenario"
+                    : "compare_process_captures",
+                predicate_type:
+                  kind === "plan"
+                    ? "rea.process-scenario-plan"
+                    : "rea.process-comparison",
+              },
+            },
+          });
+      } finally {
+        close.mockRestore();
+      }
+    },
+  );
+});
+
 describe("process CLI file cleanup", () => {
   it("retries a transient input close refusal before validating the scenario", async () => {
     const root = await createTestTempDirectory(
@@ -546,3 +637,172 @@ const validTraceSpecification = () => ({
     happens_before: [{ before: "started", after: "finished" }],
   },
 });
+
+it.each([
+  { cleanupFails: false, cancel: false },
+  { cleanupFails: true, cancel: false },
+  { cleanupFails: true, cancel: true },
+])(
+  "keeps the typed plan failure through final input close (fails: $cleanupFails; cancelled: $cancel)",
+  async ({ cleanupFails, cancel }) => {
+    const root = await createTestTempDirectory(
+      "rea-process-cli-primary-close-",
+    );
+    const path = join(root, "scenario.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        executable: process.execPath,
+        working_directory: join(root, "missing-directory"),
+        dry_run: true,
+      }),
+    );
+    const owner = new OwnedFileHandle(await open(path, "r"));
+    const controller = new AbortController();
+    const reason = { caller: "stop during failed input cleanup" };
+    const cleanupCause = new Error("retained input descriptor close failure");
+    const realPrepare = scenarioPreparation.prepareProcessScenarioPlan;
+    let primary: unknown;
+    const preparing = vi
+      .spyOn(scenarioPreparation, "prepareProcessScenarioPlan")
+      .mockImplementation(async (...args) => {
+        const result = await realPrepare(...args);
+        if (!result.ok) primary = result.error;
+        return result;
+      });
+    const realFileClose = OwnedFileHandle.prototype.close;
+    const closingFile = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this !== owner || !cleanupFails) return realFileClose.call(this);
+        if (cancel) controller.abort(reason);
+        throw cleanupCause;
+      });
+    const realScopeClose = ArtifactResourceScope.prototype.close;
+    const closingScope = vi
+      .spyOn(ArtifactResourceScope.prototype, "close")
+      .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+        // A real descriptor is retained at the final input-scope boundary;
+        // this supplies cleanup authority, not a fabricated ownership receipt.
+        this.retain({ kind: "file-handle", resource: path, handle: owner });
+        await realScopeClose.call(this);
+      });
+    let failure: unknown;
+    let returned: unknown;
+    try {
+      try {
+        returned = await captureProcessScenarioFile(
+          path,
+          process.env,
+          controller.signal,
+        );
+      } catch (cause) {
+        failure = cause;
+      }
+      expect(primary).toMatchObject({ _tag: "AnalysisInputError" });
+      if (!cleanupFails) {
+        expect(returned).toMatchObject({
+          code: "invalid_request",
+          details: { issues: [{ path: ["working_directory"] }] },
+        });
+        expect(failure).toBeUndefined();
+        return;
+      }
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("Expected retained input cleanup failure");
+      const causes = new Set<unknown>();
+      const pending = [failure as unknown];
+      while (pending.length > 0) {
+        const cause = pending.pop();
+        if (causes.has(cause)) continue;
+        causes.add(cause);
+        if (cause instanceof Error) pending.push(cause.cause);
+        if (cause instanceof AggregateError)
+          for (const nested of cause.errors) pending.push(nested);
+      }
+      expect(causes.has(primary)).toBe(true);
+      expect(failure.cleanupLeases).toHaveLength(1);
+      expect(owner.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(controller.signal.aborted).toBe(cancel);
+    } finally {
+      preparing.mockRestore();
+      closingScope.mockRestore();
+      closingFile.mockRestore();
+      if (failure instanceof ArtifactReaderFailure)
+        for (const lease of failure.cleanupLeases ?? []) await lease.release();
+      await owner.close();
+      expect(owner.handle.fd).toBe(-1);
+    }
+  },
+);
+
+it.each(["plan", "invalid"] as const)(
+  "retains %s and cancellation while final descriptor cleanup fails",
+  async (kind) => {
+    const root = await createTestTempDirectory("rea-process-mixed-final-");
+    const path = join(root, "scenario.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        executable: process.execPath,
+        working_directory: kind === "plan" ? root : join(root, "missing"),
+        dry_run: true,
+      }),
+    );
+    const owner = new OwnedFileHandle(await open(path, "r"));
+    const controller = new AbortController();
+    const reason = { caller: "late cancellation" };
+    const failureCause = new Error("descriptor close failed");
+    const realFileClose = OwnedFileHandle.prototype.close;
+    const fileClose = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this !== owner) return realFileClose.call(this);
+        controller.abort(reason);
+        throw failureCause;
+      });
+    const realScopeClose = ArtifactResourceScope.prototype.close;
+    const scopeClose = vi
+      .spyOn(ArtifactResourceScope.prototype, "close")
+      .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+        this.retain({ kind: "file-handle", resource: path, handle: owner });
+        await realScopeClose.call(this);
+      });
+    let thrown: unknown;
+    try {
+      try {
+        await captureProcessScenarioFile(path, process.env, controller.signal);
+      } catch (cause) {
+        thrown = cause;
+      }
+      expect(thrown).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(thrown instanceof ArtifactReaderFailure))
+        throw new Error("expected retained cleanup");
+      if (kind === "plan")
+        expect(thrown.partialObservation).toMatchObject({
+          operation: "capture_process_scenario",
+          predicate_type: "rea.process-scenario-plan",
+        });
+      const seen = new Set<unknown>();
+      const pending: unknown[] = [thrown];
+      while (pending.length > 0) {
+        const value = pending.pop();
+        if (seen.has(value)) continue;
+        seen.add(value);
+        if (value instanceof Error) pending.push(value.cause);
+        if (value instanceof AggregateError) pending.push(...value.errors);
+        if (value instanceof AnalysisError)
+          pending.push(...value.secondaryFailures);
+      }
+      expect(seen.has(reason)).toBe(true);
+      expect(thrown.cleanupLeases).toHaveLength(1);
+    } finally {
+      scopeClose.mockRestore();
+      fileClose.mockRestore();
+      if (thrown instanceof ArtifactReaderFailure)
+        for (const lease of thrown.cleanupLeases ?? []) await lease.release();
+      await owner.close();
+    }
+  },
+);

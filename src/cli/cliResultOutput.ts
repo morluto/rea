@@ -556,28 +556,32 @@ export const createCliResultOutput = (
     const selected = selection.value;
     const refuseUnrepresentableText = async (): Promise<true> => {
       error = projectAnalysisError(
-        new AnalysisInputError(
-          metadata.command,
-          {
-            userMessage:
-              format === "md"
-                ? "Markdown cannot preserve NUL or unpaired UTF-16 surrogates in rendered output."
-                : "TOON cannot preserve unpaired UTF-16 surrogates in UTF-8 output.",
-            remediationAction:
-              "Use --format json or --format yaml to retain the exact code units.",
-            ...(completed?.originalFailure === undefined
-              ? {}
-              : {
-                  diagnostics: { original_failure: completed.originalFailure },
-                }),
-          },
-          [
+        retainCliPublicationOnError(
+          new AnalysisInputError(
+            metadata.command,
             {
-              path: ["--format"],
-              reason: "invalid_value",
-              message: "The selected format cannot preserve this value.",
+              userMessage:
+                format === "md"
+                  ? "Markdown cannot preserve NUL or unpaired UTF-16 surrogates in rendered output."
+                  : "TOON cannot preserve unpaired UTF-16 surrogates in UTF-8 output.",
+              remediationAction:
+                "Use --format json or --format yaml to retain the exact code units.",
+              ...(completed?.originalFailure === undefined
+                ? {}
+                : {
+                    diagnostics: {
+                      original_failure: completed.originalFailure,
+                    },
+                  }),
             },
-          ],
+            [
+              {
+                path: ["--format"],
+                reason: "invalid_value",
+                message: "The selected format cannot preserve this value.",
+              },
+            ],
+          ),
         ),
       );
       const document = options.fullOutput

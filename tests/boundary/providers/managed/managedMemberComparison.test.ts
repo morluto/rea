@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../../../../src/domain/managed/managedInspectionLimits.js";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -24,10 +25,7 @@ import {
   buildManagedNestedTypeFixture,
   buildManagedPeFixture,
 } from "../../../../src/dotnet/ManagedPe.fixture.js";
-import {
-  MAX_MANAGED_SNAPSHOT_BYTES,
-  readManagedSnapshot,
-} from "../../../../src/dotnet/ManagedSnapshot.js";
+import { readManagedSnapshot } from "../../../../src/dotnet/ManagedSnapshot.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
 import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { buildManagedMemberCapacityFixture } from "../../../fixtures/managedMemberCapacity.js";
@@ -907,7 +905,7 @@ describe("managed comparison snapshot admission and cleanup", () => {
     const rightPath = join(directory, "right.dll");
     const fixture = buildManagedPeFixture();
     await writeFile(leftPath, Buffer.alloc(0));
-    await truncate(leftPath, MAX_MANAGED_SNAPSHOT_BYTES + 1);
+    await truncate(leftPath, DEFAULT_MANAGED_SNAPSHOT_BYTES + 1);
     await writeFile(rightPath, fixture);
     const template = managedPeFixtureTarget(fixture);
     const read = vi.spyOn(boundedFileBytes, "readBoundedFileBytes");
@@ -928,7 +926,7 @@ describe("managed comparison snapshot admission and cleanup", () => {
         _tag: "AnalysisResourceConstraintError",
         operation: "compare_managed_members",
         reportedLimits: {
-          max_snapshot_bytes: MAX_MANAGED_SNAPSHOT_BYTES,
+          max_snapshot_bytes: DEFAULT_MANAGED_SNAPSHOT_BYTES,
         },
       });
       expect(read).not.toHaveBeenCalled();

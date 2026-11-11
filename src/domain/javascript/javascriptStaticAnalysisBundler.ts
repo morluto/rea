@@ -48,12 +48,12 @@ export const inspectBundlerRegistration = (
   if (runtime === undefined || !t.isArrayExpression(entry)) return;
   const chunkIds = entry.elements[0];
   const table = entry.elements[1];
+  if (!t.isArrayExpression(chunkIds) || !t.isObjectExpression(table)) return;
   const runtimeValue = runtimeMetadata(
     entry.elements[2],
     bindings,
     accumulator,
   );
-  if (!t.isArrayExpression(chunkIds) || !t.isObjectExpression(table)) return;
   const recovered = recoverBundlerModules(source, table, accumulator, {
     runtime,
     bindings,

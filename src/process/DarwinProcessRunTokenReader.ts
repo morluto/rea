@@ -647,13 +647,18 @@ export const createDarwinProcessRunTokenReader = (
       if (operation?.aborting === true) {
         const waited = await waitForCompilation(operation, signal);
         if (waited.kind === "cancelled") throw waited.reason;
-        if (
-          !waited.result.ok &&
-          waited.result.error instanceof
-            DarwinProcessOwnershipInspectionError &&
-          waited.result.error.cleanupFailure !== undefined
-        )
-          throw waited.result.error;
+        if (!waited.result.ok) {
+          const failure = waited.result.error;
+          if (
+            (failure instanceof DarwinProcessOwnershipInspectionError &&
+              failure.cleanupFailure !== undefined) ||
+            !isExpectedAbort(
+              operation.primaryFailure?.cause,
+              operation.controller.signal,
+            )
+          )
+            throw failure;
+        }
         continue;
       }
       operation ??= beginCompilation();
@@ -730,7 +735,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const read = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>> => {
     signal?.throwIfAborted();
@@ -771,7 +776,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const identities = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
     if (processes.length === 0) return new Map();

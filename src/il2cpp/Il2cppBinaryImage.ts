@@ -5,6 +5,7 @@ import {
 import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
 import {
   BinaryFormatFailure,
+  BinaryMappingFailure,
   BinaryResourceFailure,
   createFileMappingIndex,
   mappedFileOffset,
@@ -14,15 +15,22 @@ import {
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
-  parsePointerFixups,
+  parsePointerFixupsSteps,
   type PointerFixups,
 } from "../native/AppleMachoFixups.js";
 import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
 } from "../native/AppleMachoSelection.js";
-import { applyElfRelativeRelocationsSteps } from "./ElfRelocations.js";
-import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
+import {
+  readElfPointerValuesSteps,
+  ElfPointerRelocationFailure,
+  type ElfVirtualPointerWrites,
+} from "../native/metadata/ElfPointerRelocations.js";
+import {
+  Il2cppBinaryFormatFailure,
+  IL2CPP_BINARY_BYTES,
+} from "./Il2cppBinaryFormat.js";
 const MACHO_CPU = new Map([
   [0x01000007, "amd64"],
   [0x0100000c, "arm64"],
@@ -83,8 +91,8 @@ export interface NativeImage {
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
   readonly imageBase: bigint;
-  readonly unresolvedPointerSlots: ReadonlyMap<bigint, number>;
-  readonly zeroFillPointers: ReadonlyMap<bigint, bigint>;
+  /** ELF loader writes retain virtual identity; source bytes stay unchanged. */
+  readonly elfPointerOverlay?: ElfVirtualPointerWrites;
   /** Mach-O loader fixups shared by every native pointer consumer. */
   readonly machoPointerFixups?: PointerFixups;
 }
@@ -93,7 +101,7 @@ export function* openImageSteps(
   bytes: Buffer,
   architecture: string | undefined,
 ): Generator<void, NativeImage> {
-  let image = selectImage(bytes, architecture);
+  const image = selectImage(bytes, architecture);
   let container: BinaryContainer;
   try {
     container = readBinaryContainer(image);
@@ -117,27 +125,28 @@ export function* openImageSteps(
       "unsupported-container",
       `only 64-bit little-endian images are supported, not ${container.bits}-bit ${container.byte_order}-endian`,
     );
-  let relocated:
-    | {
-        bytes: Buffer;
-        unresolved: ReadonlyMap<bigint, number>;
-        zeroFillPointers: ReadonlyMap<bigint, bigint>;
-      }
-    | undefined;
+  let elfPointerOverlay: ElfVirtualPointerWrites | undefined;
   try {
     if (container.format === "elf")
-      relocated = yield* applyElfRelativeRelocationsSteps(
+      elfPointerOverlay = yield* readElfPointerValuesSteps(
         image,
-        container.elf,
-        container.mappings,
-        container.zero_fills,
+        {
+          bits: 64,
+          little: true,
+          machine: container.elf.machine,
+          dynamicSegments: container.elf.dynamicSegments,
+          mappings: container.mappings,
+          zeroFills: container.zero_fills,
+        },
+        IL2CPP_BINARY_BYTES,
       );
   } catch (cause) {
+    if (cause instanceof ElfPointerRelocationFailure)
+      throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
     if (cause instanceof BinaryFormatFailure)
       throw new Il2cppBinaryFormatFailure("malformed-container", cause.message);
     throw cause;
   }
-  if (relocated !== undefined) image = relocated.bytes;
   if (container.format === "macho" && container.macho_chained_fixups === true)
     throw new Il2cppBinaryFormatFailure(
       "unsupported-pointer-encoding",
@@ -151,7 +160,7 @@ export function* openImageSteps(
         binaryMetadataArchitecture(container.architecture) ??
           container.architecture,
       );
-      machoPointerFixups = parsePointerFixups(
+      machoPointerFixups = yield* parsePointerFixupsSteps(
         image,
         layout.fixups,
         layout.segments,
@@ -195,8 +204,7 @@ export function* openImageSteps(
       container.zero_fills,
     ),
     imageBase,
-    unresolvedPointerSlots: relocated?.unresolved ?? new Map<bigint, number>(),
-    zeroFillPointers: relocated?.zeroFillPointers ?? new Map<bigint, bigint>(),
+    ...(elfPointerOverlay === undefined ? {} : { elfPointerOverlay }),
     ...(machoPointerFixups === undefined ? {} : { machoPointerFixups }),
   };
 }
@@ -217,14 +225,13 @@ export const readUInt32 = (
   image: NativeImage,
   address: bigint,
 ): number | "unknown" | null => {
-  if (
-    hasUnresolvedElfBytes(image, address, 4) ||
-    image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, 4) === true
-  )
+  if (image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, 4) === true)
     return "unknown";
-  const virtual = image.zeroFillPointers.get(address);
-  if (virtual !== undefined) return Number(virtual & 0xffffffffn);
   try {
+    if (image.elfPointerOverlay?.hasWrites(address, 4) === true) {
+      const value = image.elfPointerOverlay.unsignedAt(address, 4);
+      return value === undefined ? "unknown" : Number(value);
+    }
     return image.bytes.readUInt32LE(image.fileMappings.offset(address, 4));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
@@ -314,34 +321,20 @@ export const isExecutable = (image: NativeImage, address: bigint): boolean => {
   }
 };
 
-const hasUnresolvedElfBytes = (
-  image: NativeImage,
-  address: bigint,
-  size = 8,
-): boolean => {
-  if (image.unresolvedPointerSlots.size === 0) return false;
-  for (let delta = -7; delta < size; delta++) {
-    const width = image.unresolvedPointerSlots.get(address + BigInt(delta));
-    if (width !== undefined && delta + width > 0) return true;
-  }
-  return false;
-};
-
 export const readSlot = (
   image: NativeImage,
   address: bigint,
 ): bigint | "unknown" | null => {
-  if (hasUnresolvedElfBytes(image, address)) return "unknown";
   try {
-    const virtual = image.zeroFillPointers.get(address);
-    let raw: bigint | null;
-    if (virtual !== undefined) raw = virtual;
-    else {
-      // A successful indexed read already excludes zero-fill aliases. Only a
-      // non-file-backed slot needs the zero-fill ownership walk.
-      raw = readStoredWord(image, address);
-      if (raw === null && isZeroFilled(image, address, 8)) raw = 0n;
+    if (image.elfPointerOverlay !== undefined) {
+      const value = image.elfPointerOverlay.unsignedAt(address, 8);
+      if (value !== undefined) return value;
+      if (image.elfPointerOverlay.hasWrites(address, 8)) return "unknown";
     }
+    // A successful indexed read already excludes zero-fill aliases. Only a
+    // non-file-backed slot needs the zero-fill ownership walk.
+    let raw = readStoredWord(image, address);
+    if (raw === null && isZeroFilled(image, address, 8)) raw = 0n;
     if (raw === null) return null;
     if (image.machoPointerFixups !== undefined) {
       const resolution = image.machoPointerFixups.decode(address, raw);
@@ -356,6 +349,7 @@ export const readSlot = (
     }
     return raw;
   } catch (cause) {
+    if (cause instanceof BinaryMappingFailure) return null;
     if (cause instanceof BinaryFormatFailure)
       throw new Il2cppBinaryFormatFailure("malformed-container", cause.message);
     throw cause;
