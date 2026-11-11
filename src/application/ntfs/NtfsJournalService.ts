@@ -154,7 +154,15 @@ export const inspectNtfsJournalEvidence = async (
   );
   if (!mft.ok) return mft;
   const parsed = parseMftImage(mft.value.bytes);
-  if (!parsed.ok) return err(inputFailure("mft_path", parsed.error.message));
+  if (!parsed.ok)
+    return err(
+      inputFailure("mft_path", parsed.error.message).retainPartialObservation({
+        kind: "file-snapshot-hash",
+        path: input.mft_path,
+        sha256: mft.value.sha256,
+        bytes: mft.value.bytes.length,
+      }),
+    );
 
   const journal = await readAcquisition(
     input.journal_path,
