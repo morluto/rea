@@ -6,7 +6,7 @@ Setup previews configuration changes and asks for approval before applying them.
 | Task                               | Section                                                                                                             |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | Connect an agent                   | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
-| Install a Claude Code/Codex plugin | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
+| Install an agent plugin            | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
 | Run unreleased code                | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
 | Diagnose one task                  | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
 | Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
@@ -1828,8 +1828,11 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 
 ## Agent plugins and marketplaces
 
-REA's npm package is the shared Claude Code and Codex plugin artifact. It
-contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
+REA's npm package is one shared plugin artifact for coding agents. The
+repository's generic `.agents/plugins/marketplace.json` lists it for any agent
+that reads that marketplace format; Claude Code and Codex are the current
+examples, with their own manifests in the same package. It contains
+`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
 canonical generated `skills/` tree. Both manifests select `./skills` and run a plain Node bootstrap pinned to
 that exact package version. The client must have a supported standalone `node`
 on its PATH. Claude expands its documented `CLAUDE_PLUGIN_ROOT` in the script
@@ -1874,14 +1877,14 @@ The portal also requires the submitter's connected GitHub account to have push
 access to the submitted repository before submission. A contribution to upstream
 does not by itself grant that access.
 
-In Claude Code:
+For example, in Claude Code:
 
 ```text
 /plugin marketplace add morluto/rea
 /plugin install rea@rea
 ```
 
-In Codex CLI, add the marketplace and install REA:
+In Codex CLI, add the same marketplace and install REA:
 
 ```bash
 codex plugin marketplace add morluto/rea
