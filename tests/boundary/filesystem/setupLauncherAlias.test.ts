@@ -15,6 +15,7 @@ import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
   equivalentClientRegistrationCommands,
+  inspectClientRegistrationCommand,
   registrationRuntimePath,
 } from "../../../src/application/ClientRegistrationIdentity.js";
 import { readClientRegistrationInspections } from "../../../src/application/ClientRegistrationStatus.js";
@@ -314,6 +315,16 @@ it.skipIf(process.platform === "win32")(
         script,
       ),
     ).toBe("owned");
+    expect(
+      inspectClientRegistrationCommand(
+        [process.execPath, hardlinkedRea, "mcp"],
+        script,
+      ),
+    ).toMatchObject({
+      identity: "owned",
+      launch: "runtime_script",
+      launchLocationCompatible: false,
+    });
     expect(
       equivalentClientRegistrationCommands(
         [process.execPath, hardlinkedRea, "mcp"],

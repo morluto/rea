@@ -268,11 +268,7 @@ export const equivalentClientRegistrationCommands = (
     prior.entrypoint !== undefined &&
     prior.identity === "owned" &&
     prior.launch === requestedFacts.launch &&
-    sameCanonicalLaunchLocation(
-      prior.entrypoint,
-      current,
-      prior.launch === "direct",
-    ) &&
+    prior.launchLocationCompatible &&
     (prior.launch !== "runtime_script" ||
       sameCanonicalLaunchLocation(previous[0] ?? "", requested[0] ?? "", false))
   );
@@ -282,6 +278,12 @@ export interface ClientRegistrationCommandFacts {
   readonly identity: ClientRegistrationCommandIdentity;
   /** Execution form is separate from ownership of the selected REA file. */
   readonly launch: "runtime_script" | "direct" | "package_runner" | "unknown";
+  /**
+   * Whether the registered runtime and entrypoint resolve at the same canonical
+   * location as the running installation (e.g. symlinks pass, hardlinks fail
+   * relative ESM imports under the alias directory).
+   */
+  readonly launchLocationCompatible: boolean;
   /** Selected absolute launcher/script path; excludes package and unresolved PATH commands. */
   readonly entrypoint: string | undefined;
   readonly package:
@@ -312,6 +314,7 @@ export const inspectClientRegistrationCommand = (
     return {
       identity: owned ? "owned" : "foreign",
       launch: "package_runner",
+      launchLocationCompatible: false,
       entrypoint: undefined,
       package: {
         reference,
@@ -342,6 +345,7 @@ const inspectDirectRegistrationCommand = (
       return {
         identity: "unknown",
         launch: "runtime_script",
+        launchLocationCompatible: false,
         entrypoint: undefined,
         package: undefined,
       };
@@ -353,18 +357,30 @@ const inspectDirectRegistrationCommand = (
       return {
         identity: currentPathAvailable ? interpreterIdentity : "unknown",
         launch: "runtime_script",
+        launchLocationCompatible: false,
         entrypoint: undefined,
         package: undefined,
       };
     // The proven current runtime owns script selection: Node normalizes argv,
     // while Bun follows native traversal through symlink/.. on POSIX.
     const selectedEntrypoint = normalizeEntrypointPath(entrypoint);
+    const identity =
+      selectedEntrypoint === undefined || !currentPathAvailable
+        ? "unknown"
+        : entrypointIdentity(selectedEntrypoint, currentCommandPath);
     return {
       launch: "runtime_script",
-      identity:
-        selectedEntrypoint === undefined || !currentPathAvailable
-          ? "unknown"
-          : entrypointIdentity(selectedEntrypoint, currentCommandPath),
+      identity,
+      launchLocationCompatible:
+        identity === "owned" &&
+        selectedEntrypoint !== undefined &&
+        currentPathAvailable &&
+        sameCanonicalLaunchLocation(
+          selectedEntrypoint,
+          currentCommandPath,
+          false,
+        ) &&
+        sameCanonicalLaunchLocation(interpreter, process.execPath, false),
       entrypoint: selectedEntrypoint,
       package: undefined,
     };
@@ -375,22 +391,30 @@ const inspectDirectRegistrationCommand = (
       return {
         identity: "owned",
         launch: "direct",
+        launchLocationCompatible: false,
         entrypoint: undefined,
         package: undefined,
       };
-    if (isAbsolute(executable))
+    if (isAbsolute(executable)) {
+      const identity = currentPathAvailable
+        ? directEntrypointIdentity(executable, currentCommandPath)
+        : "unknown";
       return {
         launch: "direct",
-        identity: currentPathAvailable
-          ? directEntrypointIdentity(executable, currentCommandPath)
-          : "unknown",
+        identity,
+        launchLocationCompatible:
+          identity === "owned" &&
+          currentPathAvailable &&
+          sameCanonicalLaunchLocation(executable, currentCommandPath, true),
         entrypoint: executable,
         package: undefined,
       };
+    }
     if (/[./\\]/u.test(executable))
       return {
         identity: "unknown",
         launch: "direct",
+        launchLocationCompatible: false,
         entrypoint: undefined,
         package: undefined,
       };
@@ -398,6 +422,7 @@ const inspectDirectRegistrationCommand = (
   return {
     identity: "foreign",
     launch: "unknown",
+    launchLocationCompatible: false,
     entrypoint: undefined,
     package: undefined,
   };

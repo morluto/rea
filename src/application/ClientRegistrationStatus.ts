@@ -510,7 +510,10 @@ const registrationAligned = ({
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.
-  return commandFacts.launch === "runtime_script" ? "aligned" : "stale";
+  if (commandFacts.launch !== "runtime_script") return "stale";
+  // Owning a hardlinked entrypoint does not make its directory layout safe for
+  // relative ESM imports; require canonical launch-location compatibility.
+  return commandFacts.launchLocationCompatible ? "aligned" : "stale";
 };
 
 /** A client that rewrites its file from memory must be quit before setup. */

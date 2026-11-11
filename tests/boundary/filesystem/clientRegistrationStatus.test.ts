@@ -1,4 +1,11 @@
-import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,9 +19,12 @@ import {
 } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import {
-  currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
+  currentClientRegistrationCommand,
+  inspectClientRegistrationCommand,
 } from "../../../src/application/ClientRegistrationIdentity.js";
+import { runDoctor } from "../../../src/application/Doctor.js";
+import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import { err } from "../../../src/domain/result.js";
@@ -328,6 +338,70 @@ describe("client registration launcher identity", () => {
       command: [relativeInterpreter, currentEntry, "mcp"],
       state: "unknown",
     });
+  });
+});
+
+describe("hardlinked entrypoint readiness diagnostics", () => {
+  it("reports a hardlinked entrypoint outside scripts as owned yet stale in readiness diagnostics", async () => {
+    const home = await createTestTempDirectory("rea-hardlink-readiness-");
+    const scriptsDir = join(home, "pkg", "scripts");
+    const binDir = join(home, "bin");
+    await mkdir(scriptsDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    const script = join(scriptsDir, "rea.mjs");
+    const hardlink = join(binDir, "rea");
+    await writeFile(script, "#!/usr/bin/env node\n");
+    await link(script, hardlink);
+    await mkdir(join(home, ".cursor"));
+    const command = [process.execPath, hardlink, "mcp"];
+    await writeFile(
+      join(home, ".cursor", "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: process.execPath, args: [hardlink, "mcp"] },
+        },
+      }),
+    );
+
+    expect(inspectClientRegistrationCommand(command, script)).toMatchObject({
+      identity: "owned",
+      launch: "runtime_script",
+      launchLocationCompatible: false,
+    });
+    expect(
+      await readClientRegistrationInspections(home, script, {
+        environment: {},
+        selectedClientIds: ["cursor"],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        commandIdentity: "owned",
+        status: expect.objectContaining({
+          client: "cursor",
+          command,
+          state: "stale",
+          remediation: expect.stringContaining("rea setup"),
+        }),
+      }),
+    ]);
+    const report = await runDoctor(
+      undefined,
+      createDoctorHostFixture({
+        clientRegistrations: () =>
+          readClientRegistrationStatuses(home, script, {
+            environment: {},
+            selectedClientIds: ["cursor"],
+          }),
+      }),
+    );
+    expect(report.healthy).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration:cursor",
+        ok: false,
+        classification: "config_drift",
+      }),
+    );
   });
 });
 
