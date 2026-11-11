@@ -106,11 +106,6 @@ const resolveRoot = async (
       });
     return ok(canonicalRoot);
   } catch (cause: unknown) {
-    if (signal?.aborted === true && cause === signal.reason)
-      return err({
-        ...failure("cancelled", "Reference source import cancelled"),
-        cause: signal.reason,
-      });
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",

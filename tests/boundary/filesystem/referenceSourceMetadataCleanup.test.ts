@@ -2,6 +2,7 @@ import {
   mkdir,
   open as fsOpen,
   opendir as fsOpendir,
+  realpath as fsRealpath,
   stat as fsStat,
   writeFile,
 } from "node:fs/promises";
@@ -21,6 +22,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: vi.fn(actual.open),
     stat: vi.fn(actual.stat),
+    realpath: vi.fn(actual.realpath),
     opendir: vi.fn(actual.opendir),
   };
 });
@@ -28,6 +30,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const openMock = vi.mocked(fsOpen);
 const opendirMock = vi.mocked(fsOpendir);
 const statMock = vi.mocked(fsStat);
+const realpathMock = vi.mocked(fsRealpath);
 let actual: typeof import("node:fs/promises");
 
 beforeEach(async () => {
@@ -38,12 +41,14 @@ beforeEach(async () => {
   openMock.mockImplementation((...args) => actual.open(...args));
   opendirMock.mockImplementation((...args) => actual.opendir(...args));
   statMock.mockImplementation((...args) => actual.stat(...args));
+  realpathMock.mockImplementation((...args) => actual.realpath(...args));
 });
 
 afterEach(() => {
   openMock.mockReset();
   opendirMock.mockReset();
   statMock.mockReset();
+  realpathMock.mockReset();
 });
 
 const failCloseUntilAllowed = (
@@ -335,41 +340,56 @@ it("keeps a later packed-ref read error primary over earlier loose-ref cleanup",
   );
 });
 
-it("preserves a physical root admission failure when cancellation arrives during stat", async () => {
-  const root = await createTestTempDirectory("rea-reference-root-eio-");
-  const resources = new ArtifactResourceScope();
-  const controller = new AbortController();
-  const reason = { source: "caller" };
-  const physical = Object.assign(new Error("root stat failed"), {
-    code: "EIO",
-  });
-  statMock.mockImplementation(async (...args) => {
-    if (String(args[0]) !== root) return actual.stat(...args);
-    controller.abort(reason);
-    throw physical;
-  });
-  try {
-    const result = await importReferenceSource(
-      {
-        root,
-        caller: "test",
-        policy: { secretPatterns: [] },
-        signal: controller.signal,
-      },
-      resources,
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: "io",
-        cause: physical,
-        secondaryCancellation: { cause: reason },
-      },
+it.each([
+  ["stat", false],
+  ["stat", true],
+  ["realpath", false],
+  ["realpath", true],
+] as const)(
+  "preserves a physical root %s failure when cancellation arrives (same reason: %s)",
+  async (stage, sameReason) => {
+    const root = await createTestTempDirectory("rea-reference-root-eio-");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const physical = Object.assign(new Error(`root ${stage} failed`), {
+      code: "EIO",
     });
-  } finally {
-    await resources.close();
-  }
-});
+    const reason = sameReason ? physical : { source: "caller" };
+    const reject = (): never => {
+      controller.abort(reason);
+      throw physical;
+    };
+    if (stage === "stat") {
+      statMock.mockImplementation(async (...args) => {
+        if (String(args[0]) === root) return reject();
+        return actual.stat(...args);
+      });
+    } else {
+      realpathMock.mockImplementation(async (...args) => {
+        if (String(args[0]) === root) return reject();
+        return actual.realpath(...args);
+      });
+    }
+    try {
+      const result = await importReferenceSource(
+        {
+          root,
+          caller: "test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      if (result.ok)
+        throw new Error("Expected physical root admission failure");
+      expect(result.error.code).toBe("io");
+      expect(result.error.cause).toBe(physical);
+      expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it.each([false, true])(
   "retains a physical Git metadata read failure and late cancellation through cleanup (close fails: %s)",
