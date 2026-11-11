@@ -251,6 +251,9 @@ it.each(cases)(
           root_file_range: null,
         },
       ]);
+    if (selection.gaps.length > 0)
+      for (const continuation of result.published.extraction_continuations)
+        expect(continuation.instruction).not.toContain("was carved");
     for (const gap of result.published.extraction_gaps) {
       expect(result.published.extraction_continuations).toContainEqual({
         id: gap.continuation_id,
