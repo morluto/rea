@@ -78,7 +78,8 @@ const kunaDeadline = (
   if (launchValid === false) {
     const constraint = `${setting} is not a valid launch seed and no runtime override is active.`;
     throw new ConfigurationError(constraint, {
-      settings: [{ setting, constraint }],
+      settings: [{ setting, constraint, update_mode: "runtime" }],
+      remediationAction: `Use update_analysis_settings to set ${overrideSetting} to a valid millisecond timeout, then retry the operation. The launch seed is ${setting}.`,
     });
   }
   return { setting, ms, source };
