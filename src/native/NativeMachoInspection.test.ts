@@ -76,6 +76,72 @@ const inspect = async (lipo: string, architecture: "x86" | "arm64") => {
   return { result, commands };
 };
 
+describe("admitted Mach-O slice tools", () => {
+  it("binds slice tools to the admitted capability variant", async () => {
+    const lipo = [
+      "architecture arm64e.v1",
+      "cputype 16777228",
+      "cpusubtype 2164260866",
+      "offset 4096",
+      "size 4096",
+      "align 2^12",
+      "architecture arm64e",
+      "cputype 16777228",
+      "cpusubtype 2147483650",
+      "offset 8192",
+      "size 4096",
+      "align 2^12",
+    ].join("\n");
+    const commands: {
+      readonly tool: string;
+      readonly args: readonly string[];
+    }[] = [];
+    const result = await inspectNativeMacho({
+      readCommandNames: inspectionReader(),
+      target: {
+        kind: "executable",
+        format: "mach-o-universal",
+        path: "/fixture/app",
+        sha256: "b".repeat(64),
+        architecture: "arm64",
+        availableArchitectures: ["arm64"],
+        universalSlice: { offset: 8192, size: 4096 },
+        universalSlices: [
+          {
+            offset: 4096,
+            size: 4096,
+            cpuType: 0x0100000c,
+            cpuSubtype: 0x81000002,
+          },
+          {
+            offset: 8192,
+            size: 4096,
+            cpuType: 0x0100000c,
+            cpuSubtype: 0x80000002,
+          },
+        ],
+      },
+      run: (tool, args) => {
+        commands.push({ tool, args });
+        if (tool === "lipo") return Promise.resolve(ok(capture(tool, lipo)));
+        return Promise.resolve(
+          err(new AnalysisCancelledError("inspect_native")),
+        );
+      },
+      invocation: () => {
+        throw new Error("invocation is not reached");
+      },
+      readEncryption: unreadEncryption,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect(commands.find(({ tool }) => tool === "nm")?.args).toEqual(
+      expect.arrayContaining(["-arch", "arm64e"]),
+    );
+  });
+});
+
 describe("Mach-O tool architecture selection", () => {
   it("rejects a CPU lipo did not list instead of reading another slice", async () => {
     const { result, commands } = await inspect("architecture arm64\n", "x86");
