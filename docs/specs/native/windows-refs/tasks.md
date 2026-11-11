@@ -8,6 +8,6 @@
 - [x] Update capability declarations, diagnostics and owning documentation.
 - [x] Complete final source, documentation, artifact, package, native, Ghidra and
       original ReFS CLI verification on the same revision.
-- [ ] Review and synchronize the branch, then create a Draft PR linked to #289.
+- [x] Review and synchronize the branch, then create a Draft PR linked to #289.
 - [ ] Obtain human-owner review and readiness declarations before requesting
       maintainer review; do not merge on the owner's behalf.
