@@ -220,3 +220,50 @@ cliTest(
     }
   },
 );
+
+for (const [command, option] of [
+  ["xrefs", "address"],
+  ["function", "procedure"],
+  ["instructions", "procedure"],
+  ["decompile", "procedure"],
+  ["inspect-native-api", "procedure"],
+] as const) {
+  cliTest(
+    `admits equivalent native coordinates through ${command}`,
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: [
+          command,
+          "does-not-exist",
+          "0x1a",
+          `--${option}=0x001A`,
+          "--json",
+        ],
+      });
+      expect(result.json).toMatchObject({ code: "target_unavailable" });
+      if (command === "xrefs") {
+        for (const [left, right] of [
+          ["ram:0x1", "RAM:0x1"],
+          ["Symbol", "symbol"],
+        ] as const) {
+          const conflict = await cli.run({
+            arguments: [
+              command,
+              "does-not-exist",
+              left,
+              `--${option}=${right}`,
+              "--json",
+            ],
+          });
+          expect(conflict.json).toMatchObject({ code: "invalid_request" });
+        }
+      }
+    },
+  );
+}
+cliTest("keeps address-looking search text exact", async ({ cli }) => {
+  const result = await cli.run({
+    arguments: ["search", "does-not-exist", "0x1a", "--pattern=0x1A", "--json"],
+  });
+  expect(result.json).toMatchObject({ code: "invalid_request" });
+});
