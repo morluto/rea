@@ -769,11 +769,17 @@ it.each([true, false])("preserves RDN boundaries (one set: %s)", (oneSet) => {
     pkcs7?.certificates[0]?.issuer,
     pkcs7?.certificates[0]?.subject,
     pkcs7?.signers[0]?.issuer,
-  ])
+  ]) {
     expect(decoded?.attributes).toMatchObject([
       { value: "A", rdn_index: 0 },
       { value: "B", rdn_index: oneSet ? 0 : 1 },
     ]);
+    expect(decoded?.text).toBe(
+      oneSet
+        ? "commonName=A+organizationName=B"
+        : "commonName=A, organizationName=B",
+    );
+  }
 });
 
 it("distinguishes an empty RDNSequence from an empty RDN", () => {
