@@ -100,7 +100,7 @@ export interface MftRecord {
   /** The record number the header declares; `null` when the header predates the field. */
   readonly declaredRecordNumber: number | null;
   /** `$LogFile` sequence number as recorded; no log is read. */
-  readonly logFileSequenceNumber: number;
+  readonly logFileSequenceNumber: string;
   /** Declared offset of the first attribute; no attribute decoding follows yet. */
   readonly firstAttributeOffset: number;
   /** Declared id of the next attribute; no attribute decoding follows yet. */
@@ -350,9 +350,9 @@ const readRecord = (
       !fixups.malformed && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
         ? view.getUint32(RECORD_HEADER.recordNumber, true)
         : null,
-    logFileSequenceNumber: Number(
-      view.getBigUint64(RECORD_HEADER.logFileSequenceNumber, true),
-    ),
+    logFileSequenceNumber: view
+      .getBigUint64(RECORD_HEADER.logFileSequenceNumber, true)
+      .toString(),
     firstAttributeOffset: view.getUint16(
       RECORD_HEADER.firstAttributeOffset,
       true,
