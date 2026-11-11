@@ -10,6 +10,7 @@ import {
 } from "../../domain/apple/machoSegmentHeader.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
+  machoArchitectureFamily,
   machoArchitectureName,
   machoKnownArm64Subtype,
   machoKnownX86_64Subtype,
@@ -175,18 +176,23 @@ const sliceAt = (
 const comparableArch = (value: string): string =>
   value.trim().toLowerCase().replaceAll("-", "");
 
-const ARCH_ALIASES: ReadonlyMap<string, string> = new Map([
+/**
+ * Report spellings the join accepts, including the exact subtype names a
+ * crash producer may record. The shared family owner normalizes both sides of
+ * the comparison, so a family name also agrees with its known subtype.
+ */
+const REPORTED_FAMILIES: ReadonlyMap<string, string> = new Map([
   ["arm64", "arm64"],
   ["arm64e", "arm64e"],
+  ["arm64v8", "arm64v8"],
+  ["arm64e.x1", "arm64e.x1"],
   ["x8664", "x86_64"],
   ["x86_64", "x86_64"],
+  ["x86_64h", "x86_64h"],
   ["armv7", "armv7"],
   ["armv7s", "armv7s"],
   ["armv8", "arm64"],
-  ["arm64v8", "arm64v8"],
-  ["arm64e.x1", "arm64e.x1"],
   ["arm64_32", "arm64_32"],
-  ["x86_64h", "x86_64h"],
   ["i386", "i386"],
   ["arm", "arm"],
 ]);
@@ -195,7 +201,7 @@ const architectureRelation = (
   recorded: string,
   slice: SliceIdentity,
 ): "match" | "mismatch" | "unknown" => {
-  const left = ARCH_ALIASES.get(comparableArch(recorded));
+  const left = REPORTED_FAMILIES.get(comparableArch(recorded));
   if (left === undefined) return "unknown";
   if (
     slice.cpuType === 0x0100000c &&
@@ -209,10 +215,12 @@ const architectureRelation = (
     machoKnownX86_64Subtype(slice.cpuSubtype) === undefined
   )
     return left.startsWith("x86_64") ? "unknown" : "mismatch";
-  const right = ARCH_ALIASES.get(comparableArch(slice.arch));
+  const right = REPORTED_FAMILIES.get(
+    comparableArch(machoArchitectureFamily(slice.arch)),
+  );
   return right === undefined
     ? "unknown"
-    : left === right
+    : machoArchitectureFamily(left) === machoArchitectureFamily(right)
       ? "match"
       : "mismatch";
 };

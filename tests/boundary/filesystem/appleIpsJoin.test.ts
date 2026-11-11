@@ -328,6 +328,60 @@ describe("Apple IPS unknown architecture", () => {
   );
 });
 
+describe("Apple IPS family and subtype agreement", () => {
+  const ARM64_V8 = { type: 0x0100000c, subtype: 1 } as const;
+  const ARM64E = { type: 0x0100000c, subtype: 0x80000002 } as const;
+  const ARM64E_X1 = { type: 0x0100000c, subtype: 0x8000000c } as const;
+
+  it.each([
+    { recorded: "arm64", cpu: ARM64_V8, sliceArch: "arm64v8" },
+    { recorded: "arm64e", cpu: ARM64E_X1, sliceArch: "arm64e.x1" },
+  ])(
+    "joins a $recorded report against a $sliceArch slice of the same family",
+    async ({ recorded, cpu, sliceArch }) => {
+      const root = await createTestTempDirectory("rea-ips-family-join-");
+      const report = await inspectWithJoin(
+        root,
+        machoSlice({ cpu, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+        { arch: recorded },
+      );
+      expect(report.join.slices).toMatchObject([{ arch: sliceArch }]);
+      expect(report.join.image_matches).toEqual([
+        expect.objectContaining({
+          recorded_arch: recorded,
+          slice_arch: sliceArch,
+        }),
+      ]);
+      expect(report.join.frames[0]).toMatchObject({
+        status: "joined",
+        static_address: { decimal: "4294968120", hex: "0x100000338" },
+      });
+    },
+  );
+
+  it.each([
+    { recorded: "arm64", cpu: ARM64E, sliceArch: "arm64e" },
+    { recorded: "arm64e", cpu: ARM64_V8, sliceArch: "arm64v8" },
+    { recorded: "arm64", cpu: ARM64E_X1, sliceArch: "arm64e.x1" },
+    { recorded: "arm64e.x1", cpu: ARM64, sliceArch: "arm64" },
+  ])(
+    "still refuses a $recorded report against a $sliceArch slice of another family",
+    async ({ recorded, cpu, sliceArch }) => {
+      const root = await createTestTempDirectory("rea-ips-family-cross-");
+      const report = await inspectWithJoin(
+        root,
+        machoSlice({ cpu, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+        { arch: recorded },
+      );
+      expect(report.join.image_matches).toEqual([]);
+      expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+      expect(report.join.limitations.join(" ")).toContain(
+        `does not match ${sliceArch}`,
+      );
+    },
+  );
+});
+
 describe("Apple IPS rejected joins", () => {
   it("rejects a UUID match whose architecture differs", async () => {
     const root = await createTestTempDirectory("rea-apple-ips-join-arch-");
