@@ -296,6 +296,21 @@ export const requiredRuntimeLimitFailure = (
 const namesIn = (source, pattern) =>
   new Set([...source.matchAll(pattern)].map((match) => match[1]));
 
+/** Existing launch-seed migrations. A new per-call policy is rejected. */
+const TEMPORARY_PER_CALL_LIMITS = new Set([
+  "REA_BRIDGE_MAX_REQUEST_BYTES",
+  "REA_DEBUGGER_COMMAND_DEADLINE_MS",
+  "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+  "REA_HOPPER_CALLER_SCAN_BUDGET_MS",
+  "REA_JEB_MCP_TIMEOUT_MS",
+  "REA_KUNA_PROJECT_TIMEOUT_MS",
+  "REA_KUNA_TIMEOUT_MS",
+  "REA_PWNTOOLS_MAX_INPUT_BYTES",
+  "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
+  "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
+  "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
+]);
+
 const direct =
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
@@ -319,6 +334,10 @@ if (direct) {
     if (runtime.has(name))
       failures.push(
         `${name} is both a runtime setting and on the exception list`,
+      );
+    if (policy === "per-call" && !TEMPORARY_PER_CALL_LIMITS.has(name))
+      failures.push(
+        `${name} is a new per-call exception. Move it into ANALYSIS_SETTINGS instead of extending the temporary list.`,
       );
     if (policy === "restart-only" && read === "per-call")
       failures.push(
