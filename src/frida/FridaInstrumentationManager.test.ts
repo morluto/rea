@@ -268,11 +268,13 @@ describe("FridaInstrumentationManager", () => {
     expect(fridaCaptureLimitations({ messages_truncated: false })).toEqual([]);
     expect(
       fridaCaptureLimitations({ messages_truncated: true }).join("\n"),
-    ).toContain("16777216");
+    ).toContain("selected value is unknown");
     const field = fridaCaptureLimitations({
       messages: [{ type_truncated: true }],
     }).join("\n");
-    expect(field).toContain("4096");
+    expect(field).toContain("capture_limits.message_type_bytes");
+    expect(field).toContain("selected value is unknown");
+    expect(field).not.toContain("4096");
     expect(field).not.toContain("16777216");
     const text = fridaCaptureLimitations({
       messages: [
@@ -282,7 +284,9 @@ describe("FridaInstrumentationManager", () => {
         },
       ],
     }).join("\n");
-    expect(text).toContain("32768");
+    expect(text).toContain("capture_limits.message_text_bytes");
+    expect(text).toContain("selected value is unknown");
+    expect(text).not.toContain("32768");
     expect(text).not.toContain("16777216");
     expect(text).not.toContain("4096");
     expect(
@@ -1927,3 +1931,21 @@ it("retries only unresolved sessions and resolves the typed close aggregate", as
   expect(calls).toEqual([2, 1]);
   expect(failure.cleanupIncomplete).toBe(false);
 });
+
+// Malformed or partial observations do not establish the session's policy.
+it.each([{}, { session_bytes: 12345 }, { session_bytes: -1 }])(
+  "keeps observed capture policy unknown for %j",
+  (capture_limits) => {
+    const text = fridaCaptureLimitations({
+      capture_limits,
+      messages_truncated: true,
+      messages: [{ type_truncated: true, description_truncated: true }],
+    }).join("\n");
+    expect(text).toContain("selected value is unknown");
+    for (const invented of ["16777216", "4096", "32768"])
+      expect(text).not.toContain(invented);
+    expect(text).toContain(
+      "Already discarded observations cannot be recovered",
+    );
+  },
+);

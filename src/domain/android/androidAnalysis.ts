@@ -187,8 +187,11 @@ export const dexStaticValueSchema = z.discriminatedUnion("type", [
     type: z.literal("long"),
     value: z
       .string()
-      .regex(/^(?:0|-?[1-9]\d*)$/u)
-      .refine((text) => BigInt(text) >= LONG_MIN && BigInt(text) <= LONG_MAX),
+      .regex(/^(?:0|-?[1-9]\d*)$/u, { abort: true })
+      .refine((text) => {
+        const value = BigInt(text);
+        return value >= LONG_MIN && value <= LONG_MAX;
+      }),
   }),
   floating("float", Math.fround),
   floating("double", (value) => value),
