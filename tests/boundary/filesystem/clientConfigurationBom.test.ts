@@ -63,9 +63,14 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
           },
         );
         const updated = await readFile(client.configPath, "utf8");
-        expect(
-          updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
-        ).toBe(true);
+        if (client.format === "copilot_cli") {
+          // Copilot consumes strict JSON: source comments/BOM are grammar, not metadata.
+          expect(() => JSON.parse(updated)).not.toThrow();
+        } else {
+          expect(
+            updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
+          ).toBe(true);
+        }
         expect(
           parseClientConfiguration(updated, client.format).document,
         ).toEqual({

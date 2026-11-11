@@ -390,11 +390,8 @@ describe("commandcode registration status", () => {
     );
   };
 
-  const ownedArgs = (): readonly string[] => [
-    "-y",
-    PRODUCT_IDENTITY.registrationPackageSpecifier,
-    "mcp",
-  ];
+  const entry = resolve("scripts/rea.mjs");
+  const ownedArgs = (): readonly string[] => [entry, "mcp"];
 
   // Published command-code1.88.5 file loading accepts defaults and type aliases;
   // its management/add-json parser has a different, stricter grammar.
@@ -420,7 +417,7 @@ describe("commandcode registration status", () => {
       const home = await createTestTempDirectory("rea-commandcode-transport-");
       const registration = {
         ...fields,
-        command: "npx",
+        command: process.execPath,
         args: [...ownedArgs()],
       };
       await writeCommandcodeRegistration(home, registration);
@@ -428,12 +425,13 @@ describe("commandcode registration status", () => {
         join(home, ".commandcode/mcp.json"),
         "utf8",
       );
-      expect(await readClientRegistrationStatuses(home)).toEqual([
+      expect(await readClientRegistrationStatuses(home, entry)).toEqual([
         expect.objectContaining({
           client: "commandcode",
           state,
           command_identity: "owned",
-          command: state === "invalid" ? [] : ["npx", ...ownedArgs()],
+          command:
+            state === "invalid" ? [] : [process.execPath, ...ownedArgs()],
         }),
       ]);
       expect(await readFile(join(home, ".commandcode/mcp.json"), "utf8")).toBe(
@@ -447,11 +445,11 @@ describe("commandcode registration status", () => {
     await writeCommandcodeRegistration(home, {
       transport: "stdio",
       enabled: false,
-      command: "npx",
+      command: process.execPath,
       args: [...ownedArgs()],
     });
 
-    expect(await readClientRegistrationStatuses(home)).toEqual([
+    expect(await readClientRegistrationStatuses(home, entry)).toEqual([
       expect.objectContaining({
         client: "commandcode",
         state: "stale",
