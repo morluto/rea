@@ -463,6 +463,30 @@ it("retains fixed-name storage bytes for a fully decoded segment", async () => {
   expect(projection.commandLimitations).toEqual([]);
 });
 
+it("retains owner storage bytes for a fully decoded note command", async () => {
+  const note = Buffer.alloc(40);
+  note.writeUInt32LE(0x31, 0);
+  note.writeUInt32LE(40, 4);
+  note.write("owner\0suffix", 8);
+  note.writeBigUInt64LE(0x1000n, 24);
+  note.writeBigUInt64LE(0x40n, 32);
+  const image = machoImage({ commands: [note] });
+  const binary = await readMachoCommandNames(
+    readerOf(image),
+    image.length,
+    1024,
+    8,
+  );
+  const projection = projectMachoBinary(binary);
+  expect(binary.commands[0]?.fullyDecoded).toBe(true);
+  expect(projection.commands[0]?.fields.data_owner).toBe("owner");
+  expect(projection.commands[0]?.fields.data_owner_storage_hex).toBe(
+    Buffer.from(note.subarray(8, 24)).toString("hex"),
+  );
+  expect(projection.commands[0]?.fields).not.toHaveProperty("command_sha256");
+  expect(projection.commandLimitations).toEqual([]);
+});
+
 it("reports undecoded lazy dependency payloads and unsafe entrypoint offsets", () => {
   const result = projectMachoBinary({
     sliceSize: 4096,
