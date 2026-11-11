@@ -275,8 +275,8 @@ const createHermesYamlOptions = () => {
     // Hermes defaults to YAML 1.1; an explicit document directive still wins.
     // Use the same schema to interpret existing values and quote new strings.
     version: "1.1" as const,
-    // Keep integer key identity exact; parseHermesConfigurationYaml's reviver
-    // restores the existing number-valued consumer contract.
+    // Keep integer identity exact; the consumer projection converts only
+    // safely representable integers to numbers.
     intAsBigInt: true,
     customTags: (tags: Tags) => {
       const hasTimestamp = tags.some(
@@ -325,7 +325,9 @@ export const parseHermesConfigurationYaml = (text: string): unknown => {
     ? {}
     : document.toJS({
         reviver: (_key, value) =>
-          typeof value === "bigint" ? Number(value) : value,
+          typeof value === "bigint" && Number.isSafeInteger(Number(value))
+            ? Number(value)
+            : value,
       });
 };
 
@@ -335,7 +337,14 @@ const retainHermesSource = (
   next: Node,
   retainedSources: ReadonlySet<Node>,
 ): Node => {
-  if (isScalar(previous) && isScalar(next) && previous.value === next.value) {
+  if (
+    isScalar(previous) &&
+    isScalar(next) &&
+    (previous.value === next.value ||
+      (typeof previous.value === "bigint" &&
+        typeof next.value === "number" &&
+        numericValuesEqual(previous.value, next.value)))
+  ) {
     if (!retainedSources.has(previous)) return previous;
     const copied = previous.clone();
     if (!isScalar(copied)) throw new TypeError("Invalid Hermes scalar copy");
