@@ -1179,10 +1179,9 @@ it.each([
     environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
     cause: "AnalysisTimeoutError",
     next: "To retry, set kuna.project_timeout_ms above 300 ms with update_analysis_settings. It can be changed at runtime. The launch seed is REA_KUNA_PROJECT_TIMEOUT_MS. Then reopen the target so the export runs again.",
-    details: {
-      timeout_ms: 300,
-      captured_output: { truncated: expect.any(Boolean) },
-    },
+    // The whole export can expire during preparation, before a child exists.
+    // Command-output presence is covered at the command owner below that boundary.
+    details: { timeout_ms: 300 },
   },
   {
     name: "Kuna failure",
