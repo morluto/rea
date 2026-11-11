@@ -3,6 +3,7 @@ import {
   artifactInventoryCoverageSchema,
   artifactNodeSchema,
   artifactOccurrenceSchema,
+  artifactOccurrenceRelationshipCoverage,
   artifactEdgeSchema,
   integrityContradictionSchema,
 } from "../artifactGraph.js";
@@ -574,6 +575,12 @@ const selectOccurrenceFields = (
     ? row
     : {
         ...selectFields(row, fields),
+        ...(fields.includes("relationship_coverage")
+          ? {
+              relationship_coverage:
+                artifactOccurrenceRelationshipCoverage(row),
+            }
+          : {}),
         occurrence_id: row.occurrence_id,
         artifact_id: row.artifact_id,
         parent_occurrence_id: row.parent_occurrence_id,

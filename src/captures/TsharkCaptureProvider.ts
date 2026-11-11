@@ -369,7 +369,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         resourcePath = "path" in input ? input.path : command;
         // TShark resolves `-e` aliases before emitting canonical field names;
         // the command arguments, not output names, own field selection.
-        const matchingPackets = parsePacketOutput(output.stdout.text);
+        const matchingPackets = parsePacketOutput(
+          output.stdout.text,
+          input.packet_limit,
+        );
         const start = Math.min(input.match_offset, matchingPackets.length);
         const end =
           input.match_limit === null
