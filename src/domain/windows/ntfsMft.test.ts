@@ -374,6 +374,19 @@ describe("parseMftImage refusals and limits", () => {
     });
   });
 
+  it("returns the same inventory without retaining all the decoded records", () => {
+    const bytes = streamOf(...Array.from({ length: 33 }, () => recordOf()));
+    const decoder = createMftDecoder(bytes.length);
+    const parsed = parseMftImage(bytes);
+    if (!decoder.ok || !parsed.ok) throw new Error("invalid fixture");
+    expect(decoder.value.write(bytes).ok).toBe(true);
+    const inventory = decoder.value.finish();
+    if (!inventory.ok) throw new Error(inventory.error.message);
+    expect(inventory.value).not.toHaveProperty("records");
+    expect(inventory.value.metadata).toEqual(parsed.value.metadata);
+    expect(inventory.value.limitations).toEqual(parsed.value.limitations);
+  });
+
   it("decodes the same stream through the chunked decoder", () => {
     const stream = streamOf(recordOf(), recordOf({ flags: 0x0003 }));
     const decoder = createMftDecoder(stream.length);

@@ -110,12 +110,15 @@ export interface MftRecord {
   readonly fixups: MftRecordFixups;
 }
 
-export interface MftImage {
+export interface MftInventory {
   readonly metadata: MftMetadata;
   /** The record size the stream declared, or the fixed default when it did not. */
   readonly recordBytes: number;
-  readonly records: readonly MftRecord[];
   readonly limitations: readonly string[];
+}
+
+export interface MftImage extends MftInventory {
+  readonly records: readonly MftRecord[];
 }
 
 export interface MftMetadata {
@@ -210,6 +213,15 @@ export const hasMftFileRecordHeader = (prefix: Uint8Array): boolean => {
 export const parseMftImage = (
   bytes: Uint8Array,
 ): Result<MftImage, RegionDecodeFailure> => {
+  const records: MftRecord[] = [];
+  const inventory = scanMft(bytes, records);
+  return inventory.ok ? ok({ ...inventory.value, records }) : inventory;
+};
+
+const scanMft = (
+  bytes: Uint8Array,
+  retainedRecords?: MftRecord[],
+): Result<MftInventory, RegionDecodeFailure> => {
   if (bytes.length < NTFS_MFT_MIN_RECORD_BYTES)
     return err(
       failure(
@@ -230,7 +242,13 @@ export const parseMftImage = (
       `record 0 declares a record size of ${String(declaredRecordBytes)} bytes, which is not a supported power of two from ${String(MFT_MIN_RECORD_BYTES)} to ${String(MFT_MAX_RECORD_BYTES)}; records were read at the ${String(MFT_DEFAULT_RECORD_BYTES)}-byte default`,
     );
 
-  const records: MftRecord[] = [];
+  const recordHeaders: MftRecord[] = [];
+  let recordCount = 0;
+  let inUseCount = 0;
+  let directoryCount = 0;
+  let extensionCount = 0;
+  let mismatchCount = 0;
+  let unverifiedCount = 0;
   let invalidSlots = 0;
   let invalidExtents = 0;
   let firstInvalidExtentOffset: number | undefined;
@@ -251,7 +269,16 @@ export const parseMftImage = (
       continue;
     }
     const record = readRecord(bytes, offset, offset / recordBytes, recordBytes);
-    records.push(record);
+    retainedRecords?.push(record);
+    if (recordHeaders.length < MFT_INLINE_HEADER_LIMIT)
+      recordHeaders.push(record);
+    recordCount += 1;
+    if (record.inUse) inUseCount += 1;
+    if (record.directory) directoryCount += 1;
+    if (record.baseRecordReference !== null) extensionCount += 1;
+    if (record.fixups.mismatchSector !== null) mismatchCount += 1;
+    else if (record.fixups.verifiedSectors < recordBytes / FIXUP_SECTOR_BYTES)
+      unverifiedCount += 1;
     if (!record.extentValid) {
       invalidExtents += 1;
       firstInvalidExtentOffset ??= offset;
@@ -273,19 +300,10 @@ export const parseMftImage = (
       `${String(truncatedTailBytes)} trailing byte(s) do not fill a ${String(recordBytes)}-byte record and were not parsed`,
     );
 
-  const mismatchCount = records.filter(
-    (record) => record.fixups.mismatchSector !== null,
-  ).length;
   if (mismatchCount !== 0)
     limitations.push(
       `${String(mismatchCount)} record(s) hold a sector trailer that is not the update sequence number; their attributes were not read and no later step should trust them`,
     );
-  const unverifiedCount = records.filter(
-    (record) =>
-      record.fixups.mismatchSector === null &&
-      (record.fixups.malformed ||
-        record.fixups.coveredSectors < recordBytes / FIXUP_SECTOR_BYTES),
-  ).length;
   if (unverifiedCount !== 0)
     limitations.push(
       `${String(unverifiedCount)} record(s) carry an update sequence array that does not cover every sector; those trailers were neither restored nor verified`,
@@ -294,23 +312,18 @@ export const parseMftImage = (
   const metadata: MftMetadata = {
     kind: "ntfs-mft",
     record_bytes: recordBytes,
-    record_count: records.length,
-    in_use_record_count: records.filter((record) => record.inUse).length,
-    directory_record_count: records.filter((record) => record.directory).length,
-    extension_record_count: records.filter(
-      (record) => record.baseRecordReference !== null,
-    ).length,
+    record_count: recordCount,
+    in_use_record_count: inUseCount,
+    directory_record_count: directoryCount,
+    extension_record_count: extensionCount,
     fixup_mismatch_count: mismatchCount,
     fixup_unverified_record_count: unverifiedCount,
     truncated_tail_bytes: truncatedTailBytes,
-    record_headers: records.slice(0, MFT_INLINE_HEADER_LIMIT),
-    omitted_record_headers: Math.max(
-      0,
-      records.length - MFT_INLINE_HEADER_LIMIT,
-    ),
+    record_headers: recordHeaders,
+    omitted_record_headers: recordCount - recordHeaders.length,
   };
 
-  return ok({ metadata, recordBytes, records, limitations });
+  return ok({ metadata, recordBytes, limitations });
 };
 
 const readRecord = (
@@ -422,7 +435,7 @@ const verifyFixups = (
 };
 
 /** Buffer the admitted input once while accepting arbitrary chunk boundaries. */
-class StreamingMftDecoder implements RegionDecoder<MftImage> {
+class StreamingMftDecoder implements RegionDecoder<MftInventory> {
   readonly #bytes: Uint8Array;
   #written = 0;
 
@@ -438,16 +451,16 @@ class StreamingMftDecoder implements RegionDecoder<MftImage> {
     return ok(undefined);
   }
 
-  finish(): Result<MftImage, RegionDecodeFailure> {
+  finish(): Result<MftInventory, RegionDecodeFailure> {
     if (this.#written !== this.#bytes.length)
       return err(failure("stream ended before the admitted file length"));
-    return parseMftImage(this.#bytes);
+    return scanMft(this.#bytes);
   }
 }
 
 export const createMftDecoder = (
   fileBytes: number,
-): Result<RegionDecoder<MftImage>, RegionDecodeFailure> =>
+): Result<RegionDecoder<MftInventory>, RegionDecodeFailure> =>
   Number.isSafeInteger(fileBytes) &&
   fileBytes >= 0 &&
   fileBytes <= MFT_MAX_FILE_BYTES
