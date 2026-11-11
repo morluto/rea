@@ -18,11 +18,11 @@ export const windowsHandleSchema = z.custom<object>(
     typeof value === "object" && value !== null && !Array.isArray(value),
 );
 
-/** Observed identity of an opened local NTFS object. */
+/** Observed identity of an opened local NTFS or ReFS object. */
 export const windowsFileIdentitySchema = z.strictObject({
   requestedPath: z.string(),
   finalPath: z.string(),
-  filesystem: z.literal("NTFS"),
+  filesystem: z.enum(["NTFS", "ReFS"]),
   volumeSerial: z.string().regex(/^[a-f0-9]{16}$/u),
   fileId: z.string().regex(/^[a-f0-9]{32}$/u),
   size: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),

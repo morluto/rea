@@ -11,16 +11,18 @@ import {
 
 const fixture = (
   capabilities: {
+    filesystem?: string;
     protocolStdin?: boolean;
     jobMemoryLimit?: unknown;
     privateBridgeDescriptorAccess?: unknown;
   } = {},
 ) => {
   const { bytes, manifest } = windowsNativeArtifactFixture();
+  const { filesystem = "NTFS", ...inspectionCapabilities } = capabilities;
   const identity = {
     requestedPath: "D:\\fixture\\runtime",
     finalPath: "\\\\?\\D:\\fixture\\runtime",
-    filesystem: "NTFS",
+    filesystem,
     volumeSerial: "0123456789abcdef",
     fileId: "0123456789abcdef0123456789abcdef",
     size: 0,
@@ -46,7 +48,7 @@ const fixture = (
           privateBridgeDescriptorAccess: true,
           atomicJobAssignment: true,
           killOnOwnerClose: true,
-          ...capabilities,
+          ...inspectionCapabilities,
         }),
       };
     },
@@ -55,6 +57,20 @@ const fixture = (
 };
 
 describe("packaged Windows native compatibility", () => {
+  it.each(["NTFS", "ReFS"])("admits %s filesystem identities", (filesystem) => {
+    const result = loadWindowsNativeAuthority(fixture({ filesystem }).host);
+    expect(result).toMatchObject({
+      available: true,
+      authority: { inspection: { filesystem: { filesystem } } },
+    });
+  });
+
+  it("rejects an unsupported filesystem identity", () => {
+    expect(
+      loadWindowsNativeAuthority(fixture({ filesystem: "exFAT" }).host),
+    ).toMatchObject({ available: false, failureStage: "inspection" });
+  });
+
   it.each([true, false])(
     "preserves protocol stdin capability %s alongside existing job controls",
     (protocolStdin) => {
