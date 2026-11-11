@@ -267,10 +267,7 @@ const combineReadFailures = (
   other: ReferenceSourceReaderError | undefined,
   partial: ReferenceSourceRead | undefined,
 ): ReferenceSourceImportError => {
-  const code =
-    primary.code === "cancelled" || other?.code === "cancelled"
-      ? "cancelled"
-      : primary.code;
+  const code = primary.code;
   const cleanup = mergeCleanup(primary.cleanup, other?.cleanup);
   const message =
     other === undefined
@@ -290,6 +287,13 @@ const combineReadFailures = (
       ? {}
       : { remediationAction: primary.remediationAction }),
     ...(cleanup === undefined ? {} : { cleanup }),
+    ...(primary.secondaryCancellation !== undefined
+      ? { secondaryCancellation: primary.secondaryCancellation }
+      : other?.secondaryCancellation !== undefined
+        ? { secondaryCancellation: other.secondaryCancellation }
+        : other?.code === "cancelled" && primary.code !== "cancelled"
+          ? { secondaryCancellation: { cause: other.cause } }
+          : {}),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),
   };

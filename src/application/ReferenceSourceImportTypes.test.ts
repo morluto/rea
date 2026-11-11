@@ -38,6 +38,23 @@ describe("reference-source import error projection", () => {
     }
   });
 
+  it("projects a later cancellation without replacing a physical failure", () => {
+    const reason = { caller: "stop after I/O failure" };
+    const projected = projectReferenceSourceImportError({
+      tag: "reference-source-import",
+      code: "io",
+      message: "directory read failed",
+      secondaryCancellation: { cause: reason },
+    });
+    expect(projected.category).toBe("execution_failure");
+    expect(projected.details?.secondary_failures).toEqual([
+      expect.objectContaining({ category: "cancelled" }),
+    ]);
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  });
+
   it("preserves cancellation, partial facts, and cleanup diagnostics", () => {
     const bytes = Buffer.from("export const observed = true;\n");
     const partial: ReferenceSourceRead = {

@@ -33,12 +33,23 @@ export const readReferenceSource = async (
   resources: ArtifactResourceScope,
   options: ReferenceSourceReaderOptions = {},
 ): Promise<ReferenceSourceResult<ReferenceSourceRead>> => {
+  let result: ReferenceSourceResult<ReferenceSourceRead>;
   try {
-    return await resources.run(() => readSource(root, resources, options));
+    result = await resources.run(() => readSource(root, resources, options));
   } catch (cause: unknown) {
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    return err(referenceSourceResourceFailure(cause));
+    result = err(referenceSourceResourceFailure(cause));
   }
+  if (
+    !result.ok &&
+    result.error.code !== "cancelled" &&
+    options.signal?.aborted
+  )
+    return err({
+      ...result.error,
+      secondaryCancellation: { cause: options.signal.reason },
+    });
+  return result;
 };
 
 const readSource = async (

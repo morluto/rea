@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
+import { projectReferenceSourceImportError } from "../../../src/application/ReferenceSourceImportTypes.js";
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -363,13 +364,15 @@ it.each([false, true])(
 );
 
 it.each([
-  [false, false],
-  [false, true],
-  [true, false],
-  [true, true],
+  [false, false, "reader"],
+  [false, true, "reader"],
+  [true, false, "reader"],
+  [true, true, "reader"],
+  [true, false, "import"],
+  [true, true, "import"],
 ] as const)(
-  "preserves directory EIO through close (late cancellation=%s, close fails=%s)",
-  async (lateCancellation, closeFails) => {
+  "preserves directory EIO through close (late cancellation=%s, close fails=%s, surface=%s)",
+  async (lateCancellation, closeFails, surface) => {
     const root = await createTestTempDirectory(
       "rea-reference-directory-read-owner-",
     );
@@ -385,6 +388,7 @@ it.each([
       "directory close rejected after invalidation",
     );
     const controller = new AbortController();
+    const reason = { selected: "after directory read failed" };
     let readCalls = 0;
     let closeCalls = 0;
 
@@ -399,16 +403,27 @@ it.each([
       const close = operations.close.bind(directory);
       vi.spyOn(operations, "close").mockImplementation(async () => {
         closeCalls += 1;
-        if (lateCancellation) controller.abort("after directory read failed");
+        if (lateCancellation) controller.abort(reason);
         await close();
         if (closeFails) throw closeFailure;
       });
       return directory;
     });
 
-    const result = await readReferenceSource(root, resources, {
-      signal: controller.signal,
-    });
+    const result =
+      surface === "reader"
+        ? await readReferenceSource(root, resources, {
+            signal: controller.signal,
+          })
+        : await importReferenceSource(
+            {
+              root,
+              caller: "reference-cancellation-test",
+              policy: { secretPatterns: [] },
+              signal: controller.signal,
+            },
+            resources,
+          );
     if (result.ok)
       throw new Error("Directory and cleanup failures were ignored");
     expect(result).toMatchObject({
@@ -429,6 +444,17 @@ it.each([
         },
       },
     });
+    if (lateCancellation)
+      expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    if (
+      surface === "import" &&
+      result.error.tag === "reference-source-import"
+    ) {
+      const projected = projectReferenceSourceImportError(result.error);
+      expect(projected.details?.secondary_failures).toEqual([
+        expect.objectContaining({ category: "cancelled" }),
+      ]);
+    }
     expect(result.error.partial?.entries).toContainEqual(
       expect.objectContaining({
         status: "read",

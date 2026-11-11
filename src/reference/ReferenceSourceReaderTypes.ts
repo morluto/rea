@@ -88,6 +88,8 @@ export interface ReferenceSourceReaderError {
   readonly message: string;
   readonly remediationAction?: string;
   readonly cleanup?: AnalysisCleanupObservation;
+  /** Exact caller cancellation observed after a distinct failure. */
+  readonly secondaryCancellation?: { readonly cause: unknown };
   /** Captured entries before failure; this does not establish complete tree coverage. */
   readonly partial?: ReferenceSourceRead;
   readonly cause?: unknown;
