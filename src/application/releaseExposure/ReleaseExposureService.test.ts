@@ -1506,6 +1506,50 @@ describe("ReleaseExposureService Electron host identity", () => {
   });
 });
 
+describe("ReleaseExposureService layouts with several named hosts", () => {
+  it("keeps safe fuses unknown when the sample dropped one of a layout's named hosts", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan([
+        "/work/app/a/a.exe",
+        "/work/app/a/electron.exe",
+        "/work/app/b/b.exe",
+        "/work/app/c/c.exe",
+        "/work/app/d/d.exe",
+      ]),
+    );
+    const report = electronDesktopReport();
+    const layout = (name: string, index: number) => ({
+      ...report.files[0],
+      file_id: index === 0 ? FILE : `dsf_${String(index).repeat(64)}`,
+      path: `${name}/resources/app.asar`,
+      local_path: `/work/app/${name}/resources/app.asar`,
+    });
+    const files = ["a", "b", "c", "d"].map(layout);
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files,
+          candidates: [
+            {
+              ...report.candidates[0],
+              basis_file_ids: files.map((file) => file.file_id),
+            },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+    expect(electronFuses.inspect).toHaveBeenCalledTimes(4);
+    expect(electronFuses.inspect).not.toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/work/app/a/electron.exe" }),
+    );
+  });
+});
+
 describe("ReleaseExposureService macOS bundle layouts", () => {
   it("keeps one bundle's safe fuses from settling another bundle in a directory", async () => {
     const framework = (bundle: string) =>

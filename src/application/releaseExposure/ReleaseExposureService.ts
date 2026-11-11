@@ -857,17 +857,33 @@ const limitNativeSample = (
   ].slice(0, MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
   const omittedNative = scan.native_images.length - kept.length;
   const keptPaths = new Set(kept.map((image) => image.path));
-  const hostRead = (hosts: readonly ReleaseExposureNativeImage[]): boolean =>
-    hosts.some(
+  // With no named host, any sampled sibling could be it, so none settles alone.
+  const hostsAmong = (
+    images: readonly ReleaseExposureNativeImage[],
+  ): ReleaseExposureNativeImage[] => {
+    const named = images.filter(
       (image) =>
-        keptPaths.has(image.path) &&
         (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
-    ) ||
-    // No name picks the host out, so it counts as read only when every
-    // executable it could be was listed and sampled.
-    (scan.coverage !== "unknown" &&
-      hosts.length > 0 &&
-      hosts.every((image) => keptPaths.has(image.path)));
+    );
+    return named.length > 0
+      ? named
+      : images.filter((image) => ranked.has(image.path));
+  };
+  // A layout is read only when every host it could have was sampled: one with
+  // both `a.exe` and `electron.exe` is not settled by reading one of them.
+  // With no named host, that holds only when every executable was listed.
+  const hostRead = (hosts: readonly ReleaseExposureNativeImage[]): boolean => {
+    const candidates = hostsAmong(hosts);
+    const named = candidates.some(
+      (image) =>
+        (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
+    );
+    return (
+      (named || scan.coverage !== "unknown") &&
+      candidates.length > 0 &&
+      candidates.every((image) => keptPaths.has(image.path))
+    );
+  };
   // Each ASAR layout has its own host, so one read host covers only its own.
   const layouts = [
     ...new Set(
@@ -917,18 +933,6 @@ const limitNativeSample = (
             settledLayouts.has(folder) ||
             hostRead(preferred.filter((image) => inLayout(folder, image.path))),
         );
-  // With no named host, any sampled sibling could be it, so none settles alone.
-  const hostsAmong = (
-    images: readonly ReleaseExposureNativeImage[],
-  ): ReleaseExposureNativeImage[] => {
-    const named = images.filter(
-      (image) =>
-        (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
-    );
-    return named.length > 0
-      ? named
-      : images.filter((image) => ranked.has(image.path));
-  };
   const outside = kept.filter(
     (image) => !layouts.some((folder) => inLayout(folder, image.path)),
   );
