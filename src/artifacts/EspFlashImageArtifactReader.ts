@@ -266,9 +266,10 @@ const regionEntry = (
   // The table's encrypted flag says how a device stores the partition, not
   // that these bytes are ciphertext.
   encrypted: false,
-  // A partition past the end holds no bytes: its entry is the empty range
-  // at the end of the file, which opens as an empty stream without a read.
-  byteOffset: Math.min(region.fileOffset, fileSize),
+  // A partition outside the dump holds no bytes. The empty range sits at the
+  // near edge of the file: offset 0 when the partition starts before the
+  // origin, and the end of the file when it starts past the dump.
+  byteOffset: Math.min(Math.max(region.fileOffset, 0), fileSize),
   declaredIntegrity: null,
   unpacked: false,
   limitations:
