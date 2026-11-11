@@ -35,8 +35,11 @@ table or its bytes lack a NUL terminator. A limitation explains that missing
 name. Note coverage remains complete when all declared note tables and entries
 were examined; an unavailable section name does not erase those note facts.
 
-For GNU notes, `gnu.build_id_hex`, `gnu.abi_tag`, or `gnu.gold_version` are
-filled when the descriptor matches that type. Other owners keep `gnu` null.
+GNU decoding requires the four declared owner bytes `47 4e 55 00`, including
+the terminator. For those notes, `gnu.build_id_hex`, `gnu.abi_tag`, or
+`gnu.gold_version` are filled when the descriptor matches that type.
+An owner that only displays as `GNU` retains its raw bytes and descriptor,
+with an unknown type name and null `gnu` when its declared bytes differ.
 
 For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
 `core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
