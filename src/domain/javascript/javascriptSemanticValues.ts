@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
   semanticBindingMayHaveOpaqueEffect,
   semanticBindingCanBeRebound,
@@ -61,8 +62,6 @@ import {
   semanticPrimitiveSet as primitiveSet,
 } from "./javascriptSemanticPrimitives.js";
 import {
-  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
   exceedsSemanticPrimitiveAdditionByteBudget,
   exceedsSemanticTemplateByteBudget,
   semanticResourceLimitUnknown,
@@ -650,18 +649,24 @@ const evaluateExpressionValue = (
   node: t.Node,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  if (context.expressionDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+  if (context.expressionDepth > context.state.precision.expression_depth) {
     context.dependence.lowest = EVERY_CALLER;
-    return semanticResourceLimitUnknown("expression-depth");
+    return semanticResourceLimitUnknown(
+      "expression-depth",
+      context.state.precision,
+    );
   }
   const unwrapped = unwrapJavaScriptExpression(node);
   if (unwrapped.depth > 0) {
     if (
       context.expressionDepth + unwrapped.depth >
-      SEMANTIC_EXPRESSION_DEPTH_LIMIT
+      context.state.precision.expression_depth
     ) {
       context.dependence.lowest = EVERY_CALLER;
-      return semanticResourceLimitUnknown("expression-depth");
+      return semanticResourceLimitUnknown(
+        "expression-depth",
+        context.state.precision,
+      );
     }
     return evaluateExpression(unwrapped.node, {
       ...context,
@@ -669,7 +674,8 @@ const evaluateExpressionValue = (
     });
   }
   const literal = readExactJavaScriptLiteral(node);
-  if (literal.found) return primitiveSet([literal.value]);
+  if (literal.found)
+    return primitiveSet([literal.value], context.state.precision);
   if (
     t.isFunctionExpression(node) ||
     t.isFunctionDeclaration(node) ||
@@ -722,6 +728,7 @@ const evaluateExpressionValue = (
           branch.value ??
           evaluateExpression(branch.node, nestedContext(context)),
       ),
+      context.state.precision,
     );
   if (t.isObjectExpression(node)) return evaluateObject(node, context);
   if (t.isArrayExpression(node)) return evaluateArray(node, context);
@@ -746,8 +753,17 @@ const evaluateTemplate = (
         status: "unknown",
         reason: "Template text has no cooked representation.",
       };
-    if (exceedsSemanticTemplateByteBudget(candidates, [text]))
-      return semanticResourceLimitUnknown("primitive-bytes");
+    if (
+      exceedsSemanticTemplateByteBudget(
+        candidates,
+        [text],
+        context.state.precision,
+      )
+    )
+      return semanticResourceLimitUnknown(
+        "primitive-bytes",
+        context.state.precision,
+      );
     candidates = candidates.map((prefix) => `${prefix}${text}`);
     const expression = node.expressions[index];
     if (expression === undefined) continue;
@@ -760,16 +776,31 @@ const evaluateTemplate = (
         reason: "Template expression is not a bounded primitive.",
       };
     }
-    if (candidates.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / values.length)
-      return semanticResourceLimitUnknown("primitive-candidates");
+    if (
+      candidates.length >
+      context.state.precision.primitive_candidates / values.length
+    )
+      return semanticResourceLimitUnknown(
+        "primitive-candidates",
+        context.state.precision,
+      );
     const suffixes = values.map((value) => String(value));
-    if (exceedsSemanticTemplateByteBudget(candidates, suffixes))
-      return semanticResourceLimitUnknown("primitive-bytes");
+    if (
+      exceedsSemanticTemplateByteBudget(
+        candidates,
+        suffixes,
+        context.state.precision,
+      )
+    )
+      return semanticResourceLimitUnknown(
+        "primitive-bytes",
+        context.state.precision,
+      );
     candidates = candidates.flatMap((prefix) =>
       suffixes.map((suffix) => `${prefix}${suffix}`),
     );
   }
-  return primitiveSet(candidates);
+  return primitiveSet(candidates, context.state.precision);
 };
 
 /**
@@ -1032,7 +1063,7 @@ const evaluateAddition = (
         current = parent.node.right;
         break;
       }
-      value = addPrimitiveValues(parent.left, value);
+      value = addPrimitiveValues(parent.left, value, context.state.precision);
       pending.pop();
     }
   }
@@ -1041,6 +1072,7 @@ const evaluateAddition = (
 const addPrimitiveValues = (
   leftValue: JavaScriptSemanticValue,
   rightValue: JavaScriptSemanticValue,
+  precision: JavaScriptSemanticPrecision,
 ): JavaScriptSemanticValue => {
   const left = primitiveCandidates(leftValue);
   const right = primitiveCandidates(rightValue);
@@ -1049,10 +1081,10 @@ const addPrimitiveValues = (
     if (isSemanticResourceLimit(rightValue)) return rightValue;
     return { status: "unknown", reason: "Non-primitive addition." };
   }
-  if (left.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / right.length)
-    return semanticResourceLimitUnknown("primitive-candidates");
-  if (exceedsSemanticPrimitiveAdditionByteBudget(left, right))
-    return semanticResourceLimitUnknown("primitive-bytes");
+  if (left.length > precision.primitive_candidates / right.length)
+    return semanticResourceLimitUnknown("primitive-candidates", precision);
+  if (exceedsSemanticPrimitiveAdditionByteBudget(left, right, precision))
+    return semanticResourceLimitUnknown("primitive-bytes", precision);
   const values = left.flatMap((leftValue) =>
     right.map((rightValue) =>
       typeof leftValue === "string" || typeof rightValue === "string"
@@ -1060,7 +1092,7 @@ const addPrimitiveValues = (
         : Number(leftValue) + Number(rightValue),
     ),
   );
-  return primitiveSet(values);
+  return primitiveSet(values, precision);
 };
 
 const evaluateUnary = (
@@ -1074,11 +1106,20 @@ const evaluateUnary = (
     return { status: "unknown", reason: "Non-primitive unary operand." };
   }
   if (node.operator === "!")
-    return primitiveSet(argument.map((value) => !value));
+    return primitiveSet(
+      argument.map((value) => !value),
+      context.state.precision,
+    );
   if (node.operator === "+")
-    return primitiveSet(argument.map((value) => Number(value)));
+    return primitiveSet(
+      argument.map((value) => Number(value)),
+      context.state.precision,
+    );
   if (node.operator === "-")
-    return primitiveSet(argument.map((value) => -Number(value)));
+    return primitiveSet(
+      argument.map((value) => -Number(value)),
+      context.state.precision,
+    );
   return { status: "unknown", reason: `Unsupported unary ${node.operator}.` };
 };
 
@@ -1248,25 +1289,28 @@ const provenanceForExpression = (
   node: t.Node,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  if (context.expressionDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+  if (context.expressionDepth > context.state.precision.expression_depth) {
     context.dependence.lowest = EVERY_CALLER;
     context.state.valueResourceLimits.add("expression-depth");
     return semanticUnresolvedProvenance(
       "unknown",
-      semanticResourceLimitReason("expression-depth"),
+      semanticResourceLimitReason("expression-depth", context.state.precision),
     );
   }
   const unwrapped = unwrapJavaScriptExpression(node);
   if (unwrapped.depth > 0) {
     if (
       context.expressionDepth + unwrapped.depth >
-      SEMANTIC_EXPRESSION_DEPTH_LIMIT
+      context.state.precision.expression_depth
     ) {
       context.dependence.lowest = EVERY_CALLER;
       context.state.valueResourceLimits.add("expression-depth");
       return semanticUnresolvedProvenance(
         "unknown",
-        semanticResourceLimitReason("expression-depth"),
+        semanticResourceLimitReason(
+          "expression-depth",
+          context.state.precision,
+        ),
       );
     }
     return provenanceForExpression(unwrapped.node, {
@@ -1406,6 +1450,7 @@ const isLocallyCreatedValue = (node: t.Node): boolean =>
 
 const mergeValues = (
   values: readonly JavaScriptSemanticValue[],
+  precision: JavaScriptSemanticPrecision,
 ): JavaScriptSemanticValue => {
   const resourceLimit = values.find(isSemanticResourceLimit);
   if (resourceLimit !== undefined) return resourceLimit;
@@ -1415,7 +1460,7 @@ const mergeValues = (
   const merged: JavaScriptSemanticValue = values.every(
     (value) => value.status === "union" || value.status === "literal",
   )
-    ? primitiveSet(primitives)
+    ? primitiveSet(primitives, precision)
     : { status: "ambiguous", reason: "Branches have incompatible values." };
   if (values.length > 0 && values.every(semanticValueDefinitelyDefined))
     definitelyDefinedValues.add(merged);

@@ -140,10 +140,10 @@ check(
 // inputBytes values with a different policy (an overridable pwntools admission,
 // historical capture intake) are not this budget.
 check(
-  "inline resident-input budget (use BOUNDED_PRODUCER_LIMITS from src/process/LinuxResourceLimits)",
+  "inline resident-input budget (use BOUNDED_PRODUCER_LIMITS from src/domain/producerResourceLimits)",
   files,
   /input_bytes:\s*32 \* 1024 \* 1024/,
-  ["src/process/LinuxResourceLimits.ts"],
+  ["src/domain/producerResourceLimits.ts"],
 );
 
 // Fixed-arity backtick keys audited 2026-10-10: every prefix field is NUL-free

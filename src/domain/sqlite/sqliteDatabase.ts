@@ -2,6 +2,9 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
+/** Fixed SQLite value/record and complete-worker-reply allowance. */
+export const SQLITE_DATABASE_OUTPUT_BYTES = 16 * 1024 * 1024;
+
 /** SQLite exposes this table as a row source but omits its own catalog entry. */
 export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
 export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>

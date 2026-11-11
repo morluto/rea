@@ -1,4 +1,9 @@
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
+import {
+  DEFAULT_GODOT_READER_LIMITS,
+  type GodotReaderLimits,
+} from "../domain/artifactReaderLimits.js";
+import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import { readGodotPckHeaderFacts } from "../domain/godotPckFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
@@ -24,8 +29,6 @@ const PACK_REL_FILEBASE = 2;
 const PACK_SPARSE_BUNDLE = 4;
 const PACK_FILE_ENCRYPTED = 1;
 const DIRECTORY_CHUNK_BYTES = 64 * 1024;
-/** Encoded retained entry metadata, including escaped paths and source facts. */
-const MAX_DIRECTORY_METADATA_BYTES = 64 * 1024 * 1024;
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** One descriptor, one validated directory, and bounded positional member reads. */
@@ -37,6 +40,8 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
   constructor(
     path: string,
     admitted?: StableRegularFileDescriptor | GodotPckAdmission,
+    private readonly limits: GodotReaderLimits = DEFAULT_GODOT_READER_LIMITS,
+    private readonly expandedBytes?: number,
   ) {
     const admission =
       admitted !== undefined && "kind" in admitted ? admitted : undefined;
@@ -79,98 +84,114 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
       handle,
       header.directory_start + 4,
       header.pack_end,
-      signal,
+      { signal, limits: this.limits },
     );
     const entries: PositionalArtifactEntry[] = [];
     let retainedBytes = 0;
     let declaredPlaintextBytes = 0n;
     const expansionBudget = BigInt(
-      artifactExpansionBudgetBytes(header.pack_end - header.pack_start),
+      this.expandedBytes ??
+        artifactExpansionBudgetBytes(header.pack_end - header.pack_start),
     );
     for (let index = 0; index < header.declared_file_count; index++) {
       if (index % 256 === 0) await setImmediate();
       assertArtifactReadActive(signal);
-      const pathBytes = await cursor.uint32();
-      cursor.requireBytes(pathBytes + (header.format_version === 1 ? 32 : 36));
-      // Check worst-case JSON escaping before decoding or allocating the path.
-      // The logical path, raw source path, and metadata source path can each
-      // need six JSON bytes per input byte before retained facts are charged.
-      if (pathBytes * 18 > MAX_DIRECTORY_METADATA_BYTES - retainedBytes)
-        throw metadataLimit();
-      const rawPath = await cursor.bytes(pathBytes);
-      const offset = await cursor.uint64();
-      const size = await cursor.uint64();
-      const md5 = (await cursor.bytes(16)).toString("hex");
-      // Godot 3's format 1 has neither per-file flags nor a file-base field.
-      const flags = header.format_version === 1 ? 0 : await cursor.uint32();
-      if ((flags & ~PACK_FILE_ENCRYPTED) !== 0)
-        throw new ArtifactReaderFailure(
-          "unavailable",
-          `Godot patch or unknown member flags are unsupported: 0x${flags.toString(16)}`,
-        );
-      const sourcePath = pckMemberPath(rawPath);
-      if (header.format_version === 1 && offset === 0n)
-        throw new ArtifactReaderFailure(
-          "unavailable",
-          `Godot PCK patch removal entry is unsupported: ${sourcePath}`,
-        );
-      const start = toSafeOffset(
-        offset,
-        header.file_base,
-        header.pack_end,
-        sourcePath,
+      const metadata = await this.#readEntry(
+        cursor,
+        header,
+        index,
+        retainedBytes,
       );
-      if (size > BigInt(header.pack_end - start))
-        throw formatFailure(`member exceeds the pack: ${sourcePath}`);
       // Aliases are valid, but each path causes another hash/copy. Admit the
       // complete directory before yielding anything, including all-zero claims.
-      if ((flags & PACK_FILE_ENCRYPTED) === 0) {
-        declaredPlaintextBytes += size;
+      if (!metadata.encrypted) {
+        declaredPlaintextBytes += BigInt(metadata.declaredSize);
         if (declaredPlaintextBytes > expansionBudget)
-          throw new ArtifactReaderFailure(
-            "limit",
-            `Godot PCK readable entries declare ${String(declaredPlaintextBytes)} plaintext bytes, exceeding this pack's ${String(expansionBudget)}-byte expansion budget`,
+          throw artifactReaderLimitFailure(
+            "artifact_limits.expanded_bytes",
+            Number(expansionBudget),
+            "bytes",
+            declaredPlaintextBytes,
+            "memory",
           );
       }
-      const metadata = {
-        path: sourcePath.startsWith("res://")
-          ? sourcePath.slice(6)
-          : sourcePath,
-        sourcePath,
-        kind: "file" as const,
-        declaredSize: Number(size),
-        compressedSize: null,
-        executable: false,
-        encrypted: (flags & PACK_FILE_ENCRYPTED) !== 0,
-        byteOffset: start,
-        declaredIntegrity: /^0{32}$/u.test(md5)
-          ? null
-          : { algorithm: "md5" as const, digest: md5 },
-        unpacked: false,
-        limitations: /^0{32}$/u.test(md5)
-          ? ["Godot PCK declares an all-zero MD5; source integrity is unknown."]
-          : [],
-        adapterKey: `godot-pck-entry:${String(index)}`,
-        formatMetadata: {
-          kind: "godot-pck-entry" as const,
-          index,
-          source_path: sourcePath,
-          declared_offset: Number(offset),
-          flags,
-          md5_status: /^0{32}$/u.test(md5)
-            ? ("all-zero" as const)
-            : ("declared" as const),
-        },
-      } satisfies PositionalArtifactEntry;
       retainedBytes += jsonValueByteLength(
         metadata,
-        MAX_DIRECTORY_METADATA_BYTES - retainedBytes,
+        this.limits.directory_bytes - retainedBytes,
       );
-      if (retainedBytes > MAX_DIRECTORY_METADATA_BYTES) throw metadataLimit();
+      if (retainedBytes > this.limits.directory_bytes)
+        throw metadataLimit(this.limits, retainedBytes);
       entries.push(metadata);
     }
     await this.verifyCarrier(signal);
     return { entries, coverage: undefined };
+  }
+  async #readEntry(
+    cursor: PckCursor,
+    header: GodotPckMetadata,
+    index: number,
+    retainedBytes: number,
+  ) {
+    const pathBytes = await cursor.uint32();
+    cursor.requireBytes(pathBytes + (header.format_version === 1 ? 32 : 36));
+    // Check worst-case JSON escaping before decoding or allocating the path.
+    // The logical path, raw source path, and metadata source path can each
+    // need six JSON bytes per input byte before retained facts are charged.
+    if (pathBytes * 18 > this.limits.directory_bytes - retainedBytes)
+      throw metadataLimit(this.limits, retainedBytes + pathBytes * 18);
+    const rawPath = await cursor.bytes(pathBytes);
+    const offset = await cursor.uint64();
+    const size = await cursor.uint64();
+    const md5 = (await cursor.bytes(16)).toString("hex");
+    // Godot 3's format 1 has neither per-file flags nor a file-base field.
+    const flags = header.format_version === 1 ? 0 : await cursor.uint32();
+    if ((flags & ~PACK_FILE_ENCRYPTED) !== 0)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        `Godot patch or unknown member flags are unsupported: 0x${flags.toString(16)}`,
+      );
+    const sourcePath = pckMemberPath(rawPath);
+    if (header.format_version === 1 && offset === 0n)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        `Godot PCK patch removal entry is unsupported: ${sourcePath}`,
+      );
+    const start = toSafeOffset(
+      offset,
+      header.file_base,
+      header.pack_end,
+      sourcePath,
+    );
+    if (size > BigInt(header.pack_end - start))
+      throw formatFailure(`member exceeds the pack: ${sourcePath}`);
+    return {
+      path: sourcePath.startsWith("res://") ? sourcePath.slice(6) : sourcePath,
+      sourcePath,
+      kind: "file" as const,
+      declaredSize: Number(size),
+      compressedSize: null,
+      executable: false,
+      encrypted: (flags & PACK_FILE_ENCRYPTED) !== 0,
+      byteOffset: start,
+      declaredIntegrity: /^0{32}$/u.test(md5)
+        ? null
+        : { algorithm: "md5" as const, digest: md5 },
+      unpacked: false,
+      limitations: /^0{32}$/u.test(md5)
+        ? ["Godot PCK declares an all-zero MD5; source integrity is unknown."]
+        : [],
+      adapterKey: `godot-pck-entry:${String(index)}`,
+      formatMetadata: {
+        kind: "godot-pck-entry" as const,
+        index,
+        source_path: sourcePath,
+        declared_offset: Number(offset),
+        flags,
+        md5_status: /^0{32}$/u.test(md5)
+          ? ("all-zero" as const)
+          : ("declared" as const),
+      },
+    } satisfies PositionalArtifactEntry;
   }
 }
 
@@ -273,7 +294,10 @@ class PckCursor {
     private readonly handle: FileHandle,
     private position: number,
     private readonly end: number,
-    private readonly signal?: AbortSignal,
+    private readonly options: {
+      readonly signal: AbortSignal | undefined;
+      readonly limits: GodotReaderLimits;
+    },
   ) {}
   requireBytes(length: number): void {
     if (length > this.end - this.position)
@@ -281,7 +305,8 @@ class PckCursor {
   }
   async bytes(length: number): Promise<Buffer> {
     this.requireBytes(length);
-    if (length > MAX_DIRECTORY_METADATA_BYTES / 18) throw metadataLimit();
+    if (length > this.options.limits.directory_bytes / 18)
+      throw metadataLimit(this.options.limits, length * 18);
     if (length > DIRECTORY_CHUNK_BYTES) {
       // A large valid virtual path is bounded by retained representation, not
       // the host filesystem's PATH_MAX. Only this path receives a larger read.
@@ -290,7 +315,7 @@ class PckCursor {
         this.position,
         length,
         this.end,
-        this.signal,
+        this.options.signal,
       );
       this.position += length;
       return value;
@@ -302,7 +327,7 @@ class PckCursor {
         this.position,
         Math.min(DIRECTORY_CHUNK_BYTES, this.end - this.position),
         this.end,
-        this.signal,
+        this.options.signal,
       );
       this.#bufferStart = this.position;
     }
@@ -330,9 +355,14 @@ const toSafeOffset = (
 };
 const formatFailure = (detail: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("format", `Godot PCK is malformed: ${detail}`);
-const metadataLimit = (): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "limit",
-    "Godot PCK directory exceeds the 64 MiB encoded metadata budget",
-    { boundary: "memory" },
+const metadataLimit = (
+  limits: GodotReaderLimits,
+  required: number,
+): ArtifactReaderFailure =>
+  artifactReaderLimitFailure(
+    "artifact_limits.godot.directory_bytes",
+    limits.directory_bytes,
+    "bytes",
+    required,
+    "memory",
   );

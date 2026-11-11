@@ -860,13 +860,12 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
-      registerWebSourceLocationTool(
-        server,
-        webSourceLocation,
-        toolLogger,
+      registerWebSourceLocationTool(server, webSourceLocation, {
+        logger: toolLogger,
         recordEvidence,
-        analysisAdmission,
-      );
+        withAdmittedAnalysis: analysisAdmission,
+        evidenceById,
+      });
       registerJavaScriptRecoveryTool(
         server,
         new JavaScriptRecoveryService(javascriptRecovery),
