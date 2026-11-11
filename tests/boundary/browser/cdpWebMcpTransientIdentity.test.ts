@@ -53,7 +53,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: origin + "/app" },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-main",
+                  url: origin + "/app",
+                },
                 childFrames: [{ frame: frame(origin) }],
               },
             }
@@ -149,7 +153,11 @@ it.each([
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: origin + "/app" },
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-main",
+                url: origin + "/app",
+              },
               childFrames: [
                 {
                   frame: {
