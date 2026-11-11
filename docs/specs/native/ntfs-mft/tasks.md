@@ -13,4 +13,5 @@
 - [x] Page MFT metadata independently of journal events.
 - [x] Decode resident standard information, attribute-list references and nonresident mapping metadata.
 - [ ] Assemble extension-list payloads and recover nonresident values when required.
-- [ ] Verify against real `$MFT` and journal captures from a Windows host.
+- [x] Verify Windows 11 MFT records through the packaged Linux CLI, with pinned provenance and digests.
+- [ ] Verify real paired MFT/journal captures and Windows-host execution.

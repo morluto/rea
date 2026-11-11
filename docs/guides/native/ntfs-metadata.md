@@ -62,8 +62,9 @@ remains `unknown`: supplied bytes alone cannot establish missing captures,
 wrap, absent rename partners or a complete activity history. Multiple reasons,
 rename rows and parent changes remain distinct source facts.
 
-Current verification uses synthesized acquisitions through CLI and MCP. Real
-Windows acquisition verification remains pending. Nonresident payload recovery
+Verification covers synthesized paired acquisitions through CLI/MCP and
+[unmodified Windows 11 MFT records through the packaged Linux CLI](../../verification/ntfs-metadata-2026-11-11.md).
+Real paired journal captures and Windows-host execution remain unverified. Nonresident payload recovery
 and automatic extension-list assembly are outside the implemented coverage.
 
 Format references: [Microsoft USN V3](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v3),
