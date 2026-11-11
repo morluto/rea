@@ -149,6 +149,23 @@ it("accepts only zero eight-byte alignment padding included in dwLength", () => 
 });
 
 it.each([false, true])(
+  "rejects a certificate table that ends inside the final eight-byte alignment gap (PE32+ = %s)",
+  (plus) => {
+    const bytes = peCertificateFixture(plus);
+    const directoryAt = 0x98 + (plus ? 112 : 96) + 4 * 8;
+    const tableSize = bytes.readUInt32LE(directoryAt + 4);
+    expect(tableSize % 8).toBe(0);
+    // The entry itself is intact, but the directory declaration drops one
+    // required alignment byte. The parser must not silently publish complete
+    // certificate coverage for the missing source byte.
+    bytes.writeUInt32LE(tableSize - 1, directoryAt + 4);
+    expect(() => parse(bytes)).toThrow(
+      /alignment padding is truncated/u,
+    );
+  },
+);
+
+it.each([false, true])(
   "reads all counted alignment gaps and consecutive entries (PE32+ = %s)",
   (plus) => {
     const gaps = new Set<number>();

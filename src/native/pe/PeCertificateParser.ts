@@ -208,6 +208,8 @@ export const parsePeCertificates = (
     });
     const next = align8(at + length);
     if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
+    if (next > table.length)
+      fail("WIN_CERTIFICATE alignment padding is truncated.");
     at = next;
   }
   const certificates = entries.reduce(
