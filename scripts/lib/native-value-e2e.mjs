@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
+import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { analysisProfileSchema } from "../../dist/domain/analysisProfile.js";
 import { nativeValueTraceSchema } from "../../dist/domain/native/nativeValueTrace.js";
@@ -102,18 +106,70 @@ export async function verifyNativeValueE2e(
     workspace,
     `runtime${process.platform === "win32" ? "" : " with spaces"}-${"x".repeat(100)}`,
   );
-  await mkdir(runtime);
-  const env = { ...environment(), TMPDIR: runtime };
+  const resources = new ArtifactResourceScope();
+  let cleanupConfirmed = false;
+  let independentControlsStarted = false;
+  let completed = false;
+  const closeResources = async () => {
+    await resources.close();
+    cleanupConfirmed = true;
+  };
+  let workspaceRemoved = false;
   try {
-    return await verifyNativeValueAdapters(
-      target,
-      procedure,
-      globalAddress,
-      entrypoint,
-      env,
-    );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
+    return await withVerifierCleanup(async () => {
+      await mkdir(runtime);
+      const env = { ...environment(), TMPDIR: runtime };
+      const result = await withVerifierCleanup(
+        () =>
+          verifyNativeValueAdapters(
+            target,
+            procedure,
+            globalAddress,
+            entrypoint,
+            env,
+            resources,
+          ),
+        [closeResources],
+      );
+      independentControlsStarted = true;
+      const projectIdentity = await verifyGhidraProjectIdentity({
+        target,
+        entrypoint,
+        env,
+      });
+      const socketBoundary = await verifyGhidraSocketBoundary({
+        target,
+        procedure,
+        entrypoint,
+        env,
+      });
+      completed = true;
+      return {
+        ...result,
+        project_identity: projectIdentity,
+        socket_boundary: socketBoundary,
+      };
+    }, [
+      async () => {
+        // Before SDK construction there are no native owners, but still require
+        // the scope's positive completion before retiring this workspace.
+        if (!cleanupConfirmed && !resources.hasPending) await closeResources();
+        if (cleanupConfirmed && (!independentControlsStarted || completed)) {
+          await rm(workspace, { recursive: true, force: true });
+          workspaceRemoved = true;
+        }
+      },
+    ]);
+  } catch (cause) {
+    if (!workspaceRemoved)
+      throw Object.assign(
+        new Error(
+          `Native value verifier workspace retained at ${workspace}; cleanup or independent control completion remains unconfirmed.`,
+          { cause },
+        ),
+        { retained_workspace: workspace },
+      );
+    throw cause;
   }
 }
 
@@ -123,6 +179,7 @@ async function verifyNativeValueAdapters(
   globalAddress,
   entrypoint,
   env,
+  resources,
 ) {
   const { stdout } = await promisify(execFile)(
     process.execPath,
@@ -169,234 +226,220 @@ async function verifyNativeValueAdapters(
     stderr: "pipe",
   });
   const client = new Client({ name: "native-values-real-e2e", version: "1" });
+  for (const [resource, owner] of [
+    ["native value MCP client", client],
+    ["native value MCP transport", transport],
+  ])
+    resources.retain({
+      kind: "lease",
+      resource,
+      lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+    });
   let boundaries;
-  try {
-    await client.connect(transport);
-    const opened = await client.callTool(
-      {
-        name: "open_binary",
-        arguments: { path: target.path, provider_id: "ghidra" },
-      },
-      { timeout: 180000 },
-    );
-    assert.notEqual(opened.isError, true, JSON.stringify(opened));
-    const inventoryReply = await client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
-    const inventory = requireMcpLifecycleResult(
-      inventoryReply,
-      "binary_session",
-    );
-    assert.ok(
-      inventory.tool_availability.some(
-        (tool) => tool.name === "trace_native_values" && tool.available,
-      ),
-      "Native value tracing is unavailable in real provider discovery",
-    );
-    const result = await client.callTool(
-      {
-        name: "trace_native_values",
-        arguments: { procedure, max_depth: 2, max_functions: 8, limit: 5000 },
-      },
-      { timeout: 180000 },
-    );
-    assert.notEqual(result.isError, true, JSON.stringify(result));
-    assert.notEqual(result.structuredContent, undefined);
-    const mcpEvidence = parseEvidence(
-      requireMcpOutput(result, "trace_native_values"),
-    );
-    assert.equal(mcpEvidence.operation, "trace_native_values");
-    assert.equal(mcpEvidence.provider.id, "rea-workflow");
-    assert.deepEqual(mcpEvidence.analysis_profile, workflowProfile);
-    const mcpGraph = verifyGraph(
-      mcpEvidence.normalized_result,
-      target,
-      procedure,
-      globalAddress,
-    );
-    assert.ok(
-      mcpGraph.limitations.some(
-        (value) =>
-          value.includes("analyze_function") &&
-          value.includes("LOAD and STORE") &&
-          value.includes("address varnodes"),
-      ),
-    );
-    assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
-    assert.deepEqual(mcpGraph, cliGraph);
-    const warmReply = await client.callTool(
-      {
-        name: "trace_native_values",
-        arguments: { procedure, max_depth: 2, max_functions: 8, limit: 3 },
-      },
-      { timeout: 180000 },
-    );
-    const warmEvidence = parseEvidence(
-      requireMcpOutput(warmReply, "trace_native_values"),
-    );
-    const warmGraph = nativeValueTraceSchema.parse(
-      warmEvidence.normalized_result,
-    );
-    const analyzed = await client.callTool(
-      {
-        name: "analyze_function",
-        arguments: { procedure, detail: "complete" },
-      },
-      { timeout: 180000 },
-    );
-    assert.notEqual(analyzed.isError, true, JSON.stringify(analyzed));
-    assert.notEqual(analyzed.structuredContent, undefined);
-    const functionEvidence = parseEvidence(
-      requireMcpOutput(analyzed, "analyze_function"),
-    );
-    assert.equal(functionEvidence.operation, "analyze_function");
-    assert.equal(functionEvidence.provider.id, "ghidra");
-    const flow = functionEvidence.normalized_result.native_value_flow;
-    assert.equal(flow.available, true);
-    const identifiesEffectScope = (value) =>
-      value.includes("LOAD and STORE") && value.includes("address varnodes");
-    assert.ok(flow.limitations.some(identifiesEffectScope));
-    const effectsView = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: {
-          kind: "retained-evidence",
-          evidence_id: functionEvidence.evidence_id,
-        },
-        view: { kind: "native", facet: "value_flow_effects" },
-      },
-    });
-    assert.notEqual(effectsView.isError, true, JSON.stringify(effectsView));
-    const effectsPage = requireMcpOutput(effectsView, "inspect_analysis_view");
-    assert.ok(
-      effectsPage.normalized_result.limitations.some(identifiesEffectScope),
-    );
-    assert.deepEqual(
-      functionEvidence.normalized_result.facet_availability,
-      Object.fromEntries(
-        [
-          "pseudocode",
-          "assembly",
-          "comments",
-          "callers",
-          "callees",
-          "references",
-          "strings_names",
-          "cfg",
-        ].map((facet) => [facet, { available: true }]),
-      ),
-    );
-    assert.equal(functionEvidence.relationship_coverage?.status, "complete");
-    assert.ok(
-      functionEvidence.relationship_coverage.diagnostics.some((diagnostic) =>
-        diagnostic.includes("indirect calls remain unknown"),
-      ),
-    );
-    const functionProfile = analysisProfileSchema.parse(
-      functionEvidence.analysis_profile,
-    );
-    assert.deepEqual(functionProfile, upstreamProfile);
-    await verifyLegacyValueScopeSnapshot(client, {
-      target,
-      procedure,
-      observed: functionEvidence,
-      env,
-    });
-    const comparisonEvidence = await compareRetainedFunctionEvidence(
-      client,
-      functionEvidence,
-    );
-    assert.equal(
-      comparisonEvidence.normalized_result.status,
-      "unchanged",
-      JSON.stringify(comparisonEvidence.normalized_result.dimensions),
-    );
-    assert.ok(
-      comparisonEvidence.evidence_links.includes(functionEvidence.evidence_id),
-    );
-    await verifyUnresolvedCallEvidence(client);
-    const bundleReply = await client.callTool({
-      name: "get_evidence_bundle",
-      arguments: {},
-    });
-    assert.ok(
-      bundleReply.structuredContent,
-      "MCP omitted structured Evidence bundle",
-    );
-    const bundle = requireMcpEvidenceBundle(bundleReply);
-    for (const [evidence, graph] of [
-      [mcpEvidence, mcpGraph],
-      [warmEvidence, warmGraph],
-    ]) {
-      for (const source of [
-        ...graph.procedures,
-        ...graph.nodes,
-        ...graph.edges,
-      ]) {
-        assert.ok(evidence.evidence_links.includes(source.evidence_id));
-        assert.equal(
-          bundle.records.find(
-            (record) => record.evidence_id === source.evidence_id,
-          )?.operation,
-          "analyze_function",
-          `Missing source Evidence ${source.evidence_id}`,
-        );
-      }
-    }
-    for (const evidence of [
-      mcpEvidence,
-      functionEvidence,
-      comparisonEvidence,
-    ]) {
-      assert.deepEqual(
-        bundle.records.find(
-          (record) => record.evidence_id === evidence.evidence_id,
-        ),
-        evidence,
-      );
-    }
-    boundaries = await verifyGhidraBoundaries(client, {
-      target,
-      procedure,
-      entrypoint,
-      env,
-    });
-    const closed = await client.callTool({
-      name: "close_binary",
-      arguments: {},
-    });
-    assert.notEqual(closed.isError, true, JSON.stringify(closed));
-    const statusReply = await client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
-    assert.equal(
-      requireMcpLifecycleResult(statusReply, "binary_session").open,
-      false,
-    );
-    assert.deepEqual(
-      (await readdir(env.TMPDIR)).filter((name) =>
-        name.startsWith("rea-ghidra-"),
-      ),
-      [],
-      "Ghidra left runtime files after close",
-    );
-  } finally {
-    await client.close();
-    await transport.close();
-  }
-  const projectIdentity = await verifyGhidraProjectIdentity({
+  await client.connect(transport);
+  const opened = await client.callTool(
+    {
+      name: "open_binary",
+      arguments: { path: target.path, provider_id: "ghidra" },
+    },
+    { timeout: 180000 },
+  );
+  assert.notEqual(opened.isError, true, JSON.stringify(opened));
+  const inventoryReply = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  const inventory = requireMcpLifecycleResult(inventoryReply, "binary_session");
+  assert.ok(
+    inventory.tool_availability.some(
+      (tool) => tool.name === "trace_native_values" && tool.available,
+    ),
+    "Native value tracing is unavailable in real provider discovery",
+  );
+  const result = await client.callTool(
+    {
+      name: "trace_native_values",
+      arguments: { procedure, max_depth: 2, max_functions: 8, limit: 5000 },
+    },
+    { timeout: 180000 },
+  );
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.notEqual(result.structuredContent, undefined);
+  const mcpEvidence = parseEvidence(
+    requireMcpOutput(result, "trace_native_values"),
+  );
+  assert.equal(mcpEvidence.operation, "trace_native_values");
+  assert.equal(mcpEvidence.provider.id, "rea-workflow");
+  assert.deepEqual(mcpEvidence.analysis_profile, workflowProfile);
+  const mcpGraph = verifyGraph(
+    mcpEvidence.normalized_result,
     target,
-    entrypoint,
+    procedure,
+    globalAddress,
+  );
+  assert.ok(
+    mcpGraph.limitations.some(
+      (value) =>
+        value.includes("analyze_function") &&
+        value.includes("LOAD and STORE") &&
+        value.includes("address varnodes"),
+    ),
+  );
+  assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
+  assert.deepEqual(mcpGraph, cliGraph);
+  const warmReply = await client.callTool(
+    {
+      name: "trace_native_values",
+      arguments: { procedure, max_depth: 2, max_functions: 8, limit: 3 },
+    },
+    { timeout: 180000 },
+  );
+  const warmEvidence = parseEvidence(
+    requireMcpOutput(warmReply, "trace_native_values"),
+  );
+  const warmGraph = nativeValueTraceSchema.parse(
+    warmEvidence.normalized_result,
+  );
+  const analyzed = await client.callTool(
+    {
+      name: "analyze_function",
+      arguments: { procedure, detail: "complete" },
+    },
+    { timeout: 180000 },
+  );
+  assert.notEqual(analyzed.isError, true, JSON.stringify(analyzed));
+  assert.notEqual(analyzed.structuredContent, undefined);
+  const functionEvidence = parseEvidence(
+    requireMcpOutput(analyzed, "analyze_function"),
+  );
+  assert.equal(functionEvidence.operation, "analyze_function");
+  assert.equal(functionEvidence.provider.id, "ghidra");
+  const flow = functionEvidence.normalized_result.native_value_flow;
+  assert.equal(flow.available, true);
+  const identifiesEffectScope = (value) =>
+    value.includes("LOAD and STORE") && value.includes("address varnodes");
+  assert.ok(flow.limitations.some(identifiesEffectScope));
+  const effectsView = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: functionEvidence.evidence_id,
+      },
+      view: { kind: "native", facet: "value_flow_effects" },
+    },
+  });
+  assert.notEqual(effectsView.isError, true, JSON.stringify(effectsView));
+  const effectsPage = requireMcpOutput(effectsView, "inspect_analysis_view");
+  assert.ok(
+    effectsPage.normalized_result.limitations.some(identifiesEffectScope),
+  );
+  assert.deepEqual(
+    functionEvidence.normalized_result.facet_availability,
+    Object.fromEntries(
+      [
+        "pseudocode",
+        "assembly",
+        "comments",
+        "callers",
+        "callees",
+        "references",
+        "strings_names",
+        "cfg",
+      ].map((facet) => [facet, { available: true }]),
+    ),
+  );
+  assert.equal(functionEvidence.relationship_coverage?.status, "complete");
+  assert.ok(
+    functionEvidence.relationship_coverage.diagnostics.some((diagnostic) =>
+      diagnostic.includes("indirect calls remain unknown"),
+    ),
+  );
+  const functionProfile = analysisProfileSchema.parse(
+    functionEvidence.analysis_profile,
+  );
+  assert.deepEqual(functionProfile, upstreamProfile);
+  await verifyLegacyValueScopeSnapshot(client, {
+    target,
+    procedure,
+    observed: functionEvidence,
     env,
   });
-  const socketBoundary = await verifyGhidraSocketBoundary({
+  const comparisonEvidence = await compareRetainedFunctionEvidence(
+    client,
+    functionEvidence,
+  );
+  assert.equal(
+    comparisonEvidence.normalized_result.status,
+    "unchanged",
+    JSON.stringify(comparisonEvidence.normalized_result.dimensions),
+  );
+  assert.ok(
+    comparisonEvidence.evidence_links.includes(functionEvidence.evidence_id),
+  );
+  await verifyUnresolvedCallEvidence(client);
+  const bundleReply = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  assert.ok(
+    bundleReply.structuredContent,
+    "MCP omitted structured Evidence bundle",
+  );
+  const bundle = requireMcpEvidenceBundle(bundleReply);
+  for (const [evidence, graph] of [
+    [mcpEvidence, mcpGraph],
+    [warmEvidence, warmGraph],
+  ]) {
+    for (const source of [
+      ...graph.procedures,
+      ...graph.nodes,
+      ...graph.edges,
+    ]) {
+      assert.ok(evidence.evidence_links.includes(source.evidence_id));
+      assert.equal(
+        bundle.records.find(
+          (record) => record.evidence_id === source.evidence_id,
+        )?.operation,
+        "analyze_function",
+        `Missing source Evidence ${source.evidence_id}`,
+      );
+    }
+  }
+  for (const evidence of [mcpEvidence, functionEvidence, comparisonEvidence]) {
+    assert.deepEqual(
+      bundle.records.find(
+        (record) => record.evidence_id === evidence.evidence_id,
+      ),
+      evidence,
+    );
+  }
+  boundaries = await verifyGhidraBoundaries(client, {
     target,
     procedure,
     entrypoint,
     env,
   });
+  const closed = await client.callTool({
+    name: "close_binary",
+    arguments: {},
+  });
+  assert.notEqual(closed.isError, true, JSON.stringify(closed));
+  const statusReply = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  assert.equal(
+    requireMcpLifecycleResult(statusReply, "binary_session").open,
+    false,
+  );
+  assert.deepEqual(
+    (await readdir(env.TMPDIR)).filter((name) =>
+      name.startsWith("rea-ghidra-"),
+    ),
+    [],
+    "Ghidra left runtime files after close",
+  );
   return {
     mocked: false,
     cli: true,
@@ -404,8 +447,6 @@ async function verifyNativeValueAdapters(
     inline_evidence: true,
     direct_function_comparison: true,
     boundaries,
-    project_identity: projectIdentity,
-    socket_boundary: socketBoundary,
     nodes: cliGraph.total_nodes,
     edges: cliGraph.total_edges,
     decompilations: cliGraph.decompilations,

@@ -4,6 +4,7 @@ import {
   findMappedNonFunction,
 } from "./lib/ida-feature-trace.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
@@ -180,7 +181,7 @@ const mcp = async (cliDossier) => {
     return toolContract(name).outputSchema.parse(result.structuredContent);
   };
   let opened = false;
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport, { timeout: config.timeoutMs });
     await call("open_binary", { path: target, provider_id: "ida" });
     opened = true;
@@ -385,12 +386,18 @@ const mcp = async (cliDossier) => {
     report.checks.push(
       "CLI/MCP function identity, pseudocode, assembly, instructions, and relationship parity",
     );
-  } finally {
-    const completedPhase = phase;
-    if (opened) await call("close_binary", {});
-    await client.close();
-    phase = completedPhase;
-  }
+  }, [
+    async () => {
+      const completedPhase = phase;
+      try {
+        if (opened) await call("close_binary", {});
+      } finally {
+        phase = completedPhase;
+      }
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
 };
 const cleanup = async () => {
   phase = "upstream lifecycle verification";
@@ -434,6 +441,13 @@ try {
   report.failure = {
     phase,
     message: cause instanceof Error ? cause.message : String(cause),
+    ...(cause instanceof AggregateError
+      ? {
+          causes: cause.errors.map((failure) =>
+            failure instanceof Error ? failure.message : String(failure),
+          ),
+        }
+      : {}),
   };
   process.exitCode = 1;
 } finally {
