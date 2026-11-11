@@ -160,6 +160,7 @@ it("resolves immediately invoked loaders from their proven source bases", () => 
 
 it.each([
   ["function load(name) { require(name); }", true],
+  ["function load(args) { require.apply(null, args); }", true],
   ["function load(require, name) { require(name); }", false],
   ["require(7); require();", false],
 ] as const)(

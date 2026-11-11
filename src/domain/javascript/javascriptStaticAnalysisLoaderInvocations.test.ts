@@ -111,6 +111,26 @@ it("does not keep a dependency when an immediate call returns a replaced member"
   expect(
     callsFor('const box = { load: require }; (() => box.load)()("./dep.cjs");'),
   ).toEqual(["source-file"]);
+  expect(
+    callsFor(
+      'const box = { load: require }; box.load = () => {}; (() => (0, box.load))()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor(
+      'const box = { load: require }; (() => (0, box.load))()("./dep.cjs");',
+    ),
+  ).toEqual(["source-file"]);
+  expect(
+    callsFor(
+      'let f; const box = { load: require }; box.load = () => {}; (() => (f = box.load))()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor(
+      'let f; const box = { load: require }; (() => (f = box.load))()("./dep.cjs");',
+    ),
+  ).toEqual(["source-file"]);
 });
 
 const imported = "import {createRequire as make} from 'node:module';";

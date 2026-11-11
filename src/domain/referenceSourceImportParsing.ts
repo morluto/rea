@@ -198,7 +198,14 @@ const extractImports = (
       ) {
         const requireCall = requireCalls.get(node);
         if (requireCall === undefined) return;
-        const target = requireCall.arguments?.[0];
+        // Undefined arguments are an opaque normalized list, such as
+        // `require.apply(null, args)`. An empty list is an explicit call
+        // with no target.
+        if (requireCall.arguments === undefined) {
+          unresolvedRequireTarget = true;
+          return;
+        }
+        const target = requireCall.arguments[0];
         if (target === undefined) return;
         const literal = readExactJavaScriptLiteral(target);
         if (!literal.found) {
