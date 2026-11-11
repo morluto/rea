@@ -1238,6 +1238,11 @@ Binary-only operations and binary analysis snapshots do not apply in this
 session. `open_binary` can switch back to executable analysis, and
 `close_binary` retires either session kind.
 
+Both open operations can retire the previous analysis provider. That cleanup
+can discard ephemeral Ghidra edits or save a configured checkpoint, so their
+advertised effects include filesystem writes and possible data loss. The
+resource readers remain read-only within the selected bundle.
+
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
