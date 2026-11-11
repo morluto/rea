@@ -1905,6 +1905,25 @@ describe("ReleaseExposureService Electron applicability", () => {
   );
 });
 
+describe("ReleaseExposureService asar: false bundle with partial inventory", () => {
+  it("keeps safe fuses unknown when inventory stopped after the bundle framework", async () => {
+    // With no ASAR layout, an incomplete inventory may have stopped before a
+    // nested build's host, so the root framework cannot settle it alone.
+    const framework =
+      "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework";
+    const { service, desktop, electronFuses } = owners({
+      ...appScan,
+      native_images: [{ path: framework, format: "mach-o", sha256: SHA }],
+      coverage: "unknown",
+    });
+    desktop.inspect.mockResolvedValue(ok(evidence(frameworkDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service, "/work/App.app"))?.status).toBe("unknown");
+  });
+});
+
 describe("ReleaseExposureService app bundle with a sidecar", () => {
   const noSentinel = ok(evidence(fuseReport([slice(0, { sentinels: 0 })])));
   const unreadable = err(new AnalysisInputError("inspect_electron_fuses"));

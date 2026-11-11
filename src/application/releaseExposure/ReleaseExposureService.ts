@@ -924,9 +924,13 @@ const limitNativeSample = (
         !keptPaths.has(image.path) &&
         !layouts.some((folder) => inLayout(folder, image.path)),
     );
+  // A bundle read with no layout settles only the root build: a nested
+  // asar: false build's host may be one the sample or inventory missed.
   const electronExecutableIncluded =
     layouts.length === 0
-      ? bundleRead || selectedRead || hostRead(preferred)
+      ? (bundleRead && !missedOutsideHost) ||
+        selectedRead ||
+        hostRead(preferred)
       : !missedOutsideHost &&
         layouts.every(
           (folder) =>
