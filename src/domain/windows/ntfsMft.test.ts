@@ -5,6 +5,7 @@ import {
   MFT_MAX_FILE_BYTES,
   createMftDecoder,
   parseMftImage,
+  parseMftIndex,
 } from "./ntfsMft.js";
 
 interface RecordOptions {
@@ -234,6 +235,9 @@ describe("MFT fixup coverage", () => {
       );
     },
   );
+});
+
+describe("MFT resident names", () => {
   it("decodes a FILE_NAME across a restored sector trailer without changing the source bytes", () => {
     const bytes = recordOf();
     const view = new DataView(bytes.buffer);
@@ -309,7 +313,9 @@ describe("MFT fixup coverage", () => {
     });
     expect(parsed.value.metadata.file_name_count).toBe(2);
   });
+});
 
+describe("MFT fixup failures", () => {
   it("keeps a record whose sector trailer is not the sequence number, and reports it", () => {
     const parsed = parseMftImage(
       streamOf(recordOf(), recordOf({ sequenceNumber: 9, corruptSector: 1 })),
@@ -552,6 +558,12 @@ describe("parseMftImage refusals and limits", () => {
     expect(inventory.value).not.toHaveProperty("records");
     expect(inventory.value.metadata).toEqual(parsed.value.metadata);
     expect(inventory.value.limitations).toEqual(parsed.value.limitations);
+    const indexed = parseMftIndex(bytes);
+    if (!indexed.ok) throw new Error(indexed.error.message);
+    expect(indexed.value.metadata).toEqual(parsed.value.metadata);
+    expect(indexed.value.records).toHaveLength(33);
+    expect(indexed.value.records[32]).not.toHaveProperty("attributes");
+    expect(indexed.value.records[32]).not.toHaveProperty("fileNames");
   });
 
   it("decodes the same stream through the chunked decoder", () => {

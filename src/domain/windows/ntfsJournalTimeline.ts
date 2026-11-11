@@ -1,4 +1,4 @@
-import type { MftImage } from "./ntfsMft.js";
+import type { MftIndex } from "./ntfsMft.js";
 import {
   createUsnMftCorrelator,
   type UsnMftMatches,
@@ -33,7 +33,7 @@ export interface NtfsJournalTimeline {
 
 /** Compose a bounded source-order page for an explicitly paired acquisition. */
 export const composeNtfsJournalTimeline = (
-  mft: MftImage,
+  mft: MftIndex,
   journal: Buffer,
   window: { readonly startFileOffset: number; readonly maxRows: number },
   correlate = createUsnMftCorrelator(mft.records),

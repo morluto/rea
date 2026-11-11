@@ -66,7 +66,7 @@ mcpTest(
     });
 
     const reads = vi.spyOn(stableArtifact, "readStableArtifact");
-    const parses = vi.spyOn(mftDecoder, "parseMftImage");
+    const parses = vi.spyOn(mftDecoder, "parseMftIndex");
     onTestFinished(() => {
       reads.mockRestore();
       parses.mockRestore();
