@@ -117,6 +117,12 @@ export const functionDossierSchema = z
         path: ["swift_string_literal_omissions"],
         message: "Swift literals and their omissions must be recorded together",
       });
+  })
+  .meta({
+    dependentRequired: {
+      swift_string_literals: ["swift_string_literal_omissions"],
+      swift_string_literal_omissions: ["swift_string_literals"],
+    },
   });
 
 /** Strict analyzed-function dossier shared by provider and comparison boundaries. */
