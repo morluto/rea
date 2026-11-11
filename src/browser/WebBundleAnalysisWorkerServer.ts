@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { fitJavaScriptRouteSourceFacts } from "../domain/javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -26,7 +27,10 @@ import {
 } from "./WebBundleAnalysisWorkerProtocol.js";
 
 export interface WebBundleScriptAnalyzer {
-  (script: IncludedScript): WebBundleScriptAnalysis;
+  (
+    script: IncludedScript,
+    precision?: JavaScriptSemanticPrecisionInput,
+  ): WebBundleScriptAnalysis;
 }
 
 class WebBundleWorkerInputError extends Error {}
@@ -127,7 +131,9 @@ const analyzeJob = async (
     await send({ kind: "phase", id: request.id, phase: "analyze" });
     let result: WebBundleScriptAnalysis;
     try {
-      result = webBundleScriptAnalysisSchema.parse(analyze(script));
+      result = webBundleScriptAnalysisSchema.parse(
+        analyze(script, request.semantic_precision),
+      );
     } catch (cause) {
       throw new WebBundleWorkerOutputError(
         `Web bundle analyzer returned an invalid result: ${cause instanceof Error ? cause.message : String(cause)}`,

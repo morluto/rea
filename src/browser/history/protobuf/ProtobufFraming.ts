@@ -1,6 +1,6 @@
+import { captureBudgets } from "../CaptureBudgets.js";
 import { err, ok } from "../../../domain/result.js";
 import type { ProtobufDecoding } from "../../../domain/protobufWire.js";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "../CaptureFormatError.js";
 import { ProtobufBudget } from "./ProtobufWire.js";
 
@@ -92,10 +92,10 @@ export const prepareProtobufBody = async (
   },
   signal?: AbortSignal,
 ): Promise<PreparedProtobufBody> => {
-  if (body.length > WEB_NETWORK_CAPTURE_LIMITS.inputBytes)
+  if (body.length > captureBudgets().inputBytes)
     throw new CaptureFormatError(
       "limit",
-      "Protobuf body exceeds the admitted 32 MiB source bound",
+      `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
     );
   const work = new ProtobufBudget(signal);
   await work.checkpoint();

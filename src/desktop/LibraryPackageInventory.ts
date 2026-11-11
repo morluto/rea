@@ -1,3 +1,8 @@
+import {
+  desktopLibraryLimit,
+  desktopLibraryPolicy,
+  type DesktopLibraryPolicy,
+} from "../domain/desktop/libraryPolicy.js";
 import { realpath } from "node:fs/promises";
 
 import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
@@ -35,13 +40,12 @@ export type LibraryPackages = {
   "library_packages_reason" | "uninstallable_library_packages"
 >;
 
-/** Libraries resolved per executable; an Electron app loads about a hundred. */
-const MAX_LIBRARIES = 512;
 const QUERY_BATCH = 200;
 
 const elfDependencies = async (
   path: string,
   signal: AbortSignal | undefined,
+  policy: DesktopLibraryPolicy,
 ): Promise<Result<ElfDependencies, string>> => {
   const options = {
     symlinks: "follow" as const,
@@ -52,6 +56,7 @@ const elfDependencies = async (
       readElfDependencies(
         (offset, length) => readFileHandleRange(handle, offset, length),
         initial.size,
+        policy,
       ),
     );
   } catch (cause: unknown) {
@@ -116,11 +121,12 @@ const packageOwners = async (
 
 const incompleteReason = (
   closure: Awaited<ReturnType<typeof libraryClosure>>,
+  policy: DesktopLibraryPolicy,
 ): string | undefined => {
   const [first] = closure.unreadable;
   const reasons = [
     ...(closure.truncated
-      ? [`REA stopped after ${String(MAX_LIBRARIES)} libraries`]
+      ? [desktopLibraryLimit(policy, "libraries", "REA dependency closure")]
       : []),
     ...(first === undefined
       ? []
@@ -141,6 +147,7 @@ export const inspectLibraryPackages = async (
   ownPackage: string,
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
+  policy: DesktopLibraryPolicy = desktopLibraryPolicy(),
 ): Promise<LibraryPackages> => {
   const none = (reason: string): LibraryPackages => ({
     library_packages: [],
@@ -148,7 +155,7 @@ export const inspectLibraryPackages = async (
     unpackaged_libraries: [],
     library_packages_reason: reason,
   });
-  const root = await elfDependencies(executable, signal);
+  const root = await elfDependencies(executable, signal, policy);
   if (!root.ok)
     return none(`the libraries of ${executable} were not read: ${root.error}`);
   const cache = await linkerCache(runQuery, signal);
@@ -158,10 +165,10 @@ export const inspectLibraryPackages = async (
     { path: executable, dependencies: root.value },
     parseLinkerCache(cache),
     {
-      dependencies: (path) => elfDependencies(path, signal),
+      dependencies: (path) => elfDependencies(path, signal, policy),
       isFile: isHostFile,
     },
-    MAX_LIBRARIES,
+    policy.libraries,
   );
   const located = await Promise.all(
     closure.libraries.map(async ({ path }) => ({
@@ -196,7 +203,7 @@ export const inspectLibraryPackages = async (
     else ownershipUnresolved = true;
   }
   const reason = [
-    incompleteReason(closure),
+    incompleteReason(closure, policy),
     owners.ok || !ownershipUnresolved ? undefined : owners.error.reason,
   ]
     .filter((value): value is string => value !== undefined)

@@ -1,3 +1,7 @@
+import {
+  desktopLibraryPolicy,
+  type DesktopLibraryPolicyInput,
+} from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -37,6 +41,7 @@ const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
 
 /** Which application to launch, as the caller named it. */
 export interface LinuxApplicationRequest {
+  readonly libraryPolicy?: DesktopLibraryPolicyInput;
   readonly desktopEntry: string | undefined;
   readonly executable: string | undefined;
   readonly arguments: readonly string[];
@@ -428,6 +433,7 @@ export const inspectLinuxApplication = async (
   const { path } = found;
   const resolved = await realpath(path).catch(() => null);
   const context: InventoryContext = {
+    libraryPolicy: desktopLibraryPolicy(request.libraryPolicy),
     host,
     signal,
     limitations: [],

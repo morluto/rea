@@ -408,25 +408,25 @@ it.each([
     "POSIX Error",
     "linux",
     new Error("pipe state unknown"),
-    /inherited output stream settlement could not be verified: pipe state unknown/,
+    "Owned GDB inherited output stream settlement could not be verified: pipe state unknown",
   ],
   [
     "POSIX non-Error",
     "linux",
     "pipe state unknown",
-    /inherited output stream settlement could not be verified: pipe state unknown/,
+    "Owned GDB inherited output stream settlement could not be verified: pipe state unknown",
   ],
   [
     "Windows Error",
     "win32",
     new Error("job state unknown"),
-    /Windows Job Object settlement could not be verified: job state unknown/,
+    "Owned GDB Windows Job Object settlement could not be verified: job state unknown",
   ],
   [
     "Windows non-Error",
     "win32",
     "job state unknown",
-    /Windows Job Object settlement could not be verified: job state unknown/,
+    "Owned GDB Windows Job Object settlement could not be verified: job state unknown",
   ],
 ] as const)(
   "retains an exited debugger when output settlement throws (%s)",
@@ -451,7 +451,7 @@ it.each([
       { platform },
     );
 
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       status: "incomplete",
       reason: expectedReason,
     });
@@ -939,38 +939,6 @@ it("uses the host platform when an exited debugger is stopped without options", 
   expect(outputCloseWaits).toBe(1);
   expect(outputUnrefs).toBe(process.platform === "win32" ? 0 : 1);
 });
-
-it.each([
-  ["linux", "inherited output stream"],
-  ["win32", "Windows Job Object"],
-] as const)(
-  "retains a non-Error output-settlement failure on %s",
-  async (platform, resource) => {
-    const result = await stopOwnedDebuggerProcess(
-      {
-        id: `output-settlement-${platform}`,
-        exited: true,
-        launched: { process: { kill: () => true } },
-        supervisor: {
-          waitForExit: async () => true,
-          waitForOutputClose: async () => {
-            throw "output status unavailable";
-          },
-          limitAdditionalOutputBytes: () => {},
-          dispose: () => {},
-          unrefOutputStreams: () => {},
-        },
-      },
-      "GDB",
-      { platform },
-    );
-
-    expect(result).toEqual({
-      status: "incomplete",
-      reason: `Owned GDB ${resource} settlement could not be verified: output status unavailable`,
-    });
-  },
-);
 
 it.skipIf(process.platform === "win32")(
   "keeps supervision until a late-writing descendant closes inherited output after leader exit",

@@ -243,6 +243,15 @@ export class WebNetworkCaptureService {
             },
           }),
       sensitive_value_count: input.sensitive_values.length,
+      ...(input.max_input_bytes === undefined
+        ? {}
+        : { max_input_bytes: input.max_input_bytes }),
+      ...(input.max_reply_bytes === undefined
+        ? {}
+        : { max_reply_bytes: input.max_reply_bytes }),
+      ...(input.max_nesting_depth === undefined
+        ? {}
+        : { max_nesting_depth: input.max_nesting_depth }),
       ...(input.capture_timeout_ms === undefined
         ? {}
         : { capture_timeout_ms: input.capture_timeout_ms }),

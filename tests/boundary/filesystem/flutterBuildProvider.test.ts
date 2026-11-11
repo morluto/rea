@@ -1987,3 +1987,94 @@ it("preserves a completed analysis failure through refused cleanup and late canc
     projectAnalysisError(control.error),
   );
 });
+
+it("recovers omitted Dart pool strings through selection and per-call admission without changing source identity", async () => {
+  const packages = Array.from(
+    { length: 1001 },
+    (_, index) => `package:many/file${String(index).padStart(4, "0")}.dart`,
+  );
+  const tail = "package:tail/omitted.dart";
+  const longUri = `package:long/${"x".repeat(1100)}.dart`;
+  const longToken = `LongToken${"A".repeat(130)}`;
+  const tokens = Array.from(
+    { length: 2001 },
+    (_, index) => `Class${String(index).padStart(4, "0")}`,
+  );
+  const isolate = Buffer.concat([
+    snapshotSection(REFERENCE_HASH),
+    Buffer.from(
+      `\0${[...packages, tail, longUri, ...tokens, longToken].join("\0")}\0`,
+    ),
+  ]);
+  const image = Buffer.alloc(0x2000 + isolate.length + 16);
+  buildElf64Image([
+    { name: "_kDartVmSnapshotData", value: 0x1000, size: 52 },
+    { name: "_kDartVmSnapshotInstructions", value: 0x1800, size: 16 },
+    { name: "_kDartIsolateSnapshotData", value: 0x2000, size: isolate.length },
+    {
+      name: "_kDartIsolateSnapshotInstructions",
+      value: 0x2000 + isolate.length,
+      size: 16,
+    },
+  ]).copy(image);
+  snapshotSection(REFERENCE_HASH).copy(image, 0x1000);
+  isolate.copy(image, 0x2000);
+  const path = await buildApk("pool-headroom.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: image },
+  ]);
+  const provider = new FlutterBuildProvider();
+  onTestFinished(() => provider.close());
+  const service = new FlutterBuildAnalysisService(provider);
+  const inspect = async (pool_policy?: Record<string, unknown>) => {
+    const result = await service.execute("inspect_dart_aot", {
+      path,
+      ...(pool_policy === undefined ? {} : { pool_policy }),
+    });
+    if (!result.ok) throw result.error;
+    return {
+      evidence: result.value,
+      report: flutterResultSchemas.inspect_dart_aot.parse(
+        result.value.normalized_result,
+      ),
+    };
+  };
+  const limited = await inspect();
+  expect(limited.report.string_pool.package_uris).toHaveLength(500);
+  expect(limited.report.string_pool.class_like_tokens).toHaveLength(2000);
+  expect(limited.report.string_pool.package_uris).not.toContain(tail);
+  expect(limited.report.string_pool.package_uris).not.toContain(longUri);
+  expect(limited.report.string_pool.class_like_tokens).not.toContain(longToken);
+  expect(limited.report.string_pool.coverage).toBe("partial");
+  expect(
+    limited.evidence.limitations.some((text) =>
+      text.includes("pool_policy.run_bytes=1024"),
+    ),
+  ).toBe(true);
+  const selected = await inspect({ contains: "package:tail/" });
+  expect(selected.report.string_pool.package_uris).toEqual([tail]);
+  expect(selected.report.string_pool.package_uri_count_at_least).toBe(1);
+  const recovered = await inspect({
+    uri_limit: 1003,
+    token_limit: 2002,
+    run_bytes: 2048,
+    token_bytes: 256,
+  });
+  expect(recovered.report.string_pool.package_uris).toHaveLength(1003);
+  expect(recovered.report.string_pool.package_uris).toContain(tail);
+  expect(recovered.report.string_pool.package_uris).toContain(longUri);
+  expect(recovered.report.string_pool.class_like_tokens).toContain(longToken);
+  expect(recovered.report.string_pool.coverage).toBe("complete");
+  expect(selected.report.target).toEqual(limited.report.target);
+  expect(recovered.report.libapp.sha256).toEqual(limited.report.libapp.sha256);
+  expect(recovered.evidence.parameters.pool_policy).toEqual({
+    uri_limit: 1003,
+    token_limit: 2002,
+    run_bytes: 2048,
+    token_bytes: 256,
+  });
+  const rejected = await service.execute("inspect_dart_aot", {
+    path,
+    pool_policy: { uri_limit: 0 },
+  });
+  expect(rejected.ok).toBe(false);
+});

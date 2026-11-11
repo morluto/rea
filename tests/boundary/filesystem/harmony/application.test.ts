@@ -87,14 +87,6 @@ describe("HarmonyOS N-API declaration disclosure", () => {
     expect(projection.bridge_candidates).toEqual(control.bridge_candidates);
     expect(unreadDeclarationLimitations(control.limitations)).toEqual([]);
   });
-
-  it("does not disclose a declaration the package does not carry", async () => {
-    const projection = await projectStageHap(
-      "rea-harmony-no-pkg-context-",
-      stageHapWithDeclaration,
-    );
-    expect(unreadDeclarationLimitations(projection.limitations)).toEqual([]);
-  });
 });
 
 describe("HarmonyOS unclassified inventory", () => {

@@ -1,5 +1,9 @@
 import type { DownloadInstall } from "./appDownloadInstall.js";
 import {
+  desktopViewPolicy,
+  type DesktopViewPolicyInput,
+} from "./desktopViewPolicy.js";
+import {
   INSTALL_SCRIPT,
   type ExportAptSource,
   type ExportPackageFile,
@@ -13,7 +17,7 @@ import {
 } from "./appExportInstallText.js";
 import {
   PYTHON_DATA_HOOKS,
-  PYTHON_HELPERS,
+  renderPythonHelpers,
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
@@ -42,11 +46,12 @@ import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
 export { shellQuote } from "./shellQuote.js";
 
-/** agentenv-framework release the exported class was checked against. */
-export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1464";
+/** agentenv-framework release targeted by the exported class. */
+export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   /** Environment and folder name. */
   readonly name: string;
   readonly className: string;
@@ -641,7 +646,7 @@ SEED_MODES = {${Object.entries(plan.seedModes)
 STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target, kind }) => `(${py(alias)}, ${py(target)}, ${py(kind)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
 WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
-${PYTHON_HELPERS}
+${renderPythonHelpers(desktopViewPolicy(plan.viewPolicy))}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(
@@ -751,7 +756,7 @@ export const renderReadme = (
   `# ${plan.title} computer app
 
 Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` ${plan.download === undefined ? "package" : downloadKind(plan.download)}
-(capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
+(capture Evidence \`${plan.captureEvidenceId}\`). It targets agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for

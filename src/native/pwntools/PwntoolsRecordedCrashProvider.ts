@@ -127,6 +127,7 @@ export class PwntoolsRecordedCrashProvider
           options,
           runCommand,
           timeoutMs,
+          producerLimits,
         }) => {
           if (!input.include_debugger_context) return value;
           const diagnostics = value.decoder_diagnostics;
@@ -162,6 +163,7 @@ export class PwntoolsRecordedCrashProvider
               options,
               runCommand,
               timeoutMs,
+              producerLimits,
             });
             const context = completed.context;
             const enriched = validate(context);

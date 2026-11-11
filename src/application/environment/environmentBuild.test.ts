@@ -736,7 +736,9 @@ describe("buildEnvironment dry-run package tarball", () => {
         code: "invalid_request",
         details: { issues: [{ path: ["package_tarball"] }] },
       });
-      expect(await readdir(root)).not.toContain("bundle");
+      await expect(readdir(input.directory!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       read.mockRestore();
     }
