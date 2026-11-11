@@ -1,4 +1,4 @@
-import { accessSync, constants, realpathSync } from "node:fs";
+import { accessSync, constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
@@ -11,6 +11,10 @@ import {
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  compareExistingFileIdentities,
+  inspectFileIdentity,
+} from "../filesystem/fileIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
@@ -126,21 +130,13 @@ const entrypointIdentity = (
 ): ClientRegistrationCommandIdentity => {
   if (!isAbsolute(candidate) || !isAbsolute(current)) return "unknown";
   if (candidate === current) return "owned";
-  // Bun's realpath can normalize parent segments differently from its launcher.
-  // Without matching traversal semantics it cannot prove ownership of an alias.
-  if (
-    process.platform !== "win32" &&
-    javaScriptRuntime(process.versions).id === "bun" &&
-    [candidate, current].some((path) => path.split("/").includes(".."))
-  )
-    return "unknown";
-  try {
-    return realpathSync.native(candidate) === realpathSync.native(current)
-      ? "owned"
-      : "foreign";
-  } catch {
-    return "unknown";
-  }
+  const comparison = compareExistingFileIdentities(
+    inspectFileIdentity(candidate),
+    inspectFileIdentity(current),
+  );
+  if (comparison === "same") return "owned";
+  if (comparison === "different") return "foreign";
+  return "unknown";
 };
 
 /** A direct launcher may be a native executable or a Node shebang script. */

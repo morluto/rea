@@ -28,7 +28,10 @@ import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { err } from "../domain/result.js";
-import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import {
+  CURRENT_ENTRYPOINT_IDENTITY,
+  CURRENT_ENTRYPOINT_PATH,
+} from "../process/CurrentEntrypointPath.js";
 
 /** Inputs required to register the binary session status tool. */
 export interface SessionStatusToolOptions extends CapabilityAvailabilityProbes {
@@ -151,6 +154,7 @@ export const registerSessionStatusTool = (
       const serverIdentity = createServerIdentity({
         startedAt,
         commandPath: CURRENT_ENTRYPOINT_PATH,
+        commandIdentity: CURRENT_ENTRYPOINT_IDENTITY,
         catalog: server.catalogIdentity,
         expected: {
           ...(input.expected_package_version === undefined

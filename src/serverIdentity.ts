@@ -1,145 +1,55 @@
-import { lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { createCatalogIdentity } from "./catalogIdentity.js";
-import {
-  javaScriptRuntime,
-  type JavaScriptRuntime,
-} from "./domain/runtimeVersion.js";
 import { absoluteCallerPath } from "./filesystem/callerPath.js";
+import {
+  compareExistingFileIdentities,
+  hasExistingFileIdentity,
+  hasParentPathSegment,
+  inspectFileIdentity,
+  isMissingFileError,
+  resolveFileIdentityHost,
+  type FileIdentityComparison,
+  type FileIdentityHost,
+  type FileIdentitySnapshot,
+  type ResolvedFileIdentityHost,
+} from "./filesystem/fileIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
-
-type ServerPathComparison = "same" | "different" | "unknown";
-
-export interface ServerFileStat {
-  readonly dev: bigint;
-  readonly ino: bigint;
-}
-
-export interface ServerIdentityHost {
-  readonly platform?: NodeJS.Platform;
-  readonly runtime?: JavaScriptRuntime["id"];
-  readonly stat?: (path: string) => ServerFileStat;
-  readonly lstatIsSymbolicLink?: (path: string) => boolean;
-  readonly realpath?: (path: string) => string;
-}
-
-interface ResolvedServerIdentityHost {
-  readonly platform: NodeJS.Platform;
-  readonly runtime: JavaScriptRuntime["id"];
-  readonly stat: (path: string) => ServerFileStat;
-  readonly lstatIsSymbolicLink: (path: string) => boolean;
-  readonly realpath: (path: string) => string;
-}
-
-const resolveHost = (
-  host: ServerIdentityHost | undefined,
-): ResolvedServerIdentityHost => ({
-  platform: host?.platform ?? process.platform,
-  runtime: host?.runtime ?? javaScriptRuntime(process.versions).id,
-  stat: host?.stat ?? ((path) => statSync(path, { bigint: true })),
-  lstatIsSymbolicLink:
-    host?.lstatIsSymbolicLink ?? ((path) => lstatSync(path).isSymbolicLink()),
-  realpath: host?.realpath ?? realpathSync.native,
-});
-
-const errorCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
-const hasParentSegment = (path: string): boolean =>
-  path.split("/").includes("..");
-
-const isSymbolicLinkPath = (
-  path: string,
-  host: ResolvedServerIdentityHost,
-): boolean => {
-  try {
-    return host.lstatIsSymbolicLink(path);
-  } catch {
-    return false;
-  }
-};
-
-const inspectServerFile = (path: string, host: ResolvedServerIdentityHost) => {
-  let stats: ServerFileStat | undefined;
-  let statError: string | undefined;
-  try {
-    stats = host.stat(path);
-  } catch (cause: unknown) {
-    statError = errorCode(cause) ?? "unknown";
-  }
-  let realpath: string | undefined;
-  try {
-    realpath = host.realpath(path);
-  } catch {
-    // Missing or unreadable targets fall back to stat and path checks below.
-  }
-  return { stats, statError, realpath };
-};
-
-const sameExistingServerFile = (
-  expected: ReturnType<typeof inspectServerFile>,
-  observed: ReturnType<typeof inspectServerFile>,
-  bunPosixTraversal: boolean,
-): ServerPathComparison | undefined => {
-  if (expected.stats !== undefined && observed.stats !== undefined) {
-    const bothHaveInode =
-      expected.stats.ino !== 0n && observed.stats.ino !== 0n;
-    if (bothHaveInode) {
-      return expected.stats.dev === observed.stats.dev &&
-        expected.stats.ino === observed.stats.ino
-        ? "same"
-        : "different";
-    }
-  }
-  if (bunPosixTraversal)
-    return expected.stats !== undefined && observed.stats !== undefined
-      ? "unknown"
-      : undefined;
-  if (expected.realpath !== undefined && observed.realpath !== undefined)
-    return expected.realpath === observed.realpath ? "same" : "different";
-  if (expected.stats !== undefined && observed.stats !== undefined)
-    return "unknown";
-  return undefined;
-};
-
-const isMissingPathError = (code: string | undefined): boolean =>
-  code === undefined || code === "ENOENT" || code === "ENOTDIR";
 
 const compareServerPaths = (
   expectedPath: string,
   serverPath: string,
-  host: ResolvedServerIdentityHost,
-): ServerPathComparison => {
+  commandIdentity: FileIdentitySnapshot | undefined,
+  host: ResolvedFileIdentityHost,
+): FileIdentityComparison => {
+  if (commandIdentity !== undefined) {
+    if (!hasExistingFileIdentity(commandIdentity, host)) return "unknown";
+    const expected = inspectFileIdentity(expectedPath, host);
+    const existing = compareExistingFileIdentities(
+      expected,
+      commandIdentity,
+      host,
+    );
+    if (existing !== undefined) return existing;
+    if (!isMissingFileError(expected.statError)) return "unknown";
+    if (expected.isSymbolicLink) return "unknown";
+    if (host.platform !== "win32" && hasParentPathSegment(expectedPath))
+      return "unknown";
+    return "different";
+  }
+
   if (expectedPath === serverPath) return "same";
-  const expected = inspectServerFile(expectedPath, host);
-  const observed = inspectServerFile(serverPath, host);
-  const bunPosixTraversal =
-    host.platform !== "win32" &&
-    host.runtime === "bun" &&
-    (hasParentSegment(expectedPath) || hasParentSegment(serverPath));
-  const existing = sameExistingServerFile(
-    expected,
-    observed,
-    bunPosixTraversal,
-  );
+  const expected = inspectFileIdentity(expectedPath, host);
+  const observed = inspectFileIdentity(serverPath, host);
+  const existing = compareExistingFileIdentities(expected, observed, host);
   if (existing !== undefined) return existing;
   if (
-    !isMissingPathError(expected.statError) ||
-    !isMissingPathError(observed.statError)
+    !isMissingFileError(expected.statError) ||
+    !isMissingFileError(observed.statError)
   )
     return "unknown";
-  if (
-    isSymbolicLinkPath(expectedPath, host) ||
-    isSymbolicLinkPath(serverPath, host)
-  )
-    return "unknown";
+  if (expected.isSymbolicLink || observed.isSymbolicLink) return "unknown";
   if (
     absoluteCallerPath(expectedPath, { platform: host.platform }) ===
     absoluteCallerPath(serverPath, { platform: host.platform })
@@ -147,7 +57,7 @@ const compareServerPaths = (
     return "same";
   if (
     host.platform !== "win32" &&
-    (hasParentSegment(expectedPath) || hasParentSegment(serverPath))
+    (hasParentPathSegment(expectedPath) || hasParentPathSegment(serverPath))
   )
     return "unknown";
   return "different";
@@ -193,8 +103,9 @@ const packageRoot = (): string => {
 const buildAlignment = (
   expected: ExpectedServerIdentity | undefined,
   serverPath: string | undefined,
+  commandIdentity: FileIdentitySnapshot | undefined,
   catalog: ReturnType<typeof createCatalogIdentity>,
-  host: ResolvedServerIdentityHost,
+  host: ResolvedFileIdentityHost,
 ) => {
   const reasons: string[] = [];
   if (
@@ -212,7 +123,12 @@ const buildAlignment = (
       ? "omitted"
       : serverPath === undefined
         ? "unavailable"
-        : compareServerPaths(expected.server_path, serverPath, host);
+        : compareServerPaths(
+            expected.server_path,
+            serverPath,
+            commandIdentity,
+            host,
+          );
   if (pathComparison === "different")
     reasons.push("registration_path_mismatch");
   const observedExpectation =
@@ -244,14 +160,21 @@ const buildAlignment = (
 export const createServerIdentity = (input: {
   readonly startedAt: string;
   readonly commandPath: string | undefined;
+  readonly commandIdentity?: FileIdentitySnapshot | undefined;
   readonly expected?: ExpectedServerIdentity;
   readonly client?: ConnectedClientIdentity;
   readonly protocolVersion?: string | undefined;
   readonly catalog: ReturnType<typeof createCatalogIdentity>;
-  readonly host?: ServerIdentityHost;
+  readonly host?: FileIdentityHost;
 }) => {
   const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
+  const commandIdentity =
+    input.commandIdentity !== undefined &&
+    serverPath !== undefined &&
+    input.commandIdentity.path === serverPath
+      ? input.commandIdentity
+      : undefined;
   return {
     package: {
       name: PRODUCT_IDENTITY.packageName,
@@ -287,8 +210,9 @@ export const createServerIdentity = (input: {
     alignment: buildAlignment(
       input.expected,
       serverPath,
+      commandIdentity,
       catalog,
-      resolveHost(input.host),
+      resolveFileIdentityHost(input.host),
     ),
   } as const;
 };

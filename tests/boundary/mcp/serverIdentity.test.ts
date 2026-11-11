@@ -1,9 +1,18 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { link, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  link,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -29,6 +38,7 @@ import {
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+import { inspectFileIdentity } from "../../../src/filesystem/fileIdentity.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createServerIdentity } from "../../../src/serverIdentity.js";
 import { normalizeEntrypointPath } from "../../../src/process/CurrentEntrypointPath.js";
@@ -440,6 +450,79 @@ describe("server entrypoint path identity boundaries", () => {
   });
 });
 
+describe("startup-captured server entrypoint identity", () => {
+  it("uses startup-captured entrypoint identity after launch aliases retarget and preserves unknown without proof", async () => {
+    const root = await createTestTempDirectory("rea-server-startup-snapshot-");
+    const releaseA = join(root, "release-a");
+    const releaseB = join(root, "release-b");
+    await mkdir(releaseA, { recursive: true });
+    await mkdir(releaseB, { recursive: true });
+    const entryA = join(releaseA, "rea.mjs");
+    const entryB = join(releaseB, "rea.mjs");
+    await writeFile(entryA, "// release A\n");
+    await writeFile(entryB, "// release B\n");
+    const currentDir = join(root, "current");
+    await symlink(
+      releaseA,
+      currentDir,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const launchPath = join(currentDir, "rea.mjs");
+    const startupIdentity = inspectFileIdentity(launchPath);
+
+    // Retarget the launch alias while the process continues executing release A.
+    await rm(currentDir, { recursive: true });
+    await symlink(
+      releaseB,
+      currentDir,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const stillAligned = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: launchPath,
+      commandIdentity: startupIdentity,
+      expected: { server_path: entryA },
+    });
+    expect(stillAligned.alignment).toMatchObject({
+      state: "aligned",
+      reasons: [],
+      remediation: null,
+    });
+
+    for (const staleExpected of [entryB, launchPath]) {
+      const mismatch = createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: launchPath,
+        commandIdentity: startupIdentity,
+        expected: { server_path: staleExpected },
+      });
+      expect(mismatch.alignment).toMatchObject({
+        state: "mcp_server_restart_required",
+        reasons: ["registration_path_mismatch"],
+      });
+    }
+
+    const missingAtStartupPath = join(root, "missing-at-startup.mjs");
+    const unprovenStartup = inspectFileIdentity(missingAtStartupPath);
+    await writeFile(missingAtStartupPath, "// materialized later\n");
+    const unknown = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: missingAtStartupPath,
+      commandIdentity: unprovenStartup,
+      expected: { server_path: missingAtStartupPath },
+    });
+    expect(unknown.alignment).toMatchObject({
+      state: "unknown",
+      reasons: [],
+      remediation: expect.stringContaining("could not be resolved"),
+    });
+  });
+});
+
 describe("provider capability inventory", () => {
   it("reports composed, host, and target-specific availability truthfully", () => {
     const policy = {
@@ -614,6 +697,71 @@ describe("live server identity over MCP", () => {
         server.close(),
         session.close(),
       ]);
+    }
+  });
+
+  it("detects symlink retargeting in a live child MCP process without restarting", async () => {
+    const root = await createTestTempDirectory("rea-child-retarget-");
+    const releaseA = join(root, "release-a");
+    const releaseB = join(root, "release-b");
+    await mkdir(releaseA, { recursive: true });
+    await mkdir(releaseB, { recursive: true });
+    const entryA = join(releaseA, "entry.mjs");
+    const entryB = join(releaseB, "entry.mjs");
+    const mainUrl = pathToFileURL(resolve("dist/mcp/main.js")).href;
+    const launcherBody = `import { runEntrypoint } from ${JSON.stringify(mainUrl)};\nawait runEntrypoint();\n`;
+    await writeFile(entryA, launcherBody);
+    await writeFile(entryB, launcherBody);
+    const currentDir = join(root, "current");
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+    await symlink(releaseA, currentDir, linkType);
+    const launchEntry = join(currentDir, "entry.mjs");
+
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [launchEntry],
+      cwd: process.cwd(),
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        REA_LOG_LEVEL: "silent",
+      },
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "child-retarget-test", version: "1" });
+    const statusSchema = sessionOutputSchemas.binary_session;
+    const queryAlignment = async (expectedServerPath: string) => {
+      const response = await client.callTool({
+        name: "binary_session",
+        arguments: { expected_server_path: expectedServerPath },
+      });
+      return statusSchema.parse(response.structuredContent).result
+        .server_identity.alignment;
+    };
+    try {
+      await client.connect(transport);
+      expect(await queryAlignment(entryA)).toMatchObject({
+        state: "aligned",
+        reasons: [],
+      });
+
+      await rm(currentDir, { recursive: true });
+      await symlink(releaseB, currentDir, linkType);
+
+      expect(await queryAlignment(entryA)).toMatchObject({
+        state: "aligned",
+        reasons: [],
+      });
+      expect(await queryAlignment(entryB)).toMatchObject({
+        state: "mcp_server_restart_required",
+        reasons: ["registration_path_mismatch"],
+      });
+      expect(await queryAlignment(launchEntry)).toMatchObject({
+        state: "mcp_server_restart_required",
+        reasons: ["registration_path_mismatch"],
+      });
+    } finally {
+      await Promise.allSettled([client.close(), transport.close()]);
     }
   });
 });

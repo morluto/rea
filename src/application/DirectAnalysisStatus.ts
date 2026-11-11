@@ -6,7 +6,10 @@ import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js
 import { providerCapabilitySet } from "../contracts/toolOutputSchemaPrimitives.js";
 import { providerCapabilitySets } from "./binary/BinarySessionStatus.js";
 import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
-import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import {
+  CURRENT_ENTRYPOINT_IDENTITY,
+  CURRENT_ENTRYPOINT_PATH,
+} from "../process/CurrentEntrypointPath.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { progressiveCatalogIdentity } from "../catalogDiscovery.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
@@ -52,6 +55,7 @@ export const runSessionStatus = async (
         server_identity: createServerIdentity({
           startedAt: new Date().toISOString(),
           commandPath: CURRENT_ENTRYPOINT_PATH,
+          commandIdentity: CURRENT_ENTRYPOINT_IDENTITY,
           catalog:
             config.value.mcpToolCatalogProfile === "hot-cold"
               ? progressiveCatalogIdentity(catalog)

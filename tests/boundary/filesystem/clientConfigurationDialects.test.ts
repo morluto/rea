@@ -2,7 +2,7 @@ import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
 } from "../../../src/application/ClientRegistrationIdentity.js";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -708,6 +708,20 @@ describe("platform-aware client config paths", () => {
 });
 
 describe("client registration command ownership", () => {
+  it("recognizes hardlinked entrypoint aliases as owned", async () => {
+    const root = await createTestTempDirectory("rea-launcher-hardlink-");
+    const script = join(root, "entry.mjs");
+    const hardlink = join(root, "entry-hardlink.mjs");
+    await writeFile(script, "// owned dispatcher\n");
+    await link(script, hardlink);
+    for (const command of [
+      [hardlink, "mcp"],
+      [process.execPath, hardlink, "mcp"],
+    ]) {
+      expect(classifyClientRegistrationCommand(command, script)).toBe("owned");
+    }
+  });
+
   it.skipIf(process.platform === "win32").each([
     ["rea", "rea-agents"],
     ["rea-agents", "rea"],
