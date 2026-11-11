@@ -36,6 +36,10 @@ import {
   type FatSliceHeaderEvidence,
 } from "./apple/machoContainer.js";
 import {
+  machoCpuSubtypeBase,
+  machoHostSubtypeRank,
+} from "./apple/machoCpuIdentity.js";
+import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
 } from "./apple/machoLoadCommands.js";
@@ -192,6 +196,8 @@ interface FatDeclaration {
   readonly architecture: HeaderArchitecture;
   readonly offset: number;
   readonly size: number;
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
 }
 
 /** Validate a FAT table and its slice identities without selecting a slice. */
@@ -228,6 +234,8 @@ const validatedFatDeclarations = (
               architecture,
               offset: declaration.offset,
               size: declaration.size,
+              cpuType: declaration.cpuType,
+              cpuSubtype: declaration.cpuSubtype,
             },
           ];
     }),
@@ -270,19 +278,20 @@ const parseFatMachO = (
   if (!validated.ok) return validated;
   const declarations = validated.value;
   // Prefer the slice the host would load; a malformed host slice is an error.
-  // A container without one still declares its images, so select the first
-  // that can hold its Mach-O header, as a thin foreign image would be. A
-  // family declared more than once, such as arm64 and arm64e, has no
-  // provider-neutral choice and is not selected.
+  // Several slices of that family use subtype preference, not table order.
+  // Capability variants of the winning base follow FAT order, which is the
+  // slice codesign's family selector names. Identical subtypes, or a tie
+  // between different unlisted bases, are ambiguous. A container without a
+  // host slice still declares its images, so select the first foreign family
+  // declared once. A foreign family declared more than once, such as arm64
+  // and arm64e on an Intel host, has no provider-neutral choice.
   const preferred = fatHostArchitecture(host);
-  const hostSlices = declarations.filter(
-    ({ architecture }) => architecture === preferred,
-  );
-  if (hostSlices.length > 1)
+  const hostChoice = selectHostFatSlice(declarations, preferred);
+  if (hostChoice?.ambiguous === true)
     return err(
       `FAT binary declares several ${preferred} slices; no slice was selected`,
     );
-  const hostSlice = hostSlices[0];
+  const hostSlice = hostChoice?.slice;
   const unambiguous = declarations.filter(
     ({ architecture }) =>
       declarations.filter((other) => other.architecture === architecture)
@@ -320,6 +329,45 @@ const parseFatMachO = (
           }))
         : [],
   });
+};
+
+/**
+ * The host slice, or an ambiguity when several host slices share the best
+ * rank without a single codesign selector.
+ */
+const selectHostFatSlice = (
+  declarations: readonly FatDeclaration[],
+  preferred: HeaderArchitecture | undefined,
+):
+  | { readonly slice?: FatDeclaration; readonly ambiguous: boolean }
+  | undefined => {
+  if (preferred === undefined) return undefined;
+  const hostSlices = declarations.filter(
+    ({ architecture }) => architecture === preferred,
+  );
+  const only = hostSlices[0];
+  if (hostSlices.length === 0 || only === undefined) return undefined;
+  if (hostSlices.length === 1) return { slice: only, ambiguous: false };
+  let bestRank = Number.POSITIVE_INFINITY;
+  const winners: FatDeclaration[] = [];
+  for (const slice of hostSlices) {
+    const rank = machoHostSubtypeRank(slice.cpuType, slice.cpuSubtype);
+    if (rank < bestRank) {
+      bestRank = rank;
+      winners.length = 0;
+      winners.push(slice);
+    } else if (rank === bestRank) winners.push(slice);
+  }
+  const first = winners[0];
+  if (first === undefined) return { ambiguous: true };
+  if (winners.length === 1) return { slice: first, ambiguous: false };
+  const base = machoCpuSubtypeBase(first.cpuSubtype);
+  const capabilityVariants =
+    winners.every((slice) => machoCpuSubtypeBase(slice.cpuSubtype) === base) &&
+    winners.some((slice) => slice.cpuSubtype !== first.cpuSubtype);
+  return capabilityVariants
+    ? { slice: first, ambiguous: false }
+    : { ambiguous: true };
 };
 
 const fatSliceIdentityError = (
