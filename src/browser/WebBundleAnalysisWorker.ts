@@ -505,18 +505,24 @@ export class WebBundleAnalysisWorker {
       const primaryCause =
         artifactPrimary === undefined ? cause : artifactPrimary.cause;
       const primary =
-        interrupted !== undefined && observedFailure !== undefined
-          ? observedFailure
-          : (interrupted ??
-            (primaryCause instanceof RuntimeControlUnavailableError
-              ? runtimeControlCapabilityError(PROVIDER, OPERATION, primaryCause)
-              : primaryCause instanceof AnalysisError
-                ? primaryCause
-                : new AnalysisOutputError(
+        ownershipInspectionFailure !== undefined
+          ? ownershipInspectionFailure
+          : interrupted !== undefined && observedFailure !== undefined
+            ? observedFailure
+            : (interrupted ??
+              (primaryCause instanceof RuntimeControlUnavailableError
+                ? runtimeControlCapabilityError(
+                    PROVIDER,
                     OPERATION,
-                    "Owned web-script analysis failed",
-                    { cause: primaryCause },
-                  )));
+                    primaryCause,
+                  )
+                : primaryCause instanceof AnalysisError
+                  ? primaryCause
+                  : new AnalysisOutputError(
+                      OPERATION,
+                      "Owned web-script analysis failed",
+                      { cause: primaryCause },
+                    )));
       const failure =
         cause instanceof ArtifactFileCleanupFailure
           ? this.#cleanupFailure(

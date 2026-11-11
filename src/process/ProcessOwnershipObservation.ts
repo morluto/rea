@@ -1,3 +1,5 @@
+import { isProcessOwnershipInspectionCancellation } from "./ProcessInspectionCancellation.js";
+export { isProcessOwnershipInspectionCancellation } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { readFile, readlink, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
@@ -1161,14 +1163,6 @@ export const reobserveUnavailableTokenFacts = async (
   }
   return current;
 };
-
-export const isProcessOwnershipInspectionCancellation = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-): boolean =>
-  signal?.aborted === true &&
-  (cause === signal.reason ||
-    (cause instanceof Error && cause.name === "AbortError"));
 
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (

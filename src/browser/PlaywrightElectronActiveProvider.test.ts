@@ -3,6 +3,7 @@ import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -107,7 +108,7 @@ it.each(["prepare", "baseline"] as const)(
       const fail = async () => {
         controller.abort(reason);
         if (kind === "native-abort")
-          throw new DOMException("aborted", "AbortError");
+          throw new ExecFileOutputCancelledError(reason);
         throw kind === "reason" ? reason : physical;
       };
       const spy =
@@ -154,6 +155,55 @@ it.each(["prepare", "baseline"] as const)(
     }
   },
 );
+
+it("preserves an independent AbortError from actual ownership baseline inspection", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel" };
+  const physical = new DOMException(
+    "independent inspector failure",
+    "AbortError",
+  );
+  const host = ownershipObservation.createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    {
+      execFileOutput: async () => {
+        controller.abort(reason);
+        throw physical;
+      },
+    },
+  );
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockResolvedValue();
+  const baseline = vi
+    .spyOn(ownershipObservation.systemProcessOwnershipHost, "captureBaseline")
+    .mockImplementation((signal) => host.captureBaseline!(signal));
+  const provider = new PlaywrightElectronActiveProvider({});
+  try {
+    const result = await provider.capture(
+      {
+        ...electronActiveObservationInputSchema.parse({
+          executable_path: process.execPath,
+          application_path: process.execPath,
+        }),
+        application_root: dirname(process.execPath),
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected inspection failure");
+    const primary = primaryAnalysisError(result.error);
+    expect(primary.userCategory).not.toBe("cancelled");
+    expect(primary.cause).toBe(physical);
+    expect(
+      primary.secondaryFailures.some((failure) => failure.cause === reason),
+    ).toBe(true);
+  } finally {
+    baseline.mockRestore();
+    prepare.mockRestore();
+    await provider.close();
+  }
+});
 
 it("retains failed ownership-helper cleanup until provider close retries it", async () => {
   const controller = new AbortController();

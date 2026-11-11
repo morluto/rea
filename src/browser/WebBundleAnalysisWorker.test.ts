@@ -11,12 +11,14 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import {
+  primaryAnalysisError,
   resolvedAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import {
   webBundleHeapExhaustedReason,
   webBundleHeapExhaustedRemediation,
@@ -340,7 +342,7 @@ it.each(["reason", "native-abort"] as const)(
         controller.abort(reason);
         throw kind === "reason"
           ? reason
-          : new DOMException("aborted", "AbortError");
+          : new ExecFileOutputCancelledError(reason);
       });
     const worker = new WebBundleAnalysisWorker();
     try {
@@ -391,6 +393,41 @@ it("retains ownership-helper cleanup until worker close retries it", async () =>
       controller.signal,
     );
     const error = failureOf(result);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it("retains failed helper cleanup without caller cancellation", async () => {
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const physical = new DarwinProcessOwnershipInspectionError(
+    "inspection failed",
+    { cleanupFailure: cleanup, cleanupOwner: owner },
+  );
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockRejectedValue(physical);
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(makeScript("0"), 5_000);
+    const error = failureOf(result);
+    expect(primaryAnalysisError(error).cause).toBe(physical);
     expect(error.cleanupIncomplete).toBe(true);
     expect(error.cleanupResources).toContain("helper-root");
     await worker.close();
