@@ -200,20 +200,22 @@ export const parseEnvironmentValues = (
   unresolvedSettings: ReadonlySet<string> = new Set(),
 ): Result<Environment, ConfigurationError> => {
   // Unknown client-specific entries are preserved by registration owners and
-  // still cross the child-process boundary. Check their byte admission before
+  // still cross the child-process boundary. Check names and byte admission before
   // the known-setting schema strips them; never include rejected values.
   // Cordis expression values stay unknown, but their literal names are known.
   const keys = new Set([...Object.keys(environment), ...unresolvedSettings]);
   const invalidEntries = [...keys]
     .filter(
       (key) =>
+        key.includes("=") ||
         key.includes("\0") ||
         (Object.hasOwn(environment, key) && environment[key]?.includes("\0")),
     )
     .map((setting) => ({
       setting,
-      constraint:
-        "Environment variable names and values must not contain NUL bytes",
+      constraint: setting.includes("=")
+        ? "Environment variable names must not contain '='"
+        : "Environment variable names and values must not contain NUL bytes",
     }));
   if (invalidEntries.length > 0)
     return err(

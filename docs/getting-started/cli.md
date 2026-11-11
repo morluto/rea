@@ -651,6 +651,13 @@ be verified. See [MCP contracts](../reference/mcp-contracts.md) for session life
 [Ghidra first-query deadlines](../reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+One-shot binary analysis validates the selected operation's input before creating
+a provider session, opening the target, or replaying a snapshot. Invalid selectors
+and option combinations report their input errors before target or provider
+availability errors. An already-cancelled request keeps its cancellation reason.
+Caller-selected paths and request parameters remain separate from parsed execution
+arguments in Evidence.
+
 A one-shot command attempts provider-session and runtime cleanup before reporting
 a failure. If cleanup remains incomplete, inspect the reported resources and
 follow the error's remediation. [Same-session cleanup retry](../reference/mcp-contracts.md#retained-cleanup-retry),

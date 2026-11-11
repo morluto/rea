@@ -124,11 +124,17 @@ const stringAt = (
   return { name: text, missing: false };
 };
 
-const tableBytes = (
+const stringTableBytes = (
   bytes: Buffer,
   section: NativeSection | undefined,
 ): Buffer | null => {
-  if (section === undefined || !section.file_backed) return null;
+  if (
+    section === undefined ||
+    section.type !== 3 ||
+    !section.file_backed ||
+    section.compressed
+  )
+    return null;
   const offset = Number(section.offset);
   const size = Number(section.size);
   if (offset < 0 || size < 0 || offset > bytes.length - size) return null;
@@ -144,9 +150,19 @@ const readTable = (
 ): {
   readonly symbols: ElfInitializerSymbol[];
   readonly truncated: boolean;
+  readonly incomplete: boolean;
 } => {
   const width = facts.bits === 64 ? 24 : 16;
-  const strings = tableBytes(facts.bytes, sections[section.link]);
+  const strings = stringTableBytes(facts.bytes, sections[section.link]);
+  const compressedStrings = sections[section.link]?.compressed === true;
+  if (compressedStrings)
+    notes.add(
+      "A symbol string table is compressed; its names were not decoded.",
+    );
+  else if (strings === null)
+    notes.add(
+      "A symbol table does not link a readable SHT_STRTAB section; its names were not decoded.",
+    );
   const start = Number(section.offset);
   const declared = section.size / BigInt(width);
   const count = Number(declared < BigInt(budget) ? declared : BigInt(budget));
@@ -177,7 +193,7 @@ const readTable = (
       type: parsed.value.type,
     });
   }
-  return { symbols, truncated: truncated || nameMissing };
+  return { symbols, truncated, incomplete: nameMissing || strings === null };
 };
 
 /** Load SHT_SYMTAB and SHT_DYNSYM once. Defined STT_FUNC names win ties. */
@@ -223,10 +239,20 @@ export const loadElfSymbolIndex = (
   sections.forEach((section, index) => {
     if (truncated) return;
     if (section.type !== 2 && section.type !== 11) return;
-    if (
-      !section.file_backed ||
-      section.size % BigInt(facts.bits === 64 ? 24 : 16) !== 0n
-    ) {
+    if (section.compressed) {
+      notes.add("A symbol table is compressed; its symbols were not decoded.");
+      unreadable = true;
+      return;
+    }
+    const width = BigInt(facts.bits === 64 ? 24 : 16);
+    if (section.entry_size !== 0n && section.entry_size !== width) {
+      notes.add(
+        "A symbol table has an unexpected entry size; its symbols were not decoded.",
+      );
+      unreadable = true;
+      return;
+    }
+    if (!section.file_backed || section.size % width !== 0n) {
       notes.add(
         "A symbol table is not stored in the file or its size is not a whole number of entries, so its names were not read.",
       );
@@ -237,6 +263,7 @@ export const loadElfSymbolIndex = (
     budget -= table.symbols.length;
     tables.set(index, table.symbols);
     truncated ||= table.truncated;
+    unreadable ||= table.incomplete;
     for (const symbol of table.symbols) consider(symbol);
   });
   return {
@@ -440,7 +467,11 @@ export const sectionRelocations = async (
   for (const [position, section] of input.sections.entries()) {
     const encoding = applicable(input, section);
     if (encoding === null) continue;
-    if (!section.file_backed) {
+    if (!section.file_backed || section.compressed) {
+      if (section.compressed)
+        input.notes.add(
+          "A relocation section is compressed; its records were not decoded.",
+        );
       skip(section);
       continue;
     }

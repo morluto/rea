@@ -3,6 +3,40 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
+  "load('./dep.cjs')",
+  "load.call(null,'./dep.cjs')",
+  "load.apply(null,['./dep.cjs'])",
+  "Reflect.apply(load,null,['./dep.cjs'])",
+])("retains a createRequire filename through %s", (call) => {
+  const result = analyzeJavaScriptStaticSource(
+    `import {createRequire} from 'node:module';const load=createRequire(new URL('./sub/entry.cjs',import.meta.url));${call};`,
+  );
+  expect(result.references.filter(({ kind }) => kind === "require")).toEqual([
+    expect.objectContaining({
+      specifier: "./dep.cjs",
+      resolution_base_path: "./sub/entry.cjs",
+    }),
+  ]);
+});
+
+it.each([
+  "load.call(null,'./dep.cjs')",
+  "Reflect.apply(load,null,['./dep.cjs'])",
+])("keeps mixed createRequire bases unknown through %s", (call) => {
+  const result = analyzeJavaScriptStaticSource(
+    `import {createRequire} from 'node:module';const load=createRequire(flag?import.meta.url:new URL('./sub/entry.cjs',import.meta.url));${call};`,
+  );
+  expect(result.references.filter(({ kind }) => kind === "require")).toEqual([
+    expect.objectContaining({ specifier: null }),
+  ]);
+  expect(
+    result.references.every(
+      (reference) => !("resolution_base_path" in reference),
+    ),
+  ).toBe(true);
+});
+
+it.each([
   ['const h={require:module.require};h.require("./shared.cjs");', true],
   [
     'const h={require:module.require};h.require.call(module,"./shared.cjs");',

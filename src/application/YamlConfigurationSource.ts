@@ -9,13 +9,37 @@ import {
 } from "yaml";
 import { retainYamlSequenceAnnotations } from "./YamlSequenceAnnotations.js";
 
+export const yamlNumericValuesEqual = (
+  left: bigint | number,
+  right: bigint | number,
+): boolean => {
+  if (typeof left === "bigint" && typeof right === "bigint")
+    return left === right;
+  if (typeof left === "number" && typeof right === "number")
+    return left === right || (Number.isNaN(left) && Number.isNaN(right));
+  const integer = typeof left === "bigint" ? left : right;
+  const number = typeof left === "number" ? left : right;
+  return (
+    Number.isFinite(number) &&
+    Number.isInteger(number) &&
+    BigInt(number) === integer
+  );
+};
+
 /** Keep source annotations and unchanged scalars when updating a value. */
 export const retainYamlConfigurationSource = (
   previous: unknown,
   next: Node,
   retainedSources: ReadonlySet<Node>,
 ): Node => {
-  if (isScalar(previous) && isScalar(next) && previous.value === next.value) {
+  if (
+    isScalar(previous) &&
+    isScalar(next) &&
+    (previous.value === next.value ||
+      (typeof previous.value === "bigint" &&
+        typeof next.value === "number" &&
+        yamlNumericValuesEqual(previous.value, next.value)))
+  ) {
     if (!retainedSources.has(previous)) return previous;
     const copied = previous.clone();
     if (!isScalar(copied)) throw new TypeError("Invalid YAML scalar copy");

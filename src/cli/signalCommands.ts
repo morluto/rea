@@ -61,6 +61,12 @@ export const registerSignalCommands = (
             path: ["all"],
             message: "all and limit are mutually exclusive",
           });
+      })
+      .meta({
+        not: {
+          required: ["all", "limit"],
+          properties: { all: { const: true } },
+        },
       }),
     run: ({ options: { all, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
@@ -121,7 +127,13 @@ export const registerSignalCommands = (
       .refine(
         withinSignalRecordingSelectorBudget,
         signalRecordingSelectorBudgetIssue,
-      ),
+      )
+      .meta({
+        not: {
+          required: ["all_lines", "line_limit"],
+          properties: { all_lines: { const: true } },
+        },
+      }),
     run: ({ args, options: { all_lines, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {

@@ -20,6 +20,7 @@ import { ClientConfigurationPublication } from "../../../src/application/ClientC
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
@@ -1819,11 +1820,21 @@ describe("layered uninstall outcomes", () => {
     await mkdir(blocker);
 
     const host = systemUninstallHost(home);
+    const cleanupReason = "Controlled final cleanup diagnostic.";
+    const cleanup = new ProviderCleanupError(
+      "uninstall",
+      [],
+      { reason: cleanupReason },
+      {
+        operation: "uninstall",
+        cleanup: { reason: cleanupReason, resources: [] },
+      },
+    );
     const blocked = await runUninstall(false, {
       ...host,
       close: async () => {
         await host.close?.();
-        return "Controlled final cleanup diagnostic.";
+        return cleanup;
       },
     });
 
@@ -1855,8 +1866,9 @@ describe("layered uninstall outcomes", () => {
     expect(blocked.items).toContainEqual({
       name: "uninstall_cleanup",
       status: "failed",
-      detail: "Controlled final cleanup diagnostic.",
+      detail: `Uninstall resource cleanup failed: ${cleanupReason}`,
     });
+    expect(blocked.cleanup).toEqual({ reason: cleanupReason, resources: [] });
 
     await rm(blocker, { recursive: true });
     const recovered = await runUninstall(false, systemUninstallHost(home));

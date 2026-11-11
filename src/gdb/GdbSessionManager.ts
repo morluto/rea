@@ -1685,6 +1685,7 @@ export class GdbSessionManager {
     const lines: { readonly value: string; readonly invalidUtf8: boolean }[] =
       [];
     let offset = 0;
+    let framingFailure: string | undefined;
     while (offset < data.byteLength) {
       if (session.discardingOversizedStreamRecord) {
         const newline = data.indexOf(0x0a, offset);
@@ -1721,11 +1722,8 @@ export class GdbSessionManager {
           offset = newline + 1;
           continue;
         }
-        this.#failProtocol(
-          session,
-          `GDB emitted an MI line exceeding the ${String(MAX_MI_LINE_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`,
-        );
-        return;
+        framingFailure = `GDB emitted an MI line exceeding the ${String(MAX_MI_LINE_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
+        break;
       }
       this.#appendLineBytes(session, piece);
       if (newline < 0) break;
@@ -1801,6 +1799,13 @@ export class GdbSessionManager {
         line,
       );
       if (match === null) continue;
+      if (invalidUtf8) {
+        this.#failProtocol(
+          session,
+          "GDB emitted an MI result record containing invalid UTF-8.",
+        );
+        return;
+      }
       const token = Number(match[1]);
       const pending =
         session.pending.get(token) ??
@@ -1847,6 +1852,8 @@ export class GdbSessionManager {
         completion_status: "complete",
       });
     }
+    if (framingFailure !== undefined)
+      this.#failProtocol(session, framingFailure);
   }
 
   #appendLineBytes(session: GdbSession, piece: Buffer): void {

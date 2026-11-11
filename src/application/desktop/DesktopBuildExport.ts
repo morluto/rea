@@ -46,6 +46,7 @@ import {
   WORK,
 } from "./DesktopBuildCommands.js";
 import {
+  planOutputTree,
   writeOutputTree,
   writtenWithOpenHandles,
 } from "./DesktopOutputTree.js";
@@ -183,7 +184,7 @@ const writeBundle = async (
     unchecked: boolean;
   }[] = [];
   const unclosed = await writeOutputTree(
-    directory,
+    await planOutputTree(directory, { operation: EXPORT, field: "directory" }),
     async (tree) => {
       fetched = await fetchHomeFolder(
         computer,

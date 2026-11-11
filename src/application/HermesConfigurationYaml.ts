@@ -17,6 +17,7 @@ import {
 import {
   retainYamlConfigurationSource,
   retainYamlScalarSource,
+  yamlNumericValuesEqual,
 } from "./YamlConfigurationSource.js";
 
 const SOURCE_SCALAR_TAGS = new Set([
@@ -166,23 +167,6 @@ const numericValue = (value: unknown): bigint | number | undefined => {
   return undefined;
 };
 
-const numericValuesEqual = (
-  left: bigint | number,
-  right: bigint | number,
-): boolean => {
-  if (typeof left === "bigint" && typeof right === "bigint")
-    return left === right;
-  if (typeof left === "number" && typeof right === "number")
-    return left === right || (Number.isNaN(left) && Number.isNaN(right));
-  const integer = typeof left === "bigint" ? left : right;
-  const number = typeof left === "number" ? left : right;
-  return (
-    Number.isFinite(number) &&
-    Number.isInteger(number) &&
-    BigInt(number) === integer
-  );
-};
-
 const createHermesYamlOptions = () => {
   const timestamps = new Map<string, HermesTimestampFacts | undefined>();
   const timestampFacts = (source: string): HermesTimestampFacts | undefined => {
@@ -230,15 +214,15 @@ const createHermesYamlOptions = () => {
     const right = hermesKey(rightNode);
     if (left.kind !== right.kind) return false;
     if (left.kind === "numeric" && right.kind === "numeric")
-      return numericValuesEqual(left.value, right.value);
+      return yamlNumericValuesEqual(left.value, right.value);
     return left.value === right.value;
   };
   return {
     // Hermes defaults to YAML 1.1; an explicit document directive still wins.
     // Use the same schema to interpret existing values and quote new strings.
     version: "1.1" as const,
-    // Keep integer key identity exact; parseHermesConfigurationYaml's reviver
-    // restores the existing number-valued consumer contract.
+    // Keep integer identity exact; the consumer projection converts only
+    // safely representable integers to numbers.
     intAsBigInt: true,
     customTags: (tags: Tags) => {
       const hasTimestamp = tags.some(
@@ -291,7 +275,9 @@ export const parseHermesConfigurationYaml = (text: string): unknown => {
     ? {}
     : document.toJS({
         reviver: (_key, value) =>
-          typeof value === "bigint" ? Number(value) : value,
+          typeof value === "bigint" && Number.isSafeInteger(Number(value))
+            ? Number(value)
+            : value,
       });
 };
 
