@@ -158,7 +158,10 @@ const FAKE_APT_GET = String.raw`
 import os
 import re
 import sys
+import json
 
+with open(os.path.join(os.environ["FAKE_REA_NOTES"], "apt.jsonl"), "a") as handle:
+    handle.write(json.dumps({"argv": sys.argv[1:]}) + "\n")
 with open(os.environ["APT_CONFIG"]) as handle:
     conf = handle.read()
 lists = re.search(r'Dir::State::Lists "([^"]+)"', conf).group(1)

@@ -66,7 +66,18 @@ try {
     } else {
       // Overview controls verify identity, ABI and snapshot section identities;
       // they deliberately do not require any printable string values.
-      assert.ok(result.libapp.sections.length > 0);
+      const section = result.libapp.sections.find(
+        ({ name }) => name === oracle.section.name,
+      );
+      assert.ok(
+        section,
+        "Overview omitted the independently pinned snapshot section",
+      );
+      assert.deepEqual(
+        { name: section.name, offset: section.offset, size: section.size },
+        oracle.section,
+        "Overview snapshot section identity differs from the independent ELF oracle",
+      );
     }
     const tokenEstimate = calls.reduce(
       (n, call) => n + call.request_token_estimate + call.reply_token_estimate,

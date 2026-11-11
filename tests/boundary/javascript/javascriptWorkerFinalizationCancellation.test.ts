@@ -70,8 +70,8 @@ it.each([false, true])(
         cancelled: !cancelled.ok && (cancelled.error.error.cleanupPrimary ?? cancelled.error.error)._tag === 'AnalysisCancelledError',
         exactReason: !cancelled.ok && (cancelled.error.error.cleanupPrimary ?? cancelled.error.error).cause === reason,
         cleanupIncomplete: !cancelled.ok && cancelled.error.error.cleanupIncomplete,
-        parseStatus: facts.javascript?.parse_status, hasModule: facts.module !== null,
-        hasProjection: facts.projection !== null, reusable: worker.canReuse() };
+        parseStatus: facts.javascript?.parse_status, hasModule: facts.module != null,
+        hasProjection: facts.projection != null, exportedNames: facts.module?.moduleLinks.filter(link => link.kind === 'export').map(link => link.exportedName), projectedModule: facts.projection?.nodes.some(node => node.kind === 'module' && node.identity.module_path === 'cancelled.mjs'), reusable: worker.canReuse() };
     } finally {
       fs.promises.rm = nativeRm;
       syncBuiltinESMExports();
@@ -101,6 +101,8 @@ it.each([false, true])(
       parseStatus: "complete",
       hasModule: true,
       hasProjection: true,
+      exportedNames: ["observed"],
+      projectedModule: true,
       reusable: false,
       rootRemoved: true,
       childExited: true,

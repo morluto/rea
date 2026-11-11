@@ -98,6 +98,7 @@ import {
 } from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
 import { hasCompoundFileSignature } from "../domain/windows/compoundFile.js";
+import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
@@ -818,6 +819,7 @@ const detectArtifactFormat = async (
   if (esp === "esp-image") return "esp-image";
   if (hasFitImagesNode(magic)) return "fit";
   if (hasCompoundFileSignature(magic)) return "compound-file";
+  if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
@@ -902,6 +904,7 @@ const isArchiveFormat = (
     "esp-flash-image",
     "fit",
     "compound-file",
+    "ntfs-mft",
   ].includes(format);
 
 /** Whether the leading bytes begin any executable header family, valid or not. */

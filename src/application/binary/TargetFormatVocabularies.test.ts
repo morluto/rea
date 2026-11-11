@@ -136,6 +136,7 @@ const TARGETS: TargetFixtures = {
   },
   fit: { ...archive, format: "fit" },
   "compound-file": { ...archive, format: "compound-file" },
+  "ntfs-mft": { ...archive, format: "ntfs-mft" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },

@@ -389,7 +389,7 @@ const providerSettingSelections = (
 ];
 
 /** Render what the registration comparison established without inferring its effective environment. */
-export const registrationEnvironmentDetail = (
+const registrationEnvironmentDetail = (
   client: string,
   {
     unrecorded,

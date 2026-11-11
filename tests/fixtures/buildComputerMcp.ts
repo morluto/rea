@@ -1,4 +1,5 @@
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -63,9 +64,14 @@ export const connectBuildServer = async (
   );
   const client = new Client({ name: "build-computer-mcp", version: "1" });
   onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

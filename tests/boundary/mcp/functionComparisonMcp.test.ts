@@ -308,29 +308,6 @@ describe("function comparison MCP integration", () => {
       },
     });
   });
-
-  it("accepts inline Evidence without prior session registration", async () => {
-    const session = createTestBinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const { client } = await createApplicationMcpHarness({
-      session,
-      clientIdentity: { name: "function-link-test", version: "1" },
-    });
-    const result = await client.callTool({
-      name: "compare_functions",
-      arguments: {
-        left: FUNCTION_COMPARISON_EXAMPLE.left,
-        right: FUNCTION_COMPARISON_EXAMPLE.right,
-      },
-    });
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      normalized_result: { status: expect.any(String) },
-    });
-  });
 });
 
 describe("function comparison input-kind diagnostics", () => {

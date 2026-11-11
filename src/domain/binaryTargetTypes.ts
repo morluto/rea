@@ -303,7 +303,8 @@ export type BinaryTarget =
           | "uf2"
           | "dfuse"
           | "fit"
-          | "compound-file";
+          | "compound-file"
+          | "ntfs-mft";
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { createVerifierMcpOwner } from "./lib/verifier-mcp-owner.mjs";
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -61,6 +63,7 @@ for (const name of [
   "REA_GHIDRA_DISABLED_ANALYZERS",
 ])
   delete env[name];
+const compilerCommands = await createVerifierCommands();
 const report = {
   verifier: "ghidra-owned-checkpoints",
   phases: [],
@@ -119,6 +122,7 @@ async function refuseCli(procedure, flags, expected) {
   return refusal;
 }
 async function connect(environment = {}) {
+  const owner = createVerifierMcpOwner();
   const client = new Client({
     name: "rea-ghidra-checkpoint-verifier",
     version: "1",
@@ -130,23 +134,15 @@ async function connect(environment = {}) {
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => {});
-  try {
-    await client.connect(transport);
-  } catch (cause) {
-    await client.close();
-    await transport.close();
-    throw cause;
-  }
+  compilerCommands.adopt(owner, "checkpoint MCP connection");
+  await owner.open(client, transport);
   const raw = (name, args = {}) =>
     client.callTool({ name, arguments: args }, { timeout: 240000 });
   return {
     raw,
     call: async (name, args = {}) =>
       requireMcpOperationResult(await raw(name, args), name),
-    close: async () => {
-      await client.close();
-      await transport.close();
-    },
+    close: () => owner.close(),
   };
 }
 let manifestPath;
@@ -160,15 +156,11 @@ __attribute__((noinline)) int rea_checkpoint_leaf(CheckpointRecord *record) { re
 int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf(&record); }
 `,
   );
-  await exec("cc", [
-    "-O0",
-    "-g",
-    "-gdwarf-4",
-    "-fno-inline",
-    sourcePath,
-    "-o",
-    target,
-  ]);
+  await compilerCommands.exec(
+    "cc",
+    ["-O0", "-g", "-gdwarf-4", "-fno-inline", sourcePath, "-o", target],
+    { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
+  );
   const targetDigest = await sha(target);
   report.target = {
     sha256: targetDigest,
@@ -466,9 +458,10 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     report.failure_stderr = cause.stderr.slice(-4000);
   process.exitCode = 1;
 } finally {
-  report.run = await completeVerifierRun(run);
   let cleanupVerified = false;
   try {
+    await compilerCommands.close();
+    report.run = await completeVerifierRun(run);
     assertVerifierCleanupComplete(report.run.process_lineage);
     cleanupVerified = true;
   } catch (cause) {

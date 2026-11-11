@@ -882,6 +882,45 @@ describe("managed application graph coverage", () => {
       omitted_count: null,
       limits: [],
     });
+    const complete = memberGraph(
+      buildManagedPeFixture({ ilBody: tinyIl([0x2a]) }),
+    );
+    for (const [graph, status, evidenceId] of [
+      [parserPartialResult.graph, "partial", parserPartialEvidence.evidence_id],
+      [complete.graph, "complete", complete.memberEvidence.evidence_id],
+    ] as const) {
+      const expected = {
+        status,
+        truncated: false,
+        omitted_count: status === "partial" ? null : 0,
+        limits: [],
+      };
+      for (const kind of [
+        "managed-type",
+        "managed-method",
+        "managed-field",
+      ] as const) {
+        const nodes = graph.nodes.filter((node) => node.kind === kind);
+        expect(nodes.length).toBeGreaterThan(0);
+        for (const node of nodes) {
+          expect(node.observations.length).toBeGreaterThan(0);
+          for (const observation of node.observations) {
+            expect(observation.evidence.coverage).toEqual(expected);
+            expect(observation.evidence.evidence_ids).toContain(evidenceId);
+          }
+        }
+        const ids = new Set(nodes.map(({ node_id }) => node_id));
+        const contains = graph.edges.filter(
+          (edge) =>
+            edge.relation === "contains" && ids.has(edge.target_node_id),
+        );
+        expect(contains).toHaveLength(nodes.length);
+        for (const edge of contains) {
+          expect(edge.evidence.coverage).toEqual(expected);
+          expect(edge.evidence.evidence_ids).toContain(evidenceId);
+        }
+      }
+    }
   });
 });
 

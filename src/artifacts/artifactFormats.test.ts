@@ -44,7 +44,8 @@ type FormatsWithReaders =
   | "dfuse"
   | "esp-flash-image"
   | "fit"
-  | "compound-file";
+  | "compound-file"
+  | "ntfs-mft";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;
