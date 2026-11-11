@@ -11,27 +11,18 @@ import {
   type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import {
+  artifactEdgeId,
   artifactGraphDigest,
   artifactIdForContent,
   artifactManifestId,
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
 import { createEvidence } from "./evidence.js";
+import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
-/** Recommit observation variants so comparisons exercise valid Evidence carriers. */
-const commit = (inventory: ArtifactInventoryResult) => {
-  const graphSha256 = artifactGraphDigest({
-    nodes: inventory.nodes,
-    occurrences: inventory.occurrences,
-    edges: inventory.edges,
-    contradictions: inventory.integrity_contradictions,
-  });
-  inventory.manifest.graph_sha256 = graphSha256;
-  inventory.manifest.manifest_id = artifactManifestId(
-    inventory.manifest.root_artifact_id,
-    graphSha256,
-  );
-  return createEvidence(
+const inventoryCarrier = (inventory: ArtifactInventoryResult) =>
+  createEvidence(
     {
       path: "packing-observation",
       sha256: inventory.manifest.root_sha256,
@@ -46,7 +37,209 @@ const commit = (inventory: ArtifactInventoryResult) => {
       authority: "shipped-artifact",
     },
   );
+
+/** Recommit observation variants so comparisons exercise valid Evidence carriers. */
+const commit = (inventory: ArtifactInventoryResult) => {
+  const graphSha256 = artifactGraphDigest({
+    nodes: inventory.nodes,
+    occurrences: inventory.occurrences,
+    edges: inventory.edges,
+    contradictions: inventory.integrity_contradictions,
+  });
+  inventory.manifest.graph_sha256 = graphSha256;
+  inventory.manifest.manifest_id = artifactManifestId(
+    inventory.manifest.root_artifact_id,
+    graphSha256,
+  );
+  return inventoryCarrier(inventory);
 };
+
+const relationInventory = (
+  secondContent = "2",
+  firstRelation: ArtifactInventoryResult["edges"][number]["relation"] = "contains",
+) => {
+  const inventory = artifactInventoryResultSchema.parse(
+    ARTIFACT_COMPARISON_EXAMPLE.left.normalized_result,
+  );
+  const root = inventory.occurrences[0]!;
+  const rootNode = inventory.nodes[0]!;
+  const rootId = inventory.manifest.root_artifact_id;
+  const members = [
+    { path: "one.js", digit: "1", relation: firstRelation },
+    { path: "two.js", digit: secondContent, relation: "contains" },
+  ] as const;
+  for (const [ordinal, { path, digit, relation }] of members.entries()) {
+    const sha256 = digit.repeat(64);
+    const artifactId = artifactIdForContent(sha256);
+    const occurrence: ArtifactOccurrence = {
+      ...root,
+      occurrence_id: occurrenceIdForLocation({
+        rootArtifactId: rootId,
+        logicalPath: path,
+        entryKind: "file",
+      }),
+      artifact_id: artifactId,
+      parent_occurrence_id: root.occurrence_id,
+      logical_path: path,
+    };
+    const edge = {
+      ordinal,
+      parent_artifact_id: rootId,
+      relation,
+      occurrence_id: occurrence.occurrence_id,
+      producer: null,
+    };
+    inventory.nodes.push({ ...rootNode, artifact_id: artifactId, sha256 });
+    inventory.occurrences.push(occurrence);
+    inventory.edges.push({
+      ...edge,
+      edge_id: artifactEdgeId(edge, occurrence),
+    });
+  }
+  inventory.nodes.sort((left, right) =>
+    compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
+  );
+  inventory.edges.sort((left, right) =>
+    compareUnicodeCodePoints(left.edge_id, right.edge_id),
+  );
+  inventory.coverage = { scope: "container-entries", status: "complete" };
+  inventory.manifest.node_count = inventory.nodes.length;
+  inventory.manifest.occurrence_count = inventory.occurrences.length;
+  inventory.manifest.edge_count = inventory.edges.length;
+  return { inventory, evidence: commit(inventory) };
+};
+
+it.each(["left", "right"] as const)(
+  "does not infer a relation change from an omitted edge on the %s",
+  (partialSide) => {
+    const { inventory, evidence } = relationInventory();
+    const omitted = inventory.occurrences.find(
+      ({ logical_path }) => logical_path === "one.js",
+    )!;
+    const page = inventoryCarrier({
+      ...inventory,
+      edges: inventory.edges.filter(
+        ({ occurrence_id }) => occurrence_id !== omitted.occurrence_id,
+      ),
+    });
+    const result =
+      partialSide === "left"
+        ? compareArtifacts(page, evidence)
+        : compareArtifacts(evidence, page);
+    expect(result).toMatchObject({
+      status: "truncated",
+      summary: { changed: 0 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
+          logical_path: "one.js",
+          classification: "unknown",
+          dimensions: ["availability"],
+        }),
+      ]),
+    });
+    expect(compareArtifacts(evidence, evidence)).toMatchObject({
+      status: "unchanged",
+      changes: [],
+    });
+  },
+);
+
+it("keeps a proven content change with incomplete relation observations", () => {
+  const left = relationInventory().evidence;
+  const { inventory } = relationInventory("3");
+  const result = compareArtifacts(
+    left,
+    inventoryCarrier({ ...inventory, edges: inventory.edges.slice(0, 1) }),
+  );
+  expect(result).toMatchObject({
+    status: "truncated",
+    changes: expect.arrayContaining([
+      expect.objectContaining({
+        logical_path: "two.js",
+        classification: "changed",
+        dimensions: ["content", "availability"],
+      }),
+    ]),
+  });
+});
+
+it("does not infer a relation change when a retained edge's logical parent is omitted", () => {
+  const { inventory, evidence } = relationInventory();
+  const result = compareArtifacts(
+    evidence,
+    inventoryCarrier({
+      ...inventory,
+      occurrences: inventory.occurrences.slice(1),
+    }),
+  );
+  expect(result).toMatchObject({
+    status: "truncated",
+    summary: { changed: 0 },
+    changes: expect.arrayContaining([
+      expect.objectContaining({
+        logical_path: "one.js",
+        classification: "unknown",
+        dimensions: ["availability"],
+      }),
+    ]),
+  });
+});
+
+it("compares complete relations when an unrelated node is omitted", () => {
+  const left = relationInventory().evidence;
+  const { inventory } = relationInventory("2", "embeds");
+  const unrelated = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === "two.js",
+  )!;
+  const result = compareArtifacts(
+    left,
+    inventoryCarrier({
+      ...inventory,
+      nodes: inventory.nodes.filter(
+        ({ artifact_id }) => artifact_id !== unrelated.artifact_id,
+      ),
+    }),
+  );
+  expect(result).toMatchObject({
+    status: "truncated",
+    changes: expect.arrayContaining([
+      expect.objectContaining({
+        logical_path: "one.js",
+        classification: "changed",
+        dimensions: ["relations"],
+      }),
+    ]),
+  });
+});
+
+it("keeps a historical edge and its Evidence while reporting omitted coverage as unknown", () => {
+  const { inventory, evidence } = relationInventory();
+  const oldInventory = structuredClone(inventory);
+  const occurrence = oldInventory.occurrences.find(
+    ({ logical_path }) => logical_path === "one.js",
+  )!;
+  delete occurrence.relationship_coverage;
+  const historical = commit(oldInventory);
+  const parsed = parseArtifactInventoryEvidence(historical);
+  expect(parsed.evidence[0]).toEqual(historical);
+  expect(parsed.inventory.manifest).toEqual(oldInventory.manifest);
+  expect(parsed.inventory.edges).toEqual(oldInventory.edges);
+  expect(
+    parsed.inventory.occurrences.find(
+      ({ occurrence_id }) => occurrence_id === occurrence.occurrence_id,
+    ),
+  ).not.toHaveProperty("relationship_coverage");
+  expect(compareArtifacts(historical, evidence)).toMatchObject({
+    status: "unknown",
+    changes: [
+      {
+        logical_path: "one.js",
+        classification: "unknown",
+        dimensions: ["availability"],
+      },
+    ],
+  });
+});
 
 const observation = (
   facts: Pick<ArtifactOccurrence, "hash_status"> & Partial<ArtifactOccurrence>,
@@ -236,6 +429,67 @@ it("retains known packing changes when content is unavailable", () => {
   });
 });
 
+it("compares declared digests without using limitation prose", () => {
+  const claim = { algorithm: "md5" as const, digest: "ab".repeat(16) };
+  const edited = { algorithm: "md5" as const, digest: "cd".repeat(16) };
+  const unavailable = (integrity?: {
+    readonly algorithm: "md5";
+    readonly digest: string;
+  }) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: ["same derived note"],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const changes = (
+    left: ReturnType<typeof unavailable>,
+    right: ReturnType<typeof unavailable>,
+  ) =>
+    compareArtifacts(left, right).changes.map(
+      ({ classification, dimensions }) => ({ classification, dimensions }),
+    );
+  const equal = changes(unavailable(claim), unavailable(claim));
+  const oneSided = changes(unavailable(claim), unavailable());
+  const different = changes(unavailable(claim), unavailable(edited));
+  const noted = (
+    integrity:
+      | { readonly algorithm: "md5"; readonly digest: string }
+      | undefined,
+    limitations: readonly string[],
+  ) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: [...limitations],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const sameClaimDifferentNotes = changes(
+    noted(claim, ["reader caveat"]),
+    noted(claim, ["different caveat"]),
+  );
+  const absentDifferentNotes = changes(
+    noted(undefined, ["unread container suffix"]),
+    noted(undefined, ["content access failed"]),
+  );
+  expect(equal.length).toBeGreaterThan(0);
+  expect(oneSided).toHaveLength(equal.length);
+  expect(different).toHaveLength(equal.length);
+  expect(equal).toEqual(
+    equal.map(() => ({
+      classification: "unknown",
+      dimensions: ["availability"],
+    })),
+  );
+  expect(sameClaimDifferentNotes).toEqual(equal);
+  expect(absentDifferentNotes).toEqual(equal);
+  for (const result of [oneSided, different])
+    expect(result).toEqual(
+      result.map(() => ({
+        classification: "unknown",
+        dimensions: ["metadata", "availability"],
+      })),
+    );
+});
+
 it("keeps unavailable content unknown when packing declarations agree", () => {
   expect(
     compareArtifacts(
@@ -303,6 +557,7 @@ const recordObservation = (
     }),
     artifact_id: artifactId,
     parent_occurrence_id: root.occurrence_id,
+    relationship_coverage: artifactId === null ? "unknown" : "complete",
     logical_path: "record",
     entry_kind: "metadata",
     artifact_kind: "package-metadata",

@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { ElfUnwindRangesService } from "./ElfUnwindRangesService.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
@@ -406,12 +407,13 @@ it("rejects a report that fails the output schema", async () => {
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late ElfUnwindRanges cancellation" };
   const service = new ElfUnwindRangesService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -419,6 +421,11 @@ it("discards an observation if the caller cancels while the provider completes",
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_elf_unwind_ranges",
+    normalized_result: report,
+  });
 });

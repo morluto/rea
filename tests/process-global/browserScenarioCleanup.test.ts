@@ -24,7 +24,10 @@ import {
 } from "../../src/domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../src/domain/browserObservationError.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
 
 const state = vi.hoisted(() => ({
@@ -414,7 +417,7 @@ it("retains completed Evidence when provider shutdown fails after a successful c
   if (!captured.ok) throw captured.error;
   const evidence = createBrowserScenarioEvidence(
     scenario,
-    captured.value,
+    { source: jsonValueSchema.parse(captured.value), facts: captured.value },
     provider.identity(),
   );
   const close = vi.fn().mockRejectedValue(

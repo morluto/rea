@@ -14,7 +14,10 @@ import { runDerivedOperation } from "./runDerivedOperation.js";
 import { applicationToolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
-import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
+import {
+  recordEvidenceSources,
+  retainAnalysisResultSources,
+} from "../application/investigation/recordEvidenceSources.js";
 
 /** Register Evidence-backed deterministic artifact comparison. */
 export const registerArtifactComparisonTool = (
@@ -50,11 +53,24 @@ export const registerArtifactComparisonTool = (
               if (!compared.ok) throw compared.error;
               return compared.value;
             },
+            (value) => ({
+              evidence: value.evidence,
+              sources: [sources.value.left, sources.value.right],
+            }),
           );
-          if (!computed.ok)
-            return server.delivery.toCallToolResult(computed, contract);
+          const completed = retainAnalysisResultSources(
+            contract.name,
+            session.recordEvidence.bind(session),
+            computed,
+          );
+          if (!completed.ok)
+            return server.delivery.toPartialErrorToolResult(
+              completed.error,
+              contract.returnsTargetContent,
+              session.recordEvidence.bind(session),
+            );
           const { left, right } = sources.value;
-          const { comparison, evidence } = computed.value;
+          const { comparison, evidence } = completed.value;
           const recordedSources = recordEvidenceSources(
             (source) => session.recordEvidence(source),
             [left, right],

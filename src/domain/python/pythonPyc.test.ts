@@ -3,8 +3,48 @@ import {
   inspectPythonPycInputSchema,
   pythonPycMarshalProfile,
   PYTHON_PYC_MARSHAL_PROFILES,
+  pythonPycHeaderSchema,
 } from "./pythonPyc.js";
 import { pythonBytecodeIdentity } from "./pythonBytecodeIdentity.js";
+
+const hashHeader = {
+  magic: 3531,
+  python_version: "3.12",
+  code_layout: "py311",
+  flags: 3,
+  hash_based: true,
+  check_source: true,
+  source_hash_hex: "0123456789abcdef",
+  source_mtime: null,
+  source_size: null,
+};
+
+it.each(["", "ab", "g".repeat(16)])(
+  "rejects an invalid source hash %j",
+  (source_hash_hex) => {
+    expect(
+      pythonPycHeaderSchema.safeParse({ ...hashHeader, source_hash_hex })
+        .success,
+    ).toBe(false);
+  },
+);
+
+it.each([
+  { hash_based: false },
+  { check_source: false },
+  { source_hash_hex: null },
+  { source_mtime: 0 },
+  { source_size: 0 },
+])("keeps header facts consistent with the recorded flags: %j", (changed) => {
+  expect(
+    pythonPycHeaderSchema.safeParse({ ...hashHeader, ...changed }).success,
+  ).toBe(false);
+});
+
+it("preserves unknown raw header flags and valid hash bytes", () => {
+  const header = { ...hashHeader, flags: 0x80000003 };
+  expect(pythonPycHeaderSchema.parse(header)).toEqual(header);
+});
 
 it("keeps pinned CPython identity separate from standalone marshal coverage", () => {
   expect(pythonPycMarshalProfile(3394)).toEqual({

@@ -557,7 +557,7 @@ it("keeps idle retirement after refusing a mapping for a loaded engine", async (
 });
 
 it("completes large class inventories with exact case-sensitive search semantics", async () => {
-  const { service, apk, provider } = await setup("large-inventory");
+  const { service, apk, provider, launches } = await setup("large-inventory");
   const full = await service.execute("search_android_classes", {
     path: apk,
     query: "",
@@ -578,7 +578,22 @@ it("completes large class inventories with exact case-sensitive search semantics
       mixedCase.value.normalized_result,
     ).matches,
   ).toEqual([]);
+  const filtered = await service.execute("search_android_classes", {
+    path: apk,
+    query: "Class",
+  });
+  if (!filtered.ok) throw filtered.error;
+  const matches = androidResultSchemas.search_android_classes.parse(
+    filtered.value.normalized_result,
+  );
+  expect(matches.total_classes).toBe(9001);
+  expect(matches.matches).toHaveLength(9000);
+  expect(matches.matches[0]).toBe("fixture.Class0");
+  expect(matches.matches[4096]).toBe("fixture.Class4096");
+  expect(matches.matches.at(-1)).toBe("fixture.Class8999");
+  expect(launches).toHaveLength(1);
   await provider.close();
+  await verifyCleanup(launches);
 });
 
 it("close cancels active and queued work and prevents later acquisition", async () => {
@@ -636,25 +651,6 @@ it("retains APK identity, original input, raw producer data and normalized obser
       expect.objectContaining({ operation: "get_android_manifest" }),
     ]),
   });
-  await provider.close();
-  await verifyCleanup(launches);
-});
-
-it("pages matching classes independently of the total APK class count", async () => {
-  const { service, apk, launches, provider } = await setup("large-inventory");
-  const outcome = await service.execute("search_android_classes", {
-    path: apk,
-    query: "Class",
-  });
-  if (!outcome.ok) throw outcome.error;
-  const result = androidResultSchemas.search_android_classes.parse(
-    outcome.value.normalized_result,
-  );
-  expect(result.total_classes).toBe(9001);
-  expect(result.matches).toHaveLength(9000);
-  expect(result.matches[0]).toBe("fixture.Class0");
-  expect(result.matches[4096]).toBe("fixture.Class4096");
-  expect(result.matches.at(-1)).toBe("fixture.Class8999");
   await provider.close();
   await verifyCleanup(launches);
 });

@@ -8,7 +8,6 @@ import type {
   BuildSettle,
   SettleClock,
 } from "../../../src/application/desktop/DesktopBuildSettle.js";
-import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { SettleTiming } from "../../../src/domain/desktop/appSettle.js";
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
@@ -58,7 +57,7 @@ const lines = (...text: string[]) => ({
 
 /** A bundle folder holding `task` as the export writes it for the app. */
 const taskBundle = async (task: unknown, app: string) => {
-  const parsed = parseDesktopTask(task, isPortableBundleName);
+  const parsed = parseDesktopTask(task);
   if (!parsed.ok) throw new Error(parsed.error);
   const bundle = await bundleFolder();
   const verifier = join(
@@ -516,11 +515,15 @@ it("ends the witness when the seed already passes, and refuses its later stages"
     parsed(await check({ task: passing, stage: "seed", directory })).witness,
   ).toEqual(seed.witness);
   const elsewhere = `${directory}-elsewhere`;
-  expect(
-    parseMcpToolError(
-      await check({ task: passing, stage: "seed", directory: elsewhere }),
-    ).error.message,
-  ).toContain(`saved to ${directory}, not ${elsewhere}`);
+  const refusal = parseMcpToolError(
+    await check({ task: passing, stage: "seed", directory: elsewhere }),
+  ).error;
+  expect(refusal).toMatchObject({
+    code: "invalid_request",
+    message: expect.stringContaining(
+      `record belongs to ${directory}, not ${elsewhere}`,
+    ),
+  });
   await act("type", { text: "eggs\n" });
   expect(
     parseMcpToolError(await check({ task: passing, stage: "after_edit" })).error

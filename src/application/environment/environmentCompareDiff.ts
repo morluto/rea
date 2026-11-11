@@ -429,7 +429,9 @@ class Differ {
     for (const [key, value] of Object.entries(live)) {
       const child = `${pointer}/${escapePointer(key)}`;
       const other = envKey(key);
-      if (!Object.hasOwn(env, other))
+      // A translated key and a verbatim key may name the same entry; an
+      // environment member can account for only one live member.
+      if (!Object.hasOwn(env, other) || matched.has(other))
         this.add({
           category: "missing-field",
           pointer: child,

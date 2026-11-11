@@ -441,6 +441,7 @@ describe("setup workflow action selection", () => {
       {
         client: "codex",
         config_path: "/codex.toml",
+        command_identity: "foreign",
         command: ["unrelated-agent", "serve"],
         state: "stale",
         remediation: "Refresh this registration.",
