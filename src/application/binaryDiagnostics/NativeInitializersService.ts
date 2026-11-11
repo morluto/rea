@@ -12,7 +12,10 @@ import {
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import { MACHO_CPU_TYPES } from "../../domain/apple/machoTargetSelection.js";
+import {
+  MACHO_CPU_TYPES,
+  machoSliceFamily,
+} from "../../domain/apple/machoTargetSelection.js";
 
 const OPERATION = "inspect_native_initializers";
 
@@ -95,15 +98,20 @@ const validReport = (
 ): boolean => {
   const { coverage } = report;
   const slice = report.slice;
+  // Slice and report labels name the CPU family; arm64e selects an arm64 slice.
+  const family =
+    input.architecture === undefined
+      ? undefined
+      : machoSliceFamily(input.architecture);
   if (
     slice === null
       ? input.architecture !== undefined
       : report.format !== "mach-o" ||
-        input.architecture === undefined ||
-        slice.cpu_type !== MACHO_CPU_TYPES[input.architecture] ||
-        slice.architecture !== input.architecture ||
+        family === undefined ||
+        slice.cpu_type !== MACHO_CPU_TYPES[family] ||
+        slice.architecture !== family ||
         report.machine !== slice.cpu_type ||
-        report.architecture !== input.architecture
+        report.architecture !== family
   )
     return false;
   const insideArtifact = (offset: number, bytes: number): boolean =>

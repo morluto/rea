@@ -6,6 +6,7 @@ import {
 } from "../../domain/apple/machoImageSelection.js";
 import {
   MACHO_CPU_TYPES,
+  machoSliceFamily,
   type MachoSliceArchitecture,
   type MachoTargetSelection,
 } from "../../domain/apple/machoTargetSelection.js";
@@ -126,8 +127,7 @@ export const selectNativeImage = (
     });
   const sameFamily = fat.slices.filter(
     ({ cpuType }) =>
-      cpuType ===
-      MACHO_CPU_TYPES[architecture === "arm64e" ? "arm64" : architecture],
+      cpuType === MACHO_CPU_TYPES[machoSliceFamily(architecture)],
   );
   // Selectors are advertised only for slices whose header agrees with their
   // FAT declaration; an unverified declaration is not a working choice.

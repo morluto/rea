@@ -62,6 +62,12 @@ export type MachoSliceArchitecture = z.infer<
   typeof machoSliceArchitectureSchema
 >;
 
+/** The CPU family whose slices an architecture value selects; arm64e is an arm64 subtype. */
+export const machoSliceFamily = (
+  architecture: MachoSliceArchitecture,
+): keyof typeof MACHO_CPU_TYPES =>
+  architecture === "arm64e" ? "arm64" : architecture;
+
 /** Confirm the selected header's CPU family agrees with the caller's request. */
 export const machoTargetSelectionMatchesArchitecture = (
   selection: MachoTargetSelection,
