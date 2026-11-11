@@ -143,3 +143,36 @@ it("requires the tracked endpoint-candidate limit to be an analysis setting", ()
     }),
   ).toMatch(/numericLimitRegistry/);
 });
+
+it("does not treat a prose template that mentions a limit name as a producer", () => {
+  const name = "REA_OLD_MAX_BYTES";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/domain/removedLimit.ts",
+      source: `const guidance = \`${name} is obsolete\`;`,
+    },
+  ]);
+  expect(discovered.has(name)).toBe(false);
+});
+
+it("keeps a template that assigns a limit name", () => {
+  const name = "REA_RECONNECT_TIMEOUT_SECONDS";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/hopper/BridgeLauncher.ts",
+      source: `const line = \`${name} = ${"${seconds}"}\`;`,
+    },
+  ]);
+  expect(discovered.get(name)).toBe("src/hopper/BridgeLauncher.ts");
+});
+
+it("keeps an exact template used as an environment key", () => {
+  const name = "REA_NEW_MAX_BYTES";
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/config/newLimit.ts",
+      source: `const value = process.env[\`${name}\`];`,
+    },
+  ]);
+  expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+});

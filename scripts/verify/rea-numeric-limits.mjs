@@ -215,19 +215,20 @@ export const discoverNumericLimitUses = (files) => {
           relativePath,
           literalText(unwrapExpression(node.initializer)),
         );
-      if (
-        ts.isTemplateExpression(node) ||
-        ts.isNoSubstitutionTemplateLiteral(node)
-      ) {
-        const chunks = ts.isNoSubstitutionTemplateLiteral(node)
-          ? [node.text]
-          : [
-              node.head.text,
-              ...node.templateSpans.map((span) => span.literal.text),
-            ];
-        for (const chunk of chunks)
-          for (const token of chunk.match(/REA_[A-Z0-9_]+/gu) ?? [])
-            remember(discovered, relativePath, token);
+      // A template counts only when it is a producer: the whole chunk is the
+      // limit name, or it writes `NAME =`. Prose that mentions the name does not.
+      if (ts.isTemplateExpression(node)) {
+        const chunks = [
+          node.head.text,
+          ...node.templateSpans.map((span) => span.literal.text),
+        ];
+        for (const chunk of chunks) {
+          const assignment = /^(REA_[A-Z0-9_]+)\s*=/u.exec(chunk);
+          if (assignment !== null)
+            remember(discovered, relativePath, assignment[1]);
+          else if (/^REA_[A-Z0-9_]+$/u.test(chunk))
+            remember(discovered, relativePath, chunk);
+        }
       }
       ts.forEachChild(node, visit);
     };
