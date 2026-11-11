@@ -322,6 +322,30 @@ describe("parseMftImage refusals and limits", () => {
     });
   });
 
+  it("refuses streams that differ from the admitted byte count", () => {
+    const stream = recordOf();
+    const short = createMftDecoder(stream.length + 1);
+    if (!short.ok) throw new Error(short.error.message);
+    expect(short.value.write(stream).ok).toBe(true);
+    expect(short.value.finish()).toMatchObject({
+      ok: false,
+      error: {
+        kind: "format",
+        message: "stream ended before the admitted file length",
+      },
+    });
+
+    const long = createMftDecoder(stream.length - 1);
+    if (!long.ok) throw new Error(long.error.message);
+    expect(long.value.write(stream)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "format",
+        message: "received more bytes than the admitted file length",
+      },
+    });
+  });
+
   it("decodes the same stream through the chunked decoder", () => {
     const stream = streamOf(recordOf(), recordOf({ flags: 0x0003 }));
     const decoder = createMftDecoder(stream.length);
