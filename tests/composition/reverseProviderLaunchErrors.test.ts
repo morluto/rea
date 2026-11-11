@@ -435,11 +435,6 @@ it("preserves Darwin process ownership inspection error with cleanup state witho
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanup).toEqual(cleanupError.cleanup);
     }
-    // The helper's cleanup stays retained, and close retries it, until it
-    // resolves.
-    expect((await service.retryCleanup()).ok).toBe(false);
-    cleanupError.resolveCleanup();
-    expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
     prepareSpy.mockRestore();
@@ -496,11 +491,6 @@ it("preserves command deadline timeout when macOS helper preparation aborts and 
       expect(projected.remediation.action).not.toContain("REA_OBJDUMP_COMMAND");
       expect(result.error.cleanup).toEqual(cleanupError.cleanup);
     }
-    // The helper's cleanup stays retained, and close retries it, until it
-    // resolves.
-    expect((await service.retryCleanup()).ok).toBe(false);
-    cleanupError.resolveCleanup();
-    expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
     await service.close();

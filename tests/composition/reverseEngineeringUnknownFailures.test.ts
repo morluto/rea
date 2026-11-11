@@ -37,9 +37,12 @@ it.each([false, true])(
     };
     const service = new ReverseEngineeringService({
       commands: { objdump: () => profile, rizin: () => profile },
-      runOwned: async () => {
-        if (cancel) controller.abort(abortReason);
-        throw owned;
+      processes: {
+        lookup: findsNoExecutable,
+        runOwned: async () => {
+          if (cancel) controller.abort(abortReason);
+          throw owned;
+        },
       },
     });
     const result = await service.inspectWithObjdump(
@@ -72,9 +75,12 @@ it("keeps the owned producer cancellation reason authoritative", async () => {
   };
   const service = new ReverseEngineeringService({
     commands: { objdump: () => profile, rizin: () => profile },
-    runOwned: async () => {
-      controller.abort(abortReason);
-      throw new OwnedCommandFailure("cancelled", "owned process cancelled");
+    processes: {
+      lookup: findsNoExecutable,
+      runOwned: async () => {
+        controller.abort(abortReason);
+        throw new OwnedCommandFailure("cancelled", "owned process cancelled");
+      },
     },
   });
   const result = await service.inspectWithObjdump(

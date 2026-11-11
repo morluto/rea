@@ -21,6 +21,7 @@ import {
   VERSION_PROBE_FAILURE_REASONS,
 } from "../../../src/application/reverse/ReverseEngineeringService.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { lookupExecutable } from "../../../src/process/ExecutableLookup.js";
 import { RIZIN_VERSION_PROBE } from "../../../src/rizin/RizinCommand.js";
@@ -1086,15 +1087,17 @@ posix(
       environment: { REA_RIZIN_COMMAND: executable },
     });
     const failed = await service.executeRizinCommand({ path, command: "iI" });
-    expect(failed).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisOutputError",
-        capturedOutput: { stderr: COMPILER_OUTPUT.stderr },
-        cleanup: {
-          reason: "helper compiler still running",
-          resources: ["pid:7"],
-        },
+    if (failed.ok) throw new Error("Expected preparation failure");
+    // The probe's preparation failure is the primary; its retained helper
+    // cleanup joins the service's inspection scope.
+    expect(primaryAnalysisError(failed.error)).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      capturedOutput: { stderr: COMPILER_OUTPUT.stderr },
+    });
+    expect(failed.error).toMatchObject({
+      cleanup: {
+        reason: "helper compiler still running",
+        resources: ["pid:7"],
       },
     });
     expect(runOwned).toHaveBeenCalledOnce();
@@ -1124,13 +1127,13 @@ posix(
       environment: { REA_RIZIN_COMMAND: executable },
     });
     const failed = await service.executeRizinCommand({ path, command: "iI" });
-    expect(failed).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisTimeoutError",
-        capturedOutput: { stderr: COMPILER_OUTPUT.stderr },
-        cleanup: { reason: "helper compiler still running" },
-      },
+    if (failed.ok) throw new Error("Expected preparation timeout");
+    expect(primaryAnalysisError(failed.error)).toMatchObject({
+      _tag: "AnalysisTimeoutError",
+      capturedOutput: { stderr: COMPILER_OUTPUT.stderr },
+    });
+    expect(failed.error).toMatchObject({
+      cleanup: { reason: "helper compiler still running" },
     });
     expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
     expect(close).toHaveBeenCalledOnce();

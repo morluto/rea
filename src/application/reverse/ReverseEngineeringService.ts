@@ -4,6 +4,7 @@ import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
 } from "../../process/ProcessInspectionCancellation.js";
+import type { ProcessInspectionFailure } from "../../process/ProcessInspectionCleanup.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionFailure,
@@ -687,27 +688,14 @@ export class ReverseEngineeringService {
       if (
         inspection !== undefined &&
         !(inspection instanceof DarwinProcessOwnershipInspectionError)
-      ) {
-        const cancellation = processInspectionCancellationError(
-          ownedCause,
+      )
+        earlyFailure = ownershipPreparationError(
+          inspection,
+          cause,
+          undefined,
           operation,
+          timeoutMs,
         );
-        earlyFailure =
-          ownedCause instanceof OwnedCommandFailure &&
-          ownedCause.reason === "timeout"
-            ? new AnalysisTimeoutError(operation, timeoutMs, {
-                cause: ownedCause,
-                ...reverseCommandTimeoutGuidance(timeoutMs),
-              })
-            : inspection instanceof ProcessOwnershipInspectionCancelled ||
-                (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
-                  inspection.origin === "cancelled")
-              ? cancellation
-              : new ProviderAdapterError("process-ownership", operation, {
-                  cause: inspection,
-                  diagnostics: { stage: "ownership_preparation" },
-                });
-      }
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       if (
@@ -844,51 +832,17 @@ export class ReverseEngineeringService {
           },
         );
       }
-      const darwinFailure =
+      if (
+        earlyFailure === undefined &&
         inspection instanceof DarwinProcessOwnershipInspectionError
-          ? inspection
-          : undefined;
-      if (earlyFailure === undefined && darwinFailure !== undefined) {
-        if (code === "ETIMEDOUT") {
-          earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
-            cause,
-            ...reverseCommandTimeoutGuidance(timeoutMs),
-          });
-        } else if (darwinFailure.cancellation !== undefined) {
-          earlyFailure = new AnalysisCancelledError(operation, {
-            cause: darwinFailure.cancellation?.reason,
-          });
-        } else {
-          const setting =
-            operation === "inspect_with_objdump"
-              ? "REA_OBJDUMP_COMMAND"
-              : "REA_RIZIN_COMMAND";
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            "process-ownership",
-            "prepare_owned_process",
-            `Darwin process ownership inspection could not be prepared: ${darwinFailure.message}`,
-            {
-              cause,
-              userMessage: darwinFailure.message,
-              remediationAction: `${DARWIN_PROCESS_OWNERSHIP_REMEDIATION} ${setting} does not need to change.`,
-              diagnostics: {
-                boundary: "process-ownership",
-                stage: "ownership_preparation",
-                ...(darwinFailure.compilerOutcome === undefined
-                  ? {}
-                  : {
-                      compiler_outcome: jsonValueSchema.parse(
-                        darwinFailure.compilerOutcome,
-                      ),
-                    }),
-              },
-              ...(darwinFailure.capturedOutput === undefined
-                ? {}
-                : { capturedOutput: darwinFailure.capturedOutput }),
-            },
-          );
-        }
-      }
+      )
+        earlyFailure = ownershipPreparationError(
+          inspection,
+          cause,
+          code,
+          operation,
+          timeoutMs,
+        );
       if (inspection !== undefined && earlyFailure !== undefined)
         earlyFailure = retainProcessInspectionCleanup(
           inspection,
@@ -976,10 +930,6 @@ export class ReverseEngineeringService {
                 command,
                 system_code: code ?? null,
               },
-              ...(cause instanceof OwnedOutputFailure &&
-              cause.preparationOutput !== undefined
-                ? { capturedOutput: cause.preparationOutput }
-                : {}),
               ...ownedCleanupOptions(cause),
             },
           );
@@ -1596,6 +1546,33 @@ export class ReverseEngineeringService {
       const code = capture?.code ?? commandFailureCode(cause);
       const cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
+      // Ownership preparation that failed or stopped ends the call as it would
+      // for the command, and its cleanup joins the same retained scope.
+      const inspection = processInspectionFailure(
+        cause instanceof OwnedOutputFailure ? cause.cause : cause,
+      );
+      const preparationFailure =
+        inspection === undefined
+          ? undefined
+          : ownershipPreparationError(
+              inspection,
+              cause,
+              code,
+              operation,
+              timeoutMs,
+            );
+      if (inspection !== undefined && preparationFailure !== undefined)
+        return err(
+          this.#registerCleanupFailure(
+            retainProcessInspectionCleanup(
+              inspection,
+              preparationFailure,
+              this.#inspectionResources,
+              operation,
+            ),
+            cleanupOwner,
+          ),
+        );
       const probeOutput = {
         diagnostics: {
           phase: "version_probe",
@@ -1787,7 +1764,6 @@ interface OwnedOutputFailureOptions {
   readonly cleanupOwner?: RetainedCleanupOwner;
   readonly cause?: unknown;
   readonly launchFailure?: boolean;
-  readonly preparationOutput?: AnalysisCapturedOutput | undefined;
 }
 
 class OwnedOutputFailure extends Error {
@@ -1805,8 +1781,6 @@ class OwnedOutputFailure extends Error {
   readonly cleanup: AnalysisCleanupObservation | undefined;
   readonly cleanupOwner: RetainedCleanupOwner | undefined;
   readonly launchFailure: boolean;
-  /** What ownership preparation captured when the command never started. */
-  readonly preparationOutput: AnalysisCapturedOutput | undefined;
 
   constructor(options: OwnedOutputFailureOptions) {
     super("Owned provider command did not produce a complete result.", {
@@ -1826,35 +1800,8 @@ class OwnedOutputFailure extends Error {
     this.cleanup = options.cleanup;
     this.cleanupOwner = options.cleanupOwner;
     this.launchFailure = options.launchFailure ?? false;
-    this.preparationOutput = options.preparationOutput;
   }
 }
-
-/** Preparation's retained helper, retried through the command owners' stop. */
-const preparationCleanup = (
-  preparation: DarwinProcessOwnershipInspectionError | undefined,
-):
-  | {
-      readonly observation: AnalysisCleanupObservation;
-      readonly owner: RetainedCleanupOwner;
-    }
-  | undefined => {
-  const failure = preparation?.cleanupFailure;
-  if (preparation === undefined || failure?.cleanupIncomplete !== true)
-    return undefined;
-  const reason = failure.cleanup?.reason ?? failure.message;
-  return {
-    observation: { reason, resources: failure.cleanupResources },
-    owner: {
-      stop: async () => {
-        if (failure.cleanupIncomplete) await preparation.cleanupOwner?.close();
-        return failure.cleanupIncomplete
-          ? { status: "incomplete", reason }
-          : { status: "verified-cleanup" };
-      },
-    },
-  };
-};
 
 const runOwnedCommandOutput =
   (
@@ -1918,30 +1865,14 @@ const runOwnedCommandOutput =
         stdoutBytes: snapshot.stdout.bytes,
         stderrBytes: snapshot.stderr.bytes,
       };
-    } catch (thrown) {
-      // Preparation throws its own failure, and an interruption wraps it. The
-      // command never started in either case.
-      const cause =
-        thrown instanceof DarwinProcessOwnershipInspectionError
-          ? new OwnedCommandFailure("process", thrown.message, null, null, {
-              cause: thrown,
-              preparationFailure: thrown,
-            })
-          : thrown;
+    } catch (cause) {
       if (!(cause instanceof OwnedCommandFailure)) throw cause;
       if (cause.cleanupOwner !== undefined && cause.cleanupFailure !== null)
         onCleanupOwner(cause.cleanupOwner, {
           reason: cause.cleanupFailure,
           resources: cause.resources,
         });
-      const preparation = preparationCleanup(cause.preparationFailure);
-      if (preparation !== undefined)
-        onCleanupOwner(preparation.owner, preparation.observation);
       const snapshot = cause.snapshot;
-      const preparationOutput =
-        snapshot === null
-          ? cause.preparationFailure?.capturedOutput
-          : undefined;
       const launchErrorCode =
         cause.cause instanceof Error
           ? Reflect.get(cause.cause, "code")
@@ -1961,33 +1892,22 @@ const runOwnedCommandOutput =
                     : "ERR_PROVIDER_LAUNCH"
                   : (snapshot.exitCode ?? null);
       throw new OwnedOutputFailure({
-        stdout: snapshot?.stdout.text ?? preparationOutput?.stdout ?? "",
-        stderr: snapshot?.stderr.text ?? preparationOutput?.stderr ?? "",
+        stdout: snapshot?.stdout.text ?? "",
+        stderr: snapshot?.stderr.text ?? "",
         code,
         launchFailure: cause.reason === "process" && snapshot === null,
         signal: snapshot?.signal ?? null,
-        outputTruncated:
-          snapshot?.diagnosticTruncated === true ||
-          preparationOutput?.truncated === true,
-        stdoutInvalidUtf8:
-          snapshot?.stdout.invalidUtf8 === true ||
-          preparationOutput?.stdout_invalid_utf8 === true,
-        stderrInvalidUtf8:
-          snapshot?.stderr.invalidUtf8 === true ||
-          preparationOutput?.stderr_invalid_utf8 === true,
-        stdoutBytes:
-          snapshot?.stdout.bytes ?? preparationOutput?.stdout_bytes ?? 0,
-        stderrBytes:
-          snapshot?.stderr.bytes ?? preparationOutput?.stderr_bytes ?? 0,
-        preparationOutput,
+        outputTruncated: snapshot?.diagnosticTruncated === true,
+        stdoutInvalidUtf8: snapshot?.stdout.invalidUtf8 === true,
+        stderrInvalidUtf8: snapshot?.stderr.invalidUtf8 === true,
+        stdoutBytes: snapshot?.stdout.bytes ?? 0,
+        stderrBytes: snapshot?.stderr.bytes ?? 0,
         ...(cause.cause instanceof AnalysisCapabilityUnavailableError
           ? { capabilityError: cause.cause }
           : {}),
         ...(cause.collectionFailure ? { collectionFailure: true } : {}),
         ...(cause.cleanupFailure === null
-          ? preparation === undefined
-            ? {}
-            : { cleanup: preparation.observation }
+          ? {}
           : {
               cleanup: {
                 reason: cause.cleanupFailure,
@@ -1995,9 +1915,7 @@ const runOwnedCommandOutput =
               },
             }),
         ...(cause.cleanupOwner === undefined
-          ? preparation === undefined
-            ? {}
-            : { cleanupOwner: preparation.owner }
+          ? {}
           : { cleanupOwner: cause.cleanupOwner }),
         cause,
       });
@@ -2020,6 +1938,84 @@ const runtimeControlPreparationError = (
   if (cause instanceof OwnedCommandFailure && cause.reason === "process")
     return runtimeControlPreparationError(cause.cause);
   return windowsNativeSpawnControlError(cause);
+};
+
+/**
+ * The failure an ownership preparation leaves when it fails or stops. The
+ * command and its version probe share it, so a preparation failure ends the
+ * call the same way at either. `code` is the failure code the runner reported;
+ * Darwin preparation that a deadline interrupted stays a timeout.
+ */
+const ownershipPreparationError = (
+  inspection: ProcessInspectionFailure,
+  cause: unknown,
+  code: string | number | null | undefined,
+  operation: ReverseEngineeringOperation,
+  timeoutMs: number,
+): AnalysisError | undefined => {
+  const ownedCause = cause instanceof OwnedOutputFailure ? cause.cause : cause;
+  if (!(inspection instanceof DarwinProcessOwnershipInspectionError)) {
+    const cancellation = processInspectionCancellationError(
+      ownedCause,
+      operation,
+    );
+    return ownedCause instanceof OwnedCommandFailure &&
+      ownedCause.reason === "timeout"
+      ? new AnalysisTimeoutError(operation, timeoutMs, {
+          cause: ownedCause,
+          ...reverseCommandTimeoutGuidance(timeoutMs),
+        })
+      : inspection instanceof ProcessOwnershipInspectionCancelled ||
+          (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
+            inspection.origin === "cancelled")
+        ? cancellation
+        : new ProviderAdapterError("process-ownership", operation, {
+            cause: inspection,
+            diagnostics: { stage: "ownership_preparation" },
+          });
+  }
+  // A deadline that interrupted preparation keeps what the helper's compiler
+  // printed, as a failed preparation does.
+  if (code === "ETIMEDOUT")
+    return new AnalysisTimeoutError(operation, timeoutMs, {
+      cause,
+      ...reverseCommandTimeoutGuidance(timeoutMs),
+      ...(inspection.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: inspection.capturedOutput }),
+    });
+  if (inspection.cancellation !== undefined)
+    return new AnalysisCancelledError(operation, {
+      cause: inspection.cancellation?.reason,
+    });
+  const setting =
+    operation === "inspect_with_objdump"
+      ? "REA_OBJDUMP_COMMAND"
+      : "REA_RIZIN_COMMAND";
+  return new AnalysisCapabilityUnavailableError(
+    "process-ownership",
+    "prepare_owned_process",
+    `Darwin process ownership inspection could not be prepared: ${inspection.message}`,
+    {
+      cause,
+      userMessage: inspection.message,
+      remediationAction: `${DARWIN_PROCESS_OWNERSHIP_REMEDIATION} ${setting} does not need to change.`,
+      diagnostics: {
+        boundary: "process-ownership",
+        stage: "ownership_preparation",
+        ...(inspection.compilerOutcome === undefined
+          ? {}
+          : {
+              compiler_outcome: jsonValueSchema.parse(
+                inspection.compilerOutcome,
+              ),
+            }),
+      },
+      ...(inspection.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: inspection.capturedOutput }),
+    },
+  );
 };
 
 /** How a caller raises the deadline that `timeoutMs` reached, if it can. */
