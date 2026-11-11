@@ -181,9 +181,21 @@ describe("MFT header facts", () => {
     expect(parsed.value.metadata).toMatchObject({
       record_count: 33,
       omitted_record_headers: 1,
+      next_record_header_index: 32,
     });
     expect(parsed.value.metadata.record_headers).toHaveLength(32);
     expect(parsed.value.records).toHaveLength(33);
+    const lastPage = parseMftIndex(
+      streamOf(...Array.from({ length: 33 }, () => recordOf())),
+      32,
+    );
+    if (!lastPage.ok) throw new Error(lastPage.error.message);
+    expect(lastPage.value.metadata).toMatchObject({
+      record_count: 33,
+      record_header_start_index: 32,
+      record_headers: [{ index: 32 }],
+      next_record_header_index: null,
+    });
     expect(parsed.value.limitations).toEqual([]);
   });
 

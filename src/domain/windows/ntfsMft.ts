@@ -140,6 +140,8 @@ export interface MftMetadata {
   readonly truncated_tail_bytes: number;
   readonly record_headers: readonly MftRecord[];
   readonly omitted_record_headers: number;
+  readonly record_header_start_index: number;
+  readonly next_record_header_index: number | null;
   readonly file_name_count: number;
   readonly file_name_incomplete_record_count: number;
   readonly attribute_incomplete_record_count: number;
@@ -229,6 +231,7 @@ export const parseMftImage = (
 /** Retain only identity/header facts outside the fixed inline detail window. */
 export const parseMftIndex = (
   bytes: Uint8Array,
+  startRecord = 0,
 ): Result<MftIndex, RegionDecodeFailure> => {
   const records: MftRecordHeader[] = [];
   const inventory = scanMft(
@@ -241,6 +244,7 @@ export const parseMftIndex = (
       attributeIssue: _issue,
       ...header
     }) => records.push(header),
+    startRecord,
   );
   return inventory.ok ? ok({ ...inventory.value, records }) : inventory;
 };
@@ -248,6 +252,7 @@ export const parseMftIndex = (
 const scanMft = (
   bytes: Uint8Array,
   retainRecord?: (record: MftRecord) => void,
+  startRecord = 0,
 ): Result<MftInventory, RegionDecodeFailure> => {
   if (bytes.length < NTFS_MFT_MIN_RECORD_BYTES)
     return err(
@@ -270,6 +275,7 @@ const scanMft = (
     );
 
   const recordHeaders: MftRecord[] = [];
+  let nextRecordHeaderIndex: number | null = null;
   let recordCount = 0;
   let inUseCount = 0;
   let directoryCount = 0;
@@ -304,8 +310,11 @@ const scanMft = (
     retainRecord?.(record);
     fileNameCount += record.fileNames.length;
     if (record.attributeCoverage === "incomplete") incompleteAttributes += 1;
-    if (recordHeaders.length < MFT_INLINE_HEADER_LIMIT)
-      recordHeaders.push(record);
+    if (record.index >= startRecord) {
+      if (recordHeaders.length < MFT_INLINE_HEADER_LIMIT)
+        recordHeaders.push(record);
+      else nextRecordHeaderIndex ??= record.index;
+    }
     recordCount += 1;
     if (record.inUse) inUseCount += 1;
     if (record.directory) directoryCount += 1;
@@ -371,6 +380,8 @@ const scanMft = (
     truncated_tail_bytes: truncatedTailBytes,
     record_headers: recordHeaders,
     omitted_record_headers: recordCount - recordHeaders.length,
+    record_header_start_index: startRecord,
+    next_record_header_index: nextRecordHeaderIndex,
     file_name_count: fileNameCount,
     file_name_incomplete_record_count: incompleteNames,
     attribute_incomplete_record_count: incompleteAttributes,

@@ -36,6 +36,7 @@ it("keeps exact USN values and coverage rows on bounded source-order pages", () 
       { kind: "coverage", issue: { kind: "padding", fileOffset: 0, bytes: 8 } },
     ],
     historyCompleteness: "unknown",
+    mftMetadata: mft.value.metadata,
     nextFileOffset: 8,
     mftLimitations: [],
   });
