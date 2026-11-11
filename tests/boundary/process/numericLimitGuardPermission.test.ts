@@ -14,8 +14,17 @@ processTest.skipIf(
     const root = await createTestTempDirectory("rea-limit-permission-");
     await mkdir(join(root, "scripts/verify"), { recursive: true });
     await mkdir(join(root, "tests/nested"), { recursive: true });
-    for (const name of ["src", ".agents", "node_modules"])
+    for (const name of ["src", ".agents", "node_modules", "bridge"])
       await symlink(resolve(name), join(root, name), "dir");
+    await symlink(
+      resolve("scripts/hopper-demo-x11.py"),
+      join(root, "scripts/hopper-demo-x11.py"),
+    );
+    await symlink(
+      resolve("tests/boundary"),
+      join(root, "tests/boundary"),
+      "dir",
+    );
     await copyFile(
       "scripts/verify/rea-numeric-limits.mjs",
       join(root, "scripts/verify/rea-numeric-limits.mjs"),

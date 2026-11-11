@@ -701,17 +701,20 @@ export const parseNumericLimitRegistry = (source) => {
   return array.elements.map((element) => {
     const value = fields(element);
     const name = text(value, "name");
+    const update_mode = text(value, "update_mode");
     const policy = text(value, "policy");
     const read = text(value, "read");
     const reason = text(value, "reason");
     if (
       exactLimit(name) === undefined ||
+      update_mode !== "restart" ||
       !["restart-only", "per-call"].includes(policy) ||
       !["startup", "per-call", "construction"].includes(read)
     )
       throw new Error(`Invalid numeric limit registry entry ${name}`);
     const source = value.get("provenance");
-    if (source === undefined) return { name, policy, read, reason };
+    if (source === undefined)
+      return { name, update_mode, policy, read, reason };
     const provenance = fields(unwrapExpression(source));
     const kind = text(provenance, "kind");
     const producer = text(provenance, "source");
@@ -728,6 +731,7 @@ export const parseNumericLimitRegistry = (source) => {
       throw new Error(`Invalid external provenance for ${name}`);
     return {
       name,
+      update_mode,
       policy,
       read,
       reason,
@@ -814,13 +818,26 @@ export const parseRuntimeSettingEnvironments = (source) => {
             !ts.isPropertyAssignment(property) ||
             (!ts.isIdentifier(property.name) &&
               !ts.isStringLiteral(property.name)) ||
-            property.name.text === "environment",
+            ["environment", "updateMode"].includes(property.name.text),
         );
       })
     )
       throw new Error(
         "Analysis setting fields must be static named assignments",
       );
+    const modes = definition.properties.filter(
+      (field) =>
+        ts.isPropertyAssignment(field) &&
+        (ts.isIdentifier(field.name) || ts.isStringLiteral(field.name)) &&
+        field.name.text === "updateMode",
+    );
+    if (
+      modes.length !== 1 ||
+      !["runtime", "restart"].includes(
+        literalText(unwrapExpression(modes[0].initializer)),
+      )
+    )
+      throw new Error("Analysis setting must declare a static updateMode");
     const fields = definition.properties.filter(
       (field) =>
         ts.isPropertyAssignment(field) &&
@@ -978,6 +995,59 @@ if (direct) {
       inRegistry: listed.has(name),
     });
     if (failure !== undefined) failures.push(failure);
+  }
+
+  const parameterOwners = [
+    "src/artifacts/ArtifactReaderLimits.ts",
+    "src/domain/artifactReaderLimits.ts",
+    "src/domain/webNetworkCapture.ts",
+  ];
+  for (const relativePath of parameterOwners) {
+    const source = await readFile(join(root, relativePath), "utf8");
+    if (/update_mode:\s*"runtime"/u.test(source))
+      failures.push(
+        `${relativePath} is a per-call parameter, so update_mode cannot be runtime`,
+      );
+    if (!/update_mode:\s*"parameter"/u.test(source))
+      failures.push(`${relativePath} must report update_mode parameter`);
+  }
+
+  const forbidden =
+    /(?<![A-Za-z0-9_])(?:rea_restart_required|restartRequired|restart_required)(?![A-Za-z0-9_])|effect:\s*"(?:immediate|next_process)"|SettingChangeEffect/gu;
+  // Docs and verification receipts keep the field names they recorded.
+  // Source, tests, skills, and scripts cannot reintroduce those names.
+  const scanRoots = ["src", "tests", ".agents", "scripts"].map((dir) =>
+    join(root, dir),
+  );
+  const skipDir = new Set([
+    "node_modules",
+    "dist",
+    ".turbo",
+    ".cache",
+    "rea-numeric-limits.mjs",
+  ]);
+  const listText = async (dir) => {
+    const output = [];
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (skipDir.has(entry.name)) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) output.push(...(await listText(path)));
+      else if (/\.(?:ts|tsx|mjs|js|md|json|py|yml|yaml)$/u.test(entry.name))
+        output.push(path);
+    }
+    return output;
+  };
+  for (const dir of scanRoots) {
+    for (const path of await listText(dir)) {
+      if (path.endsWith(`${sep}rea-numeric-limits.mjs`)) continue;
+      const source = await readFile(path, "utf8");
+      const hit = source.match(forbidden);
+      if (hit)
+        failures.push(
+          `${relative(root, path).split(sep).join("/")} still uses ${[...new Set(hit)].join(", ")}`,
+        );
+    }
   }
 
   if (failures.length > 0) {
