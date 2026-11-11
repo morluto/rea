@@ -8,7 +8,7 @@ export function verifyGhidraInstructionFlow(
   ) => Promise<unknown>,
   names: readonly { readonly address: string; readonly value: string }[],
   cli: (command: string, address: string) => Promise<unknown>,
-  target?: Partial<Pick<BinaryTarget, "format" | "architecture">>,
+  target: Pick<BinaryTarget, "format" | "architecture"> | null,
 ): Promise<{
   readonly return_instruction: string;
   readonly decoded_pcode_return: true;

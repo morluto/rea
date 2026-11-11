@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 export async function verifyGhidraInstructionFlow(call, names, cli, target) {
   // inventory.c emits these controls only for an x86-64 ELF compilation.
   // Provider name omission cannot establish whether that source branch applied.
-  const applicabilityKnown =
-    target?.format !== undefined && target?.architecture !== undefined;
   const controlsRequired =
-    target?.format === "elf" && target?.architecture === "x86_64";
+    target !== null &&
+    target.format === "elf" &&
+    target.architecture === "x86_64";
   const leaf = names.find((item) =>
     item.value.endsWith("rea_ghidra_inventory_leaf"),
   );
@@ -82,11 +82,12 @@ export async function verifyGhidraInstructionFlow(call, names, cli, target) {
     decoded_pcode_return: true,
     return_cli_mcp_parity: true,
     explicit_x86_elf_controls: checked,
-    explicit_control_scope: !applicabilityKnown
-      ? "Unknown: source fixture format/architecture was not supplied"
-      : controlsRequired
-        ? "x86-64 ELF"
-        : "Not compiled for this fixture format/architecture",
+    explicit_control_scope:
+      target === null
+        ? "Unknown: source fixture format/architecture was not established"
+        : controlsRequired
+          ? "x86-64 ELF"
+          : "Not compiled for this fixture format/architecture",
     generic_unknown_preserved: true,
   };
 }

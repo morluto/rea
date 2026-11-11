@@ -103,11 +103,16 @@ it.each([
   },
 );
 
-it.each([undefined, {}, { format: "elf" }] as const)(
-  "keeps omitted fixture metadata unknown: %j",
-  async (target) => {
-    const result = await verifyGhidraInstructionFlow(call, [leaf], cli, target);
-    expect(result.explicit_x86_elf_controls).toBe(0);
+it.each([0, 1, 4])(
+  "keeps explicit unknown applicability with %i observed controls",
+  async (observed) => {
+    const result = await verifyGhidraInstructionFlow(
+      call,
+      [leaf, ...names.slice(0, observed)],
+      cli,
+      null,
+    );
+    expect(result.explicit_x86_elf_controls).toBe(observed);
     expect(result.explicit_control_scope).toContain("Unknown");
   },
 );
