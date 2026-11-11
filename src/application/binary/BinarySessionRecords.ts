@@ -84,11 +84,11 @@ const attributeImportedProviderSelection = (
   createImmutableEvidenceBundle(
     bundle.records.map((record) => {
       // A record the ledger already holds is the session's own attribution;
-      // rederiving it here would mark the caller's copy as a fresh observation.
+      // rederiving it here would replace the caller's display metadata with
+      // the session's copy, so attribution is reserved for new records.
       const existing = retained(record.evidence_id);
-      return (
-        existing ?? withEvidenceProviderSelection(record, providerSelection)
-      );
+      if (existing !== undefined) return record;
+      return withEvidenceProviderSelection(record, providerSelection);
     }),
     bundle.unknowns,
   );

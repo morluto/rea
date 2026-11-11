@@ -1185,7 +1185,16 @@ describe("snapshot cache eligibility", () => {
           );
         } else {
           expect(evidenceIds).toEqual([undefined, undefined]);
-          expect(records).toEqual([source]);
+          // The session attributes the source to its own provider selection, so
+          // the callable fields match while the attribution is the session's.
+          expect(records).toHaveLength(1);
+          expect(records[0]).toMatchObject({
+            evidence_id: source.evidence_id,
+            provider_selection: {
+              selection_source: "auto-single-candidate",
+              candidates: [{ selected: true }],
+            },
+          });
         }
         expect(session.exportAnalysisSnapshot()).toMatchObject({
           ok: true,
