@@ -148,6 +148,7 @@ export interface MftMetadata {
   readonly omitted_record_headers: number;
   readonly record_header_start_index: number;
   readonly next_record_header_index: number | null;
+  /** These aggregate counts cover physical records, without double-counting linked attributes. */
   readonly file_name_count: number;
   readonly file_name_incomplete_record_count: number;
   readonly attribute_incomplete_record_count: number;
@@ -399,7 +400,7 @@ const scanMft = (
 
   if (incompleteNames > 0)
     limitations.push(
-      `File name coverage is incomplete for ${String(incompleteNames)} record(s)`,
+      `Local FILE_NAME coverage is incomplete for ${String(incompleteNames)} record(s)`,
     );
 
   const metadata: MftMetadata = {

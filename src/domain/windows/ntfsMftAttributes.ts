@@ -152,6 +152,7 @@ export interface MftAttributeScan {
   readonly attributeIssue: AttributeIssue | null;
   readonly fileNames: readonly MftFileName[];
   readonly attributes: readonly MftAttribute[];
+  /** Physical-record walk; linked names have independent attribute-list coverage. */
   readonly fileNameCoverage: "complete" | "incomplete";
   /** Local attribute walk only; extension references are retained, never followed. */
   readonly attributeCoverage: "complete" | "incomplete";
