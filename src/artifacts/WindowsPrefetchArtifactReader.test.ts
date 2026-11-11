@@ -46,28 +46,28 @@ it.each(PARSED_VERSIONS)(
   },
 );
 
-it("reports the v23 run total and last-run slot count as declared", async () => {
+it("reports the v23 run count and last-run presence as declared", async () => {
   const reader = await readerFor(
-    prefetchFixture({ version: "23", runCount: 12, runTimeSlots: 8 }),
+    prefetchFixture({ version: "23", runCount: 12, runTimeSlots: 1 }),
   );
   try {
     await inventory(reader);
     expect(reader.formatMetadata()).toMatchObject({
       run_count: 12,
-      run_time_slots: 8,
+      run_time_slots: 1,
     });
   } finally {
     await reader.close();
   }
 });
 
-it("keeps v17 run totals unknown instead of reporting zero", async () => {
+it("reports the v17 run count from the same field", async () => {
   const reader = await readerFor(prefetchFixture({ version: "17" }));
   try {
     await inventory(reader);
     expect(reader.formatMetadata()).toMatchObject({
-      run_count: null,
-      run_time_slots: null,
+      run_count: 7,
+      run_time_slots: 1,
     });
   } finally {
     await reader.close();
@@ -98,7 +98,7 @@ it("refuses a MAM container without calling it corrupt", async () => {
   );
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
-      message: expect.stringContaining("MAM-compressed") as unknown,
+      message: expect.stringContaining("MAM") as unknown,
     });
   } finally {
     await reader.close();
@@ -124,7 +124,7 @@ it("does not claim bytes that lack a Prefetch signature", async () => {
   const reader = await readerFor(bytes);
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
-      message: expect.stringContaining("version tag") as unknown,
+      message: expect.stringContaining("No Prefetch generation") as unknown,
     });
   } finally {
     await reader.close();

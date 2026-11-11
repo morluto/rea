@@ -449,7 +449,7 @@ const NON_ZIP_FORMATS = {
     retainClassifiedSource: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "Windows Prefetch inventory reports the executable name and path hash, declared run count, last-run times, volumes and read-ahead file references. MAM-compressed generations and the v17 body layout are identified without being decoded; nothing is executed or read from a live endpoint.",
+      "Windows Prefetch inventory reports the recorded executable name, its name hash, the declared file size beside the observed size, the recorded run count and whether a last-run timestamp is present. The timestamp value, the volume list and the read-ahead file list are not decoded; MAM-compressed containers are identified without being decoded, and nothing is executed or read from a live endpoint.",
     createReader: (path, options) =>
       new WindowsPrefetchArtifactReader(path, sourceOf(options)),
   }),

@@ -11,7 +11,10 @@ import { recognizeEspImage } from "../../domain/firmware/espImage.js";
 import { hasUf2Block } from "../../domain/firmware/uf2.js";
 import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
-import { hasPrefetchSignature } from "../../domain/windows/prefetchFormat.js";
+import {
+  hasPrefetchSignature,
+  isMamContainer,
+} from "../../domain/windows/prefetchFormat.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -623,8 +626,10 @@ export const classifyArtifactBytes = (
     return "dfuse";
   if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
   if (hasFitImagesNode(prefix)) return "fit";
-  // A Prefetch tag alone is the format generation, not evidence of corruption.
-  if (hasPrefetchSignature(prefix)) return "windows-prefetch";
+  // A Prefetch generation and its signature are the format, not corruption. A
+  // MAM container has no generation at offset 0, so it is probed separately.
+  if (hasPrefetchSignature(prefix) || isMamContainer(prefix))
+    return "windows-prefetch";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);

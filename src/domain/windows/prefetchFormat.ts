@@ -1,9 +1,9 @@
 import { err, ok, type Result } from "../result.js";
 
 /**
- * A Prefetch file starts with a four-byte ASCII version tag and a "S"
- * signature. 17 is Windows XP/2003, 23 Windows Vista/7; 26 and 30/31 are
- * Windows 8+ files, which are MAM-compressed as a whole.
+ * An uncompressed Prefetch file starts with a little-endian DWORD generation
+ * and the four-byte "SCCA" signature. 17 is Windows XP/2003, 23 Windows
+ * Vista/7; 26 and 30/31 are Windows 8+ files, which are MAM-compressed.
  */
 const SUPPORTED_VERSIONS = ["17", "23", "26", "30", "31"] as const;
 export type PrefetchVersion = (typeof SUPPORTED_VERSIONS)[number];
@@ -11,27 +11,29 @@ export type PrefetchVersion = (typeof SUPPORTED_VERSIONS)[number];
 /** Versions whose fixed header this reader parses. */
 export type ParsedPrefetchVersion = "17" | "23";
 
-/** The version tag occupies four bytes and the signature follows it. */
-const TAG_BYTES = 4;
+const VERSION_BYTES = 4;
 const SIGNATURE_OFFSET = 4;
-const PREFETCH_SIGNATURE = 0x53; // "S"
-/** MSCF begins at the same offset on a compressed Prefetch file. */
-const MAM_MAGIC = [0x4d, 0x53, 0x43, 0x46];
+const SIGNATURE = Buffer.from("SCCA", "ascii");
+/** A MAM-compressed container replaces the whole header with "MAM" and a header size. */
+const MAM_MAGIC = Buffer.from("MAM", "ascii");
 
-/** Common header: tag, signature, unknown, file size, name, hash, unknown. */
+/** Common header: generation, signature, unknown, file size, name, hash, flags. */
 const COMMON_HEADER_BYTES = 84;
 const FILE_SIZE_OFFSET = 0x0c;
 const EXECUTABLE_NAME_OFFSET = 0x10;
 const EXECUTABLE_NAME_BYTES = 60;
 const EXECUTABLE_HASH_OFFSET = 0x4c;
-/** v23 header: 84 common bytes plus "unknown2", file information, volumes, run times. */
-const V23_HEADER_BYTES = 128;
-const V23_FILE_INFORMATION_OFFSET = 0x54;
-const V23_VOLUMES_OFFSET = 0x5c;
-const V23_VOLUME_COUNT = 0x64;
-const V23_RUN_TIMES_OFFSET = 0x6c;
-const V23_RUN_TIMES_SIZE = 0x70;
-const V23_RUN_COUNT = 0x84;
+
+/**
+ * File information follows the common header: a 12-byte metrics array, the
+ * FILETIME of the last run, then the run count. Version 23 appends a directory
+ * strings array; that does not move these fields.
+ */
+const FILE_INFORMATION_OFFSET = 0x54;
+const RUN_COUNT_OFFSET = 0x98;
+
+/** One FILETIME slot occupies eight bytes; its value is not decoded. */
+const RUN_TIME_SLOT_BYTES = 8;
 
 /** Refuse to hold a whole Prefetch file above this size. */
 export const PREFETCH_MAX_FILE_BYTES = 64 * 1024 * 1024;
@@ -59,41 +61,43 @@ export interface PrefetchDecodeFailure {
 }
 
 const readVersionTag = (bytes: Uint8Array): PrefetchVersion | null => {
-  if (bytes.length < TAG_BYTES) return null;
-  const tag = String.fromCharCode(
-    bytes[0]!,
-    bytes[1]!,
-    bytes[2]!,
-    bytes[3]!,
-  ).trimEnd();
+  if (bytes.length < VERSION_BYTES) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = String(view.getUint32(0, true));
   return (SUPPORTED_VERSIONS as readonly string[]).includes(tag)
     ? (tag as PrefetchVersion)
     : null;
 };
 
 /**
- * Whether the first bytes carry a Prefetch version tag and "S" signature. The
- * tag is four ASCII bytes and the signature follows them, so this probe never
- * depends on the file's name.
+ * Whether the first bytes carry a Prefetch generation and its "SCCA"
+ * signature. Recognition never depends on the file's name.
  */
 export const hasPrefetchSignature = (prefix: Uint8Array): boolean =>
   readVersionTag(prefix) !== null &&
-  prefix.length > SIGNATURE_OFFSET &&
-  prefix[SIGNATURE_OFFSET] === PREFETCH_SIGNATURE;
+  prefix.length >= SIGNATURE_OFFSET + SIGNATURE.length &&
+  Buffer.from(
+    prefix.subarray(SIGNATURE_OFFSET, SIGNATURE_OFFSET + SIGNATURE.length),
+  ).equals(SIGNATURE);
 
-const isMamContainer = (bytes: Uint8Array): boolean =>
-  bytes.length >= SIGNATURE_OFFSET + MAM_MAGIC.length &&
-  MAM_MAGIC.every((value, index) => bytes[SIGNATURE_OFFSET + index] === value);
+/**
+ * A MAM container starts at offset 0 with "MAM", an uncompressed Prefetch file
+ * with its generation DWORD, so the two cannot be confused.
+ */
+export const isMamContainer = (bytes: Uint8Array): boolean =>
+  bytes.length >= MAM_MAGIC.length &&
+  Buffer.from(bytes.subarray(0, MAM_MAGIC.length)).equals(MAM_MAGIC);
 
 /** Prefetch header fields are little-endian. */
 const u32 = (view: DataView, offset: number, end: number): number | null =>
   offset + 4 <= end ? view.getUint32(offset, true) : null;
 
-const asciiName = (bytes: Uint8Array): string | null => {
-  const nul = bytes.indexOf(0);
-  const text = Buffer.from(nul < 0 ? bytes : bytes.subarray(0, nul)).toString(
-    "latin1",
-  );
+/** The executable name is a NUL-terminated UTF-16LE string in a 60-byte field. */
+const utf16Name = (bytes: Uint8Array): string | null => {
+  let end = 0;
+  while (end + 1 < bytes.length && (bytes[end] !== 0 || bytes[end + 1] !== 0))
+    end += 2;
+  const text = Buffer.from(bytes.subarray(0, end)).toString("utf16le");
   return text.length === 0 ? null : text;
 };
 
@@ -101,7 +105,7 @@ const hexHash = (value: number | null): string | null =>
   value === null ? null : value.toString(16).padStart(8, "0");
 
 const NOT_DECODED_LIMITATION =
-  "This reader reports the Prefetch header only. Last-run times, volumes and the read-ahead file list are not decoded, so executions recorded by those fields remain unknown.";
+  "This reader reports the executable name, its name hash, the declared file size, the recorded run count and whether a last-run timestamp is present. The timestamp value, the volume list and the read-ahead file list are not decoded; their contents remain unknown.";
 
 export const parsePrefetchFile = (
   bytes: Uint8Array,
@@ -111,19 +115,20 @@ export const parsePrefetchFile = (
       kind: "limit",
       message: `The file exceeds the ${String(PREFETCH_MAX_FILE_BYTES)}-byte Prefetch allowance.`,
     });
-  const version = readVersionTag(bytes);
-  if (version === null)
-    return err({ kind: "format", message: "No Prefetch version tag." });
-  // A compressed file carries "MSCF" where an uncompressed one writes "S".
+  // A MAM container replaces the header entirely, so it has no generation.
   if (isMamContainer(bytes))
     return err({
       kind: "unsupported",
-      message: `Prefetch v${version} is MAM-compressed, and this reader does not decode that container.`,
+      message:
+        "The file is a MAM-compressed container, and this reader does not decode that container.",
     });
+  const version = readVersionTag(bytes);
+  if (version === null)
+    return err({ kind: "format", message: "No Prefetch generation." });
   if (!hasPrefetchSignature(bytes))
     return err({
       kind: "format",
-      message: "The Prefetch signature byte is not 'S'.",
+      message: 'The Prefetch signature is not "SCCA".',
     });
   if (version !== "17" && version !== "23")
     return err({
@@ -139,7 +144,7 @@ export const parsePrefetchFile = (
   const end = bytes.byteLength;
   const limitations: string[] = [];
   const declaredFileBytes = u32(view, FILE_SIZE_OFFSET, end);
-  const executableName = asciiName(
+  const executableName = utf16Name(
     bytes.subarray(
       EXECUTABLE_NAME_OFFSET,
       EXECUTABLE_NAME_OFFSET + EXECUTABLE_NAME_BYTES,
@@ -154,24 +159,19 @@ export const parsePrefetchFile = (
       `The header declares ${String(declaredFileBytes)} bytes but the file holds ${String(bytes.length)}.`,
     );
   let runCount: number | null = null;
-  let runTimeSlots: number | null = null;
-  if (version === "23") {
-    if (end < V23_HEADER_BYTES)
-      limitations.push(
-        "The file ends inside the v23 header, so run totals are unknown.",
-      );
-    else {
-      runCount = u32(view, V23_RUN_COUNT, end);
-      const size = u32(view, V23_RUN_TIMES_SIZE, end);
-      if (size === null || size % 8 !== 0)
-        limitations.push(
-          "The declared last-run array size is not a whole number of eight-byte slots, so its length is unknown.",
-        );
-      else runTimeSlots = size / 8;
-    }
-  } else
+  const runTimeSlots: number | null =
+    end >= FILE_INFORMATION_OFFSET + RUN_TIME_SLOT_BYTES ? 1 : null;
+  // The run count sits at the same offset in both generations; only its
+  // presence depends on the file reaching the end of the file-information
+  // block.
+  if (end < RUN_COUNT_OFFSET + 4)
     limitations.push(
-      "v17 headers do not report a run count, so execution totals are unknown.",
+      "The file ends before the run count field, so the recorded run total is unknown.",
+    );
+  else runCount = u32(view, RUN_COUNT_OFFSET, end);
+  if (runTimeSlots === null)
+    limitations.push(
+      "The file ends before the last-run timestamp, so no run time is reported.",
     );
   limitations.push(NOT_DECODED_LIMITATION);
   return ok({
