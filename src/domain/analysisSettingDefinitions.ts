@@ -227,6 +227,7 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_startup",
     provider: "ghidra",
     operations: [
+      "open_binary",
       "binary_overview",
       "list_documents",
       "list_procedures",
@@ -248,6 +249,7 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_startup",
     provider: "hopper",
     operations: [
+      "open_binary",
       "binary_overview",
       "list_documents",
       "list_procedures",
@@ -372,6 +374,7 @@ export const ANALYSIS_SETTINGS = {
     // Cutter bridge calls. bridgeMaxRequestBytes.test.ts fails when a registry
     // gains an operation that is missing here.
     operations: [
+      "open_binary",
       "address_name",
       "comment",
       "current_address",

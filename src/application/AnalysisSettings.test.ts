@@ -163,6 +163,17 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: "64",
   };
   const store = new AnalysisSettings(environment);
+  for (const provider of ["ghidra", "hopper"] as const)
+    expect(
+      store
+        .inspect({ provider, operation: "open_binary" })
+        .settings.map(({ setting }) => setting),
+    ).toEqual(
+      expect.arrayContaining([
+        `${provider}.startup_timeout_ms`,
+        "bridge.max_request_bytes",
+      ]),
+    );
   const parsed = parseConfig(environment);
   if (!parsed.ok) throw parsed.error;
   const config = runtimeAnalysisConfig(parsed.value, store.read);
