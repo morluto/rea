@@ -745,9 +745,9 @@ export class RizinDebugSessionManager {
           },
         ),
       );
-    session.pendingCommandCount += 1;
     const acceptedDeadline = this.#commandDeadline;
     const acceptedOutput = this.#commandOutput;
+    session.pendingCommandCount += 1;
     let release: (() => void) | undefined;
     let acquired = false;
     let commandSent = false;
