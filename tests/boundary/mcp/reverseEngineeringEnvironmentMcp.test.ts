@@ -7,6 +7,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
@@ -190,10 +191,20 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
   const listed = tools.find((tool) => tool.name === rizinContract.name);
   expect(listed?.description).toBe(rizinContract.description);
   // Rizin applies any width that shares a bit with a declared one, so the
-  // contract advertises the declared widths.
+  // contract advertises the declared widths. The default compact listing may
+  // reduce this tool's schema to shallow property types, which keeps no enum,
+  // so the full advertisement carries them and the call below enforces them.
   expect(listed?.inputSchema.properties?.asm_bits).toMatchObject({
-    enum: [4, 8, 16, 32, 64],
+    type: "number",
   });
+  expect(
+    (
+      advertisedInputJsonSchema(rizinContract).properties as Record<
+        string,
+        unknown
+      >
+    ).asm_bits,
+  ).toMatchObject({ enum: [4, 8, 16, 32, 64] });
   const undeclared = await client.callTool({
     name: "execute_rizin_command",
     arguments: { ...input, asm_bits: 17 },
