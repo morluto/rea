@@ -370,6 +370,7 @@ const readRecord = (
     extentValid:
       totalBytes === recordBytes &&
       usedBytes >= NTFS_MFT_MIN_RECORD_BYTES &&
+      usedBytes % 8 === 0 &&
       usedBytes <= totalBytes,
     baseRecordReference:
       baseRecordReference === 0n

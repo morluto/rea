@@ -83,6 +83,18 @@ it("names a failed fixup in the coverage limitations", async () => {
   );
 });
 
+it("reports an unaligned used-byte count as incomplete coverage", async () => {
+  const record = recordBytes({});
+  record.writeUInt32LE(57, 24);
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeMft("$MFT", record),
+  );
+  expect(inventory.coverage.status).toBe("unknown");
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    record_headers: [{ usedBytes: 57, extentValid: false }],
+  });
+});
+
 it("reports incomplete coverage when FILE extents contradict the record slots", async () => {
   const usedTooLarge = recordBytes({});
   usedTooLarge.writeUInt32LE(4096, 24);
