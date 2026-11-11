@@ -1,4 +1,5 @@
 import { expect, it as test, vi } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 
@@ -183,29 +184,57 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
   const { kuna, open } = await session(
     "rea-kuna-single-retained-slot-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "300" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
     unproven.launcher,
     1,
   );
   const client = open();
   const waiter = new AbortController();
+  let queued: ReturnType<typeof client.execute> | undefined;
+  let restoreAcquire: (() => void) | undefined;
   try {
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
     expect(
-      await client.execute("procedure_pseudo_code", { procedure: "main" }),
+      await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "kuna.function_timeout_ms": 300 } },
+        () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+      ),
     ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
     // The timed-out tree may still run, so the next run must not start.
-    const queued = client.execute(
+    const admission = deferred<void>();
+    const acquire = KunaRunSlots.prototype.acquire;
+    let granted = false;
+    const requests = vi
+      .spyOn(KunaRunSlots.prototype, "acquire")
+      .mockImplementation(function (this: KunaRunSlots, signal) {
+        const pending = acquire.call(this, signal);
+        void pending.then(() => {
+          granted = true;
+        });
+        admission.resolve();
+        return pending;
+      });
+    restoreAcquire = () => requests.mockRestore();
+    queued = client.execute(
       "procedure_pseudo_code",
       { procedure: "parse" },
       { signal: waiter.signal },
     );
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await awaitAcknowledgement(
+      admission.promise,
+      queued,
+      "retained single-function slot",
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(granted).toBe(false);
     expect(await decompilesOf(kuna)).toHaveLength(1);
     waiter.abort();
     expect(await queued).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
+    restoreAcquire();
+    restoreAcquire = undefined;
     expect((await client.close()).ok).toBe(false);
     unproven.release();
     expect(await client.close()).toEqual({ ok: true, value: null });
@@ -225,6 +254,8 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
     waiter.abort();
     unproven.release();
     await client.close();
+    await Promise.allSettled([queued]);
+    restoreAcquire?.();
   }
 });
 
@@ -343,13 +374,17 @@ it("does not keep a failed run, so a repeat runs again", async () => {
   const { kuna, open } = await session(
     "rea-kuna-single-failed-not-kept-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "200" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
   );
   const client = open();
   try {
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
     for (let repeat = 0; repeat < 2; repeat += 1)
       expect(
-        await client.execute("procedure_pseudo_code", { procedure: "main" }),
+        await runWithAnalysisOperationSnapshot(
+          { revision: 1, overrides: { "kuna.function_timeout_ms": 200 } },
+          () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+        ),
       ).toMatchObject({ ok: false });
     expect(await decompilesOf(kuna)).toHaveLength(2);
   } finally {
@@ -390,13 +425,15 @@ it("names the setting that owns a single-function deadline", async () => {
   const { open } = await session(
     "rea-kuna-function-deadline-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "300" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
   );
   const client = open();
   try {
-    const result = await client.execute("procedure_pseudo_code", {
-      procedure: "main",
-    });
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    const result = await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "kuna.function_timeout_ms": 300 } },
+      () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+    );
     if (result.ok) throw new Error("the hanging run answered");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
