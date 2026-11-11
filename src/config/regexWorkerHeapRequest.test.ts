@@ -12,6 +12,7 @@ import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   parseRegexWorkerHeapRequest,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
+  regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
 } from "./regexWorkerHeapRequest.js";
 import {
@@ -32,7 +33,7 @@ it("keeps the 128 MiB request when the setting is unset", () => {
   expect(parsed.value.regexWorkerHeapRequest).toEqual(
     DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   );
-  const recovery = regexWorkerHeapRequestRecovery(
+  const recovery = regexWorkerHeapRequestContinuingRecovery(
     DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   );
   const projected = projectAnalysisError(
