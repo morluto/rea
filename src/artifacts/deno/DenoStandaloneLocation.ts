@@ -50,7 +50,6 @@ const ELF32_PROGRAM_HEADER_BYTES = 32;
 const ELF64_SECTION_HEADER_BYTES = 64;
 const ELF32_SECTION_HEADER_BYTES = 40;
 const SHT_NOTE = 7;
-const SHF_COMPRESSED = 0x800n;
 const RT_RCDATA = 10;
 const RESOURCE_NAME = "D3N0L4ND";
 const SECTION_NAME = "d3n0l4nd";
@@ -653,7 +652,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
         continue;
       }
       if (parsed.value.type !== SHT_NOTE) continue;
-      if ((parsed.value.flags & SHF_COMPRESSED) !== 0n) {
+      if (parsed.value.compressed) {
         damaged("compressed ELF note sections are unsupported");
         continue;
       }

@@ -40,6 +40,15 @@ export interface ElfUnwindFixtureOptions {
   readonly symbolSource?: "symtab" | "dynsym" | "none";
   /** First CIE uses version 3 and a ULEB return-address register. */
   readonly version3?: boolean;
+  /** Raw LEB128 operands for boundary tests; omitted operands keep their normal encoding. */
+  readonly leb128?: {
+    readonly dataAlignment?: readonly number[];
+    readonly pointers?: {
+      readonly signed: boolean;
+      readonly start: readonly number[];
+      readonly size: readonly number[];
+    };
+  };
   /** Cut the second FDE after its length word. */
   readonly truncate?: boolean;
   /** Non-zero byte after a real terminator, still inside .eh_frame. */
@@ -267,10 +276,13 @@ interface BuiltFrame {
 
 /** The first CIE's `R` encoding for the selected frame options. */
 const firstPointerEncoding = (options: {
+  readonly leb128?: ElfUnwindFixtureOptions["leb128"];
   readonly datarelBase?: number;
   readonly indirectStart?: boolean;
   readonly unsignedPcrel?: { readonly bits: 32 | 64 };
 }): number => {
+  if (options.leb128?.pointers !== undefined)
+    return options.leb128.pointers.signed ? 0x09 : 0x01;
   if (options.unsignedPcrel !== undefined)
     return options.unsignedPcrel.bits === 64 ? 0x14 : 0x13;
   if (options.datarelBase !== undefined) return 0x3b;
@@ -282,6 +294,7 @@ const buildUnwindFrame = (
   ehVa: number,
   little: boolean,
   options: {
+    readonly leb128?: ElfUnwindFixtureOptions["leb128"];
     readonly version3: boolean;
     readonly functions: 1 | 2;
     readonly truncate: boolean;
@@ -333,7 +346,8 @@ const buildUnwindFrame = (
     `${unknown ? "zXR" : "zR"}${options.signalFrame ? "S" : ""}${"S".repeat(options.longAugmentation ?? 0)}\0`,
   );
   w.uleb(1);
-  w.sleb(-4);
+  if (options.leb128?.dataAlignment === undefined) w.sleb(-4);
+  else w.bytes(Buffer.from(options.leb128.dataAlignment));
   if (options.version3) w.uleb(128);
   else w.u8(16);
   w.uleb(unknown ? 2 : 1);
@@ -345,7 +359,10 @@ const buildUnwindFrame = (
   const fde0 = begin(wide);
   fdeOffsets.push(fde0);
   w.u32(w.length - cie0);
-  if (unsigned !== undefined) {
+  if (options.leb128?.pointers !== undefined) {
+    w.bytes(Buffer.from(options.leb128.pointers.start));
+    w.bytes(Buffer.from(options.leb128.pointers.size));
+  } else if (unsigned !== undefined) {
     const distance = BigInt(UNWIND_FN_A - (ehVa + w.length));
     if (unsigned.bits === 64) {
       w.u64Big(BigInt.asUintN(64, distance));
@@ -766,6 +783,7 @@ export const elfUnwindFixture = (
   const unwind = options.unwind !== false;
   const frame = unwind
     ? buildUnwindFrame(UNWIND_EH_VA, little, {
+        leb128: options.leb128,
         version3: options.version3 ?? false,
         functions: 2,
         truncate: options.truncate ?? false,

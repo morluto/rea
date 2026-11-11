@@ -31,6 +31,31 @@ const expectMftInventory = (value: unknown): void => {
         sequenceNumber: 1,
         declaredRecordNumber: null,
         fixups: { verifiedSectors: 2 },
+        attributeCoverage: "complete",
+        attributes: [
+          { type: 0x30, storage: { kind: "resident", valueFileOffset: 80 } },
+          {
+            type: 0x10,
+            storage: {
+              kind: "resident",
+              standardInformation: {
+                createdFileTime: "133000000000000002",
+                ownerId: 12,
+                usn: "9007199254740993",
+              },
+            },
+          },
+        ],
+        fileNameCoverage: "complete",
+        fileNames: [
+          {
+            name: "name",
+            parent: { recordNumber: 5, sequenceNumber: 3 },
+            fileOffset: 80,
+            createdFileTime: "133000000000000001",
+            dataBytes: "9007199254740993",
+          },
+        ],
       },
     ],
     omitted_record_headers: 0,
@@ -48,8 +73,25 @@ mcpTest(
     record.writeUInt16LE(3, 6);
     record.writeUInt16LE(1, 16);
     record.writeUInt16LE(56, 20);
-    record.writeUInt32LE(64, 24);
-    record.writeUInt32LE(0xffff_ffff, 56);
+    record.writeUInt32LE(264, 24);
+    record.writeUInt32LE(0x30, 56);
+    record.writeUInt32LE(104, 60);
+    record.writeUInt32LE(74, 72);
+    record.writeUInt16LE(24, 76);
+    record.writeBigUInt64LE(0x0003_0000_0000_0005n, 80);
+    record.writeBigUInt64LE(133000000000000001n, 88);
+    record.writeBigUInt64LE(9007199254740993n, 128);
+    record.writeUInt8(4, 144);
+    record.writeUInt8(1, 145);
+    record.write("name", 146, "utf16le");
+    record.writeUInt32LE(0x10, 160);
+    record.writeUInt32LE(96, 164);
+    record.writeUInt32LE(72, 176);
+    record.writeUInt16LE(24, 180);
+    record.writeBigUInt64LE(133000000000000002n, 184);
+    record.writeUInt32LE(12, 232);
+    record.writeBigInt64LE(9007199254740993n, 248);
+    record.writeUInt32LE(0xffff_ffff, 256);
     record.writeUInt32LE(1024, 28);
     record.writeUInt16LE(5, 42);
     record.writeUInt16LE(5, 510);

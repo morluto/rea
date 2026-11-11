@@ -570,3 +570,119 @@ it("retains exact cancellation reason and a complete checkpoint during final cle
     await session.dispose();
   }
 });
+
+it.each(
+  (
+    [
+      "execute",
+      "direct observation",
+      "external mutation",
+      "composed analysis",
+      "reset",
+      "open binary",
+      "open resources",
+    ] as const
+  ).flatMap((entrypoint) =>
+    [false, true].map((aborted) => ({ entrypoint, aborted })),
+  ),
+)(
+  "seals new $entrypoint admission at shutdown with caller aborted=$aborted",
+  async ({ entrypoint, aborted }) => {
+    const [target] = await createBinarySessionTargets();
+    const calls: string[] = [];
+    const session = createTestBinarySession(createCacheProvider(calls));
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const parameters = { address: "0x1000", document: "fixture" };
+    const mutation = vi.fn(async () => ok(null));
+    let earlier: Promise<unknown> | undefined;
+    try {
+      const opened = await session.open(target);
+      if (!opened.ok) throw opened.error;
+      earlier = session.withAdmittedAnalysis(
+        "earlier",
+        undefined,
+        async (analysis) => {
+          entered.resolve();
+          await release.promise;
+          return analysis.execute("address_name", parameters);
+        },
+      );
+      await awaitAcknowledgement(
+        entered.promise,
+        earlier,
+        "earlier analysis admission",
+      );
+      const controller = new AbortController();
+      const reason = { caller: "opaque shutdown cancellation", entrypoint };
+      if (aborted) controller.abort(reason);
+      session.beginShutdown();
+      const options = { signal: controller.signal };
+      const late = {
+        execute: () => session.execute("address_name", parameters, options),
+        "direct observation": () =>
+          session.executeForDirectObservation(
+            "address_name",
+            parameters,
+            parameters,
+            options,
+          ),
+        "external mutation": () =>
+          session.withAdmittedExternalMutation(
+            undefined,
+            controller.signal,
+            mutation,
+            (_value, error) => error,
+          ),
+        "composed analysis": () =>
+          session.withAdmittedAnalysis("late", controller.signal, mutation),
+        reset: () => session.resetInvestigation(options),
+        "open binary": () => session.open(target, options),
+        "open resources": () => session.openBundleResources(target, options),
+      }[entrypoint]();
+      release.resolve();
+      const result = await late;
+      if (result.ok) throw new Error("Expected shutdown admission refusal");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(aborted ? reason : undefined);
+      expect(mutation).not.toHaveBeenCalled();
+      expect(await earlier).toMatchObject({ ok: true, value: { ok: true } });
+      expect(calls.filter((name) => name === "address_name")).toHaveLength(1);
+    } finally {
+      release.resolve();
+      await earlier;
+      await session.dispose();
+    }
+  },
+);
+
+it("stops prompt completion dispatch as soon as shutdown seals admission", async () => {
+  const [target] = await createBinarySessionTargets();
+  const calls: string[] = [];
+  const base = createCacheProvider(calls);
+  const session = createTestBinarySession({
+    ...base,
+    createClient: (...arguments_) => {
+      const client = base.createClient(...arguments_);
+      return { ...client, executeIfReady: client.execute.bind(client) };
+    },
+  });
+  try {
+    const opened = await session.open(target);
+    if (!opened.ok) throw opened.error;
+    // Instantiate the real composite's child before exercising its ready path.
+    const initial = await session.execute("address_name", {});
+    if (!initial.ok) throw initial.error;
+    expect(
+      await session.executeIfProviderReady("address_name", {}),
+    ).toMatchObject({ ok: true });
+    const before = calls.length;
+    session.beginShutdown();
+    expect(
+      await session.executeIfProviderReady("address_name", {}),
+    ).toBeUndefined();
+    expect(calls).toHaveLength(before);
+  } finally {
+    await session.dispose();
+  }
+});

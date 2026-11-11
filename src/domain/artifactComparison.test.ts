@@ -429,6 +429,46 @@ it("retains known packing changes when content is unavailable", () => {
   });
 });
 
+it("compares declared digests without using limitation prose", () => {
+  const claim = { algorithm: "md5" as const, digest: "ab".repeat(16) };
+  const edited = { algorithm: "md5" as const, digest: "cd".repeat(16) };
+  const unavailable = (integrity?: {
+    readonly algorithm: "md5";
+    readonly digest: string;
+  }) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: ["same derived note"],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const changes = (
+    left: ReturnType<typeof unavailable>,
+    right: ReturnType<typeof unavailable>,
+  ) =>
+    compareArtifacts(left, right).changes.map(
+      ({ classification, dimensions }) => ({ classification, dimensions }),
+    );
+  const equal = changes(unavailable(claim), unavailable(claim));
+  const oneSided = changes(unavailable(claim), unavailable());
+  const different = changes(unavailable(claim), unavailable(edited));
+  expect(equal.length).toBeGreaterThan(0);
+  expect(oneSided).toHaveLength(equal.length);
+  expect(different).toHaveLength(equal.length);
+  expect(equal).toEqual(
+    equal.map(() => ({
+      classification: "unknown",
+      dimensions: ["availability"],
+    })),
+  );
+  for (const result of [oneSided, different])
+    expect(result).toEqual(
+      result.map(() => ({
+        classification: "unknown",
+        dimensions: ["metadata", "availability"],
+      })),
+    );
+});
+
 it("keeps unavailable content unknown when packing declarations agree", () => {
   expect(
     compareArtifacts(

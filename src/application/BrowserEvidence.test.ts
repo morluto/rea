@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import { describe, expect, it } from "vitest";
 
 import { createBrowserEvidence } from "./BrowserEvidence.js";
@@ -52,7 +53,7 @@ describe("web bundle Evidence origin scope", () => {
     const evidence = createBrowserEvidence(
       "analyze_web_bundle",
       input([]),
-      result,
+      { source: jsonValueSchema.parse(result), facts: result },
       provider,
     );
 
@@ -65,7 +66,7 @@ describe("web bundle Evidence origin scope", () => {
     const evidence = createBrowserEvidence(
       "analyze_web_bundle",
       input(["https://explicit.example.test"]),
-      result,
+      { source: jsonValueSchema.parse(result), facts: result },
       provider,
     );
 
@@ -75,17 +76,18 @@ describe("web bundle Evidence origin scope", () => {
   });
 
   it("does not infer an origin from a URL without one", () => {
+    const observed = webBundleAnalysisSchema.parse({
+      ...result,
+      capture: {
+        ...result.capture,
+        target_url: "file:///tmp/app.html",
+        target_origin: null,
+      },
+    });
     const evidence = createBrowserEvidence(
       "analyze_web_bundle",
       input([]),
-      webBundleAnalysisSchema.parse({
-        ...result,
-        capture: {
-          ...result.capture,
-          target_url: "file:///tmp/app.html",
-          target_origin: null,
-        },
-      }),
+      { source: jsonValueSchema.parse(observed), facts: observed },
       provider,
     );
 
@@ -93,17 +95,18 @@ describe("web bundle Evidence origin scope", () => {
   });
 
   it("does not infer a non-HTTP origin from a bundle URL", () => {
+    const observed = webBundleAnalysisSchema.parse({
+      ...result,
+      capture: {
+        ...result.capture,
+        target_url: "ftp://host/app",
+        target_origin: null,
+      },
+    });
     const evidence = createBrowserEvidence(
       "analyze_web_bundle",
       input([]),
-      webBundleAnalysisSchema.parse({
-        ...result,
-        capture: {
-          ...result.capture,
-          target_url: "ftp://host/app",
-          target_origin: null,
-        },
-      }),
+      { source: jsonValueSchema.parse(observed), facts: observed },
       provider,
     );
 
@@ -123,7 +126,7 @@ it.each([undefined, {}, { decoded_records: 1024 }])(
     const evidence = createBrowserEvidence(
       "analyze_web_bundle",
       selected,
-      result,
+      { source: jsonValueSchema.parse(result), facts: result },
       provider,
     );
     if (selection === undefined)

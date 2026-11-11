@@ -377,7 +377,7 @@ it.each([
       REA_REFERENCE_SECRET_PATTERNS_JSON: '["*.private", "local/**"]',
       REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
       REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp",
-      CALLER_SETTING: "preserve exactly",
+      CALLER_SETTING: "preserve exactly = caller value",
       ["__proto__"]: "caller prototype setting",
       constructor: "caller constructor setting",
       toString: "caller string setting",
@@ -748,6 +748,11 @@ it("retains legacy OpenCode environment when migrating into a native server tabl
 });
 
 it.each([
+  [
+    "environment name containing an equals delimiter",
+    { "CALLER=SETTING": "value" },
+    "CALLER=SETTING",
+  ],
   [
     "non-string member",
     { REA_MCP_INPUT_SCHEMA_PROFILE: "compact", PORT: 8080 },

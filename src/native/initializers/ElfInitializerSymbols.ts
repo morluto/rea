@@ -467,7 +467,11 @@ export const sectionRelocations = async (
   const word = wordOf(input.bits);
   let complete = true;
   const skip = (section: NativeSection): void => {
-    if (wantedBy(section).length > 0) complete = false;
+    if (
+      (input.relocatable && input.sections[section.info] === undefined) ||
+      wantedBy(section).length > 0
+    )
+      complete = false;
   };
   // One budget across every header, so many headers over one range cannot multiply the work.
   let budget = SECTION_RELOCATION_RECORD_SCAN;
@@ -497,6 +501,7 @@ export const sectionRelocations = async (
       input.notes.add(
         "A relocation section names a target section that does not exist, so its records were not applied.",
       );
+      skip(section);
       continue;
     }
     const start = Number(section.offset);
