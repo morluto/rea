@@ -1,3 +1,4 @@
+import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
@@ -22,7 +23,7 @@ import {
 const MIB = 1024 * 1024;
 
 /** Largest retained file the state view reads. */
-const DEFAULT_MAX_BYTES = 64 * MIB;
+const DEFAULT_MAX_BYTES = DESKTOP_VIEW_DEFAULTS.file_bytes;
 
 type FailedRelease = Extract<
   ArtifactCleanupAttempt,

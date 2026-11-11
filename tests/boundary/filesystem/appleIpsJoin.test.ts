@@ -341,9 +341,6 @@ describe("Apple IPS rejected joins", () => {
       status: "unjoined",
       reason: expect.stringContaining("join.limitations"),
     });
-    expect(report.join.limitations.join(" ")).toContain(
-      "does not match x86_64",
-    );
     expect(report.join.limitations.join("\n")).toContain(
       "does not match x86_64",
     );

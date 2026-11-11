@@ -33,6 +33,7 @@ import {
 
 /** Complete or partially assembled inventory used by comparison workflows. */
 export interface InventorySet {
+  readonly effectiveLimits?: ArtifactInventoryResult["effective_limits"];
   readonly manifest: ArtifactInventoryResult["manifest"];
   readonly nodes: readonly ArtifactNode[];
   readonly occurrences: readonly ArtifactOccurrence[];
@@ -383,6 +384,13 @@ const assembleInventoryResults = (
   const occurrences = new Map<string, ArtifactOccurrence>();
   const edges = new Map<string, ArtifactInventoryResult["edges"][number]>();
   for (const page of pages) {
+    if (
+      canonicalJson(page.effective_limits ?? null, "Artifact reader policy") !==
+      canonicalJson(first.effective_limits ?? null, "Artifact reader policy")
+    )
+      throw new ArtifactInventoryCompositionError(
+        "Artifact inventory pages do not share one accepted reader policy",
+      );
     if (canonicalJson(page.manifest, "Artifact inventory") !== manifestJson)
       throw new ArtifactInventoryCompositionError(
         "Artifact inventory pages do not share one manifest",
@@ -477,6 +485,9 @@ const orderedInventory = (
   ].sort(compareUnicodeCodePoints);
   return {
     manifest: first.manifest,
+    ...(first.effective_limits === undefined
+      ? {}
+      : { effectiveLimits: first.effective_limits }),
     nodes,
     occurrences,
     edges,

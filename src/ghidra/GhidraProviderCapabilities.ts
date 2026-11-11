@@ -239,12 +239,18 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
         : {}),
       available: true,
       reason: null,
-      // Project writes are private import machinery. Analysis reads are bound
-      // to the artifact/profile; session annotations disable snapshot replay.
+      // Dossier projections consume runtime budgets. Reobserve even an imported
+      // snapshot so a raised or lowered budget cannot replay stale flow coverage.
+      // Ghidra retains its own native decompiler cache.
       ...(GHIDRA_MUTATING_OPERATIONS.has(operation) ||
       operation === "list_documents"
         ? {}
-        : { cachePolicy: "snapshot" as const }),
+        : {
+            cachePolicy:
+              operation === "analyze_function"
+                ? ("live" as const)
+                : ("snapshot" as const),
+          }),
       effects: Object.freeze({
         mutatesArtifact: GHIDRA_MUTATING_OPERATIONS.has(operation),
         launchesProcess: true,

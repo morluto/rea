@@ -1,3 +1,4 @@
+import type { DesktopViewPolicyInput } from "../../domain/desktop/desktopViewPolicy.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import {
@@ -14,13 +15,11 @@ import {
   type HomePathCollision,
   type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
-import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import type { WithheldFile } from "../../domain/desktop/appWithheld.js";
 import {
   trashedFiles,
   runtimeSeeds,
   unownedChangedFolders,
-  unownedFoldersLimitation,
   unreadDconfLimitation,
 } from "../../domain/desktop/appExportUnowned.js";
 import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
@@ -32,7 +31,6 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
-import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -71,7 +69,11 @@ import { exportLimitations } from "./DesktopExportLimitations.js";
 import { withRetainedContent } from "./DesktopRetainedContent.js";
 import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
-import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
+import {
+  admitDesktopTasks,
+  type AdmittedTasks,
+  type TaskSummary,
+} from "./DesktopTaskExport.js";
 import { taskReads } from "./DesktopExportReaders.js";
 
 const OPERATION = "export_desktop_application";
@@ -80,21 +82,25 @@ const SEED_MAX_BYTES = 1024 * 1024 * 1024;
 
 /** What the caller asked to export, after CLI parsing. */
 export interface DesktopExportRequest extends WithheldRequest {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   readonly capture: string;
   readonly directory: string;
   readonly name: string | undefined;
-  /** Task files to validate and add; a capture yields at most one. */
+  /** Task files to validate and add, each checked at its own end. */
   readonly tasks: readonly string[];
+  /** `NAME=CHECKPOINT` for each task checked at a checkpoint other than the end checkpoint. */
+  readonly taskEnds?: readonly string[] | undefined;
   /** Where the computer downloads the captured package file from, for an application installed from one. */
   readonly packageUrl?: string | undefined;
   /** Packages installed beside the application, such as a runtime piece a build request named. */
   readonly extraPackages?: readonly string[] | undefined;
   /** A JSON file naming the AppImage or tarball a build computer unpacked the application from. */
   readonly downloadInstall?: string | undefined;
+  /** The folder a build computer keeps a screenshot of each checkpoint in, a screen judge's examples. */
   readonly screens?: string | undefined;
   /** The checkpoint the seed is taken at; the baseline when omitted. */
   readonly seedCheckpoint?: string | undefined;
-  /** The checkpoint a task's end state is read at; the last when omitted. */
+  /** The checkpoint a task's end state is read at unless it names its own; the last when omitted. */
   readonly endCheckpoint?: string | undefined;
   /** The seed was made for the task, as in a build computer, rather than taken from the user's own data. */
   readonly syntheticSeed?: boolean | undefined;
@@ -120,7 +126,7 @@ export interface DesktopExportResult {
   readonly dconf_groups: number;
   readonly files: readonly string[];
   readonly limitations: readonly string[];
-  readonly task: AdmittedTask["summary"] | null;
+  readonly tasks: readonly TaskSummary[];
   /** Files withheld from the seed, each a secret setting a deploy takes from its environment variable. */
   readonly withheld_files: readonly WithheldFile[];
   /** Withheld files seeded all the same, with the person's consent. */
@@ -235,6 +241,7 @@ const planExport = async (
   });
   const launch = planLaunch(capture, electron, seeds, files);
   const plan: DesktopAppExportPlan = {
+    viewPolicy: request.viewPolicy,
     name: source,
     className: className(source),
     title: application.desktop_entry?.name ?? source,
@@ -295,7 +302,7 @@ const planExport = async (
 /** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
 const bundleText = (
   plan: DesktopAppExportPlan,
-  admitted: AdmittedTask | undefined,
+  admitted: AdmittedTasks | undefined,
   dconfHoldsIdentity: boolean,
   consent: string | undefined,
 ) => {
@@ -349,6 +356,7 @@ const runExport = async (
     request.capture,
     readers,
     signal,
+    { viewPolicy: request.viewPolicy },
   );
   if (stateEvidence instanceof AnalysisError) throw stateEvidence;
   const state = desktopApplicationStateSchema.parse(
@@ -378,9 +386,17 @@ const runExport = async (
     checkpoints,
     signal,
   });
-  const admitted = await admitDesktopTask(
-    request.tasks,
-    { ...plan, files, identity, ends, ...reads, seeded: new Set(seeds.keys()) },
+  const admitted = await admitDesktopTasks(
+    { paths: request.tasks, ends: request.taskEnds ?? [] },
+    {
+      ...plan,
+      files,
+      identity,
+      ends,
+      checkpoints,
+      ...reads,
+      seeded: new Set(seeds.keys()),
+    },
     signal,
   );
   const copy = await withheldCopy(request, plan, held.captured, signal);
@@ -431,7 +447,7 @@ const runExport = async (
       ...copies.map((copy) => copy.path),
     ],
     limitations,
-    task: admitted?.summary ?? null,
+    tasks: admitted?.summaries ?? [],
     withheld_files: plan.withheld ?? [],
     consented_files: plan.consentedFiles ?? [],
   };
@@ -467,6 +483,7 @@ export const exportDesktopApplication = async (
         capture_evidence_id: captureEvidenceId,
         named: request.name !== undefined,
         tasks: request.tasks.length,
+        task_ends: [...(request.taskEnds ?? [])],
         package_url: request.packageUrl !== undefined,
         download_install: request.downloadInstall !== undefined,
         extra_packages: [...(request.extraPackages ?? [])],
@@ -477,6 +494,9 @@ export const exportDesktopApplication = async (
         withhold_to: request.withhold?.to ?? null,
         withhold_paths: [...(request.withhold?.paths ?? [])],
         seed_withheld: request.seedWithheld === true,
+        ...(request.viewPolicy === undefined
+          ? {}
+          : { view_policy: { ...request.viewPolicy } }),
       },
       result: {
         ...result,

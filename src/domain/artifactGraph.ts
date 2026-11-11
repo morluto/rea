@@ -6,6 +6,7 @@ import {
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
+import { artifactReaderLimitsSchema } from "./artifactReaderLimits.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { inesInventorySchema } from "./inesContainer.js";
 
@@ -102,6 +103,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "dfuse",
   "esp-flash-image",
   "fit",
+  "ntfs-mft",
   "unknown",
 ] as const;
 
@@ -123,6 +125,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "uf2",
   "dfuse",
   "fit",
+  "ntfs-mft",
   "mach-o-universal",
   "mach-o",
   "elf",
@@ -253,6 +256,11 @@ export type ArtifactInventoryCoverage = z.infer<
 
 /** Current inventory observation containing the stable artifact graph. */
 export const artifactInventoryResultSchema = z.strictObject({
+  effective_limits: artifactReaderLimitsSchema
+    .exactOptional()
+    .describe(
+      "Accepted resource policy when selected; each format group applies only if that format is encountered. Not measured process memory or confirmation every reader ran.",
+    ),
   manifest: artifactGraphManifestSchema,
   nodes: z.array(artifactNodeSchema),
   occurrences: z.array(artifactOccurrenceSchema),
@@ -284,6 +292,7 @@ const artifactExtractionManifestSchema = z.object({
 
 /** Safe extraction observation with containment and cleanup verification. */
 export const artifactExtractionResultSchema = z.object({
+  effective_limits: artifactReaderLimitsSchema.exactOptional(),
   manifest: artifactGraphManifestSchema,
   extraction_manifest: artifactExtractionManifestSchema,
   output_root: z.string().min(1),

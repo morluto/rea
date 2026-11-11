@@ -1,10 +1,11 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, onTestFinished } from "vitest";
 
 import { electronActiveTimelineEventSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -3675,28 +3676,19 @@ const runNode = async (
   readonly stdout: string;
   readonly stderr: string;
 }> => {
-  const hook = await stageHook(root, sourceHook);
-  return new Promise((resolve, reject) => {
-    const child = spawn(
+  const processes = createTestProcessRegistry();
+  onTestFinished(() => processes.shutdown());
+  return withVerifierCleanup(async () => {
+    const hook = await stageHook(root, sourceHook);
+    const result = await processes.run(
       process.execPath,
       [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
-      {
-        cwd: root,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
+      { cwd: root, env: process.env, timeoutMs: 10_000 },
     );
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) =>
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
-    );
-  });
+    return {
+      code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }, [() => processes.shutdown()]);
 };

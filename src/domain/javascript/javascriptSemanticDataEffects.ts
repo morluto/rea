@@ -220,7 +220,7 @@ const collectDefaults = (
     if (candidate === undefined) return;
     const literal = readExactJavaScriptLiteral(node.right);
     const value: JavaScriptSemanticValue = literal.found
-      ? semanticPrimitiveSet([literal.value])
+      ? semanticPrimitiveSet([literal.value], context.state.precision)
       : { status: "unknown", reason: "Default is not an exact primitive." };
     recordSemanticValueLimit(context.state, value);
     output.push({

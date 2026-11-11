@@ -19,6 +19,7 @@ describe("executable header parsing", () => {
     });
   });
   it.each([
+    // x32 uses ELF32 with the x86-64 machine identity.
     [elf(1, 1, 62), "elf", "x86_64"],
     [elf(2, 2, 183), "elf", "arm64"],
     [elf(1, 1, 164), "elf", "hexagon"],
@@ -50,13 +51,6 @@ describe("executable header parsing", () => {
     expect(parseExecutableHeader(elf(1, 1, 0xabc7), "x64")).toEqual({
       ok: false,
       error: "unsupported ELF architecture: e_machine 43975",
-    });
-  });
-
-  it("retains ELF32 x86-64 identity for the x32 ABI", () => {
-    expect(parseExecutableHeader(elf(1, 1, 62), "x64")).toMatchObject({
-      ok: true,
-      value: { format: "elf", architecture: "x86_64" },
     });
   });
 
