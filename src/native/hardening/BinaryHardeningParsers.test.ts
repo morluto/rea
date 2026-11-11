@@ -1109,7 +1109,10 @@ it("cites a non-ASCII import name by its source bytes", () => {
 });
 
 it("treats the __chk_fail handler import as a FORTIFY sign", () => {
-  const bytes = elfHardeningFixture({ fortify: true, fortifyName: "__chk_fail" });
+  const bytes = elfHardeningFixture({
+    fortify: true,
+    fortifyName: "__chk_fail",
+  });
   const image = readElfHardening(bytes);
   const row = findRow(image.rows, "fortify");
   expect(row).toMatchObject({ state: "enabled", location: { bytes: 10 } });
