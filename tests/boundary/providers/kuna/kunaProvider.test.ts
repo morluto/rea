@@ -41,6 +41,7 @@ import {
   exportsOf,
   FUNCTIONS,
   unprovenCleanupLauncher,
+  awaitKunaCommand,
 } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -827,13 +828,7 @@ it.each([false, true])(
       withCallerSignal ? { signal: caller.signal } : {},
     );
     try {
-      await expect
-        .poll(async () =>
-          (await fakeKunaCalls(kuna)).filter(
-            ({ argv }) => argv[0] === "decompile",
-          ),
-        )
-        .toHaveLength(1);
+      await awaitKunaCommand(kuna, "decompile", request);
       const call = (await fakeKunaCalls(kuna)).find(
         ({ argv }) => argv[0] === "decompile",
       );
@@ -845,8 +840,8 @@ it.each([false, true])(
       });
     } finally {
       caller.abort();
-      await request;
       await client.close();
+      await request;
     }
   },
 );
@@ -900,13 +895,7 @@ it("retains an active request's workspace when close cannot prove its stop", asy
     { signal: caller.signal },
   );
   try {
-    await expect
-      .poll(async () =>
-        (await fakeKunaCalls(kuna)).filter(
-          ({ argv }) => argv[0] === "decompile",
-        ),
-      )
-      .toHaveLength(1);
+    await awaitKunaCommand(kuna, "decompile", request);
     const closed = await client.close();
     expect(closed).toMatchObject({
       ok: false,
@@ -922,9 +911,10 @@ it("retains an active request's workspace when close cannot prove its stop", asy
     expect(await readFile(input ?? "", "utf8")).toBe("program bytes");
   } finally {
     caller.abort();
-    await request;
     unproven.release();
-    expect(await client.close()).toEqual({ ok: true, value: null });
+    const closed = await client.close();
+    await request;
+    expect(closed).toEqual({ ok: true, value: null });
   }
 });
 
