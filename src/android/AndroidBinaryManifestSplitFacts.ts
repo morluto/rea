@@ -301,8 +301,16 @@ export const readAndroidBinaryManifestSplitFacts = (
     );
     if (!pool.ok) return pool;
     const strings = pool.value;
+    // A resource map is a flat run of 4-byte IDs, so a payload that ends
+    // mid-word cannot be rounded down: the ID for an obfuscated or renamed
+    // attribute would shift, and a framework attribute would read as absent.
     const resourceIds: number[] = [];
     if (resourceMapChunk !== undefined) {
+      if ((resourceMapChunk.chunkSize - resourceMapChunk.headerSize) % 4 !== 0)
+        return err({
+          kind: "malformed",
+          message: "The resource map ends inside a resource ID.",
+        });
       for (
         let offset = resourceMapChunk.start + resourceMapChunk.headerSize;
         offset + 4 <= resourceMapChunk.start + resourceMapChunk.chunkSize;
