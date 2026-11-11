@@ -578,6 +578,33 @@ if (expression !== undefined) {
 })();
 `;
 
+export interface RegexConfigurationSnapshot {
+  readonly deadline: RegexMatchingDeadline;
+  readonly heapRequest: RegexWorkerHeapRequest;
+}
+
+/** Capture the operation's admitted regex values without starting work. */
+export const snapshotRegexConfiguration = (
+  selectedDeadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+  selectedHeap: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+): Result<RegexConfigurationSnapshot, ConfigurationError> => {
+  try {
+    return ok({
+      deadline: {
+        deadlineMs: selectedDeadline.deadlineMs,
+        source: selectedDeadline.source,
+      },
+      heapRequest: {
+        heapMiB: selectedHeap.heapMiB,
+        source: selectedHeap.source,
+      },
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError) return err(cause);
+    throw cause;
+  }
+};
+
 /** Match an inventory off the service thread, and prove worker exit before returning. */
 export const matchRegexValues = async (input: {
   readonly operation: string;
@@ -596,24 +623,12 @@ export const matchRegexValues = async (input: {
         cause: input.signal.reason,
       }),
     );
-  const selectedDeadline = input.deadline ?? DEFAULT_REGEX_MATCHING_DEADLINE;
-  const selectedHeap = input.heapRequest ?? DEFAULT_REGEX_WORKER_HEAP_REQUEST;
-  let deadline: RegexMatchingDeadline;
-  let heapRequest: RegexWorkerHeapRequest;
-  try {
-    // Capture the accepted values before work begins; subsequent updates do not alter this match.
-    deadline = {
-      deadlineMs: selectedDeadline.deadlineMs,
-      source: selectedDeadline.source,
-    };
-    heapRequest = {
-      heapMiB: selectedHeap.heapMiB,
-      source: selectedHeap.source,
-    };
-  } catch (cause: unknown) {
-    if (cause instanceof ConfigurationError) return err(cause);
-    throw cause;
-  }
+  const admitted = snapshotRegexConfiguration(
+    input.deadline,
+    input.heapRequest,
+  );
+  if (!admitted.ok) return admitted;
+  const { deadline, heapRequest } = admitted.value;
   let worker: Worker;
   try {
     worker = new Worker(WORKER_SOURCE, {
