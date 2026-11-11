@@ -8,6 +8,7 @@ import {
 } from "./solcCompilerJson.js";
 import {
   compilerSelectionSchema,
+  solcBytecodeProperty,
   type CompilerSelection,
   type SolcArtifact,
 } from "./solcArtifact.js";
@@ -202,8 +203,7 @@ function selectFromTree(
   const contractResult = selectedContract(tree, selection);
   if (!contractResult.ok) return contractResult;
   const contract = contractResult.value;
-  const bytecodeKey =
-    selection.bytecode_kind === "creation" ? "bytecode" : "deployedBytecode";
+  const bytecodeKey = solcBytecodeProperty(selection.bytecode_kind);
   const evm = child(contract, "evm");
   if (evm !== undefined && evm.type !== "object")
     return failure("format", "Selected contract evm output must be an object");

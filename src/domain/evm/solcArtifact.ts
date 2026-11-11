@@ -13,11 +13,34 @@ export const compilerSelectionSchema = z.strictObject({
   bytecode_kind: z.enum(["creation", "deployed"]),
 });
 export type CompilerSelection = z.infer<typeof compilerSelectionSchema>;
+export const solcBytecodeProperty = (
+  kind: CompilerSelection["bytecode_kind"],
+) => (kind === "creation" ? "bytecode" : "deployedBytecode");
 
 const coordinate = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const spanLength = (range: { start: number; end: number }) =>
   range.end - range.start;
 type SyntaxRange = { start: number; end: number };
+/** Minimum object-property/array wrappers; source escapes and whitespace may be longer. */
+const containsProperty = (
+  parent: SyntaxRange,
+  nested: SyntaxRange,
+  keys: readonly string[],
+  array = false,
+) =>
+  nested.start - parent.start >=
+    keys.reduce(
+      (size, key) => size + JSON.stringify(key).length + 2,
+      array ? 1 : 0,
+    ) && parent.end - nested.end >= keys.length + (array ? 1 : 0);
+
+/** Shared by retained successful reports and worker failures after row admission. */
+export const compilerDiagnosticsFitCarrier = (
+  diagnostics: readonly { source_range: SyntaxRange }[] | null | undefined,
+  carrierBytes: number,
+) =>
+  diagnostics?.every(({ source_range }) => source_range.end <= carrierBytes) ??
+  true;
 const overlaps = (left: SyntaxRange, right: SyntaxRange) =>
   left.start < right.end && right.start < left.end;
 const orderedDisjoint = (ranges: readonly SyntaxRange[]) =>
@@ -165,13 +188,12 @@ export const solcArtifactSchema = z
         path: ["object_range"],
         message: "Object range cannot contain the retained JSON string",
       });
-    const contains = (
-      parent: { start: number; end: number },
-      nested: { start: number; end: number },
-    ) => nested.start > parent.start && nested.end < parent.end;
     if (
       value.bytecode_range !== null &&
-      !contains(value.contract_range, value.bytecode_range)
+      !containsProperty(value.contract_range, value.bytecode_range, [
+        "evm",
+        solcBytecodeProperty(value.selection.bytecode_kind),
+      ])
     )
       context.addIssue({
         code: "custom",
@@ -189,7 +211,22 @@ export const solcArtifactSchema = z
         continue;
       }
       for (const [index, reference] of references.entries()) {
-        if (!contains(value.bytecode_range, reference.source_range))
+        const keys =
+          facet === "link_references"
+            ? [
+                "linkReferences",
+                reference.source_unit!,
+                reference.library_name!,
+              ]
+            : ["immutableReferences", reference.immutable_id!];
+        if (
+          !containsProperty(
+            value.bytecode_range,
+            reference.source_range,
+            keys,
+            true,
+          )
+        )
           context.addIssue({
             code: "custom",
             path: [facet, index, "source_range"],
@@ -200,7 +237,7 @@ export const solcArtifactSchema = z
     if (
       value.object_range !== null &&
       (value.bytecode_range === null ||
-        !contains(value.bytecode_range, value.object_range))
+        !containsProperty(value.bytecode_range, value.object_range, ["object"]))
     )
       context.addIssue({
         code: "custom",
@@ -208,7 +245,9 @@ export const solcArtifactSchema = z
       });
     if (
       value.metadata.source_range !== null &&
-      !contains(value.contract_range, value.metadata.source_range)
+      !containsProperty(value.contract_range, value.metadata.source_range, [
+        "metadata",
+      ])
     )
       context.addIssue({
         code: "custom",
@@ -237,15 +276,21 @@ export const solcArtifactSchema = z
         code: "custom",
         message: "Bytecode object and reference source ranges overlap",
       });
+    const firstDiagnostic = value.diagnostics?.at(0)?.source_range;
+    const lastDiagnostic = value.diagnostics?.at(-1)?.source_range;
     if (
-      value.diagnostics?.some((diagnostic) =>
-        overlaps(value.contract_range, diagnostic.source_range),
-      )
+      firstDiagnostic !== undefined &&
+      lastDiagnostic !== undefined &&
+      overlaps(value.contract_range, {
+        start: firstDiagnostic.start,
+        end: lastDiagnostic.end,
+      })
     )
       context.addIssue({
         code: "custom",
         path: ["diagnostics"],
-        message: "Diagnostic source range overlaps selected contract",
+        message:
+          "Compiler diagnostics region overlaps or straddles selected contract",
       });
   })
   .superRefine((value, context) => {
@@ -253,10 +298,7 @@ export const solcArtifactSchema = z
       context.addIssue({ code: "custom", message });
     const escape = (segment: string) =>
       segment.replaceAll("~", "~0").replaceAll("/", "~1");
-    const key =
-      value.selection.bytecode_kind === "creation"
-        ? "bytecode"
-        : "deployedBytecode";
+    const key = solcBytecodeProperty(value.selection.bytecode_kind);
     if (
       value.json_pointer !==
       `/contracts/${escape(value.selection.source_unit)}/${escape(value.selection.contract_name)}/evm/${key}`

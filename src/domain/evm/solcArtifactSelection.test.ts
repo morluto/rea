@@ -425,3 +425,65 @@ describe("nested compiler syntax containment", () => {
     expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
   });
 });
+
+describe("compiler property wrapper ranges", () => {
+  it.each(
+    ["bytecode", "deployed", "object", "link", "immutable", "metadata"].flatMap(
+      (facet) =>
+        (facet === "object" || facet === "metadata"
+          ? ["prefix"]
+          : ["prefix", "suffix"]
+        ).map((side) => ({ facet, side })),
+    ),
+  )("reserves $facet property $side syntax", ({ facet, side }) => {
+    const bytecode =
+      facet === "object"
+        ? { object: "" }
+        : facet === "link"
+          ? { linkReferences: { "lib.sol": { L: [{ start: 0, length: 1 }] } } }
+          : facet === "immutable"
+            ? { immutableReferences: { "0": [{ start: 0, length: 1 }] } }
+            : {};
+    const chosen = {
+      ...selection,
+      bytecode_kind:
+        facet === "deployed" ? ("deployed" as const) : ("creation" as const),
+    };
+    const artifact = successful(
+      JSON.stringify({
+        errors: [{}, {}],
+        contracts: {
+          [selection.source_unit]: {
+            C:
+              facet === "metadata"
+                ? { metadata: "{}" }
+                : {
+                    evm: {
+                      [facet === "deployed" ? "deployedBytecode" : "bytecode"]:
+                        bytecode,
+                    },
+                  },
+          },
+        },
+      }),
+      chosen,
+    ).artifact;
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+    const parent = ["bytecode", "deployed", "metadata"].includes(facet)
+      ? artifact.contract_range
+      : artifact.bytecode_range!;
+    const child =
+      facet === "metadata"
+        ? artifact.metadata.source_range!
+        : facet === "object"
+          ? artifact.object_range!
+          : facet === "link"
+            ? artifact.link_references![0]!.source_range
+            : facet === "immutable"
+              ? artifact.immutable_references![0]!.source_range
+              : artifact.bytecode_range!;
+    if (side === "prefix") child.start = parent.start + 1;
+    else child.end = parent.end - 1;
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
+  });
+});

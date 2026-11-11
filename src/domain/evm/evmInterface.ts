@@ -6,6 +6,7 @@ import { solidityMetadataSchema } from "./solidityMetadata.js";
 import { inspectSolcBytecodeObject } from "./solcBytecodeObject.js";
 import {
   compilerSelectionSchema,
+  compilerDiagnosticsFitCarrier,
   solcArtifactSchema,
   type CompilerSelection,
 } from "./solcArtifact.js";
@@ -173,8 +174,9 @@ export const evmInterfaceSchema = z
     if (
       compiler !== undefined &&
       (compiler.contract_range.end > value.artifact.bytes ||
-        compiler.diagnostics?.some(
-          (diagnostic) => diagnostic.source_range.end > value.artifact.bytes,
+        !compilerDiagnosticsFitCarrier(
+          compiler.diagnostics,
+          value.artifact.bytes,
         ))
     )
       context.addIssue({

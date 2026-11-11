@@ -980,18 +980,29 @@ it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
 
 it
   .runIf(!unsupportedHost)
-  .each(["valid", "missing", "wrong", "invalid-omission", "rows-and-omission"])(
+  .each([
+    "valid",
+    "valid-diagnostic",
+    "outside-diagnostic",
+    "missing",
+    "wrong",
+    "invalid-omission",
+    "rows-and-omission",
+  ])(
   "binds compiler failures and omission evidence to their carrier: %s",
   async (scenario) => {
     const { path } = await fixture();
-    await writeFile(path, "{}");
+    await writeFile(path, '{"errors":[{}]}');
     const provider = new EvmoleInterfaceProvider({}, async (spawn) => {
       const request = evmWorkerRequestSchema.parse(
         JSON.parse(await readFile(spawn.arguments.at(-1)!, "utf8")),
       );
-      const digest = createHash("sha256")
-        .update(await readFile(request.snapshot_path))
-        .digest("hex");
+      const snapshot = await readFile(request.snapshot_path);
+      const start =
+        scenario === "outside-diagnostic"
+          ? snapshot.length + 1
+          : snapshot.toString().indexOf("{}");
+      const digest = createHash("sha256").update(snapshot).digest("hex");
       await writeFile(
         request.reply_path,
         JSON.stringify({
@@ -1006,6 +1017,22 @@ it
               }),
           ...(["invalid-omission", "rows-and-omission"].includes(scenario)
             ? { compiler_diagnostics_omitted: "reply-budget" }
+            : {}),
+          ...(["valid-diagnostic", "outside-diagnostic"].includes(scenario)
+            ? {
+                compiler_diagnostics: [
+                  {
+                    raw_json: "{}",
+                    json_pointer: "/errors/0",
+                    severity: null,
+                    source_range: {
+                      start,
+                      end: start + 2,
+                      unit: "utf16-code-unit",
+                    },
+                  },
+                ],
+              }
             : {}),
           ...(scenario === "rows-and-omission"
             ? { compiler_diagnostics: [] }
@@ -1030,9 +1057,11 @@ it
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected compiler failure");
     expect(result.error._tag).toBe(
-      scenario === "valid" ? "AnalysisInputError" : "AnalysisOutputError",
+      scenario.startsWith("valid")
+        ? "AnalysisInputError"
+        : "AnalysisOutputError",
     );
-    if (scenario === "valid") {
+    if (scenario.startsWith("valid")) {
       const projected = projectAnalysisError(result.error);
       expect(projected.recovery).toBeUndefined();
       expect(projected.remediation.action).toContain(

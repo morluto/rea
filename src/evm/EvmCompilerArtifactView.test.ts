@@ -572,3 +572,15 @@ it("rejects diagnostics whose pointer indexes contradict source order", () => {
   });
   expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
 });
+
+it("rejects diagnostics straddling the selected contract", () => {
+  const parent = compilerParent(undefined, { errors: [{}, {}] });
+  expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(true);
+  const artifact = (parent.normalizedResult as EvmInterface).compiler_artifact!;
+  artifact.diagnostics![0]!.source_range = {
+    start: 0,
+    end: 2,
+    unit: "utf16-code-unit",
+  };
+  expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
+});

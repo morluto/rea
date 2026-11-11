@@ -83,6 +83,7 @@ import {
 import { evmWorkerReplySchema } from "./EvmInterfaceWorkerContract.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { SOLC_JSON_LIMITS } from "../domain/evm/solcCompilerJson.js";
+import { compilerDiagnosticsFitCarrier } from "../domain/evm/solcArtifact.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import {
@@ -713,7 +714,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       if (!reply.ok) {
         if (
           compilerSelection !== undefined
-            ? reply.carrier_sha256 !== carrier.sha256
+            ? reply.carrier_sha256 !== carrier.sha256 ||
+              !compilerDiagnosticsFitCarrier(
+                reply.compiler_diagnostics,
+                carrier.bytes.length,
+              )
             : reply.compiler_diagnostics !== undefined ||
               reply.compiler_diagnostics_omitted !== undefined ||
               reply.carrier_sha256 !== undefined
