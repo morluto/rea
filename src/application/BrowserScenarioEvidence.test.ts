@@ -36,10 +36,10 @@ const create = (fields: Record<string, unknown> = {}) => ({
 });
 
 describe("browser scenario evidence parameters", () => {
-  it("records a scenario that saves nothing as it was recorded before saved values existed", () => {
+  it("records the current parsed request action, including an empty saved-value list", () => {
     const recorded = parameters([open(), create()]);
     const actions = recorded["actions"] as Record<string, unknown>[];
-    expect(Object.keys(actions[1]!)).not.toContain("save");
+    expect(actions[1]).toHaveProperty("save", []);
     expect(parameters([open(), create({ save: [] })])).toEqual(recorded);
     const { scenario_sha256, ...scenario } = recorded;
     expect(scenario_sha256).toBe(
