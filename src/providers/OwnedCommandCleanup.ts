@@ -223,7 +223,7 @@ export const bindProcessInspectionCancellations = (
   primary: AnalysisError,
   operation: string,
 ): AnalysisError => {
-  const preparation = inspectionFailure(cause);
+  const preparation = processInspectionFailure(cause);
   if (
     preparation instanceof DarwinProcessOwnershipInspectionError &&
     preparation.capturedOutput !== undefined
