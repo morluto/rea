@@ -262,3 +262,73 @@ it("keeps caller attribution and the selected path through workspace rollback re
     expect((await client.close()).ok).toBe(true);
   }
 });
+
+it.each(["clean", "refuse"] as const)(
+  "preserves workspace cancellation and retries its rollback: %s",
+  async (mode) => {
+    const fixture = await session("rea-kuna-workspace-cancel-");
+    const lifetime = new AbortController();
+    const reason = { caller: "cancel target copy" };
+    const commands = new KunaTargetCommands(fixture.target, {
+      signal: lifetime.signal,
+    });
+    const create = PrivateRuntimeRoot.create;
+    let rootClose: ReturnType<typeof vi.spyOn> | undefined;
+    const roots = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        const root = await create(options);
+        if (mode === "refuse")
+          rootClose = vi
+            .spyOn(root, "close")
+            .mockRejectedValue(new Error("controlled rollback refusal"));
+        lifetime.abort(reason);
+        return root;
+      });
+    try {
+      const result = await commands.prepare();
+      if (result.ok) throw new Error("Expected cancelled workspace admission");
+      const primary = result.error.cleanupPrimary ?? result.error;
+      expect(primary).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(result.error.cleanupIncomplete).toBe(mode === "refuse");
+      if (mode === "refuse") {
+        expect((await commands.close()).ok).toBe(false);
+        rootClose?.mockRestore();
+        expect((await commands.close()).ok).toBe(true);
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(result.error.cleanupPrimary).toBe(primary);
+      }
+    } finally {
+      roots.mockRestore();
+      rootClose?.mockRestore();
+      expect((await commands.close()).ok).toBe(true);
+    }
+  },
+);
+
+it("does not relabel a physical workspace failure when cancellation also arrives", async () => {
+  const fixture = await session("rea-kuna-workspace-physical-");
+  const lifetime = new AbortController();
+  const physical = new Error("controlled workspace creation failure");
+  const commands = new KunaTargetCommands(fixture.target, {
+    signal: lifetime.signal,
+  });
+  const roots = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementation(async () => {
+      lifetime.abort({ caller: "concurrent shutdown" });
+      throw physical;
+    });
+  try {
+    expect(await commands.prepare()).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError", cause: physical },
+    });
+  } finally {
+    roots.mockRestore();
+    expect((await commands.close()).ok).toBe(true);
+  }
+});
