@@ -1,6 +1,7 @@
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
+  processInspectionFailure,
 } from "../providers/OwnedCommandCleanup.js";
 import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -325,7 +326,8 @@ export class WebBundleAnalysisWorker {
       try {
         await this.#start(deadline);
       } catch (cause: unknown) {
-        ownershipInspectionFailure = this.#inspectionFailure(cause, deadline);
+        if (processInspectionFailure(cause) !== undefined)
+          ownershipInspectionFailure = this.#inspectionFailure(cause, deadline);
         throw cause;
       }
       if (this.#frames.length > 0 || this.#pending !== "")
