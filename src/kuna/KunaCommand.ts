@@ -363,26 +363,27 @@ export const copyAndHash = async (
 const capturedKunaOutput = (
   snapshot: ProviderProcessSnapshot | null,
   failureReason?: OwnedCommandFailure["reason"],
-): AnalysisCapturedOutput | undefined =>
-  snapshot === null
-    ? undefined
-    : {
-        // An overflowing document is cut off; its tail explains nothing.
-        // Other evidence-sized output keeps only a bounded diagnostic tail.
-        stdout:
-          failureReason === "output-limit"
-            ? ""
-            : snapshot.stdout.text.slice(-4096),
-        stderr: snapshot.stderr.text,
-        truncated:
-          snapshot.diagnosticTruncated === true ||
-          snapshot.outputIncomplete === true ||
-          snapshot.stdout.text.length > 4096,
-        stdout_bytes: snapshot.stdout.observedBytes,
-        stderr_bytes: snapshot.stderr.observedBytes,
-        exit_code: snapshot.exitCode ?? null,
-        signal: snapshot.signal ?? null,
-      };
+): AnalysisCapturedOutput | undefined => {
+  if (snapshot === null) return undefined;
+  const text = snapshot.stdout.text;
+  let start = Math.max(0, text.length - 4096);
+  // Drop the whole leading character when the cap falls inside its pair.
+  if (start > 0 && (text.codePointAt(start - 1) ?? 0) > 0xffff) start += 1;
+  return {
+    // An overflowing document is cut off; its tail explains nothing.
+    // Other evidence-sized output keeps only a bounded diagnostic tail.
+    stdout: failureReason === "output-limit" ? "" : text.slice(start),
+    stderr: snapshot.stderr.text,
+    truncated:
+      snapshot.diagnosticTruncated === true ||
+      snapshot.outputIncomplete === true ||
+      start > 0,
+    stdout_bytes: snapshot.stdout.observedBytes,
+    stderr_bytes: snapshot.stderr.observedBytes,
+    exit_code: snapshot.exitCode ?? null,
+    signal: snapshot.signal ?? null,
+  };
+};
 
 /** Map an owned-command failure to its typed error, keeping unproven cleanup owned. */
 const commandFailure = (

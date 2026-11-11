@@ -15,7 +15,13 @@ const MARKER = "KUNA_OUTPUT_MARKER";
 
 /** Emit selected actual bytes before the fixture executable is fingerprinted. */
 const fixture = async (
-  mode: "invalid" | "invalid-long" | "unicode" | "stderr" | "exit",
+  mode:
+    | "invalid"
+    | "invalid-long"
+    | "unicode"
+    | "unicode-exit"
+    | "stderr"
+    | "exit",
   subcommand?: string,
 ) => {
   const root = await createTestTempDirectory("rea-kuna-buffered-output-");
@@ -32,6 +38,7 @@ const fixture = async (
   const output = `
 const originalWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = (chunk, ...rest) => {
+  ${mode === "unicode-exit" ? 'if (process.argv[2] === "xrefs") return originalWrite("😀".repeat(3000) + "x", ...rest);' : ""}
   const bytes = Buffer.from(chunk);
   const marker = Buffer.from(process.argv[2] === "xrefs" ? "fixture reference" : ${JSON.stringify(MARKER)});
   const index = ${subcommand === undefined ? "true" : `process.argv[2] === ${JSON.stringify(subcommand)}`} ? bytes.indexOf(marker) : -1;
@@ -39,7 +46,7 @@ process.stdout.write = (chunk, ...rest) => {
   return originalWrite(replaced, ...rest);
 };
 ${mode === "stderr" ? 'if (process.argv[2] !== "--version") process.stderr.write(Buffer.from([0xff]));' : ""}
-${mode === "exit" ? 'if (process.argv[2] === "xrefs") { process.exitCode = 7; process.stderr.write("physical failure"); }' : ""}
+${mode === "exit" || mode === "unicode-exit" ? 'if (process.argv[2] === "xrefs") { process.exitCode = 7; process.stderr.write("physical failure"); }' : ""}
 ${mode === "invalid" || mode === "invalid-long" ? `if (process.argv[2] === ${JSON.stringify(subcommand)}) process.stderr.write("fixture diagnostic");` : ""}
 `;
   await writeFile(
@@ -161,6 +168,31 @@ it("marks the bounded diagnostic tail without losing the observed byte count", a
   if (result.ok) throw new Error("Expected malformed provider output");
   expect(result.error.capturedOutput?.stdout).toHaveLength(4096);
   expect(result.error.capturedOutput?.stdout_bytes).toBeGreaterThan(5000);
+});
+
+it("keeps a valid Unicode diagnostic tail intact through a physical failure", async () => {
+  const client = await fixture("unicode-exit", "xrefs");
+  const result = await client.execute("xrefs", { address: "0x1000" });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ProviderAdapterError",
+      capturedOutput: {
+        stdout_bytes: 12001,
+        stderr: "physical failure",
+        exit_code: 7,
+        signal: null,
+        truncated: true,
+      },
+    },
+  });
+  if (result.ok) throw new Error("Expected physical command failure");
+  const output = result.error.capturedOutput;
+  if (output === undefined) throw new Error("Expected captured diagnostics");
+  // Encoding the decoded diagnostic must preserve every character.
+  expect(Buffer.from(output.stdout).toString("utf8")).toBe(output.stdout);
+  expect(output.stdout.length).toBeLessThanOrEqual(4096);
+  expect(output.stdout).toBe("😀".repeat(2047) + "x");
 });
 
 it.each(["unicode", "stderr"] as const)(
