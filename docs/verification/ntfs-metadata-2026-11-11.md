@@ -2,8 +2,9 @@
 
 Executed the packaged Linux CLI using Node 24.22.1, one CPU,
 and a 1 GiB V8 heap cap against unmodified Windows 11 MFT records. This verifies
-real acquisition bytes on Linux; no Windows runtime, live volume or real paired
-journal stream was exercised.
+real acquisition bytes on Linux. This initial sample-only run did not exercise
+a Windows runtime or paired journal stream. The later paired-volume fixture
+verification below covers both logical streams without mounting a volume.
 
 ## Inputs and attribution
 
@@ -43,9 +44,10 @@ Parsed the returned Evidence and artifact metadata, then asserted:
 
 The upstream notice supplies the Windows origin and intended fixture coverage;
 these CLI observations were executed locally. No upstream parser was run as an
-independent oracle. V2/V3/V4 journal decoding, paging and error recovery retain
-synthesized-fixture CLI/MCP coverage; real paired MFT/journal captures and
-Windows-host execution remain unverified.
+independent oracle for these three samples. V3/V4 journal decoding and error
+recovery retain synthesized-fixture coverage. The later paired-volume run below
+independently checks V2 records; authenticated forensic captures and Windows-host
+execution remain unverified.
 
 ## Default journal delivery comparison
 
@@ -110,3 +112,77 @@ extension-assembly and full-path limitations. The canonical inventory
 regression verifies actual names/attributes alongside the limitation text;
 reader coverage still reports corrupt fixups independently. No consumer-side
 wording override was introduced.
+
+
+## Paired-volume fixture verification
+
+Executed the packaged REA CLI and production stdio MCP server at
+`bae4ec0cdabc3401f84f61f49ee6867816fb0b6e` on Linux with Node 24.22.1.
+The source is Fox-IT's Dissect Team
+[`ntfs-cloud.bin.gz` volume fixture at
+83f71a87e173613580eb31f64c600789f4259c20](https://github.com/fox-it/dissect.ntfs/blob/83f71a87e173613580eb31f64c600789f4259c20/tests/_data/ntfs-cloud.bin.gz).
+The repository's [copyright notice](https://github.com/fox-it/dissect.ntfs/blob/83f71a87e173613580eb31f64c600789f4259c20/COPYRIGHT)
+attributes Dissect to Fox-IT, part of NCC Group, and the Dissect Team, with AGPL3
+terms. The compressed fixture and extracted binary streams remain local and are
+not committed to REA. The fixture's original acquisition process and Windows
+version were not independently authenticated; this is paired volume-fixture
+verification, not a claim of verified production forensic provenance.
+
+| Input | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Published compressed volume | 1,234,746 | `c44f83257be7a8e0ff1aecb61fe82b362c44256808da216d8824ea735576af5a` |
+| Extracted logical `$MFT` | 262,144 | `3a0f1a9c5bfa7d1d011eb1b391fddd40d5773a1cf89d7223165fd8516fb34d76` |
+| Extracted logical `$UsnJrnl:$J` | 21,376 | `39bd88d262fc71e3d45b69bb559268191f76051a63f42415f60bc6357881b56a` |
+
+### Independent extraction and oracle
+
+Installed `dissect.ntfs==3.16`, `dissect.cstruct==4.7` and
+`dissect.util==3.24` in an isolated temporary directory. Opened the compressed
+volume through a seekable gzip stream, without mounting it or materializing its
+1,054,866,944 decompressed bytes in memory. The independent NTFS parser read
+both logical streams from that same volume: the unnamed data of MFT segment 0
+and `$J` of segment 44 (`$Extend\$UsnJrnl`). Its 4,096-byte-cluster runs were
+`(LCN 85845, 64 clusters)` and `(LCN 1418, 64 clusters)` respectively. Extraction
+stopped at each declared logical length, excluding allocation slack.
+
+Built an independent expected table from all 179 Dissect V2 records: source
+positions and lengths, full file/parent references, USNs, raw FILETIMEs, reason
+and source flags, security IDs, file attributes and names. Dissect independently
+verified fixups for all 49 FILE records. Its local filename attributes supplied
+all 45 names with namespace, parent, source offset, raw timestamps, sizes and
+flags. Expected joins used the independently decoded slot and sequence identity;
+a missing or mismatched identity remained unresolved.
+
+### Executed public workflows and outcomes
+
+The production stdio MCP client discovered the advertised tools and validated
+replies with the SDK/Ajv2020 client contract. It traversed four journal pages
+at 50 rows per request, then two independent MFT detail pages at 32 records per
+request. Every event field and all filename facts above matched the independent
+oracle. All four coverage rows described zero padding, checked directly against
+the extracted journal bytes. Results retained:
+
+- 49 FILE records, 48 in use, 13 directories, no extension records, and zero
+  malformed/incomplete local attribute walks or unverified/mismatched fixups.
+- 179 V2 events; 157 file references matched and 22 stayed unresolved. All 179
+  parent references matched. The three old-name and six new-name reason rows
+  remain separate source events; they do not establish complete rename pairs.
+- The first result retrieved through `get_evidence_bundle` matched the original
+  normalized page. Client and transport closed successfully.
+
+The packaged CLI inspected the same pair with `--maxRows=200` and
+`--mftRecordLimit=32`. Its 179 events, four padding rows and first 32 MFT details
+matched the combined MCP results exactly. Continuations and omitted counts
+matched the selected views. Both extracted input digests remained unchanged
+after the CLI and MCP workflows. `historyCompleteness` remained `unknown`.
+
+The extraction used one CPU, a 512 MiB address-space limit and a 30-second CPU
+limit. REA/client processes used one CPU and a 1 GiB V8 heap limit each, with
+90-second MCP and 60-second CLI timeouts. No resource guard stopped a task.
+These were correctness checks; process-family memory and performance were not
+measured for this fixture and no performance claim is made.
+
+This run covers a paired V2 volume fixture on Linux. It does not establish
+Windows-host behavior, authenticated forensic acquisition provenance, real
+V3/V4 captures, extension-list assembly or nonresident payload recovery. Those
+limits remain explicit alongside the existing synthesized boundary regressions.
