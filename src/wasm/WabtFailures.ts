@@ -32,16 +32,13 @@ import {
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+  WABT_VERSION,
   MAX_WASM_COMMAND_TIMEOUT_MS,
   WASM_RESOURCE_DEFAULTS,
   WASM_RESOURCE_MAXIMUMS,
   type WasmResourceLimits,
 } from "../domain/wasm/wasmArtifact.js";
-import {
-  WABT_ACCEPTED_RANGE,
-  WABT_PROVIDER_IDENTITY,
-  WABT_VERSION,
-} from "./WabtRelease.js";
+import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 
 /** Recovery names the exhausted per-call byte owner, independently of deadlines. */
@@ -63,6 +60,12 @@ export type WabtVersionProbe = {
 
 type WabtFailureContext = {
   readonly commandTimeoutMs: number;
+  readonly commandTimeoutSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
   readonly limits?: WasmResourceLimits;
   readonly versionProbe?: WabtVersionProbe;
   readonly inputField?: readonly (string | number)[];
@@ -182,13 +185,17 @@ const classifyWabtFailure = (
     // Classify once before cleanup takes precedence, so the primary remains actionable.
     const timeoutMs =
       execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const timeoutSource =
+      execution?.commandTimeoutMs === undefined
+        ? "default"
+        : execution.commandTimeoutSource;
     const timeout =
       cause.reason === "timeout"
         ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
             limit: analysisSettingLimit(
               "wasm.command_timeout_ms",
               timeoutMs,
-              undefined,
+              timeoutSource,
             ),
             ...options,
             // The cleanup wrapper retains output once; its nested primary needs only recovery facts.

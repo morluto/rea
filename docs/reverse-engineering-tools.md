@@ -107,10 +107,13 @@ GDB and Rizin share these settings in the environment that launches REA:
 | `REA_DEBUGGER_MAX_SESSIONS`             | 8              | 1 to 64                  |
 | `REA_DEBUGGER_MAX_PENDING_COMMANDS`     | 16             | 1 to 256                 |
 
-Unset settings keep the defaults. Invalid selections fail configuration instead
-of falling back. Restart REA after changing its launch environment; these are
-not `update_analysis_settings` options. For MCP, set the values in the client's
-REA registration and restart that server.
+Unset settings keep the defaults. Invalid values are refused when the setting
+is used instead of falling back. Change the command deadline and output budget
+for subsequent operations with `update_analysis_settings` using
+`debugger.command_deadline_ms` and `debugger.max_command_output_bytes`. Session
+and pending-command capacities require a restart. To change the launch values,
+update REA's environment and restart; for MCP, edit the client registration and
+restart that server.
 
 These settings also apply to one-shot `rea debug-with-gdb` and
 `rea debug-with-rizin` commands. They do not change the fixed initial-prompt

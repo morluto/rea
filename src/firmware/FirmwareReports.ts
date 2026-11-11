@@ -540,28 +540,46 @@ export const normalizeUnblobReport = (
       "extract_firmware",
       "Report contains tasks disconnected from the selected input",
     );
-  // A producer can emit no UnknownChunkReport for an opaque file. Compute
-  // examined byte coverage from reported intervals rather than from empty errors.
+  // A producer can emit no UnknownChunkReport for an opaque file, including
+  // nested outputs. Each regular file owns its byte coverage; decompressed
+  // child offsets do not establish offsets in the original firmware.
   const unclassifiedRanges: {
     input_path: string;
     range: { offset: number; length: number };
-    root_file_range: { offset: number; length: number };
+    root_file_range: { offset: number; length: number } | null;
   }[] = [];
-  let coveredEnd = 0;
-  const gap = (offset: number, length: number) =>
-    unclassifiedRanges.push({
-      input_path: "$input",
-      range: { offset, length },
-      root_file_range: { offset: context.offset + offset, length },
-    });
-  for (const chunk of chunks
-    .filter((chunk) => chunk.input_path === "$input")
-    .sort((left, right) => left.range.offset - right.range.offset)) {
-    if (chunk.range.offset > coveredEnd)
-      gap(coveredEnd, chunk.range.offset - coveredEnd);
-    coveredEnd = Math.max(coveredEnd, chunk.range.offset + chunk.range.length);
+  const chunksByPath = new Map<string, (typeof chunks)[number][]>();
+  for (const chunk of chunks) {
+    const owned = chunksByPath.get(chunk.input_path) ?? [];
+    owned.push(chunk);
+    chunksByPath.set(chunk.input_path, owned);
   }
-  if (coveredEnd < context.length) gap(coveredEnd, context.length - coveredEnd);
+  for (const [path, size] of [...sizes].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
+    if (!files.has(path)) continue;
+    let coveredEnd = 0;
+    const gap = (offset: number, length: number) =>
+      unclassifiedRanges.push({
+        input_path: path,
+        range: { offset, length },
+        root_file_range:
+          path === "$input"
+            ? { offset: context.offset + offset, length }
+            : null,
+      });
+    for (const chunk of (chunksByPath.get(path) ?? []).sort(
+      (left, right) => left.range.offset - right.range.offset,
+    )) {
+      if (chunk.range.offset > coveredEnd)
+        gap(coveredEnd, chunk.range.offset - coveredEnd);
+      coveredEnd = Math.max(
+        coveredEnd,
+        chunk.range.offset + chunk.range.length,
+      );
+    }
+    if (coveredEnd < size) gap(coveredEnd, size - coveredEnd);
+  }
   return {
     files,
     sizes,

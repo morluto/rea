@@ -10,14 +10,20 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
   readonly _tag = "AnalysisUnsupportedTargetError";
   /** Refusal-specific recovery, when the producer knows an available workflow. */
   readonly remediationAction: string | undefined;
+  /** The target holds the content, so unsupported does not make it inapplicable. */
+  readonly undecodedContent: boolean;
   constructor(
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: AnalysisErrorOptions & { readonly remediationAction?: string },
+    options?: AnalysisErrorOptions & {
+      readonly remediationAction?: string;
+      readonly undecodedContent?: boolean;
+    },
   ) {
     super(`Unsupported target for ${operation} at ${path}: ${reason}`, options);
     this.remediationAction = options?.remediationAction;
+    this.undecodedContent = options?.undecodedContent ?? false;
   }
 }
 
@@ -95,6 +101,28 @@ const resourceConstraintRecoveryFrom = (
       : { retryable: options.retryable }),
   };
 };
+
+/**
+ * Re-attribute a resource refusal to another operation. Recovery and the
+ * structured setting limit travel with it; a new error that keeps only the
+ * sentence drops the setting, source, and effective value.
+ */
+export const reattributedResourceConstraint = (
+  operation: string,
+  error: AnalysisResourceConstraintError,
+  options?: AnalysisErrorOptions,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    error.resource,
+    error.reason,
+    error.reportedLimits,
+    {
+      ...options,
+      ...resourceConstraintRecovery(error),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
+    },
+  );
 
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
@@ -256,12 +284,16 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
 /** Caller cancellation won before provider-neutral work completed. */
 export class AnalysisCancelledError extends AnalysisError {
   readonly _tag = "AnalysisCancelledError";
+  override readonly userMessage: string | undefined;
 
   constructor(
     readonly operation: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+    },
   ) {
     super(`Analysis operation was cancelled: ${operation}`, options);
+    this.userMessage = options?.userMessage;
   }
 }
 

@@ -13,9 +13,11 @@ import {
 import {
   clientConfigurationRecordSchema,
   clientRegistrationEntry,
+  clientRegistrationLauncherEntry,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
+import type { ClientRegistrationTarget } from "./ClientRegistrationProfile.js";
 import {
   classifyClientRegistrationCommand,
   equivalentClientRegistrationCommands,
@@ -34,14 +36,16 @@ const launcherSchema = z
     args: z.array(z.string()).default([]),
   })
   .passthrough();
-const opencodeLauncherSchema = z
+const arrayLauncherSchema = z
   .object({
-    type: z.literal("local"),
     command: z.array(z.string()).min(1),
   })
   .passthrough();
+const opencodeLauncherSchema = arrayLauncherSchema.extend({
+  type: z.literal("local"),
+});
 const normalizeOpencodeLauncher = (
-  entry: z.output<typeof opencodeLauncherSchema>,
+  entry: z.output<typeof arrayLauncherSchema>,
 ): z.output<typeof launcherSchema> => {
   const [command = "", ...args] = entry.command;
   return { ...entry, command, args };
@@ -52,8 +56,10 @@ const registrationSchema = launcherSchema.extend({
   tool_timeout_sec: tomlTimeoutSchema.optional(),
   startupTimeoutMs: z.number().positive().optional(),
   toolTimeoutMs: z.number().positive().optional(),
-  type: z.string().optional(),
-  transport: z.string().optional(),
+  // Native transport tags belong to the selected profile's admission owner.
+  // Other clients may retain arbitrary metadata under these same names.
+  type: z.unknown().optional(),
+  transport: z.unknown().optional(),
   serverName: z.string().optional(),
   disabled: z.boolean().optional(),
   enabled: z.boolean().optional(),
@@ -100,14 +106,38 @@ const registrationError = (error: z.ZodError): ConfigurationError =>
 /** Launcher identity remains usable when unrelated readiness settings are invalid. */
 export const parseClientRegistrationLauncher = (
   value: unknown,
-  client: SetupClient,
+  target: ClientRegistrationTarget,
 ): Result<{ command: string; args: string[] }, ConfigurationError> => {
+  const { dialect, profile } = target;
+  if (profile.connection.kind === "unavailable")
+    return err(new ConfigurationError(profile.connection.reason));
+  if (profile.connection.kind === "cline") {
+    const row = clientConfigurationRecordSchema.safeParse(value);
+    if (row.success && Object.hasOwn(row.data, "transport")) {
+      const transport = clientConfigurationRecordSchema.safeParse(
+        row.data.transport,
+      );
+      if (transport.success) value = transport.data;
+    }
+  }
   const parsed =
-    client.format === "opencode"
-      ? opencodeLauncherSchema
+    dialect === "opencode" ||
+    dialect === "opencode_v2" ||
+    dialect === "fx" ||
+    dialect === "kilo"
+      ? arrayLauncherSchema
           .transform(normalizeOpencodeLauncher)
           .safeParse(value)
-      : launcherSchema.safeParse(value);
+      : dialect === "goose"
+        ? z
+            .object({
+              cmd: z.string().min(1),
+              args: z.array(z.string()).default([]),
+            })
+            .passthrough()
+            .transform((entry) => ({ command: entry.cmd, args: entry.args }))
+            .safeParse(value)
+        : launcherSchema.safeParse(value);
   return parsed.success
     ? ok({ command: parsed.data.command, args: parsed.data.args })
     : err(registrationError(parsed.error));
@@ -118,7 +148,10 @@ export const clientRegistrationOwnership = (
   value: unknown,
   client: SetupClient,
 ): ClientRegistrationCommandIdentity => {
-  const parsed = parseClientRegistrationLauncher(value, client);
+  const parsed = parseClientRegistrationLauncher(value, {
+    dialect: client.format ?? "json",
+    profile: client.registrationProfile,
+  });
   return parsed.ok
     ? classifyClientRegistrationCommand(
         [parsed.value.command, ...parsed.value.args],
@@ -150,8 +183,8 @@ const validateClientPolicy = (
     : err(registrationError(policy.error));
 };
 
-/** Normalize launcher facts once; policy fields keep their dialect-specific shape. */
-export const parseClientRegistration = (
+/** Parse launcher syntax and client policy; native transport selection is admitted separately. */
+export const parseClientRegistrationPolicy = (
   value: unknown,
   client: SetupClient,
 ): Result<ClientRegistration, ConfigurationError> => {
@@ -179,50 +212,181 @@ export const parseClientRegistration = (
   const parsed = registrationSchema.safeParse(value);
   if (!parsed.success) return err(registrationError(parsed.error));
   const registration = parsed.data;
-  const transportInvalid =
-    ((client.format === "kimi" || client.format === "commandcode") &&
-      registration.transport !== undefined &&
-      registration.transport !== "stdio") ||
-    (client.format === "commandcode" && registration.transport === undefined);
-  const typeInvalid =
-    ((client.format === "vscode" || client.format === "copilot_cli") &&
-      registration.type !== "stdio") ||
-    ((client.format === "kimi" ||
-      client.format === "omp" ||
-      client.format === "pi") &&
-      registration.type !== undefined &&
-      registration.type !== "stdio");
-  if (transportInvalid || typeInvalid)
-    return err(
-      new ConfigurationError("Expected an stdio registration", {
-        settings: [
-          {
-            setting: transportInvalid ? "transport" : "type",
-            constraint: "Expected stdio",
-          },
-        ],
-      }),
-    );
   return ok(registration);
 };
 
 // These fields select REA's connection and activation. Everything else belongs
 // to the caller/client, including future policy keys. Client-specific timeout
 // defaults and preservation rules are applied below.
-const managedConnectionKeys = new Set([
-  "command",
-  "args",
+const managedPolicyKeys = new Set([
   "env",
   "environment",
-  "type",
-  "transport",
   "enabled",
   "disabled",
   "enable",
   "serverName",
-  "url",
-  "httpUrl",
 ]);
+
+/** Own only fields selected by this native client's admitted profile. */
+export const clientRegistrationSourceFacts = (
+  target: ClientRegistrationTarget,
+  command: readonly string[],
+  previous: unknown,
+): Result<
+  {
+    readonly source: Record<string, unknown> | undefined;
+    readonly connectionFields: ReadonlySet<string>;
+  },
+  ConfigurationError
+> => {
+  const { profile } = target;
+  const connection = profile.connection;
+  if (connection.kind === "unavailable")
+    return err(new ConfigurationError(connection.reason));
+  const parsed = clientConfigurationRecordSchema.safeParse(previous);
+  const source = parsed.success ? parsed.data : undefined;
+  const fields = new Set(
+    Object.keys(clientRegistrationLauncherEntry(target.dialect, command)),
+  );
+  if (connection.kind === "stdio-only") {
+    const admitted = new Set([...fields, ...connection.documentedFields]);
+    const unknown = Object.keys(source ?? {}).filter(
+      (key) => !admitted.has(key),
+    );
+    if (
+      (previous !== undefined && source === undefined) ||
+      unknown.length > 0 ||
+      (source !== undefined &&
+        Object.hasOwn(source, "type") &&
+        source.type !== "stdio")
+    )
+      return err(
+        new ConfigurationError(
+          `Write applicability for ${profile.nativeClient} is unknown outside its documented stdio profile. Review the selected row in the client's native settings; no configuration was changed.`,
+          {
+            settings: [
+              {
+                setting: unknown[0] ?? "type",
+                constraint:
+                  "Native interpretation is not established by the documented stdio profile",
+              },
+            ],
+          },
+        ),
+      );
+  } else {
+    for (const field of connection.kind === "cline"
+      ? ["transport", "type", "transportType", "url"]
+      : connection.kind === "commandcode"
+        ? ["type", "url"]
+        : connection.fields)
+      fields.add(field);
+  }
+  return ok({ source, connectionFields: fields });
+};
+
+/** Explicit launcher replacement preserves policy and native environment, while
+ * superseding connection selectors that could keep the old remote transport.
+ * Goose's single env alias becomes envs; declaring both remains ambiguous. */
+export const replaceClientRegistrationLauncher = (
+  target: ClientRegistrationTarget,
+  command: readonly string[],
+  previous: unknown,
+  inherited?: unknown,
+): Result<Record<string, unknown>, ConfigurationError> => {
+  const { dialect, profile } = target;
+  const facts = clientRegistrationSourceFacts(target, command, previous);
+  if (!facts.ok) return facts;
+  const { source, connectionFields: launcherConnectionKeys } = facts.value;
+  const retained: Record<string, unknown> =
+    source === undefined
+      ? {}
+      : Object.fromEntries(
+          Object.entries(source).filter(
+            ([key]) => !launcherConnectionKeys.has(key),
+          ),
+        );
+  if (dialect === "goose" && Object.hasOwn(retained, "env")) {
+    if (Object.hasOwn(retained, "envs"))
+      return err(
+        new ConfigurationError(
+          "Goose environment is ambiguous: keep only envs or its env alias, not both.",
+          {
+            settings: [
+              {
+                setting: "envs",
+                constraint: "env and envs declare the same native field",
+              },
+            ],
+          },
+        ),
+      );
+    const alias = jsonRecordSchema(z.string()).safeParse(retained.env);
+    if (!alias.success)
+      return err(
+        new ConfigurationError("Invalid Goose env alias", {
+          cause: alias.error,
+          settings: [
+            {
+              setting: "env",
+              constraint: "Expected a mapping of string environment values",
+            },
+          ],
+        }),
+      );
+    retained.envs = alias.data;
+    delete retained.env;
+  }
+  const defaults = clientRegistrationEntry(dialect, command, {});
+  // Layered native clients inherit policy without copying it into the edited
+  // fragment. Defaults must not override an explicitly configured lower layer.
+  const inheritedPolicy = clientConfigurationRecordSchema.safeParse(inherited);
+  if (inheritedPolicy.success)
+    for (const key of Object.keys(defaults))
+      if (
+        !launcherConnectionKeys.has(key) &&
+        (Object.hasOwn(inheritedPolicy.data, key) ||
+          (dialect === "opencode" &&
+            key === "enabled" &&
+            Object.hasOwn(inheritedPolicy.data, "disabled")))
+      )
+        delete defaults[key];
+  // V1 already accepts a disabled policy. Adding enabled:true would override
+  // that existing activation dialect when OpenCode migrates the row.
+  if (
+    dialect === "opencode" &&
+    source !== undefined &&
+    Object.hasOwn(source, "disabled")
+  )
+    delete defaults.enabled;
+  const launcher = clientRegistrationLauncherEntry(dialect, command);
+  if (profile.connection.kind === "cline" && source !== undefined) {
+    const nested = clientConfigurationRecordSchema.safeParse(source.transport);
+    if (nested.success) {
+      for (const key of Object.keys(launcher)) delete defaults[key];
+      const retainedTransport = Object.fromEntries(
+        Object.entries(nested.data).filter(
+          ([key]) =>
+            key !== "type" && key !== "url" && !Object.hasOwn(launcher, key),
+        ),
+      );
+      return ok({
+        ...defaults,
+        ...retained,
+        transport: {
+          ...retainedTransport,
+          type: "stdio",
+          ...launcher,
+        },
+      });
+    }
+  }
+  return ok({
+    ...defaults,
+    ...retained,
+    ...launcher,
+  });
+};
 
 /** Whether a rea setup repair for this target preserves the row's
  * `enable: false` instead of dropping it. Shared registration doubles as
@@ -245,11 +409,13 @@ export const refreshClientRegistration = (
   previous: unknown,
   timeoutInputs: McpToolTimeoutInputs,
 ): Result<Record<string, unknown>, ConfigurationError> => {
-  const source = clientConfigurationRecordSchema.safeParse(previous);
-  const existing = source.success ? source.data : {};
+  const target = { dialect, profile: client.registrationProfile };
+  const facts = clientRegistrationSourceFacts(target, command, previous);
+  if (!facts.ok) return facts;
+  const existing = facts.value.source ?? {};
   const policy = validateClientPolicy(existing, client);
   if (!policy.ok) return policy;
-  const prior = parseClientRegistrationLauncher(existing, client);
+  const prior = parseClientRegistrationLauncher(existing, target);
   const priorCommand = prior.ok
     ? [prior.value.command, ...prior.value.args]
     : undefined;
@@ -262,7 +428,8 @@ export const refreshClientRegistration = (
     ...clientRegistrationEntry(dialect, launcher, environment),
     ...Object.fromEntries(
       Object.entries(existing).filter(
-        ([key]) => !managedConnectionKeys.has(key),
+        ([key]) =>
+          !facts.value.connectionFields.has(key) && !managedPolicyKeys.has(key),
       ),
     ),
   };
