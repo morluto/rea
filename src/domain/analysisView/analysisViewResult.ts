@@ -1476,6 +1476,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: browserScenarioViewRequestSchema,
     items: browserScenarioViewItemsSchema,
     ...viewResultBase,
+    coverage: nullableCollectionViewCoverageSchema,
     ...browserScenarioViewContextSchema.shape,
     artifact: z.null(),
     parent_operation: z.literal("capture_browser_scenario"),

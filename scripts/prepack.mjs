@@ -43,6 +43,10 @@ if (await pathExists(join(root, "src"))) {
     throw new Error("Prepack could not resolve the active package manager");
   run(process.execPath, [packageManagerPath, "run", "build:cached"]);
   run(process.execPath, ["scripts/generate-skill-metadata.mjs", "--check"]);
+  run(process.execPath, [
+    "scripts/generate-cursor-plugin-skill.mjs",
+    "--check",
+  ]);
 } else {
   for (const path of [
     "scripts/lib/cli-process-environment.mjs",

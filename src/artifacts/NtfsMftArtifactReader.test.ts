@@ -9,6 +9,7 @@ import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
 import { MFT_DEFAULT_RECORD_BYTES } from "../domain/windows/ntfsMft.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { linkedMftFixture } from "../../tests/fixtures/ntfsMftExtension.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
 /** A 1 KiB FILE record whose update sequence array covers both sectors. */
@@ -16,6 +17,7 @@ const recordBytes = (options: {
   readonly sequenceNumber?: number;
   readonly flags?: number;
   readonly index?: number;
+  readonly name?: string;
 }): Buffer => {
   const record = Buffer.alloc(MFT_DEFAULT_RECORD_BYTES);
   record.write("FILE", 0, "latin1");
@@ -30,8 +32,22 @@ const recordBytes = (options: {
   record.writeUInt32LE(options.index ?? 0, 44);
   record.writeUInt16LE(56, 20);
   record.writeUInt16LE(options.flags ?? 0x0001, 22);
-  record.writeUInt32LE(64, 24);
-  record.writeUInt32LE(0xffff_ffff, 56);
+  const attribute = 56;
+  let end = attribute;
+  if (options.name !== undefined) {
+    const valueBytes = 66 + Buffer.byteLength(options.name, "utf16le");
+    const length = Math.ceil((24 + valueBytes) / 8) * 8;
+    record.writeUInt32LE(0x30, attribute);
+    record.writeUInt32LE(length, attribute + 4);
+    record.writeUInt32LE(valueBytes, attribute + 16);
+    record.writeUInt16LE(24, attribute + 20);
+    const value = attribute + 24;
+    record.writeUInt8(options.name.length, value + 64);
+    record.write(options.name, value + 66, "utf16le");
+    end += length;
+  }
+  record.writeUInt32LE(end + 8, 24);
+  record.writeUInt32LE(0xffff_ffff, end);
   record.writeUInt32LE(MFT_DEFAULT_RECORD_BYTES, 28);
   record.writeUInt16LE(sequenceNumber, 510);
   record.writeUInt16LE(sequenceNumber, 1022);
@@ -50,13 +66,20 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
     await writeMft(
       "$MFT",
       Buffer.concat([
-        recordBytes({}),
+        recordBytes({ name: "sample" }),
         recordBytes({ flags: 0x0003, index: 1 }),
       ]),
     ),
   );
   expect(inventory.manifest.root_format).toBe("ntfs-mft");
   expect(inventory.coverage.status).toBe("complete");
+  const limitations = inventory.limitations.join(" ");
+  expect(limitations).not.toMatch(
+    /attributes, filenames.*not decoded|no path, file size/iu,
+  );
+  expect(limitations).toContain(
+    "Nonresident list values and file contents are not recovered",
+  );
   // A record stream declares no members, so the root is its whole inventory.
   expect(inventory.occurrences.map((row) => row.logical_path)).toEqual(["."]);
   expect(inventory.occurrences[0]).toMatchObject({
@@ -70,6 +93,15 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
       extension_record_count: 0,
       fixup_mismatch_count: 0,
       fixup_unverified_record_count: 0,
+      record_headers: [
+        {
+          fileNames: [{ name: "sample" }],
+          attributes: [{ type: 0x30, storage: { kind: "resident" } }],
+        },
+        {},
+      ],
+      file_name_count: 1,
+      file_name_incomplete_record_count: 0,
       truncated_tail_bytes: 0,
     },
   });
@@ -208,4 +240,36 @@ it("revalidates the source before reusing a completed header inventory", async (
   } finally {
     await reader.close();
   }
+});
+
+it("delivers acquired extension metadata through the canonical inventory schema", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeMft("linked", linkedMftFixture()),
+  );
+  expect(inventory.occurrences[0]).toMatchObject({
+    artifact_format: "ntfs-mft",
+    format_metadata: {
+      record_count: 2,
+      extension_record_count: 1,
+      file_name_count: 2,
+      record_headers: [
+        {
+          index: 0,
+          fileNames: [{ name: "local" }],
+          attributeListResolution: {
+            coverage: "complete",
+            references: [
+              { result: { kind: "resolved", attributeFileOffset: 1080 } },
+            ],
+            linkedFileNames: [{ name: "linked", fileOffset: 1104 }],
+          },
+        },
+        {
+          index: 1,
+          baseRecordReference: { recordNumber: 0, sequenceNumber: 2 },
+          fileNames: [{ name: "linked" }],
+        },
+      ],
+    },
+  });
 });
