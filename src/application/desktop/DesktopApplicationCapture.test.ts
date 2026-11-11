@@ -14,6 +14,22 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
+import {
+  SessionObservations,
+  trackProcess,
+} from "../../desktop/DesktopSessionObservations.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import * as captureFailures from "./DesktopCaptureFailure.js";
+import * as providerProcess from "../../process/ProviderProcess.js";
+import { systemProcessOwnershipHost } from "../../process/ProcessOwnershipObservation.js";
+import { ProcessOwnershipInspectionCancelled } from "../../process/ProcessInspectionCancellation.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import {
   desktopApplicationCaptureSchema,
@@ -757,3 +773,361 @@ const readFileSyncSafe = (path: string): string | undefined => {
     return undefined;
   }
 };
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0).for([
+  { denied: false, lateCancellation: false },
+  { denied: true, lateCancellation: false },
+  { denied: true, lateCancellation: true },
+])(
+  "capture baseline persistence and final cleanup cancellation (denied: $denied, late cancellation: $lateCancellation)",
+  async ({ denied, lateCancellation }, context) => {
+    const root = await createTestTempDirectory("capture-content-permission-");
+    const home = join(root, "home");
+    const state = join(home, ".config/notes");
+    const output = join(root, "capture");
+    const content = join(output, "content");
+    await mkdir(state, { recursive: true });
+    await writeFile(join(state, "state.ini"), "count=0\n");
+    const controller = new AbortController();
+    const reason = new Error("cancel after actual failed capture cleanup");
+    const captured = captureFixture();
+    let physicalFailure: unknown;
+    let projectedFailure: AnalysisError | undefined;
+    let baselineStarted = false;
+    let stored = false;
+    let discarded = false;
+    let closed = false;
+    const session = vi
+      .spyOn(desktopSession, "runDesktopSession")
+      .mockResolvedValue({
+        session: captured.session,
+        unreleased: undefined,
+        unreadableWindowSamples: 0,
+      });
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: {
+          ...captured.application,
+          argv: [process.execPath],
+          working_directory: home,
+          state_directories: [{ path: state, exists_at_start: true }],
+        },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    const retain = DesktopContentStore.prototype.retainBytes;
+    vi.spyOn(DesktopContentStore.prototype, "retainBytes").mockImplementation(
+      async function (this: DesktopContentStore, bytes) {
+        try {
+          return await retain.call(this, bytes);
+        } catch (cause: unknown) {
+          physicalFailure = cause;
+          throw cause;
+        }
+      },
+    );
+    const discard = DesktopContentStore.prototype.discard;
+    vi.spyOn(DesktopContentStore.prototype, "discard").mockImplementation(
+      async function (this: DesktopContentStore) {
+        await discard.call(this);
+        discarded = true;
+      },
+    );
+    const close = DesktopContentStore.prototype.close;
+    vi.spyOn(DesktopContentStore.prototype, "close").mockImplementation(
+      async function (this: DesktopContentStore) {
+        await close.call(this);
+        closed = true;
+        if (lateCancellation) {
+          expect(discarded).toBe(true);
+          expect(controller.signal.aborted).toBe(false);
+          controller.abort(reason);
+        }
+      },
+    );
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        {
+          ...request(output),
+          executable: process.execPath,
+          statePaths: [state],
+        },
+        {
+          ...host({
+            HOME: home,
+            DISPLAY: ":controlled",
+            REA_XPROP_COMMAND: process.execPath,
+          }),
+          report: async (message) => {
+            if (message.startsWith("Recording the starting state")) {
+              baselineStarted = true;
+              if (denied) await chmod(content, 0o500);
+            }
+          },
+        },
+        controller.signal,
+      );
+      expect(baselineStarted, JSON.stringify(result)).toBe(true);
+      if (!denied) {
+        expect(physicalFailure).toBeUndefined();
+        expect(session).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+          operation: "capture_desktop_application",
+          normalized_result: { state: { content_files: 1 } },
+        });
+        expect(await readFile(join(content, sha256("count=0\n")), "utf8")).toBe(
+          "count=0\n",
+        );
+        expect(closed).toBe(true);
+        return;
+      }
+      if (physicalFailure === undefined) {
+        expect(stored).toBe(true);
+        context.skip(
+          "Host allowed writes to the denied owner-only content directory; EACCES boundary unavailable.",
+        );
+      }
+      expect(physicalFailure).toMatchObject({ code: "EACCES" });
+      expect(session).not.toHaveBeenCalled();
+      expect(discarded).toBe(true);
+      expect(closed).toBe(true);
+      expect(await readdir(output)).toEqual([]);
+      expect(result).toMatchObject({
+        error: "Desktop capture failed",
+        code: "execution_failure",
+      });
+      expect(projectedFailure).toBeInstanceOf(ProviderAdapterError);
+      expect(projectedFailure?.cause).toBe(physicalFailure);
+      if (lateCancellation) {
+        expect(projectedFailure?.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+        const cancellation = projectedFailure?.secondaryFailures.find(
+          (failure) => failure instanceof AnalysisCancelledError,
+        );
+        expect(cancellation?.cause).toBe(reason);
+      } else expect(projectedFailure?.secondaryFailures).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      await chmod(content, 0o700).catch((cause: unknown) => {
+        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+      });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves actual prelaunch inspection cancellation before native preparation or child creation",
+  async () => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "capture-prelaunch");
+    const controller = new AbortController();
+    const reason = { stop: "before desktop launch" };
+    const captured = captureFixture();
+    let sourceFailure: unknown;
+    let projectedFailure: AnalysisError | undefined;
+    let baselineStored = false;
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: {
+          ...captured.application,
+          argv: [process.execPath],
+          working_directory: home,
+          state_directories: [],
+        },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockRejectedValue(new Error("native preparation must not run"));
+    if (systemProcessOwnershipHost.captureBaseline === undefined)
+      throw new Error(
+        "existing process baseline port is required for this fixture",
+      );
+    const baseline = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockRejectedValue(new Error("native baseline inspection must not run"));
+    const spawn = providerProcess.spawnOwnedProviderProcess;
+    const launch = vi
+      .spyOn(providerProcess, "spawnOwnedProviderProcess")
+      .mockImplementation(async (options) => {
+        expect(options.signal?.aborted).toBe(true);
+        try {
+          return await spawn(options);
+        } catch (cause: unknown) {
+          sourceFailure = cause;
+          throw cause;
+        }
+      });
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        {
+          ...request(output),
+          executable: process.execPath,
+          statePaths: [join(home, ".config/fakeapp")],
+        },
+        {
+          ...host(environment),
+          report: async (message) => {
+            if (message.startsWith("Launching")) {
+              expect(
+                await readFile(
+                  join(output, "content", sha256("count=0\n")),
+                  "utf8",
+                ),
+              ).toBe("count=0\n");
+              baselineStored = true;
+              controller.abort(reason);
+            }
+          },
+        },
+        controller.signal,
+      );
+      expect(baselineStored).toBe(true);
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(prepare).not.toHaveBeenCalled();
+      expect(baseline).not.toHaveBeenCalled();
+      expect(sourceFailure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+      if (!(sourceFailure instanceof ProcessOwnershipInspectionCancelled))
+        throw new Error("expected actual prelaunch checkpoint cancellation");
+      expect(sourceFailure.reason).toBe(reason);
+      expect(await readdir(output)).toEqual([]);
+      expect(result).toMatchObject({
+        error: "Desktop capture failed",
+        code: "cancelled",
+      });
+      expect(projectedFailure).toBeInstanceOf(AnalysisCancelledError);
+      expect(projectedFailure?.cause).toBe(reason);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it.for([{ retrySucceeds: true }, { retrySucceeds: false }])(
+  "retains an actual optional inspection descriptor through capture cleanup (retry succeeds: $retrySucceeds)",
+  async ({ retrySucceeds }) => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "capture-inspection-close");
+    const descriptor = await failedInspectionDescriptor();
+    const captured = captureFixture();
+    const retainedStores = new Set<DesktopContentStore>();
+    let projectedFailure: AnalysisError | undefined;
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: {
+          ...captured.application,
+          argv: [process.execPath],
+          working_directory: home,
+          state_directories: [],
+        },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    const environmentRead = vi
+      .spyOn(systemProcessOwnershipHost, "environment")
+      .mockRejectedValue(descriptor.failure);
+    const session = vi
+      .spyOn(desktopSession, "runDesktopSession")
+      .mockImplementation(async () => {
+        const observations = new SessionObservations(
+          performance.now(),
+          { runId: "recording-session", launchPid: process.pid },
+          { names: new Set(), byPid: false },
+        );
+        await trackProcess(
+          observations,
+          process.pid,
+          new AbortController().signal,
+        );
+        throw new Error("The actual inspection cleanup failure was swallowed");
+      });
+    const close = DesktopContentStore.prototype.close;
+    vi.spyOn(DesktopContentStore.prototype, "close").mockImplementation(
+      async function (this: DesktopContentStore) {
+        retainedStores.add(this);
+        if (retrySucceeds) descriptor.allow();
+        await close.call(this);
+      },
+    );
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        { ...request(output), executable: process.execPath },
+        host(environment),
+      );
+      expect(session).toHaveBeenCalledTimes(1);
+      expect(environmentRead).toHaveBeenCalledTimes(1);
+      expect(primaryAnalysisError(projectedFailure!).cause).toBe(
+        descriptor.failure,
+      );
+      expect(descriptor.closes()).toBeGreaterThan(1);
+      expect(await readdir(output)).toEqual([]);
+      expect(result).toMatchObject({
+        code: retrySucceeds ? "execution_failure" : "cleanup_incomplete",
+      });
+      expect(descriptor.handle.fd === -1).toBe(retrySucceeds);
+      expect(projectedFailure?.cleanupIncomplete).toBe(!retrySucceeds);
+      const [retainedStore] = retainedStores;
+      expect(retainedStore).toBeDefined();
+      if (!retrySucceeds) {
+        expect(retainedStore?.resourceScope.cleanupResources).toEqual([
+          descriptor.path,
+        ]);
+        await expect(retainedStore!.close()).rejects.toBeDefined();
+        descriptor.allow();
+        await retainedStore!.close();
+        expect(descriptor.handle.fd).toBe(-1);
+        expect(retainedStore?.resourceScope.cleanupResources).toEqual([]);
+        expect(projectedFailure?.cleanupIncomplete).toBe(false);
+      }
+    } finally {
+      descriptor.allow();
+      await Promise.all([...retainedStores].map((store) => store.close()));
+      await descriptor.failure.owner.close();
+      vi.restoreAllMocks();
+    }
+  },
+);

@@ -19,11 +19,9 @@ import {
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
+import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  RegularFileCleanupFailure,
-  withOwnedRegularFile,
-} from "../filesystem/OwnedRegularFile.js";
+import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   RegularFileCapacityError,
@@ -38,7 +36,7 @@ import {
   type DebianPackageHost,
   type InventoryContext,
 } from "./DebianPackageInventory.js";
-import { hostCloseFailure, isRefusedRead } from "./HostFileRead.js";
+import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
 import { runHostQuery } from "./HostQuery.js";
 import { resolveProgram } from "./ProgramLookup.js";
 
@@ -145,14 +143,14 @@ const findNestedDesktopEntry = async (
   let examined = 0;
   let incomplete = false;
   while (pending.length > 0) {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const directory = pending.pop()!;
     if (directory.depth > 1) {
       if (examined >= NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
       examined++;
       const path = join(directory.path, directory.remaining);
       const kind = await desktopPathKind(path);
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       if (!kind.ok) incomplete = true;
       else if (kind.value === "file") return { path };
     }
@@ -167,7 +165,7 @@ const findNestedDesktopEntry = async (
       examined++;
       const path = join(directory.path, prefix);
       const kind = await desktopPathKind(path);
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       if (!kind.ok) {
         incomplete = true;
         continue;
@@ -198,17 +196,17 @@ const locateDesktopEntry = async (
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const path = join(directory, id);
     const kind = await desktopPathKind(path);
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     if (!kind.ok)
       return err({ reason: "desktop_entry_search_incomplete", searched });
     if (kind.value === "file")
       return ok({ path, id: id.slice(0, -".desktop".length) });
     // A nested entry in this directory outranks a flat one in a later root.
     const nested = await findNestedDesktopEntry(directory, id, signal);
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     if (nested !== undefined && "path" in nested)
       return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
     // The bounded search did not establish absence, so a later root must not
@@ -235,9 +233,8 @@ const readDesktopEntry = async (
       )
     ).toString("utf8");
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure)
-      throw hostCloseFailure(cause);
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     if (!isRefusedRead(cause)) throw cause;
     return err({
       reason: "desktop_entry_invalid",
@@ -274,9 +271,8 @@ const readHeader = async (
         (await readStableFilePrefix(handle, path, 16, options)).bytes,
     );
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure)
-      throw hostCloseFailure(cause);
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     if (!isRefusedRead(cause)) throw cause;
     return new Uint8Array();
   }
@@ -338,9 +334,11 @@ const electronMarkers = async (
     if (image.slices.some((slice) => slice.sentinel_count > 0))
       markers.push("fuse-sentinel");
   } catch (cause: unknown) {
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      (cause.cleanup !== undefined || cause.reason === "cancelled")
+    )
       throw cause;
-    signal?.throwIfAborted();
     // Scripts and other non-binary launchers carry no fuse wire.
   }
   const asar = join(dirname(resolved), "resources/app.asar");

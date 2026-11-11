@@ -24,12 +24,9 @@ import {
   parseDpkgOwners,
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  RegularFileCleanupFailure,
-  withOwnedRegularFile,
-} from "../filesystem/OwnedRegularFile.js";
+import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { hostCloseFailure, isHostFile, isRefusedRead } from "./HostFileRead.js";
+import { hostReadFailure, isHostFile, isRefusedRead } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
@@ -64,9 +61,8 @@ const elfDependencies = async (
       ),
     );
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure)
-      throw hostCloseFailure(cause);
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     if (!isRefusedRead(cause)) throw cause;
     return err({
       kind: "unreadable",
