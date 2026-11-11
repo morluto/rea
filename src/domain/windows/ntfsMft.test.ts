@@ -111,6 +111,16 @@ describe("MFT header facts", () => {
     expect(parsed.value.limitations).toEqual([]);
   });
 
+  it("identifies unrecognized flags without losing their source bits", () => {
+    const parsed = parseMftImage(recordOf({ flags: 0x8001 }));
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.metadata.record_headers[0]?.flags).toEqual({
+      raw: 0x8001,
+      names: ["in-use"],
+      unknownMask: 0x8000,
+    });
+  });
+
   it("keeps the inline header window separate from the parsed record count", () => {
     const parsed = parseMftImage(
       streamOf(...Array.from({ length: 33 }, () => recordOf())),

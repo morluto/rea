@@ -309,7 +309,11 @@ const ntfsRecordHeaderSchema = z.strictObject({
   fileOffset: offset,
   sequenceNumber: offset,
   hardLinkCount: offset,
-  flags: z.strictObject({ raw: offset, names: z.array(z.string()) }),
+  flags: z.strictObject({
+    raw: offset,
+    names: z.array(z.string()),
+    unknownMask: offset,
+  }),
   inUse: z.boolean(),
   directory: z.boolean(),
   usedBytes: offset,
