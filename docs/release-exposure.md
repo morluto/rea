@@ -24,23 +24,23 @@ The CLI resolves a relative path against the caller's working directory. MCP req
 
 The audit composes existing readers. It does not reread Electron fuse bytes itself, and it does not rewrite the artifact.
 
-| Check                           | Exposed when                                                             | Severity |
-| ------------------------------- | ------------------------------------------------------------------------ | -------- |
-| `javascript.source_map_sources` | A shipped source map has `sourcesContent`                                | high     |
-| `javascript.source_maps`        | A shipped source map has no embedded sources                             | medium   |
-| `electron.run_as_node`          | The fuse implication is honored                                          | high     |
-| `electron.asar_integrity`       | Embedded ASAR integrity is not enforced                                  | medium   |
-| `electron.only_load_from_asar`  | Loading is not restricted to `app.asar`                                  | medium   |
-| `electron.node_cli_inspect`     | Node CLI inspect arguments are honored                                   | medium   |
-| `packaging.extractable_payload` | A Bun, Node SEA, PyInstaller, .NET bundle, or ASAR has a readable member | low      |
-| `native.debug_companions`       | A `.pdb`, `.dSYM`, `.debug`, or linker `.map` ships beside the release   | medium   |
-| `native.pdb_path`               | A PE CodeView record names a PDB path                                    | low      |
-| `go.build_paths`                | Go build info or its build flags contain file paths                      | low      |
-| `rust.dependency_metadata`      | cargo-auditable metadata is present                                      | low      |
-| `text.credential_markers`       | A text member contains a provider-prefixed marker                        | high     |
-| `native.hardening`              | Not assessed in this audit                                               |          |
-| `macho.hardened_runtime`        | Not assessed in this audit                                               |          |
-| `android.manifest`              | Not assessed in this audit                                               |          |
+| Check                           | Exposed when                                                                   | Severity |
+| ------------------------------- | ------------------------------------------------------------------------------ | -------- |
+| `javascript.source_map_sources` | A shipped source map has `sourcesContent`                                      | high     |
+| `javascript.source_maps`        | A shipped source map has no embedded sources                                   | medium   |
+| `electron.run_as_node`          | The fuse implication is honored                                                | high     |
+| `electron.asar_integrity`       | Embedded ASAR integrity is not enforced                                        | medium   |
+| `electron.only_load_from_asar`  | Loading is not restricted to `app.asar`                                        | medium   |
+| `electron.node_cli_inspect`     | Node CLI inspect arguments are honored                                         | medium   |
+| `packaging.extractable_payload` | A Bun, Deno, Node SEA, PyInstaller, .NET bundle, or ASAR has a readable member | low      |
+| `native.debug_companions`       | A `.pdb`, `.dSYM`, `.debug`, or linker `.map` ships beside the release         | medium   |
+| `native.pdb_path`               | A PE CodeView record names a PDB path                                          | low      |
+| `go.build_paths`                | Go build info or its build flags contain file paths                            | low      |
+| `rust.dependency_metadata`      | cargo-auditable metadata is present                                            | low      |
+| `text.credential_markers`       | A text member contains a provider-prefixed marker                              | high     |
+| `native.hardening`              | Not assessed in this audit                                                     |          |
+| `macho.hardened_runtime`        | Not assessed in this audit                                                     |          |
+| `android.manifest`              | Not assessed in this audit                                                     |          |
 
 `go.build_paths` reads a flag's arguments by the rules of the tool that takes them. A linker `-X` value is an application string, so a relative one is not a path. A rooted one cannot be told from a file path, so it is reported: `-X main.route=/api/v1` is sampled like `-X main.root=/srv/build`, because dropping both would miss the second.
 

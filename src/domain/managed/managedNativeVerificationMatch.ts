@@ -1,7 +1,10 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { Evidence } from "../evidence.js";
 import { machoRuntimeSymbolName } from "../native/machoSymbolName.js";
-import type { ManagedNativeObservationFacts } from "./managedNativeVerificationSource.js";
+import type {
+  ManagedNativeObservationFacts,
+  ManagedNativePlatform,
+} from "./managedNativeVerificationSource.js";
 import type { ManagedNativeBoundaryInspection } from "./managedArtifact.js";
 import type {
   ManagedNativeVerificationResult,
@@ -22,18 +25,21 @@ export const collectNativeSymbols = (
   readonly unsupported: number;
   readonly partialExports: boolean;
   readonly exportLimitations: readonly string[];
-  readonly moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>;
+  readonly modulePlatformsByEvidenceId: ReadonlyMap<
+    string,
+    ManagedNativePlatform
+  >;
 } => {
   const symbols: NativeSymbol[] = [];
-  const moduleFormatsByEvidenceId = new Map<string, string | null>();
+  const modulePlatformsByEvidenceId = new Map<string, ManagedNativePlatform>();
   let accepted = 0;
   let unsupported = 0;
   let partialExports = false;
   const exportLimitations: string[] = [];
   for (const observation of observations) {
-    moduleFormatsByEvidenceId.set(
+    modulePlatformsByEvidenceId.set(
       observation.evidence.evidence_id,
-      observation.evidence.subject?.format ?? null,
+      observation.platform,
     );
     if (!observation.supported) {
       unsupported += 1;
@@ -55,7 +61,7 @@ export const collectNativeSymbols = (
     unsupported,
     partialExports,
     exportLimitations,
-    moduleFormatsByEvidenceId,
+    modulePlatformsByEvidenceId,
   };
 };
 
@@ -73,22 +79,26 @@ type ModuleCompatibility = "match" | "mismatch" | "unknown";
 const moduleFilename = (
   value: string,
   caseSensitive: boolean,
-  format?: string | null,
+  platform: ManagedNativePlatform,
 ): string => {
-  const separators = format === "elf" || format === "mach-o" ? /\//u : /[\\/]/u;
+  const separators =
+    platform === "elf" || platform === "mach-o" ? /\//u : /[\\/]/u;
   const filename = value.split(separators).at(-1) ?? value;
   return caseSensitive ? filename : filename.toLowerCase();
 };
 
-const isAbsoluteModulePath = (value: string, format?: string | null): boolean =>
+const isAbsoluteModulePath = (
+  value: string,
+  platform: ManagedNativePlatform,
+): boolean =>
   value.startsWith("/") ||
-  (format === "pe" &&
+  (platform === "pe" &&
     (/^[a-z]:[\\/]/iu.test(value) || value.startsWith("\\\\")));
 
 const hasModulePathSeparator = (
   value: string,
-  format: string | null,
-): boolean => (format === "pe" ? /[\\/]/u.test(value) : value.includes("/"));
+  platform: ManagedNativePlatform,
+): boolean => (platform === "pe" ? /[\\/]/u.test(value) : value.includes("/"));
 
 const unixModuleCandidates = (
   value: string,
@@ -123,15 +133,15 @@ const unixModuleCandidates = (
 /** Candidate module names documented for each native loader platform. */
 const moduleCandidates = (
   value: string,
-  format: string | null,
+  platform: ManagedNativePlatform,
 ): readonly string[] => {
-  if (isAbsoluteModulePath(value, format)) return [value];
-  if (format === "pe")
+  if (isAbsoluteModulePath(value, platform)) return [value];
+  if (platform === "pe")
     return /\.(dll|exe)$/iu.test(value) || value.endsWith(".")
       ? [value]
       : [value, `${value}.dll`];
-  if (format === "elf") return unixModuleCandidates(value, ".so");
-  if (format === "mach-o") return unixModuleCandidates(value, ".dylib");
+  if (platform === "elf") return unixModuleCandidates(value, ".so");
+  if (platform === "mach-o") return unixModuleCandidates(value, ".dylib");
   return [value];
 };
 
@@ -148,29 +158,29 @@ const plausiblePlatformCandidates = (value: string): readonly string[] => {
 const moduleValueCompatibility = (
   expected: string,
   observed: string,
-  format: string | null,
+  platform: ManagedNativePlatform,
 ): ModuleCompatibility => {
-  const exactCandidates = moduleCandidates(expected, format);
-  const expectedIsAbsolutePath = isAbsoluteModulePath(expected, format);
+  const exactCandidates = moduleCandidates(expected, platform);
+  const expectedIsAbsolutePath = isAbsoluteModulePath(expected, platform);
   if (expectedIsAbsolutePath) {
-    const observedIsAbsolutePath = isAbsoluteModulePath(observed, format);
+    const observedIsAbsolutePath = isAbsoluteModulePath(observed, platform);
     if (!observedIsAbsolutePath) {
       const hasMatchingFilename = exactCandidates.some(
         (candidate) =>
-          moduleFilename(candidate, format !== "pe", format) ===
-          moduleFilename(observed, format !== "pe", format),
+          moduleFilename(candidate, platform !== "pe", platform) ===
+          moduleFilename(observed, platform !== "pe", platform),
       );
       return hasMatchingFilename ? "unknown" : "mismatch";
     }
-    const fold = format === "pe";
+    const fold = platform === "pe";
     const normalize = (path: string) =>
       fold ? path.replaceAll("\\", "/").toLowerCase() : path;
     return exactCandidates.some(
       (candidate) => normalize(candidate) === normalize(observed),
     )
       ? "match"
-      : format !== "pe" &&
-          format !== "elf" &&
+      : platform !== "pe" &&
+          platform !== "elf" &&
           exactCandidates.some(
             (candidate) =>
               normalize(candidate).toLowerCase() ===
@@ -179,15 +189,15 @@ const moduleValueCompatibility = (
         ? "unknown"
         : "mismatch";
   }
-  if (hasModulePathSeparator(expected, format)) {
-    const isObservedAbsolute = isAbsoluteModulePath(observed, format);
+  if (hasModulePathSeparator(expected, platform)) {
+    const isObservedAbsolute = isAbsoluteModulePath(observed, platform);
     if (!isObservedAbsolute && exactCandidates.includes(observed))
       return "match";
     const normalizePath = (path: string) =>
-      format === "pe" ? path.replaceAll("\\", "/").toLowerCase() : path;
+      platform === "pe" ? path.replaceAll("\\", "/").toLowerCase() : path;
     if (
       !isObservedAbsolute &&
-      format === "pe" &&
+      platform === "pe" &&
       exactCandidates.some(
         (candidate) => normalizePath(candidate) === normalizePath(observed),
       )
@@ -203,55 +213,53 @@ const moduleValueCompatibility = (
     }
     const sameFilename = exactCandidates.some(
       (candidate) =>
-        moduleFilename(candidate, false, format) ===
-        moduleFilename(observed, false, format),
+        moduleFilename(candidate, false, platform) ===
+        moduleFilename(observed, false, platform),
     );
     return sameFilename ? "unknown" : "mismatch";
   }
-  const observedFilename = moduleFilename(observed, true, format);
+  const observedFilename = moduleFilename(observed, true, platform);
   if (exactCandidates.includes(observedFilename)) return "match";
   const caseFoldedCandidates = exactCandidates.map((candidate) =>
-    moduleFilename(candidate, false, format),
+    moduleFilename(candidate, false, platform),
   );
-  const observedFolded = moduleFilename(observed, false, format);
+  const observedFolded = moduleFilename(observed, false, platform);
   if (!caseFoldedCandidates.includes(observedFolded)) {
     if (
-      format !== "pe" &&
-      format !== "elf" &&
-      format !== "mach-o" &&
+      platform === null &&
       plausiblePlatformCandidates(expected)
-        .map((candidate) => moduleFilename(candidate, false, format))
+        .map((candidate) => moduleFilename(candidate, false, platform))
         .includes(observedFolded)
     )
       return "unknown";
     return "mismatch";
   }
-  if (format === "elf") return "mismatch";
-  if (format === "pe") return "match";
+  if (platform === "elf") return "mismatch";
+  if (platform === "pe") return "match";
   return "unknown";
 };
 
 const moduleCompatibility = (
   scope: string | null,
   symbol: NativeSymbol,
-  format: string | null,
+  platform: ManagedNativePlatform,
 ): ModuleCompatibility => {
   if (
     scope === null ||
     scope.trim().length === 0 ||
-    moduleFilename(scope, false, format).length === 0
+    moduleFilename(scope, false, platform).length === 0
   )
     return "unknown";
-  const observedValues = isAbsoluteModulePath(scope, format)
+  const observedValues = isAbsoluteModulePath(scope, platform)
     ? [symbol.module_path]
     : [symbol.module_name, symbol.module_path];
   const values = observedValues.filter(
     (value): value is string =>
-      value !== null && moduleFilename(value, false, format).length > 0,
+      value !== null && moduleFilename(value, false, platform).length > 0,
   );
   if (values.length === 0) return "unknown";
   const results = values.map((value) =>
-    moduleValueCompatibility(scope, value, format),
+    moduleValueCompatibility(scope, value, platform),
   );
   if (results.includes("match")) return "match";
   if (results.includes("unknown")) return "unknown";
@@ -263,26 +271,22 @@ const candidateNames = (
     PinvokeImport,
     "import_name" | "char_set" | "call_convention" | "no_mangle"
   >,
-  nativeFormat: string | null,
+  platform: ManagedNativePlatform,
 ): readonly string[] => {
   if (managed.import_name.length === 0) return [];
   const names = new Set<string>([managed.import_name]);
   // Unix P/Invoke lookup uses the declared entry point directly, regardless of
   // marshalling charset or calling convention. Keep Windows decorations local
   // to PE or an unresolved native platform; metadata flags remain unchanged.
-  if (
-    !managed.no_mangle &&
-    nativeFormat !== "elf" &&
-    nativeFormat !== "mach-o"
-  ) {
+  if (!managed.no_mangle && (platform === "pe" || platform === null)) {
     if (
       managed.char_set === "unicode" ||
-      (nativeFormat === "pe" && managed.char_set === "auto")
+      (platform === "pe" && managed.char_set === "auto")
     )
       names.add(`${managed.import_name}W`);
     if (
       managed.char_set === "ansi" ||
-      (nativeFormat === "pe" && managed.char_set === "not-specified")
+      (platform === "pe" && managed.char_set === "not-specified")
     )
       names.add(`${managed.import_name}A`);
     if (managed.call_convention === "stdcall") {
@@ -312,15 +316,16 @@ interface PinvokeCandidateMatch {
 const pinvokeCandidates = (
   managed: PinvokeImport,
   symbols: readonly NativeSymbol[],
-  moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>,
+  modulePlatformsByEvidenceId: ReadonlyMap<string, ManagedNativePlatform>,
 ): readonly NativeSymbol[] => {
-  const namesByFormat = new Map<string | null, readonly string[]>();
+  const namesByPlatform = new Map<ManagedNativePlatform, readonly string[]>();
   return symbols.filter((symbol) => {
-    const format = moduleFormatsByEvidenceId.get(symbol.evidence_id) ?? null;
-    let names = namesByFormat.get(format);
+    const platform =
+      modulePlatformsByEvidenceId.get(symbol.evidence_id) ?? null;
+    let names = namesByPlatform.get(platform);
     if (names === undefined) {
-      names = candidateNames(managed, format);
-      namesByFormat.set(format, names);
+      names = candidateNames(managed, platform);
+      namesByPlatform.set(platform, names);
     }
     return names.some((name) => sameSymbolName(name, symbol));
   });
@@ -330,12 +335,12 @@ const matchPinvoke = (
   managed: PinvokeImport,
   symbols: readonly NativeSymbol[],
   supportedNativeEvidence: number,
-  moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>,
+  modulePlatformsByEvidenceId: ReadonlyMap<string, ManagedNativePlatform>,
 ): PinvokeCandidateMatch => {
   const allCandidates = pinvokeCandidates(
     managed,
     symbols,
-    moduleFormatsByEvidenceId,
+    modulePlatformsByEvidenceId,
   );
   const [first, ...remaining] = allCandidates;
   if (first === undefined)
@@ -357,7 +362,7 @@ const matchPinvoke = (
     moduleCompatibility(
       managed.import_scope_name,
       symbol,
-      moduleFormatsByEvidenceId.get(symbol.evidence_id) ?? null,
+      modulePlatformsByEvidenceId.get(symbol.evidence_id) ?? null,
     );
   const exact = candidates.find(
     (symbol) =>
@@ -460,7 +465,10 @@ interface VerifyPinvokeContext {
   readonly native: {
     readonly symbols: readonly NativeSymbol[];
     readonly accepted: number;
-    readonly moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>;
+    readonly modulePlatformsByEvidenceId: ReadonlyMap<
+      string,
+      ManagedNativePlatform
+    >;
   };
 }
 
@@ -489,7 +497,7 @@ export const verifyPinvoke = ({
     item,
     native.symbols,
     native.accepted,
-    native.moduleFormatsByEvidenceId,
+    native.modulePlatformsByEvidenceId,
   );
   const limitations = pinvokeLimitations(selection.match, item);
   const context: PinvokeVerificationContext = {

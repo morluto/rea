@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
+import {
+  buildDenoSection,
+  denoElf,
+} from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
+
 import { createReleaseExposureService } from "../../../src/composition/releaseExposure.js";
 import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
@@ -12,6 +17,70 @@ import { thinFuseImage } from "../../fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("release exposure filesystem boundary", () => {
+  it.each(["vfs", "remote"] as const)(
+    "audits Deno %s source maps using their retained roles",
+    async (kind) => {
+      const root = await createTestTempDirectory("rea-release-exposure-deno-");
+      const path = join(root, "application");
+      const script = Buffer.from("export const value = 1;\n");
+      const map = Buffer.from(
+        JSON.stringify({
+          version: 3,
+          sources: ["private.ts"],
+          sourcesContent: ["export const value: number = 1;"],
+          names: [],
+          mappings: "AAAA",
+        }),
+      );
+      await writeFile(
+        path,
+        denoElf(
+          buildDenoSection(
+            kind === "remote"
+              ? {
+                  specifiers: [{ text: "https://example.com/module", id: 1 }],
+                  remoteModules: [
+                    {
+                      specifierId: 1,
+                      mediaType: 0,
+                      data: `export const value = 1;\n//# sourceMappingURL=data:application/json;base64,${map.toString("base64")}`,
+                    },
+                  ],
+                }
+              : {
+                  vfs: [
+                    {
+                      File: {
+                        n: "main.ts",
+                        o: [0, script.length],
+                        s: [script.length, map.length],
+                        u: true,
+                      },
+                    },
+                  ],
+                  vfsFileData: Buffer.concat([script, map]),
+                },
+          ),
+        ),
+      );
+      const service = createReleaseExposureService();
+      try {
+        const result = await service.inspect({ path });
+        if (!result.ok) throw result.error;
+        const report = releaseExposureReportSchema.parse(
+          result.value.normalized_result,
+        );
+        expect(
+          report.checks.find(
+            (check) => check.id === "javascript.source_map_sources",
+          )?.status,
+        ).toBe("exposed");
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
   it("retains unknown JavaScript coverage for an external-section bundle.map", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-map-");
     await writeFile(

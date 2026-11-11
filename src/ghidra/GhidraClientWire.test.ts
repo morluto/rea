@@ -141,16 +141,30 @@ describe("GhidraWire request ceiling", () => {
 });
 
 it.each([null, 7])(
-  "sends the accepted decompile budget %s in the request envelope",
+  "sends accepted decompile and value-flow budgets with deadline %s in the request envelope",
   async (budget) => {
     const { wire, writes, pending } = harness(limit(8192));
     const result = wire.request(
       "procedure_pseudo_code",
       { procedure: "0x1000" },
-      { decompileTimeoutSeconds: budget },
+      {
+        decompileTimeoutSeconds: budget,
+        decompileMaxPayloadMiB: budget,
+        valueFlowLimits: {
+          max_operations: 6000,
+          max_inputs_per_operation: 128,
+          max_edges: 24000,
+        },
+      },
     );
     expect(JSON.parse(writes[0]!)).toMatchObject({
       decompile_timeout_seconds: budget,
+      decompile_max_payload_mib: budget,
+      value_flow_limits: {
+        max_operations: 6000,
+        max_inputs_per_operation: 128,
+        max_edges: 24000,
+      },
     });
     pending.settle(1, ok("pseudocode"));
     expect(await result).toEqual(ok("pseudocode"));

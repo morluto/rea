@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
@@ -17,6 +18,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
   reverseCommandTimeoutSchema,
+  reverseCommandOutputBytesSchema,
   rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -150,10 +152,9 @@ export const registerReverseEngineeringCommands = (
     description:
       "Inspect a local artifact using GNU-style objdump arguments and retain the selected command output as Evidence",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Path to the local artifact to inspect."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to inspect.",
+      ),
       operation: z
         .enum(OBJDUMP_ARTIFACT_OPERATIONS)
         .describe("GNU-style objdump operation to run."),
@@ -173,6 +174,7 @@ export const registerReverseEngineeringCommands = (
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
       commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -197,6 +199,9 @@ export const registerReverseEngineeringCommands = (
                   ...(options.symbol === undefined
                     ? {}
                     : { symbol: options.symbol }),
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
                   ...(options.commandTimeoutMs === undefined
                     ? {}
                     : { command_timeout_ms: options.commandTimeoutMs }),
@@ -220,6 +225,7 @@ export const registerReverseEngineeringCommands = (
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
       commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
     }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
@@ -244,6 +250,9 @@ export const registerReverseEngineeringCommands = (
                 service.inspectWithObjdump(
                   {
                     operation: "architectures",
+                    ...(options.maxOutputBytes === undefined
+                      ? {}
+                      : { max_output_bytes: options.maxOutputBytes }),
                     ...(options.commandTimeoutMs === undefined
                       ? {}
                       : { command_timeout_ms: options.commandTimeoutMs }),
@@ -265,10 +274,9 @@ export const registerReverseEngineeringCommands = (
   cli.command(CLI_COMMANDS.executeRizinCommand, {
     description: "Execute one Rizin command against a local artifact",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Path to the local artifact to analyze."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to analyze.",
+      ),
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     options: z.object({
@@ -277,6 +285,7 @@ export const registerReverseEngineeringCommands = (
       asmCpu: rizinInputSchema.shape.asm_cpu,
       baseAddress: rizinInputSchema.shape.base_address,
       commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -300,6 +309,9 @@ export const registerReverseEngineeringCommands = (
                   ...(options.baseAddress === undefined
                     ? {}
                     : { base_address: options.baseAddress }),
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
                   ...(options.commandTimeoutMs === undefined
                     ? {}
                     : { command_timeout_ms: options.commandTimeoutMs }),
@@ -394,7 +406,9 @@ export const registerReverseEngineeringCommands = (
     description:
       "Run one unrestricted Rizin debugger command in an ephemeral session",
     args: z.object({
-      path: z.string().min(1).describe("Path to the local artifact to debug."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to debug.",
+      ),
       command: z
         .string()
         .min(1)

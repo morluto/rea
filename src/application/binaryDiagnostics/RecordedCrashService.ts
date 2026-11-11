@@ -95,6 +95,9 @@ export class RecordedCrashService {
           parameters: {
             path: input.value.path,
             include_debugger_context: input.value.include_debugger_context,
+            ...(input.value.producer_limits === undefined
+              ? {}
+              : { producer_limits: input.value.producer_limits }),
             ...(input.value.pwntools_timeout_ms === undefined
               ? {}
               : { pwntools_timeout_ms: input.value.pwntools_timeout_ms }),

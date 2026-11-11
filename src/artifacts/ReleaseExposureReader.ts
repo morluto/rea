@@ -127,11 +127,17 @@ import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javasc
 const OPERATION = "audit_release_exposure";
 type PackageFormat = Extract<
   ArtifactOccurrence["artifact_format"],
-  "asar" | "bun-standalone" | "dotnet-bundle" | "node-sea" | "pyinstaller"
+  | "asar"
+  | "bun-standalone"
+  | "deno-standalone"
+  | "dotnet-bundle"
+  | "node-sea"
+  | "pyinstaller"
 >;
 const PACKAGE_FORMATS = [
   "asar",
   "bun-standalone",
+  "deno-standalone",
   "dotnet-bundle",
   "node-sea",
   "pyinstaller",
@@ -944,6 +950,16 @@ const canDeclareMap = (member: MemberRole): boolean =>
 
 /** Bun loaders whose module contents a compiled executable ships as JavaScript. */
 const BUN_SCRIPT_LOADERS = new Set(["js", "jsx", "ts", "tsx"]);
+const DENO_SCRIPT_MEDIA_TYPES = new Set([
+  "JavaScript",
+  "Jsx",
+  "Mjs",
+  "Cjs",
+  "TypeScript",
+  "Mts",
+  "Cts",
+  "Tsx",
+]);
 
 /**
  * The role a package reader states for its entry, or null when it states none.
@@ -962,6 +978,23 @@ const ownerStatedKind = (
     )
       return "javascript";
     return null;
+  }
+  if (metadata?.kind === "deno-standalone-entry") {
+    if (metadata.role === "remote-module") {
+      if (metadata.media_type_name === "SourceMap") return "source-map";
+      if (DENO_SCRIPT_MEDIA_TYPES.has(metadata.media_type_name ?? ""))
+        return "javascript";
+    }
+    if (
+      metadata.role === "vfs-source-map" ||
+      metadata.role === "remote-source-map"
+    )
+      return "source-map";
+    if (
+      metadata.role === "vfs-transpiled" ||
+      metadata.role === "remote-transpiled"
+    )
+      return "javascript";
   }
   if (metadata?.kind === "node-sea-entry" && metadata.role === "main-script")
     return "javascript";

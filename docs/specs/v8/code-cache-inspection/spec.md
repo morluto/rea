@@ -1,5 +1,9 @@
 # Inspect a V8 code cache container
 
+This specification records an implementation increment and its original problem
+statement. For current behavior and limitations, see the
+[current guide](../../../guides/javascript/v8-code-cache.md).
+
 ## Outcome
 
 A bytenode `.jsc`, the bytes `vm.Script.createCachedData()` writes, and a code cache

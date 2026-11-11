@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · **Українська** · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Реверс-інжиніринг будь-чого
 
@@ -83,6 +83,10 @@ npx rea-agents setup
 Налаштування підтримує Claude Code, Codex, Cursor, Gemini CLI, Grok Build та [інших агентів](../getting-started/installation.md#supported-agents). Конфігурацію провайдерів і ручну реєстрацію MCP описано в розділі [встановлення й налаштування](../getting-started/installation.md).
 
 MCP типово використовує компактні вхідні схеми. Для повного опису полів і вкладеної перевірки задайте `REA_MCP_INPUT_SCHEMA_PROFILE=full` у реєстрації MCP. Обидва профілі зберігають усі інструменти й однакову канонічну перевірку сервера; див. посібник контрактів MCP.
+
+Налаштування безпосередньо реєструє вибране середовище виконання та стартовий скрипт REA. Якщо ви використовуєте засіб запуску пакетів, збережіть його запис у кеші та середовище виконання; отримуйте пакет із довіреного каталогу поза цільовим проєктом. Див. посібник зі встановлення.
+
+Повні схеми виводу оголошуються за замовчуванням. Якщо клієнт обмежує `tools/list`, задайте `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` або `off` у реєстрації MCP. Перевірка сервера та структуровані результати залишаються повними. Див. розділ «Output schemas» у посібнику з контрактів MCP.
 
 ### Запитайте агента
 
@@ -173,6 +177,7 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 | Захоплення пакетів                   | Кінцеві точки, DNS, TLS SNI, розподіл протоколів та HTTP-запити                                                   | Надані викликаючою стороною tshark та capinfos; [підручник pcap](../guides/data/pcap-analysis.md)                                                                 |
 | Збірки .NET                          | Метадані, інструкції CIL, оголошені нативні залежності й порівняння збірок                                        | Статична перевірка; [посібник керованого коду](../guides/managed/managed-code-analysis.md)                                                                        |
 | PyInstaller                          | CArchive, PYZ, Python bytecode                                                                                    | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                             |
+| Deno compile binaries                | Virtual files, entry point, recorded options, npm snapshot length                                                 | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                              |
 | Android APK                          | Оголошення маніфесту, класи, декомпільовані методи й посилання                                                    | JADX без графічного інтерфейсу й повний JDK у Linux/macOS/Windows x64; [посібник Android](../guides/android/android-analysis.md)                                  |
 | Пристрої Android                     | Пристрої, пакети, процеси, журнали, дампи, знімки екрана та передавання APK/файлів                                | adb, наданий викликаючою стороною (емулятор або пристрій); [підручник ADB](../guides/android/adb-device-analysis.md)                                              |
 | Проєкти JEB                          | Єдиниці проєкту від рушія, дайджести артефактів і псевдокод типів/методів                                         | Запущений викликаною стороною клієнт JEB з MCP, обирається через REA_JEB_MCP_URL; [посібник JEB](../providers/jeb-analysis.md)                                    |
@@ -273,6 +278,12 @@ REA експортує готове до запуску середовище з 
 [Посібник зі створення середовища](https://rea.tools/guides/rl-environments/) ·
 [Довідник середовищ](../agent-environments.md) ·
 [Дивитися демо в X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Середовища настільних застосунків
+
+REA також може створити середовище настільного застосунку для Linux, яким агент користується через знімки екрана, мишу й клавіатуру. За запитом в один рядок, як-от «Створи середовище Gnote, де агент додає оливкову олію до нотатки зі списком покупок», ваш агент встановлює застосунок на локальний комп’ютер збирання, пише завдання, експортує середовище й перевіряє завдання на новому комп’ютері. Машині, яка його збирає, потрібні Linux на amd64 або arm64, Docker і версія фреймворку agentenv, зазначена в посібнику.
+
+[Налаштування середовищ настільних застосунків](../desktop-build-computer.md)
 
 ## Поширені запитання
 

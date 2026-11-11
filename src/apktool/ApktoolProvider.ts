@@ -31,6 +31,7 @@ import { providerConfigurationRefusal } from "../domain/providerConfigurationRef
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolResultSchemas,
+  apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
   MAX_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
@@ -666,7 +667,7 @@ export class ApktoolProvider {
           : "complete";
 
       completedDecode.strings = [...projectedStrings.strings];
-      if (input.locales !== undefined || input.string_tables_only === true)
+      if (apktoolStringTablesRequested(input))
         completedDecode.string_tables = [...projectedStrings.tables];
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;

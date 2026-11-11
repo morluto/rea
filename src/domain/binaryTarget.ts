@@ -1,5 +1,9 @@
+import {
+  resolveMappedFileOffset,
+  type FileMapping,
+  type ZeroFillMapping,
+} from "./virtualFileMapping.js";
 import type {
-  BinaryArchitecture,
   ElfFamilyMetadata,
   HeaderArchitecture,
   MipsElfMetadata,
@@ -31,6 +35,10 @@ import {
   validateFatSliceIdentity,
   type FatSliceHeaderEvidence,
 } from "./apple/machoContainer.js";
+import {
+  machoCpuSubtypeBase,
+  machoHostSubtypeRank,
+} from "./apple/machoCpuIdentity.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
@@ -188,6 +196,8 @@ interface FatDeclaration {
   readonly architecture: HeaderArchitecture;
   readonly offset: number;
   readonly size: number;
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
 }
 
 /** Validate a FAT table and its slice identities without selecting a slice. */
@@ -224,6 +234,8 @@ const validatedFatDeclarations = (
               architecture,
               offset: declaration.offset,
               size: declaration.size,
+              cpuType: declaration.cpuType,
+              cpuSubtype: declaration.cpuSubtype,
             },
           ];
     }),
@@ -266,14 +278,20 @@ const parseFatMachO = (
   if (!validated.ok) return validated;
   const declarations = validated.value;
   // Prefer the slice the host would load; a malformed host slice is an error.
-  // A container without one still declares its images, so select the first
-  // that can hold its Mach-O header, as a thin foreign image would be. A
-  // family declared more than once, such as arm64 and arm64e, has no
-  // provider-neutral choice and is not selected.
+  // Several slices of that family use subtype preference, not table order.
+  // Capability variants of the winning base follow FAT order, which is the
+  // slice codesign's family selector names. Identical subtypes, or a tie
+  // between different unlisted bases, are ambiguous. A container without a
+  // host slice still declares its images, so select the first foreign family
+  // declared once. A foreign family declared more than once, such as arm64
+  // and arm64e on an Intel host, has no provider-neutral choice.
   const preferred = fatHostArchitecture(host);
-  const hostSlice = declarations.find(
-    ({ architecture }) => architecture === preferred,
-  );
+  const hostChoice = selectHostFatSlice(declarations, preferred);
+  if (hostChoice?.ambiguous === true)
+    return err(
+      `FAT binary declares several ${preferred} slices; no slice was selected`,
+    );
+  const hostSlice = hostChoice?.slice;
   const unambiguous = declarations.filter(
     ({ architecture }) =>
       declarations.filter((other) => other.architecture === architecture)
@@ -311,6 +329,50 @@ const parseFatMachO = (
           }))
         : [],
   });
+};
+
+/**
+ * The host slice, or an ambiguity when several host slices share the best
+ * rank without a single codesign selector.
+ */
+const selectHostFatSlice = (
+  declarations: readonly FatDeclaration[],
+  preferred: HeaderArchitecture | undefined,
+):
+  | { readonly slice?: FatDeclaration; readonly ambiguous: boolean }
+  | undefined => {
+  if (preferred === undefined) return undefined;
+  const hostSlices = declarations.filter(
+    ({ architecture }) => architecture === preferred,
+  );
+  const only = hostSlices[0];
+  if (hostSlices.length === 0 || only === undefined) return undefined;
+  if (hostSlices.length === 1) return { slice: only, ambiguous: false };
+  let bestRank = Number.POSITIVE_INFINITY;
+  const winners: FatDeclaration[] = [];
+  for (const slice of hostSlices) {
+    const rank = machoHostSubtypeRank(slice.cpuType, slice.cpuSubtype);
+    if (rank < bestRank) {
+      bestRank = rank;
+      winners.length = 0;
+      winners.push(slice);
+    } else if (rank === bestRank) winners.push(slice);
+  }
+  const first = winners[0];
+  if (first === undefined) return { ambiguous: true };
+  if (winners.length === 1) return { slice: first, ambiguous: false };
+  const base = machoCpuSubtypeBase(first.cpuSubtype);
+  if (winners.some((slice) => machoCpuSubtypeBase(slice.cpuSubtype) !== base))
+    return { ambiguous: true };
+  // A repeated full subtype is still ambiguous, even beside a distinct
+  // capability variant of the same base.
+  const subtypes = new Set<number>();
+  for (const slice of winners) {
+    if (subtypes.has(slice.cpuSubtype)) return { ambiguous: true };
+    subtypes.add(slice.cpuSubtype);
+  }
+  if (subtypes.size < 2) return { ambiguous: true };
+  return { slice: first, ambiguous: false };
 };
 
 const fatSliceIdentityError = (
@@ -604,28 +666,37 @@ export const peRvaToFileOffset = (
   sizeOfHeaders: number,
   size = 1,
 ): number | undefined => {
-  if (rva < sizeOfHeaders && size <= sizeOfHeaders - rva) return rva;
-  for (let i = 0; i < numberOfSections; i++) {
-    const offset = i * 40;
+  const mappings: FileMapping[] = [
+    { address: 0n, offset: 0, size: sizeOfHeaders },
+  ];
+  const zeroFills: ZeroFillMapping[] = [];
+  for (let index = 0; index < numberOfSections; index += 1) {
+    const offset = index * 40;
     const parsed = readPeSectionHeader(
       sectionTable.subarray(offset, offset + 40),
     );
-    if (!parsed.ok) break;
-    const {
-      virtual_address: virtualAddress,
-      raw_size: sizeOfRawData,
-      offset: pointerToRawData,
-    } = parsed.value;
-    if (
-      pointerToRawData > 0 &&
-      rva >= virtualAddress &&
-      rva - virtualAddress < sizeOfRawData &&
-      size <= sizeOfRawData - (rva - virtualAddress)
-    ) {
-      return pointerToRawData + (rva - virtualAddress);
-    }
+    if (!parsed.ok) return undefined;
+    const section = parsed.value;
+    const address = BigInt(section.virtual_address);
+    if (section.raw_size > 0)
+      mappings.push({
+        address,
+        offset: section.offset,
+        size: section.raw_size,
+      });
+    if (section.virtual_size > section.raw_size)
+      zeroFills.push({
+        address: address + BigInt(section.raw_size),
+        size: BigInt(section.virtual_size - section.raw_size),
+      });
   }
-  return undefined;
+  const mapped = resolveMappedFileOffset(
+    mappings,
+    BigInt(rva),
+    size,
+    zeroFills,
+  );
+  return mapped.ok ? mapped.value : undefined;
 };
 
 /** CodeView RVA admission uses the same bounded prefix as target file reads. */

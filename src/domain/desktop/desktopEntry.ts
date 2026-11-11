@@ -22,7 +22,6 @@ const VALUE_ESCAPES: Readonly<Record<string, string>> = {
   t: "\t",
   r: "\r",
   "\\": "\\",
-  ";": "\\;",
 };
 
 /** Undo the escapes the desktop entry format allows in string values. */
@@ -69,13 +68,25 @@ export const escapeDesktopEntryValue = (value: string): string => {
   return escaped;
 };
 
-const listValue = (value: string | undefined): readonly string[] =>
-  value === undefined
-    ? []
-    : value
-        .split(/(?<!\\);/u)
-        .map((part) => part.replaceAll("\\;", ";"))
-        .filter((part) => part.length > 0);
+/** Decode list separators and escapes together, before either loses its meaning. */
+const listValue = (value: string | undefined): readonly string[] => {
+  if (value === undefined) return [];
+  const entries: string[] = [];
+  let entry = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value.charAt(index);
+    const next = value.charAt(index + 1);
+    if (character === "\\" && next.length > 0) {
+      entry += next === ";" ? ";" : (VALUE_ESCAPES[next] ?? `\\${next}`);
+      index += 1;
+    } else if (character === ";") {
+      entries.push(entry);
+      entry = "";
+    } else entry += character;
+  }
+  if (entry.length > 0) entries.push(entry);
+  return entries;
+};
 
 /** Read the main group of a freedesktop desktop entry, ignoring localized keys. */
 export const parseDesktopEntry = (
@@ -101,13 +112,14 @@ export const parseDesktopEntry = (
       // Keep the existing enum/boolean token treatment before value unescaping.
       values.set(
         key,
-        unescapeValue(
-          key === "Type" || key === "Terminal" ? value.trimEnd() : value,
-        ),
+        key === "Type" || key === "Terminal" ? value.trimEnd() : value,
       );
   }
   if (!found) return err("missing_desktop_entry_group");
-  const field = (key: string) => values.get(key) ?? null;
+  const field = (key: string) => {
+    const value = values.get(key);
+    return value === undefined ? null : unescapeValue(value);
+  };
   return ok({
     type: field("Type"),
     name: field("Name"),
@@ -118,7 +130,7 @@ export const parseDesktopEntry = (
     startup_wm_class: field("StartupWMClass"),
     categories: listValue(values.get("Categories")),
     mime_types: listValue(values.get("MimeType")),
-    terminal: values.get("Terminal") === "true",
+    terminal: field("Terminal") === "true",
   });
 };
 
@@ -349,4 +361,24 @@ export const unwrapDesktopCommand = (
       application_id: flatpakApplicationId(argv.slice(index + 2)),
     };
   return { kind: "direct", program, environment, index };
+};
+
+/** The first argument after an `env` prefix, the program, and a `flatpak run` id. */
+export const desktopArgumentIndex = (argv: readonly string[]): number => {
+  const command = unwrapDesktopCommand(argv);
+  if (command.kind === "direct") return command.index + 1;
+  let index = 0;
+  if (argv[0]?.split("/").at(-1) === "env") {
+    index = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) index += 1;
+  }
+  index += 1;
+  if (argv[index] === "run") index += 1;
+  for (; index < argv.length; index += 1) {
+    const token = argv[index] ?? "";
+    if (token === "--") return Math.min(index + 2, argv.length);
+    if (!token.startsWith("-")) return index + 1;
+    if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
+  }
+  return argv.length;
 };

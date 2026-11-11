@@ -23,25 +23,43 @@ export interface OwnedWorkerRuntimeOptions {
   readonly cleanupRegistry?: WorkerCleanupRegistry;
 }
 
-/** Retained worker runtimes one host retries before admitting another child. */
-export class WorkerCleanupRegistry {
-  readonly #pending = new Set<OwnedWorkerRuntime>();
+/** A resource owner that can retry its own retained cleanup. */
+export interface RetainedWorkerCleanup {
+  retryRetainedCleanup(): Promise<void>;
+}
 
-  has(runtime: OwnedWorkerRuntime): boolean {
+/** Retained worker resources one host retries before admitting another child. */
+export class WorkerCleanupRegistry {
+  readonly #pending = new Set<RetainedWorkerCleanup>();
+
+  has(runtime: RetainedWorkerCleanup): boolean {
     return this.#pending.has(runtime);
   }
 
-  add(runtime: OwnedWorkerRuntime): void {
+  add(runtime: RetainedWorkerCleanup): void {
     this.#pending.add(runtime);
   }
 
-  delete(runtime: OwnedWorkerRuntime): void {
+  delete(runtime: RetainedWorkerCleanup): void {
     this.#pending.delete(runtime);
   }
 
-  async retry(except?: OwnedWorkerRuntime): Promise<void> {
-    for (const owner of [...this.#pending])
-      if (owner !== except) await owner.retryRetainedCleanup();
+  async retry(except?: RetainedWorkerCleanup): Promise<void> {
+    const failures: unknown[] = [];
+    for (const owner of [...this.#pending]) {
+      if (owner === except) continue;
+      try {
+        await owner.retryRetainedCleanup();
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "Owned worker cleanup remains incomplete",
+      );
   }
 }
 
