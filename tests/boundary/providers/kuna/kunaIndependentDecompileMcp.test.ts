@@ -84,8 +84,8 @@ it("runs a cold independent request without starting a project export", async ()
         limit: {
           setting: "kuna.function_timeout_ms",
           effective_value: 300,
-          effect: "immediate",
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
           minimum: 1,
           maximum: 2147483647,
         },

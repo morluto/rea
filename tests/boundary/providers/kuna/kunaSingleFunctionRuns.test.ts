@@ -372,8 +372,8 @@ it("names the setting that owns a single-function deadline", async () => {
         limit: {
           setting: "kuna.function_timeout_ms",
           effective_value: 300,
-          effect: "immediate",
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
         },
       },
     });

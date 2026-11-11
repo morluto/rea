@@ -405,8 +405,6 @@ export class KunaSessionClient implements AnalysisClient {
   #installation:
     | SharedStartupAttempt<Result<KunaInstallation, AnalysisError>>
     | undefined;
-  /** Launch configuration captured when the export starts, for its deadline source. */
-  #kunaConfiguration: KunaConfiguration | undefined;
   /** Deadline the project export accepted. Not recomputed from later settings. */
   #acceptedProjectDeadline: KunaDeadline | undefined;
   #inventory:
@@ -2101,14 +2099,7 @@ export class KunaSessionClient implements AnalysisClient {
     return this.#starting;
   }
 
-  #projectDeadline(): KunaDeadline | undefined {
-    // The export already accepted this deadline. Re-resolving after a reset
-    // would throw away the value the failed export used.
-    return this.#acceptedProjectDeadline;
-  }
-
   async #lookupOrBuild(installation: KunaInstallation): Promise<void> {
-    this.#kunaConfiguration = installation.configuration;
     this.#acceptedProjectDeadline ??= kunaProjectDeadline(
       installation.configuration,
     );

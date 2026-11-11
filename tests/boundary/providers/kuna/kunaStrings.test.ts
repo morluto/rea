@@ -438,8 +438,8 @@ it.each([
               limit: {
                 setting: "kuna.project_timeout_ms",
                 effective_value: 500,
-                effect: "immediate",
-                rea_restart_required: false,
+                update_mode: "runtime",
+                pending_restart: false,
               },
             },
           });
