@@ -388,7 +388,6 @@ function* collectPaths(
   for (const path in sourcePaths) {
     if (!Object.hasOwn(sourcePaths, path) || path.startsWith("x-")) continue;
     yield;
-    context.examined++;
     // Reserve expanded pointer/path strings before escaping or building a row.
     const admitted = inventory.reserve(512 + path.length * 16);
     if (!admitted.ok) return admitted;
@@ -401,6 +400,7 @@ function* collectPaths(
           "A Paths entry must start with /; it was not interpreted as an endpoint.",
         );
     if (!read.ok) return read;
+    context.examined++;
   }
   return ok(undefined);
 }
@@ -443,17 +443,6 @@ export function* parseApiContractSteps(
       : Object.hasOwn(root, "paths")
         ? "malformed"
         : "absent";
-  if (
-    pathsState === "malformed" ||
-    (pathsState === "absent" && version[1] === "0")
-  ) {
-    const diagnosed = inventory.diagnostic(
-      "invalid-paths",
-      "/paths",
-      "paths must be an object and is required for OpenAPI 3.0; a missing or malformed inventory is not proof of zero operations.",
-    );
-    if (!diagnosed.ok) return diagnosed;
-  }
   const context: ContractReportContext = {
     openapi: root.openapi,
     info: info.value,
@@ -469,6 +458,17 @@ export function* parseApiContractSteps(
       error.retainPartialObservation(contractReport(inventory, context, true));
     return err(error);
   };
+  if (
+    pathsState === "malformed" ||
+    (pathsState === "absent" && version[1] === "0")
+  ) {
+    const diagnosed = inventory.diagnostic(
+      "invalid-paths",
+      "/paths",
+      "paths must be an object and is required for OpenAPI 3.0; a missing or malformed inventory is not proof of zero operations.",
+    );
+    if (!diagnosed.ok) return interrupted(diagnosed.error);
+  }
   try {
     const read = yield* collectPaths(
       paths ?? {},

@@ -316,7 +316,10 @@ it("bounds expanded identities and source pointers before building a giant row",
   expect(result.error._tag).toBe("AnalysisResourceConstraintError");
   const partial = apiContractSchema.parse(result.error.partialObservation);
   expect(partial.operations.map((row) => row.path)).toEqual(["/retained"]);
-  expect(partial.source_coverage.status).toBe("partial");
+  expect(partial.source_coverage).toMatchObject({
+    status: "partial",
+    path_entries_examined: 1,
+  });
 });
 
 it("retains an interpreted path when cancellation interrupts traversal", () => {
