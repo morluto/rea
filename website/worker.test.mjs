@@ -125,3 +125,13 @@ await test("missing Markdown keeps HTML, and asset redirects and missing routes 
     assert.equal(response.status, status);
   }
 });
+
+await test("a Markdown-preferring client keeps the HTML validator when the sidecar is missing", async () => {
+  const response = await worker.fetch(
+    new Request("https://rea.tools/guide/", {
+      headers: { Accept: "text/markdown", "If-None-Match": '"html"' },
+    }),
+    assets({ markdownStatus: 404 }),
+  );
+  assert.equal(response.status, 304);
+});

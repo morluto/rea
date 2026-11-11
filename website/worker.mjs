@@ -46,6 +46,20 @@ function advertiseMarkdown(response, path) {
   return response;
 }
 
+/**
+ * Answer with HTML when the Markdown route is absent.
+ *
+ * The probe dropped the HTML validators so the Markdown route could be evaluated
+ * on its own, so a Markdown-preferring caller needs the asset service asked again
+ * with its conditional headers; otherwise a matching ETag answers 200 instead of
+ * 304. A caller that already asked for HTML gets the probed response unchanged.
+ */
+const htmlFallback = async (original, request, useMarkdown, env) => {
+  if (!useMarkdown) return original;
+  await original.body?.cancel();
+  return env.ASSETS.fetch(request);
+};
+
 export default {
   async fetch(request, env) {
     const useMarkdown = prefersMarkdown(request.headers.get("Accept"));
@@ -85,7 +99,7 @@ export default {
     );
     if (!candidate.ok && ![304, 412, 416].includes(candidate.status)) {
       await candidate.body?.cancel();
-      return original;
+      return htmlFallback(original, request, useMarkdown, env);
     }
     const response = new Response(
       useMarkdown ? candidate.body : original.body,
