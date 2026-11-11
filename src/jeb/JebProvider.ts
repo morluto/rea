@@ -574,6 +574,7 @@ export class JebProvider implements JebAnalysisPort {
               ...(cause.remediationAction === undefined
                 ? {}
                 : { remediationAction: cause.remediationAction }),
+              ...(cause.limit === undefined ? {} : { limit: cause.limit }),
             })
           : new AnalysisCancelledError(operation, options);
       return failure

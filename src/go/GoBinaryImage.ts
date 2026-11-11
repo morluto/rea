@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../domain/virtualFileMapping.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -6,8 +10,6 @@ import {
   imageFileMappings,
   isZeroFilledSpan,
   type BinaryContainer,
-  type FileMapping,
-  type ZeroFillMapping,
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
@@ -127,6 +129,7 @@ export const readGoBinaryImage = (
     throw new BinaryFormatFailure(
       "unsupported",
       "Go build-info flags contain an unsupported format bit",
+      true,
     );
   if ((flags & 2) === 0 && (flags & 1) !== (byte_order === "big" ? 1 : 0))
     throw new BinaryFormatFailure(

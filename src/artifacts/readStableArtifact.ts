@@ -140,13 +140,18 @@ const assertUnchangedAfterRead = async (
     );
 };
 
-/** Read one bounded regular file and reject replacement or in-place changes. */
+/**
+ * Read one bounded regular file and reject replacement or in-place changes.
+ * The optional observer receives verified state before descriptor finalization;
+ * callers may reuse it only after this promise resolves successfully.
+ */
 export const readStableArtifact = async (
   path: string,
   maximumBytes: number,
   signal?: AbortSignal,
   fileSystem: StableArtifactFileSystem = FILE_SYSTEM,
   resourceScope?: ArtifactResourceScope,
+  onValidatedState?: (state: BigIntStats) => void,
 ): Promise<StableArtifactSnapshot> => {
   assertArtifactReadActive(signal);
   const { before, file } = await openRegularFile(path, fileSystem, (stat) => {
@@ -208,6 +213,7 @@ export const readStableArtifact = async (
       }
       await assertUnchangedAfterRead(path, file, fileSystem, initial, count);
       assertArtifactReadActive(signal);
+      onValidatedState?.(initial);
       return {
         bytes,
         sha256: hash.digest("hex"),
@@ -307,4 +313,22 @@ export const readStableArtifactRanges = async <T>(
       return { result, sha256: hash.digest("hex"), bytes: size };
     },
   );
+};
+
+/** Revalidate a completed snapshot's selected file state without reading its bytes again. */
+export const assertStableArtifactState = async (
+  path: string,
+  expected: BigIntStats,
+  signal?: AbortSignal,
+): Promise<void> => {
+  assertArtifactReadActive(signal);
+  const current = await afterValidation(path, "before cached inspection", () =>
+    lstat(path, { bigint: true }),
+  );
+  if (!sameRegularFileState(expected, current))
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact changed since acquisition: ${path}`,
+    );
+  assertArtifactReadActive(signal);
 };

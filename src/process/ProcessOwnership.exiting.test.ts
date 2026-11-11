@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
@@ -174,6 +175,9 @@ it("preserves caller cancellation during native exit settlement", async () => {
     abort.signal,
   );
   abort.abort(reason);
-  await expect(pending).rejects.toBe(reason);
+  const failure: unknown = await pending.catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+  if (!(failure instanceof ProcessOwnershipInspectionCancelled)) throw failure;
+  expect(failure.reason).toBe(reason);
   expect(host.processIdentities).not.toHaveBeenCalled();
 });

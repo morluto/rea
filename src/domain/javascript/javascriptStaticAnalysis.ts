@@ -140,7 +140,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     accumulator,
     vitePreloadDependencyTable: indexVitePreloadDependencyTable(
       file.program,
-      bindings.erasedSyntaxNodes,
+      bindings,
     ),
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,

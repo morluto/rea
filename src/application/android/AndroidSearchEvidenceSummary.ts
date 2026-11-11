@@ -29,6 +29,12 @@ export const summarizeRetainedAndroidSearch = (
       result: evidence.normalized_result,
       rawResult: { ...summary, complete_evidence_id: evidence.evidence_id },
       confidence: evidence.confidence,
+      ...(evidence.analysis_profile === null
+        ? {}
+        : { analysisProfile: evidence.analysis_profile }),
+      ...(evidence.relationship_coverage === null
+        ? {}
+        : { relationshipCoverage: evidence.relationship_coverage }),
       limitations: evidence.limitations,
       locations: evidence.locations,
       evidenceLinks: [evidence.evidence_id],
