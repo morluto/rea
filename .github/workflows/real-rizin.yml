@@ -14,6 +14,10 @@ on:
       - "tests/boundary/providers/RizinTestInferiorTty.ts"
       - "tests/boundary/providers/RizinDebugSessionCoverage.fixtures.ts"
       - "tests/support/requiredRizin.ts"
+      # Helpers the two gates import directly.
+      - "tests/support/reverseDebuggerMcpTestHelpers.ts"
+      - "tests/support/process/pidFile.ts"
+      - "tests/fixtures/mcpToolError.ts"
 
 permissions:
   contents: read
