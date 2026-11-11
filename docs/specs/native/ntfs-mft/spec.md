@@ -25,8 +25,9 @@ its own.
   and is reported per record and in the metadata count.
 - Report a missing, misplaced or short update-sequence array as unverified
   rather than as a clean record, and a trailing partial record as a byte count.
-- Stop at the first record that does not begin with the `FILE` signature and
-  name its offset, rather than guessing at the remaining bytes.
+- Report the first invalid record signature and the number of invalid slots.
+  Continue at the next slot when the stream declared a supported record size.
+  With a fallback record size, stop at the first invalid signature.
 - Bound the whole file at a fixed 512 MiB ceiling and report the ceiling as a
   `limit` failure with its boundary.
 - Parse only the records' headers and fixups. Attributes, filenames, data

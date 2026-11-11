@@ -193,16 +193,27 @@ describe("parseMftImage", () => {
     expect(parsed.value.metadata.directory_record_count).toBe(1);
   });
 
-  it("stops at a record that does not begin with the FILE signature", () => {
-    const stream = streamOf(recordOf(), recordOf(), recordOf());
-    stream.set(Buffer.from("BAAD", "latin1"), 1024);
+  it("skips malformed and sparse slots without renumbering valid records", () => {
+    const stream = streamOf(
+      recordOf(),
+      recordOf(),
+      new Uint8Array(MFT_DEFAULT_RECORD_BYTES),
+      recordOf(),
+    );
+    stream.set(Buffer.from("BAAD", "latin1"), MFT_DEFAULT_RECORD_BYTES);
     const parsed = parseMftImage(stream);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.value.metadata.record_count).toBe(1);
-    expect(parsed.value.limitations.join(" ")).toMatch(
-      /record at 1024 does not begin with the FILE signature/u,
-    );
+    expect(parsed.value.metadata.record_count).toBe(2);
+    expect(
+      parsed.value.records.map(({ index, fileOffset }) => [index, fileOffset]),
+    ).toEqual([
+      [0, 0],
+      [3, 3 * MFT_DEFAULT_RECORD_BYTES],
+    ]);
+    expect(parsed.value.limitations).toEqual([
+      "record at 1024 does not begin with the FILE signature; 2 slot(s) without a FILE signature were found",
+    ]);
   });
 
   it("keeps a trailing partial record out of the inventory", () => {

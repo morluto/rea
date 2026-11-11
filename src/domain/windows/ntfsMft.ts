@@ -198,22 +198,29 @@ export const parseMftImage = (
     );
 
   const records: MftRecord[] = [];
+  let invalidSlots = 0;
+  let firstInvalidOffset: number | undefined;
   for (
     let offset = 0;
     offset + recordBytes <= bytes.length;
     offset += recordBytes
   ) {
     if (
-      text(bytes.subarray(offset, offset + MFT_FILE_RECORD_MAGIC_BYTES)) !==
-      MFT_FILE_RECORD_MAGIC
+      !hasMftFileRecordSignature(
+        bytes.subarray(offset, offset + MFT_FILE_RECORD_MAGIC_BYTES),
+      )
     ) {
-      limitations.push(
-        `record at ${String(offset)} does not begin with the FILE signature; ${String(records.length)} record(s) were examined`,
-      );
-      break;
+      invalidSlots += 1;
+      firstInvalidOffset ??= offset;
+      if (!isRecordSize(declaredRecordBytes)) break;
+      continue;
     }
-    records.push(readRecord(bytes, offset, records.length, recordBytes));
+    records.push(readRecord(bytes, offset, offset / recordBytes, recordBytes));
   }
+  if (firstInvalidOffset !== undefined)
+    limitations.push(
+      `record at ${String(firstInvalidOffset)} does not begin with the FILE signature; ${String(invalidSlots)} slot(s) without a FILE signature were found`,
+    );
 
   const truncatedTailBytes = bytes.length % recordBytes;
   if (truncatedTailBytes !== 0)
