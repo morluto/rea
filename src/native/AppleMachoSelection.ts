@@ -25,8 +25,9 @@ import type { FixupCommands } from "./AppleMachoFixups.js";
 import { decodeMachoFixedName, decodeMachoName } from "./AppleMachoNames.js";
 import {
   MACHO_ARCHITECTURE_POLICIES,
-  selectPreferredMachoSlice,
+  machoSubtypeRank,
 } from "./MachoArchitectureSelection.js";
+import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   readFatSliceDeclarations,
   readFatHeaderPrefix,
@@ -101,8 +102,8 @@ export const selectMachoSlice = (
   const { count, tableEnd: headerEnd } = header;
   if (count > 128 || headerEnd > bytes.length)
     throw malformed("Malformed FAT architecture table");
-  // An unknown architecture is refused before the declarations are parsed.
-  if (MACHO_ARCHITECTURE_POLICIES[architecture] === undefined)
+  const policy = MACHO_ARCHITECTURE_POLICIES[architecture];
+  if (policy === undefined)
     throw invalid("Requested FAT architecture is absent");
   const declarations = readFatSliceDeclarations(bytes.subarray(8, headerEnd), {
     count,
@@ -110,19 +111,30 @@ export const selectMachoSlice = (
     littleEndian,
   });
   if (declarations.status !== "parsed") throw malformed(declarations.reason);
+  let best: FatSliceDeclaration | undefined;
+  let bestRank = Number.POSITIVE_INFINITY;
+  let ambiguous = false;
   for (const declaration of declarations.slices) {
     const issue = validateFatSlice(declaration, bytes.length, headerEnd);
     if (issue !== null) throw malformed(issue);
+    if (declaration.cpuType !== policy.cpuType) continue;
+    const rank = machoSubtypeRank(policy, declaration.cpuSubtype);
+    if (best !== undefined && rank >= bestRank) {
+      // Equal ranks keep FAT table order unless the slices share a subtype.
+      if (
+        rank === bestRank &&
+        machoCpuSubtypeBase(declaration.cpuSubtype) ===
+          machoCpuSubtypeBase(best.cpuSubtype)
+      )
+        ambiguous = true;
+      continue;
+    }
+    best = declaration;
+    bestRank = rank;
+    ambiguous = false;
   }
-  const preferred = selectPreferredMachoSlice(
-    declarations.slices,
-    architecture,
-  );
-  if (preferred.status === "absent")
-    throw invalid("Requested FAT architecture is absent");
-  if (preferred.status === "ambiguous")
-    throw invalid("Ambiguous FAT architecture slice");
-  const best = preferred.slice;
+  if (best === undefined) throw invalid("Requested FAT architecture is absent");
+  if (ambiguous) throw invalid("Ambiguous FAT architecture slice");
   const selected: MachoSlice = {
     slice: best.offset,
     sliceEnd: best.offset + best.size,

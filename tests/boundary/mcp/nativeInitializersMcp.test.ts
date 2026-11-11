@@ -96,7 +96,7 @@ mcpTest(
 );
 
 mcpTest(
-  "reads the preferred arm64 slice when a universal Mach-O also holds arm64e",
+  "reads the arm64 or arm64e slice that the architecture names",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
@@ -110,15 +110,20 @@ mcpTest(
       const root = await createTestTempDirectory("rea-native-init-arm64e-mcp-");
       const path = join(root, "universal");
       await writeFile(path, universal.bytes);
-      const response = await client.callTool({
-        name: "inspect_native_initializers",
-        arguments: { path, architecture: "arm64" },
-      });
-      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract(
-        "inspect_native_initializers",
-      ).outputSchema.parse(response.structuredContent);
-      expect(evidence.normalized_result).toMatchObject({
+      const read = async (architecture: string) => {
+        const response = await client.callTool({
+          name: "inspect_native_initializers",
+          arguments: { path, architecture },
+        });
+        expect(response.isError, JSON.stringify(response.content)).not.toBe(
+          true,
+        );
+        return toolContract("inspect_native_initializers").outputSchema.parse(
+          response.structuredContent,
+        ).normalized_result;
+      };
+      const arm64 = await read("arm64");
+      expect(arm64).toMatchObject({
         format: "mach-o",
         slice: {
           file_offset: universal.slices[1]?.offset,
@@ -126,11 +131,17 @@ mcpTest(
           architecture: "arm64",
         },
       });
-      expect(evidence.normalized_result.entries.length).toBeGreaterThan(0);
-      // The arm64e slice is not read, and the result says so.
-      expect(evidence.normalized_result.limitations).toContain(
-        `Only the selected arm64 slice (arm64 (subtype 0x0) at file offset ${String(universal.slices[1]?.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(universal.slices[2]?.offset)}, which no architecture value selects.`,
+      expect(arm64.entries.length).toBeGreaterThan(0);
+      // The arm64e slice is not read, and the result names the value that reads it.
+      expect(arm64.limitations).toContain(
+        `Only the selected arm64 slice (arm64 (subtype 0x0) at file offset ${String(universal.slices[1]?.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(universal.slices[2]?.offset)} (architecture arm64e selects it).`,
       );
+      expect(await read("arm64e")).toMatchObject({
+        slice: {
+          file_offset: universal.slices[2]?.offset,
+          cpu_subtype: 0x80000002,
+        },
+      });
     } finally {
       await session.close();
     }

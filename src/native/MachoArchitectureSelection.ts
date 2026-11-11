@@ -36,7 +36,7 @@ export const MACHO_ARCHITECTURE_POLICIES: Readonly<
 };
 
 /** Unlisted subtypes follow the preferred slices in FAT table order. */
-const machoSubtypeRank = (
+export const machoSubtypeRank = (
   policy: MachoArchitecturePolicy,
   subtype: number,
 ): number => {
@@ -44,50 +44,6 @@ const machoSubtypeRank = (
     (candidate) => candidate.subtype === machoCpuSubtypeBase(subtype),
   );
   return rank < 0 ? policy.subtypes.length : rank;
-};
-
-/** The FAT slice one CPU family resolves to, or why none can be chosen. */
-export type PreferredMachoSlice<Slice> =
-  | { readonly status: "selected"; readonly slice: Slice }
-  | { readonly status: "absent" }
-  | { readonly status: "ambiguous" };
-
-/**
- * Choose the one FAT slice an architecture selects. Lower subtype ranks win and
- * equal ranks keep FAT table order. The choice is ambiguous only when the
- * winning base subtype (capability bits cleared) appears more than once.
- */
-export const selectPreferredMachoSlice = <
-  Slice extends { readonly cpuType: number; readonly cpuSubtype: number },
->(
-  slices: readonly Slice[],
-  architecture: string,
-): PreferredMachoSlice<Slice> => {
-  const policy = MACHO_ARCHITECTURE_POLICIES[architecture];
-  if (policy === undefined) return { status: "absent" };
-  let best: Slice | undefined;
-  let bestRank = Number.POSITIVE_INFINITY;
-  let ambiguous = false;
-  for (const slice of slices) {
-    if (slice.cpuType !== policy.cpuType) continue;
-    const rank = machoSubtypeRank(policy, slice.cpuSubtype);
-    if (best !== undefined && rank >= bestRank) {
-      if (
-        rank === bestRank &&
-        machoCpuSubtypeBase(slice.cpuSubtype) ===
-          machoCpuSubtypeBase(best.cpuSubtype)
-      )
-        ambiguous = true;
-      continue;
-    }
-    best = slice;
-    bestRank = rank;
-    ambiguous = false;
-  }
-  if (best === undefined) return { status: "absent" };
-  return ambiguous
-    ? { status: "ambiguous" }
-    : { status: "selected", slice: best };
 };
 
 /** codesign's architecture name for one FAT CPU identity, when known. */

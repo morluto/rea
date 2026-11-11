@@ -118,7 +118,7 @@ export const registerBinaryDiagnosticsCommands = (
       architecture: machoSliceArchitectureSchema
         .optional()
         .describe(
-          "CPU family of the slice to read from a universal Mach-O; required for universal files",
+          "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64, arm64e or x86_64 names the subtype; required for universal files",
         ),
     }),
     run: ({ args, options }) =>

@@ -163,22 +163,27 @@ read within individual segments or sections. The historical two-word string
 descriptor follows the
 [Go 1.17.13 reader](https://github.com/golang/go/blob/go1.17.13/src/cmd/go/internal/version/version.go#L212).
 
-A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
-or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
+A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`, `arm64`
+or `arm64e`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
 and validates the selected slice's range, alignment and Mach-O header CPU
 against the table. The result keeps the universal file as `artifact` (its
 SHA-256 and size), adds `selected_slice` with the slice offset, length, raw CPU
-type/subtype and the FAT table digest, and reports every source range as a
-file offset inside that slice. Without `architecture`, or when the file has no
-such slice, the request fails on `architecture` and lists the slices present.
-When several slices share the CPU family, REA reads the preferred subtype:
-`arm64` before `arm64e` before `arm64v8`, and the canonical `i386` and `x86_64`
-subtypes before variants such as `x86_64h`. Subtypes with no listed preference
-come after the listed ones, in FAT table order. `limitations` names the
-same-family slices it did not read. The request still fails on `architecture`
-when the preferred subtype itself appears more than once (capability bits
-aside), such as two `arm64` subtype 0 slices. `architecture` on any other image
-is rejected rather than ignored.
+type/subtype and the FAT table digest, and reports every source range as a file
+offset inside that slice. Without `architecture`, or when the file has no slice
+of that CPU family, the request fails on `architecture` and lists the slices
+present. A CPU family with one slice is selected by its family name, so `arm64`
+also reads a lone `arm64e` slice; `arm64e` reads only an `arm64e` slice. When
+several slices share the family, the value must name the slice's subtype, as
+`lipo -thin` does: `arm64` reads the `arm64` (or `arm64v8`) slice, `arm64e` the
+`arm64e` (or `arm64e.x1`) slice, and `x86_64` the canonical `x86_64` slice.
+Capability bits are ignored when subtypes are compared. REA does not choose a
+slice by preference. When no slice or several slices carry the named subtype,
+the request fails on `architecture` and names any other value that selects
+exactly one slice. Other subtypes, such as `x86_64h` and the `x86` (i386) and
+32-bit `arm` subtypes, have no value of their own; they are read only as the
+only slice of their family. `limitations` lists the same-family slices that were
+not read and the value, if any, that selects each. `architecture` on any other
+image is rejected rather than ignored.
 
 For ELF images without a named build-info section, discovery checks each
 nonempty writable, non-executable load segment in program-header order. This

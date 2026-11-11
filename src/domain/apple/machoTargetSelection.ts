@@ -52,12 +52,12 @@ export const MACHO_CPU_TYPES = {
   arm64: 0x0100000c,
 } as const satisfies Partial<Record<BinaryArchitecture, number>>;
 
-/** Caller-selected CPU family of one universal Mach-O slice. */
+/** Caller-selected architecture of one universal Mach-O slice. */
 export const machoSliceArchitectureSchema = z
-  .enum(["x86", "x86_64", "arm", "arm64"])
+  .enum(["x86", "x86_64", "arm", "arm64", "arm64e"])
   .describe(
-    "CPU family of the slice to read from a universal (FAT) Mach-O. Required for universal files and rejected for every other image. When several slices share the family, the preferred subtype is read (arm64 before arm64e); a duplicated preferred subtype is refused.",
-  ) satisfies z.ZodType<keyof typeof MACHO_CPU_TYPES>;
+    "Architecture of the slice to read from a universal (FAT) Mach-O. Required for universal files and rejected for every other image. A CPU family with one slice is selected by its family name; arm64e reads only an arm64e slice. When several slices share a family, the value must name the slice's subtype, as lipo -thin does: arm64 reads the arm64 slice and arm64e the arm64e slice.",
+  ) satisfies z.ZodType<keyof typeof MACHO_CPU_TYPES | "arm64e">;
 export type MachoSliceArchitecture = z.infer<
   typeof machoSliceArchitectureSchema
 >;

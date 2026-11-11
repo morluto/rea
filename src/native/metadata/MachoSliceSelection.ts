@@ -10,8 +10,12 @@ import {
   type MachoTargetSelection,
 } from "../../domain/apple/machoTargetSelection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  machoArchitectureFamily,
+  machoKnownArm64Subtype,
+  machoKnownX86_64Subtype,
+} from "../../domain/apple/machoCpuIdentity.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { selectPreferredMachoSlice } from "../MachoArchitectureSelection.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {
   const name = Object.entries(MACHO_CPU_TYPES).find(
@@ -30,7 +34,7 @@ export interface SelectedNativeImage {
   readonly fileOffset: number;
   /** Selected universal slice identity; null when the file is not a universal Mach-O. */
   readonly selection: MachoTargetSelection | null;
-  /** Other slices of the selected CPU family that this inspection does not read. */
+  /** Other slices of the selected CPU family that this inspection does not read, and how to select each. */
   readonly limitations: readonly string[];
 }
 
@@ -40,12 +44,74 @@ export interface MachoSliceSelectionIssue {
   readonly message: string;
 }
 
+interface FatSlice {
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
+  readonly offset: number;
+}
+
+/**
+ * The architecture value that names this slice's subtype exactly, as
+ * `lipo -thin` does, or undefined when no accepted value names it. Capability
+ * bits are ignored; `arm64v8` reads as `arm64` and `arm64e.x1` as `arm64e`.
+ */
+const exactSelector = (slice: FatSlice): MachoSliceArchitecture | undefined => {
+  if (slice.cpuType === MACHO_CPU_TYPES.arm64) {
+    const name = machoKnownArm64Subtype(slice.cpuSubtype);
+    const family =
+      name === undefined ? undefined : machoArchitectureFamily(name);
+    return family === "arm64" || family === "arm64e" ? family : undefined;
+  }
+  if (slice.cpuType === MACHO_CPU_TYPES.x86_64)
+    return machoKnownX86_64Subtype(slice.cpuSubtype) === "x86_64"
+      ? "x86_64"
+      : undefined;
+  return undefined;
+};
+
+/** Whether a value names a subtype, not only a CPU family. */
+const namesSubtype = (architecture: MachoSliceArchitecture): boolean =>
+  architecture === "arm64" ||
+  architecture === "arm64e" ||
+  architecture === "x86_64";
+
+/** The architecture values that address slices of this value's CPU family. */
+const familyValues = (
+  architecture: MachoSliceArchitecture,
+): readonly MachoSliceArchitecture[] =>
+  architecture === "arm64" || architecture === "arm64e"
+    ? ["arm64", "arm64e"]
+    : [architecture];
+
+/**
+ * The slices one value addresses within its CPU family: a family name reads
+ * the family's only slice, and otherwise the value must name a subtype.
+ */
+const addressedSlices = <Slice extends FatSlice>(
+  family: readonly Slice[],
+  architecture: MachoSliceArchitecture,
+): readonly Slice[] =>
+  architecture !== "arm64e" && family.length === 1
+    ? family
+    : family.filter((slice) => exactSelector(slice) === architecture);
+
+/** The value that addresses exactly this slice, if any. */
+const selectorFor = <Slice extends FatSlice>(
+  family: readonly Slice[],
+  slice: Slice,
+  architecture: MachoSliceArchitecture,
+): MachoSliceArchitecture | undefined =>
+  familyValues(architecture).find((value) => {
+    const addressed = addressedSlices(family, value);
+    return addressed.length === 1 && addressed[0] === slice;
+  });
+
 /**
  * Select the thin image to inspect without lipo. A universal Mach-O needs the
- * caller's architecture and yields the one validated slice picked by the
- * subtype preference order (`MACHO_ARCHITECTURE_POLICIES`) that
- * `inspect_macho` also uses; any other file is returned whole and rejects an
- * architecture rather than ignoring it.
+ * caller's architecture. A family name selects the family's only slice; when
+ * several slices share the family, the value must name one slice's subtype
+ * exactly, and no slice is chosen by preference. Any other file is returned
+ * whole and rejects an architecture rather than ignoring it.
  */
 export const selectNativeImage = (
   bytes: Buffer,
@@ -69,24 +135,41 @@ export const selectNativeImage = (
       kind: "architecture",
       message: `Universal Mach-O holds ${available}; select one architecture.`,
     });
-  const preferred = selectPreferredMachoSlice(fat.slices, architecture);
-  if (preferred.status !== "selected")
+  const sameFamily = fat.slices.filter(
+    ({ cpuType }) =>
+      cpuType ===
+      MACHO_CPU_TYPES[architecture === "arm64e" ? "arm64" : architecture],
+  );
+  const matches = addressedSlices(sameFamily, architecture);
+  const [slice] = matches;
+  if (slice === undefined || matches.length > 1) {
+    const choices = familyValues(architecture).filter(
+      (value) =>
+        value !== architecture &&
+        addressedSlices(sameFamily, value).length === 1,
+    );
+    const select =
+      choices.length === 0
+        ? ""
+        : ` Select architecture ${choices.join(" or ")}.`;
     return err({
       kind: "architecture",
       message:
-        preferred.status === "absent"
-          ? `Universal Mach-O holds ${available}, not ${architecture}.`
-          : `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
+        sameFamily.length === 0
+          ? `Universal Mach-O holds ${available}, not ${architecture}.${select}`
+          : matches.length === 0 && namesSubtype(architecture)
+            ? `Universal Mach-O holds ${available}; no slice has the ${architecture} subtype.${select}`
+            : `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.${select}`,
     });
-  const { slice } = preferred;
+  }
   const selected = readUniversalMachoSlice(bytes, fat, slice);
   if (!selected.ok) return selected;
-  const unread = fat.slices
-    .filter((other) => other !== slice && other.cpuType === slice.cpuType)
-    .map(
-      (other) =>
-        `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)}`,
-    );
+  const unread = sameFamily
+    .filter((other) => other !== slice)
+    .map((other) => {
+      const selector = selectorFor(sameFamily, other, architecture);
+      return `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)} (${selector === undefined ? "no architecture value selects it" : `architecture ${selector} selects it`})`;
+    });
   return ok({
     bytes: selected.value,
     fileOffset: slice.offset,
@@ -105,7 +188,7 @@ export const selectNativeImage = (
       unread.length === 0
         ? []
         : [
-            `Only the selected ${architecture} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}, which no architecture value selects.`,
+            `Only the selected ${architecture} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}.`,
           ],
   });
 };

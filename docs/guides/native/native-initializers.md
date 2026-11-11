@@ -20,15 +20,17 @@ requires an absolute filesystem path:
 }
 ```
 
-A universal Mach-O requires `architecture` to select one slice. When several
-slices share the CPU family, such as the `arm64` and `arm64e` slices of stock
-macOS tools, REA reads the preferred subtype and reports it in `slice`: `arm64`
-before `arm64e` before `arm64v8`, and the canonical `i386` and `x86_64` subtypes
-before variants such as `x86_64h`. Subtypes with no listed preference come after
-the listed ones, in FAT table order. `limitations` names the same-family slices
-it did not read. The request fails on `architecture` when the preferred subtype
-itself appears more than once (capability bits aside), such as two `arm64`
-subtype 0 slices. ELF files and thin Mach-O files do not take it.
+A universal Mach-O requires `architecture` (`x86`, `x86_64`, `arm`, `arm64` or
+`arm64e`) to select one slice. A CPU family with one slice is selected by its
+family name; `arm64e` reads only an `arm64e` slice. When several slices share
+the family, such as the `arm64` and `arm64e` slices of stock macOS tools, the
+value must name the slice's subtype, as `lipo -thin` does: `arm64` reads the
+`arm64` slice and `arm64e` the `arm64e` slice. REA does not choose a slice by
+preference. When no slice or several slices carry the named subtype (capability
+bits are ignored when comparing), the request fails on `architecture`. `slice`
+reports the selected subtype, and `limitations` lists the same-family slices
+that were not read and the value, if any, that selects each. ELF files and thin
+Mach-O files do not take it.
 
 ## Sources
 

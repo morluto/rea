@@ -22,7 +22,8 @@ export const MAX_NATIVE_INITIALIZER_NAME_BYTES = 1024;
 export const MAX_NATIVE_INITIALIZER_NOTES = 24;
 /**
  * Upper bound on reported limitations: the standing ones, the note budget, a
- * line per tallied reason, an omission count and a withheld-name count.
+ * line per tallied reason, an omission count, a withheld-name count and the
+ * universal slice selection line.
  */
 export const MAX_NATIVE_INITIALIZER_LIMITATIONS = 40;
 
