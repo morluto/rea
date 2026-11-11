@@ -5,12 +5,9 @@ import {
   ProcessOwnershipIdentityBatchFailure,
 } from "../ProcessInspectionCancellation.js";
 import { systemProcessOwnershipHost } from "../ProcessOwnershipObservation.js";
+import { settleSamplingReads } from "./ProcessSamplingObservation.js";
 import {
-  SamplingReadBatchFailure,
-  settleSamplingReads,
-} from "./ProcessSamplingObservation.js";
-import {
-  normalizeCaptureFailure,
+  ProcessCaptureSamplingFailure,
   ProcessCaptureInspectionFailure,
 } from "./ProcessCaptureError.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
@@ -82,7 +79,7 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
         } catch (cancellation) {
           if (kind === "opaque-peer")
             return settleSamplingReads([
-              Promise.reject(normalizeCaptureFailure(cancellation)),
+              Promise.reject(cancellation),
               Promise.reject(physical),
             ]).then(
               () => {
@@ -129,7 +126,7 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
       await stop().catch((cause: unknown) => {
         if (
           !(cause instanceof ProcessCaptureInspectionFailure) &&
-          !(cause instanceof SamplingReadBatchFailure)
+          !(cause instanceof ProcessCaptureSamplingFailure)
         )
           throw cause;
       });
@@ -141,12 +138,12 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
     const outcome = stop();
     if (kind === "opaque-peer") {
       const failure: unknown = await outcome.catch((cause: unknown) => cause);
-      expect(failure).toBeInstanceOf(SamplingReadBatchFailure);
-      if (!(failure instanceof SamplingReadBatchFailure))
+      expect(failure).toBeInstanceOf(ProcessCaptureSamplingFailure);
+      if (!(failure instanceof ProcessCaptureSamplingFailure))
         throw new Error("Expected physical batch");
-      expect(failure).toBe(original);
+      expect(failure.samplingFailure).toBe(original);
       expect(failure.userCategory).toBeUndefined();
-      expect(failure.outcomes[1]).toEqual({
+      expect(failure.samplingFailure.outcomes[1]).toEqual({
         status: "rejected",
         reason: physical,
       });

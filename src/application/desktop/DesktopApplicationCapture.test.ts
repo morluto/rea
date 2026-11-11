@@ -1,3 +1,8 @@
+import {
+  samplingInspectionFailures,
+  settleSamplingReads,
+  SamplingReadBatchFailure,
+} from "../../process/capture/ProcessSamplingObservation.js";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFileSync, rmSync } from "node:fs";
@@ -1041,7 +1046,10 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-const sessionInspectionFailure = async (cause: unknown, resource: string) => {
+const sessionInspectionFailure = async (
+  cause: unknown,
+  resources: readonly string[],
+) => {
   const child = Object.assign(new EventEmitter(), {
     pid: 42,
     stdout: null,
@@ -1065,7 +1073,8 @@ const sessionInspectionFailure = async (cause: unknown, resource: string) => {
   });
   child.emit("exit", 0, null);
   child.emit("close", 0, null);
-  supervisor.retainInspectionFailure(cause);
+  for (const inspection of samplingInspectionFailures(cause))
+    supervisor.retainInspectionFailure(inspection);
   const stopped = await supervisor.stop();
   if (
     stopped.status !== "incomplete" ||
@@ -1079,21 +1088,28 @@ const sessionInspectionFailure = async (cause: unknown, resource: string) => {
       new AnalysisCleanupLease(async () => {
         const retried = await supervisor.stop();
         if (retried.status === "incomplete") throw new Error(retried.reason);
-      }, [resource]),
+      }, resources),
     ],
   });
 };
 
 it.for([
-  { retrySucceeds: true, sessionOwns: false },
-  { retrySucceeds: false, sessionOwns: false },
-  { retrySucceeds: false, sessionOwns: true },
+  { retrySucceeds: true, sessionOwns: false, neutralBatch: false },
+  { retrySucceeds: false, sessionOwns: false, neutralBatch: false },
+  { retrySucceeds: false, sessionOwns: true, neutralBatch: false },
+  { retrySucceeds: false, sessionOwns: true, neutralBatch: true },
 ])(
-  "retains an actual optional inspection descriptor through capture cleanup (retry succeeds: $retrySucceeds, session owns: $sessionOwns)",
-  async ({ retrySucceeds, sessionOwns }) => {
+  "retains an actual optional inspection descriptor through capture cleanup (retry succeeds: $retrySucceeds, session owns: $sessionOwns, settled batch: $neutralBatch)",
+  async ({ retrySucceeds, sessionOwns, neutralBatch }) => {
     const { root, home, environment } = await fixture();
     const output = join(root, "capture-inspection-close");
     const descriptor = await failedInspectionDescriptor();
+    const descriptors = [
+      descriptor,
+      ...(neutralBatch ? [await failedInspectionDescriptor()] : []),
+    ];
+    const completed = { value: "caller-selected completed sampling peer" };
+    let sourceFailure: unknown = descriptor.failure;
     const captured = captureFixture();
     let sessionFailure: desktopSession.DesktopSessionCleanupError | undefined;
     const retainedStores = new Set<DesktopContentStore>();
@@ -1121,6 +1137,18 @@ it.for([
     const session = vi
       .spyOn(desktopSession, "runDesktopSession")
       .mockImplementation(async () => {
+        if (neutralBatch) {
+          sourceFailure = await settleSamplingReads([
+            Promise.reject(descriptor.failure),
+            Promise.resolve(completed),
+            Promise.reject(descriptors[1]!.failure),
+          ]).catch((cause: unknown) => cause);
+          sessionFailure = await sessionInspectionFailure(
+            sourceFailure,
+            descriptors.map((entry) => entry.path),
+          );
+          throw sessionFailure;
+        }
         const observations = new SessionObservations(
           performance.now(),
           { runId: "recording-session", launchPid: process.pid },
@@ -1136,7 +1164,7 @@ it.for([
           if (!sessionOwns) throw cause;
           sessionFailure = await sessionInspectionFailure(
             cause,
-            descriptor.path,
+            descriptors.map((entry) => entry.path),
           );
           throw sessionFailure;
         }
@@ -1163,10 +1191,8 @@ it.for([
         host(environment),
       );
       expect(session).toHaveBeenCalledTimes(1);
-      expect(environmentRead).toHaveBeenCalledTimes(1);
-      expect(primaryAnalysisError(projectedFailure!).cause).toBe(
-        descriptor.failure,
-      );
+      expect(environmentRead).toHaveBeenCalledTimes(neutralBatch ? 0 : 1);
+      expect(primaryAnalysisError(projectedFailure!).cause).toBe(sourceFailure);
       expect(descriptor.closes()).toBeGreaterThan(1);
       expect(await readdir(output)).toEqual([]);
       expect(result).toMatchObject({
@@ -1179,12 +1205,23 @@ it.for([
       if (sessionOwns) {
         expect(retainedStore?.resourceScope.cleanupResources).toEqual([]);
         expect(sessionFailure?.cleanup.inspectionCleanup?.causes[0]).toBe(
-          descriptor.failure,
+          neutralBatch ? descriptors[0]!.failure : sourceFailure,
         );
-        descriptor.allow();
+        for (const entry of descriptors) entry.allow();
         await sessionFailure!.cleanup.leases[0]!.release();
         expect(descriptor.handle.fd).toBe(-1);
         expect(projectedFailure?.cleanupIncomplete).toBe(false);
+        if (neutralBatch) {
+          expect(sourceFailure).toBeInstanceOf(SamplingReadBatchFailure);
+          expect(sourceFailure).toMatchObject({
+            outcomes: [
+              { status: "rejected" },
+              { status: "fulfilled", value: completed },
+              { status: "rejected" },
+            ],
+          });
+          expect(descriptors[1]!.handle.fd).toBe(-1);
+        }
       } else if (!retrySucceeds) {
         expect(retainedStore?.resourceScope.cleanupResources).toEqual([
           descriptor.path,
@@ -1197,10 +1234,12 @@ it.for([
         expect(projectedFailure?.cleanupIncomplete).toBe(false);
       }
     } finally {
-      descriptor.allow();
+      for (const entry of descriptors) entry.allow();
       await Promise.all([...retainedStores].map((store) => store.close()));
       await sessionFailure?.cleanup.leases[0]?.release();
-      await descriptor.failure.owner.close();
+      await Promise.all(
+        descriptors.map((entry) => entry.failure.owner.close()),
+      );
       vi.restoreAllMocks();
     }
   },

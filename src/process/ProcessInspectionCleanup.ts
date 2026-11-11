@@ -1,4 +1,3 @@
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -20,11 +19,14 @@ export type ProcessInspectionCleanupFailure =
   | DarwinProcessOwnershipInspectionError
   | RegularFileCleanupFailure;
 
-/** One inspection fact paired with the exact lease its normalizer already owns. */
-export interface ProcessInspectionCleanupLease {
-  readonly failure: ProcessInspectionCleanupFailure;
-  readonly lease: AnalysisCleanupLease;
-}
+/** Only the inspection owner's named failures carry inspection facts. */
+export const isProcessInspectionFailure = (
+  cause: unknown,
+): cause is ProcessInspectionFailure =>
+  cause instanceof DarwinProcessOwnershipInspectionError ||
+  cause instanceof RegularFileCleanupFailure ||
+  cause instanceof ProcessOwnershipInspectionCancelled ||
+  cause instanceof ProcessOwnershipIdentityBatchFailure;
 
 /** Collect only the exact owners explicitly transferred by inspection preparation. */
 export const processInspectionCleanupFailures = (
