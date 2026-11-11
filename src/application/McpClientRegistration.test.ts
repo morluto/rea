@@ -242,6 +242,58 @@ it("uses Cline's literal fallback for an empty POSIX HOME and refuses unknown sy
     "/selected/cline/data/settings/cline_mcp_settings.json",
   );
 });
+
+it("selects Goose and Zed native settings paths for their platforms and overrides", async () => {
+  const cases = [
+    {
+      agent: "goose",
+      platform: "linux" as const,
+      environment: { GOOSE_PATH_ROOT: "/isolated", XDG_CONFIG_HOME: "/custom" },
+      expected: "/isolated/config/config.yaml",
+    },
+    {
+      agent: "goose",
+      platform: "darwin" as const,
+      environment: { GOOSE_PATH_ROOT: "relative", XDG_CONFIG_HOME: "/custom" },
+      expected: "/custom/goose/config.yaml",
+    },
+    {
+      agent: "goose",
+      platform: "linux" as const,
+      environment: { XDG_CONFIG_HOME: "relative" },
+      expected: "/home/user/.config/goose/config.yaml",
+    },
+    {
+      agent: "zed",
+      platform: "darwin" as const,
+      environment: { XDG_CONFIG_HOME: "/custom" },
+      expected: "/home/user/.config/zed/settings.json",
+    },
+    {
+      agent: "zed",
+      platform: "linux" as const,
+      environment: { XDG_CONFIG_HOME: "/custom" },
+      expected: "/custom/zed/settings.json",
+    },
+  ];
+  for (const { agent, platform, environment, expected } of cases) {
+    const resolved = await resolveMcpRegistrationClients(
+      {
+        agents: [agent],
+        global: true,
+        home: "/home/user",
+        cwd: "/work",
+        platform,
+        environment,
+      },
+      resources,
+    );
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value[0]?.configPath).toBe(expected);
+  }
+});
+
 const settingsFixture = async (original?: string) => {
   const directory = await createTestTempDirectory("rea-amp-writer-");
   const path = join(directory, "settings.json");

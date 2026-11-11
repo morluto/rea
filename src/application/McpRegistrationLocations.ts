@@ -1,5 +1,5 @@
 import { lstat } from "node:fs/promises";
-import { dirname, join, win32 } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -172,7 +172,14 @@ export const clineCliLocation = async (
 export const gooseLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
-  const { home, platform } = context;
+  const { home, platform, environment } = context;
+  const pathApi = platform === "win32" ? win32 : posix;
+  const root = environment.GOOSE_PATH_ROOT;
+  if (root && pathApi.isAbsolute(root)) {
+    const selected = pathApi.join(root, "config", "config.yaml");
+    return location(selected, selected);
+  }
+  const xdg = environment.XDG_CONFIG_HOME;
   const path =
     platform === "win32"
       ? join(
@@ -183,9 +190,7 @@ export const gooseLocation = async (
           "config.yaml",
         )
       : join(
-          platform === "darwin"
-            ? join(home, ".config")
-            : platformPaths(context).config,
+          xdg && posix.isAbsolute(xdg) ? xdg : join(home, ".config"),
           "goose",
           "config.yaml",
         );
@@ -232,13 +237,13 @@ export const zedLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> =>
   location(
-    join(
-      platformPaths(context).appSupport,
-      context.platform === "darwin" || context.platform === "win32"
-        ? "Zed"
-        : "zed",
-      "settings.json",
-    ),
+    context.platform === "darwin"
+      ? join(context.home, ".config", "zed", "settings.json")
+      : join(
+          platformPaths(context).appSupport,
+          context.platform === "win32" ? "Zed" : "zed",
+          "settings.json",
+        ),
   );
 
 export const fxLocation = async (
