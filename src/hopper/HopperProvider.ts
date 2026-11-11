@@ -49,9 +49,6 @@ import {
   reconciliationChildOptions,
 } from "./HopperCallerReconciliation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { capabilityLimit } from "../config/runtimeAnalysisSettings.js";
-import { DEFAULT_REGEX_MATCHING_DEADLINE } from "../config/regexMatchingDeadline.js";
-import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "../config/regexWorkerHeapRequest.js";
 
 import { hopperCapabilities } from "./HopperProviderCapabilities.js";
 import { HOPPER_PROVIDER_IDENTITY } from "./HopperProviderMetadata.js";
@@ -94,16 +91,8 @@ export class HopperProvider implements AnalysisProviderCandidate {
 
   capabilities(): readonly CapabilityDescriptor[] {
     return hopperCapabilities(
-      capabilityLimit(() => {
-        const deadline = this.config.regexMatchingDeadline;
-        void deadline.deadlineMs;
-        return deadline;
-      }, DEFAULT_REGEX_MATCHING_DEADLINE),
-      capabilityLimit(() => {
-        const request = this.config.regexWorkerHeapRequest;
-        void request.heapMiB;
-        return request;
-      }, DEFAULT_REGEX_WORKER_HEAP_REQUEST),
+      this.config.regexMatchingDeadline,
+      this.config.regexWorkerHeapRequest,
     );
   }
 

@@ -27,9 +27,6 @@ import type {
   RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
-import { DEFAULT_REGEX_MATCHING_DEADLINE } from "../config/regexMatchingDeadline.js";
-import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "../config/regexWorkerHeapRequest.js";
-import { capabilityLimit } from "../config/runtimeAnalysisSettings.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { idaRegistrationDigest } from "./IdaRegistrationIdentity.js";
 import { isDeepStrictEqual } from "node:util";
@@ -434,16 +431,8 @@ export class IdaProvider implements AnalysisProviderCandidate {
   }
   #regexLimitation(): string {
     return launchRegexMatchingLimitation(
-      capabilityLimit(() => {
-        const deadline = this.config.regexMatchingDeadline;
-        void deadline.deadlineMs;
-        return deadline;
-      }, DEFAULT_REGEX_MATCHING_DEADLINE),
-      capabilityLimit(() => {
-        const request = this.config.regexWorkerHeapRequest;
-        void request.heapMiB;
-        return request;
-      }, DEFAULT_REGEX_WORKER_HEAP_REQUEST),
+      this.config.regexMatchingDeadline,
+      this.config.regexWorkerHeapRequest,
     );
   }
   #createBoundClient(

@@ -3,7 +3,7 @@ import {
   currentAnalysisOperationSnapshot,
   currentAnalysisSettingOverride,
 } from "../domain/analysisOperationSnapshot.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
 import {
@@ -165,18 +165,6 @@ export const runtimeAnalysisConfig = (
   };
 };
 
-/** Capability text may describe the built-in default. The operation still admits the seed. */
-export const capabilityLimit = <Value>(
-  read: () => Value,
-  fallback: Value,
-): Value => {
-  try {
-    return read();
-  } catch (cause) {
-    if (cause instanceof ConfigurationError) return fallback;
-    throw cause;
-  }
-};
 export const runtimeAsarHeaderAdmission = (
   environment: Readonly<Record<string, string | undefined>>,
   read?: AnalysisSettingsReader,
