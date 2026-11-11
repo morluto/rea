@@ -1,4 +1,7 @@
-import { launchAnalysisSetting } from "../config/analysisSettings.js";
+import {
+  inspectAnalysisSettingSeeds,
+  launchAnalysisSetting,
+} from "../config/analysisSettings.js";
 import {
   parseEnvironment,
   parseEnvironmentValues,
@@ -320,6 +323,16 @@ const validatedDetails = (
       ? parseEnvironmentValues(runtimeEnvironment, unresolved)
       : parseEnvironment(runtimeEnvironment, unresolved);
   if (!validated.ok) return validated;
+  const seedIssues = inspectAnalysisSettingSeeds(
+    runtimeEnvironment,
+    unresolved,
+  );
+  if (seedIssues.length > 0)
+    return err(
+      new ConfigurationError("Invalid REA environment configuration", {
+        settings: seedIssues,
+      }),
+    );
   return ok(environmentDetails(environment, validated.value, unresolved));
 };
 
