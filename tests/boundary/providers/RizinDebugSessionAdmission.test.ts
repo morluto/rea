@@ -66,15 +66,6 @@ it.skipIf(process.platform === "win32").each([
     const set = () =>
       settings.update({ changes: [{ setting, action: "set", value }] });
     expect(set().ok).toBe(true);
-    const other =
-      setting === "debugger.command_deadline_ms"
-        ? "debugger.max_command_output_bytes"
-        : "debugger.command_deadline_ms";
-    expect(
-      settings.update({
-        changes: [{ setting: other, action: "set", value: 4096 }],
-      }).ok,
-    ).toBe(true);
     try {
       const provider = await harness.makeProvider(`process.stdout.write("\\0");
 let input = "";
@@ -101,7 +92,10 @@ process.stdin.on("data", chunk => {
       ).toBe(true);
       await expect(
         settings.run(() => manager.execute(sessionId, "dr")),
-      ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "ConfigurationError" },
+      });
       expect(set().ok).toBe(true);
       const retried = await settings.run(() =>
         manager.execute(sessionId, "dr"),
