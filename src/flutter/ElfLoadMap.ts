@@ -1,3 +1,4 @@
+import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -31,7 +32,7 @@ export const createElfLoadMap = async (
   for (let index = 0; index < events.length; index += 1) {
     if (index % 4096 === 0) {
       await yieldToEventLoop();
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
     }
     const event = events[index]!;
     if (event.at > previous && active.size > 0) {
@@ -60,7 +61,7 @@ export const createElfLoadMap = async (
     }
     return low - 1;
   };
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   return (address, size) => {
     const missing = () =>
       err({ reason: "has no contiguous file-backed PT_LOAD range" });
