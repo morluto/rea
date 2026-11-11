@@ -27,6 +27,23 @@ it("reads only actual settings environment properties", () => {
       "export const ANALYSIS_SETTINGS = { a: { environment: value } };",
     ),
   ).toThrow();
+  expect(() =>
+    parseRuntimeSettingEnvironments(
+      'export const ANALYSIS_SETTINGS = { a: { environment: "REA_OLD_MAX_BYTES", ...other } };',
+    ),
+  ).toThrow();
+  expect(() =>
+    parseRuntimeSettingEnvironments(
+      'export const ANALYSIS_SETTINGS = { a: { environment: "REA_OLD_MAX_BYTES", [key]: "REA_NEW_MAX_BYTES" } };',
+    ),
+  ).toThrow();
+  expect(() =>
+    parseRuntimeSettingEnvironments(`
+    const shared = { type: "number" };
+    Object.assign(shared, { environment: "REA_NEW_MAX_BYTES" });
+    export const ANALYSIS_SETTINGS = { a: { environment: "REA_OLD_MAX_BYTES", ...shared } };
+  `),
+  ).toThrow();
 });
 
 it("parses declared external provenance rather than inferring it from prose", () => {
