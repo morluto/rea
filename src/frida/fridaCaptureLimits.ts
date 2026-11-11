@@ -1,5 +1,4 @@
 import {
-  DEFAULT_FRIDA_CAPTURE_POLICY,
   fridaCapturePolicySchema,
   FRIDA_CAPTURE_MAX_JSON_DEPTH,
   type FridaCapturePolicy,
@@ -32,28 +31,35 @@ const namedLimit = (value: unknown): FridaOwnedCaptureLimit | undefined =>
 
 const limitationFor = (
   limit: FridaOwnedCaptureLimit,
-  policy: FridaCapturePolicy,
+  policy: FridaCapturePolicy | undefined,
 ): string => {
-  const recover = (field: string, value: number, unit: string): string =>
-    `Frida capture reached capture_limits.${field} (${String(value)} ${unit}). Select a larger capture_limits.${field} before starting a new explicitly chosen session or instrument_with_frida experiment; no REA restart is required. Already discarded observations cannot be recovered. Session bytes and MCP/client delivery budgets remain independent.`;
+  const recover = (
+    field: string,
+    value: number | undefined,
+    unit: string,
+  ): string =>
+    value === undefined
+      ? `Frida capture reached capture_limits.${field}; its selected value is unknown because the observation did not report a valid capture policy. Select capture_limits.${field} before starting a new explicitly chosen session or instrument_with_frida experiment. Already discarded observations cannot be recovered. Session bytes and MCP/client delivery budgets remain independent.`
+      : `Frida capture reached capture_limits.${field} (${String(value)} ${unit}). Select a larger capture_limits.${field} before starting a new explicitly chosen session or instrument_with_frida experiment; no REA restart is required. Already discarded observations cannot be recovered. Session bytes and MCP/client delivery budgets remain independent.`;
   switch (limit) {
     case "session_bytes":
     case "payload_bytes":
     case "binary_bytes":
       return recover(
         "session_bytes",
-        policy.session_bytes,
+        policy?.session_bytes,
         "bytes including JSON/base64 expansion and metadata",
       );
     case "message_type":
-      return recover("message_type_bytes", policy.message_type_bytes, "bytes");
+      return recover("message_type_bytes", policy?.message_type_bytes, "bytes");
     case "message_text":
-      return recover("message_text_bytes", policy.message_text_bytes, "bytes");
+      return recover("message_text_bytes", policy?.message_text_bytes, "bytes");
     case "json_nodes":
-      return recover("json_nodes", policy.json_nodes, "nodes");
+      return recover("json_nodes", policy?.json_nodes, "nodes");
     case "json_depth":
-      return policy.json_depth < FRIDA_CAPTURE_MAX_JSON_DEPTH
-        ? recover("json_depth", policy.json_depth, "levels") +
+      return policy === undefined ||
+        policy.json_depth < FRIDA_CAPTURE_MAX_JSON_DEPTH
+        ? recover("json_depth", policy?.json_depth, "levels") +
             ` The maximum is ${String(FRIDA_CAPTURE_MAX_JSON_DEPTH)} levels, reserving the surrounding Evidence envelope.`
         : `Frida capture reached capture_limits.json_depth (${String(policy.json_depth)} levels), the shared JSON representation allowance after reserving the Evidence envelope. No higher depth is supported. Select a script that sends shallower payloads for a new explicitly chosen experiment. Already discarded observations cannot be recovered.`;
     case "unrepresentable":
@@ -100,8 +106,7 @@ export const fridaCaptureLimitations = (result: unknown): readonly string[] => {
     typeof result === "object" && result !== null && "capture_limits" in result
       ? fridaCapturePolicySchema.safeParse(result.capture_limits)
       : undefined;
-  const policy =
-    selected?.success === true ? selected.data : DEFAULT_FRIDA_CAPTURE_POLICY;
+  const policy = selected?.success === true ? selected.data : undefined;
   collectOwnedCaps(result, caps);
   return FRIDA_OWNED_CAPTURE_LIMITS.flatMap((limit) =>
     caps.has(limit) ? [limitationFor(limit, policy)] : [],

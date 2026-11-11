@@ -30,9 +30,9 @@ it("bounds query parser expansion before publishing or merging observed names", 
   const accumulator = new WebNetworkApiSurfaceAccumulator(64 * 1024, true);
   add(accumulator, record(0, "/products?kept=1"));
   const before = accumulator.page(0, 1);
-  expect(
-    accumulator.add(record(1, `/products?${"x=1&".repeat(200)}`)),
-  ).toMatchObject({
+  const rejected = record(1, `/products?${"x=1&".repeat(200)}`);
+  rejected.limitations = ["Uncommitted rejected record caveat"];
+  expect(accumulator.add(rejected)).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisResourceConstraintError" },
   });
