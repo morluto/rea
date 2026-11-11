@@ -5,9 +5,10 @@ import { asarDeclaredSizeSchema, asarNodeSchema } from "./AsarNode.js";
 import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 import { assertAsarReadActive } from "./AsarFailure.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-
-/** Capacity for expanded paths and listing records, independent of packed bytes. */
-const MAX_LISTING_BYTES = 64 * 1024 * 1024;
+import {
+  DEFAULT_ASAR_LISTING_ADMISSION,
+  type AsarListingAdmission,
+} from "../config/asarListingAdmission.js";
 const BLOCK_INTEGRITY_LIMITATION =
   "ASAR block integrity declarations were not validated. Whole-file digest comparison does not establish block integrity or Electron runtime acceptance.";
 /** Source text quoted in listing diagnostics; longer values keep their length. */
@@ -104,6 +105,7 @@ function* ownChildren(files: Record<string, unknown>) {
 export const readAsarListing = async (
   header: unknown,
   signal?: AbortSignal,
+  admission: AsarListingAdmission = DEFAULT_ASAR_LISTING_ADMISSION,
 ): Promise<AsarListedEntry[]> => {
   const parsedRoot = asarListingNodeSchema.safeParse(header);
   if (!parsedRoot.success)
@@ -116,10 +118,17 @@ export const readAsarListing = async (
   let retainedBytes = 0;
   const admitRetainedBytes = (bytes: number): void => {
     retainedBytes += bytes;
-    if (retainedBytes > MAX_LISTING_BYTES)
+    if (retainedBytes > admission.maximumBytes)
       throw new ArtifactReaderFailure(
         "limit",
-        "ASAR expanded listing exceeds its 64 MiB representation budget",
+        `ASAR expanded listing exceeds its ${String(admission.maximumBytes)} byte representation budget (source ${admission.source}). On MCP, set asar.max_listing_bytes with update_analysis_settings, then retry the same archive; the change applies to the next operation without restarting REA. For CLI, set REA_ASAR_MAX_LISTING_BYTES in the invocation environment. The budget must be a positive safe integer in bytes. Header admission and worker heaps do not raise this independent retention budget.`,
+        {
+          admission: {
+            kind: "asar-listing",
+            ...admission,
+            requiredBytes: retainedBytes,
+          },
+        },
       );
   };
   let examined = 0;

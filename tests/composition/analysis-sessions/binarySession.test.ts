@@ -1456,22 +1456,6 @@ describe("typed unavailability without dispatching", () => {
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
-  it("keeps the active client when a switch fails", async () => {
-    const [first, second] = await createBinarySessionTargets();
-    let created = 0;
-    const session = createTestBinarySession(() => client(created++ === 1));
-    expect((await session.open(first)).ok).toBe(true);
-    expect((await session.open(second)).ok).toBe(false);
-    expect(await session.status()).toMatchObject({
-      open: true,
-      sha256:
-        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
-      architecture: null,
-    });
-    expect(JSON.stringify(await session.status())).toContain("first.hop");
-    expect(created).toBe(3);
-  });
-
   it("orders calls between queued transitions without deadlocking", async () => {
     const [first, second] = await createBinarySessionTargets();
     const clients: ControllableAnalysisClient[] = [];
@@ -1799,6 +1783,13 @@ describe("cancellation during client transitions", () => {
     expect(clients[1]?.closed).toBe(1);
     expect(clients[0]?.closed).toBe(1);
     expect(clients[2]?.closed).toBe(0);
+    expect(await session.status()).toMatchObject({
+      open: true,
+      sha256:
+        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+      architecture: null,
+    });
+    expect(clients).toHaveLength(3);
     expect(JSON.stringify(await session.status())).toContain("first.hop");
     await session.close();
     await session.close();

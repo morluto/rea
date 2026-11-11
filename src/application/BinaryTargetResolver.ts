@@ -97,6 +97,7 @@ import {
   isDfuSeFile,
 } from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
+import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
 import {
   hasPrefetchSignature,
   isMamContainer,
@@ -824,6 +825,7 @@ const detectArtifactFormat = async (
   // alone would route it to executable parsing instead of the refusal.
   if (hasPrefetchSignature(magic) || isMamContainer(magic))
     return "windows-prefetch";
+  if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
@@ -908,6 +910,7 @@ const isArchiveFormat = (
     "esp-flash-image",
     "fit",
     "windows-prefetch",
+    "ntfs-mft",
   ].includes(format);
 
 /** Whether the leading bytes begin any executable header family, valid or not. */

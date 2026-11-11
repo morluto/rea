@@ -44,7 +44,8 @@ type FormatsWithReaders =
   | "dfuse"
   | "esp-flash-image"
   | "fit"
-  | "windows-prefetch";
+  | "windows-prefetch"
+  | "ntfs-mft";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;

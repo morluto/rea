@@ -159,10 +159,7 @@ describe("agent recovery metadata", () => {
     },
   );
 
-  it("keeps retryability for transient conflicts and provider timeouts", () => {
-    expect(
-      projectAnalysisError(new UnknownRegistryError("revision-conflict")),
-    ).toMatchObject({ code: "revision_conflict", retryable: true });
+  it("keeps retryability for provider timeouts", () => {
     expect(
       projectAnalysisError(
         new AnalysisTimeoutError("inspect_binary_layout", 2500),

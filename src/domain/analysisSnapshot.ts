@@ -87,6 +87,7 @@ const formatSchema = z.enum([
   "esp-flash-image",
   "fit",
   "windows-prefetch",
+  "ntfs-mft",
   "plist",
   "javascript",
   "source-map",

@@ -41,6 +41,7 @@ import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
+import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
@@ -50,6 +51,9 @@ import { ZipArtifactReader } from "./ZipArtifactReader.js";
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
 
 export interface ArtifactReaderConstruction {
+  readonly readerLimits?:
+    | import("../domain/artifactReaderLimits.js").ArtifactReaderLimits
+    | undefined;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly unreadableDirectories: "fail" | "omit";
   readonly admission?: ArtifactReaderAdmission | undefined;
@@ -163,7 +167,13 @@ const zipDescriptor = (id: ZipPackageFormat) =>
     id,
     ZIP_FAMILY_CAPABILITIES,
     (path, options) =>
-      new ZipArtifactReader(path, id, undefined, sourceOf(options)),
+      new ZipArtifactReader(
+        path,
+        id,
+        undefined,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
   );
 
 function described<Id extends ArtifactFormatId>(
@@ -227,6 +237,7 @@ const NON_ZIP_FORMATS = {
       new DotnetBundleArtifactReader(
         path,
         admittedAs("dotnet-bundle", options),
+        options.readerLimits?.dotnet_bundle,
       ),
   }),
   "bun-standalone": container("bun-standalone", {
@@ -236,6 +247,8 @@ const NON_ZIP_FORMATS = {
       new BunStandaloneArtifactReader(
         path,
         admittedAs("bun-standalone", options),
+        options.readerLimits?.bun,
+        options.readerLimits?.expanded_bytes,
       ),
   }),
   "deno-standalone": container("deno-standalone", {
@@ -293,7 +306,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "PCK inventory establishes packaged bytes and metadata; scenes, binary resources, GDScript bytecode and runtime signal behavior were not decoded.",
     createReader: (path, options) =>
-      new GodotPckArtifactReader(path, admittedAs("godot-pck", options)),
+      new GodotPckArtifactReader(
+        path,
+        admittedAs("godot-pck", options),
+        options.readerLimits?.godot,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   unityfs: container("unityfs", {
     roleContainer: true,
@@ -369,7 +387,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "Node SEA inventory establishes the injected blob, flags, fuse sentinel, main script, optional code cache, snapshot, and assets. V8 snapshots and code cache are not deserialized, and the application is not executed.",
     createReader: (path, options) =>
-      new NodeSeaArtifactReader(path, admittedAs("node-sea", options)),
+      new NodeSeaArtifactReader(
+        path,
+        admittedAs("node-sea", options),
+        options.readerLimits?.node_sea,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   "intel-hex": container("intel-hex", {
     roleContainer: true,
@@ -452,6 +475,14 @@ const NON_ZIP_FORMATS = {
       "Windows Prefetch inventory reports the recorded executable name, its name hash, the declared file size beside the observed size, the recorded run count and whether a last-run timestamp is present. The timestamp value, the volume list and the read-ahead file list are not decoded; MAM-compressed containers are identified without being decoded, and nothing is executed or read from a live endpoint.",
     createReader: (path, options) =>
       new WindowsPrefetchArtifactReader(path, sourceOf(options)),
+  }),
+  "ntfs-mft": described("ntfs-mft", {
+    ...plain,
+    retainClassifiedSource: true,
+    readerLimitation:
+      "MFT inventory reports whole-stream counts and a bounded sample of the first 32 decoded FILE record headers, with the omitted-header count. Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
+    createReader: (path, options) =>
+      new NtfsMftArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<
