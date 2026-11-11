@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { describe, expect, it } from "vitest";
 import { runDirectAnalysis } from "../../src/application/DirectAnalysis.js";
@@ -18,6 +19,9 @@ import {
 
 const inventory = [
   { address: "0x1000", value: "table_only" },
+  { address: "0x1000", value: "add" },
+  { address: "0x1000", value: "0xHelper" },
+  { address: "0x1000", value: "name:0xSuffix" },
   { address: "0x1000", value: "entry_alias" },
   { address: "0x1000", value: "namespace::function" },
   { address: "0x2000", value: "data_symbol" },
@@ -34,12 +38,15 @@ const fixture = (
     readonly malformedInventory?: boolean;
     readonly acceptsNamedSelectors?: boolean;
     readonly xrefsError?: AnalysisInputError;
+    readonly requiresPrefixedAddresses?: boolean;
   } = {},
 ) => {
   let closed = 0;
+  const calls: { operation: string; parameters: unknown }[] = [];
   const createSession = () =>
     createTestBinarySession(() => ({
       execute: (operation, parameters) => {
+        if (operation !== "health") calls.push({ operation, parameters });
         if (operation === "list_names")
           return Promise.resolve(
             options.inventoryError !== undefined
@@ -56,7 +63,10 @@ const fixture = (
           const address = parameters.address;
           if (
             !options.acceptsNamedSelectors &&
-            (typeof address !== "string" ||
+            ((options.requiresPrefixedAddresses &&
+              typeof address === "string" &&
+              !address.startsWith("0x")) ||
+              typeof address !== "string" ||
               !/^(?:(?:0[xX])?[0-9a-fA-F]+|space%20name:0[xX][0-9a-fA-F]+)$/u.test(
                 address,
               ))
@@ -87,16 +97,36 @@ const fixture = (
     createNativeBinarySession: createSession,
     createManagedBinarySession: createSession,
   };
-  return { dependencies, closed: () => closed };
+  return { dependencies, calls, closed: () => closed };
 };
 
 describe("direct CLI cross-reference selectors", () => {
-  it("retains validation issues unrelated to symbol resolution", async () => {
+  it("rejects unknown arguments before opening a session", async () => {
     const [path] = await createBinarySessionTargets();
-    const issues = [
-      { path: ["address"], reason: "invalid_format" },
-      { path: ["extra"], reason: "unknown_argument" },
-    ] as const;
+    const provider = fixture({
+      xrefsError: new AnalysisInputError("xrefs", undefined, [
+        { path: ["address"], reason: "invalid_format" },
+      ]),
+    });
+    const result = await runDirectAnalysis(
+      provider.dependencies,
+      path,
+      "xrefs",
+      { address: "table_only", extra: true },
+    ).then(projectCliAnalysisResult);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "xrefs",
+        issues: [{ path: ["extra"], reason: "unknown_argument" }],
+      },
+    });
+    expect(provider.closed()).toBe(0);
+  });
+
+  it("retains provider validation issues unrelated to symbol resolution", async () => {
+    const [path] = await createBinarySessionTargets();
+    const issues = [{ path: ["address"], reason: "invalid_format" }] as const;
     const provider = fixture({
       xrefsError: new AnalysisInputError("xrefs", undefined, issues),
     });
@@ -104,15 +134,15 @@ describe("direct CLI cross-reference selectors", () => {
       provider.dependencies,
       path,
       "xrefs",
-      { address: "table_only", extra: true },
-    );
+      { address: "table_only" },
+    ).then(projectCliAnalysisResult);
     expect(result).toMatchObject({
       code: "invalid_request",
       details: { operation: "xrefs", issues },
     });
     expect(provider.closed()).toBe(1);
   });
-  it.each(["hidden_alias", "dead"])(
+  it.each(["hidden_alias", "dead", "0x1000", "1000", "space%20name:0x1000"])(
     "retains the provider's existing interpretation of %s",
     async (address) => {
       const [path] = await createBinarySessionTargets();
@@ -123,10 +153,13 @@ describe("direct CLI cross-reference selectors", () => {
       const evidence = parseEvidence(
         await runDirectAnalysis(provider.dependencies, path, "xrefs", {
           address,
-        }),
+        }).then(projectCliAnalysisResult),
       );
       expect(evidence.parameters).toEqual({ address });
       expect(evidence.normalized_result).toEqual(["0x4000"]);
+      expect(provider.calls).toEqual([
+        { operation: "xrefs", parameters: { address } },
+      ]);
       expect(provider.closed()).toBe(1);
     },
   );
@@ -148,10 +181,33 @@ describe("direct CLI cross-reference selectors", () => {
       const evidence = parseEvidence(
         await runDirectAnalysis(provider.dependencies, path, "xrefs", {
           address,
-        }),
+        }).then(projectCliAnalysisResult),
       );
       expect(evidence.parameters).toEqual({ address });
       expect(evidence.normalized_result).toEqual(["0x4000"]);
+      expect(provider.closed()).toBe(1);
+    },
+  );
+});
+
+describe("direct CLI cross-reference name resolution", () => {
+  it.each(["add", "0xHelper", "name:0xSuffix"])(
+    "resolves %s after the provider rejects its address format",
+    async (address) => {
+      const [path] = await createBinarySessionTargets();
+      const provider = fixture({ requiresPrefixedAddresses: true });
+      const evidence = parseEvidence(
+        await runDirectAnalysis(provider.dependencies, path, "xrefs", {
+          address,
+        }).then(projectCliAnalysisResult),
+      );
+      expect(evidence.parameters).toEqual({ address });
+      expect(evidence.normalized_result).toEqual(["0x4000"]);
+      expect(provider.calls).toEqual([
+        { operation: "xrefs", parameters: { address } },
+        { operation: "list_names", parameters: {} },
+        { operation: "xrefs", parameters: { address: "0x1000" } },
+      ]);
       expect(provider.closed()).toBe(1);
     },
   );
@@ -162,7 +218,7 @@ describe("direct CLI cross-reference selectors", () => {
     const empty = parseEvidence(
       await runDirectAnalysis(provider.dependencies, path, "xrefs", {
         address: "unreferenced",
-      }),
+      }).then(projectCliAnalysisResult),
     );
     expect(empty.normalized_result).toEqual([]);
     const missing = await runDirectAnalysis(
@@ -172,11 +228,15 @@ describe("direct CLI cross-reference selectors", () => {
       {
         address: "missing_symbol",
       },
-    );
+    ).then(projectCliAnalysisResult);
     expect(missing).toMatchObject({
       code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("use different address coordinates"),
+      },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });
+    expect(missing).not.toHaveProperty("recovery");
     expect(JSON.stringify(missing)).toContain("missing_symbol");
     expect(provider.closed()).toBe(2);
   });
@@ -191,8 +251,14 @@ describe("direct CLI cross-reference selectors", () => {
       {
         address: "ambiguous",
       },
-    );
-    expect(result).toMatchObject({ code: "invalid_request" });
+    ).then(projectCliAnalysisResult);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("Select an exact address"),
+      },
+    });
+    expect(result).not.toHaveProperty("recovery");
     expect(JSON.stringify(result)).toContain("0x1000");
     expect(JSON.stringify(result)).toContain("0x2000");
     expect(provider.closed()).toBe(1);
@@ -210,7 +276,7 @@ describe("direct CLI cross-reference selectors", () => {
     const evidence = parseEvidence(
       await runDirectAnalysis(provider.dependencies, path, "xrefs", {
         address: "table_only",
-      }),
+      }).then(projectCliAnalysisResult),
     );
     expect(evidence.parameters).toEqual({ address: "table_only" });
     expect(evidence.normalized_result).toEqual(["0x4000"]);
@@ -235,7 +301,7 @@ describe("direct CLI cross-reference selectors", () => {
         {
           address: "table_only",
         },
-      );
+      ).then(projectCliAnalysisResult);
       expect(result).toMatchObject({ code });
       expect(provider.closed()).toBe(1);
     },

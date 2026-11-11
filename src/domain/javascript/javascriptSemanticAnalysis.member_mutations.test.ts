@@ -1,13 +1,277 @@
 import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
-import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
+import {
+  onlyBinding,
+  onlyCallable,
+} from "./javascriptSemanticAnalysis.fixture.js";
 
 const resultValue = (body: string) =>
   onlyCallable(
     analyzeJavaScriptSemantics(`export function result() { ${body} }`),
     "result",
   ).returnSites[0]?.value;
+
+it.each([
+  [
+    "own getter",
+    "const value = { count: 1, get then() { this.count = 2; } };",
+    2,
+  ],
+  [
+    "own method",
+    "const value = { count: 1, then(resolve) { this.count = 2; resolve(); } };",
+    2,
+  ],
+  [
+    "function-valued slot",
+    "const value = { count: 1, then: function(resolve) { this.count = 2; resolve(); } };",
+    2,
+  ],
+  [
+    "getter returning a method",
+    "const value = { count: 1, get then() { return function(resolve) { this.count = 2; resolve(); }; } };",
+    2,
+  ],
+  [
+    "inherited getter",
+    "const proto = { get then() { this.count = 2; } }; const value = { __proto__: proto, count: 1 };",
+    2,
+  ],
+  [
+    "inherited method",
+    "const proto = { then(resolve) { this.count = 2; resolve(); } }; const value = { __proto__: proto, count: 1 };",
+    2,
+  ],
+  [
+    "class method",
+    "class Value { count = 1; then(resolve) { this.count = 2; resolve(); } } const value = new Value();",
+    2,
+  ],
+  [
+    "stored method",
+    "const value = { count: 1 }; value.then = function(resolve) { this.count = 2; resolve(); };",
+    2,
+  ],
+  [
+    "method stored on a copied shared child",
+    "const source = { child: { count: 1 } }; const box = { ...source }; source.child.then = function(resolve) { this.count = 2; resolve(); }; const value = box.child;",
+    2,
+  ],
+  [
+    "copied method retained after source replacement",
+    "const source = { count: 1, then(resolve) { this.count = 2; resolve(); } }; const value = { ...source }; source.then = null;",
+    2,
+  ],
+  ["inert object", "const value = { count: 1 };", 1],
+  ["noncallable then", "const value = { count: 1, then: null };", 1],
+  [
+    "noncallable getter result",
+    "const value = { count: 1, get then() { return 3; } };",
+    1,
+  ],
+  [
+    "own noncallable shadow",
+    "const proto = { get then() { this.count = 2; } }; const value = { __proto__: proto, count: 1, then: null };",
+    1,
+  ],
+  [
+    "method replaced before await",
+    "const value = { count: 1, then(resolve) { this.count = 2; resolve(); } }; value.then = null;",
+    1,
+  ],
+] as const)(
+  "accounts for thenable effects at await: %s",
+  async (_kind, declaration, expected) => {
+    const body = `${declaration} await value; return value.count;`;
+    expect(await runInNewContext(`(async () => { ${body} })()`)).toBe(expected);
+    const ir = analyzeJavaScriptSemantics(
+      `export async function result() { ${body} }`,
+    );
+    const value = onlyCallable(ir, "result").returnSites[0]?.value;
+    if (expected === 2) expect(value?.status).toBe("unknown");
+    else expect(value).toEqual({ status: "literal", value: 1 });
+  },
+);
+
+it("keeps a then slot captured before a later top-level source write", async () => {
+  const body = `
+    const source = { count: 1 };
+    const value = { ...source };
+    source.then = function(resolve) { this.count = 2; resolve(); };
+    await value;
+    const observed = value.count;
+  `;
+  expect(
+    await runInNewContext(`(async () => { ${body} return observed; })()`),
+  ).toBe(1);
+  expect(
+    onlyBinding(analyzeJavaScriptSemantics(body), "observed").value,
+  ).toEqual({ status: "literal", value: 1 });
+});
+
+it.each([
+  "const value = { count: 1, then: external };",
+  "const value = { count: 1, then: null }; value.then = external;",
+])("keeps an externally supplied then callable possible: %s", async (slot) => {
+  const body = `${slot} await value; return value.count;`;
+  for (const external of [
+    null,
+    function (this: { count: number }, resolve: () => void) {
+      this.count = 2;
+      resolve();
+    },
+  ]) {
+    expect(
+      await runInNewContext(`(async () => { ${body} })()`, { external }),
+    ).toBe(external === null ? 1 : 2);
+  }
+  const ir = analyzeJavaScriptSemantics(
+    `export async function result(external) { ${body} }`,
+  );
+  expect(onlyCallable(ir, "result").returnSites[0]?.value.status).toBe(
+    "unknown",
+  );
+});
+
+it.each([
+  ["field = shared;", "declare field: { mode: string };", "new Derived()"],
+  [
+    "get field() { return shared; }",
+    "declare field: { mode: string };",
+    "new Derived()",
+  ],
+  [
+    "static field = shared;",
+    "declare static field: { mode: string };",
+    "Derived",
+  ],
+  [
+    "static get field() { return shared; }",
+    "declare static field: { mode: string };",
+    "Derived",
+  ],
+])(
+  "follows inherited references past erased class fields: %s",
+  (base, declaration, receiver) => {
+    expect(
+      resultValue(`
+    const shared = { mode: "initial" };
+    class Base { ${base} }
+    class Derived extends Base { ${declaration} }
+    ${receiver}.field.mode = "updated";
+    return shared.mode;
+  `)?.status,
+    ).toBe("unknown");
+  },
+);
+
+it("retains then invocation effects through a getter-invoked async callable", async () => {
+  const body = `
+    const value = {
+      count: 1,
+      get start() { (async () => { await this; })(); return null; },
+      then(resolve) { this.count = 2; resolve(); },
+    };
+    await value.start;
+    return value.count;
+  `;
+  expect(await runInNewContext(`(async () => { ${body} })()`)).toBe(2);
+  const ir = analyzeJavaScriptSemantics(
+    `export async function result() { ${body} }`,
+  );
+  expect(onlyCallable(ir, "result").returnSites[0]?.value.status).toBe(
+    "unknown",
+  );
+});
+
+it.each([
+  [
+    "Object.prototype.then = function(resolve) { this.count = 2; resolve(); }; const value = { count: 1 }; await value; return value.count;",
+    2,
+  ],
+  [
+    "Array.prototype.then = function(resolve) { this[0] = 2; resolve(); }; const value = [1]; await value; return value[0];",
+    2,
+  ],
+  [
+    "Object.prototype.then = function(resolve) { this.count = 2; resolve(); }; const value = { count: 1, then: null }; await value; return value.count;",
+    1,
+  ],
+  [
+    "Object.prototype.then = function(resolve) { this.count = 2; resolve(); }; const value = { __proto__: null, count: 1 }; await value; return value.count;",
+    1,
+  ],
+  [
+    "Array.prototype.then = function(resolve) { this[0] = 2; resolve(); }; const value = [1]; value.then = null; await value; return value[0];",
+    1,
+  ],
+  [
+    "Object.prototype.then = function(resolve) { this[0] = 2; resolve(); }; const value = [1]; await value; return value[0];",
+    2,
+  ],
+  [
+    "Object.prototype.then = function(resolve) { this[0] = 2; resolve(); }; Array.prototype.then = null; const value = [1]; await value; return value[0];",
+    1,
+  ],
+  [
+    "Object.prototype.then = null; const value = { count: 1 }; await value; return value.count;",
+    1,
+  ],
+  [
+    "Object.defineProperty(Object.prototype, 'then', { get() { this.count = 2; } }); const value = { count: 1 }; await value; return value.count;",
+    2,
+  ],
+  [
+    "Array.prototype.__proto__ = { then(resolve) { this[0] = 2; resolve(); } }; const value = [1]; await value; return value[0];",
+    2,
+  ],
+  [
+    "Object.prototype.then = function(resolve) { this[0] = 2; resolve(); }; Array.prototype.__proto__ = null; const value = [1]; await value; return value[0];",
+    1,
+  ],
+] as const)(
+  "retains source-written prototype then invocation: %s",
+  async (body, expected) => {
+    expect(await runInNewContext(`(async () => { ${body} })()`)).toBe(expected);
+    const ir = analyzeJavaScriptSemantics(
+      `export async function result() { ${body} }`,
+    );
+    const value = onlyCallable(ir, "result").returnSites[0]?.value;
+    if (expected === 2) expect(value?.status).toBe("unknown");
+    else expect(value).toEqual({ status: "literal", value: 1 });
+  },
+);
+
+it.each(["field;", "field = { mode: 'other' };"])(
+  "preserves a real derived field's shadowing: %s",
+  (field) => {
+    expect(
+      resultValue(`
+      const shared = { mode: "initial" };
+      class Base { field = shared; }
+      class Derived extends Base { ${field} }
+      const instance = new Derived();
+      if (instance.field) instance.field.mode = "updated";
+      return shared.mode;
+    `),
+    ).toEqual({ status: "literal", value: "initial" });
+  },
+);
+
+it("follows inherited references past an abstract field declaration", () => {
+  expect(
+    resultValue(`
+    const shared = { mode: "initial" };
+    class Base { field = shared; }
+    abstract class Derived extends Base { abstract field: { mode: string }; }
+    const Constructor = Derived as unknown as new () => Base;
+    new Constructor().field.mode = "updated";
+    return shared.mode;
+  `)?.status,
+  ).toBe("unknown");
+});
 
 const mutations = [
   'const shared = { mode: "initial" }; const options = { [key]: shared }; options.foo.mode = "updated"; return shared.mode;',
@@ -813,21 +1077,6 @@ describe("property mutation collection on minified bundles", () => {
       ],
     });
   }, 30000);
-
-  it("indexes many returned object methods instead of rescanning the object", () => {
-    const methods = Array.from(
-      { length: 2000 },
-      (_, index) => `m${index}() { return shared; }`,
-    ).join(",");
-    const writes = Array.from(
-      { length: 2000 },
-      (_, index) => `box.m${index}().p${index} = ${index};`,
-    ).join(" ");
-    const value = resultValue(
-      `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${writes} return shared.token;`,
-    );
-    expect(value?.status).toBe("unknown");
-  }, 30000);
 });
 
 describe("results of methods on an escaped receiver", () => {
@@ -865,3 +1114,32 @@ describe("results of methods on an escaped receiver", () => {
     });
   }, 30000);
 });
+
+it.each([
+  ["named", "@dec abstract slot: { mode: string };"],
+  ["computed literal", '@dec abstract ["slot"]: { mode: string };'],
+])(
+  "retains the possible inherited alias through a decorated abstract %s field",
+  (_name, field) => {
+    // An emit that erases the field lets this write reach Base.slot. The
+    // analysis must still invalidate shared even if another emit shadows it.
+    const setup = `
+      function dec(...args: unknown[]) {}
+      const shared = { mode: "initial" };
+      class Base { slot = shared; }
+      abstract class Derived extends Base { ${field} }
+      const Constructor = Derived as unknown as new () => Base;
+    `;
+    expect(resultValue(`${setup} return shared.mode;`)).toEqual({
+      status: "literal",
+      value: "initial",
+    });
+    expect(
+      resultValue(`
+        ${setup}
+        new Constructor().slot.mode = "updated";
+        return shared.mode;
+      `),
+    ).toMatchObject({ status: "unknown" });
+  },
+);

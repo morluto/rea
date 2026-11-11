@@ -1,10 +1,10 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ProviderIdentity } from "./AnalysisProvider.js";
 import {
   createEvidence,
   type Evidence,
   type EvidenceObservation,
 } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type {
   InspectWebPageInput,
@@ -16,6 +16,7 @@ import type {
 } from "../domain/browserObservationSchemas.js";
 import type {
   AnalyzeWebBundleInput,
+  WebBundleAcquisitionPartialObservation,
   WebBundleAnalysis,
 } from "../domain/webBundleAnalysis.js";
 import type {
@@ -31,12 +32,21 @@ import type {
   BrowserCaptureComparisonInput,
 } from "../domain/browserCaptureComparison.js";
 import { commitBrowserScenarioNormalization } from "../domain/browserScenarioNormalization.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type {
   CaptureWebScreenshotInput,
   CompareWebScreenshotsInput,
   WebScreenshot,
   WebScreenshotDiff,
 } from "../domain/webScreenshot.js";
+
+import type { JsonValue } from "../domain/jsonValue.js";
+
+/** The own JSON source and the facts admitted by its named output contract. */
+export interface BrowserEvidenceReport {
+  readonly source: JsonValue;
+  readonly facts: BrowserEvidenceResult;
+}
 
 type BrowserEvidenceInput =
   | ListBrowserTargetsInput
@@ -51,6 +61,7 @@ type BrowserEvidenceResult =
   | BrowserTargetList
   | WebPageInspection
   | WebBundleAnalysis
+  | WebBundleAcquisitionPartialObservation
   | WebObservationSession
   | WebMcpDiscovery
   | BrowserCaptureComparison
@@ -66,36 +77,62 @@ type BrowserEvidenceOperation =
   | "capture_web_screenshot"
   | "compare_web_screenshots";
 
+const isBundleAcquisition = (
+  result: BrowserEvidenceResult,
+): result is WebBundleAcquisitionPartialObservation =>
+  "kind" in result && result.kind === "web-bundle-acquisition";
+
 /** Create Evidence for one request-scoped external browser observation. */
 export const createBrowserEvidence = (
   operation: BrowserEvidenceOperation,
   input: BrowserEvidenceInput,
-  result: BrowserEvidenceResult,
+  report: BrowserEvidenceReport,
   provider: ProviderIdentity,
-): Evidence =>
-  createEvidence(undefined, provider, {
+): Evidence => {
+  const result = report.facts;
+  const acquisition = isBundleAcquisition(result);
+  const observed = acquisition ? result.inspection : result;
+  const comparison =
+    operation === "compare_web_captures" ||
+    operation === "compare_web_screenshots";
+  return createEvidence(undefined, provider, {
     predicateType: browserPredicate(operation),
     operation,
-    parameters: browserParameters(input, result),
-    result: jsonValueSchema.parse(result),
-    confidence: "observed",
-    authority: "external-service",
-    environment:
-      "browser" in result
+    parameters: {
+      ...browserParameters(input, result),
+      ...(comparison
         ? {
-            id: `${result.browser.product}@${result.browser.revision}`,
+            comparison_input_sha256: digestCanonicalValue(
+              input,
+              "Browser comparison input",
+            ),
+          }
+        : {}),
+    },
+    result,
+    rawResult: isDeepStrictEqual(report.source, result) ? null : report.source,
+    confidence: comparison ? "derived" : "observed",
+    authority: comparison ? "analyst-inference" : "external-service",
+    environment:
+      "browser" in observed
+        ? {
+            id: `${observed.browser.product}@${observed.browser.revision}`,
             platform: "unknown",
             architecture: "unknown",
             isolation: "none",
           }
         : null,
     limitations: [
-      ...result.limitations,
-      ...("browser" in result
+      ...observed.limitations,
+      ...(acquisition && result.source_maps.limitation !== undefined
+        ? [result.source_maps.limitation]
+        : []),
+      ...("browser" in observed
         ? ["Browser host platform and architecture were not observed."]
         : []),
     ],
   });
+};
 
 const browserParameters = (
   input: BrowserEvidenceInput,
@@ -138,6 +175,10 @@ const browserParameters = (
         : "target_id" in input && observedOrigin !== undefined
           ? [observedOrigin]
           : [],
+    ...("discovery_timeout_ms" in input &&
+    input.discovery_timeout_ms !== undefined
+      ? { discovery_timeout_ms: input.discovery_timeout_ms }
+      : {}),
     ...("command_timeout_ms" in input && input.command_timeout_ms !== undefined
       ? { command_timeout_ms: input.command_timeout_ms }
       : {}),
@@ -165,6 +206,12 @@ const browserParameters = (
     ...("fetch_source_maps" in input
       ? {
           fetch_source_maps: input.fetch_source_maps,
+          ...(input.source_map_limits === undefined
+            ? {}
+            : { source_map_limits: input.source_map_limits }),
+          ...(input.semantic_precision === undefined
+            ? {}
+            : { semantic_precision: input.semantic_precision }),
           ...(input.max_heap_mb === undefined
             ? {}
             : { max_heap_mb: input.max_heap_mb }),
@@ -198,6 +245,8 @@ const browserResultTargetOrigin = (
     typeof result.inspection.target.origin === "string"
   )
     return result.inspection.target.origin;
+  if ("capture" in result && "target_origin" in result.capture)
+    return result.capture.target_origin ?? undefined;
   if (!("target" in result)) return undefined;
   if ("origin" in result.target) return result.target.origin;
   if ("initial_url" in result.target)

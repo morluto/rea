@@ -67,7 +67,7 @@ export const optionalObservationFactories = (
   return {
     browserObservation: async () => browser,
     browserScenarioCapture: async () => createBrowserScenarioProvider({}),
-    electronObservation: async () => createElectronObservationProvider(),
+    electronObservation: async () => createElectronObservationProvider({}),
     electronActiveObservation: async () => createElectronScenarioProvider({}),
     javascriptRuntimeObservation: async () => runtime,
   };

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { traceSourceMap } from "../../../src/javascript/sourceMaps/TraceSourceMap.js";
 
@@ -127,6 +127,7 @@ const cases = [
       [1, 10, "b.ts"],
     ],
     dedicatedControl: false,
+    expectedStatus: "invalid",
   },
   {
     name: "nested gap clips previous parent leaf",
@@ -177,6 +178,7 @@ const cases = [
       [1, 8, "b.ts"],
     ],
     dedicatedControl: false,
+    expectedStatus: "invalid",
   },
   {
     name: "empty indexed sibling clips previous leaf",
@@ -210,6 +212,7 @@ const cases = [
     },
     expected: [[1, 0, "a.ts"]],
     dedicatedControl: false,
+    expectedStatus: "invalid",
   },
   {
     name: "depth-three same-line composition",
@@ -307,12 +310,16 @@ const cases = [
       [4, 1, "b.ts"],
     ],
     dedicatedControl: false,
+    expectedStatus: "invalid",
   },
 ] as const;
 
 it.each(cases)(
   "preserves indexed coordinate contract: $name",
-  async ({ map, expected, dedicatedControl }) => {
+  async (testCase) => {
+    const { map, expected, dedicatedControl } = testCase;
+    const expectedStatus =
+      "expectedStatus" in testCase ? testCase.expectedStatus : "included";
     const origin = "https://example.test";
     const url = origin + "/app.js.map";
     const text = JSON.stringify(map);
@@ -328,7 +335,7 @@ it.each(cases)(
         expect(point.matches).toHaveLength(1);
       }
     }
-    const result = await fetchWebSourceMaps(
+    const result = await fetchWebSourceMapsOk(
       [{ scriptKey: "scr_" + "1".repeat(64), declaredUrl: url, fetchUrl: url }],
       analyzeWebBundleInputSchema.parse({
         cdp_endpoint: "http://127.0.0.1:9222",
@@ -340,6 +347,15 @@ it.each(cases)(
       { fetch: () => Promise.resolve(new Response(text, { status: 200 })) },
     );
     const item = result.items[0];
+    if (expectedStatus === "invalid") {
+      expect(item).toMatchObject({
+        status: "invalid",
+        artifact: null,
+        mappings: [],
+        limitation: expect.stringContaining("overlap"),
+      });
+      return;
+    }
     if (item?.status !== "included") throw new Error(JSON.stringify(result));
     expect(
       item.mappings.map((entry) => [
@@ -358,3 +374,76 @@ it.each(cases)(
     ]);
   },
 );
+
+it("rejects a source mapping that crosses an indexed section boundary", async () => {
+  const origin = "https://example.test";
+  const url = `${origin}/app.js.map`;
+  const makeMap = (firstMappings: string) => ({
+    version: 3,
+    sections: [
+      {
+        offset: { line: 0, column: 0 },
+        map: {
+          version: 3,
+          sources: ["a.js"],
+          sourcesContent: ["x();"],
+          names: [],
+          mappings: firstMappings,
+        },
+      },
+      {
+        offset: { line: 0, column: 1 },
+        map: {
+          version: 3,
+          sources: ["b.js"],
+          sourcesContent: ["y();"],
+          names: [],
+          mappings: "AAAA",
+        },
+      },
+    ],
+  });
+  const input = analyzeWebBundleInputSchema.parse({
+    cdp_endpoint: "http://127.0.0.1:9222",
+    allowed_origins: [origin],
+    target_id: "page-1",
+    fetch_source_maps: true,
+  });
+  const request = {
+    scriptKey: "scr_" + "1".repeat(64),
+    declaredUrl: url,
+    fetchUrl: url,
+  };
+  const fetchMap = (map: ReturnType<typeof makeMap>) =>
+    fetchWebSourceMapsOk([request], input, undefined, {
+      fetch: () =>
+        Promise.resolve(new Response(JSON.stringify(map), { status: 200 })),
+    });
+  const overlapping = makeMap("AAAA,EAAA");
+  const overlapText = JSON.stringify(overlapping);
+  expect(() =>
+    traceSourceMap(overlapText, url, { line: 1, column: 2 }),
+  ).toThrow(/overlap/u);
+  const overlappingResult = await fetchMap(overlapping);
+  expect(overlappingResult).toMatchObject({
+    status: "unavailable",
+    requested: 1,
+    processed: 1,
+  });
+  expect(overlappingResult.items[0]).toMatchObject({
+    status: "invalid",
+    artifact: null,
+    mappings: [],
+    limitation: expect.stringContaining("overlap"),
+  });
+
+  const controlResult = await fetchMap(makeMap("AAAA"));
+  expect(controlResult.items[0]).toMatchObject({
+    status: "included",
+    limitation: null,
+    mappings: [
+      { generated_line: 1, generated_column: 0, source: `${origin}/a.js` },
+      { generated_line: 1, generated_column: 1, source: `${origin}/b.js` },
+    ],
+  });
+});

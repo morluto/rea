@@ -52,7 +52,7 @@ describe("PowerPC ELF header boundaries", () => {
   it("does not recognize EM_PPC64 as the 32-bit family", () => {
     expect(parseExecutableHeader(header(false, 64, 21), "x64")).toEqual({
       ok: false,
-      error: "unsupported ELF architecture",
+      error: "unsupported ELF architecture: e_machine 21",
     });
   });
 });

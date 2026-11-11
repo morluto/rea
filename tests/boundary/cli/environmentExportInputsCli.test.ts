@@ -49,9 +49,12 @@ for (const role of ["manifest", "evidence"] as const) {
         timeoutMs: 30_000,
       });
       expect(await readFile(marker, "utf8")).toBe("read");
-      expect(await readFile(input)).toEqual(
-        Buffer.concat([before, Buffer.from(" ")]),
-      );
+      expect(
+        Buffer.compare(
+          await readFile(input),
+          Buffer.concat([before, Buffer.from(" ")]),
+        ),
+      ).toBe(0);
       expect(result.exitCode, result.stderr).toBe(1);
       expect(result.json).toMatchObject({
         code: "invalid_request",

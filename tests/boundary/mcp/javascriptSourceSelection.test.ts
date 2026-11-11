@@ -7,6 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -31,6 +32,8 @@ const createSelectionClient = () => {
     env: {
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
+      // Exact advertised constraints require the complete schema profile.
+      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
     },
     stderr: "pipe",
   });
@@ -74,8 +77,10 @@ it("resolves ESM whitespace specifiers through the public application tool", asy
       ]),
     );
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
 }, 60_000);
 
@@ -105,8 +110,10 @@ it("retains missing ASAR native-addon inventory through the public application t
       ),
     ).toBe(true);
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
 }, 60_000);
 
@@ -232,8 +239,10 @@ it("advertises exact source selection and retains its scope through summary, Evi
     ).toBe(1);
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
 }, 60_000);
 
@@ -301,8 +310,10 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     });
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
 }, 60_000);
 
@@ -342,8 +353,10 @@ it("accepts ASAR headers with long legal JSON whitespace through the public appl
         .digest("hex"),
     );
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
 }, 60_000);
 
@@ -377,7 +390,9 @@ it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP
     });
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
 }, 60_000);

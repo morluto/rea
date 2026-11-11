@@ -1,8 +1,8 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { createHash } from "node:crypto";
-import { writeFile, type FileHandle } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { deflateSync } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
@@ -10,6 +10,11 @@ import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "../ArtifactHash.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { marshalCode } from "../../python/PythonPyc.fixture.js";
+import * as artifactPaths from "../ArtifactPaths.js";
+import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -28,9 +33,12 @@ const archive = (body: Buffer) =>
     pythonVersion: 309,
     members: [{ name: "data", typeCode: "x", payload: body, compress: false }],
   });
-const members = async (reader: PyInstallerArtifactReader) => {
+const members = async (
+  reader: PyInstallerArtifactReader,
+  signal?: AbortSignal,
+) => {
   const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
+  for await (const entry of reader.entries(signal)) entries.push(entry);
   return entries;
 };
 const deferred = () => {
@@ -40,6 +48,134 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+it.each(["success", "io", "caller cancellation", "reader close"] as const)(
+  "joins the pending descriptor read after a module prefix stop (%s)",
+  async (outcome) => {
+    const payload = marshalCode("py38", {
+      bytecode: randomBytes(256 * 1024),
+    });
+    const compressedBytes = deflateSync(payload).length;
+    expect(compressedBytes).toBeGreaterThan(128 * 1024);
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          { name: "module", typeCode: "m", payload, compress: true },
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
+            compress: false,
+          },
+        ],
+      }),
+      async (reader, handle) => {
+        const entered = deferred(),
+          prefixStopped = deferred(),
+          release = deferred();
+        const caller = new AbortController();
+        const cancelled = new Error("caller leaves during prefix drain");
+        const io = Object.assign(new Error("late module prefix read EIO"), {
+          code: "EIO",
+        });
+        const memberSource = PyInstallerPyzStore.prototype.memberSource;
+        let prefixSignal: AbortSignal | undefined;
+        const source = vi
+          .spyOn(PyInstallerPyzStore.prototype, "memberSource")
+          .mockImplementation(function (this: PyInstallerPyzStore, ...args) {
+            prefixSignal = args[2];
+            prefixSignal.addEventListener("abort", prefixStopped.resolve, {
+              once: true,
+            });
+            return memberSource.apply(this, args);
+          });
+        const read = handle.read.bind(handle);
+        let memberReads = 0;
+        let requestedMemberBytes = 0;
+        const descriptor = vi
+          .spyOn(handle, "read")
+          .mockImplementation(async (...args: unknown[]) => {
+            if (prefixSignal !== undefined) {
+              memberReads++;
+              // Inflate can deliver this prefix while the next native read is pending.
+              if (memberReads === 1) args[2] = 64;
+              requestedMemberBytes += Number(args[2]);
+              if (memberReads === 2) {
+                entered.resolve();
+                await release.promise;
+                if (outcome === "io") throw io;
+              }
+            }
+            return Reflect.apply(read, handle, args);
+          });
+        let settled = false;
+        const listing = members(reader, caller.signal).finally(() => {
+          settled = true;
+        });
+        void listing.catch(() => undefined);
+        let closing: Promise<void> | undefined;
+        try {
+          await Promise.all([entered.promise, prefixStopped.promise]);
+          expect(prefixSignal?.aborted).toBe(true);
+          expect(caller.signal.aborted).toBe(false);
+          expect(memberReads).toBe(2);
+          expect(settled).toBe(false);
+          if (outcome === "caller cancellation") {
+            caller.abort(cancelled);
+            await setImmediate();
+          }
+          if (outcome === "reader close") {
+            let closed = false;
+            closing = reader.close().then(() => {
+              closed = true;
+            });
+            await setImmediate();
+            expect(closed).toBe(false);
+            expect(handle.fd).toBeGreaterThanOrEqual(0);
+          }
+          expect(settled).toBe(false);
+          release.resolve();
+          if (outcome === "success") {
+            const module = (await listing).find(
+              (entry) => entry.path === "module",
+            );
+            expect(module).toMatchObject({
+              formatMetadata: { bytecode_header: "derived" },
+            });
+          } else {
+            const failure: unknown = await listing.catch(
+              (cause: unknown) => cause,
+            );
+            expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+            if (!(failure instanceof ArtifactReaderFailure))
+              throw new Error("Expected module prefix failure");
+            expect(failure.reason).toBe(outcome === "io" ? "io" : "cancelled");
+            if (outcome !== "reader close")
+              expect(failure.cause).toBe(outcome === "io" ? io : cancelled);
+            else
+              expect(failure.cause).toMatchObject({
+                reason: "unavailable",
+                message: "PyInstaller reader closed",
+              });
+          }
+          await closing;
+          expect(memberReads).toBe(2);
+          expect(requestedMemberBytes).toBeLessThan(compressedBytes);
+        } finally {
+          release.resolve();
+          await Promise.allSettled([
+            listing,
+            ...(closing === undefined ? [] : [closing]),
+          ]);
+          descriptor.mockRestore();
+          source.mockRestore();
+        }
+      },
+    );
+  },
+);
 
 it.each([false, true])(
   "settles independent private and carrier closes and retries only failed owners (carrier failure: %s)",
@@ -145,6 +281,59 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
     });
   });
 });
+
+it.each(["ENOENT", "ENOTDIR"] as const)(
+  "retains changed-source evidence when an admitted carrier becomes unaddressable (%s)",
+  async (code) => {
+    const body = Buffer.from("observed before the source moved");
+    const bytes = archive(body);
+    await withPyInstallerReader(bytes, async (reader, handle, path) => {
+      await reader.prepareContainer(hash(bytes));
+      const [entry] = await members(reader);
+      if (entry === undefined) throw new Error("Missing original member");
+      const observed = await hashReadable(await reader.open(entry));
+      expect(observed).toMatchObject({
+        sha256: hash(body),
+        bytes: body.length,
+      });
+      const moved = code === "ENOENT" ? path : dirname(path);
+      await rename(moved, `${moved}.moved`);
+      if (code === "ENOTDIR") await writeFile(moved, "replaced ancestor");
+      try {
+        const attempts = [
+          () => reader.prepareContainer(hash(bytes)),
+          () => members(reader),
+          () => reader.open(entry),
+        ];
+        for (const attempt of attempts) {
+          const cause = await attempt().then(
+            () => undefined,
+            (failure: unknown) => failure,
+          );
+          expect(cause).toMatchObject({
+            reason: "integrity",
+            message: expect.stringContaining(path),
+          });
+          expect(
+            projectAnalysisError(
+              translateArtifactFailure("extract_artifact", cause),
+            ),
+          ).toMatchObject({
+            category: "integrity_mismatch",
+            details: {
+              reason: "integrity",
+              detail: expect.stringContaining(path),
+            },
+          });
+        }
+        expect(handle.fd).toBeGreaterThanOrEqual(0);
+      } finally {
+        if (code === "ENOTDIR") await unlink(moved);
+        await rename(`${moved}.moved`, moved);
+      }
+    });
+  },
+);
 
 it("bounds descriptor reads while hashing a selected stored member", async () => {
   const payload = Buffer.alloc(2 * 1024 * 1024, 0x61);
@@ -512,7 +701,6 @@ for (const cancel of [false, true]) {
           release.resolve();
           const result = await reading;
           if (failClose || cancel) {
-            expect(result.ok).toBe(false);
             if (result.ok) throw new Error("Expected read failure");
             expect(result.cause).toMatchObject(
               failClose
@@ -521,9 +709,10 @@ for (const cancel of [false, true]) {
             );
             if (failClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           } else {
-            expect(result.ok).toBe(true);
             if (!result.ok) throw result.cause;
-            expect(result.value.subarray(16)).toEqual(Buffer.from("body"));
+            expect(
+              Buffer.compare(result.value.subarray(16), Buffer.from("body")),
+            ).toBe(0);
           }
           await reader.close();
           expect(attempts).toBe(failClose ? 2 : 1);
@@ -611,18 +800,20 @@ it.each([false, true])(
           release = deferred();
         const handles = new Set<FileHandle>();
         const stat = borrowed.stat;
+        const prototype: Pick<FileHandle, "stat"> =
+          Object.getPrototypeOf(borrowed);
         const spy = vi
-          .spyOn(Object.getPrototypeOf(borrowed), "stat")
+          .spyOn(prototype, "stat")
           .mockImplementation(async function (
             this: FileHandle,
-            ...args: unknown[]
+            ...args: Parameters<FileHandle["stat"]>
           ) {
             if (this !== borrowed) {
               handles.add(this);
               entered.resolve();
               await release.promise;
             }
-            return Reflect.apply(stat, this, args);
+            return stat.call(this, ...args);
           });
         const caller = new AbortController(),
           reason = new Error("one admission waiter leaves");
@@ -671,3 +862,247 @@ it.each([false, true])(
     );
   },
 );
+
+it.each(
+  (["carrier", "private image"] as const).flatMap((stage) =>
+    ([false, true] as const).map((peer) => ({ stage, peer })),
+  ),
+)(
+  "isolates cancelled $stage parsing from a fresh inventory (concurrent: $peer)",
+  async ({ stage, peer }) => {
+    const payload = Buffer.from("body");
+    const bytes =
+      stage === "carrier"
+        ? archive(payload)
+        : cArchiveExecutable({
+            layout: "2.1",
+            pythonVersion: 309,
+            members: [
+              {
+                name: "PYZ.pyz",
+                typeCode: "z",
+                compress: true,
+                payload: pyzArchive({
+                  magic: PYTHON_39_MAGIC,
+                  modules: [{ name: "app", typeCode: 0, body: payload }],
+                }),
+              },
+            ],
+          });
+    await withPyInstallerReader(bytes, async (reader, handle) => {
+      const entered = deferred(),
+        release = deferred();
+      const caller = new AbortController();
+      const reason = new Error("cancel first archive parse");
+      const nativeRead = handle.read.bind(handle);
+      const spool = PyInstallerPyzStore.prototype.spool;
+      const images: FileHandle[] = [];
+      let held = false;
+      const pause = async () => {
+        if (held) return;
+        held = true;
+        entered.resolve();
+        await release.promise;
+      };
+      const reads = vi
+        .spyOn(handle, "read")
+        .mockImplementation(async (...args: unknown[]) => {
+          const result = await Reflect.apply(nativeRead, handle, args);
+          if (stage === "carrier") await pause();
+          return result;
+        });
+      const spools = vi
+        .spyOn(PyInstallerPyzStore.prototype, "spool")
+        .mockImplementation(async function (
+          this: PyInstallerPyzStore,
+          ...args
+        ) {
+          const result = await spool.apply(this, args);
+          images.push(result.handle);
+          if (stage === "private image") await pause();
+          return result;
+        });
+      const first = members(reader, caller.signal).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      let second: Promise<ArtifactEntry[]> | undefined;
+      try {
+        await entered.promise;
+        expect(reader.formatMetadata()).toBeUndefined();
+        if (peer) {
+          second = members(reader);
+          void second.catch(() => undefined);
+        }
+        caller.abort(reason);
+        release.resolve();
+        expect(await first).toMatchObject({
+          reason: "cancelled",
+          cause: reason,
+        });
+        const retried = await (second ?? members(reader));
+        const selected = retried.find(
+          ({ path }) =>
+            path === (stage === "carrier" ? "data" : "PYZ.pyz/app.pyc"),
+        );
+        expect(selected).toBeDefined();
+        const content = await buffer(await reader.open(selected!));
+        expect(
+          content.subarray(stage === "carrier" ? 0 : 16).equals(payload),
+        ).toBe(true);
+        if (stage === "private image") {
+          expect(images).toHaveLength(2);
+          expect(images[0]!.fd).toBe(-1);
+        }
+      } finally {
+        release.resolve();
+        await first;
+        await second?.catch(() => undefined);
+        reads.mockRestore();
+        spools.mockRestore();
+      }
+    });
+  },
+);
+
+it("does not charge a cancelled namespace projection against the next parse", async () => {
+  const name = "a/".repeat(2000) + "x";
+  const names = [
+    name,
+    ...Array.from({ length: 256 }, (_, index) => `sibling-${index}`),
+  ];
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: names.map((name) => ({
+      name,
+      typeCode: "x",
+      payload: Buffer.alloc(0),
+      compress: false,
+    })),
+  });
+  await withPyInstallerReader(bytes, async (reader) => {
+    const caller = new AbortController();
+    const reason = new Error("cancel after namespace reservation");
+    let scheduled = false;
+    const normalize = artifactPaths.normalizeArtifactPath;
+    const paths = vi
+      .spyOn(artifactPaths, "normalizeArtifactPath")
+      .mockImplementation((path) => {
+        const result = normalize(path);
+        // The projection yields at its next batch after reserving this deep path.
+        if (path === name && !scheduled) {
+          scheduled = true;
+          globalThis.setImmediate(() => caller.abort(reason));
+        }
+        return result;
+      });
+    try {
+      await expect(members(reader, caller.signal)).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: reason,
+      });
+      expect(reader.formatMetadata()).toBeUndefined();
+      const retried = await members(reader);
+      expect(retried.map(({ path }) => path)).toEqual(names);
+      expect(await buffer(await reader.open(retried[0]!))).toHaveLength(0);
+    } finally {
+      paths.mockRestore();
+    }
+  });
+});
+
+it("keeps a physical parse failure primary despite simultaneous caller cancellation", async () => {
+  await withPyInstallerReader(
+    archive(Buffer.from("body")),
+    async (reader, handle) => {
+      const entered = deferred(),
+        release = deferred();
+      const caller = new AbortController();
+      const io = new Error("carrier read EIO");
+      const reads = vi.spyOn(handle, "read").mockImplementation(async () => {
+        entered.resolve();
+        await release.promise;
+        caller.abort(new Error("caller also leaves"));
+        throw io;
+      });
+      const first = members(reader, caller.signal).catch(
+        (cause: unknown) => cause,
+      );
+      let second: Promise<unknown> | undefined;
+      try {
+        await entered.promise;
+        second = members(reader).catch((cause: unknown) => cause);
+        release.resolve();
+        const original = await first;
+        expect(original).toMatchObject({ reason: "io", cause: io });
+        expect(await second).toBe(original);
+        reads.mockRestore();
+        await expect(members(reader)).rejects.toBe(original);
+        expect(reader.formatMetadata()).toBeUndefined();
+      } finally {
+        release.resolve();
+        await first;
+        await second;
+        reads.mockRestore();
+      }
+    },
+  );
+});
+
+it("retains failed cancelled-attempt cleanup and retries its exact private owner on close", async () => {
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [
+      {
+        name: "PYZ.pyz",
+        typeCode: "z",
+        compress: true,
+        payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
+      },
+    ],
+  });
+  await withPyInstallerReader(bytes, async (reader) => {
+    const caller = new AbortController();
+    const reason = new Error("cancel private parse");
+    const cleanupFailure = new Error("private cancelled close denied");
+    const spool = PyInstallerPyzStore.prototype.spool;
+    const nativeClose = OwnedFileHandle.prototype.close;
+    let retained: FileHandle | undefined;
+    let attempts = 0;
+    const spools = vi
+      .spyOn(PyInstallerPyzStore.prototype, "spool")
+      .mockImplementation(async function (this: PyInstallerPyzStore, ...args) {
+        const result = await spool.apply(this, args);
+        retained = result.handle;
+        caller.abort(reason);
+        return result;
+      });
+    const closes = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this.handle === retained && ++attempts === 1) throw cleanupFailure;
+        await nativeClose.call(this);
+      });
+    try {
+      const failure = await members(reader, caller.signal).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toMatchObject({
+        reason: "cancelled",
+        cancellation: { reason },
+        cleanup: { reason: expect.stringContaining(cleanupFailure.message) },
+      });
+      expect(retained?.fd).toBeGreaterThanOrEqual(0);
+      await expect(members(reader)).rejects.toBe(failure);
+      expect(spools).toHaveBeenCalledTimes(1);
+      await reader.close();
+      expect(attempts).toBe(2);
+      expect(retained?.fd).toBe(-1);
+    } finally {
+      spools.mockRestore();
+      closes.mockRestore();
+    }
+  });
+});

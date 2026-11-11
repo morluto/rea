@@ -43,6 +43,7 @@ it.each(operations)(
           parameters: {},
           result: { completed: true },
         },
+        { immutable: true },
       );
     const evidence: Record<ObservationOperation, Evidence> = {
       list_browser_targets: makeEvidence("list_browser_targets"),
@@ -154,7 +155,7 @@ it.each(operations)(
       },
     });
     expect(
-      session.evidenceById(evidence[selectedOperation].evidence_id),
-    ).toEqual(evidence[selectedOperation]);
+      session.evidenceForAnalysis(evidence[selectedOperation].evidence_id),
+    ).toBe(evidence[selectedOperation]);
   },
 );

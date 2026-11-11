@@ -89,7 +89,11 @@ export const readCudaParameters = (
   for (const record of readCudaInfo(bytes, little, budget)) {
     if (record.format === 3 && record.attribute === 0x19)
       byteDeclarations.add(record.value);
-    if (record.format !== 4 || record.attribute !== 0x17) continue;
+    if (
+      record.format !== 4 ||
+      (record.attribute !== 0x17 && record.attribute !== 0x45)
+    )
+      continue;
     if (record.data.length !== 12) {
       complete = false;
       continue;
@@ -100,7 +104,7 @@ export const readCudaParameters = (
       ordinal: r.u16(4),
       name: null,
       offset: r.u16(6),
-      size: r.u32(8) >>> 18,
+      size: record.attribute === 0x45 ? r.u32(8) : r.u32(8) >>> 18,
       type: null,
       hidden: null,
     };

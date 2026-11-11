@@ -4,16 +4,15 @@ import {
   sourceToBundleComparisonResultSchema,
   type SourceToBundleComparisonResult,
 } from "../javascript/sourceToBundleComparisonSchemas.js";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { err, ok, type Result } from "../result.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -94,45 +93,30 @@ export const sourceToBundleViewContextSchema =
       unmapped_current_node_count: z.number().int().nonnegative(),
     });
 
-const checked = new WeakMap<object, SourceToBundleComparisonResult>();
-const checkedReport = (
-  parent: AnalysisViewParent,
-): Result<SourceToBundleComparisonResult, AnalysisError> => {
-  const source = parent.normalizedResult;
-  const reusable =
-    typeof source === "object" &&
-    source !== null &&
-    parent.sealedResult === true &&
-    isImmutableJsonSnapshot(source);
-  const cached = reusable ? checked.get(source) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(
-    sourceToBundleComparisonResultSchema,
-    parent,
-  );
-  if (!parsed.ok) return parsed;
-  const report = reusable
-    ? (source as SourceToBundleComparisonResult)
-    : parsed.value;
-  if (reusable) checked.set(source, report);
-  return ok(report);
-};
+const checkedReport = createAnalysisViewResultReader(
+  sourceToBundleComparisonResultSchema,
+);
 const selected = (values: readonly string[] | undefined) =>
   values === undefined ? undefined : new Set(values);
 const columns = (
   row: object,
   fields: readonly string[],
 ): Record<string, JsonValue> => {
-  const source = row as Record<string, JsonValue>;
-  return Object.fromEntries(fields.map((field) => [field, source[field]!]));
+  const selected = new Set(fields);
+  return Object.fromEntries(
+    Object.entries(row).filter(([field]) => selected.has(field)),
+  );
 };
 
 /** Page facts owned by a complete comparison; page exhaustion does not upgrade source coverage. */
 export const projectSourceToBundleView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "source-to-bundle")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof sourceToBundleViewRequestSchema>
+  >(admitted, "summary", "source-to-bundle");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -174,7 +158,7 @@ export const projectSourceToBundleView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: context,
@@ -255,7 +239,7 @@ export const projectSourceToBundleView = (
     }
   }
   return ok({
-    kind: "source-to-bundle",
+    kind: "source-to-bundle" as const,
     view,
     ...shared,
     ...context,

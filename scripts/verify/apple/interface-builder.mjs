@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
+  artifactCli,
   artifactCliEvidence,
   artifactMcpResult,
   withArtifactMcp,
@@ -25,6 +26,56 @@ const nibPath = join(resourcesPath, "Main.nib");
 const sourceRoot = fileURLToPath(
   new URL("../../../tests/conformance/interface-builder/", import.meta.url),
 );
+const mainSource = join(sourceRoot, "Main.xib");
+// ibtool property names mapped to the keys AppKit archives for NSControl.
+const buttonBooleanKeys = {
+  continuous: "NSControlContinuous",
+  refusesFirstResponder: "NSControlRefusesFirstResponder",
+};
+const plistDocument = (body) =>
+  `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">${body}</plist>\n`;
+const compileNib = (source) =>
+  exec("xcrun", [
+    "ibtool",
+    "--errors",
+    "--warnings",
+    "--compile",
+    nibPath,
+    source,
+  ]);
+/** Apple's source-level property values: the oracle for compiled booleans. */
+const exportedButtonBooleans = async (source) => {
+  const exported = join(fixtureRoot, "export.plist");
+  const { stdout } = await exec("xcrun", [
+    "ibtool",
+    "--export",
+    join(fixtureRoot, "export-request.plist"),
+    source,
+  ]);
+  await writeFile(exported, stdout);
+  const { stdout: json } = await exec("plutil", [
+    "-convert",
+    "json",
+    "-o",
+    "-",
+    exported,
+  ]);
+  return JSON.parse(json)["com.apple.ibtool.document.export"].button;
+};
+const decodedButtonBooleans = (result) => {
+  const button = result.graph.nodes.find(
+    (node) => node.kind === "control" && node.name === "NSButton",
+  );
+  assert.ok(button, "compiled button control was not decoded");
+  return Object.fromEntries(
+    Object.entries(buttonBooleanKeys).map(([property, key]) => [
+      property,
+      button.attributes.nibValues?.[key],
+    ]),
+  );
+};
 
 let report;
 try {
@@ -36,14 +87,7 @@ try {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundleIdentifier</key><string>dev.rea.interface-builder-fixture</string></dict></plist>\n`,
   );
-  await exec("xcrun", [
-    "ibtool",
-    "--errors",
-    "--warnings",
-    "--compile",
-    nibPath,
-    join(sourceRoot, "Main.xib"),
-  ]);
+  await compileNib(mainSource);
   await exec("cc", [join(sourceRoot, "fixture.c"), "-o", executablePath]);
 
   const evidence = await artifactCliEvidence(
@@ -110,6 +154,53 @@ try {
   );
   assert.equal(decoded.graph.truncated, false);
 
+  // Compiled booleans must keep their source polarity in both directions.
+  const properties = Object.keys(buttonBooleanKeys);
+  await writeFile(
+    join(fixtureRoot, "export-request.plist"),
+    plistDocument(
+      `<dict><key>NSControl</key><array>${properties.map((property) => `<string>${property}</string>`).join("")}</array></dict>`,
+    ),
+  );
+  await writeFile(
+    join(fixtureRoot, "toggle.plist"),
+    plistDocument(
+      `<dict><key>button</key><dict>${properties.map((property) => `<key>${property}</key><true/>`).join("")}</dict></dict>`,
+    ),
+  );
+  const toggledSource = join(fixtureRoot, "Toggled.xib");
+  await exec("xcrun", [
+    "ibtool",
+    "--import",
+    join(fixtureRoot, "toggle.plist"),
+    "--write",
+    toggledSource,
+    mainSource,
+  ]);
+  const mainBooleans = await exportedButtonBooleans(mainSource);
+  const toggledBooleans = await exportedButtonBooleans(toggledSource);
+  assert.deepEqual(mainBooleans, {
+    continuous: false,
+    refusesFirstResponder: false,
+  });
+  assert.deepEqual(toggledBooleans, {
+    continuous: true,
+    refusesFirstResponder: true,
+  });
+  assert.deepEqual(
+    decodedButtonBooleans(decoded),
+    mainBooleans,
+    "compiled false booleans differ from the source export",
+  );
+  await compileNib(toggledSource);
+  assert.deepEqual(
+    decodedButtonBooleans(
+      await artifactCli("decode-interface-builder", appPath),
+    ),
+    toggledBooleans,
+    "compiled true booleans differ from the source export",
+  );
+
   report = {
     ok: true,
     fixture: "compiled-appkit-nib",
@@ -122,6 +213,7 @@ try {
     connections: decoded.documents[0].connection_count,
     recovered_control: button.name,
     recovered_action: action.name,
+    button_booleans: { main: mainBooleans, toggled: toggledBooleans },
     hierarchy_complete: decoded.documents[0].hierarchy_complete,
     truncated: decoded.graph.truncated,
   };

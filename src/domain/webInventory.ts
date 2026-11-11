@@ -28,6 +28,23 @@ export type WebResourceReconciliation =
   | { readonly status: "ambiguous"; readonly candidate_resource_keys: string[] }
   | { readonly status: "unmatched"; readonly reason: "no_exact_sanitized_url" };
 
+/**
+ * Comparison identity excludes optional size evidence while preserving the
+ * source inventory key.
+ */
+export const webResourceComparisonIdentity = (
+  resource: WebInventoryResourceInput,
+): string =>
+  `resg_${digestCanonicalValue(
+    {
+      url: resource.url,
+      origin: resource.origin,
+      type: resource.type,
+      mime_type: resource.mime_type,
+    },
+    "Web resource comparison identity",
+  )}`;
+
 /** Assign deterministic identities to a bounded resource inventory. */
 export const stableWebResources = (
   resources: readonly WebInventoryResourceInput[],
@@ -45,24 +62,6 @@ export const stableWebResources = (
       compareUnicodeCodePoints(left.resource_key, right.resource_key) ||
       compareUnicodeCodePoints(left.url, right.url),
   );
-};
-
-/** Reconcile one script with resource-tree observations without fuzzy matching. */
-export const reconcileWebScript = (
-  script: WebInventoryScriptInput,
-  resources: readonly StableWebResource[],
-): WebResourceReconciliation => {
-  const candidates = resources.filter(
-    (resource) => resource.url === script.url,
-  );
-  if (candidates.length === 1)
-    return { status: "exact", resource_key: candidates[0]?.resource_key ?? "" };
-  if (candidates.length > 1)
-    return {
-      status: "ambiguous",
-      candidate_resource_keys: uniqueResourceKeys(candidates),
-    };
-  return { status: "unmatched", reason: "no_exact_sanitized_url" };
 };
 
 /** Index one capture's observations without merging duplicate raw URLs. */
@@ -123,8 +122,3 @@ export const stableWebScriptKey = (script: WebInventoryScriptInput): string =>
     },
     "Web inventory",
   )}`;
-
-const uniqueResourceKeys = (
-  resources: readonly StableWebResource[],
-): string[] =>
-  [...new Set(resources.map(({ resource_key }) => resource_key))].sort();

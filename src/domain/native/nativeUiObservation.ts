@@ -11,12 +11,11 @@ import { decodeCanonicalBase64 } from "../webScreenshot.js";
 import { readPngHeaderDimensions } from "../pngHeader.js";
 
 const scope = {
-  pid: z.number().int().positive(),
-  window_id: z.number().int().positive(),
+  pid: z.int().positive(),
+  window_id: z.int().positive(),
   screenshot: z.boolean().default(true),
   accessibility: z.boolean().default(true),
   max_nodes: z
-    .number()
     .int()
     .positive()
     .safe()
@@ -36,22 +35,21 @@ export const nativeUiScenarioInputSchema = z.strictObject({
       z.discriminatedUnion("kind", [
         z.strictObject({
           kind: z.literal("click"),
-          path: z.array(z.number().int().nonnegative()).max(32),
+          path: z.array(z.int().nonnegative()).max(32),
         }),
         z.strictObject({
           kind: z.literal("scroll"),
-          path: z.array(z.number().int().nonnegative()).max(32),
+          path: z.array(z.int().nonnegative()).max(32),
           direction: z.enum(["increment", "decrement"]),
         }),
         z.strictObject({
           kind: z.literal("key-entry"),
-          path: z.array(z.number().int().nonnegative()).max(32),
+          path: z.array(z.int().nonnegative()).max(32),
           text: z.string(),
         }),
         z.strictObject({
           kind: z.literal("wait"),
           milliseconds: z
-            .number()
             .int()
             .min(0)
             .max(NATIVE_UI_WAIT_STEP_MAX_MS)
@@ -78,12 +76,10 @@ const nativeUiScreenshotSchema = z
       .regex(/^[a-f0-9]{64}$/u)
       .describe("SHA-256 digest of the decoded PNG bytes."),
     width: z
-      .number()
       .int()
       .positive()
       .describe("Must equal the width encoded in the PNG IHDR chunk."),
     height: z
-      .number()
       .int()
       .positive()
       .describe("Must equal the height encoded in the PNG IHDR chunk."),
@@ -122,20 +118,20 @@ const nativeUiScreenshotSchema = z
 
 export const nativeUiSnapshotSchema = z.strictObject({
   window: z.strictObject({
-    pid: z.number().int().positive(),
-    window_id: z.number().int().positive(),
+    pid: z.int().positive(),
+    window_id: z.int().positive(),
     executable: z.string(),
     launch_time: z.number(),
     title: z.string(),
   }),
   nodes: z.array(
     z.strictObject({
-      path: z.array(z.number().int().nonnegative()),
+      path: z.array(z.int().nonnegative()),
       role: z.string().nullable(),
       title: z.string().nullable(),
-      value: z.string().nullable(),
+      value: z.union([z.string(), z.number(), z.boolean()]).nullable(),
       actions: z.array(z.string()),
-      children_count: z.number().int().nonnegative().nullable(),
+      children_count: z.int().nonnegative().nullable(),
     }),
   ),
   truncated: z.boolean(),
@@ -147,7 +143,7 @@ export const nativeUiResultSchema = z.strictObject({
   initial: nativeUiSnapshotSchema,
   steps: z.array(
     z.strictObject({
-      index: z.number().int().nonnegative(),
+      index: z.int().nonnegative(),
       kind: z.string(),
       before: nativeUiSnapshotSchema,
       after: nativeUiSnapshotSchema.nullable(),

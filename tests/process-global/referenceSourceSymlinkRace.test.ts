@@ -16,8 +16,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     opendir: async (...args: Parameters<typeof filesystem.opendir>) => {
       const directory = await filesystem.opendir(...args);
       if (String(args[0]) === race.directory) {
-        const close = directory.close.bind(directory);
-        vi.spyOn(directory, "close").mockImplementation(async () => {
+        const closing: { close(): Promise<void> } = directory;
+        const close = closing.close.bind(directory);
+        vi.spyOn(closing, "close").mockImplementation(async () => {
           await close();
           const hook = race.afterDirectoryClose;
           race.afterDirectoryClose = undefined;
@@ -156,7 +157,7 @@ it.skipIf(process.platform === "win32").each(["reader", "import"] as const)(
 );
 
 it.skipIf(process.platform === "win32").each(["contents", "root"] as const)(
-  "retains a changed %s as a graph limitation after its directory handle closes",
+  "retains observed entries when %s changes after its directory handle closes",
   async (changed) => {
     const parent = await createTestTempDirectory("rea-reference-root-race-");
     const root = join(parent, "observed");
@@ -192,14 +193,28 @@ it.skipIf(process.platform === "win32").each(["contents", "root"] as const)(
       "already observed source",
     );
     await expect(readFile(source)).rejects.toMatchObject({ code: "ENOENT" });
+    if (changed === "root") {
+      expect(imported).toMatchObject({
+        ok: false,
+        error: {
+          code: "io",
+          message: expect.stringContaining(
+            "Directory identity could not be verified: ENOENT",
+          ),
+          partial: {
+            entries: [{ status: "read", kind: "file", path: "source.txt" }],
+            bytesRead: Buffer.byteLength("already observed source"),
+          },
+        },
+      });
+      return;
+    }
     expect(imported.ok, JSON.stringify(imported)).toBe(true);
     if (!imported.ok) return;
     expect(imported.value.inventory_state).toBe("partial");
     expect(imported.value.limitations).toContainEqual(
       expect.stringContaining(
-        changed === "contents"
-          ? "Reference root enumeration is incomplete: Reference root changed"
-          : "Reference root enumeration is incomplete: Directory identity could not be verified: ENOENT",
+        "Reference root enumeration is incomplete: Reference root changed",
       ),
     );
     expect(imported.value.entries).toEqual([

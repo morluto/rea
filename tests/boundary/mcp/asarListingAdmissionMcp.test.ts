@@ -39,7 +39,7 @@ it("reports expanded ASAR admission failure through MCP and permits a valid retr
       },
     });
     expect(result.structuredContent).toBeUndefined();
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     const valid = join(root, "valid.asar");
     await writeFile(valid, nestedAsarHeader(1, "lib", 1));
     expect(

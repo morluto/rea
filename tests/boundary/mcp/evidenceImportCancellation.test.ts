@@ -1,15 +1,83 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { ServerContext, ToolCallback } from "@modelcontextprotocol/server";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import * as evidenceBundleFiles from "../../../src/application/EvidenceBundleFiles.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it("preserves the exact reason when import is cancelled after reading the bundle", async () => {
+  const root = await createTestTempDirectory(
+    "rea-mcp-import-post-read-cancel-",
+  );
+  const path = join(root, "bundle.json");
+  const session = createTestBinarySession(() => {
+    throw new Error("Evidence import must not start a binary provider");
+  });
+  const evidence = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "imported_observation",
+      parameters: {},
+      result: { retained: true },
+    },
+  );
+  await writeFile(path, JSON.stringify(createEvidenceBundle([evidence])));
+  const registration = vi.spyOn(EvidenceMcpServer.prototype, "registerTool");
+  const server = createServer({ kind: "session", session });
+  onTestFinished(async () => {
+    vi.restoreAllMocks();
+    await server.close();
+    await session.close();
+  });
+  const contract = toolContract("import_evidence_bundle");
+  const registered = registration.mock.calls.find(
+    ([name]) => name === contract.name,
+  );
+  if (registered === undefined)
+    throw new Error("Missing bundle import handler");
+  const handler = registered[2] as unknown as ToolCallback<
+    typeof contract.inputSchema
+  >;
+  const reason = { request: "cancel after authenticated bundle read" };
+  const controller = new AbortController();
+  const before = session.exportEvidenceBundle();
+  const read = evidenceBundleFiles.readImmutableEvidenceBundle;
+  const authenticatedRead = vi
+    .spyOn(evidenceBundleFiles, "readImmutableEvidenceBundle")
+    .mockImplementationOnce(async (...args) => {
+      const loaded = await read(...args);
+      controller.abort(reason);
+      return loaded;
+    });
+  const imported = vi.spyOn(session, "importEvidenceBundle");
+  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+
+  const response = await handler(contract.inputSchema.parse({ path }), {
+    mcpReq: { signal: controller.signal },
+  } as ServerContext);
+  const delivered = delivery.mock.calls.find(
+    ([, deliveredContract]) => deliveredContract.name === contract.name,
+  )?.[0];
+  if (delivered === undefined || delivered.ok)
+    throw new Error("Expected import cancellation at delivery");
+  expect(response.isError).toBe(true);
+  expect(delivered.error._tag).toBe("AnalysisCancelledError");
+  expect(delivered.error.cause).toBe(reason);
+  expect(authenticatedRead).toHaveBeenCalledOnce();
+  expect(imported).not.toHaveBeenCalled();
+  expect(session.exportEvidenceBundle()).toEqual(before);
+});
 
 it("keeps the complete session unchanged after SDK import cancellation and permits a retry", async () => {
   const root = await createTestTempDirectory("rea-mcp-import-cancel-");

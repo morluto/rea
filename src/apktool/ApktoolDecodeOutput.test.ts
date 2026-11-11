@@ -107,6 +107,133 @@ describe("parseApktoolYml", () => {
       targetSdkVersion: null,
     });
   });
+
+  // Source-derived fixtures from Apktool 3.0.3 VersionInfo.write and
+  // YamlStringEscapeUtils at 18b5e99cb56ff9451e8aa55b065dcf5bbd616975.
+  it.each([
+    ["1.0 #beta", "1.0 #beta"],
+    [String.raw`1.0\\beta`, String.raw`1.0\beta`],
+    [String.raw`1.0 \uD83D\uDE80`, "1.0 🚀"],
+    [String.raw`literal \\uD83D\\uDE80`, String.raw`literal \uD83D\uDE80`],
+    [String.raw`release \"quoted\"`, 'release "quoted"'],
+    ["'release'", "'release'"],
+    ["1.0: beta", "1.0: beta"],
+    ["[beta]", "[beta]"],
+    ["  release  ", "  release  "],
+    ["release\u2028beta", "release\u2028beta"],
+    ["null", "null"],
+    ["", ""],
+    ['"1.0 #beta"', "1.0 #beta"],
+  ])(
+    "reads Apktool 3 version string %j without YAML scalar loss",
+    (source, expected) => {
+      expect(
+        parseApktoolYml(
+          `version: 3.0.3\nversionInfo:\n  versionCode: 7\n  versionName: ${source}\nsdkInfo:\n  minSdkVersion: 24\n  targetSdkVersion: 35\n`,
+        ),
+      ).toEqual({
+        versionName: expected,
+        versionCode: "7",
+        minSdkVersion: "24",
+        targetSdkVersion: "35",
+      });
+    },
+  );
+
+  it("keeps Apktool 2 quoted and plain YAML semantics", () => {
+    expect(
+      parseApktoolYml(
+        String.raw`version: 2.7.0
+versionInfo:
+  versionName: 'literal \n #beta'
+  versionCode: 0045
+sdkInfo:
+  minSdkVersion: null
+  targetSdkVersion: 35 # comment
+`,
+      ),
+    ).toEqual({
+      versionName: String.raw`literal \n #beta`,
+      versionCode: "0045",
+      minSdkVersion: null,
+      targetSdkVersion: "35",
+    });
+  });
+
+  it("keeps Apktool 3 field ownership across nested decoys and CRLF", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "version: 3.0.3",
+          "versionName: root decoy",
+          "versionInfo:",
+          "  custom:",
+          "    versionName: nested decoy",
+          "  versionName: 1.0 #beta",
+          "other:",
+          "  versionName: unrelated decoy",
+          "",
+        ].join("\r\n"),
+      ),
+    ).toMatchObject({ versionName: "1.0 #beta" });
+  });
+
+  it.each([
+    "versionInfo:\n  versionName: one\n  versionName: two\n",
+    "versionInfo:\n  versionName: one\nversionInfo:\n  versionName: two\n",
+    "version: 2.7.0\nversionInfo:\n  versionName: ambiguous\n",
+    String.raw`versionInfo:
+  versionName: invalid\uZZZZ
+`,
+  ])("rejects ambiguous or malformed Apktool 3 fields", (fields) => {
+    expect(() => parseApktoolYml(`version: 3.0.3\n${fields}`)).toThrow();
+  });
+});
+
+describe("parseApktoolYml Apktool 2.9+ metadata dialect", () => {
+  // Source-derived from ApkInfo.write, VersionInfo.write and YamlWriter at
+  // Apktool v2.9.0 and v2.12.1, whose string escaping matches 3.0.3.
+  const yml = (version: string, versionName: string) =>
+    [
+      `version: ${version}`,
+      "apkFileName: app-release.apk",
+      "isFrameworkApk: false",
+      "usesFramework:",
+      "  ids:",
+      "  - 1",
+      "  tag: null",
+      "sdkInfo:",
+      "  minSdkVersion: 24",
+      "  targetSdkVersion: 34",
+      "packageInfo:",
+      "  forcedPackageId: 127",
+      "  renameManifestPackage: null",
+      "versionInfo:",
+      "  versionCode: 7",
+      `  versionName: ${versionName}`,
+      "sharedLibrary: false",
+      "sparseResources: false",
+      "doNotCompress:",
+      "- arsc",
+      "",
+    ].join("\n");
+
+  it.each([
+    ["2.9.0", "1.0 #beta", "1.0 #beta"],
+    ["2.9.3", String.raw`release \"quoted\"`, 'release "quoted"'],
+    ["2.12.1", "1.0: beta", "1.0: beta"],
+    ["2.12.1", "", ""],
+  ])(
+    "reads Apktool %s version string %j as its writer escaped it",
+    (version, source, expected) => {
+      expect(parseApktoolYml(yml(version, source))).toEqual({
+        versionName: expected,
+        versionCode: "7",
+        minSdkVersion: "24",
+        targetSdkVersion: "34",
+      });
+    },
+  );
 });
 
 describe("parseManifestPackage", () => {

@@ -2,21 +2,19 @@ import { promptArgumentsSchema } from "./promptArguments.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
 import type { RegisteredPrompt } from "@modelcontextprotocol/server";
-import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
-  PROMPT_CONTRACTS,
+  guidedPromptArgumentValues,
   renderGuidedPrompt,
   type PromptContract,
 } from "../contracts/promptContracts.js";
+import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import {
   createPromptCompletionSource,
   type PromptCompletionSource,
 } from "./promptCompletion.js";
-
-const promptValuesSchema = z.record(z.string(), z.string());
 
 /** Live prompt registry whose updates emit MCP prompts/list_changed. */
 export interface GuidedPromptRegistry {
@@ -40,19 +38,23 @@ export const registerGuidedPrompts = (
     },
   });
   const prompts = new Map<string, RegisteredPrompt>();
-  for (const contract of PROMPT_CONTRACTS)
+  // The shared projection keeps required tools and removes disabled routes.
+  for (const contract of promptsForToolFamilies(server.advertisedToolFamilies))
     prompts.set(contract.name, registerPrompt(server, contract, completion));
   return {
     update(contract) {
       const prompt = prompts.get(contract.name);
-      if (prompt === undefined)
+      const scoped = promptsForToolFamilies(server.advertisedToolFamilies, [
+        contract,
+      ])[0];
+      if (prompt === undefined || scoped === undefined)
         throw new RangeError(`Unknown guided prompt ${contract.name}`);
-      const argsSchema = promptArgumentsSchema(contract, completion);
+      const argsSchema = promptArgumentsSchema(scoped, completion);
       prompt.update({
-        title: contract.title,
-        description: contract.description,
+        title: scoped.title,
+        description: scoped.description,
         argsSchema,
-        callback: (arguments_) => promptResult(contract, arguments_),
+        callback: (arguments_) => promptResult(scoped, arguments_),
       });
     },
   };
@@ -76,13 +78,7 @@ const registerPrompt = (
 };
 
 const promptResult = (contract: PromptContract, arguments_: unknown) => {
-  const values = promptValuesSchema.parse(arguments_);
-  for (const [name, argument] of Object.entries(contract.arguments))
-    if (
-      argument.required &&
-      (values[name] === undefined || values[name]?.trim().length === 0)
-    )
-      throw new TypeError(`Invalid arguments: ${name} must not be empty`);
+  const values = guidedPromptArgumentValues(contract, arguments_);
   return {
     description: contract.description,
     messages: [

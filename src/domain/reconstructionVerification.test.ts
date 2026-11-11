@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "./evidence.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import { reconstructionVerificationResultSchema } from "./reconstructionVerificationSchemas.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import {
+  reconstructionVerificationResultSchema,
+  reconstructionSpecificationSchema,
+} from "./reconstructionVerificationSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./process/processCaptureExample.js";
-import { reconstructionSpecificationSchema } from "./reconstructionVerificationSchemas.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { createResidualUnknown } from "./residualUnknown.js";
 
@@ -329,8 +333,35 @@ describe("reconstruction process capture input", () => {
         behavioralSpec(comparison),
         createEvidenceBundle([comparison, left, right]),
       ),
-    ).toThrow();
+    ).toThrow(EvidenceIntegrityError);
   });
+});
+
+it("reports a missing comparison reference as caller input with its claim path", () => {
+  const left = source("1", "controlled-replay");
+  const right = source("2", "controlled-replay");
+  const comparison = processComparison(left, right, processResult());
+  try {
+    verifyReconstruction(
+      behavioralSpec(comparison),
+      createEvidenceBundle([left, right]),
+    );
+    throw new Error("Expected a missing comparison reference to be rejected");
+  } catch (error: unknown) {
+    expect(error).toBeInstanceOf(AnalysisInputError);
+    if (!(error instanceof AnalysisInputError)) throw error;
+    expect(error).toMatchObject({
+      issues: [
+        {
+          path: ["claims", 0, "comparison_evidence_id"],
+          reason: "invalid_value",
+        },
+      ],
+    });
+    expect(error.userMessage).toContain(comparison.evidence_id);
+    expect(error.userMessage).toMatch(/missing.*comparison/iu);
+    expect(error.issues[0]?.message).toBe(error.userMessage);
+  }
 });
 
 describe("reconstruction verification outcomes", () => {
@@ -560,4 +591,132 @@ describe("reconstruction verification integrity", () => {
     expect(result.status).toBe("unknown");
     expect(result.claims.items[0]?.unknown_ids).toHaveLength(101);
   });
+});
+
+it("keeps a valid comparison selected for the wrong claim kind as caller input", () => {
+  const left = ARTIFACT_COMPARISON_EXAMPLE.left;
+  const right = ARTIFACT_COMPARISON_EXAMPLE.right;
+  const comparison = artifactComparison(left, right, false);
+  try {
+    verifyReconstruction(
+      behavioralSpec(comparison),
+      createEvidenceBundle([left, right, comparison]),
+    );
+    throw new Error("Expected a claim-selection error");
+  } catch (cause: unknown) {
+    expect(cause).toBeInstanceOf(AnalysisInputError);
+    expect(cause).toMatchObject({
+      operation: "verify_reconstruction",
+      issues: [
+        expect.objectContaining({
+          path: ["claims", 0, "comparison_evidence_id"],
+        }),
+      ],
+    });
+  }
+});
+
+describe("retained reconstruction source coverage", () => {
+  const omittedTerminalCapture = {
+    ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    truncated: true,
+    truncation_details: {
+      ...EMPTY_PROCESS_CAPTURE_EXAMPLE.truncation_details,
+      raw_terminal: {
+        ...EMPTY_PROCESS_CAPTURE_EXAMPLE.truncation_details.raw_terminal,
+        observed_frames: 1,
+        observed_bytes: 1,
+      },
+    },
+  };
+
+  it("keeps old unchanged terminal and overall claims unknown while retaining unrelated claims", () => {
+    const left = source("1", "controlled-replay");
+    const right = source("2", "controlled-replay", "observed", {
+      captureResult: omittedTerminalCapture,
+    });
+    const comparison = processComparison(left, right, processResult());
+    const bundle = createEvidenceBundle([left, right, comparison]);
+    const before = JSON.stringify(bundle);
+    const result = verifyReconstruction(
+      {
+        name: "Retained capture coverage",
+        claims: ["terminal", "overall", "exit", "interaction"].map(
+          (dimension) => ({
+            kind: "behavioral",
+            claim_id: dimension,
+            title: dimension,
+            dimension,
+            comparison_evidence_id: comparison.evidence_id,
+          }),
+        ),
+      },
+      bundle,
+    );
+    expect(
+      result.claims.items.map(({ claim_id, status }) => [claim_id, status]),
+    ).toEqual([
+      ["exit", "pass"],
+      ["interaction", "pass"],
+      ["overall", "unknown"],
+      ["terminal", "unknown"],
+    ]);
+    expect(
+      result.claims.items.find(({ claim_id }) => claim_id === "terminal")
+        ?.limitations,
+    ).toContain(
+      `Source ${right.evidence_id}: terminal observation coverage is incomplete.`,
+    );
+    expect(JSON.stringify(bundle)).toBe(before);
+  });
+
+  it("retains a decisive changed claim despite omitted terminal observations", () => {
+    const left = source("1", "controlled-replay");
+    const right = source("2", "controlled-replay", "observed", {
+      captureResult: omittedTerminalCapture,
+    });
+    const comparison = processComparison(left, right, processResult("changed"));
+    const claims = ["terminal", "overall"].map((dimension) => ({
+      kind: "behavioral",
+      claim_id: dimension,
+      title: dimension,
+      dimension,
+      comparison_evidence_id: comparison.evidence_id,
+    }));
+    expect(
+      verifyReconstruction(
+        { name: "Observed disagreement", claims },
+        createEvidenceBundle([left, right, comparison]),
+      ),
+    ).toMatchObject({
+      status: "fail",
+      summary: { failed: 2, unknown: 0 },
+    });
+  });
+
+  it.each(["status", "kind"] as const)(
+    "rejects a summary inconsistent with actual claim %s",
+    (field) => {
+      const left = source("1", "controlled-replay");
+      const right = source("2", "controlled-replay");
+      const comparison = processComparison(left, right, processResult());
+      const result = verifyReconstruction(
+        behavioralSpec(comparison),
+        createEvidenceBundle([left, right, comparison]),
+      );
+      const inconsistent = {
+        ...result,
+        claims: {
+          items: result.claims.items.map((claim) =>
+            field === "status"
+              ? { ...claim, status: "fail", observed_status: "changed" }
+              : { ...claim, kind: "structural-function" },
+          ),
+        },
+      };
+      expect(
+        reconstructionVerificationResultSchema.safeParse(inconsistent).success,
+      ).toBe(false);
+    },
+  );
 });

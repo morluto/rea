@@ -1,92 +1,55 @@
-import { z } from "zod";
-
-import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  DuplicateEvidenceRecordError,
-  NonCanonicalEvidenceBundleError,
-} from "../domain/evidenceBundle.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
-import {
-  reconstructionObligationLedgerInputSchema,
-  reconstructionObligationLedgerSchema,
-  type ReconstructionObligationLedgerInput,
-  type ReconstructionObligationLedger,
-} from "../domain/reconstructionObligationLedgerSchemas.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { requestInputError, workflowInputError } from "./workflowInputError.js";
-import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
-import {
-  deriveReconstructionObligationCandidates,
-  MissingReviewEvidenceError,
-} from "./ReconstructionObligationCandidates.js";
+import type { ReconstructionObligationLedger } from "../domain/reconstructionObligationLedgerSchemas.js";
+import { ok, type Result } from "../domain/result.js";
+import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
+import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
 import { evaluateReconstructionObligationLedger } from "./ReconstructionObligationLedgerEvaluation.js";
+import {
+  resolveReconstructionObligationLedgerRequest,
+  type ResolvedReconstructionObligationRequest,
+} from "./ReconstructionObligationLedgerRequest.js";
 
-const OPERATION = "build_reconstruction_obligation_ledger" as const;
+const OPERATION = "build_reconstruction_obligation_ledger";
 
-/** Parse one portable ledger request for both CLI and MCP adapters. */
-export const resolveReconstructionObligationLedgerRequest = (
+/** Build portable ledger Evidence from a caller-selected request. */
+export const buildReconstructionObligationLedgerEvidence = (
   input: unknown,
-): Result<ReconstructionObligationLedgerInput, AnalysisError> => {
-  const parsed = reconstructionObligationLedgerInputSchema.safeParse(input);
-  return parsed.success
-    ? ok(parsed.data)
-    : err(requestInputError(OPERATION, parsed.error, input));
+): Result<Evidence, AnalysisError> => {
+  const request = resolveReconstructionObligationLedgerRequest(input);
+  if (!request.ok) return request;
+  return ok(buildResolvedReconstructionObligationLedgerEvidence(request.value));
 };
 
-/** Build the complete deterministic ledger and wrap it in portable Evidence. */
-export const buildReconstructionObligationLedgerEvidenceValidated = (
-  input: ReconstructionObligationLedgerInput,
-): Result<Evidence, AnalysisError> => {
-  try {
-    const generated = deriveReconstructionObligationCandidates(
-      input.evidence_bundle,
-      input.reviewed_obligations,
-    );
-    const ledger = evaluateReconstructionObligationLedger({
-      candidates: generated.candidates,
-      bundle: input.evidence_bundle,
-      manifest: input.manifest,
-      generationLimitations: generated.limitations,
-    });
-    return ok(createLedgerEvidence(input, ledger));
-  } catch (cause: unknown) {
-    if (
-      cause instanceof NonCanonicalEvidenceBundleError ||
-      cause instanceof DuplicateEvidenceRecordError ||
-      cause instanceof MissingReviewEvidenceError
-    )
-      return err(workflowInputError(OPERATION, cause));
-    if (cause instanceof z.ZodError)
-      return err(workflowInputError(OPERATION, cause));
-    return err(
-      new AnalysisProtocolError(
-        "Reconstruction obligation ledger generation failed",
-        { cause },
-      ),
-    );
-  }
+/** Generate and evaluate against the same authenticated bundle and record index. */
+export const buildResolvedReconstructionObligationLedgerEvidence = (
+  request: ResolvedReconstructionObligationRequest,
+): Evidence => {
+  const generated = deriveReconstructionObligationCandidates(request);
+  const ledger = evaluateReconstructionObligationLedger({
+    candidates: generated.candidates,
+    sources: request.sources,
+    manifest: request.manifest,
+    generationLimitations: generated.limitations,
+  });
+  return createLedgerEvidence(ledger);
 };
 
 const createLedgerEvidence = (
-  input: ReconstructionObligationLedgerInput,
   ledger: ReconstructionObligationLedger,
-): Evidence => {
-  const completeLedger = reconstructionObligationLedgerSchema.parse(ledger);
-  return createEvidence(undefined, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
+): Evidence =>
+  createEvidence(undefined, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
     predicateType: "rea.reconstruction-obligation-ledger",
     operation: OPERATION,
-    parameters: jsonObjectSchema.parse({
-      ledger_id: completeLedger.ledger_id,
-      closure_digest: completeLedger.closure_digest,
-    }),
-    result: jsonValueSchema.parse(completeLedger),
+    parameters: {
+      ledger_id: ledger.ledger_id,
+      closure_digest: ledger.closure_digest,
+    },
+    result: ledger,
     rawResult: null,
     confidence: "inferred",
     authority: "analyst-inference",
     environment: null,
-    limitations: completeLedger.limitations,
-    evidenceLinks: completeLedger.evidence_links,
+    limitations: ledger.limitations,
+    evidenceLinks: ledger.evidence_links,
   });
-};

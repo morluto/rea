@@ -1,12 +1,17 @@
-import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import {
-  buildReconstructionObligationLedgerEvidenceValidated,
-  resolveReconstructionObligationLedgerRequest,
-} from "./ReconstructionObligationLedgerService.js";
+  reconstructionObligationProofSchema,
+  type ReconstructionObligationProof,
+} from "../domain/reconstructionObligationProof.js";
+import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
+import { buildReconstructionObligationLedgerEvidence } from "./ReconstructionObligationLedgerService.js";
+import { resolveReconstructionObligationLedgerRequest } from "./ReconstructionObligationLedgerRequest.js";
+import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCaptureExample.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  createEvidenceBundle,
+  type EvidenceBundle,
+} from "../domain/evidenceBundle.js";
 import {
   reconstructionObligationLedgerSchema,
   type ReconstructionObligationLedgerInput,
@@ -41,12 +46,10 @@ export const processEvidence = (
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: {},
-    result: jsonValueSchema.parse(
-      processCaptureSchema.parse({
-        ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-        ...overrides,
-      }),
-    ),
+    result: processCaptureSchema.parse({
+      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      ...overrides,
+    }),
     confidence: "observed",
     authority: "controlled-replay",
   });
@@ -54,13 +57,7 @@ export const processEvidence = (
 /** Build verifier Evidence bound to enumerated fixture and obligation identities. */
 export const boundProofEvidence = (
   id: string,
-  result: {
-    readonly obligation_ids: readonly string[];
-    readonly fixture_ids: readonly string[];
-    readonly case_kinds: readonly string[];
-    readonly verifier_ids: readonly string[];
-    readonly claim_ids: readonly string[];
-  },
+  result: ReconstructionObligationProof,
   authority: "shipped-artifact" | "controlled-replay" = "controlled-replay",
 ) =>
   createEvidence(
@@ -70,14 +67,7 @@ export const boundProofEvidence = (
       predicateType: "rea.reconstruction-proof",
       operation: "verify_reconstruction_obligations",
       parameters: {},
-      result: {
-        passed: true,
-        obligation_ids: [...result.obligation_ids],
-        fixture_ids: [...result.fixture_ids],
-        case_kinds: [...result.case_kinds],
-        verifier_ids: [...result.verifier_ids],
-        claim_ids: [...result.claim_ids],
-      },
+      result: reconstructionObligationProofSchema.parse(result),
       confidence: "observed",
       authority,
     },
@@ -98,11 +88,7 @@ export const request = (
 export const build = (
   input: ReconstructionObligationLedgerInput,
 ): ReconstructionObligationLedger => {
-  const parsed = resolveReconstructionObligationLedgerRequest(input);
-  if (!parsed.ok) throw parsed.error;
-  const result = buildReconstructionObligationLedgerEvidenceValidated(
-    parsed.value,
-  );
+  const result = buildReconstructionObligationLedgerEvidence(input);
   if (!result.ok) throw result.error;
   return reconstructionObligationLedgerSchema.parse(
     result.value.normalized_result,
@@ -132,11 +118,25 @@ export const readyProcessLedgerRequest =
       (caseKind) => `packaged.${caseKind}`,
     );
     const proof = boundProofEvidence("packaged", {
-      obligation_ids: [obligation.obligation_id],
-      fixture_ids: fixtureIds,
-      case_kinds: obligation.required_case_kinds,
-      verifier_ids: ["verifier.packaged"],
-      claim_ids: ["claim.process"],
+      bindings: [
+        {
+          obligation_id: obligation.obligation_id,
+          obligation_version: obligation.obligation_version,
+          owner_sha256: "2".repeat(64),
+          fixtures: obligation.required_case_kinds.map((caseKind, index) => ({
+            fixture_id: fixtureIds[index]!,
+            case_kind: caseKind,
+            passed: true,
+          })),
+          verifiers: [
+            {
+              verifier_id: "verifier.packaged",
+              claim_id: "claim.process",
+              passed: true,
+            },
+          ],
+        },
+      ],
     });
     return request([capture, proof], {
       manifest: {
@@ -266,3 +266,101 @@ export const MIXED_AUTHORITY_SUMMARY = {
     { key: "unknown", count: 0 },
   ],
 } as const;
+
+/** Resolve fixture sources through the production request owner. */
+export const resolveRequest = (input: ReconstructionObligationLedgerInput) => {
+  const resolved = resolveReconstructionObligationLedgerRequest(input);
+  if (!resolved.ok) throw resolved.error;
+  return resolved.value;
+};
+
+/** Derive candidates from fixture requests after authenticating their sources. */
+export const deriveCandidates = (
+  bundle: EvidenceBundle,
+  reviewed: readonly ReviewedReconstructionObligation[],
+) =>
+  deriveReconstructionObligationCandidates(
+    resolveRequest({
+      evidence_bundle: bundle,
+      reviewed_obligations: [...reviewed],
+      manifest: { bindings: [], contradictions: [] },
+    }),
+  );
+
+/** Exact reviewed proof control shared by public CLI/MCP applicability tests. */
+export const readyReviewedLedgerRequest =
+  (): ReconstructionObligationLedgerInput => {
+    const original = authorityEvidence("reviewed-original", "shipped-artifact");
+    const obligation = reviewedObligation(
+      "review.identity",
+      original.evidence_id,
+    );
+    const proof = boundProofEvidence("reviewed", {
+      bindings: [
+        {
+          obligation_id: obligation.obligation_id,
+          obligation_version: obligation.obligation_version,
+          owner_sha256: "1".repeat(64),
+          fixtures: [
+            {
+              fixture_id: "fixture.positive",
+              case_kind: "positive",
+              passed: true,
+            },
+          ],
+          verifiers: [
+            {
+              verifier_id: "verifier.reviewed",
+              claim_id: "claim.reviewed",
+              passed: true,
+            },
+          ],
+        },
+      ],
+    });
+    return request([original, proof], {
+      reviewed_obligations: [obligation],
+      manifest: {
+        bindings: [
+          {
+            obligation_id: obligation.obligation_id,
+            owner: {
+              module_path: "src/owner.ts",
+              symbol: "run",
+              owner_sha256: "1".repeat(64),
+            },
+            parser_type: null,
+            original_cases: [
+              {
+                kind: "positive",
+                evidence_id: original.evidence_id,
+                location: "/normalized_result",
+              },
+            ],
+            fixtures: [
+              {
+                fixture_id: "fixture.positive",
+                case_kind: "positive",
+                authority: "unit",
+                evidence_ids: [proof.evidence_id],
+              },
+            ],
+            verifier: {
+              verifier_id: "verifier.reviewed",
+              claim_id: "claim.reviewed",
+              command: "synthetic proof (not executed)",
+              authority: "unit",
+              status: "pass",
+              result_evidence_id: proof.evidence_id,
+              enumerated_obligation_ids: [obligation.obligation_id],
+              nondeterminism: {
+                mode: "total-order",
+                specification: "Single result",
+              },
+            },
+          },
+        ],
+        contradictions: [],
+      },
+    });
+  };

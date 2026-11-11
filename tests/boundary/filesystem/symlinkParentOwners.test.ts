@@ -27,7 +27,7 @@ const layout = async (prefix: string) => {
 };
 
 describe.skipIf(process.platform === "win32")(
-  "file owners given a directory symlink followed by ..",
+  "file owners preserve POSIX path traversal",
   () => {
     it("snapshots the firmware image the filesystem selects", async () => {
       const root = await layout("rea-symlink-parent-firmware-");
@@ -88,5 +88,27 @@ describe.skipIf(process.platform === "win32")(
         await tree.rollback();
       }
     });
+
+    it.each(["file/out", "file/../out"])(
+      "refuses an output parent traversing a regular file: %s",
+      async (relative) => {
+        const root = await layout("rea-nondirectory-parent-output-");
+        await writeFile(join(root, "file"), "original");
+        // Darwin realpath can collapse file/.. even though stat rejects it.
+        const output = `${root}/${relative}`;
+        for (const admit of [
+          () => SafeOutputTree.checkDestination(output),
+          () => SafeOutputTree.create(output),
+        ]) {
+          await expect(admit()).rejects.toMatchObject({
+            name: "SafeOutputTreeDestinationRefusal",
+            reason: "path",
+          });
+          await expect(stat(join(root, "out"))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        }
+      },
+    );
   },
 );

@@ -5,18 +5,26 @@ import {
   createJavaScriptSemanticGraphNode,
   JavaScriptSemanticEvidenceContextRegistry,
 } from "../domain/javascript/javascriptSemanticGraph.js";
-import { proofEvidence } from "./ReconstructionObligationLedger.fixture.js";
+import {
+  deriveCandidates,
+  proofEvidence,
+} from "./ReconstructionObligationLedger.fixture.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { emptyUnverifiedProcessCapture } from "../domain/process/processCapture.fixture.js";
-import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCaptureExample.js";
+import {
+  emptyUnverifiedProcessCapture,
+  FINALIZED_PROCESS_CAPTURE_EXAMPLE,
+} from "../domain/process/processCapture.fixture.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
-import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
+import {
+  parseProcessCapture,
+  safeParseProcessCapture,
+} from "../domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
-  parseProcessScenario,
+  processScenarioSchema,
   processComparisonContract,
   processScenarioCommitment,
 } from "../domain/process/processScenario.js";
@@ -30,10 +38,8 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
 } from "../domain/javascript/javascriptApplicationGraph.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { createProcessCaptureEvidence } from "./process/ProcessEvidence.js";
-import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
 
 const applicationWithUnknowns = (
   keys: readonly string[],
@@ -76,10 +82,32 @@ const applicationWithUnknowns = (
       ],
     }),
   );
+  const root = createJavaScriptApplicationNode({
+    kind: "artifact",
+    identity: {
+      strategy: "content-digest",
+      stability: "global-exact",
+      sha256: APPLICATION_GRAPH_DIGESTS.asar,
+    },
+    observations: [
+      {
+        label: "managed root",
+        properties: {},
+        evidence: artifactEvidence(
+          APPLICATION_GRAPH_DIGESTS.asar,
+          "artifact-root",
+        ),
+      },
+    ],
+  });
   const graph = createJavaScriptApplicationGraph({
     schema: "JavaScriptApplicationGraph",
-    root_node_ids: base.root_node_ids,
-    nodes: [...base.nodes, ...unknownNodes],
+    root_node_ids: [root.node_id],
+    nodes: [
+      ...base.nodes.filter(({ node_id }) => node_id !== root.node_id),
+      ...unknownNodes,
+      root,
+    ],
     edges: base.edges,
     coverage: completeCoverage,
     limitations: base.limitations,
@@ -88,7 +116,7 @@ const applicationWithUnknowns = (
     predicateType: "rea.managed-application-graph",
     operation: "project_managed_application_graph",
     parameters: {},
-    result: jsonValueSchema.parse({
+    result: {
       projection_id: `magp_${"a".repeat(64)}`,
       root_artifact_sha256: APPLICATION_GRAPH_DIGESTS.asar,
       source_evidence: {
@@ -111,7 +139,7 @@ const applicationWithUnknowns = (
       coverage: { status: "complete-within-inputs" },
       evidence_links: [source.evidence_id],
       limitations: [],
-    }),
+    },
     confidence: "inferred",
     authority: "analyst-inference",
     evidenceLinks: [source.evidence_id],
@@ -119,7 +147,7 @@ const applicationWithUnknowns = (
   return {
     graph,
     unknownNodes,
-    generated: deriveReconstructionObligationCandidates(
+    generated: deriveCandidates(
       createEvidenceBundle([source, application]),
       [],
     ),
@@ -167,7 +195,7 @@ describe("reconstruction obligation candidates", () => {
   });
 
   it("does not bind an unknown process image to a packaged artifact obligation", () => {
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: "/path/whose-launch-identity-is-unknown",
     });
     const base = emptyUnverifiedProcessCapture();
@@ -192,14 +220,14 @@ describe("reconstruction obligation candidates", () => {
       },
     });
     const evidence = createProcessCaptureEvidence(scenario, capture);
-    const generated = deriveReconstructionObligationCandidates(
-      createEvidenceBundle([evidence]),
-      [],
-    );
+    const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
     expect(generated.candidates).toEqual([]);
-    expect(generated.limitations).toContain(
-      `Process capture ${evidence.evidence_id} has no validated executable artifact identity; packaged-process lifecycle obligation was not bound to an artifact.`,
+    const warning = generated.limitations.find((value) =>
+      value.includes(evidence.evidence_id),
+    );
+    expect(warning).toMatch(
+      /process capture.*no validated executable artifact identity.*lifecycle obligation.*not bound to an artifact/iu,
     );
   });
 
@@ -213,7 +241,7 @@ describe("reconstruction obligation candidates", () => {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
-      result: jsonValueSchema.parse({
+      result: {
         ...rest,
         manifest,
         exit: {
@@ -225,16 +253,20 @@ describe("reconstruction obligation candidates", () => {
             ],
           },
         },
-      }),
+      },
     });
-    const generated = deriveReconstructionObligationCandidates(
-      createEvidenceBundle([evidence]),
-      [],
-    );
+    const invalid = safeParseProcessCapture(evidence.normalized_result);
+    expect(invalid.success).toBe(false);
+    if (invalid.success) throw new Error("Expected invalid capture fixture");
+    expect(invalid.error.issues).toHaveLength(2);
+    const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
-    expect(generated.limitations).toEqual([
-      `Process Evidence ${evidence.evidence_id} could not generate candidates: at manifest.completed_at: Invalid input: expected string, received undefined (1 more issues)`,
-    ]);
+    expect(generated.limitations).toHaveLength(1);
+    expect(generated.limitations[0]).toContain(evidence.evidence_id);
+    expect(generated.limitations[0]).toMatch(
+      /Process Evidence.*could not generate candidates.*manifest\.completed_at/iu,
+    );
+    expect(generated.limitations[0]).toContain("(1 more issues)");
   });
 });
 
@@ -312,17 +344,32 @@ it("keeps each semantic candidate bound to its own file and authority context", 
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: semanticGraph }),
+      result: { ...base, semantic_graph: semanticGraph },
       confidence: "derived",
       authority: "shipped-artifact",
       evidenceLinks: sourceRecords.map(({ evidence_id }) => evidence_id),
     },
   );
-  const generated = deriveReconstructionObligationCandidates(
+  const generated = deriveCandidates(
     createEvidenceBundle([...sourceRecords, application]),
     [],
   );
-  expect(generated.limitations).toEqual([]);
+  expect(generated.limitations).toHaveLength(2);
+  expect(generated.limitations).toContainEqual(
+    expect.stringMatching(
+      /coverage is unknown.*omitted candidates remain unknown/iu,
+    ),
+  );
+  expect(
+    generated.limitations.every((limitation) =>
+      limitation.includes(semanticGraph.graph_id),
+    ),
+  ).toBe(true);
+  expect(generated.limitations).toContainEqual(
+    expect.stringContaining(
+      "Semantic relations are unavailable in this minimal example.",
+    ),
+  );
   expect(generated.candidates).toHaveLength(requests.length);
   for (const [index, node] of requests.entries()) {
     const source = sourceRecords[Math.floor(index / 2)];
@@ -416,13 +463,13 @@ it("falls back to a kind-based title when a semantic node label is blank", () =>
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: semanticGraph }),
+      result: { ...base, semantic_graph: semanticGraph },
       confidence: "derived",
       authority: "shipped-artifact",
       evidenceLinks: [source.evidence_id],
     },
   );
-  const generated = deriveReconstructionObligationCandidates(
+  const generated = deriveCandidates(
     createEvidenceBundle([source, application]),
     [],
   );

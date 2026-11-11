@@ -3,10 +3,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
-import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
+import { TRACE_FEATURE_REFERENCE_LIMITATION } from "../../../src/application/WorkflowEvidence.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisOutputError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -116,11 +121,6 @@ const expectedTrace = (
       source_address: "0x21",
       containing_procedure: containing("0x21"),
     },
-    ...extraMatches.map(() => ({
-      target_address: "0x10",
-      source_address: "0x20",
-      containing_procedure: containing("0x20"),
-    })),
   ].filter(
     ({ target_address }) => !emptyReferenceTargets.includes(target_address),
   ),
@@ -138,10 +138,314 @@ const trace = async (analysis: AnalysisOperationPort) => {
     arguments: { query: "hello" },
   });
   expect(result.isError).not.toBe(true);
-  return result.structuredContent as { normalized_result: unknown };
+  return result.structuredContent as {
+    normalized_result: unknown;
+    limitations: string[];
+  };
 };
 
+it("reports known reference-discovery gaps without claiming truncation or a missing edge", async () => {
+  const baseline = provider();
+  const gap =
+    "An unwalked candidate may have outgoing references; its presence does not establish a reference to the selected target.";
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs" && input.address === "0x10"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution([], PROVIDER, {
+                referenceCoverageGaps: [
+                  { code: "unwalked", scope: "observation", description: gap },
+                ],
+              }),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [`References to 0x10: ${gap}`],
+    references: [{ target_address: "0x11", source_address: "0x21" }],
+  });
+});
+
+it("deduplicates an image-wide gap without merging target-specific gaps", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: async (operation, input, options) => {
+      const result = await baseline.execute(operation, input, options);
+      if (operation !== "xrefs" || !result.ok) return result;
+      return ok({
+        ...result.value,
+        referenceCoverageGaps: [
+          {
+            code: "missing-relocations",
+            scope: "image",
+            description: "Image relocation coverage unavailable.",
+          },
+          {
+            code: "unwalked",
+            scope: "observation",
+            description: "This observation has unwalked sources.",
+          },
+        ],
+      });
+    },
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [
+      "Image relocation coverage unavailable.",
+      "References to 0x10: This observation has unwalked sources.",
+      "References to 0x11: This observation has unwalked sources.",
+    ],
+  });
+});
+
+it("carries reported pointer classifications without inferring other reference kinds", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs" && input.address === "0x10"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution(["0x20"], PROVIDER, {
+                referenceClassifications: [
+                  {
+                    sourceAddress: "0x20",
+                    targetAddress: "0x10",
+                    kind: "stored_pointer",
+                    provenance: "chained-fixups",
+                    width: 8,
+                  },
+                  {
+                    sourceAddress: "0x20",
+                    targetAddress: "0x99",
+                    kind: "stored_pointer",
+                    provenance: "other",
+                    width: 4,
+                  },
+                ],
+              }),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    references: [
+      {
+        source_address: "0x20",
+        source_classifications: [
+          { kind: "stored_pointer", provenance: "chained-fixups", width: 8 },
+        ],
+      },
+      { source_address: "0x21" },
+    ],
+  });
+});
+
+it("preserves references and explicitly unknown owners without claiming truncation", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "resolve_containing_procedure" && input.address === "0x20"
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                operation,
+                "not supported",
+              ),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [expect.stringContaining("0x20")],
+    references: [
+      {
+        target_address: "0x10",
+        source_address: "0x20",
+        containing_procedure: {
+          query_address: "0x20",
+          status: "unavailable",
+          provider_id: "fixture",
+          reason: "not supported",
+        },
+      },
+      {
+        target_address: "0x11",
+        source_address: "0x21",
+        containing_procedure: containing("0x21"),
+      },
+    ],
+  });
+  expect(output.normalized_result).toMatchObject({
+    residual_unknowns: [expect.stringContaining("not supported")],
+  });
+});
+
+it("keeps distinct targets when a capped reference source has an unavailable owner", async () => {
+  const calls: string[] = [];
+  const baseline = provider({ duplicateProcedure: true, calls });
+  const output = await trace({
+    execute: (operation, input, options) => {
+      if (operation === "xrefs") {
+        calls.push(`xrefs:${String(input.address)}`);
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution(["0x20"], PROVIDER, {
+              referencesTruncated: input.address === "0x10",
+            }),
+          ),
+        );
+      }
+      if (operation === "resolve_containing_procedure") {
+        calls.push(`resolve_containing_procedure:${String(input.address)}`);
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "not supported",
+            ),
+          ),
+        );
+      }
+      return baseline.execute(operation, input, options);
+    },
+  });
+
+  expect(calls.filter((call) => call.startsWith("xrefs:"))).toEqual([
+    "xrefs:0x10",
+    "xrefs:0x11",
+  ]);
+  expect(
+    calls.filter((call) => call.startsWith("resolve_containing_procedure:")),
+  ).toEqual(["resolve_containing_procedure:0x20"]);
+  expect(output.normalized_result).toMatchObject({
+    truncated: true,
+    residual_unknowns: [
+      expect.stringContaining("0x10"),
+      expect.stringContaining("0x20"),
+    ],
+    references: [
+      {
+        target_address: "0x10",
+        source_address: "0x20",
+        containing_procedure: {
+          status: "unavailable",
+          reason: "not supported",
+        },
+      },
+      {
+        target_address: "0x11",
+        source_address: "0x20",
+        containing_procedure: {
+          status: "unavailable",
+          reason: "not supported",
+        },
+      },
+    ],
+  });
+});
+
+it("does not swallow an unavailable owner with incomplete cleanup", async () => {
+  const baseline = provider();
+  const result = await new EnhancedTools({
+    execute: (operation, input, options) =>
+      operation === "resolve_containing_procedure"
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                operation,
+                "cleanup failed",
+                {
+                  cleanup: {
+                    reason: "cleanup failed",
+                    resources: ["owned worker"],
+                  },
+                },
+              ),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  }).execute("trace_feature", { query: "hello" });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+});
+
+it("preserves cancellation that arrives during an unavailable owner lookup", async () => {
+  const baseline = provider();
+  const controller = new AbortController();
+  const reason = { request: "cancel during owner lookup" };
+  const result = await new EnhancedTools({
+    execute: (operation, input, options) => {
+      if (operation !== "resolve_containing_procedure")
+        return baseline.execute(operation, input, options);
+      controller.abort(reason);
+      return Promise.resolve(
+        err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "not supported",
+          ),
+        ),
+      );
+    },
+  }).execute("trace_feature", { query: "hello" }, controller.signal);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+  }
+});
+
+it("retains incomplete cleanup when cancellation arrives during owner lookup", async () => {
+  const baseline = provider();
+  const controller = new AbortController();
+  const result = await new EnhancedTools({
+    execute: (operation, input, options) => {
+      if (operation !== "resolve_containing_procedure")
+        return baseline.execute(operation, input, options);
+      controller.abort();
+      return Promise.resolve(
+        err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "cleanup failed",
+            {
+              cleanup: {
+                reason: "cleanup failed",
+                resources: ["owned worker"],
+              },
+            },
+          ),
+        ),
+      );
+    },
+  }).execute("trace_feature", { query: "hello" }, controller.signal);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+});
+
 describe("trace_feature reference coverage", () => {
+  it("reports the address-only scope when a match has no references", async () => {
+    const output = await trace(provider({ emptyXrefsOf: "0x10" }));
+
+    expect(output.normalized_result).toEqual(expectedTrace([], [], ["0x10"]));
+    expect(output.limitations).toContain(TRACE_FEATURE_REFERENCE_LIMITATION);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/start address/);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(
+      /interior bytes of strings and procedures/,
+    );
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/truncated: false/);
+  });
+
   it("marks the trace truncated for the target whose references the provider capped", async () => {
     const output = await trace(
       provider({ coverage: { "0x10": true, "0x11": false } }),
@@ -200,7 +504,7 @@ describe("trace_feature reference coverage", () => {
     ]);
     expect(
       output.normalized_result,
-      "every reference is still reported with its containing procedure",
+      "each target's reference set is reported once with its containing procedure",
     ).toEqual(
       expectedTrace(
         [],
@@ -265,5 +569,158 @@ describe("trace_feature reference coverage", () => {
 
     expect(result.ok).toBe(false);
     expect(calls.filter((call) => call.startsWith("xrefs:"))).toEqual([]);
+  });
+});
+
+it("preserves string search qualifications in trace matches without fabricating them for procedures", async () => {
+  const baseline = provider({ duplicateProcedure: true });
+  const row = {
+    address: "0x10",
+    value: "hello",
+    provider_value: "provider display",
+    decoding: { available: false, reason: "Typed bytes were unavailable." },
+    string: {
+      encoding: "utf-8",
+      encoding_status: "inferred",
+      termination: "missing",
+      byte_length: 5,
+    },
+  } as const;
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "search_strings"
+        ? Promise.resolve(ok(createAnalysisExecution([row], PROVIDER)))
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    matches: [
+      { ...row, type: "string" },
+      { type: "procedure", address: "0x10", value: "hello" },
+    ],
+  });
+  expect(
+    (output.normalized_result as { matches: object[] }).matches[1],
+  ).not.toHaveProperty("string");
+});
+
+it("retains each same-address string encoding and reuses the address reference observation", async () => {
+  const calls: string[] = [];
+  const baseline = provider({ calls });
+  // Kuna's canonical inventory identity includes the encoding at each address.
+  const rows = ["ascii", "utf8", "utf16"].map((encoding) => ({
+    address: "0x10",
+    value: "hello",
+    string: {
+      encoding,
+      encoding_status: "observed" as const,
+      termination: "present_or_not_required" as const,
+      byte_length: encoding === "utf16" ? 12 : 6,
+    },
+  }));
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "search_strings"
+        ? Promise.resolve(ok(createAnalysisExecution(rows, PROVIDER)))
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    matches: rows.map((row) => ({ ...row, type: "string" })),
+    references: [
+      {
+        target_address: "0x10",
+        source_address: "0x20",
+        containing_procedure: containing("0x20"),
+      },
+    ],
+  });
+  expect(calls.filter((call) => call.startsWith("xrefs:"))).toEqual([
+    "xrefs:0x10",
+  ]);
+  expect(
+    calls.filter((call) => call.startsWith("resolve_containing_procedure:")),
+  ).toEqual(["resolve_containing_procedure:0x20"]);
+});
+
+it("keeps duplicate reference rows reported by one provider observation", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs"
+        ? Promise.resolve(
+            ok(createAnalysisExecution(["0x20", "0x20"], PROVIDER)),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    references: ["0x10", "0x10", "0x11", "0x11"].map((address) => ({
+      target_address: address,
+      source_address: "0x20",
+      containing_procedure: containing("0x20"),
+    })),
+  });
+});
+
+it.each([
+  null,
+  {},
+  { query_address: "0x20", found: true, procedure: null },
+  { query_address: "0x20", found: false, procedure: null },
+])(
+  "returns a typed failure for malformed trace reference resolution: %j",
+  async (resolution) => {
+    const baseline = provider();
+    const client = await connect({
+      execute: (operation, input, options) =>
+        operation === "resolve_containing_procedure"
+          ? Promise.resolve(ok(createAnalysisExecution(resolution, PROVIDER)))
+          : baseline.execute(operation, input, options),
+    });
+    const result = await client.callTool({
+      name: "trace_feature",
+      arguments: { query: "hello" },
+    });
+    expect(JSON.stringify(result.content)).not.toContain(
+      "Output validation error",
+    );
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "unreadable_output",
+      details: { operation: "resolve_containing_procedure" },
+    });
+  },
+);
+
+it("retains a validated containing procedure and its unavailable body facts", async () => {
+  const baseline = provider();
+  const resolution = {
+    query_address: "0x20",
+    found: true,
+    procedure: {
+      address: "0x20",
+      name: "hello_caller",
+      classification: null,
+      body: { available: false, reason: "Provider has no function ranges." },
+    },
+  } as const;
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "resolve_containing_procedure"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution(
+                { ...resolution, query_address: String(input.address) },
+                PROVIDER,
+              ),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    references: [
+      { source_address: "0x20", containing_procedure: resolution },
+      {
+        source_address: "0x21",
+        containing_procedure: { ...resolution, query_address: "0x21" },
+      },
+    ],
   });
 });

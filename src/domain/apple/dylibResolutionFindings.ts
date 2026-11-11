@@ -43,7 +43,7 @@ export const deriveFindings = (
         explanation: `The modeled dyld search checks ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A compatible Mach-O placed at an earlier modeled path could take precedence over that fallback, subject to unmodeled search inputs and code-signing library validation; library validation is not evaluated here (see inspect_signature).${edge.loader_conditional ? " This loader loads only conditionally; if it never loads, this search never occurs." : ""}${edge.resolution.status === "conditional" ? " Unmodeled environment overrides or earlier unknown candidates may take precedence; placing an image at this rpath does not establish which image dyld will load." : ""}`,
       });
   });
-  // Slices can share an architecture name (arm64e and arm64e.x1), so each
+  // Capability-bit variants can share an architecture name, so each
   // finding uses the slice its root was traced from, not a name lookup.
   for (const { image, slice } of roots) {
     const { architecture } = slice;
@@ -164,7 +164,7 @@ const lazyConsequence = (weak: boolean): string =>
 export const DYLIB_RESOLUTION_LIMITATIONS = [
   "LC_LAZY_LOAD_DYLIB and LC_LAZY_LOAD_DYLIB_INFO dependencies are resolved but not traversed, because dyld loads them only on first use.",
   "Slices are matched by dyld's graded architectures (an x86_64h process also loads x86_64). arm64e processes that disable pointer authentication can also load arm64 slices; that fallback is not modeled.",
-  "Absolute install names and rpaths are outside the analyzed root and are not evaluated, including /System and /usr/lib libraries that the dyld shared cache usually provides.",
+  "Absolute install names and rpaths are evaluated only when spelled beneath the analyzed root. Other absolute paths remain outside the analyzed root, including /System and /usr/lib libraries that the dyld shared cache usually provides.",
   "Leaf and relative install names depend on dyld fallback paths, DYLD_* variables, and the working directory; they are undetermined.",
   "Load order follows dyld's dependents-first traversal in load-command order. An image reached through several chains is resolved once per process, with the rpath stack and conditionality of the first chain; a later @rpath request whose install name matches an already loaded image reuses it.",
   "@loader_path uses each image's symlink-resolved path within the analyzed root.",

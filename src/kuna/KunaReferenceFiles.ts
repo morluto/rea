@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareKunaAddresses } from "./KunaAddress.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { parseKunaJson } from "./KunaJson.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
 
@@ -13,7 +14,7 @@ export const KUNA_XREF_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 const addressKeys = new Set(["address", "from_address", "to_address"]);
 const address = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/u);
-const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const count = z.int().min(0).max(Number.MAX_SAFE_INTEGER);
 const kind = z.enum(["call", "jump", "data", "read", "write"]);
 
 const graphHeader = z.object({
@@ -149,7 +150,7 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
     }
     const node = parseKunaRow(graphNode, "graph function", fields);
     if (this.#nodes.has(node.address))
-      throw new Error("graph repeats a function address");
+      throw new KunaDocumentError("repeated_function");
     this.#nodes.set(node.address, node);
     this.#hasIndirectCalls ||= node.hasIndirectCalls;
   }
@@ -174,12 +175,12 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
     const { callerAddress: caller, calleeAddress: callee } = edge;
     this.#edgeCount += 1;
     const targets = this.#targets.get(caller) ?? new Set<string>();
-    if (targets.has(callee)) throw new Error("graph repeats an edge");
+    if (targets.has(callee)) throw new KunaDocumentError("repeated_edge");
     targets.add(callee);
     this.#targets.set(caller, targets);
     const order = this.#orders.get(caller) ?? new Set<number>();
     if (order.has(edge.calleeOrder))
-      throw new Error("graph repeats a callee order");
+      throw new KunaDocumentError("repeated_callee_order");
     order.add(edge.calleeOrder);
     this.#orders.set(caller, order);
     if (edge.kind !== "call") return;
@@ -223,6 +224,32 @@ const xrefRow = z.object({
   to_function: xrefFunction.nullable(),
   instruction: z.string(),
 });
+const xrefPointer = z.object({
+  kind: z.literal("pointer"),
+  from_address: address,
+  from_address_hex: address,
+  from_name: z.string().nullable(),
+  to_address: address,
+  to_address_hex: address,
+  to_name: z.string().nullable(),
+  width: z.int().positive(),
+  source: z.string().min(1),
+});
+const xrefWalkCoverage = z.object({
+  decoded: z.boolean(),
+  section: z.string().nullable(),
+  code_section: z.boolean().nullable(),
+  executable: z.boolean().nullable(),
+  unwalked: z.array(
+    z.object({
+      name: z.string().nullable(),
+      address,
+      address_hex: address,
+      section: z.string(),
+    }),
+  ),
+  notes: z.array(z.string()),
+});
 const xrefsDocument = z.object({
   binary: z.string(),
   direction: z.literal("to"),
@@ -234,6 +261,10 @@ const xrefsDocument = z.object({
     aliases: z.array(xrefFunction),
   }),
   xrefs: z.array(z.unknown()),
+  coverage: xrefWalkCoverage.optional(),
+  data_refs_coverage: z.string().optional(),
+  data_refs_count: count.optional(),
+  data_refs: z.array(xrefPointer).optional(),
 });
 
 export interface KunaIncomingReferences {
@@ -242,6 +273,21 @@ export interface KunaIncomingReferences {
   readonly bytes: number;
   readonly rows: number;
   readonly excludedAliasRows: number;
+  readonly targetAliases: readonly {
+    readonly name: string;
+    readonly address: string;
+  }[];
+  readonly walkCoverage: z.infer<typeof xrefWalkCoverage> | null;
+  readonly pointerCoverage: string | null;
+  readonly pointers: Array<
+    Omit<z.infer<typeof xrefPointer>, "from_address_hex" | "to_address_hex">
+  > | null;
+}
+
+/** Code from incoming-reference admission, plus the address field when one failed. */
+export interface KunaIncomingReferenceError {
+  readonly code: string;
+  readonly field?: string;
 }
 
 /** Native --to unifies forwarding aliases; REA xrefs asks for the exact address. */
@@ -249,7 +295,7 @@ export const parseKunaIncomingReferences = (
   text: string,
   input: string,
   target: string,
-): Result<KunaIncomingReferences, string> => {
+): Result<KunaIncomingReferences, KunaIncomingReferenceError> => {
   try {
     const document = xrefsDocument.parse(
       parseKunaJson(text, KUNA_XREF_OUTPUT_BYTES, addressKeys),
@@ -259,17 +305,43 @@ export const parseKunaIncomingReferences = (
       document.target.address !== target ||
       document.target.address_hex !== target
     )
-      throw new Error("xref document names a different input or target");
+      throw new KunaDocumentError("xref_identity");
     if (document.count !== document.xrefs.length)
-      throw new Error("xref count disagrees with examined rows");
+      throw new KunaDocumentError("xref_count");
     const aliases = new Set([target]);
     for (const alias of document.target.aliases) {
       if (alias.address !== alias.address_hex)
-        throw new Error("xref alias address disagrees with its hex field");
+        throw new KunaDocumentError("xref_alias_hex");
       aliases.add(alias.address);
+    }
+    if (
+      (document.data_refs === undefined) !==
+      (document.data_refs_count === undefined)
+    )
+      throw new KunaDocumentError("xref_count");
+    if (
+      document.data_refs !== undefined &&
+      document.data_refs.length !== document.data_refs_count
+    )
+      throw new KunaDocumentError("xref_count");
+    for (const item of document.coverage?.unwalked ?? [])
+      if (item.address !== item.address_hex)
+        throw new KunaDocumentError("xref_endpoints");
+    for (const pointer of document.data_refs ?? []) {
+      if (
+        pointer.from_address !== pointer.from_address_hex ||
+        pointer.to_address !== pointer.to_address_hex
+      )
+        throw new KunaDocumentError("xref_endpoints");
+      if (!aliases.has(pointer.to_address))
+        throw new KunaDocumentError("xref_target");
     }
     const addresses = new Set<string>();
     let excludedAliasRows = 0;
+    for (const pointer of document.data_refs ?? []) {
+      if (pointer.to_address === target) addresses.add(pointer.from_address);
+      else excludedAliasRows += 1;
+    }
     for (const raw of document.xrefs) {
       const row = xrefRow.parse(raw);
       if (
@@ -278,27 +350,44 @@ export const parseKunaIncomingReferences = (
         row.from_address !== row.from_address_hex ||
         row.to_address !== row.to_address_hex
       )
-        throw new Error(
-          "xref endpoints disagree with numeric or directional fields",
-        );
+        throw new KunaDocumentError("xref_endpoints");
       for (const fn of [row.from_function, row.to_function])
         if (fn !== null && fn.address !== fn.address_hex)
-          throw new Error("xref function address disagrees with its hex field");
+          throw new KunaDocumentError("xref_function_hex");
       if (!aliases.has(row.to_address))
-        throw new Error(
-          "xref row targets neither the requested address nor an advertised alias",
-        );
+        throw new KunaDocumentError("xref_target");
       if (row.to_address === target) addresses.add(row.from_address);
       else excludedAliasRows += 1;
     }
     return ok({
       addresses: [...addresses].sort(compareKunaAddresses),
-      rows: document.xrefs.length,
+      rows: document.xrefs.length + (document.data_refs?.length ?? 0),
       excludedAliasRows,
+      targetAliases: document.target.aliases.map(({ name, address }) => ({
+        name,
+        address,
+      })),
+      walkCoverage: document.coverage ?? null,
+      pointerCoverage: document.data_refs_coverage ?? null,
+      pointers:
+        document.data_refs?.map(
+          ({ from_address_hex: _from, to_address_hex: _to, ...pointer }) =>
+            pointer,
+        ) ?? null,
       bytes: Buffer.byteLength(text),
       sha256: createHash("sha256").update(text).digest("hex"),
     });
   } catch (cause: unknown) {
-    return err(cause instanceof Error ? cause.message : String(cause));
+    if (cause instanceof KunaDocumentError) {
+      const field = cause.detail?.field;
+      return err(
+        typeof field === "string"
+          ? { code: cause.code, field }
+          : { code: cause.code },
+      );
+    }
+    return err({
+      code: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 };

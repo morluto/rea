@@ -4,14 +4,17 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
 import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
-it("publishes valid SDK schemas and retains historical inline Evidence with the supplied session", async () => {
-  const service = new WebNetworkCaptureService({
+const syntheticCaptureService = () =>
+  new WebNetworkCaptureService({
     inspect: () =>
       Promise.resolve(
         ok({
@@ -31,6 +34,9 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
         }),
       ),
   });
+
+it("publishes valid SDK schemas and retains historical inline Evidence with the supplied session", async () => {
+  const service = syntheticCaptureService();
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
   });
@@ -90,15 +96,88 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
     name: "inspect_web_network_capture",
     arguments: { ...args, capture_path: "relative.har" },
   });
-  expect(invalid.isError).toBe(true);
+  expect(parseMcpToolError(invalid).error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+  });
   const invalidSensitive = await client.callTool({
     name: "inspect_web_network_capture",
     arguments: { ...args, sensitive_values: ["secret"], mysecret: true },
   });
-  expect(invalidSensitive.isError).toBe(true);
   expect(parseMcpToolError(invalidSensitive)).toMatchObject({
-    error: { code: "invalid_request", details: { issues: [{ path: [] }] } },
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: { issues: [{ path: [] }] },
+    },
   });
   expect(JSON.stringify(invalidSensitive)).not.toContain("secret");
   expect(ajv.validate(inputSchema, { ...args, mysecret: true })).toBe(false);
 });
+
+it.each([false, true])(
+  "advertises offline capture inspection without a browser provider (browser load failure %s)",
+  async (failed) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("Binary provider must not start");
+    });
+    const mcp = createTestMcp();
+    onTestFinished(async () => {
+      await mcp.close();
+      await session.close();
+    });
+    const client = await mcp.connect(
+      createServer(
+        { kind: "session", session },
+        {
+          webNetworkCapture: syntheticCaptureService(),
+          ...(failed
+            ? {
+                optionalProviderLoadFailures: {
+                  browserObservation: {
+                    providerId: "rea-cdp-browser",
+                    reason: "synthetic browser import failure",
+                  },
+                },
+              }
+            : {}),
+        },
+      ),
+    );
+    const status = await client.callTool({
+      name: "binary_session",
+      arguments: {},
+    });
+    const availability = expandToolAvailability(
+      sessionOutputSchemas.binary_session.parse(status.structuredContent).result
+        .tool_availability,
+    );
+    const entry = (name: string) =>
+      availability.find((tool) => tool.name === name);
+    expect(entry("inspect_web_network_capture")).toMatchObject({
+      available: true,
+      reason: "available",
+    });
+    expect(entry("list_browser_targets")).toMatchObject({
+      available: false,
+      reason: failed ? "provider_unavailable" : "provider_missing",
+    });
+
+    const response = await client.callTool({
+      name: "inspect_web_network_capture",
+      arguments: { capture_path: "/capture.har", format: "har" },
+    });
+    expect(response.isError).not.toBe(true);
+    const capture = webNetworkCaptureSchema.parse(
+      toolContract("inspect_web_network_capture").outputSchema.parse(
+        response.structuredContent,
+      ).normalized_result,
+    );
+    expect(capture).toMatchObject({ format: "har", total_records: 0 });
+    const live = await client.callTool({
+      name: "list_browser_targets",
+      arguments: { cdp_endpoint: "http://127.0.0.1:9222" },
+    });
+    expect(live.isError).toBe(true);
+  },
+);

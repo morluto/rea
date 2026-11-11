@@ -8,13 +8,15 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField, cliIntegerArgument } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
   deliverCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { explicitSensitiveValueOptions } from "./explicitSensitiveArguments.js";
 
 /** Expose offline historical capture inspection with the same selection contract as MCP. */
 export const registerWebNetworkCaptureCommands = (
@@ -22,12 +24,11 @@ export const registerWebNetworkCaptureCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  const service = createWebNetworkCaptureService(environment);
   cli.command(CLI_COMMANDS.inspectWebNetworkCapture, {
     description:
       "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
     args: z.object({
-      capturePath: z.string().describe("Absolute local capture path"),
+      capturePath: localPathStringSchema.describe("Local capture path"),
       format: z
         .enum(WEB_NETWORK_CAPTURE_FORMATS)
         .describe("Producer capture format"),
@@ -42,10 +43,9 @@ export const registerWebNetworkCaptureCommands = (
         .array(z.string())
         .optional()
         .describe("Exact body pointers; repeat to select several"),
-      protobufSchema: z
-        .string()
+      protobufSchema: localPathStringSchema
         .optional()
-        .describe("Absolute local compiled FileDescriptorSet path"),
+        .describe("Local compiled FileDescriptorSet path"),
       protobufMessage: z
         .string()
         .optional()
@@ -54,14 +54,20 @@ export const registerWebNetworkCaptureCommands = (
         .array(cliIntegerArgument(0))
         .optional()
         .describe("Zero-based producer ordinals; repeat to select several"),
-      sensitiveValue: z
-        .array(z.string().min(1))
-        .default([])
-        .describe(
-          "Literal string values explicitly marked sensitive; repeat as needed",
-        ),
-      captureTimeoutMs:
+      ...explicitSensitiveValueOptions,
+      maxInputBytes: cliDecimalField(
+        inspectWebNetworkCaptureInputSchema.shape.max_input_bytes,
+      ),
+      maxReplyBytes: cliDecimalField(
+        inspectWebNetworkCaptureInputSchema.shape.max_reply_bytes,
+      ),
+      maxNestingDepth: cliDecimalField(
+        inspectWebNetworkCaptureInputSchema.shape.max_nesting_depth,
+      ),
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -69,6 +75,7 @@ export const registerWebNetworkCaptureCommands = (
           logger,
           CLI_COMMANDS.inspectWebNetworkCapture,
           async () => {
+            const service = createWebNetworkCaptureService(environment);
             return deliverCliAnalysisEvidence({
               run: () =>
                 service.inspect(
@@ -76,6 +83,15 @@ export const registerWebNetworkCaptureCommands = (
                     capture_path: absoluteCallerPath(args.capturePath),
                     format: args.format,
                     sensitive_values: options.sensitiveValue,
+                    ...(options.maxInputBytes === undefined
+                      ? {}
+                      : { max_input_bytes: options.maxInputBytes }),
+                    ...(options.maxReplyBytes === undefined
+                      ? {}
+                      : { max_reply_bytes: options.maxReplyBytes }),
+                    ...(options.maxNestingDepth === undefined
+                      ? {}
+                      : { max_nesting_depth: options.maxNestingDepth }),
                     ...([
                       options.protobufFraming,
                       options.protobufBodyPointer,
@@ -113,6 +129,12 @@ export const registerWebNetworkCaptureCommands = (
                       : { capture_timeout_ms: options.captureTimeoutMs }),
                   },
                   { signal },
+                  {
+                    capture: args.capturePath,
+                    ...(options.protobufSchema === undefined
+                      ? {}
+                      : { descriptor: options.protobufSchema }),
+                  },
                 ),
               service,
               providerId: "web-network-capture",
@@ -120,6 +142,7 @@ export const registerWebNetworkCaptureCommands = (
               signal,
               detail: options.detail,
               evidenceOutput: options.evidence_output,
+              sensitiveValues: options.sensitiveValue ?? [],
             });
           },
         ),

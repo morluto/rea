@@ -17,11 +17,14 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
+import { parseNativeMatchingAllowance } from "../config/nativeMatchingAllowance.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Resolve portable input bundles, then use the same read-only matching service as MCP. */
 export const registerNativeFunctionMatchingCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   cli.command(CLI_COMMANDS.matchNativeFunctions, {
     description:
@@ -35,14 +38,12 @@ export const registerNativeFunctionMatchingCommands = (
     }),
     options: z.object({
       source_bundle: z
-        .array(z.string())
+        .array(localPathStringSchema)
         .default([])
         .describe(
           "Canonical source Evidence bundle for retained references; repeat for each input",
         ),
-      evidence_output: z
-        .string()
-        .min(1)
+      evidence_output: localPathStringSchema
         .optional()
         .describe(
           "Save full matching Evidence and selected sources; required for default summary; never overwrites",
@@ -75,6 +76,8 @@ export const registerNativeFunctionMatchingCommands = (
           };
           const invalid = cliEvidenceDeliveryInputError(delivery);
           if (invalid !== undefined) return projectAnalysisError(invalid);
+          const allowance = parseNativeMatchingAllowance(environment);
+          if (!allowance.ok) return projectAnalysisError(allowance.error);
           const resources = new ArtifactResourceScope();
           let sources: readonly Evidence[] = [];
           const complete = await finishAnalysisCommand(
@@ -83,7 +86,7 @@ export const registerNativeFunctionMatchingCommands = (
                 parsed.data,
                 options.source_bundle,
                 resources,
-                { signal },
+                { signal, representationAllowance: allowance.value },
               );
               if (!result.ok) return result;
               sources = result.value.sources;

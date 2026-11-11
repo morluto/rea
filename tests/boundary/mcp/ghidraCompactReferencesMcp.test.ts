@@ -68,6 +68,12 @@ describe("compact Ghidra reference MCP evidence", () => {
       inspect_native_instruction: {
         ...compactInstruction(),
         status: "data",
+        containing_data: {
+          address: "0x401000",
+          length: 4,
+          type_id: "/dword",
+          provenance: "ghidra-listing",
+        },
         incoming_references: [],
       },
       resolve_native_call_targets: compactCallTargets(),
@@ -100,6 +106,47 @@ describe("compact Ghidra reference MCP evidence", () => {
       }
     } finally {
       await harness.close();
+    }
+  }, 30_000);
+
+  it("preserves ARM TMode and Thumb decoder context across the MCP boundary", async () => {
+    const instructionWithContext = (value: string | null) => ({
+      ...compactInstruction(),
+      architecture: "ARM:LE:32:v7",
+      decoder_context: [
+        {
+          register: "TMode",
+          value,
+          source: "ghidra-program-context",
+        },
+      ],
+    });
+
+    for (const tmodeValue of ["0", "1", null]) {
+      const outputs = {
+        inspect_native_instruction: instructionWithContext(tmodeValue),
+      };
+      const harness = await connectGhidraMcp(
+        `ghidra-arm-tmode-${String(tmodeValue)}`,
+        (operation) => {
+          if (operation !== "inspect_native_instruction")
+            throw new TypeError(`Unexpected operation: ${operation}`);
+          return Promise.resolve(ok(outputs[operation]));
+        },
+      );
+      try {
+        const result = await harness.mcp.callTool({
+          name: "inspect_native_instruction",
+          arguments: { address: "0x08000000" },
+        });
+        expect(result.isError).not.toBe(true);
+        expect(
+          sessionEvidence(harness.session, result.structuredContent)
+            .normalized_result,
+        ).toEqual(outputs.inspect_native_instruction);
+      } finally {
+        await harness.close();
+      }
     }
   }, 30_000);
 });

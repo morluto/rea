@@ -21,7 +21,8 @@ export const BINARY_ARCHITECTURES = [
 /** Provider-neutral CPU family for a caller-supplied raw-binary load. */
 export const binaryArchitectureSchema = z.enum(BINARY_ARCHITECTURES);
 
-const RAW_BINARY_ENTRY_POINT = /^0x[0-9A-Fa-f]{1,16}$/u;
+/** Caller-supplied hexadecimal address of at most 64 bits, such as 0x08000000. */
+export const RAW_BINARY_ENTRY_POINT = /^0x[0-9A-Fa-f]{1,16}$/u;
 
 /** Hexadecimal load and entry address; file offset 0 is mapped here. */
 export const rawBinaryEntryPointSchema = z
@@ -152,6 +153,12 @@ export const rawBinarySelectionError = (input: {
 }): string | undefined => {
   const hasArchitecture = input.architecture !== undefined;
   const hasEntry = input.entryPoint !== undefined;
+  if (input.format === "gamecube-dol") {
+    // The DOL header fixes architecture; entry_point is checked against it at admission.
+    return hasArchitecture
+      ? "format=gamecube-dol takes its architecture from the DOL header; omit architecture"
+      : undefined;
+  }
   if (input.format === "raw-binary") {
     if (!hasArchitecture || !hasEntry)
       return "format=raw-binary requires architecture and entry_point";

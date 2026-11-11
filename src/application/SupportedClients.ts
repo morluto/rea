@@ -1,12 +1,17 @@
+import type {
+  ClientRegistrationConnectionProfile,
+  ClientRegistrationProfile,
+} from "./ClientRegistrationProfile.js";
 import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lstatSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   HermesClientPathError,
   resolveHermesClientHome,
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import {
   type MsixPackageView,
@@ -16,6 +21,7 @@ import {
 /** One supported client configuration location. */
 export interface SetupClient {
   readonly name: string;
+  readonly registrationProfile: ClientRegistrationProfile;
   readonly displayName?: string;
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
@@ -34,10 +40,18 @@ export interface SetupClient {
   /** Same-scope fallback ZCode stops loading after its first native server. */
   readonly zcodeFallbackPath?: string;
   readonly markerPath?: string;
+  /**
+   * Registration storage shared with other products. Its presence never proves
+   * this product is installed; only a recognizable REA-owned row in it proves
+   * ownership of a registration REA wrote.
+   */
+  readonly sharedRegistration?: boolean;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
   readonly quitBeforeSetup?: boolean;
+  /** Product-specific applicability evidence when configuration storage is shared. */
+  readonly discoveryPaths?: readonly string[];
   readonly format?:
     | "json"
     | "claude_code"
@@ -50,6 +64,7 @@ export interface SetupClient {
     | "omp"
     | "pi"
     | "kimi"
+    | "lm_studio"
     | "hermes"
     | "zcode_fallback"
     | "zcode"
@@ -60,6 +75,7 @@ export interface SetupClient {
 interface ClientPathFailure {
   readonly path: string;
   readonly message: string;
+  readonly msixPackage?: MsixPackageView;
 }
 
 type ClientPathResult = Result<string, ClientPathFailure>;
@@ -80,26 +96,28 @@ interface ClientLocation {
   readonly msixPackage?: MsixPackageView;
 }
 
-type ClientDefinition = ClientDefinitionBase &
-  (
-    | {
-        readonly configPath: ClientPath;
-        readonly markerPath: ClientPath;
-        readonly location?: undefined;
-      }
-    | {
-        /** Resolve configuration and marker together when they share probes. */
-        readonly location: (
-          context: ClientPathContext,
-        ) => Result<ClientLocation, ClientPathFailure>;
-        readonly configPath?: undefined;
-        readonly markerPath?: undefined;
-      }
-  );
+type ClientDefinition = ClientDefinitionBase & ClientDefinitionLocation;
+type ClientDefinitionLocation =
+  | {
+      readonly configPath: ClientPath;
+      readonly markerPath: ClientPath;
+      readonly location?: undefined;
+    }
+  | {
+      /** Resolve configuration and marker together when they share probes. */
+      readonly location: (
+        context: ClientPathContext,
+      ) => Result<ClientLocation, ClientPathFailure>;
+      readonly configPath?: undefined;
+      readonly markerPath?: undefined;
+    };
 
 interface ClientDefinitionBase {
   readonly name: string;
+  readonly registrationProfile: ClientRegistrationProfile;
   readonly displayName: string;
+  readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
+  readonly sharedRegistration?: true;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
@@ -119,11 +137,26 @@ const vscodeUserDirectory = ({
   platform,
   env,
 }: ClientPathContext): string => {
-  if (platform === "win32")
-    return join(windowsAppDataRoots(home, env).roaming, "Code", "User");
-  if (platform === "darwin")
-    return join(home, "Library", "Application Support", "Code", "User");
-  return join(xdgConfigHome({ home, platform, env }), "Code", "User");
+  // Match VS Code's user-data selection before appending the User scope.
+  // Empty overrides are unset; portable storage takes precedence over appdata.
+  const userData = env.VSCODE_PORTABLE
+    ? join(env.VSCODE_PORTABLE, "user-data")
+    : env.VSCODE_APPDATA
+      ? join(env.VSCODE_APPDATA, "Code")
+      : platform === "win32"
+        ? join(windowsAppDataRoots(home, env).roaming, "Code")
+        : platform === "darwin"
+          ? join(home, "Library", "Application Support", "Code")
+          : join(xdgConfigHome({ home, platform, env }), "Code");
+  // The catalog can describe Windows clients on another host; retain its
+  // drive-absolute paths instead of resolving them against that host cwd.
+  const absoluteUserData =
+    platform === "win32" && win32.isAbsolute(userData) && !isAbsolute(userData)
+      ? userData
+      : isAbsolute(userData)
+        ? resolve(userData)
+        : resolve(env.VSCODE_CWD || process.cwd(), userData);
+  return join(absoluteUserData, "User");
 };
 
 const traeUserDirectory = ({
@@ -167,11 +200,46 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 const kimiDirectory = ({ home, env }: ClientPathContext): string =>
   env.KIMI_CODE_HOME || join(home, ".kimi-code");
 
+/** Clients registered with the compact input-schema profile unless one is selected. */
+export const compactInputSchemaByDefault = ({
+  name,
+}: Pick<SetupClient, "name">): boolean =>
+  name === "kimi" || name === "lm_studio";
+
+/**
+ * LM Studio's findLMStudioHome, read-only: a home pointer file wins, then an
+ * existing ~/.cache/lm-studio, then ~/.lmstudio. Setup never writes the pointer.
+ */
+const lmStudioLocation = ({
+  home,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const pointerPath = join(home, ".lmstudio-home-pointer");
+  let directory: string;
+  try {
+    directory = readFileSync(pointerPath, "utf8").trim();
+  } catch (cause: unknown) {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+      return err({
+        path: pointerPath,
+        message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${cause instanceof Error ? cause.message : String(cause)}. Repair access to that file, then rerun.`,
+      });
+    const cache = join(home, ".cache", "lm-studio");
+    directory = existsSync(cache) ? cache : join(home, ".lmstudio");
+  }
+  if (!isAbsolute(directory))
+    return err({
+      path: pointerPath,
+      message: `${pointerPath} does not hold an absolute LM Studio home path. Correct or remove that file, then rerun.`,
+    });
+  return ok({ configPath: join(directory, "mcp.json"), markerPath: directory });
+};
+
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
 
-const factoryDirectory = ({ home }: ClientPathContext): string =>
-  join(home, ".factory");
+/** Droid's override selects the home containing .factory, including personal skills. */
+const factoryDirectory = ({ home, env }: ClientPathContext): string =>
+  join(env.FACTORY_HOME_OVERRIDE || home, ".factory");
 
 /** Match Qwen Code's home override, including tilde and cwd-relative paths. */
 const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
@@ -283,9 +351,14 @@ export const registrationWriteBlocker = (
   const msix = client.msixPackage;
   if (msix === undefined || msix.processView === "direct") return undefined;
   const name = client.displayName ?? client.name;
-  return msix.processView === "redirected"
-    ? `This process was started from ${name}'s MSIX package ${msix.packageFamilyName}: its AppData is redirected into that package, so ${name} is running and would overwrite ${msix.privateConfigPath} from memory. Quit ${name} fully, then rerun ${operation} from a terminal that ${name} did not start.`
-    : `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because none of its files under ${dirname(msix.privateConfigPath)} could be compared with ${dirname(msix.appDataConfigPath)}. A running ${name} would overwrite the change. Open ${name} once if it has never run, quit it fully, then rerun ${operation} from a terminal that ${name} did not start.`;
+  if (msix.processView === "redirected")
+    return `This process was started from ${name}'s MSIX package ${msix.packageFamilyName}: its AppData is redirected into that package, so ${name} is running and would overwrite ${msix.privateConfigPath} from memory. Quit ${name} fully, then rerun ${operation} from a terminal that ${name} did not start.`;
+  // Setup would write the configuration the app reads; uninstall cleans both files.
+  const manualEdit =
+    operation === "setup"
+      ? `Add REA's entry to ${client.configPath} by hand`
+      : `Remove REA's entry by hand from each of ${msix.privateConfigPath} and ${msix.appDataConfigPath} that has one`;
+  return `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because no private file under ${dirname(dirname(msix.privateConfigPath))} could be compared with ${dirname(dirname(msix.appDataConfigPath))}, and a ${name} that started it would overwrite the change from memory. ${manualEdit} while ${name} is fully quit, or rerun ${operation} from a terminal that ${name} did not start once REA can compare a private file there.`;
 };
 
 /** The MSIX package view, if any, that redirects this process's AppData writes. */
@@ -477,10 +550,46 @@ const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
     ? join(windowsAppDataRoots(home, env).roaming, "devin")
     : join(env.XDG_CONFIG_HOME || join(home, ".config"), "devin");
 
+/**
+ * FreeBuff's own profile directory (its `state.json` root, fixed under
+ * `.config` on every platform). The shared `~/.agents` folder is not
+ * FreeBuff-specific: REA's own skill installs create it, so it cannot
+ * prove FreeBuff is installed.
+ */
+const freebuffProfileDirectory = ({ home }: ClientPathContext): string =>
+  join(home, ".config", "freebuff-desktop");
+
+type ClientDefinitionInput = Omit<ClientDefinitionBase, "registrationProfile"> &
+  ClientDefinitionLocation & {
+    readonly registrationConnection: ClientRegistrationConnectionProfile;
+  };
+
+/** Bind native identity once while retaining the original definition's literal name. */
+const defineClient = <const Definition extends ClientDefinitionInput>(
+  definition: Definition,
+) => {
+  const { registrationConnection, ...metadata } = definition;
+  return {
+    ...metadata,
+    registrationProfile: {
+      nativeClient: definition.name,
+      connection: registrationConnection,
+    },
+  };
+};
+
 /** Stable product metadata used to derive setup discovery and documentation. */
 export const SUPPORTED_CLIENT_DEFINITIONS = [
-  {
+  defineClient({
     name: "claude_code",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Claude Code",
     skillPath: (context: ClientPathContext) =>
       join(claudeCodeMarkerDirectory(context), "skills"),
@@ -488,31 +597,69 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(claudeCodeConfigDirectory(context), ".claude.json"),
     markerPath: claudeCodeMarkerDirectory,
     format: "claude_code",
-  },
-  {
+  }),
+  defineClient({
     name: "claude_desktop",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type"],
+      stdio: [{ kind: "optional-enum", field: "type", values: ["stdio"] }],
+    },
     displayName: "Claude Desktop",
     location: claudeDesktopLocation,
     quitBeforeSetup: true,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "codex",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "non-nullish", field: "url" }],
+    },
     displayName: "Codex",
     configPath: (context: ClientPathContext) =>
-      join(codexDirectory(context), "config.toml"),
+      appendCallerPath(codexDirectory(context), "config.toml"),
     markerPath: codexDirectory,
     format: "toml",
-  },
-  {
+  }),
+  defineClient({
     name: "cursor",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Cursor",
     configPath: [".cursor", "mcp.json"],
     markerPath: [".cursor"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
+    name: "codebuddy",
+    registrationConnection: {
+      kind: "stdio-only",
+      documentedFields: ["env", "type"],
+    },
+    displayName: "CodeBuddy",
+    skillPath: [".codebuddy", "skills"],
+    configPath: [".codebuddy", "mcp.json"],
+    markerPath: [".codebuddy"],
+    format: "json",
+  }),
+  defineClient({
     name: "gemini_cli",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url", "httpUrl"],
+      stdio: [
+        { kind: "truthy", field: "httpUrl" },
+        { kind: "truthy", field: "url" },
+      ],
+    },
     displayName: "Gemini CLI",
     geminiSettings,
     configPath: ({ home, env }: ClientPathContext) =>
@@ -522,105 +669,197 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     skillPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".agents", "skills"),
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "windsurf",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["serverUrl", "url"],
+      stdio: [
+        { kind: "present", field: "serverUrl" },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Windsurf",
     configPath: [".codeium", "windsurf", "mcp_config.json"],
     markerPath: [".codeium", "windsurf"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "devin",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "transport"],
+      stdio: [
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Devin",
     configPath: ({ home, platform, env }: ClientPathContext) =>
       join(devinDirectory({ home, platform, env }), "mcp_config.json"),
     markerPath: devinDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "opencode",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
+    },
     displayName: "OpenCode",
     configPath: existingOpenCodeConfigPath,
     configPaths: openCodeConfigurationPaths,
     markerPath: opencodeDirectory,
     format: "opencode",
-  },
-  {
+  }),
+  defineClient({
     name: "antigravity",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["serverUrl", "url"],
+      stdio: [
+        { kind: "present", field: "serverUrl" },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Antigravity",
     skillPath: [".gemini", "config", "skills"],
     configPath: [".gemini", "config", "mcp_config.json"],
     markerPath: [".gemini", "config"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "copilot_cli",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio", "local"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "GitHub Copilot CLI",
     configPath: (context: ClientPathContext) =>
       join(copilotDirectory(context), "mcp-config.json"),
     markerPath: copilotDirectory,
     format: "copilot_cli",
-  },
-  {
+  }),
+  defineClient({
     name: "commandcode",
+    registrationConnection: { kind: "commandcode" },
     displayName: "Command Code",
     configPath: (context: ClientPathContext) =>
       join(commandCodeDirectory(context), "mcp.json"),
     markerPath: commandCodeDirectory,
     format: "commandcode",
-  },
-  {
+  }),
+  defineClient({
     name: "qwen_code",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "httpUrl", "url"],
+      stdio: [
+        { kind: "truthy", field: "httpUrl" },
+        { kind: "truthy", field: "url" },
+        { kind: "equals", field: "type", value: "sdk" },
+      ],
+    },
     displayName: "Qwen Code",
     configPath: (context: ClientPathContext) =>
       join(qwenCodeDirectory(context), "settings.json"),
     markerPath: qwenCodeDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "kimi",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url", "transport"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Kimi Code",
     configPath: (context: ClientPathContext) =>
       join(kimiDirectory(context), "mcp.json"),
     markerPath: kimiDirectory,
     format: "kimi",
-  },
-  {
+  }),
+  defineClient({
     name: "vscode",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "transport"],
+      stdio: [
+        { kind: "required-enum", field: "type", values: ["stdio"] },
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "VS Code",
     configPath: (context: ClientPathContext) =>
       join(vscodeUserDirectory(context), "mcp.json"),
     markerPath: vscodeUserDirectory,
     format: "vscode",
-  },
-  {
+  }),
+  defineClient({
     name: "trae",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
     displayName: "Trae",
     skillPath: [".trae", "skills"],
     configPath: (context: ClientPathContext) =>
       join(traeUserDirectory(context), "mcp.json"),
     markerPath: traeUserDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "workbuddy",
+    registrationConnection: { kind: "stdio-only", documentedFields: ["env"] },
     displayName: "WorkBuddy",
     skillPath: [".workbuddy", "skills"],
     configPath: [".workbuddy", "mcp.json"],
     markerPath: [".workbuddy"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
+    name: "lm_studio",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
+    displayName: "LM Studio",
+    location: lmStudioLocation,
+    format: "lm_studio",
+  }),
+  defineClient({
     name: "grok_build",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "non-nullish", field: "url" }],
+    },
     displayName: "Grok Build",
     configPath: (context: ClientPathContext) =>
       join(grokDirectory(context), "config.toml"),
     markerPath: grokDirectory,
     format: "grok",
-  },
-  {
+  }),
+  defineClient({
     name: "omp",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "optional-enum", field: "type", values: ["stdio"] }],
+    },
     displayName: "OMP",
     configPath: (context: ClientPathContext) => {
       const directory = ompAgentDirectory(context);
@@ -628,9 +867,23 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     },
     markerPath: ompAgentDirectory,
     format: "omp",
-  },
-  {
+  }),
+  defineClient({
     name: "pi",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        {
+          kind: "all",
+          conditions: [
+            { kind: "missing", field: "type" },
+            { kind: "string", field: "url" },
+          ],
+        },
+      ],
+    },
     displayName: "Pi",
     configPath: (context: ClientPathContext) =>
       (context.platform === "win32" ? win32 : { join }).join(
@@ -639,19 +892,37 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       ),
     markerPath: piAgentDirectory,
     format: "pi",
-  },
-  {
+  }),
+  defineClient({
     name: "hermes",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "transport"],
+      stdio: [
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Hermes",
     skillPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "skills"),
+      appendCallerPath(hermesDirectory(context), "skills"),
     configPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "config.yaml"),
+      appendCallerPath(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
-  },
-  {
+  }),
+  defineClient({
     name: "qoder",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url", "qoder_url", "tcp"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+        { kind: "present", field: "qoder_url" },
+        { kind: "present", field: "tcp" },
+      ],
+    },
     displayName: "Qoder",
     skillPath: (context: ClientPathContext) =>
       join(qoderDirectory(context), "skills"),
@@ -659,9 +930,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(qoderDirectory(context), "settings.json"),
     markerPath: qoderDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "droid",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Factory Droid",
     skillPath: (context: ClientPathContext) =>
       join(factoryDirectory(context), "skills"),
@@ -669,19 +948,35 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(factoryDirectory(context), "mcp.json"),
     markerPath: factoryDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "zcode",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     zcodeFallbackPath: ({ home }: ClientPathContext) =>
       join(home, ".agents", "mcp.json"),
     displayName: "ZCode",
     configPath: [".zcode", "cli", "config.json"],
     markerPath: [".zcode", "cli"],
     skillPath: [".zcode", "skills"],
+    discoveryPaths: ({ home }: ClientPathContext) => [
+      join(home, ".zcode", "cli"),
+    ],
     format: "zcode",
-  },
-  {
+  }),
+  defineClient({
     name: "dsh",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "required-enum", field: "transport", values: ["stdio"] }],
+    },
     displayName: "DeepSeek Harness",
     // The home Cordis patch applies to every profile; the skill directory is
     // shared agent storage Harness discovers.
@@ -690,32 +985,122 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: dshPatchDirectory,
     markerPath: dshHomeDirectory,
     format: "dsh",
-  },
-  {
+  }),
+  defineClient({
+    name: "freebuff",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
+    displayName: "FreeBuff",
+    // FreeBuff discovers personal skills in the shared user agents directory.
+    skillPath: ({ home }: ClientPathContext) => join(home, ".agents", "skills"),
+    // FreeBuff loads MCP servers from the shared user agents directory.
+    configPath: ({ home }: ClientPathContext) =>
+      join(home, ".agents", "mcp.json"),
+    markerPath: freebuffProfileDirectory,
+    discoveryPaths: (context: ClientPathContext) => [
+      freebuffProfileDirectory(context),
+    ],
+    // The same file doubles as ZCode's user-scope fallback, so its presence
+    // proves neither product is installed; see clientOwnershipEvidencePaths.
+    sharedRegistration: true,
+    format: "json",
+  }),
+  defineClient({
     name: "grok_bot",
+    registrationConnection: {
+      kind: "unavailable",
+      reason:
+        "Grok Bot has no supported configuration writer. Configure its MCP connection manually.",
+    },
     displayName: "Grok Bot",
     configPath: grokBotDirectory,
     markerPath: grokBotDirectory,
     format: "unsupported",
-  },
+  }),
 ] as const satisfies readonly ClientDefinition[];
 
+export type SupportedClientName =
+  (typeof SUPPORTED_CLIENT_DEFINITIONS)[number]["name"];
+
+/** Setup and registration consume the same already-bound native profile object. */
+export const supportedClientRegistrationProfile = (
+  name: SupportedClientName,
+): ClientRegistrationProfile => {
+  const definition = SUPPORTED_CLIENT_DEFINITIONS.find(
+    (candidate) => candidate.name === name,
+  );
+  if (definition === undefined)
+    throw new Error(`No supported client definition for ${name}`);
+  return definition.registrationProfile;
+};
+
 /**
- * Paths whose presence means doctor and setup should inspect the client.
- * Layered sources count: OpenCode still loads its XDG files when a custom
- * directory override does not exist.
+ * Paths whose presence means the product itself is applicable, so doctor and
+ * setup should inspect the client. Layered sources count: OpenCode still loads
+ * its XDG files when a custom directory override does not exist. Shared
+ * registration storage never establishes applicability; see
+ * {@link clientOwnershipEvidencePaths}.
  */
 export const clientEvidencePaths = (
-  client: Pick<SetupClient, "configPath" | "configPaths" | "markerPath">,
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
+  >,
 ): readonly string[] => [
   ...new Set(
-    [
-      client.configPath,
-      ...(client.configPaths ?? []),
-      client.markerPath,
-    ].filter((path): path is string => path !== undefined && path.length > 0),
+    (
+      client.discoveryPaths ?? [
+        client.configPath,
+        ...(client.configPaths ?? []),
+        client.markerPath,
+      ]
+    ).filter((path): path is string => path !== undefined && path.length > 0),
   ),
 ];
+
+/**
+ * Paths where a recognizable REA-owned row proves ownership of a registration
+ * REA wrote, never that the product is installed: shared storage is created by
+ * other products and by REA's own skill installs. A client whose registration
+ * is product-local declares no shared storage, so this stays empty for it.
+ */
+export const clientOwnershipEvidencePaths = (
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "sharedRegistration"
+  >,
+): readonly string[] =>
+  client.sharedRegistration === true
+    ? [client.configPath, ...(client.configPaths ?? [])].filter(
+        (path): path is string => path !== undefined && path.length > 0,
+      )
+    : [];
+
+/**
+ * Registration storage this client shares with another product: its own shared
+ * configuration plus any same-scope fallback another client also loads. Only
+ * this storage may be retained when product applicability is unproven, because
+ * failing closed on it would block REA removals for files REA does not own.
+ * Product-local configuration is REA's own boundary and stays fail-closed.
+ */
+export const clientSharedRegistrationPaths = (
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "sharedRegistration" | "zcodeFallbackPath"
+  >,
+): ReadonlySet<string> =>
+  new Set([
+    ...clientOwnershipEvidencePaths(client),
+    ...(client.zcodeFallbackPath === undefined
+      ? []
+      : [client.zcodeFallbackPath]),
+  ]);
 
 const resolvePath = (
   path: ClientPath,
@@ -753,14 +1138,19 @@ export const supportedClients = (
       if (!location.ok)
         return {
           name: definition.name,
+          registrationProfile: definition.registrationProfile,
           displayName: definition.displayName,
           format: definition.format,
           configPath: location.error.path,
           configPathError: location.error.message,
+          ...(location.error.msixPackage === undefined
+            ? {}
+            : { msixPackage: location.error.msixPackage }),
         };
       const { configPath, markerPath, msixPackage } = location.value;
       return {
         name: definition.name,
+        registrationProfile: definition.registrationProfile,
         displayName: definition.displayName,
         configPath,
         ...(definition.geminiSettings === undefined
@@ -781,12 +1171,19 @@ export const supportedClients = (
         ...(definition.quitBeforeSetup === true
           ? { quitBeforeSetup: true }
           : {}),
+        ...(definition.discoveryPaths === undefined
+          ? {}
+          : { discoveryPaths: definition.discoveryPaths(context) }),
+        ...(definition.sharedRegistration === true
+          ? { sharedRegistration: true }
+          : {}),
         format: definition.format,
       };
     } catch (cause: unknown) {
       if (cause instanceof HermesClientPathError)
         return {
           name: definition.name,
+          registrationProfile: definition.registrationProfile,
           displayName: definition.displayName,
           format: definition.format,
           configPath: cause.path,
@@ -795,6 +1192,7 @@ export const supportedClients = (
       if (definition.name !== "pi") throw cause;
       return {
         name: definition.name,
+        registrationProfile: definition.registrationProfile,
         displayName: definition.displayName,
         format: definition.format,
         configPath: env.PI_CODING_AGENT_DIR ?? "",
@@ -804,13 +1202,24 @@ export const supportedClients = (
   });
 };
 
-/** Resolve personal skill roots using the same client environment as setup. */
+/** Resolved destinations and unresolved selections share one path-resolution owner. */
 export const clientSkillDirectories = (
   home: string,
   clientIds: readonly string[] | undefined,
   environment: Readonly<NodeJS.ProcessEnv> = {},
   platform: NodeJS.Platform = process.platform,
-): readonly { readonly client: string; readonly directory: string }[] => {
+): {
+  readonly directories: readonly {
+    readonly client: string;
+    readonly directory: string;
+  }[];
+  readonly unresolved: readonly {
+    readonly client: string;
+    readonly path: string;
+    readonly detail: string;
+  }[];
+} => {
+  const unresolved: { client: string; path: string; detail: string }[] = [];
   const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
   const selected =
     clientIds === undefined
@@ -823,34 +1232,54 @@ export const clientSkillDirectories = (
       : clientIds.length === 0
         ? ["shared"]
         : clientIds;
+  const sharedDirectory = appendCallerPath(home, ".agents/skills", platform);
   const destinations = new Map<string, { client: string; directory: string }>();
   for (const client of selected) {
     const definition = definitions.find(({ name }) => name === client);
+    if (definition === undefined && client !== "shared") {
+      unresolved.push({
+        client,
+        path: client,
+        detail: `Unsupported skill client: ${client}`,
+      });
+      continue;
+    }
     let directory: string;
     try {
       const resolved =
         definition?.skillPath === undefined
-          ? ok(join(home, ".agents", "skills"))
+          ? ok(sharedDirectory)
           : resolvePath(definition.skillPath, {
               home,
               platform,
               env: environment,
             });
-      if (!resolved.ok) continue;
+      if (!resolved.ok) {
+        unresolved.push({
+          client,
+          path: resolved.error.path,
+          detail: resolved.error.message,
+        });
+        continue;
+      }
       directory = resolved.value;
     } catch (cause: unknown) {
-      // Registration diagnostics own an unresolved profile; never fall back to another skill root.
-      if (cause instanceof HermesClientPathError) continue;
+      if (cause instanceof HermesClientPathError) {
+        unresolved.push({ client, path: cause.path, detail: cause.message });
+        continue;
+      }
       throw cause;
     }
     if (!destinations.has(directory))
       destinations.set(directory, {
-        client:
-          directory === join(home, ".agents", "skills") ? "shared" : client,
+        client: directory === sharedDirectory ? "shared" : client,
         directory,
       });
   }
-  return [...destinations.values()].sort((left, right) =>
-    compareUnicodeCodePoints(left.directory, right.directory),
-  );
+  return {
+    directories: [...destinations.values()].sort((left, right) =>
+      compareUnicodeCodePoints(left.directory, right.directory),
+    ),
+    unresolved,
+  };
 };

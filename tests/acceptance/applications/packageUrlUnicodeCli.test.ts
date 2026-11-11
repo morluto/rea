@@ -232,6 +232,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             request.status === "root-legacy"
               ? fileStatus
               : request.status;
+          const mapKind = request.specifier.startsWith("#")
+            ? "imports"
+            : "exports";
+          const selectedTarget =
+            request.specifier === "mapped/structuralReentry"
+              ? targets.structuralReentry.value
+              : targets.feature.value;
           expect(graph.edges).toContainEqual(
             expect.objectContaining({
               relation: "imports",
@@ -249,6 +256,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
                   status === "unavailable" && request.status !== "unavailable"
                     ? expect.arrayContaining([
                         expect.stringContaining("unpaired UTF-16 surrogate"),
+                        ...(request.status === "relative"
+                          ? [
+                              expect.stringContaining(
+                                `${mapKind} target ${JSON.stringify(selectedTarget)}:`,
+                              ),
+                            ]
+                          : []),
                       ])
                     : expect.not.arrayContaining([
                         expect.stringContaining("unpaired UTF-16 surrogate"),
@@ -263,6 +277,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             }),
           );
         }
-    expect(await readFile(archive)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(archive), bytes)).toBe(0);
   },
 );

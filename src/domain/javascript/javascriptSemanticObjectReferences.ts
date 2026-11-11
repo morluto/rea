@@ -1,9 +1,11 @@
 import * as t from "@babel/types";
+import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
+  isRuntimeJavaScriptClassProperty,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -17,23 +19,11 @@ import {
   SemanticGetterQuery,
   type GetterQueryJob,
 } from "./javascriptSemanticGetterQueries.js";
-import { expandSemanticGetterResult } from "./javascriptSemanticGetterResults.js";
+import { expandSemanticGetterResult } from "./javascriptSemanticGetterResultWalker.js";
 
-export interface JavaScriptSemanticObjectReference {
-  readonly node: t.Node;
-  readonly path: PropertyPath;
-  /** This selection crossed the object's prototype, rather than an own slot. */
-  readonly inherited?: true;
-  /** A shallow copy selects this prefix now while retaining its child identity. */
-  readonly capturedSelectionAt?: t.Node;
-  readonly ownEnumerable?: true;
-  readonly iterableFallbackPath?: PropertyPath;
-  readonly escapes?: true;
-  /** A retry omitted suffixes, so escaping constructed children must cover them. */
-  readonly widenedGetterResult?: true;
-  /** The allocation owned by this binding, rather than a read of its prior value. */
-  readonly ownerInitializer?: t.Node;
-}
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
+
+export type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 
 export const semanticClassCandidates = (
   root: t.Node,
@@ -118,7 +108,13 @@ const instanceFieldReferences = (
         ? current.klass.body.body
         : current.klass.body.body.slice(0, before);
     for (const member of [...members].reverse()) {
-      if (!t.isClassProperty(member) || member.static) continue;
+      if (!isRuntimeJavaScriptClassProperty(member) || member.static) continue;
+      if (
+        propertyName !== null &&
+        member.computed &&
+        semanticKnownSymbolKey(member.key, state)
+      )
+        continue;
       const key = semanticStaticPropertyKey(member.key, member.computed);
       if (key !== null && shadowed.has(key)) continue;
       if (key !== null) shadowed.add(key);
@@ -154,86 +150,77 @@ const classPropertyDescriptors = (
   klass: t.ClassDeclaration | t.ClassExpression,
   propertyName: string | null,
   kind: ClassPropertyLookup["kind"],
+  state: JavaScriptSemanticAnalysisState,
   initializedBefore?: t.ClassProperty,
+  accessor: "get" | "set" = "get",
 ) => {
-  const isStatic = kind === "static";
-  const selectedGetters: t.ClassMethod[] = [];
   const fields: t.ClassProperty[] = [];
-  const indexedMembers: {
-    readonly member: t.ClassMethod | t.ClassProperty;
-    readonly index: number;
-    readonly key: string | null;
-  }[] = [];
+  const methods: t.ClassMethod[] = [];
+  const accessors: t.ClassMethod[] = [];
+  const definitions: (t.ClassMethod | t.ClassProperty)[] = [];
   const before =
     initializedBefore === undefined
       ? -1
       : klass.body.body.indexOf(initializedBefore);
-  klass.body.body.forEach((member, index) => {
-    if (before >= 0 && index >= before && t.isClassProperty(member)) return;
+  for (const [index, member] of klass.body.body.entries()) {
     if (
-      (t.isClassMethod(member) ||
-        (kind === "static" && t.isClassProperty(member))) &&
-      member.static === isStatic
+      (!t.isClassMethod(member) &&
+        !(kind === "static" && isRuntimeJavaScriptClassProperty(member))) ||
+      member.static !== (kind === "static") ||
+      (before >= 0 &&
+        isRuntimeJavaScriptClassProperty(member) &&
+        index >= before) ||
+      (propertyName !== null &&
+        member.computed &&
+        semanticKnownSymbolKey(member.key, state))
     )
-      indexedMembers.push({
-        member,
-        index,
-        key: semanticStaticPropertyKey(member.key, member.computed),
-      });
-  });
-  const matchingMembers =
-    propertyName === null
-      ? []
-      : indexedMembers.filter(({ key }) => key === propertyName);
-  const uncertainGetters = indexedMembers.filter(
-    (entry): entry is typeof entry & { member: t.ClassMethod } => {
-      const { member, key } = entry;
-      return (
-        t.isClassMethod(member) &&
-        member.kind === "get" &&
-        (propertyName === null || (member.computed && key === null))
-      );
-    },
-  );
-  const getters = matchingMembers.filter(
-    (entry): entry is typeof entry & { member: t.ClassMethod } =>
-      t.isClassMethod(entry.member) && entry.member.kind === "get",
-  );
-  const getter = getters.at(-1);
-  const getterIndex = getter?.index ?? -1;
-  const laterDataMember = matchingMembers.some(
-    ({ member, index }) =>
-      t.isClassProperty(member) ||
-      (t.isClassMethod(member) &&
-        member.kind === "method" &&
-        index > getterIndex),
-  );
-  const seenFields = new Set<string>();
-  for (const { member, key } of [...indexedMembers].reverse()) {
-    if (!t.isClassProperty(member)) continue;
-    if (key !== null && seenFields.has(key)) continue;
-    if (key !== null) seenFields.add(key);
-    if (propertyName === null || key === null || key === propertyName)
-      fields.push(member);
+      continue;
+    definitions.push(member);
   }
-  if (getters.length > 0 && !laterDataMember && getter !== undefined)
-    selectedGetters.push(getter.member);
-  for (const { member, index } of uncertainGetters)
+  // Methods/accessors are installed before static fields execute, even when a
+  // field appears earlier in source. Instance fields are owned separately.
+  const ordered = [
+    ...definitions.filter((member) => t.isClassMethod(member)),
+    ...definitions.filter((member) => t.isClassProperty(member)),
+  ];
+  const data = new Set<string>();
+  const getterNames = new Set<string>();
+  const setterNames = new Set<string>();
+  let inherits = true;
+  for (const member of ordered.reverse()) {
+    const key = semanticStaticPropertyKey(member.key, member.computed);
+    if (propertyName !== null && key !== null && key !== propertyName) continue;
+    if (propertyName !== null && key === propertyName) inherits = false;
+    const descriptor =
+      t.isClassMethod(member) &&
+      (member.kind === "get" || member.kind === "set")
+        ? member.kind
+        : "data";
+    const selected = key ?? propertyName;
     if (
-      !matchingMembers.some(
-        ({ member: matching, index: matchingIndex }) =>
-          (t.isClassProperty(matching) ||
-            (t.isClassMethod(matching) &&
-              (matching.kind === "method" || matching.kind === "get"))) &&
-          matchingIndex > index,
-      )
-    )
-      selectedGetters.push(member);
-  return {
-    getters: selectedGetters,
-    fields,
-    inherits: matchingMembers.length === 0,
-  };
+      selected !== null &&
+      (data.has(selected) ||
+        (descriptor === "data"
+          ? getterNames.has(selected) || setterNames.has(selected)
+          : (descriptor === "get" ? getterNames : setterNames).has(selected)))
+    ) {
+      // A later accessor replaced this data descriptor, but the data definition
+      // still prevents an earlier accessor from pairing across it.
+      if (descriptor === "data" && key !== null) data.add(key);
+      continue;
+    }
+    if (t.isClassProperty(member)) fields.push(member);
+    else if (member.kind === "method") methods.push(member);
+    else if (member.kind === accessor) accessors.push(member);
+    if (key !== null)
+      (descriptor === "data"
+        ? data
+        : descriptor === "get"
+          ? getterNames
+          : setterNames
+      ).add(key);
+  }
+  return { accessors, fields, methods, inherits };
 };
 
 export const semanticClassPropertyReferences = (
@@ -247,6 +234,18 @@ export const semanticClassPropertyReferences = (
     (job) => expandGetterResult(job, query),
   );
 };
+
+/** Class descriptor selection shares field shadowing and inheritance with reference lookup. */
+export const semanticClassAccessorReferences = (
+  lookup: ClassPropertyLookup,
+  key: PropertyPath[number],
+  state: JavaScriptSemanticAnalysisState,
+  accessor: "get" | "set",
+): readonly JavaScriptSemanticObjectReference[] =>
+  new ClassReferenceWalk(lookup, [key], state, {
+    query: new SemanticGetterQuery(state),
+    accessor,
+  }).run();
 
 class ClassReferenceWalk {
   readonly #references: JavaScriptSemanticObjectReference[] = [];
@@ -263,6 +262,7 @@ class ClassReferenceWalk {
     readonly context: {
       readonly query: SemanticGetterQuery;
       readonly escapes?: boolean;
+      readonly accessor?: "get" | "set";
     },
   ) {
     const [key, ...path] = selection;
@@ -281,7 +281,9 @@ class ClassReferenceWalk {
       this.state,
       this.lookup.initializedBefore,
     );
-    for (const reference of fields.references) this.#references.push(reference);
+    if (this.context.accessor === undefined)
+      for (const reference of fields.references)
+        this.#references.push(reference);
     this.#fields = fields.definiteNames;
     return this.#name !== null && this.#fields.has(this.#name);
   }
@@ -292,6 +294,10 @@ class ClassReferenceWalk {
   ): void {
     const key = semanticStaticPropertyKey(getter.key, getter.computed);
     if (key !== null && this.#fields.has(key)) return;
+    if (this.context.accessor !== undefined) {
+      this.#references.push({ node: getter, path: [] });
+      return;
+    }
     this.context.query.schedule(
       {
         getter,
@@ -308,13 +314,29 @@ class ClassReferenceWalk {
       klass,
       this.#name,
       this.lookup.kind,
+      this.state,
       this.lookup.initializedBefore,
+      this.context.accessor,
     );
-    for (const field of descriptors.fields)
+    for (const field of this.context.accessor === undefined
+      ? descriptors.fields
+      : [])
       if (field.value != null)
-        this.#references.push({ node: field.value, path: this.#path });
-    for (const getter of this.lookup.fieldsOnly ? [] : descriptors.getters)
+        this.#references.push({
+          node: field.value,
+          path: this.#path,
+          ...(this.lookup.kind === "static" && klass !== this.lookup.owner
+            ? { inherited: true }
+            : {}),
+        });
+    for (const getter of this.lookup.fieldsOnly ? [] : descriptors.accessors)
       this.#getter(klass, getter);
+    if (this.context.accessor === undefined && !this.lookup.fieldsOnly)
+      for (const method of descriptors.methods) {
+        const name = semanticStaticPropertyKey(method.key, method.computed);
+        if (name !== null && this.#fields.has(name)) continue;
+        this.#references.push({ node: method, path: this.#path });
+      }
     // Only a definite own descriptor can suppress possible superclass results.
     if (descriptors.inherits && klass.superClass != null)
       for (const base of semanticClassCandidates(klass.superClass, this.state))
@@ -526,6 +548,18 @@ const expandGetterResult = (
 
 type ObjectLiteralMember = t.ObjectExpression["properties"][number];
 
+/** Only this colon-form definition selects an object literal's prototype. */
+const isObjectPrototypeSetter = (
+  property: ObjectLiteralMember,
+  name = t.isSpreadElement(property)
+    ? null
+    : semanticStaticPropertyKey(property.key, property.computed),
+): property is t.ObjectProperty =>
+  t.isObjectProperty(property) &&
+  !property.computed &&
+  !property.shorthand &&
+  name === "__proto__";
+
 /** Property positions grouped by whether an exact key can reach them. */
 interface ObjectPropertyIndex {
   /** Spreads, computed keys and `__proto__` data entries reach every key. */
@@ -546,13 +580,7 @@ const objectPropertyIndex = (node: t.ObjectExpression): ObjectPropertyIndex => {
     const name = t.isSpreadElement(property)
       ? null
       : semanticStaticPropertyKey(property.key, property.computed);
-    if (
-      name === null ||
-      (t.isObjectProperty(property) &&
-        !property.computed &&
-        !property.shorthand &&
-        name === "__proto__")
-    ) {
+    if (name === null || isObjectPrototypeSetter(property, name)) {
       keyIndependent.push(index);
       return;
     }
@@ -605,6 +633,22 @@ export const semanticObjectPropertyReferences = (
   );
 };
 
+/** Select accessor descriptors without invoking them or following their return values. */
+export const semanticObjectAccessorReferences = (
+  node: t.ObjectExpression,
+  key: PropertyPath[number],
+  state: JavaScriptSemanticAnalysisState,
+  accessor: "get" | "set",
+  lookup: "prototype" | "own" = "prototype",
+): readonly JavaScriptSemanticObjectReference[] =>
+  new ObjectReferenceWalk(
+    node,
+    [key],
+    new SemanticGetterQuery(state),
+    accessor,
+    lookup,
+  ).run();
+
 class ObjectReferenceWalk {
   readonly #references: JavaScriptSemanticObjectReference[] = [];
   readonly #overwritten = new Set<string>();
@@ -619,8 +663,12 @@ class ObjectReferenceWalk {
     readonly node: t.ObjectExpression,
     path: PropertyPath,
     readonly query: SemanticGetterQuery,
+    readonly accessor?: "get" | "set",
+    readonly accessorLookup: "prototype" | "own" = "prototype",
   ) {
-    [this.#key, ...this.#remaining] = path;
+    const [key, ...remaining] = path;
+    this.#key = typeof key === "number" ? String(key) : key;
+    this.#remaining = remaining;
   }
 
   #spreadKey(): PropertyPath[number] {
@@ -640,43 +688,38 @@ class ObjectReferenceWalk {
 
   #spread(property: t.SpreadElement): void {
     const selected = this.#key ?? null;
-    if (typeof selected !== "object" && this.#overwritten.has(String(selected)))
-      return;
-    this.#references.push({
-      node: property.argument,
-      path: [this.#spreadKey(), ...this.#remaining],
-      capturedSelectionAt: property.argument,
-      ownEnumerable: true,
-    });
+    // Spread creates data properties; the source descriptor is not installed.
     if (
-      selected !== null &&
-      typeof selected !== "object" &&
-      t.isObjectExpression(property.argument) &&
-      objectExpressionDefinesKey(property.argument, String(selected))
-    ) {
-      this.#overwritten.add(String(selected));
-      this.#data.add(String(selected));
-    }
+      this.accessor === undefined &&
+      (typeof selected === "object" || !this.#overwritten.has(String(selected)))
+    )
+      this.#references.push({
+        node: property.argument,
+        path: [this.#spreadKey(), ...this.#remaining],
+        capturedSelectionAt: property.argument,
+        ownEnumerable: true,
+      });
+    if (t.isObjectExpression(property.argument))
+      for (const name of objectExpressionDefinedKeys(property.argument)) {
+        this.#overwritten.add(name);
+        this.#data.add(name);
+      }
   }
 
   #prototype(
     property: t.ObjectMethod | t.ObjectProperty,
     name: string | null,
   ): boolean {
-    if (
-      !t.isObjectProperty(property) ||
-      property.computed ||
-      property.shorthand ||
-      name !== "__proto__"
-    )
-      return false;
+    if (!isObjectPrototypeSetter(property, name)) return false;
     const selected = this.#key ?? null;
+    if (this.accessor !== undefined && this.accessorLookup === "own")
+      return true;
     if (
       t.isExpression(property.value) &&
       (selected === null ||
         typeof selected === "object" ||
         (typeof selected === "string" &&
-          !objectExpressionDefinesKey(this.node, selected)))
+          !objectExpressionDefinedKeys(this.node).has(selected)))
     )
       this.#references.push({
         node: property.value,
@@ -690,11 +733,31 @@ class ObjectReferenceWalk {
     property: t.ObjectMethod | t.ObjectProperty,
     name: string | null,
   ): void {
+    // An earlier unknown computed key cannot replace a later definite slot.
+    // Spreads obey the same overwrite proof; paired named accessors below
+    // retain their separate getter/setter semantics.
+    if (
+      name === null &&
+      this.#key != null &&
+      typeof this.#key !== "object" &&
+      (t.isObjectMethod(property) && property.kind === (this.accessor ?? "get")
+        ? this.#data.has(String(this.#key)) ||
+          (this.accessor === "set" ? this.#setters : this.#getters).has(
+            String(this.#key),
+          )
+        : this.#overwritten.has(String(this.#key)))
+    )
+      return;
     if (
       name !== null &&
       !semanticPropertyPathKeyMatches(this.#key ?? null, name)
     )
       return;
+    if (this.accessor !== undefined) {
+      if (t.isObjectMethod(property) && property.kind === this.accessor)
+        this.#references.push({ node: property, path: [] });
+      return;
+    }
     if (t.isObjectMethod(property)) {
       if (property.kind === "get")
         this.query.schedule(
@@ -724,6 +787,14 @@ class ObjectReferenceWalk {
       this.#spread(property);
       return;
     }
+    if (
+      property.computed &&
+      this.#key !== undefined &&
+      this.#key !== null &&
+      typeof this.#key !== "object" &&
+      semanticKnownSymbolKey(property.key, this.query.state)
+    )
+      return;
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (this.#prototype(property, name)) return;
     const kind =
@@ -736,8 +807,10 @@ class ObjectReferenceWalk {
         ? this.#data.has(name) || this.#accessors.has(name)
         : this.#data.has(name) ||
           (kind === "get" ? this.#getters : this.#setters).has(name))
-    )
+    ) {
+      if (kind === "data") this.#data.add(name);
       return;
+    }
     this.#read(property, name);
     if (name !== null) this.#record(name, kind);
   }
@@ -756,12 +829,12 @@ const objectPropertyReferences = (
 ): readonly JavaScriptSemanticObjectReference[] =>
   new ObjectReferenceWalk(node, path, query).run();
 
-const objectExpressionDefinesKey = (
+const objectExpressionDefinedKeys = (
   root: t.ObjectExpression,
-  key: string,
-): boolean => {
+): ReadonlySet<string> => {
   const pending: t.ObjectExpression[] = [root];
   const seen = new Set<t.ObjectExpression>();
+  const names = new Set<string>();
   for (let cursor = 0; cursor < pending.length; cursor++) {
     const object = pending[cursor];
     if (object === undefined || seen.has(object)) continue;
@@ -773,19 +846,11 @@ const objectExpressionDefinesKey = (
         continue;
       }
       const name = semanticStaticPropertyKey(property.key, property.computed);
-      if (
-        name === key &&
-        !(
-          t.isObjectProperty(property) &&
-          !property.computed &&
-          !property.shorthand &&
-          name === "__proto__"
-        )
-      )
-        return true;
+      if (name !== null && !isObjectPrototypeSetter(property, name))
+        names.add(name);
     }
   }
-  return false;
+  return names;
 };
 
 export const semanticArrayPropertyReferences = (
@@ -840,4 +905,45 @@ export const semanticArrayPropertyReferences = (
     minimumIndex++;
   }
   return references;
+};
+
+/** Possible native fallback after own slots; explicit prototype references are walked separately. */
+export const semanticNativePrototypeChain = (
+  node: t.ObjectExpression | t.ArrayExpression,
+  key: PropertyPath[number],
+): readonly ("Object" | "Array")[] => {
+  const exact =
+    key !== null && typeof key !== "object" ? String(key) : undefined;
+  if (t.isArrayExpression(node)) {
+    if (exact === "length") return [];
+    if (exact !== undefined) {
+      const sources = semanticArrayPropertyReferences(node, [exact]);
+      if (
+        sources.length > 0 &&
+        sources.every((source) => source.capturedSelectionAt === undefined)
+      )
+        return [];
+    }
+    return ["Array", "Object"];
+  }
+  if (exact !== undefined && objectExpressionDefinedKeys(node).has(exact))
+    return [];
+  for (const property of node.properties) {
+    if (!isObjectPrototypeSetter(property)) continue;
+    const prototype = unwrapJavaScriptExpression(property.value).node;
+    // Null removes the prototype. Objects select the explicitly retained
+    // chain, while primitive values are ignored and unknowns may be primitive.
+    if (
+      t.isNullLiteral(prototype) ||
+      t.isObjectExpression(prototype) ||
+      t.isArrayExpression(prototype) ||
+      t.isFunctionExpression(prototype) ||
+      t.isArrowFunctionExpression(prototype) ||
+      t.isClassExpression(prototype) ||
+      t.isRegExpLiteral(prototype) ||
+      t.isNewExpression(prototype)
+    )
+      return [];
+  }
+  return ["Object"];
 };

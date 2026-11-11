@@ -3,6 +3,7 @@ import {
   artifactInventoryCoverageSchema,
   artifactNodeSchema,
   artifactOccurrenceSchema,
+  artifactOccurrenceRelationshipCoverage,
   artifactEdgeSchema,
   integrityContradictionSchema,
 } from "../artifactGraph.js";
@@ -15,6 +16,7 @@ import { prefixedDigestSchema } from "../digests.js";
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
+import { artifactReaderLimitsSchema } from "../artifactReaderLimits.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -23,18 +25,26 @@ import {
   validateArtifactInventorySubject,
   parseArtifactInspectionInventoryResult,
   parseArtifactInventoryResult,
+  ArtifactInventoryValidationError,
   type InventorySet,
 } from "../artifactInventoryEvidence.js";
 import type { ArtifactInspectionResult } from "../artifactInspection.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { analysisViewResultInputError } from "./analysisViewParent.js";
+import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
+import {
+  espFlashImageSummaryMetadataSchema,
+  summaryRootMetadata,
+} from "./espFlashImageSummary.js";
 
 const page = {
   kind: z.literal("inventory"),
@@ -85,6 +95,7 @@ export const artifactInventoryItemsSchema = z.array(
 );
 
 export const artifactInventorySummarySchema = z.strictObject({
+  effective_limits: artifactReaderLimitsSchema.exactOptional(),
   source_coverage: artifactInventoryCoverageSchema.exactOptional(),
   available_hash_status_counts: z
     .strictObject({
@@ -95,7 +106,10 @@ export const artifactInventorySummarySchema = z.strictObject({
     })
     .exactOptional(),
   manifest: artifactGraphManifestSchema,
-  root_format_metadata: artifactFormatMetadataSchema.exactOptional(),
+  /** An ESP flash layout's nested images appear as summaries here. */
+  root_format_metadata: z
+    .union([artifactFormatMetadataSchema, espFlashImageSummaryMetadataSchema])
+    .exactOptional(),
   available_counts: z.strictObject({
     nodes: z.number().int().nonnegative(),
     occurrences: z.number().int().nonnegative(),
@@ -121,10 +135,13 @@ export const artifactInventorySummarySchema = z.strictObject({
   limitation_count: z.number().int().nonnegative(),
 });
 
-const inputError = (message: string): AnalysisInputError =>
+const inputError = (
+  field: "source" | "view",
+  message: string,
+): AnalysisInputError =>
   new AnalysisInputError("inspect_analysis_view", undefined, [
     {
-      path: ["source"],
+      path: [field],
       reason: "invalid_value",
       message,
     },
@@ -172,7 +189,7 @@ const parseSource = (
         cached.source.inventory.manifest,
       );
     } catch (cause: unknown) {
-      return sourceFailure(cause);
+      return sourceFailure(parent.normalizedResult, cause);
     }
     return ok(cached.source);
   }
@@ -208,32 +225,43 @@ const parseSourceUncached = (
       inspection: parsed.inspection,
     });
   } catch (cause: unknown) {
-    return sourceFailure(cause);
+    return sourceFailure(parent.normalizedResult, cause);
   }
 };
 
-const sourceFailure = (cause: unknown): Result<never, AnalysisError> => {
-  if (!(cause instanceof TypeError) && !(cause instanceof z.ZodError))
-    throw cause;
-  return err(inputError(cause.message));
+const sourceFailure = (
+  input: unknown,
+  cause: unknown,
+): Result<never, AnalysisError> => {
+  if (cause instanceof z.ZodError)
+    return err(analysisViewResultInputError(input, cause));
+  if (!(cause instanceof ArtifactInventoryValidationError)) throw cause;
+  return err(inputError("source", cause.message));
 };
 
 /** Project exact source records; exhausted pages cover available records, not runtime behavior. */
 export const projectArtifactInventoryView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   const operation = parent.operation;
   if (operation !== "inventory_artifact" && operation !== "inspect_artifact")
     return err(
       inputError(
+        "source",
         "Inventory views require inventory_artifact or inspect_artifact Evidence.",
       ),
     );
   if (view.kind !== "summary" && view.kind !== "inventory")
     return err(
-      inputError("Artifact Evidence supports summary and inventory views."),
+      inputError(
+        "view",
+        "Artifact Evidence supports summary and inventory views.",
+      ),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof artifactInventoryViewRequestSchema>
+  >(view, "summary", "inventory");
   const parsed = parseSource(parent);
   if (!parsed.ok) return parsed;
   const source = parsed.value;
@@ -251,8 +279,18 @@ export const projectArtifactInventoryView = (
   const includeHashCounts =
     view.kind === "inventory" ||
     inventory.manifest.root_format === "godot-pck" ||
-    inventory.manifest.root_format === "pyinstaller";
-  const counts = includeHashCounts ? inventoryCounts(source) : undefined;
+    inventory.manifest.root_format === "unityfs" ||
+    inventory.manifest.root_format === "wxapkg" ||
+    inventory.manifest.root_format === "pyinstaller" ||
+    inventory.manifest.root_format === "node-sea" ||
+    inventory.manifest.root_format === "intel-hex" ||
+    inventory.manifest.root_format === "srec" ||
+    inventory.manifest.root_format === "esp-image" ||
+    inventory.manifest.root_format === "uf2" ||
+    inventory.manifest.root_format === "dfuse" ||
+    inventory.manifest.root_format === "esp-flash-image" ||
+    inventory.manifest.root_format === "fit";
+  const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,
     ...inventory.limitations,
@@ -270,15 +308,10 @@ export const projectArtifactInventoryView = (
     unknowns: [
       "Inventory does not establish application runtime behavior or complete format-specific analysis.",
       ...(inventory.coverage.status === "unknown"
-        ? [
-            "Producer traversal coverage is unknown; missing matches do not prove source absence.",
-          ]
+        ? [ARTIFACT_INVENTORY_VIEW_CAVEATS.unknownTraversal]
         : []),
-      ...(counts !== undefined &&
-      (counts.hashes.unavailable > 0 || counts.hashes["not-hashed"] > 0)
-        ? [
-            "Content hashes are unknown for some recorded files; missing node IDs do not prove content absence.",
-          ]
+      ...(counts.hashes.unavailable > 0 || counts.hashes["not-hashed"] > 0
+        ? [ARTIFACT_INVENTORY_VIEW_CAVEATS.unknownContentHashes]
         : []),
       ...(inventory.complete
         ? []
@@ -286,25 +319,26 @@ export const projectArtifactInventoryView = (
             "Parent inventory is partial; counts and exhausted pages cover only available records. Missing matches do not establish absence.",
           ]),
     ],
-  } satisfies Pick<
-    UnsignedAnalysisView,
-    | "parent_evidence_id"
-    | "parent_operation"
-    | "parent_digest"
-    | "artifact"
-    | "limitations"
-    | "unknowns"
-  >;
+  } satisfies {
+    parent_evidence_id: string;
+    parent_operation: "inspect_artifact" | "inventory_artifact";
+    parent_digest: string;
+    artifact: { path: string; sha256: string };
+    limitations: readonly string[];
+    unknowns: readonly string[];
+  };
   if (view.kind === "summary") {
-    const counts = inventoryCounts(source);
     const examined =
       inventory.nodes.length +
       inventory.occurrences.length +
       inventory.edges.length;
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary: {
+        ...(inventory.effectiveLimits === undefined
+          ? {}
+          : { effective_limits: inventory.effectiveLimits }),
         manifest: inventory.manifest,
         available_counts: {
           nodes: inventory.nodes.length,
@@ -329,7 +363,7 @@ export const projectArtifactInventoryView = (
         inventory_evidence_ids: [...evidenceIds],
         ...(rootMetadata === null
           ? {}
-          : { root_format_metadata: rootMetadata }),
+          : { root_format_metadata: summaryRootMetadata(rootMetadata) }),
         inspection:
           inspection === null
             ? null
@@ -359,7 +393,7 @@ export const projectArtifactInventoryView = (
                 : inventory.integrityContradictions.length,
           };
   return ok({
-    kind: "inventory",
+    kind: "inventory" as const,
     view,
     manifest: inventory.manifest,
     inventory_evidence_ids: [...evidenceIds],
@@ -392,7 +426,7 @@ const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
 const nodePage = (
   source: InventorySource,
   view: Extract<
-    AnalysisViewRequest,
+    z.output<typeof artifactInventoryViewRequestSchema>,
     { kind: "inventory"; collection: "nodes" }
   >,
 ) => {
@@ -437,7 +471,7 @@ const inventoryCounts = (source: InventorySource): InventoryCounts => {
 };
 
 type OccurrenceView = Extract<
-  AnalysisViewRequest,
+  z.output<typeof artifactInventoryViewRequestSchema>,
   { kind: "inventory"; collection: "occurrences" }
 >;
 
@@ -541,6 +575,12 @@ const selectOccurrenceFields = (
     ? row
     : {
         ...selectFields(row, fields),
+        ...(fields.includes("relationship_coverage")
+          ? {
+              relationship_coverage:
+                artifactOccurrenceRelationshipCoverage(row),
+            }
+          : {}),
         occurrence_id: row.occurrence_id,
         artifact_id: row.artifact_id,
         parent_occurrence_id: row.parent_occurrence_id,

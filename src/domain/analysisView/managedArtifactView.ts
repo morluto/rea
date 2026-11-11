@@ -1,18 +1,18 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
 } from "../managed/managedArtifact.js";
-import { err, ok, type Result } from "../result.js";
+import { err, ok } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -22,8 +22,8 @@ import {
 export const managedViewRequestSchema = z.strictObject({
   kind: z.literal("managed"),
   collection: z.enum(["references", "resources", "attributes"]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 export const managedViewItemSchema = z.union([
@@ -37,9 +37,9 @@ export const managedSummarySchema = managedArtifactInspectionSchema
   .omit({ references: true, resources: true, attributes: true })
   .extend({
     reported_counts: z.strictObject({
-      references: z.number().int().nonnegative(),
-      resources: z.number().int().nonnegative(),
-      attributes: z.number().int().nonnegative(),
+      references: z.int().nonnegative(),
+      resources: z.int().nonnegative(),
+      attributes: z.int().nonnegative(),
     }),
     identity_scope: managedMemberInspectionSchema.shape.identity_scope,
   });
@@ -72,9 +72,12 @@ export const managedViewIdentityUnknowns = (
 /** Project authenticated metadata without reading a path or invoking a provider. */
 export const projectManagedArtifactView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "managed")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof managedViewRequestSchema>
+  >(admitted, "summary", "managed");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -116,7 +119,7 @@ export const projectManagedArtifactView = (
     };
     const total = references.length + resources.length + attributes.length;
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: { ...summary, reported_counts, identity_scope },
@@ -126,7 +129,7 @@ export const projectManagedArtifactView = (
   const collection = report[view.collection];
   const item = collection.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "managed",
+    kind: "managed" as const,
     view,
     item,
     ...shared,

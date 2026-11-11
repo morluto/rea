@@ -1,3 +1,4 @@
+import { requireMcpOutput } from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,7 @@ import {
 } from "../fixtures/browser-network-site.mjs";
 import { assertBrowserNetworkEvidence } from "./browser-network-assertions.mjs";
 import { scenarioProfiles } from "./browser-scenario-verifier.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Exercise selected network content through real CLI and stdio MCP, one browser at a time. */
 export async function verifyBrowserNetworkEvidence(
@@ -26,8 +27,7 @@ export async function verifyBrowserNetworkEvidence(
   let profilesBefore;
   let transport;
   let client;
-  let primaryError;
-  try {
+  return withVerifierCleanup(async () => {
     site = await startBrowserNetworkSite();
     profilesBefore = await scenarioProfiles();
     const scenario = browserScenarioSchema.parse({
@@ -117,9 +117,12 @@ export async function verifyBrowserNetworkEvidence(
       { timeout: 60_000 },
     );
     assert.notEqual(result.isError, true, JSON.stringify(result));
-    const evidence = parseEvidence(result.structuredContent);
+    assert.notEqual(result.structuredContent, undefined);
+    const evidence = parseEvidence(
+      requireMcpOutput(result, "capture_browser_scenario"),
+    );
     mcpProof = assertBrowserNetworkEvidence(
-      browserScenarioCaptureSchema.parse(evidence.normalized_result),
+      evidence.normalized_result,
       site.origin,
     );
     if (attachment !== undefined) {
@@ -132,12 +135,13 @@ export async function verifyBrowserNetworkEvidence(
         { timeout: 60_000 },
       );
       assert.notEqual(connected.isError, true, JSON.stringify(connected));
-      const connectedEvidence = parseEvidence(connected.structuredContent);
+      assert.notEqual(connected.structuredContent, undefined);
+      const connectedEvidence = parseEvidence(
+        requireMcpOutput(connected, "capture_browser_scenario"),
+      );
       assert.deepEqual(
         assertBrowserNetworkEvidence(
-          browserScenarioCaptureSchema.parse(
-            connectedEvidence.normalized_result,
-          ),
+          connectedEvidence.normalized_result,
           site.origin,
           "disconnected-external",
         ),
@@ -178,14 +182,5 @@ export async function verifyBrowserNetworkEvidence(
       profile_cleanup: true,
       connected_network_verified: attachment !== undefined,
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    const cleanup = [];
-    if (client !== undefined) cleanup.push(() => client.close());
-    if (transport !== undefined) cleanup.push(() => transport.close());
-    if (site !== undefined) cleanup.push(() => site.close());
-    await closeVerifierResources(cleanup, primaryError);
-  }
+  }, [() => client?.close(), () => transport?.close(), () => site?.close()]);
 }

@@ -1,11 +1,19 @@
 import * as t from "@babel/types";
 import {
+  staticObjectPropertyReader,
+  readExactJavaScriptLiteral,
+  isObjectPrototypeSetter,
+  objectDataPropertyValue,
   semanticStaticPropertyKey,
   semanticWriteSiteTarget,
   semanticWriteTargets,
   runtimeFunctionParameters,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
@@ -44,6 +52,9 @@ interface PropertyWrite {
   readonly path: readonly string[];
   readonly value: t.Node;
   readonly site: t.Node;
+  readonly exportReceiver?: "module" | "exports";
+  readonly exportValueReceiver?: "module" | "exports";
+  readonly receiverUncertain?: true;
 }
 interface SymbolicReturnFlow extends SymbolicMetadata {
   readonly values: readonly SymbolicValue[];
@@ -60,14 +71,6 @@ interface SymbolicReadBoundary {
 type SymbolicNamespace = Extract<SymbolicValue, { kind: "namespace" }>;
 
 const emptyEnvironment: SymbolicEnvironment = { values: new Map() };
-const isObjectPrototypeSetter = (
-  property: t.ObjectMethod | t.ObjectProperty,
-  name: string,
-): boolean =>
-  t.isObjectProperty(property) &&
-  !property.computed &&
-  !property.shorthand &&
-  name === "__proto__";
 
 const containsOwnedReturn = (root: t.Node): boolean => {
   let found = false;
@@ -118,9 +121,13 @@ export class JavaScriptSymbolicBindings {
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
   }> = [];
-  #remainingEvaluations = 1_000_000;
+  #remainingEvaluations: number;
   #depth = 0;
-  truncated = false;
+  readonly resourceLimits = new Set<"wrapper_visits" | "wrapper_depth">();
+
+  get truncated(): boolean {
+    return this.resourceLimits.size > 0;
+  }
   unresolved = false;
 
   constructor(
@@ -130,7 +137,13 @@ export class JavaScriptSymbolicBindings {
       indexJavaScriptElectronIdentitySteps(program, state),
     ),
   ) {
+    this.#remainingEvaluations = state.precision.wrapper_visits;
     this.#electronIdentity = electronIdentity;
+    const shapes = createSemanticExpressionShapeResolver(state);
+    const defineProperty = createGlobalReferenceReader(state, [
+      "Object",
+      "defineProperty",
+    ]);
     this.#indexBindingAliases();
     traverseJavaScriptAst(program, {
       enter: (node) => {
@@ -141,33 +154,59 @@ export class JavaScriptSymbolicBindings {
       enter: (node) => {
         const target = semanticWriteSiteTarget(node);
         if (target !== null) this.#indexWriteSite(target, node);
-        if (
-          t.isCallExpression(node) &&
-          t.isMemberExpression(node.callee) &&
-          t.isIdentifier(node.callee.object, { name: "Object" }) &&
-          !resolveSemanticBindingState(state, node.callee.object, "Object") &&
-          semanticStaticPropertyKey(
-            node.callee.property,
-            node.callee.computed,
-          ) === "defineProperty"
-        ) {
+        if (t.isCallExpression(node) && t.isMemberExpression(node.callee)) {
+          const intrinsic = defineProperty(node.callee);
+          if (intrinsic.status === "unrelated") return;
           const [target, key, descriptor] = node.arguments;
           if (
             t.isIdentifier(target) &&
             t.isStringLiteral(key) &&
-            t.isObjectExpression(descriptor)
+            descriptor !== undefined
           ) {
-            const value = descriptor.properties.find(
-              (p) =>
-                t.isObjectProperty(p) &&
-                semanticStaticPropertyKey(p.key, p.computed) === "value",
+            if (intrinsic.status !== "unmodified") {
+              const replacement =
+                intrinsic.status === "replacement"
+                  ? unwrapJavaScriptExpression(intrinsic.value).node
+                  : undefined;
+              const unchanged =
+                (t.isFunctionExpression(replacement) ||
+                  t.isArrowFunctionExpression(replacement)) &&
+                (t.isBlockStatement(replacement.body)
+                  ? replacement.body.body.length === 0
+                  : readExactJavaScriptLiteral(replacement.body).found) &&
+                runtimeFunctionParameters(replacement).every(
+                  (parameter) =>
+                    t.isIdentifier(parameter) ||
+                    (t.isRestElement(parameter) &&
+                      t.isIdentifier(parameter.argument)),
+                );
+              if (!unchanged) this.#addWrite(target, [key.value], node, node);
+              return;
+            }
+            const properties = staticObjectPropertyReader(
+              unwrapJavaScriptExpression(descriptor).node,
+              shapes.isNullish,
             );
-            if (t.isObjectProperty(value))
+            const value = properties("value");
+            const hasAccessor =
+              properties("get").status !== "missing" ||
+              properties("set").status !== "missing";
+            if (value.status === "explicit" && !hasAccessor)
               this.#addWrite(target, [key.value], value.value, node);
+            else if (value.status !== "missing" || hasAccessor)
+              // Unknown values, accessor replacements and invalid mixed
+              // descriptors cannot preserve an earlier data export.
+              this.#addWrite(target, [key.value], node, node);
           }
         }
       },
     });
+    for (const writes of this.#writes.values())
+      writes.sort(
+        (left, right) =>
+          (left.site.end ?? Infinity) - (right.site.end ?? Infinity) ||
+          (right.site.start ?? 0) - (left.site.start ?? 0),
+      );
     for (const table of this.#bootstrapTables)
       this.#invalidateBootstrapTable(table.tableAliases, table.modules);
   }
@@ -187,15 +226,27 @@ export class JavaScriptSymbolicBindings {
     return emptyEnvironment;
   }
 
+  /** Shared admission; cache hits keep their existing depth-free fast path. */
+  #admitEvaluation(): boolean {
+    if (
+      --this.#remainingEvaluations < 0 ||
+      this.#depth >= this.state.precision.wrapper_depth
+    ) {
+      this.resourceLimits.add(
+        this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
+      );
+      return false;
+    }
+    return true;
+  }
+
   evaluate(
     input: t.Node | null | undefined,
     environment?: SymbolicEnvironment,
   ): SymbolicValue {
     if (!input) return { kind: "literal", value: undefined };
-    if (--this.#remainingEvaluations < 0 || this.#depth >= 128) {
-      this.truncated = true;
+    if (!this.#admitEvaluation())
       return symbolicUnknown("symbolic resource limit");
-    }
     const node = unwrapJavaScriptExpression(input).node;
     const env = environment ?? this.environmentAt(node);
     const cache = this.#cache.get(env) ?? new WeakMap<t.Node, SymbolicValue>();
@@ -232,7 +283,7 @@ export class JavaScriptSymbolicBindings {
           : 0);
       if (cost > this.#remainingEvaluations) {
         this.#remainingEvaluations = 0;
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return symbolicUnknown("symbolic condition resource limit");
       }
       this.#remainingEvaluations -= cost;
@@ -255,14 +306,21 @@ export class JavaScriptSymbolicBindings {
     key: string,
     read?: SymbolicPropertyRead,
   ): SymbolicValue {
-    let result: SymbolicValue;
-    if (value.kind === "union")
-      result = symbolicUnion([
-        ...this.#commonProperty(value.values, key, read),
-        ...value.values.map((variant) => this.property(variant, key, read)),
-      ]);
-    else result = this.#property(value, key, read);
-    return this.#withConditions(result, value);
+    if (!this.#admitEvaluation())
+      return symbolicUnknown("symbolic resource limit");
+    this.#depth += 1;
+    try {
+      let result: SymbolicValue;
+      if (value.kind === "union")
+        result = symbolicUnion([
+          ...this.#commonProperty(value.values, key, read),
+          ...value.values.map((variant) => this.property(variant, key, read)),
+        ]);
+      else result = this.#property(value, key, read);
+      return this.#withConditions(result, value);
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   #commonProperty(
@@ -275,7 +333,7 @@ export class JavaScriptSymbolicBindings {
       first === undefined ? undefined : this.#completionGroups.get(first);
     if (group === undefined || group.members.size !== values.length) return [];
     if (values.length > this.#remainingEvaluations) {
-      this.truncated = true;
+      this.resourceLimits.add("wrapper_visits");
       this.#remainingEvaluations = 0;
       return [];
     }
@@ -316,7 +374,13 @@ export class JavaScriptSymbolicBindings {
       ) {
         return symbolicUnknown("overwritten Electron API member");
       }
-      return { kind: "external", path };
+      return {
+        kind: "external",
+        path,
+        ...(value.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
+      };
     }
     if (value.kind === "record") {
       const property = value.values.get(key);
@@ -341,19 +405,19 @@ export class JavaScriptSymbolicBindings {
         this.unresolved = true;
         return symbolicUnknown("module export read boundary is unavailable");
       }
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
+      const write = available.findLast(
+        (write) =>
+          write.path.length === 0 ||
+          (write.path.length === 1 && write.path[0] === key),
       );
-      if (replacement)
+      if (write?.receiverUncertain)
+        return symbolicUnknown("uncertain export receiver");
+      if (write?.path.length === 0)
         return this.property(
-          this.evaluate(replacement.value, value.environment),
+          this.evaluate(write.value, value.environment),
           key,
           read,
         );
-      const writes = available.filter(
-        (w) => w.path.length === 1 && w.path[0] === key,
-      );
-      const write = writes.at(-1);
       return write
         ? this.evaluate(write.value, value.environment)
         : symbolicUnknown("unresolved module export");
@@ -387,7 +451,7 @@ export class JavaScriptSymbolicBindings {
               (candidate): candidate is t.ObjectMethod | t.ObjectProperty =>
                 !t.isSpreadElement(candidate),
             )
-            .find((candidate) => isObjectPrototypeSetter(candidate, key));
+            .find((candidate) => isObjectPrototypeSetter(candidate));
           if (prototypeSetter !== undefined)
             return this.#objectPropertyValue(
               prototypeSetter,
@@ -431,12 +495,10 @@ export class JavaScriptSymbolicBindings {
     property: t.ObjectMethod | t.ObjectProperty,
     environment: SymbolicEnvironment,
   ): SymbolicValue {
-    return t.isObjectMethod(property) && property.kind !== "method"
+    const value = objectDataPropertyValue(property);
+    return value === undefined
       ? symbolicUnknown("accessor property")
-      : this.evaluate(
-          t.isObjectProperty(property) ? property.value : property,
-          environment,
-        );
+      : this.evaluate(value, environment);
   }
 
   members(
@@ -444,40 +506,55 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): readonly string[] {
     if (active.has(value)) return [];
+    if (!this.#admitEvaluation()) return [];
     active.add(value);
-    if (value.kind === "union")
-      return [...new Set(value.values.flatMap((v) => this.members(v, active)))];
-    if (value.kind === "record") return [...value.values.keys()];
-    if (value.kind === "namespace") {
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return [];
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.members(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : [
-            ...new Set(
-              available.flatMap((w) => (w.path.length === 1 ? w.path : [])),
-            ),
-          ];
-    }
-    if (value.kind !== "object") return [];
-    return [
-      ...new Set(
-        value.node.properties.flatMap((p) =>
-          t.isSpreadElement(p)
-            ? this.members(this.evaluate(p.argument, value.environment), active)
-            : [semanticStaticPropertyKey(p.key, p.computed)].filter(
-                (k): k is string =>
-                  k !== null && !isObjectPrototypeSetter(p, k),
-              ),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return [
+          ...new Set(value.values.flatMap((v) => this.members(v, active))),
+        ];
+      if (value.kind === "record") return [...value.values.keys()];
+      if (value.kind === "namespace") {
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return [];
+        const replacementIndex = available.findLastIndex(
+          (write) => write.path.length === 0,
+        );
+        const replacement = available[replacementIndex];
+        return [
+          ...new Set([
+            ...(replacement === undefined
+              ? []
+              : this.members(
+                  this.evaluate(replacement.value, value.environment),
+                  active,
+                )),
+            ...available
+              .slice(replacementIndex + 1)
+              .flatMap((write) => (write.path.length === 1 ? write.path : [])),
+          ]),
+        ];
+      }
+      if (value.kind !== "object") return [];
+      return [
+        ...new Set(
+          value.node.properties.flatMap((p) =>
+            t.isSpreadElement(p)
+              ? this.members(
+                  this.evaluate(p.argument, value.environment),
+                  active,
+                )
+              : [semanticStaticPropertyKey(p.key, p.computed)].filter(
+                  (k): k is string =>
+                    k !== null && !isObjectPrototypeSetter(p, k),
+                ),
+          ),
         ),
-      ),
-    ];
+      ];
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   unknownMembers(
@@ -485,39 +562,46 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): number {
     if (active.has(value)) return 1;
+    if (!this.#admitEvaluation()) return 1;
     active.add(value);
-    if (value.kind === "union")
-      return value.values.reduce(
-        (sum, v) => sum + this.unknownMembers(v, active),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return value.values.reduce(
+          (sum, v) => sum + this.unknownMembers(v, active),
+          0,
+        );
+      if (value.kind === "record") return 0;
+      if (value.kind === "namespace") {
+        if (this.#mutated.has(value.bindingId)) return 1;
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return 1;
+        if (available.some((write) => write.receiverUncertain)) return 1;
+        const replacement = available.findLast(
+          (write) => write.path.length === 0,
+        );
+        return replacement
+          ? this.unknownMembers(
+              this.evaluate(replacement.value, value.environment),
+              active,
+            )
+          : 0;
+      }
+      if (value.kind !== "object") return 1;
+      return value.node.properties.reduce(
+        (sum, p) =>
+          sum +
+          (t.isSpreadElement(p)
+            ? this.unknownMembers(
+                this.evaluate(p.argument, value.environment),
+                new Set(active),
+              )
+            : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
         0,
       );
-    if (value.kind === "record") return 0;
-    if (value.kind === "namespace") {
-      if (this.#mutated.has(value.bindingId)) return 1;
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return 1;
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.unknownMembers(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : 0;
+    } finally {
+      this.#depth -= 1;
     }
-    if (value.kind !== "object") return 1;
-    return value.node.properties.reduce(
-      (sum, p) =>
-        sum +
-        (t.isSpreadElement(p)
-          ? this.unknownMembers(
-              this.evaluate(p.argument, value.environment),
-              new Set(active),
-            )
-          : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
-      0,
-    );
   }
 
   /** Calling a generator creates an iterator; advancing it is not modeled. */
@@ -708,13 +792,25 @@ export class JavaScriptSymbolicBindings {
     if (!binding)
       return !semanticResolutionBlocked(this.state, node, node.name) &&
         ["require", "navigator", "String", "Boolean"].includes(node.name)
-        ? { kind: "external", path: [node.name] }
+        ? node.name === "require" &&
+          javaScriptRuntimeContext(this.state.program) === "module"
+          ? symbolicUnknown("CommonJS require is unavailable in an ES module")
+          : {
+              kind: "external",
+              path: [node.name],
+              ...(node.name === "require" &&
+              javaScriptRuntimeContext(this.state.program) === "unknown"
+                ? { loaderAuthority: "candidate" as const }
+                : {}),
+            }
         : symbolicUnknown("unbound identifier");
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     // Electron member identity is checked at the selected property. A write
     // to one method must not erase the module origin or unaffected siblings.
-    const electronOrigin = this.#electronIdentity.exportPath(node);
+    const electronOrigin =
+      this.#electronIdentity.exportPath(node) ??
+      this.#electronIdentity.candidateExportPath(node);
     if (electronOrigin === undefined && this.#mutated.has(binding.bindingId))
       return symbolicUnknown("dynamic member writes");
     for (let e: SymbolicEnvironment | undefined = env; e; e = e.parent) {
@@ -904,7 +1000,7 @@ export class JavaScriptSymbolicBindings {
       current = current.parent
     ) {
       if (--this.#remainingEvaluations < 0) {
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return false;
       }
       if (current.activation === activation) return true;
@@ -923,7 +1019,7 @@ export class JavaScriptSymbolicBindings {
       current = current.caller
     ) {
       if (--this.#remainingEvaluations < 0) {
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return undefined;
       }
       const point = current.point;
@@ -954,14 +1050,16 @@ export class JavaScriptSymbolicBindings {
     const boundary =
       read === undefined ? undefined : this.#namespaceReadBoundary(value, read);
     if (this.#remainingEvaluations <= 0) {
-      this.truncated = true;
+      this.resourceLimits.add("wrapper_visits");
       return undefined;
     }
     const sourcePoint = boundary?.node[boundary.edge];
     if (boundary !== undefined && sourcePoint == null) return undefined;
     if (completedAt !== undefined && completedAt.end == null) return undefined;
     if (sourcePoint == null && completedAt === undefined)
-      return read === undefined ? writes : undefined;
+      return read === undefined
+        ? this.#publicNamespaceWrites(writes)
+        : undefined;
     // An owned snapshot cannot read beyond either its capture or this exit.
     const point = Math.min(
       sourcePoint ?? Infinity,
@@ -972,7 +1070,7 @@ export class JavaScriptSymbolicBindings {
     if (commonThrough != null) {
       if (writes.length > this.#remainingEvaluations) {
         this.#remainingEvaluations = 0;
-        this.truncated = true;
+        this.resourceLimits.add("wrapper_visits");
         return undefined;
       }
       this.#remainingEvaluations -= writes.length;
@@ -987,15 +1085,82 @@ export class JavaScriptSymbolicBindings {
         }
       }
     }
-    return writes.filter(
-      (write) =>
-        write.site.end != null &&
-        write.site.end <= point &&
-        (changed.size === 0 ||
-          (write.path.length > 0
-            ? !changed.has(write.path[0]!)
-            : selectedKey !== undefined && !changed.has(selectedKey))),
+    return this.#publicNamespaceWrites(
+      writes.filter(
+        (write) =>
+          write.site.end != null &&
+          write.site.end <= point &&
+          (changed.size === 0 ||
+            (write.path.length > 0
+              ? !changed.has(write.path[0]!)
+              : selectedKey !== undefined && !changed.has(selectedKey))),
+      ),
     );
+  }
+
+  /** Keep publication separate from writes through a detached or rebound alias. */
+  #publicNamespaceWrites(
+    writes: readonly PropertyWrite[],
+  ): readonly PropertyWrite[] {
+    let relation: "connected" | "detached" | "uncertain" = "connected";
+    const published: PropertyWrite[] = [];
+    for (const write of writes) {
+      if (write.path.length === 0 && write.exportReceiver === "exports") {
+        if (write.exportValueReceiver === "module") relation = "connected";
+        else if (write.exportValueReceiver !== "exports")
+          relation = "uncertain";
+        continue;
+      }
+      if (write.path.length === 0 && write.exportReceiver === "module") {
+        if (
+          write.exportValueReceiver === "module" ||
+          (write.exportValueReceiver === "exports" && relation === "connected")
+        )
+          continue;
+        relation =
+          write.exportValueReceiver === "exports"
+            ? "connected"
+            : relation === "uncertain"
+              ? "uncertain"
+              : "detached";
+      }
+      if (write.exportReceiver === "exports") {
+        if (relation === "detached") continue;
+        if (relation === "uncertain") {
+          published.push({ ...write, receiverUncertain: true });
+          continue;
+        }
+      }
+      published.push(write);
+    }
+    return published;
+  }
+
+  #exportValueReceiver(
+    input: t.Node,
+    alias: string,
+  ): "module" | "exports" | undefined {
+    const expression = unwrapJavaScriptExpression(input).node;
+    const node = t.isAssignmentExpression(expression, { operator: "=" })
+      ? expression.left
+      : expression;
+    const root = t.isMemberExpression(node) ? node.object : node;
+    if (!t.isIdentifier(root)) return undefined;
+    const binding = resolveSemanticBindingState(this.state, root, root.name);
+    if (
+      binding === undefined ||
+      this.#exportAliases.get(binding.bindingId) !== alias
+    )
+      return undefined;
+    if (t.isIdentifier(node))
+      return this.#moduleBindings.has(binding.bindingId)
+        ? undefined
+        : "exports";
+    return t.isMemberExpression(node) &&
+      this.#moduleBindings.has(binding.bindingId) &&
+      semanticStaticPropertyKey(node.property, node.computed) === "exports"
+      ? "module"
+      : undefined;
   }
 
   #completeNamespace(
@@ -1070,7 +1235,7 @@ export class JavaScriptSymbolicBindings {
       ) {
         if (variants.length > this.#remainingEvaluations) {
           this.#remainingEvaluations = 0;
-          this.truncated = true;
+          this.resourceLimits.add("wrapper_visits");
         } else {
           this.#remainingEvaluations -= variants.length;
           const exits = variants as readonly SymbolicNamespace[];
@@ -1119,7 +1284,15 @@ export class JavaScriptSymbolicBindings {
           const spec = args[0];
           result =
             spec?.kind === "literal" && typeof spec.value === "string"
-              ? { kind: "external", path: [spec.value] }
+              ? {
+                  kind: "external",
+                  path: [spec.value],
+                  ...(semanticRequireOriginCandidate(node, this.state)?.origin
+                    .loaderAuthority === "candidate" ||
+                  value.loaderAuthority === "candidate"
+                    ? { loaderAuthority: "candidate" as const }
+                    : {}),
+                }
               : symbolicUnknown("dynamic require");
         } else if (
           value.kind !== "function" ||
@@ -1192,8 +1365,13 @@ export class JavaScriptSymbolicBindings {
         ...(unresolvedFallthrough ? { conditionUnresolved: true } : {}),
       });
     for (const statement of statements) {
-      if (--this.#remainingEvaluations < 0 || depth >= 128) {
-        this.truncated = true;
+      if (
+        --this.#remainingEvaluations < 0 ||
+        depth >= this.state.precision.wrapper_depth
+      ) {
+        this.resourceLimits.add(
+          this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
+        );
         return {
           values: [...possible, symbolicUnknown("symbolic resource limit")],
           fallsThrough: false,
@@ -1453,6 +1631,14 @@ export class JavaScriptSymbolicBindings {
     const binding = resolveSemanticBindingState(this.state, root, root.name);
     if (!binding) return;
     const alias = this.#exportAliases.get(binding.bindingId);
+    if (
+      alias &&
+      this.#moduleBindings.has(binding.bindingId) &&
+      path.length === 0
+    ) {
+      this.#mutated.add(alias);
+      return;
+    }
     if (this.#moduleBindings.has(binding.bindingId) && path[0] !== "exports")
       return;
     const key = alias ?? binding.bindingId;
@@ -1482,7 +1668,25 @@ export class JavaScriptSymbolicBindings {
       }
     }
     const writes = this.#writes.get(key) ?? [];
-    writes.push({ path: selected, value, site });
+    const exportValueReceiver =
+      alias !== undefined &&
+      selected.length === 0 &&
+      t.isAssignmentExpression(value, { operator: "=" })
+        ? this.#exportValueReceiver(value.right, alias)
+        : undefined;
+    writes.push({
+      path: selected,
+      value,
+      site,
+      ...(alias === undefined
+        ? {}
+        : {
+            exportReceiver: this.#moduleBindings.has(binding.bindingId)
+              ? ("module" as const)
+              : ("exports" as const),
+          }),
+      ...(exportValueReceiver === undefined ? {} : { exportValueReceiver }),
+    });
     this.#writes.set(key, writes);
   }
 }

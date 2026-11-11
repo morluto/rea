@@ -22,7 +22,7 @@ import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { jadxOperationTimeoutGuidance } from "./JadxRelease.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 
 const JAVA_MODULE_LISTING_TIMEOUT_MS = 10_000;
 const JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES = 1024 * 1024;

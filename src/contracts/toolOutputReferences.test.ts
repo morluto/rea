@@ -327,3 +327,33 @@ it.each(["relative/", "https://example.test/nested.json"])(
     expect(projected).not.toHaveProperty("$id");
   },
 );
+
+it("does not synthesize an output base for duplicate embedded resource identifiers", () => {
+  const canonical = z.looseObject({}).meta({
+    type: "object",
+    properties: {
+      before: { $id: "https://example.test/repeated", type: "string" },
+      after: { $id: "https://example.test/repeated", type: "number" },
+    },
+  });
+  const projected = toolOutputSchemaWithMetadata({
+    ...toolContract("binary_session"),
+    outputSchema: canonical,
+  })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+  expect(projected).not.toHaveProperty("$id");
+});
+
+it.each(["$dynamicRef", "$recursiveRef"])(
+  "preserves the output base for %s",
+  (keyword) => {
+    const canonical = z.looseObject({}).meta({
+      type: "object",
+      properties: { next: { [keyword]: "#" } },
+    });
+    const projected = toolOutputSchemaWithMetadata({
+      ...toolContract("binary_session"),
+      outputSchema: canonical,
+    })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+    expect(projected).not.toHaveProperty("$id");
+  },
+);

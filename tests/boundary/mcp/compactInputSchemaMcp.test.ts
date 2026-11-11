@@ -1,7 +1,6 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import {
@@ -23,11 +22,13 @@ import {
 } from "../../../src/config/mcpInputSchemaProfile.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   arrayItemSchemaError,
-  booleanLiteralSchemaError,
+  strictGatewayItemSchemaErrors,
+  unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 
 interface AdvertisedTool {
@@ -79,19 +80,131 @@ const unsupportedDependencyKeywords = (
   });
 };
 
+// Moonshot rejects a $ref whose target is a oneOf/anyOf whose branches
+// contain another $ref (morluto/rea#9581): "detected infinite recursion
+// without termination condition". The rejection is about the reference
+// shape, not the union itself, so this checks the pattern rather than
+// banning references outright: a genuinely recursive schema still needs
+// $ref, but never in this shape.
+const resolveLocalPointer = (root: unknown, reference: string): unknown => {
+  if (!reference.startsWith("#/")) return undefined;
+  let current: unknown = root;
+  for (const token of reference
+    .slice(2)
+    .split("/")
+    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string, unknown>)[token];
+  }
+  return current;
+};
+
+const collectSchemaReferences = (
+  node: unknown,
+  path: string,
+  collected: { path: string; reference: string }[],
+): void => {
+  if (Array.isArray(node)) {
+    node.forEach((child, index) =>
+      collectSchemaReferences(child, `${path}[${index}]`, collected),
+    );
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "$ref" && typeof value === "string") {
+      collected.push({ path: `${path}.$ref`, reference: value });
+      continue;
+    }
+    if (["const", "enum", "default", "examples"].includes(key)) continue;
+    if (schemaMaps.has(key) && typeof value === "object" && value !== null) {
+      for (const [name, child] of Object.entries(value))
+        collectSchemaReferences(child, `${path}.${key}.${name}`, collected);
+    } else if (schemaArrays.has(key) && Array.isArray(value)) {
+      value.forEach((child, index) =>
+        collectSchemaReferences(child, `${path}.${key}[${index}]`, collected),
+      );
+    } else if (schemaChildren.has(key)) {
+      if (Array.isArray(value))
+        value.forEach((child, index) =>
+          collectSchemaReferences(child, `${path}.${key}[${index}]`, collected),
+        );
+      else collectSchemaReferences(value, `${path}.${key}`, collected);
+    }
+  }
+};
+
+/** Paths of $refs Moonshot rejects: targets that are a oneOf/anyOf with a nested $ref. */
+const moonshotRejectedReferences = (
+  schema: Record<string, unknown>,
+): readonly string[] => {
+  const collected: { path: string; reference: string }[] = [];
+  collectSchemaReferences(schema, "$", collected);
+  return collected
+    .filter(({ reference }) => {
+      const target = resolveLocalPointer(schema, reference);
+      if (typeof target !== "object" || target === null) return false;
+      for (const key of ["oneOf", "anyOf"]) {
+        const branches = (target as Record<string, unknown>)[key];
+        if (!Array.isArray(branches)) continue;
+        const nested: { path: string; reference: string }[] = [];
+        for (const branch of branches)
+          collectSchemaReferences(branch, "$", nested);
+        if (nested.length > 0) return true;
+      }
+      return false;
+    })
+    .map(({ path }) => path);
+};
+
+it("distinguishes rejected references from allowed references and literal data", () => {
+  const union = {
+    oneOf: [
+      { type: "object", properties: { a: { $ref: "#/$defs/s" } } },
+      { type: "object", properties: { a: { $ref: "#/$defs/t" } } },
+    ],
+  };
+  const definitions = { s: { type: "string" }, t: { type: "number" } };
+  const rejected = {
+    type: "object",
+    properties: { c: { $ref: "#/$defs/u" } },
+    $defs: { ...definitions, u: union },
+  };
+  expect(moonshotRejectedReferences(rejected)).toEqual(["$.properties.c.$ref"]);
+  expect(
+    moonshotRejectedReferences({
+      type: "object",
+      properties: { c: { $ref: "#/$defs/s" } },
+      $defs: definitions,
+    }),
+  ).toEqual([]);
+  expect(
+    moonshotRejectedReferences({
+      type: "object",
+      properties: { c: { $ref: "#/$defs/a~1b~0c" } },
+      $defs: { ...definitions, "a/b~c": union },
+    }),
+  ).toEqual(["$.properties.c.$ref"]);
+  expect(
+    moonshotRejectedReferences({
+      const: rejected,
+      enum: [rejected],
+      default: rejected,
+      examples: [rejected],
+    }),
+  ).toEqual([]);
+});
+
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
 ): Promise<readonly AdvertisedTool[]> => {
-  const client = new Client({ name: "compact-profile", version: "0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    return (await client.listTools()).tools;
-  } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-  }
+  const mcp = createTestMcp();
+  onTestFinished(() => mcp.close());
+  const client = await mcp.connect(server, {
+    name: "compact-profile",
+    version: "0",
+  });
+  return (await client.listTools()).tools;
 };
 
 const registerCatalog = (server: EvidenceMcpServer): void => {
@@ -108,7 +221,7 @@ const compactServer = (): EvidenceMcpServer =>
     { name: "compact-profile", version: "0" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
   );
 
@@ -117,7 +230,7 @@ const fullServer = (): EvidenceMcpServer =>
     { name: "full-profile", version: "0" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
   );
 
 describe("MCP compact input schema profile", () => {
@@ -200,6 +313,11 @@ it("advertises every tool input schema within the provider budget", async () => 
   expect(
     tooDeep.map(({ name, inputSchema }) => [name, schemaDepth(inputSchema)]),
   ).toEqual([]);
+  expect(
+    tools.flatMap(({ name, inputSchema }) =>
+      strictGatewayItemSchemaErrors(inputSchema, name),
+    ),
+  ).toEqual([]);
 });
 
 it("keeps output schemas and tool descriptions identical to the default profile", async () => {
@@ -241,6 +359,41 @@ it("detects missing client-required items in nested array alternatives", () => {
   );
 });
 
+it("detects item schemas Gemini declarations reject in schema positions only", () => {
+  // The #5201 report: `properties[functions].items.items: field predicate
+  // failed: $type == Type.ARRAY` for an any-value element type list.
+  expect(
+    strictGatewayItemSchemaErrors(
+      {
+        type: "object",
+        properties: {
+          functions: {
+            type: "array",
+            items: {
+              type: ["null", "boolean", "object", "array", "number", "string"],
+              items: {},
+            },
+          },
+          actions: {
+            type: "array",
+            items: { oneOf: [{ type: "object" }, { type: "string" }] },
+          },
+          nested: {
+            type: "array",
+            items: { type: "array", items: { type: "string" } },
+          },
+        },
+        default: { items: {} },
+        examples: [{ items: {} }],
+      },
+      "injected",
+    ),
+  ).toEqual([
+    'injected.properties.functions.items.items is beside type ["null","boolean","object","array","number","string"]',
+    "injected.properties.actions.items is an untyped union",
+  ]);
+});
+
 it("preserves arbitrary nested JSON values at the converted SDK boundary", async () => {
   const contract = {
     ...toolContract("binary_session"),
@@ -270,6 +423,7 @@ it("preserves arbitrary nested JSON values at the converted SDK boundary", async
 });
 
 it("keeps SDK-converted schemas valid and accepting canonical examples", async () => {
+  let checkedFullRestrictions = false;
   for (const profile of ["full", "compact"] as const) {
     const server = profile === "full" ? fullServer() : compactServer();
     registerCatalog(server);
@@ -284,7 +438,7 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
         `${profile} profile: ${tool.name}`,
       ).toBeUndefined();
       expect(
-        booleanLiteralSchemaError(tool.inputSchema, tool.name),
+        unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
       ).toBeUndefined();
       expect(
         ajv.validateSchema(tool.inputSchema),
@@ -298,7 +452,84 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
           `${profile} profile, ${tool.name}: ${example.title}`,
         ).toBe(true);
     }
+    if (profile === "full") {
+      const adb = tools.find(({ name }) => name === "start_adb_activity");
+      const managed = tools.find(
+        ({ name }) => name === "inspect_managed_members",
+      );
+      const wasm = tools.find(({ name }) => name === "inspect_wasm_artifact");
+      if (adb === undefined || managed === undefined || wasm === undefined)
+        throw new Error("Missing ADB, managed member, or WASM inspection tool");
+      const validateAdb = ajv.compile(adb.inputSchema);
+      const activity = {
+        serial: "emulator-5554",
+        action: "android.intent.action.MAIN",
+      };
+      expect(
+        validateAdb({
+          ...activity,
+          extras: [
+            { key: "bool", type: "boolean", value: "false" },
+            { key: "int", type: "int", value: "-3" },
+            { key: "long", type: "long", value: "9007199254740993" },
+            { key: "float", type: "float", value: "-1.25" },
+          ],
+        }),
+      ).toBe(true);
+      for (const [type, value] of [
+        ["boolean", ""],
+        ["boolean", "yes"],
+        ["int", "1.5"],
+        ["long", ""],
+        ["float", "garbage"],
+      ])
+        expect(
+          validateAdb({
+            ...activity,
+            extras: [{ key: "invalid", type, value }],
+          }),
+          `${type}: ${value}`,
+        ).toBe(false);
+      const validateManaged = ajv.compile(managed.inputSchema);
+      expect(
+        validateManaged({
+          path: "/artifacts/program.dll",
+          type_names: ["Fixture.Program", "Missing.Type"],
+        }),
+      ).toBe(true);
+      expect(
+        validateManaged({
+          path: "/artifacts/program.dll",
+          type_names: ["Fixture.Program", "Fixture.Program"],
+        }),
+      ).toBe(false);
+      const validateWasm = ajv.compile(wasm.inputSchema);
+      expect(
+        validateWasm({ path: "/artifacts/program", detail: "summary" }),
+      ).toBe(true);
+      expect(
+        validateWasm({ path: "/artifacts/program", detail: "brief" }),
+      ).toBe(false);
+      for (const command_timeout_ms of [1, 42_000, 2_147_483_647])
+        expect(
+          validateWasm({ path: "/artifacts/program", command_timeout_ms }),
+        ).toBe(true);
+      for (const command_timeout_ms of [
+        0,
+        -1,
+        1.5,
+        2_147_483_648,
+        "1000",
+        null,
+      ])
+        expect(
+          validateWasm({ path: "/artifacts/program", command_timeout_ms }),
+          String(command_timeout_ms),
+        ).toBe(false);
+      checkedFullRestrictions = true;
+    }
   }
+  expect(checkedFullRestrictions).toBe(true);
 });
 
 it("omits Gemini-unsupported dependency keywords from both catalog profiles", async () => {
@@ -366,6 +597,55 @@ it("retains parameter types and avoids client-side reference expansion", async (
   });
 });
 
+it("advertises Moonshot-accepted input schemas without the rejected reference pattern in both profiles", async () => {
+  // morluto/rea#9581: Kimi/Moonshot rejects a $ref whose target is a
+  // oneOf/anyOf with another $ref inside, which broke every Kimi request
+  // because clients send the whole tool list. The nine tools named in the
+  // issue must stay advertised with inlined schemas in both profiles.
+  const rejectedInIssue = [
+    "capture_browser_scenario",
+    "capture_native_ui_scenario",
+    "observe_native_calls",
+    "inspect_analysis_view",
+    "compare_web_captures",
+    "trace_javascript_semantics",
+    "compare_process_captures",
+    "correlate_static_and_runtime",
+    "verify_reconstruction",
+  ];
+  for (const profile of ["full", "compact"] as const) {
+    const server = profile === "full" ? fullServer() : compactServer();
+    registerCatalog(server);
+    const tools = await listToolsThroughTransport(server);
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const name of rejectedInIssue) {
+      const tool = byName.get(name);
+      if (tool === undefined)
+        throw new Error(`${profile} profile: ${name} was not advertised`);
+      expect(
+        tool.inputSchema,
+        `${profile} profile: ${name}`,
+      ).not.toHaveProperty("$defs");
+      expect(
+        moonshotRejectedReferences(tool.inputSchema),
+        `${profile} profile: ${name}`,
+      ).toEqual([]);
+    }
+    expect(
+      tools.flatMap(({ name, inputSchema }) =>
+        moonshotRejectedReferences(inputSchema).map(
+          (path) => `${profile} profile: ${name}${path.slice(1)}`,
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      tools
+        .filter(({ inputSchema }) => Object.hasOwn(inputSchema, "$defs"))
+        .map(({ name }) => `${profile} profile: ${name}`),
+    ).toEqual([]);
+  }
+});
+
 it("parses the profile selection the server startup reads", () => {
   expect(parseMcpInputSchemaProfile("compact")).toEqual({
     ok: true,
@@ -394,36 +674,33 @@ describe("MCP compact input schema canonical enforcement", () => {
         };
       },
     );
-    const client = new Client({ name: "compact-validation", version: "0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
-        ({ name }) => name === contract.name,
-      );
-      if (advertised === undefined)
-        throw new Error("Process capture tool was not advertised");
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      const validate = ajv.compile(advertised.inputSchema);
-      const valid = { executable: "node", environment: { APP_MODE: "test" } };
-      const reserved = {
-        executable: "node",
-        environment: { REA_PROCESS_RUN_ID: "caller-value" },
-      };
-      expect(validate(valid)).toBe(true);
-      expect(processScenarioSchema.safeParse(valid).success).toBe(true);
-      expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
-      const result = await client.callTool({
-        name: contract.name,
-        arguments: reserved,
-      });
-      expect(result.isError).toBe(true);
-      expect(handlerCalled).toBe(false);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "compact-validation",
+      version: "0",
+    });
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === contract.name,
+    );
+    if (advertised === undefined)
+      throw new Error("Process capture tool was not advertised");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(advertised.inputSchema);
+    const valid = { executable: "node", environment: { APP_MODE: "test" } };
+    const reserved = {
+      executable: "node",
+      environment: { REA_PROCESS_RUN_ID: "caller-value" },
+    };
+    expect(validate(valid)).toBe(true);
+    expect(processScenarioSchema.safeParse(valid).success).toBe(true);
+    expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
+    const result = await client.callTool({
+      name: contract.name,
+      arguments: reserved,
+    });
+    expect(result.isError).toBe(true);
+    expect(handlerCalled).toBe(false);
   });
 
   it("compacts plain standard schemas that are not Zod instances", async () => {
@@ -459,3 +736,162 @@ describe("MCP compact input schema canonical enforcement", () => {
     expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
   });
 });
+
+it.each(["full", "compact"] as const)(
+  "preserves nested resource validation through the %s SDK catalog and canonical handler",
+  async (profile) => {
+    const source = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://example.test/root.json",
+      type: "object",
+      definitions: {
+        value: { type: "string" },
+        child: {
+          $id: "child.json",
+          type: "object",
+          definitions: { value: { type: "number" } },
+          properties: { value: { $ref: "#/definitions/value" } },
+          required: ["value"],
+          additionalProperties: false,
+        },
+      },
+      properties: { child: { $ref: "#/definitions/child" } },
+      required: ["child"],
+      additionalProperties: false,
+    };
+    const canonical = new Ajv2020({ strict: false }).compile(source);
+    const registration = toolRegistrationOptions(
+      toolContract("binary_session"),
+    );
+    const inputSchema = {
+      "~standard": {
+        ...registration.inputSchema["~standard"],
+        vendor: "rea-resource-fixture",
+        jsonSchema: {
+          ...registration.inputSchema["~standard"].jsonSchema,
+          input: () => source,
+        },
+        validate: (value: unknown) =>
+          canonical(value)
+            ? { value }
+            : { issues: [{ message: "Invalid resource value" }] },
+      },
+    };
+    const server = profile === "compact" ? compactServer() : fullServer();
+    let calls = 0;
+    server.registerTool("resource_fixture", { inputSchema }, async () => {
+      calls++;
+      return { content: [{ type: "text", text: "accepted" }] };
+    });
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "resource-scope",
+      version: "1",
+    });
+    const definition = (await client.listTools()).tools.find(
+      ({ name }) => name === "resource_fixture",
+    );
+    if (definition === undefined) throw new Error("Missing resource fixture");
+    const advertised = new Ajv2020({ strict: false }).compile(
+      definition.inputSchema,
+    );
+    for (const value of [7, "seven"]) {
+      const args = { child: { value } };
+      expect(advertised(args)).toBe(canonical(args));
+      const result = await client.callTool({
+        name: "resource_fixture",
+        arguments: args,
+      });
+      expect(result.isError === true).toBe(!canonical(args));
+    }
+    expect(calls).toBe(1);
+  },
+);
+
+it("keeps root detail guidance so callers can choose bounded summaries", async () => {
+  const full = fullServer();
+  const compact = compactServer();
+  registerCatalog(full);
+  registerCatalog(compact);
+  const [fullTools, compactTools] = await Promise.all([
+    listToolsThroughTransport(full),
+    listToolsThroughTransport(compact),
+  ]);
+  const detailGuidance = (tools: readonly AdvertisedTool[]) =>
+    Object.fromEntries(
+      tools.flatMap(({ name, inputSchema }) => {
+        const detail = (
+          inputSchema.properties as Record<string, Record<string, unknown>>
+        )?.detail;
+        return typeof detail?.description === "string"
+          ? [[name, detail.description]]
+          : [];
+      }),
+    );
+  const expected = detailGuidance(fullTools);
+  expect(Object.keys(expected)).toEqual(
+    expect.arrayContaining(["inspect_artifact", "inspect_macho"]),
+  );
+  expect(detailGuidance(compactTools)).toEqual(expected);
+});
+
+it.each([
+  [
+    "export_environment_bundle",
+    "name",
+    {
+      source: { kind: "evidence-file", path: "/capture.json" },
+      output_directory: "/bundle",
+    },
+  ],
+  [
+    "measure_build_task",
+    "task",
+    { bundle: "/bundle", model: "test-model", budget_usd: 1 },
+  ],
+] as const)(
+  "advertises portable names for %s through the SDK",
+  async (name, field, base) => {
+    const contract = toolContract(name);
+    const server = fullServer();
+    server.registerTool(
+      contract.name,
+      toolRegistrationOptions(contract),
+      async () => ({ content: [] }),
+    );
+    const tool = (await listToolsThroughTransport(server)).find(
+      ({ name }) => name === contract.name,
+    );
+    expect(tool).toBeDefined();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(tool!.inputSchema);
+    for (const [name, accepted] of [
+      [undefined, field === "name"],
+      ["replay-2", true],
+      ["123-replay", true],
+      ["a".repeat(63), true],
+      ["a".repeat(64), false],
+      ["../escape", false],
+      ["Uppercase", false],
+      ["two--hyphens", false],
+      ["trailing\n", false],
+      ["con", false],
+      ["com1", false],
+      ["lpt9", false],
+      ["123", false],
+      ["0128", false],
+      ["0x", false],
+      ["0xffffffff", false],
+      ["0xg", true],
+      ["com10", true],
+    ] as const) {
+      const input = {
+        ...base,
+        ...(name === undefined ? {} : { [field]: name }),
+      };
+      expect(validate(input), JSON.stringify(input)).toBe(accepted);
+      expect(contract.inputSchema.safeParse(input).success).toBe(accepted);
+    }
+  },
+);

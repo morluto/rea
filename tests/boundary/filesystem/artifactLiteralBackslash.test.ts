@@ -117,7 +117,9 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
       [...new Set(NAMES.map((name) => name.split("/")[0]))].sort(),
     );
     for (const name of NAMES)
-      expect(await readFile(join(output, name))).toEqual(CONTENT);
+      expect(Buffer.compare(await readFile(join(output, name)), CONTENT)).toBe(
+        0,
+      );
   },
 );
 

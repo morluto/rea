@@ -3,11 +3,44 @@ import { compareProcessCaptures } from "./processComparison.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
 import { hasCaptureTruncation } from "./processCaptureCoverage.js";
+import { digestProcessCommitment } from "./processScenario.js";
+import type { JsonValue } from "../jsonValue.js";
 
 import {
   processCaptureSchema,
   type UnverifiedProcessCapture,
 } from "./processCapture.js";
+
+const finalizedScenario = {
+  ...EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest.scenario,
+  finalization_ms: 1_500,
+};
+const finalizedComparisonContract = { finalization_ms: 1_500 };
+
+/** Valid capture of a timeout that finalized: SIGTERM delivered, exit observed. */
+export const FINALIZED_PROCESS_CAPTURE_EXAMPLE = {
+  ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+  manifest: {
+    ...EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest,
+    scenario: finalizedScenario,
+    comparison_contract: finalizedComparisonContract,
+    full_scenario_sha256: digestProcessCommitment(finalizedScenario),
+    comparison_contract_sha256: digestProcessCommitment(
+      finalizedComparisonContract,
+    ),
+  },
+  exit: {
+    code: null,
+    signal: 0,
+    reason: "timeout",
+    finalization: {
+      requested_ms: 1_500,
+      elapsed_ms: 12,
+      exit_code: 0,
+      signals: [{ signal: "SIGTERM", sent_at_ms: 0, delivery: "signaled" }],
+    },
+  },
+} satisfies JsonValue;
 /** Parse a detached valid empty capture for tests that need trusted evidence. */
 export const emptyProcessCapture = () =>
   parseProcessCapture(EMPTY_PROCESS_CAPTURE_EXAMPLE);

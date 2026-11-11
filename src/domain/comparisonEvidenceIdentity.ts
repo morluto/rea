@@ -1,4 +1,5 @@
 import type { Evidence } from "./evidence.js";
+import { createAnalysisProfile } from "./analysisProfile.js";
 import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
@@ -18,6 +19,11 @@ export const FUNCTION_COMPARISON_PROVIDER = {
   version: "1",
 } as const;
 
+export const FUNCTION_COMPARISON_PROFILE = createAnalysisProfile(
+  FUNCTION_COMPARISON_PROVIDER,
+  { workflow_revision: 2 },
+);
+
 const COMPARISON_EVIDENCE_IDENTITIES = {
   compare_artifacts: {
     predicate: "rea.artifact-comparison",
@@ -33,7 +39,8 @@ const COMPARISON_EVIDENCE_IDENTITIES = {
   },
 } as const;
 
-type ComparisonEvidenceOperation = keyof typeof COMPARISON_EVIDENCE_IDENTITIES;
+export type ComparisonEvidenceOperation =
+  keyof typeof COMPARISON_EVIDENCE_IDENTITIES;
 
 /** Whether an operation is one of the comparison workflows this domain owns. */
 export const isComparisonEvidenceOperation = (

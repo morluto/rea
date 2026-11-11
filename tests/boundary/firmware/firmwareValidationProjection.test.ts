@@ -31,7 +31,6 @@ describe("firmware request validation projection", () => {
       const service = new FirmwareAnalysisService({ execute });
       const result = await service.execute("extract_firmware", input);
 
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected request validation to fail");
       const projected = projectAnalysisError(result.error);
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
@@ -45,7 +44,7 @@ describe("firmware request validation projection", () => {
           operation: "extract_firmware",
           issues: [
             {
-              path: ["input", "range", missing],
+              path: ["range", missing],
               reason: "missing_argument",
             },
           ],

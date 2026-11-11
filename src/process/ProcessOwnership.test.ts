@@ -44,10 +44,18 @@ describe("owned process-group cleanup discovery", () => {
       ]),
     ).toEqual([100, 102]);
   });
-  it("drops nameless Linux environment entries", () => {
-    expect(
-      parseProcessEnvironment("=ignored\0REA_PROCESS_RUN_ID=owned\0EMPTY=\0"),
-    ).toEqual({ REA_PROCESS_RUN_ID: "owned", EMPTY: "" });
+  it("preserves only named source entries in the Linux environment", () => {
+    const environment = parseProcessEnvironment(
+      "=ignored\0REA_PROCESS_RUN_ID=earlier\0EMPTY=\0REA_PROCESS_RUN_ID=owned\0constructor=source\0__proto__=retained\0VALUE=a=b\0",
+    );
+    expect(environment).toEqual({
+      REA_PROCESS_RUN_ID: "owned",
+      EMPTY: "",
+      constructor: "source",
+      ["__proto__"]: "retained",
+      VALUE: "a=b",
+    });
+    expect(environment["toString"]).toBeUndefined();
   });
   it("matches macOS executable names after process-table normalization", () => {
     expect(
@@ -88,6 +96,19 @@ describe("owned process-group cleanup discovery", () => {
       signaled: true,
     });
     expect(signalGroup).toHaveBeenCalledWith(100, "SIGKILL");
+  });
+  it("does not signal a group when a member only inherits its matching token", async () => {
+    const inherited: Record<string, string> = Object.create({
+      REA_PROCESS_RUN_ID: ownership.runId,
+    });
+    const { adapter, signalGroup } = host({
+      100: { REA_PROCESS_RUN_ID: ownership.runId },
+      101: inherited,
+    });
+    expect(await cleanupOwnedProcessGroup(ownership, adapter)).toMatchObject({
+      cleaned: false,
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
   });
 });
 
@@ -316,7 +337,12 @@ describe("related sweep candidates during cleanup", () => {
     let childReads = 0;
     const adapter: ProcessOwnershipHost = {
       listProcesses: async () => processes,
-      processIdentities: async (members) => identitiesWithRelations(members),
+      processIdentities: async (members) =>
+        identitiesWithRelations(
+          processes.filter(({ pid }) =>
+            members.some((member) => member.pid === pid),
+          ),
+        ),
       environment: async () => ({}),
       runTokens: async (members) =>
         new Map(
@@ -340,7 +366,7 @@ describe("related sweep candidates during cleanup", () => {
     );
     expect(result).toMatchObject({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 200",
+      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
       failures: [{ pid: 200, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).not.toHaveBeenCalledWith(200, "SIGKILL");
@@ -539,7 +565,7 @@ describe("sampled detached process groups during cleanup", () => {
 
     expect(result).toMatchObject({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 200",
+      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
       failures: [{ pid: 200, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).toHaveBeenCalledTimes(1);
@@ -577,7 +603,7 @@ describe("sampled detached process groups during cleanup", () => {
 
     expect(result).toMatchObject({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 200",
+      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
       failures: [{ pid: 200, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).not.toHaveBeenCalled();

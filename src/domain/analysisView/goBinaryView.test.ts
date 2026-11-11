@@ -1,3 +1,4 @@
+import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
@@ -37,6 +38,7 @@ const parent = (): AnalysisViewParent => {
     },
   );
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     subject: evidence.subject,
@@ -63,7 +65,6 @@ it("bounds inherited messages while keeping their complete parent reference", ()
     limitations: [note],
   };
   const result = projectAnalysisView(input, { kind: "summary" });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.limitations.join(" ")).toContain(input.evidenceId);
   expect(result.value.limitations.join(" ")).toContain("omitted");
@@ -71,14 +72,13 @@ it("bounds inherited messages while keeping their complete parent reference", ()
   expect(input.limitations[0]).toBe(note);
 });
 
-it.each(["path", "digest", "format"] as const)(
+it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
     const input = parent();
     if (input.subject == null) throw new Error("Expected artifact subject");
     const subject = {
       ...input.subject,
-      ...(field === "path" ? { local_path: "/artifacts/other" } : {}),
       ...(field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {}),
     };
     const result = projectAnalysisView(
@@ -110,8 +110,12 @@ it.each([
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (input.subject == null) throw new Error("Expected artifact subject");
-    const subject = { ...input.subject, architecture: subjectArchitecture };
+    if (input.subject?.format !== "elf")
+      throw new Error("Expected ELF subject");
+    const subject = {
+      ...input.subject,
+      architecture: subjectArchitecture,
+    };
     const normalizedResult = { ...report, architecture };
     for (const view of [
       { kind: "summary" },
@@ -123,6 +127,164 @@ it.each([
       );
       expect(result.ok).toBe(accepted);
       if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+    }
+  },
+);
+
+it("revalidates the parent subject after immutable Go report facts have been cached", () => {
+  const input = {
+    ...parent(),
+    normalizedResult: freezeOwnedJsonTreeSnapshot(structuredClone(report)),
+    sealedResult: true,
+  };
+  expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
+  if (input.subject == null) throw new Error("Expected artifact subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...input,
+        subject: { ...input.subject, digest: { sha256: "b".repeat(64) } },
+      },
+      { kind: "summary" },
+    ).ok,
+  ).toBe(false);
+});
+
+it("refuses string_literals view when unrequested and projects filtered/truncated string_literals when present", () => {
+  const unrequested = projectAnalysisView(parent(), {
+    kind: "go",
+    collection: "string_literals",
+    offset: 0,
+    limit: 64,
+  });
+  expect(unrequested.ok).toBe(false);
+  if (!unrequested.ok) {
+    expect(unrequested.error).toBeInstanceOf(AnalysisInputError);
+    if (unrequested.error instanceof AnalysisInputError)
+      expect(unrequested.error.issues[0]?.path).toEqual(["view", "collection"]);
+  }
+
+  const withStrings: GoBinary = {
+    ...report,
+    string_literals: {
+      evidence_kind: "inferred",
+      discovered_count: 5,
+      aggregate_bytes: 52,
+      max_items: 3,
+      truncated: true,
+      items: [
+        {
+          value: "ListResourceProviders",
+          location: { offset: 128, bytes: 21 },
+          first_header_offset: 300,
+          reference_count: 1,
+        },
+        {
+          value: "genai",
+          location: { offset: 149, bytes: 5 },
+          first_header_offset: 316,
+          reference_count: 2,
+        },
+        {
+          value: "https://example.invalid/v1",
+          location: { offset: 154, bytes: 26 },
+          first_header_offset: 332,
+          reference_count: 1,
+        },
+      ],
+    },
+  };
+  const stringParent = { ...parent(), normalizedResult: withStrings };
+  const summary = projectAnalysisView(stringParent, { kind: "summary" });
+  expect(summary.ok).toBe(true);
+  if (
+    !summary.ok ||
+    summary.value.kind !== "summary" ||
+    summary.value.parent_operation !== "inspect_go_binary"
+  )
+    throw new Error("Expected Go summary view");
+  expect(summary.value.source_coverage.string_literals).toBe("truncated");
+  expect(summary.value.summary).toMatchObject({
+    string_literals: {
+      evidence_kind: "inferred",
+      available_count: 3,
+      discovered_count: 5,
+      aggregate_bytes: 52,
+      max_items: 3,
+      truncated: true,
+    },
+  });
+  expect(summary.value.unknowns.join(" ")).toContain("truncated");
+
+  const filtered = projectAnalysisView(stringParent, {
+    kind: "go",
+    collection: "string_literals",
+    contains: "example.invalid",
+    fields: ["value", "reference_count"],
+    offset: 0,
+    limit: 10,
+  });
+  expect(filtered.ok).toBe(true);
+  if (!filtered.ok || filtered.value.kind !== "go")
+    throw new Error("Expected Go string_literals page");
+  expect(filtered.value.page).toEqual({
+    collection: "string_literals",
+    rows: [
+      {
+        index: 2,
+        value: "https://example.invalid/v1",
+        reference_count: 1,
+      },
+    ],
+  });
+});
+
+it.each(["dependencies", "settings"] as const)(
+  "distinguishes unavailable Go %s from decoded empty records",
+  (collection) => {
+    for (const available of [false, true]) {
+      const input = parent();
+      const result = projectAnalysisView(
+        {
+          ...input,
+          normalizedResult: {
+            ...report,
+            build_info: available
+              ? {
+                  header_offset: 0,
+                  encoding: "inline",
+                  go_version: null,
+                  go_version_bytes_base64: "",
+                  module_text: null,
+                  module_bytes_base64: "",
+                  version_location: { offset: 32, bytes: 0 },
+                  module_location: { offset: 32, bytes: 0 },
+                  module: {
+                    path: null,
+                    main: null,
+                    dependencies: [],
+                    settings: [],
+                    unparsed_lines: [],
+                    unparsed_line_bytes_base64: [],
+                    complete: true,
+                  },
+                }
+              : null,
+          },
+        },
+        { kind: "go", collection, offset: 3, limit: 1 },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toEqual({
+        status: available ? "empty" : "unavailable",
+        examined: 0,
+        total: available ? 0 : null,
+        next_offset: null,
+        exhausted: available,
+      });
+      expect(result.value).toMatchObject({
+        source_coverage: { build_info_available: available },
+      });
     }
   },
 );

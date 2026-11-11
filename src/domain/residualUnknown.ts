@@ -1,3 +1,4 @@
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { z } from "zod";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
@@ -51,7 +52,7 @@ const comparisonConclusionScopeSchema = z
   })
   .strict()
   .superRefine(({ dimensions }, context) => {
-    if (!sameOrderedValues(dimensions, sortedUnique(dimensions)))
+    if (!sameOrderedValues(dimensions, uniqueSorted(dimensions)))
       context.addIssue({
         code: "custom",
         message: "Comparison dimensions must be sorted and unique",
@@ -77,7 +78,7 @@ const resolutionSchema = z.discriminatedUnion("disposition", [
 /** Strict durable record for one unresolved or evidence-qualified question. */
 const residualUnknownObjectSchema = z.strictObject({
   unknown_id: unknownIdSchema,
-  revision: z.number().int().min(1),
+  revision: z.int().min(1),
   previous_revision_digest: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -220,7 +221,7 @@ const refineRevision = (value: UnknownRevision, context: z.RefinementCtx) => {
     });
 };
 
-const residualUnknownValidatedSchema = residualUnknownObjectSchema.superRefine(
+export const residualUnknownSchema = residualUnknownObjectSchema.superRefine(
   (value, context) => {
     if (computeRevisionDigest(value) !== value.revision_digest)
       context.addIssue({
@@ -231,8 +232,6 @@ const residualUnknownValidatedSchema = residualUnknownObjectSchema.superRefine(
     refineRevision(value, context);
   },
 );
-
-export const residualUnknownSchema = residualUnknownValidatedSchema;
 
 const generatedRevisionSchema = residualUnknownObjectSchema
   .omit({ revision_digest: true })
@@ -265,7 +264,7 @@ export type RecordUnknownInput = z.infer<typeof recordUnknownInputSchema>;
 /** Explicit optimistic-concurrency update command for one unknown. */
 export const updateUnknownInputSchema = z.strictObject({
   unknown_id: unknownIdSchema,
-  expected_revision: z.number().int().min(1),
+  expected_revision: z.int().min(1),
   status: residualUnknownObjectSchema.shape.status,
   severity: residualUnknownObjectSchema.shape.severity,
   supporting_evidence_ids: z.array(evidenceIdSchema),
@@ -339,7 +338,7 @@ export const updateResidualUnknown = (
       : { comparison_conclusion_scope: current.comparison_conclusion_scope }),
     ...projectRevisionDetails(input),
     resolution: input.resolution,
-    mutation_evidence_ids: sortedUnique([
+    mutation_evidence_ids: uniqueSorted([
       ...current.mutation_evidence_ids,
       mutationEvidenceId,
     ]),
@@ -367,8 +366,8 @@ type RevisionDetailsInput = Pick<
 
 const projectRevisionDetails = (input: RevisionDetailsInput) => ({
   severity: input.severity,
-  supporting_evidence_ids: sortedUnique(input.supporting_evidence_ids),
-  contradicting_evidence_ids: sortedUnique(input.contradicting_evidence_ids),
+  supporting_evidence_ids: uniqueSorted(input.supporting_evidence_ids),
+  contradicting_evidence_ids: uniqueSorted(input.contradicting_evidence_ids),
   required_authority: input.required_authority,
   required_confidence: input.required_confidence,
   required_environment: input.required_environment,
@@ -385,8 +384,6 @@ const computeRevisionDigest = (
   return digestCanonicalValue(semantic, "Unknown identity");
 };
 
-const sortedUnique = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareUnicodeCodePoints);
 const sameOrderedValues = (
   left: readonly string[],
   right: readonly string[],

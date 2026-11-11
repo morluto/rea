@@ -1,19 +1,22 @@
 import { functionStructuralCandidate } from "./functionStructuralCandidate.js";
-import type { z } from "zod";
+import { z } from "zod";
 import type { Evidence } from "../evidence.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
+import { readEvidencePayload } from "../evidenceValidation.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import {
+  availableFunctionBodySchema,
   functionBodySchema,
   functionBodyEntryAgrees,
-  functionDossierSchema,
-} from "../hopperValues.js";
-import { isAutoName } from "../functionComparisonNormalization.js";
+} from "../native/functionBody.js";
+import { unavailableNativeFactSchema } from "./nativeFactAvailability.js";
+import { nativeSymbolOrigin } from "./nativeSymbol.js";
 import {
   addressedValueSchema,
   nativeInventoryRowsSchemas,
 } from "./nativeInventory.js";
-import { parseNativeAddress } from "./nativeAddress.js";
+import { nativeAddressInputSchema } from "./nativeAddress.js";
 import { nativeByteReadSchema } from "./nativeByteRead.js";
 import { procedureInfoSchema } from "./procedureInfo.js";
 import type { NativeFunctionMatchMember } from "./functionMatching.js";
@@ -22,15 +25,56 @@ import {
   type NativeMatchingCheckpoint,
 } from "./functionByteCoverage.js";
 
+const matchingRowsSchema = nativeInventoryRowsSchemas.names.element
+  .extend({ address: nativeAddressInputSchema })
+  .array();
+const matchingBodySchema = z.discriminatedUnion("available", [
+  unavailableNativeFactSchema,
+  availableFunctionBodySchema.safeExtend({
+    ranges: availableFunctionBodySchema.shape.ranges.element
+      .extend({
+        start: nativeAddressInputSchema,
+        end: nativeAddressInputSchema,
+      })
+      .array(),
+  }),
+]);
+const matchingProcedureInfoSchema = procedureInfoSchema
+  .safeExtend({
+    entrypoint: nativeAddressInputSchema,
+    body: matchingBodySchema,
+  })
+  .transform(({ entrypoint, body, name, symbol }) => ({
+    address: entrypoint,
+    body,
+    name,
+    symbol,
+  }));
+const matchingFunctionDossierSchema = functionDossierSchema.safeExtend({
+  procedure: functionDossierSchema.shape.procedure.safeExtend({
+    address: nativeAddressInputSchema,
+    body: matchingBodySchema,
+  }),
+});
+const sourcePayload = <Output>(
+  schema: z.ZodType<Output>,
+  input: unknown,
+): Output => {
+  const result = readEvidencePayload(schema, input);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
 type Body = z.infer<typeof functionBodySchema>;
 type AddressedValue = z.infer<typeof addressedValueSchema>;
+
 export interface MatchingFunction {
   readonly member: NativeFunctionMatchMember;
   readonly symbol: string | null;
   readonly fingerprint: string | null;
 }
 interface Detail {
-  body?: Body;
+  body: Body;
   dossier?: string | null;
   candidate?: string | null;
   conflict: boolean;
@@ -46,47 +90,43 @@ interface Facts {
   readonly bytes: FunctionByteCoverage;
 }
 
-/** Supplementary observations must belong to this exact provider/target/profile/document. */
-const requireContext = (inventory: Evidence, observation: Evidence): void => {
-  if (
-    observation.predicate_type !== "rea.analysis" ||
-    digestCanonicalValue(observation.subject) !==
-      digestCanonicalValue(inventory.subject) ||
-    digestCanonicalValue(observation.provider) !==
-      digestCanonicalValue(inventory.provider) ||
-    digestCanonicalValue(observation.analysis_profile) !==
-      digestCanonicalValue(inventory.analysis_profile) ||
-    (observation.parameters.document ?? null) !==
-      (inventory.parameters.document ?? null)
-  )
-    throw new EvidenceIntegrityError(
-      "Function observation does not belong to its selected inventory context",
-    );
-};
-const addBody = (observation: Evidence, details: Facts["details"]): void => {
+const addBody = (
+  observation: Evidence,
+  details: Facts["details"],
+  symbols: Facts["symbols"],
+): void => {
   const dossier =
     observation.operation === "analyze_function"
-      ? functionDossierSchema.parse(observation.normalized_result)
+      ? sourcePayload(
+          matchingFunctionDossierSchema,
+          observation.normalized_result,
+        )
       : undefined;
   const procedure =
     dossier?.procedure ??
-    (() => {
-      const info = procedureInfoSchema.parse(observation.normalized_result);
-      return { address: info.entrypoint, body: info.body };
-    })();
-  const address = parseNativeAddress(procedure.address);
+    sourcePayload(matchingProcedureInfoSchema, observation.normalized_result);
+  const address = procedure.address;
+  if (procedure.symbol != null)
+    addSymbol(
+      { address, value: procedure.name, symbol: procedure.symbol },
+      observation.evidence_id,
+      symbols,
+    );
   if (!functionBodyEntryAgrees(procedure.body, address))
     throw new EvidenceIntegrityError(
       "Procedure body entry membership contradicts its address",
     );
   let detail = details.get(address);
-  if (detail === undefined)
-    details.set(address, (detail = { conflict: false, links: [] }));
-  if (
-    detail.body !== undefined &&
+  if (detail === undefined) {
+    details.set(
+      address,
+      (detail = { body: procedure.body, conflict: false, links: [] }),
+    );
+  } else if (
     digestCanonicalValue(detail.body) !== digestCanonicalValue(procedure.body)
-  )
+  ) {
     detail.conflict = true;
+  }
   detail.body = procedure.body;
   if (observation.operation === "analyze_function") {
     const candidate = functionStructuralCandidate(observation, dossier!);
@@ -101,32 +141,52 @@ const addBody = (observation: Evidence, details: Facts["details"]): void => {
   }
   detail.links.push(observation.evidence_id);
 };
+const addSymbol = (
+  symbol: AddressedValue,
+  evidenceId: string,
+  symbols: Facts["symbols"],
+): void => {
+  const address = symbol.address;
+  let group = symbols.get(address);
+  if (group === undefined)
+    symbols.set(address, (group = { values: [], links: new Set() }));
+  group.values.push(symbol);
+  group.links.add(evidenceId);
+};
 const addNames = async (
   observation: Evidence,
   symbols: Facts["symbols"],
   checkpoint: NativeMatchingCheckpoint,
 ): Promise<void> => {
-  for (const symbol of nativeInventoryRowsSchemas.names.parse(
+  for (const symbol of sourcePayload(
+    matchingRowsSchema,
     observation.normalized_result,
   )) {
     await checkpoint(128 + symbol.value.length * 2);
-    const address = parseNativeAddress(symbol.address);
-    let group = symbols.get(address);
-    if (group === undefined)
-      symbols.set(address, (group = { values: [], links: new Set() }));
-    group.values.push(symbol);
-    group.links.add(observation.evidence_id);
+    addSymbol(symbol, observation.evidence_id, symbols);
   }
 };
 const addBytes = async (
   observation: Evidence,
   bytes: FunctionByteCoverage,
 ): Promise<void> => {
-  const read = nativeByteReadSchema.parse(observation.normalized_result);
+  const parsed = sourcePayload(
+    nativeByteReadSchema,
+    observation.normalized_result,
+  );
+  const requestAddress =
+    typeof observation.parameters.address === "string"
+      ? sourcePayload(nativeAddressInputSchema, observation.parameters.address)
+      : undefined;
+  const read = {
+    ...parsed,
+    address:
+      requestAddress !== undefined || parsed.returned_bytes > 0
+        ? sourcePayload(nativeAddressInputSchema, parsed.address)
+        : parsed.address,
+  };
   if (
-    (typeof observation.parameters.address === "string" &&
-      parseNativeAddress(observation.parameters.address) !==
-        parseNativeAddress(read.address)) ||
+    (requestAddress !== undefined && requestAddress !== read.address) ||
     (typeof observation.parameters.length === "number" &&
       observation.parameters.length !== read.requested_bytes)
   )
@@ -147,18 +207,13 @@ const reportedSymbol = (
     ...(known?.values.filter((symbol) => symbol.value === row.value) ?? []),
   ];
   const generated = names.some(
-    (symbol) =>
-      symbol.symbol?.dynamic === true || symbol.symbol?.source === "default",
+    (symbol) => nativeSymbolOrigin(symbol.symbol) === "generated",
   );
   const named = names.some(
-    (symbol) =>
-      symbol.symbol?.dynamic === false && symbol.symbol.source !== "default",
+    (symbol) => nativeSymbolOrigin(symbol.symbol) === "named",
   );
   return {
-    value:
-      row.value.length === 0 || generated || (!named && isAutoName(row.value))
-        ? null
-        : row.value,
+    value: row.value.length === 0 || generated || !named ? null : row.value,
     origin:
       generated && named
         ? "conflicting"
@@ -176,7 +231,7 @@ const functionFact = async (
   facts: Facts,
   checkpoint: NativeMatchingCheckpoint,
 ): Promise<MatchingFunction> => {
-  const address = parseNativeAddress(row.address),
+  const address = row.address,
     detail = facts.details.get(address),
     symbols = facts.symbols.get(address);
   // Bound expansion before creating per-occurrence sets, arrays and subsequent
@@ -185,7 +240,6 @@ const functionFact = async (
     await checkpoint(256 + 8 * link.length);
   for (const link of symbols?.links ?? [])
     await checkpoint(256 + 8 * link.length);
-  await checkpoint(256 + 8 * inventory.evidence_id.length);
   const links = new Set([inventory.evidence_id]);
   for (const link of detail?.links ?? []) links.add(link);
   for (const link of symbols?.links ?? []) links.add(link);
@@ -205,7 +259,7 @@ const functionFact = async (
     );
   if (symbol.origin === "unknown")
     limitations.push(
-      "Symbol origin unavailable; exact-name matching uses the reported name and the existing automatic-name exclusion rule.",
+      "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
     );
   if (symbol.origin === "conflicting")
     limitations.push(
@@ -236,23 +290,36 @@ const functionFact = async (
   };
 };
 
-/** Consume normalized producer facts once; never infer body extents from neighbor entries. */
+const textLength = (value: unknown): number =>
+  typeof value === "string" ? value.length : 0;
+/**
+ * Every row becomes exactly one emitted member: its parsed row and member
+ * (768 bytes), then the report validation and Evidence normalization copies
+ * that serialization digests (1280 bytes). Names and addresses are shared
+ * strings, charged for UTF-16 storage and serialized copies.
+ */
+const rowBytes = (row: unknown): number =>
+  typeof row === "object" && row !== null
+    ? 2048 +
+      4 *
+        (textLength((row as { address?: unknown }).address) +
+          textLength((row as { value?: unknown }).value))
+    : 2048;
+
+/** Consume application-admitted normalized facts; never infer body extents from neighbor entries. */
 export const readFunctionInventory = async (
   inventory: Evidence,
   observations: readonly Evidence[],
   checkpoint: NativeMatchingCheckpoint,
 ): Promise<MatchingFunction[]> => {
-  if (
-    inventory.operation !== "list_procedures" ||
-    inventory.predicate_type !== "rea.analysis" ||
-    inventory.subject === null
-  )
-    throw new EvidenceIntegrityError(
-      "Expected artifact-bound list_procedures Evidence",
-    );
-  const rows = nativeInventoryRowsSchemas.names.parse(
-    inventory.normalized_result,
-  );
+  // Charge each row's member before parsing clones it, so a borrowed retained
+  // inventory is bounded without walking the resident record and an oversized
+  // side is refused before allocation. Members share one inventory ID string.
+  const source = inventory.normalized_result;
+  if (Array.isArray(source))
+    for (const row of source as unknown[]) await checkpoint(rowBytes(row));
+  await checkpoint(256 + 8 * inventory.evidence_id.length);
+  const rows = sourcePayload(matchingRowsSchema, source);
   const facts: Facts = {
     details: new Map(),
     symbols: new Map(),
@@ -260,7 +327,6 @@ export const readFunctionInventory = async (
   };
   for (const observation of observations) {
     await checkpoint();
-    requireContext(inventory, observation);
     switch (observation.operation) {
       case "list_names":
         await addNames(observation, facts.symbols, checkpoint);
@@ -270,18 +336,14 @@ export const readFunctionInventory = async (
         break;
       case "procedure_info":
       case "analyze_function":
-        addBody(observation, facts.details);
+        addBody(observation, facts.details, facts.symbols);
         break;
-      default:
-        throw new EvidenceIntegrityError(
-          "Function matching observations must be list_names, procedure_info, read_bytes or analyze_function Evidence",
-        );
     }
   }
   const functions: MatchingFunction[] = [];
   for (let sourceIndex = 0; sourceIndex < rows.length; sourceIndex++) {
     const row = rows[sourceIndex]!;
-    await checkpoint(1024 + 4 * (row.address.length + row.value.length));
+    await checkpoint();
     functions.push(
       await functionFact({ inventory, row, sourceIndex }, facts, checkpoint),
     );

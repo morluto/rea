@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
 
 import {
   withOwnedRegularFile,
@@ -10,7 +9,9 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
   assertRegularFileActive,
-  sameRegularFileState,
+  assertStableRegularFileIdentity,
+  regularFileState,
+  type RegularFileState,
 } from "./RegularFile.js";
 import type { OwnedFileHandle } from "./OwnedFileHandle.js";
 
@@ -20,6 +21,7 @@ export interface StableFileHashOptions {
 }
 
 export interface StableFileObservation {
+  readonly state: RegularFileState;
   readonly sha256: string;
   readonly bytes: number;
   /** The first two bytes, read from the same descriptor and stream as the hash. */
@@ -82,55 +84,54 @@ async function readStableFile(
   includePrefix: boolean,
 ): Promise<StableFileFingerprint | StableFileObservation> {
   try {
-    return await withOwnedRegularFile(path, options, async (handle) => {
-      const initial = await handle.stat();
-      if (!Number.isSafeInteger(initial.size) || initial.size < 0)
-        throw new RangeError(
-          `Regular file size cannot be represented safely: ${path}`,
-        );
-      const hash = createHash("sha256");
-      const chunk = Buffer.allocUnsafe(64 * 1024);
-      const prefix = Buffer.alloc(
-        includePrefix ? Math.min(STABLE_FILE_PREFIX_BYTES, initial.size) : 0,
-      );
-      let position = 0;
-      while (position <= initial.size) {
-        assertRegularFileActive(options.signal);
-        const length = Math.min(chunk.length, initial.size - position + 1);
-        if (length <= 0) break;
-        const read = await handle.read(chunk, 0, length, position);
-        if (
-          position + read.bytesRead > initial.size ||
-          (read.bytesRead === 0 && position < initial.size)
-        )
-          throw new RegularFileChangedError(path);
-        assertRegularFileActive(options.signal);
-        if (read.bytesRead === 0) break;
-        if (position < prefix.length) {
-          const prefixBytes = Math.min(
-            read.bytesRead,
-            prefix.length - position,
+    return await withOwnedRegularFile(
+      path,
+      options,
+      async ({ handle, initial }) => {
+        if (!Number.isSafeInteger(initial.size) || initial.size < 0)
+          throw new RangeError(
+            `Regular file size cannot be represented safely: ${path}`,
           );
-          chunk.copy(prefix, position, 0, prefixBytes);
+        const hash = createHash("sha256");
+        const chunk = Buffer.allocUnsafe(64 * 1024);
+        const prefix = Buffer.alloc(
+          includePrefix ? Math.min(STABLE_FILE_PREFIX_BYTES, initial.size) : 0,
+        );
+        let position = 0;
+        while (position <= initial.size) {
+          assertRegularFileActive(options.signal);
+          const length = Math.min(chunk.length, initial.size - position + 1);
+          if (length <= 0) break;
+          const read = await handle.read(chunk, 0, length, position);
+          if (
+            position + read.bytesRead > initial.size ||
+            (read.bytesRead === 0 && position < initial.size)
+          )
+            throw new RegularFileChangedError(path);
+          assertRegularFileActive(options.signal);
+          if (read.bytesRead === 0) break;
+          if (position < prefix.length) {
+            const prefixBytes = Math.min(
+              read.bytesRead,
+              prefix.length - position,
+            );
+            chunk.copy(prefix, position, 0, prefixBytes);
+          }
+          hash.update(chunk.subarray(0, read.bytesRead));
+          position += read.bytesRead;
         }
-        hash.update(chunk.subarray(0, read.bytesRead));
-        position += read.bytesRead;
-      }
-      assertRegularFileActive(options.signal);
-      const [opened, currentPath] = await Promise.all([
-        handle.stat(),
-        stat(path),
-      ]);
-      if (
-        position !== initial.size ||
-        !sameRegularFileState(initial, opened) ||
-        !sameRegularFileState(initial, currentPath)
-      )
-        throw new RegularFileChangedError(path);
-      assertRegularFileActive(options.signal);
-      const fingerprint = { sha256: hash.digest("hex"), bytes: position };
-      return includePrefix ? { ...fingerprint, prefix } : fingerprint;
-    });
+        assertRegularFileActive(options.signal);
+        if (position !== initial.size) throw new RegularFileChangedError(path);
+        await assertStableRegularFileIdentity(handle, path, initial, {
+          symlinks: "follow",
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+        const fingerprint = { sha256: hash.digest("hex"), bytes: position };
+        return includePrefix
+          ? { ...fingerprint, prefix, state: regularFileState(initial) }
+          : fingerprint;
+      },
+    );
   } catch (cause: unknown) {
     if (
       cause instanceof RegularFileCleanupFailure ||

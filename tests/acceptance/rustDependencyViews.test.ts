@@ -2,6 +2,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
+import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
 import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
@@ -9,10 +10,60 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import {
   createRustImage,
+  createRustHashOverflowImage,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "keeps compiler-prefix coverage in CLI summaries until the selected budget admits every hash",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-compiler-summary-");
+    const path = join(root, "compiler-paths.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    for (const maxHashes of [64, 65]) {
+      const output = join(root, `source-${String(maxHashes)}.json`);
+      const delivered = await cli.run({
+        arguments: [
+          "inspect-rust-binary",
+          path,
+          "--detail",
+          "summary",
+          "--evidence_output",
+          output,
+          "--max-rustc-hashes",
+          String(maxHashes),
+          "--json",
+        ],
+      });
+      expect(delivered.exitCode, delivered.stderr).toBe(0);
+      const summary = analysisViewResultSchema.parse(
+        (delivered.json as { summary: { normalized_result: unknown } }).summary
+          .normalized_result,
+      );
+      if (
+        summary.kind !== "summary" ||
+        summary.parent_operation !== "inspect_rust_binary"
+      )
+        throw new Error("Expected a Rust summary");
+      expect(summary.summary.rustc_commit).toEqual({
+        evidence_kind: "inferred",
+        hashes_count: maxHashes,
+        ...(maxHashes === 64
+          ? {
+              coverage: {
+                status: "partial",
+                reason: "max_rustc_hashes",
+                effective_limit: 64,
+              },
+            }
+          : {}),
+      });
+      expect(summary.summary.auditable_metadata?.counts.packages).toBe(2);
+    }
+  },
+);
 
 /** Both authenticated retention and portable imports query the same captured facts. */
 const assertRetainedPages = async (
@@ -123,6 +174,7 @@ cliTest(
             version: "1",
             source: "crates.io",
             dependencies: [2],
+            features: ["default"],
           },
           {
             name: "same",
@@ -153,7 +205,7 @@ cliTest(
       const selection = {
         collection: "packages",
         names: ["same"],
-        fields: ["name", "version", "dependencies"],
+        fields: ["name", "version", "dependencies", "features"],
       };
       const direct = await call("inspect_rust_binary", {
         path,
@@ -169,7 +221,13 @@ cliTest(
         page: {
           collection: "packages",
           rows: [
-            { index: 0, name: "same", version: "1", dependencies: [2] },
+            {
+              index: 0,
+              name: "same",
+              version: "1",
+              dependencies: [2],
+              features: ["default"],
+            },
             { index: 1, name: "same", version: "2", dependencies: [0, 2] },
           ],
         },
@@ -215,7 +273,7 @@ cliTest(
         bundle.value.records.find(
           (row) => row.evidence_id === full.evidence_id,
         ),
-      ).toEqual(full);
+      ).toEqual({ ...full, caller_input_path: path });
       const exported = join(root, `${format}-record.json`);
       await writeFile(exported, JSON.stringify(full));
       await unlink(path);
@@ -252,6 +310,105 @@ cliTest(
     }
   },
   60000,
+);
+
+cliTest(
+  "queries historical feature omissions from authenticated bundles without changing the parent",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-historical-features-");
+    const path = join(root, "source.elf");
+    await writeFile(
+      path,
+      createRustImage({
+        format: "elf",
+        payload: rustDependencyPayload({
+          packages: [{ name: "old", version: "1", source: "local" }],
+        }),
+      }),
+    );
+    const { call } = await connectLocalToolsMcp();
+    const captured = await call("inspect_rust_binary", { path });
+    expect(captured.isError, JSON.stringify(captured.content)).not.toBe(true);
+    const full = parseEvidence(captured.structuredContent);
+    const report = rustBinarySchema.parse(full.normalized_result);
+    const metadata = report.auditable_metadata;
+    if (metadata === null) throw new Error("Expected Rust dependency metadata");
+    if (full.subject == null)
+      throw new Error("Expected Rust artifact identity");
+    const historical = createEvidence(
+      {
+        path,
+        sha256: report.artifact.sha256,
+        format: "elf",
+        ...(full.subject.architecture === null
+          ? {}
+          : { architecture: full.subject.architecture }),
+      },
+      full.provider,
+      {
+        operation: full.operation,
+        parameters: full.parameters,
+        result: {
+          ...report,
+          auditable_metadata: {
+            ...metadata,
+            packages: metadata.packages.map(
+              ({ features: _features, ...row }) => row,
+            ),
+          },
+        },
+      },
+    );
+    const bundle = join(root, "historical-bundle.json");
+    const record = join(root, "historical-record.json");
+    await writeFile(bundle, JSON.stringify(createEvidenceBundle([historical])));
+    await writeFile(record, JSON.stringify(historical));
+    await unlink(path);
+    const view = { kind: "rust", collection: "packages", fields: ["features"] };
+    for (const source of [
+      { kind: "retained-evidence", evidence_id: historical.evidence_id },
+      { kind: "evidence-file", path: record },
+    ]) {
+      const reply = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({ source, view }),
+          ...(source.kind === "retained-evidence"
+            ? ["--evidence-bundle", bundle]
+            : []),
+          "--json",
+        ],
+      });
+      expect(reply.exitCode, reply.stderr + JSON.stringify(reply.json)).toBe(0);
+      expect(parseEvidence(reply.json).normalized_result).toMatchObject({
+        parent_evidence_id: historical.evidence_id,
+        page: { rows: [{ index: 0, features: null }] },
+      });
+    }
+    const imported = await call("import_evidence_bundle", { path: bundle });
+    expect(imported.isError, JSON.stringify(imported.content)).not.toBe(true);
+    for (const fields of [["features"], [], ["features"]]) {
+      const reply = await call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: historical.evidence_id,
+        },
+        view: { ...view, fields },
+      });
+      expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+      expect(
+        parseEvidence(reply.structuredContent).normalized_result,
+      ).toMatchObject({
+        parent_evidence_id: historical.evidence_id,
+        page: {
+          rows: [
+            fields.length === 0 ? { index: 0 } : { index: 0, features: null },
+          ],
+        },
+      });
+    }
+    expect(JSON.parse(await readFile(record, "utf8"))).toEqual(historical);
+  },
 );
 
 cliTest(

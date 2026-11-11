@@ -1,3 +1,6 @@
+/** Existing selected-binary allowance also bounds its retained pointer workspace. */
+export const IL2CPP_BINARY_BYTES = 1024 * 1024 * 1024;
+
 export const IL2CPP_BINARY_FAILURE_REASONS = {
   unsupported: [
     "unsupported-container",
@@ -6,6 +9,7 @@ export const IL2CPP_BINARY_FAILURE_REASONS = {
     "ambiguous-slice-selection",
     "unsupported-pointer-encoding",
     "unsupported-type-kind",
+    "generic-methods-unsupported",
   ],
   capacity: [
     "native-index-capacity",
@@ -21,6 +25,8 @@ export const IL2CPP_BINARY_FAILURE_REASONS = {
     "invalid-method-token",
     "metadata-registration-not-found",
     "invalid-type",
+    "generic-method-registration-not-found",
+    "ambiguous-generic-method-registration",
   ],
 } as const;
 

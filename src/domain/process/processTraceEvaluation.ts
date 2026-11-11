@@ -131,6 +131,34 @@ type FiniteTraceEvaluation =
       readonly locationIndexes: readonly number[];
     };
 
+/** Distinguish pure omissions from displaced successors, without relaxing the language. */
+const finiteTraceOmissions = (
+  ids: readonly string[],
+  tokens: Extract<
+    ProcessTraceSpecification["language"],
+    { kind: "finite_traces" }
+  >["variants"][number]["trace"],
+): readonly string[] | undefined => {
+  let observed = 0;
+  const missing: string[] = [];
+  for (const token of tokens) {
+    const remaining = new Map<string, number>();
+    for (const id of typeof token === "string" ? [token] : token.unordered)
+      remaining.set(id, (remaining.get(id) ?? 0) + 1);
+    while (observed < ids.length) {
+      const id = ids[observed];
+      const count = id === undefined ? 0 : (remaining.get(id) ?? 0);
+      if (id === undefined || count === 0) break;
+      if (count === 1) remaining.delete(id);
+      else remaining.set(id, count - 1);
+      observed++;
+    }
+    for (const [id, count] of remaining)
+      for (let index = 0; index < count; index++) missing.push(id);
+  }
+  return observed === ids.length && missing.length > 0 ? missing : undefined;
+};
+
 /** Match variants once, retaining the best-prefix mismatch for attribution. */
 const evaluateFiniteTrace = (
   ids: readonly string[],
@@ -187,7 +215,12 @@ const evaluateFiniteTrace = (
         unexpected.length > 0 ||
         actual.length < expected.length
       ) {
-        recordMismatch(offset, missing, unexpected);
+        const omitted = finiteTraceOmissions(ids, variant.trace);
+        recordMismatch(
+          offset,
+          omitted ?? missing,
+          omitted === undefined ? unexpected : [],
+        );
         mismatched = true;
         break;
       }

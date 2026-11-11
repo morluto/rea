@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { buildBinary, parseBinary } from "plist";
 
 import {
   buildInterfaceBuilderAnalysis,
@@ -158,20 +157,19 @@ describe("compiled Interface Builder graph projection", () => {
   });
 
   it("reads recognized objects from a compiled NSKeyedArchiver object table", () => {
-    const bytes = buildBinary({
+    const parsed = parseInterfaceBuilderRecords({
       $archiver: "NSKeyedArchiver",
       $version: 100000,
       $objects: [
         "$null",
-        { $class: { UID: 2 }, title: "Build", identifier: "build-button" },
+        { $class: { CF$UID: 2 }, title: "Build", identifier: "build-button" },
         {
           $classname: "UIButton",
           $classes: ["UIButton", "UIControl", "UIView", "NSObject"],
         },
       ],
-      $top: { root: { UID: 1 } },
+      $top: { root: { CF$UID: 1 } },
     });
-    const parsed = parseInterfaceBuilderRecords(parseBinary(bytes));
     expect(parsed.objects).toMatchObject([
       {
         id: "1",
@@ -190,12 +188,12 @@ describe("keyed archive objects with unresolved classes", () => {
       $version: 100000,
       $objects: [
         "$null",
-        { $class: { UID: 99 }, label: "Unresolved object" },
+        { $class: { CF$UID: 99 }, label: "Unresolved object" },
         { $classname: "UIView", $classes: ["UIView", "NSObject"] },
-        { $class: { UID: 2 }, "NS.string": "ok" },
+        { $class: { CF$UID: 2 }, "NS.string": "ok" },
         "plain scalar",
       ],
-      $top: { root: { UID: 3 } },
+      $top: { root: { CF$UID: 3 } },
     });
     // The class descriptor and the scalar are not archived objects.
     expect(parsed.objects).toMatchObject([
@@ -204,7 +202,7 @@ describe("keyed archive objects with unresolved classes", () => {
         kind: "other",
         class_name: null,
         name: "Unresolved object",
-        attributes: { label: "Unresolved object", $class: { UID: 99 } },
+        attributes: { label: "Unresolved object", $class: { CF$UID: 99 } },
       },
       { id: "3", kind: "view", class_name: "UIView" },
     ]);
@@ -226,11 +224,11 @@ describe("keyed archive objects with unresolved classes", () => {
             $version: 100000,
             $objects: [
               "$null",
-              { $class: { UID: 99 }, label: "Unresolved object" },
+              { $class: { CF$UID: 99 }, label: "Unresolved object" },
               { $classname: "UIView", $classes: ["UIView", "NSObject"] },
-              { $class: { UID: 2 }, "NS.string": "ok" },
+              { $class: { CF$UID: 2 }, "NS.string": "ok" },
             ],
-            $top: { root: { UID: 1 } },
+            $top: { root: { CF$UID: 1 } },
           },
         },
       ],
@@ -307,6 +305,44 @@ describe("Interface Builder parser bounds", () => {
 });
 
 describe("keyed archive identity decoding", () => {
+  it("uses object-table indexes when authored archiveUID fields collide", () => {
+    const parsed = parseInterfaceBuilderRecords({
+      $archiver: "NSKeyedArchiver",
+      $version: 100000,
+      $objects: [
+        "$null",
+        { archiveUID: 2, title: "First", $class: { CF$UID: 4 } },
+        { title: "Second", $class: { CF$UID: 4 } },
+        {
+          NSSource: { CF$UID: 2 },
+          NSDestination: { CF$UID: 1 },
+          NSLabel: "peer",
+          $class: { CF$UID: 5 },
+        },
+        {
+          $classname: "ArchiveProbeView",
+          $classes: ["ArchiveProbeView", "NSView", "NSObject"],
+        },
+        {
+          $classname: "NSNibOutletConnector",
+          $classes: ["NSNibOutletConnector", "NSObject"],
+        },
+      ],
+      $top: { root: { CF$UID: 1 } },
+    });
+
+    expect(parsed.objects.map(({ id }) => id)).toEqual(["1", "2", "3"]);
+    expect(parsed.objects[0]?.attributes).toMatchObject({ archiveUID: 2 });
+    expect(parsed.connections).toContainEqual(
+      expect.objectContaining({
+        kind: "outlet",
+        source_id: "2",
+        destination_id: "1",
+        label: "peer",
+      }),
+    );
+  });
+
   it("preserves keyed archive UID identities, arrays, and control actions", () => {
     const parsed = parseInterfaceBuilderRecords({
       $archiver: "NSKeyedArchiver",
@@ -314,16 +350,16 @@ describe("keyed archive identity decoding", () => {
       $objects: [
         "$null",
         {
-          subviews: [{ UID: 2 }],
-          $class: { UID: 5 },
+          subviews: [{ CF$UID: 2 }],
+          $class: { CF$UID: 5 },
         },
-        { $class: { UID: 6 } },
-        { $class: { UID: 7 } },
+        { $class: { CF$UID: 6 } },
+        { $class: { CF$UID: 7 } },
         {
-          source: { UID: 3 },
-          destination: { UID: 2 },
+          source: { CF$UID: 3 },
+          destination: { CF$UID: 2 },
           label: "runAction:",
-          $class: { UID: 8 },
+          $class: { CF$UID: 8 },
         },
         { $classname: "UIView", $classes: ["UIView", "NSObject"] },
         { $classname: "UIButton", $classes: ["UIButton", "UIView"] },
@@ -335,9 +371,9 @@ describe("keyed archive identity decoding", () => {
           $classname: "NSNibControlConnector",
           $classes: ["NSNibControlConnector", "NSObject"],
         },
-        [{ UID: 1 }],
+        [{ CF$UID: 1 }],
       ],
-      $top: { root: { UID: 9 } },
+      $top: { root: { CF$UID: 9 } },
     });
 
     expect(parsed.objects.map(({ id }) => id)).toContain("2");
@@ -471,6 +507,61 @@ describe("Interface Builder graph limits", () => {
   });
 });
 
+it.each([
+  { relativePath: "Main.nib", sourceId: "missing" },
+  { relativePath: "Views/:hierarchy:/Main.nib", sourceId: "missing" },
+  { relativePath: "Main.nib", sourceId: "missing:hierarchy:source" },
+])(
+  "keeps connection omissions separate from complete hierarchy for $relativePath / $sourceId",
+  ({ relativePath, sourceId }) => {
+    const result = buildInterfaceBuilderAnalysis({
+      targetSha256: hash,
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath,
+          archiveSha256: hash,
+          documentKind: "nib",
+          raw: {
+            "com.apple.ibtool.document.objects": {
+              kept: { class: "UIView" },
+            },
+            "com.apple.ibtool.document.hierarchy": [{ objectID: "kept" }],
+            "com.apple.ibtool.document.connections": {
+              [sourceId]: [
+                { type: "outlet", label: "view", destinationId: "kept" },
+              ],
+            },
+          },
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({ max_objects: 2 }),
+    });
+    expect(result.documents[0]?.hierarchy_complete).toBe(true);
+    expect(result.graph.nodes).toHaveLength(2);
+    expect(result.graph.edges).toHaveLength(1);
+    expect(result.graph.truncated).toBe(true);
+    expect(result.graph.coverage).toEqual(
+      expect.arrayContaining([
+        {
+          facet: `hierarchy:${relativePath}`,
+          status: "complete",
+          reason: null,
+          examined: 1,
+          omitted: 0,
+        },
+        {
+          facet: `connections:${relativePath}`,
+          status: "partial",
+          reason: "object_limit_reached",
+          examined: 1,
+          omitted: 2,
+        },
+      ]),
+    );
+  },
+);
+
 describe("Interface Builder hierarchy completeness", () => {
   it("marks only the later document incomplete when its hierarchy root is omitted", () => {
     const document = (relativePath: string, objectId: string) => ({
@@ -601,24 +692,24 @@ describe("keyed archive object references", () => {
     // inlining references would expand the table into an exponential tree.
     const viewCount = 40;
     const views = Array.from({ length: viewCount }, (_, index) => ({
-      $class: { UID: 1 },
-      NSWindow: { UID: 2 },
-      NSSuperview: { UID: index === 0 ? 2 : 3 + index - 1 },
-      NSNextKeyView: { UID: 3 + ((index + 1) % viewCount) },
-      NSSubviews: index + 1 < viewCount ? [{ UID: 3 + index + 1 }] : [],
-      NSTitle: { UID: 3 + viewCount },
+      $class: { CF$UID: 1 },
+      NSWindow: { CF$UID: 2 },
+      NSSuperview: { CF$UID: index === 0 ? 2 : 3 + index - 1 },
+      NSNextKeyView: { CF$UID: 3 + ((index + 1) % viewCount) },
+      NSSubviews: index + 1 < viewCount ? [{ CF$UID: 3 + index + 1 }] : [],
+      NSTitle: { CF$UID: 3 + viewCount },
     }));
     const parsed = parseInterfaceBuilderRecords({
       $archiver: "NSKeyedArchiver",
       $objects: [
         "$null",
         { $classname: "NSView", $classes: ["NSView", "NSObject"] },
-        { $class: { UID: 3 + viewCount + 1 }, NSContentView: { UID: 3 } },
+        { $class: { CF$UID: 3 + viewCount + 1 }, NSContentView: { CF$UID: 3 } },
         ...views,
         "Title",
         { $classname: "NSWindow", $classes: ["NSWindow", "NSObject"] },
       ],
-      $top: { root: { UID: 2 } },
+      $top: { root: { CF$UID: 2 } },
     });
 
     expect(parsed.objects).toHaveLength(viewCount + 1);
@@ -686,19 +777,19 @@ describe("AppKit keyed archive connectors", () => {
       $archiver: "NSKeyedArchiver",
       $objects: [
         "$null",
-        { $class: { UID: 6 } },
-        { $class: { UID: 7 }, identifier: "unrelated-identifier" },
+        { $class: { CF$UID: 6 } },
+        { $class: { CF$UID: 7 }, identifier: "unrelated-identifier" },
         {
-          $class: { UID: 8 },
-          NSSource: { UID: 1 },
-          NSDestination: { UID: 2 },
-          NSLabel: { UID: 5 },
+          $class: { CF$UID: 8 },
+          NSSource: { CF$UID: 1 },
+          NSDestination: { CF$UID: 2 },
+          NSLabel: { CF$UID: 5 },
         },
         {
-          $class: { UID: 9 },
-          NSSource: { UID: 2 },
-          NSDestination: { UID: 1 },
-          NSLabel: { UID: 10 },
+          $class: { CF$UID: 9 },
+          NSSource: { CF$UID: 2 },
+          NSDestination: { CF$UID: 1 },
+          NSLabel: { CF$UID: 10 },
         },
         "o_button",
         {
@@ -742,24 +833,24 @@ describe("unsupported keyed archive connections", () => {
       $archiver: "NSKeyedArchiver",
       $objects: [
         "$null",
-        { $class: { UID: 6 } },
-        { $class: { UID: 6 } },
+        { $class: { CF$UID: 6 } },
+        { $class: { CF$UID: 6 } },
         {
-          $class: { UID: 7 },
-          NSSource: { UID: 1 },
-          NSDestination: { UID: 2 },
+          $class: { CF$UID: 7 },
+          NSSource: { CF$UID: 1 },
+          NSDestination: { CF$UID: 2 },
           NSLabel: "outlet",
         },
         {
-          $class: { UID: 8 },
-          NSSource: { UID: 1 },
-          NSDestination: { UID: 2 },
+          $class: { CF$UID: 8 },
+          NSSource: { CF$UID: 1 },
+          NSDestination: { CF$UID: 2 },
           NSLabel: "performAction:",
         },
         {
-          $class: { UID: 9 },
-          NSSource: { UID: 1 },
-          NSDestination: { UID: 2 },
+          $class: { CF$UID: 9 },
+          NSSource: { CF$UID: 1 },
+          NSDestination: { CF$UID: 2 },
           NSLabel: "value",
         },
         { $classname: "NSView", $classes: ["NSView", "NSObject"] },
@@ -828,9 +919,9 @@ describe("keyed archive class identity", () => {
       $objects: [
         "$null",
         {
-          $class: { UID: 2 },
-          NSSource: { UID: 1 },
-          NSDestination: { UID: 1 },
+          $class: { CF$UID: 2 },
+          NSSource: { CF$UID: 1 },
+          NSDestination: { CF$UID: 1 },
         },
         {
           $classname: "TelemetryConnectorState",
@@ -854,9 +945,9 @@ describe("keyed archive class identity", () => {
       $objects: [
         "$null",
         {
-          $class: { UID: 3 },
-          NSSource: { UID: 1 },
-          NSDestination: { UID: 1 },
+          $class: { CF$UID: 3 },
+          NSSource: { CF$UID: 1 },
+          NSDestination: { CF$UID: 1 },
         },
         { $classname: "NSNibConnector", $classes: ["NSNibConnector"] },
         {
@@ -877,9 +968,9 @@ describe("keyed archive class identity", () => {
       $objects: [
         "$null",
         {
-          $class: { UID: 99 },
-          NSSource: { UID: 1 },
-          NSDestination: { UID: 1 },
+          $class: { CF$UID: 99 },
+          NSSource: { CF$UID: 1 },
+          NSDestination: { CF$UID: 1 },
         },
       ],
       $top: {},
@@ -889,7 +980,7 @@ describe("keyed archive class identity", () => {
       expect.objectContaining({
         class_name: null,
         id: "1",
-        attributes: expect.objectContaining({ $class: { UID: 99 } }),
+        attributes: expect.objectContaining({ $class: { CF$UID: 99 } }),
       }),
     );
     expect(parsed.connections).toEqual([]);
@@ -911,12 +1002,12 @@ describe("AppKit control connectors", () => {
             $archiver: "NSKeyedArchiver",
             $objects: [
               "$null",
-              { $class: { UID: 4 } },
-              { $class: { UID: 5 } },
+              { $class: { CF$UID: 4 } },
+              { $class: { CF$UID: 5 } },
               {
-                $class: { UID: 6 },
-                NSSource: { UID: 2 },
-                NSDestination: { UID: 1 },
+                $class: { CF$UID: 6 },
+                NSSource: { CF$UID: 2 },
+                NSDestination: { CF$UID: 1 },
                 NSLabel: "buttonClicked:",
               },
               { $classname: "BuildDelegate", $classes: ["NSObject"] },
@@ -1176,4 +1267,37 @@ it("states each object's class, label, and ID once", () => {
       attributes: { class: "UIButton", title: "Build", objectID: "authored" },
     }),
   ]);
+});
+
+it("attributes connection omissions caused by missing source nodes to the object limit", () => {
+  const result = buildInterfaceBuilderAnalysis({
+    targetSha256: hash,
+    toolVersion: "test",
+    limits: interfaceBuilderLimitsSchema.parse({ max_objects: 1 }),
+    documents: [
+      {
+        relativePath: "Main.nib",
+        archiveSha256: hash,
+        documentKind: "nib",
+        raw: {
+          "com.apple.ibtool.document.objects": {
+            source: { class: "UIButton" },
+            destination: { class: "UIView" },
+          },
+          "com.apple.ibtool.document.connections": {
+            source: [
+              { type: "action", label: "tap:", destinationId: "destination" },
+            ],
+          },
+        },
+      },
+    ],
+  });
+  expect(result.graph.coverage).toContainEqual(
+    expect.objectContaining({
+      facet: "connections:Main.nib",
+      status: "partial",
+      reason: "object_limit_reached",
+    }),
+  );
 });

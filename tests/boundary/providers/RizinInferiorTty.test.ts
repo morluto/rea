@@ -24,6 +24,7 @@ import {
   rizinTestInferiorTty,
 } from "./RizinTestInferiorTty.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
+import { waitForTestPidFile } from "../../support/process/pidFile.js";
 
 let terminal: ReturnType<typeof spawn> | undefined;
 let manager: RizinDebugSessionManager | undefined;
@@ -363,6 +364,7 @@ it.skipIf(process.platform !== "linux")(
   async () => {
     const sessionId = await startFakeInferiorSession({
       overflowPxCommand: true,
+      withholdCleanupSynchronization: true,
       maxCommandOutputBytes: 1_024,
     });
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -400,8 +402,10 @@ it.skipIf(process.platform !== "linux")(
     expect(evidence.normalized_result).toMatchObject({
       output_truncated: true,
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "The owned debugger session remains retained because cleanup could not be verified",
+    expect(evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /debugger session.*retained.*cleanup could not be verified/iu,
+      ),
     );
     expect(manager!.status(sessionId)?.state).toBe("closed");
   },
@@ -463,18 +467,7 @@ it.skipIf(
     );
     const closed = await closing;
     expect(closed.ok, closed.ok ? "" : closed.error.message).toBe(true);
-    const deadline = Date.now() + 5_000;
-    let pidText = "";
-    while (Date.now() < deadline) {
-      try {
-        pidText = await readFile(pidPath, "utf8");
-        break;
-      } catch {
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
-      }
-    }
-    inferiorPid = Number(pidText);
-    expect(Number.isSafeInteger(inferiorPid) && inferiorPid > 0).toBe(true);
+    inferiorPid = await waitForTestPidFile(pidPath, 5_000);
     expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
     await writeFile(releasePath, "release after close");
     const outputDeadline = Date.now() + 3_000;
@@ -520,6 +513,7 @@ async function startFakeInferiorSession(
     readonly truncateOlj?: boolean;
     readonly truncateCleanupFrame?: boolean;
     readonly overflowPxCommand?: boolean;
+    readonly withholdCleanupSynchronization?: boolean;
     readonly startupWatchdogMs?: number;
     readonly maxCommandOutputBytes?: number;
   } = {},
@@ -547,6 +541,7 @@ const exitKills = ${JSON.stringify(options.exitKills ?? "false")};
 const truncateOlj = ${JSON.stringify(options.truncateOlj ?? false)};
 const truncateCleanupFrame = ${JSON.stringify(options.truncateCleanupFrame ?? false)};
 const overflowPxCommand = ${JSON.stringify(options.overflowPxCommand ?? false)};
+const withholdCleanupSynchronization = ${JSON.stringify(options.withholdCleanupSynchronization ?? false)};
 let oljCalls = 0;
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -563,6 +558,7 @@ process.stdin.on("data", (chunk) => {
     }
     else if (overflowPxCommand && line === "px") process.stdout.write("x".repeat(2_048) + "\\0");
     else if (line === "e dbg.exitkills") process.stdout.write(exitKills + "\\0");
+    else if (withholdCleanupSynchronization && line.startsWith("!echo __REA_CLEANUP_SYNC_")) {}
     else if (line.startsWith("!echo ")) process.stdout.write((truncateCleanupFrame ? "x".repeat(2_048) : "") + line.slice(6) + "\\0");
   }
 });
@@ -571,7 +567,17 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   let providerStderr = "";
   manager = new RizinDebugSessionManager(
-    { ...process.env, REA_RIZIN_COMMAND: provider },
+    {
+      PATH: process.env.PATH,
+      ...(options.maxCommandOutputBytes === undefined
+        ? {}
+        : {
+            REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: String(
+              options.maxCommandOutputBytes,
+            ),
+          }),
+      REA_RIZIN_COMMAND: provider,
+    },
     {
       spawnProcess: async (spawnOptions) => {
         const launched = await spawnOwnedProviderProcess(spawnOptions);
@@ -597,9 +603,6 @@ process.stdin.on("data", (chunk) => {
         });
         return launched;
       },
-      ...(options.maxCommandOutputBytes === undefined
-        ? {}
-        : { maxCommandOutputBytes: options.maxCommandOutputBytes }),
     },
   );
   const started = await manager.start({
@@ -612,20 +615,7 @@ process.stdin.on("data", (chunk) => {
   ).toBe(true);
   if (!started.ok) throw started.error;
   if (launchTarget) {
-    let pidText: string | undefined;
-    const deadline = Date.now() + 2_000;
-    while (pidText === undefined && Date.now() < deadline) {
-      try {
-        pidText = await readFile(pidPath, "utf8");
-      } catch {
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
-      }
-    }
-    const parsedInferiorPid =
-      pidText === undefined ? Number.NaN : Number(pidText);
-    if (!Number.isSafeInteger(parsedInferiorPid) || parsedInferiorPid <= 0)
-      throw new Error("The test inferior did not publish a valid PID.");
-    inferiorPid = parsedInferiorPid;
+    inferiorPid = await waitForTestPidFile(pidPath, 2_000);
   }
   return started.value.session_id;
 }

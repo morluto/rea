@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
 const expressionWrappers = [
@@ -357,8 +358,8 @@ it.each(expressionWrappers)(
       )
       .toEqual([
         ["local-window", "candidate"],
-        ["/local-db", null],
-        ["/local-cache", null],
+        ["/local-db", "candidate"],
+        ["/local-cache", "candidate"],
         ["changed-window", "candidate"],
         ["uncertain-window", "candidate"],
       ]);
@@ -408,7 +409,7 @@ it("retains endpoint observations for exact template and TypeScript member keys"
 
 it("preserves preload and utility paths through exact computed join members", () => {
   for (const key of ['"join"', "`join`", '"join" as const']) {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
         const { BrowserWindow, utilityProcess } = require("electron");
         const path = require("node:path");
         new BrowserWindow({ webPreferences: {
@@ -433,7 +434,12 @@ it("preserves preload and utility paths through exact computed join members", ()
         ),
       )
       .toEqual([
-        ["preload", "preload.js", "filesystem-expression", "property:preload"],
+        [
+          "preload",
+          "preload.js",
+          "filesystem-expression",
+          "BrowserWindow:webPreferences.preload",
+        ],
       ]);
     expect
       .soft(
@@ -486,7 +492,7 @@ it("keeps dynamic, interpolated, and invalid template keys unresolved", () => {
   ]) {
     const preload = `path[${key}](__dirname, "preload.js")`;
     const worker = `path[${key}](__dirname, "worker.js")`;
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
         const { BrowserWindow, utilityProcess } = require("electron");
         const path = require("node:path");
         client[${key}]("/api/items");
@@ -541,11 +547,14 @@ it("keeps dynamic, interpolated, and invalid template keys unresolved", () => {
 describe("static callee boundary matching", () => {
   it("matches complete callee members without suffix collisions", () => {
     const analysis = analyzeJavaScriptStaticSource(`
+      const {BrowserWindow} = require("electron");
+      const win = new BrowserWindow();
       win.loadFile("./window.html");
-      BrowserWindow.loadURL("https://app.example.test");
+      new BrowserWindow().loadURL("https://app.example.test");
       navigator.serviceWorker.register("./worker.js");
       loadFile("./bare.html");
-      win?.loadURL("https://optional.example.test");
+      const optional = new BrowserWindow();
+      optional?.loadURL("https://optional.example.test");
 
       uploadFile("./upload.html");
       preloadFile("./preload.html");
@@ -559,9 +568,8 @@ describe("static callee boundary matching", () => {
       analysis.role_paths.map(({ path, mechanism }) => [path, mechanism]),
     ).toEqual([
       ["./window.html", "call:win.loadFile"],
-      ["https://app.example.test", "call:BrowserWindow.loadURL"],
-      ["./bare.html", "call:loadFile"],
-      ["https://optional.example.test", "call:win.loadURL"],
+      ["https://app.example.test", "call:loadURL"],
+      ["https://optional.example.test", "call:optional.loadURL"],
     ]);
     // The document base URL is unknown, so the script path stays unresolved.
     expect(

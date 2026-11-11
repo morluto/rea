@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { artifactCliEvidence } from "../../lib/artifact-e2e.mjs";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { PrivateRuntimeRoot } from "../../../dist/process/PrivateRuntimeRoot.js";
 import {
   OwnedCommandFailure,
@@ -82,9 +82,8 @@ const normalize = (rows) =>
     ),
   }));
 let temporary;
-let primaryError;
 let retainTemporary = false;
-try {
+await withVerifierCleanup(async () => {
   await client.connect(transport);
   transport.stderr?.resume();
   const tools = (await client.listTools()).tools;
@@ -393,23 +392,15 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
         "First query is after shared artifact analysis; subsequent queries share one MCP session. Legacy item reads are serial; a concurrent legacy baseline is unmeasured. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children.",
     })}\n`,
   );
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      () => client.close(),
-      () => transport.close(),
-      async () => {
-        if (temporary === undefined) return;
-        if (retainTemporary)
-          throw new Error(
-            `Command cleanup is incomplete; retaining its private input/Evidence files at ${temporary.path}.`,
-          );
-        await temporary.close();
-      },
-    ],
-    primaryError,
-  );
-}
+}, [
+  () => client.close(),
+  () => transport.close(),
+  async () => {
+    if (temporary === undefined) return;
+    if (retainTemporary)
+      throw new Error(
+        `Command cleanup is incomplete; retaining its private input/Evidence files at ${temporary.path}.`,
+      );
+    await temporary.close();
+  },
+]);

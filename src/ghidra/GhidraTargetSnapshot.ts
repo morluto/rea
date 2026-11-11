@@ -84,7 +84,7 @@ export const createGhidraTargetSnapshot = async (
         sourcePath,
         resources,
         options.signal,
-        async (source) => {
+        async ({ handle: source }) => {
           const initial = await source.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           return await withArtifactFileHandle(

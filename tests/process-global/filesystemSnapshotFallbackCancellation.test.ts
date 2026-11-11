@@ -54,7 +54,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../src/domain/process/processScenario.js";
 import {
   hashFile,
   snapshotRoots,
@@ -94,7 +94,7 @@ it.each(["hash", "snapshot"] as const)(
       operation === "hash"
         ? hashFile(path, expected, 1_000, controller.signal)
         : snapshotRoots(
-            parseProcessScenario({
+            processScenarioSchema.parse({
               executable: process.execPath,
               working_directory: directory,
               filesystem_observation_paths: [path],

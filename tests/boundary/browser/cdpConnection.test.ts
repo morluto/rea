@@ -107,7 +107,7 @@ describe("CDP connection admission cancellation", () => {
 
 describe("CDP connection response correlation", () => {
   it("correlates concurrent command responses over a real WebSocket", async () => {
-    const browser = await startFakeCdpBrowser();
+    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
     browsers.push(browser);
     const connection = await CdpConnection.connect(
       browser.browserWebSocketUrl,
@@ -123,6 +123,28 @@ describe("CDP connection response correlation", () => {
         frameTree: { frame: { id: "frame-main" } },
       });
       browser.emitRawMessage(JSON.stringify({ id: 999 }));
+      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+      const first = connection.send("Page.enable", { selected: "first" });
+      const second = connection.send("Page.enable", { selected: "second" });
+      const replies = Promise.all([first, second]);
+      await vi.waitFor(() => expect(browser.commands).toHaveLength(5));
+      const firstCommand = browser.commands[3];
+      const secondCommand = browser.commands[4];
+      if (firstCommand === undefined || secondCommand === undefined)
+        throw new Error("Fake browser did not receive both pending commands");
+      browser.emitRawMessage(
+        JSON.stringify({
+          id: secondCommand.id,
+          result: { selected: "second" },
+        }),
+      );
+      browser.emitRawMessage(
+        JSON.stringify({ id: firstCommand.id, result: { selected: "first" } }),
+      );
+      await expect(replies).resolves.toEqual([
+        { selected: "first" },
+        { selected: "second" },
+      ]);
       await expect(connection.send("Runtime.enable")).resolves.toEqual({});
     } finally {
       await connection.close();
@@ -337,6 +359,46 @@ describe("CDP transport failure precedence", () => {
 });
 
 describe("CDP connection command responses", () => {
+  it("rejects invalid UTF-8 replies without aliasing a literal replacement character", async () => {
+    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    try {
+      const control = connection.send("Page.enable");
+      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      browser.emitRawMessage(
+        Buffer.from(
+          JSON.stringify({
+            id: browser.commands[0]?.id,
+            result: { value: "�" },
+          }),
+        ),
+      );
+      await expect(control).resolves.toEqual({ value: "�" });
+      const pending = connection.send("Page.enable");
+      const rejected = expect(pending).rejects.toMatchObject({
+        reason: "protocol_error",
+      });
+      await vi.waitFor(() => expect(browser.commands).toHaveLength(2));
+      browser.emitRawMessage(
+        Buffer.concat([
+          Buffer.from(
+            `{"id":${String(browser.commands[1]?.id)},"result":{"value":"`,
+          ),
+          Buffer.from([0xff]),
+          Buffer.from('"}}'),
+        ]),
+      );
+      await rejected;
+      expect(connection.isReusable()).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("surfaces an unmodeled fake command as a CDP method rejection", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);

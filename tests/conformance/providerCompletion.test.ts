@@ -14,7 +14,7 @@ import {
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../fixtures/binaryDiagnostics/layout.js";
 import { PeResourcesService } from "../../src/application/binaryDiagnostics/PeResourcesService.js";
-import { PE_RESOURCES_PROVIDER } from "../../src/application/InvestigationProviders.js";
+import { PE_RESOURCES_PROVIDER } from "../../src/domain/investigationProviders.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { parsePeResources } from "../../src/native/pe/PeResourceParser.js";
 import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";

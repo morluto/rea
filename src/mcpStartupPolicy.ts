@@ -1,43 +1,31 @@
-import type { AnalysisProviderSelector } from "./contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "./domain/providerSelection.js";
+import {
+  mcpPhaseBudgetRecovery,
+  type McpPhaseBudget,
+} from "./config/mcpStartupBudgets.js";
 
 /**
- * Supported MCP startup deadlines and operation headroom.
- *
- * Client timeouts are caller-facing configuration. The smaller phase budgets
- * preserve operational headroom, while the doctor deadline covers additional
- * inventory requests after initialization.
+ * Client startup guidance, operation headroom, and doctor output retention.
+ * REA startup phase deadlines belong to config/mcpStartupBudgets; consumers
+ * resolve them from the selected environment with resolveMcpStartupBudgets.
  */
 export const MCP_STARTUP_POLICY = {
   codexStartupTimeoutSeconds: 30,
   kimiStartupTimeoutMs: 30_000,
   toolOperationHeadroomMs: 120_000,
-  initializeBudgetMs: 15_000,
-  toolsListBudgetMs: 5_000,
-  firstCatalogBudgetMs: 20_000,
-  doctorDeadlineMs: 30_000,
   doctorStderrBytes: 64 * 1024,
 } as const;
 
-/**
- * Recovery for a fixed MCP startup phase budget. Codex's startup figure is
- * client guidance and is not named here; doctor text adds that distinction
- * because its deadline uses the same 30 second magnitude.
- */
-export const fixedMcpPhaseBudgetRecovery = (
-  phase: string,
-  value: number,
-  unit: "ms" | "bytes",
-): string =>
-  `REA's fixed ${phase} is ${String(value)} ${unit} and this release has no runtime override.`;
-
 /** Doctor startup recovery. The Codex figure is client guidance REA does not enforce. */
-export const mcpDoctorDeadlineRecovery = (budgetMs: number): string =>
-  `${fixedMcpPhaseBudgetRecovery("MCP doctor startup deadline", budgetMs, "ms")} Codex startup_timeout_sec of ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)} seconds is client guidance; REA does not enforce that figure as this deadline.`;
+export const mcpDoctorDeadlineRecovery = (budget: McpPhaseBudget): string =>
+  `${mcpPhaseBudgetRecovery(budget)} Codex startup_timeout_sec of ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)} seconds is client guidance; REA does not enforce that figure as this deadline.`;
 
 /** Parsed startup and upstream request budgets affecting a client's tool deadline. */
 export interface McpToolTimeoutInputs {
   readonly analysisProvider: AnalysisProviderSelector;
   readonly ghidraStartupTimeoutMs: number;
+  /** One configured Ghidra decompile allowance; bulk cardinality is unknown here. */
+  readonly ghidraDecompileTimeoutMs?: number;
   readonly hopperStartupTimeoutMs: number;
   readonly jebMcpTimeoutMs?: number;
   readonly providerRequestTimeoutMs?: number;
@@ -48,15 +36,15 @@ export const mcpProviderDeadlineAllowanceMs = (
   inputs: McpToolTimeoutInputs,
 ): number => {
   const selectedProvider = inputs.analysisProvider;
+  // A bounded decompile can run right after a cold import in the same call.
+  const ghidraAllowance =
+    inputs.ghidraStartupTimeoutMs + (inputs.ghidraDecompileTimeoutMs ?? 0);
   const selectedTimeout =
     selectedProvider === "ghidra"
-      ? inputs.ghidraStartupTimeoutMs
+      ? ghidraAllowance
       : selectedProvider === "hopper"
         ? inputs.hopperStartupTimeoutMs
-        : Math.max(
-            inputs.ghidraStartupTimeoutMs,
-            inputs.hopperStartupTimeoutMs,
-          );
+        : Math.max(ghidraAllowance, inputs.hopperStartupTimeoutMs);
   return Math.max(
     selectedTimeout,
     inputs.jebMcpTimeoutMs ?? 0,
@@ -64,7 +52,7 @@ export const mcpProviderDeadlineAllowanceMs = (
   );
 };
 
-/** Add operation headroom to the parsed provider deadline allowance. */
+/** Add headroom to the single-request estimate; this is not a bulk-workflow bound. */
 export const recommendedMcpToolTimeoutMs = (
   inputs: McpToolTimeoutInputs,
 ): number =>

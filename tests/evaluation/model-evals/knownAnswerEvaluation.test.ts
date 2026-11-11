@@ -4,21 +4,21 @@ import { describe, expect, it } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
+import { evaluateCodexEvents } from "./CodexAgentEval.js";
 import {
   agentFixtureAnswerInstructions,
   agentFixtureClaims,
-} from "../../../src/evaluation/AgentEvaluationFixtures.js";
+} from "./AgentEvaluationFixtures.js";
 import { inspectManagedArtifactBytes } from "../../../src/dotnet/ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "../../../src/dotnet/ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
-import type { FixtureClaimExpectation } from "../../../src/evaluation/KnownAnswerEvaluation.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import type { FixtureClaimExpectation } from "./KnownAnswerEvaluation.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const provider = { id: "fixture", name: "Fixture analysis", version: "1" };
 const subject = {

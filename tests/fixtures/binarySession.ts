@@ -29,6 +29,7 @@ import { observed } from "./analysisExecution.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 type TestBinarySessionOptions = {
+  readonly auxiliaryProviders?: readonly AnalysisProvider[];
   readonly resolveAnalysisProfile?: (
     target: BinaryTarget,
     options?: AnalysisProfileResolutionOptions,
@@ -87,6 +88,7 @@ export const createTestProviderRouter = (
   if (resolve === undefined)
     return SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
       declared,
+      ...(options.auxiliaryProviders ?? []),
     ]);
   const candidate: AnalysisProviderCandidate = {
     identity: () => declared.identity(),
@@ -109,7 +111,7 @@ export const createTestProviderRouter = (
   };
   return SessionProviderRouter.selectable(
     new AnalysisProviderRegistry([candidate]),
-    [],
+    options.auxiliaryProviders ?? [],
   );
 };
 

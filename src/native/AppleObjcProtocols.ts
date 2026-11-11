@@ -1,10 +1,22 @@
+import { readObjcPropertyList } from "./AppleObjcProperties.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { SwiftMetadataReaders } from "./AppleSwiftVtables.js";
+import type { SwiftNominalReaders } from "./AppleSwiftNominalTypes.js";
+import { err, ok, type Result } from "../domain/result.js";
+
+/** A failed list still owns the names read before its unreadable suffix. */
+export type ObjcProtocolListResult = Result<
+  string[],
+  {
+    readonly _tag: "ProtocolListUnreadable";
+    readonly names: string[];
+    readonly reason: string;
+  }
+>;
 
 /** Read protocol lists and absolute protocol method declarations with cycle-safe identities. */
 export const createObjcProtocolReader = (input: {
   readers: Pick<
-    SwiftMetadataReaders,
+    SwiftNominalReaders,
     "u32" | "string" | "location" | "evidence" | "admit"
   > & {
     pointer(address: bigint): bigint;
@@ -18,23 +30,36 @@ export const createObjcProtocolReader = (input: {
   const { readers: read, result, failures } = input;
   const visited = new Set<bigint>();
   const name = (address: bigint) => read.string(read.pointer(address + 8n));
-  const list = (address: bigint, onTruncated?: () => void): string[] => {
-    if (address === 0n) return [];
-    // `count` is plain uintptr_t data, not a pointer fixup.
-    const count = read.u64(address);
-    if (count > 20000n)
-      throw new RangeError("Protocol list exceeds 20000 entries");
+  /** Own the list pointer field as well as the list's count and entries. */
+  const readList = (
+    field: bigint,
+    onTruncated?: () => void,
+  ): ObjcProtocolListResult => {
     const names: string[] = [];
-    for (let index = 0n; index < count; index++) {
-      if (!read.admit()) {
-        onTruncated?.();
-        break;
+    try {
+      const address = read.pointer(field);
+      if (address === 0n) return ok(names);
+      // `count` is plain uintptr_t data, not a pointer fixup.
+      const count = read.u64(address);
+      if (count > 20000n)
+        throw new RangeError("Protocol list exceeds 20000 entries");
+      for (let index = 0n; index < count; index++) {
+        if (!read.admit()) {
+          onTruncated?.();
+          break;
+        }
+        const protocol = read.pointer(address + 8n + index * 8n);
+        names.push(name(protocol));
+        record(protocol);
       }
-      const protocol = read.pointer(address + 8n + index * 8n);
-      names.push(name(protocol));
-      record(protocol);
+      return ok(names);
+    } catch (cause: unknown) {
+      return err({
+        _tag: "ProtocolListUnreadable",
+        names,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
     }
-    return names;
   };
   const methods = (
     address: bigint,
@@ -86,7 +111,8 @@ export const createObjcProtocolReader = (input: {
     if (address === 0n || visited.has(address) || !read.admit()) return;
     visited.add(address);
     try {
-      if (read.u32(address + 64n) < 72)
+      const protocolSize = read.u32(address + 64n);
+      if (protocolSize < 72)
         throw new RangeError("Truncated Objective-C protocol declaration");
       const protocolName = name(address);
       // Adopted protocols are independent declarations; decode them before
@@ -95,7 +121,11 @@ export const createObjcProtocolReader = (input: {
       const onTruncated = () => {
         budgetTruncated = true;
       };
-      const adopted = list(read.pointer(address + 16n), onTruncated);
+      const adopted = readList(address + 16n, onTruncated);
+      if (!adopted.ok)
+        failures.push(
+          `Protocol 0x${address.toString(16)} adopted protocol list: ${adopted.error.reason}`,
+        );
       if (protocolName.length === 0)
         throw new TypeError("Objective-C protocol has an empty name");
       const skipped: string[] = [];
@@ -135,7 +165,35 @@ export const createObjcProtocolReader = (input: {
         failures.push(
           `Protocol 0x${address.toString(16)}: Objective-C protocol ${protocolName} ${message}`,
         );
+      let properties: ObjcSwiftMetadata["objc_protocols"][number]["properties"] =
+        [];
+      const propertyReasons: string[] = [];
+      try {
+        const decoded = readObjcPropertyList(
+          read,
+          read.pointer(address + 56n),
+          () => read.admit(),
+          onTruncated,
+        );
+        properties = decoded.properties;
+        for (const problem of decoded.issues)
+          propertyReasons.push(problem.message);
+        // Older protocol revisions end at size/flags. The later class-property
+        // list has no class/instance discriminator in the public property shape.
+        if (protocolSize >= 96 && read.pointer(address + 88n) !== 0n)
+          propertyReasons.push("protocol class properties are not decoded");
+      } catch (cause) {
+        propertyReasons.push(
+          cause instanceof Error ? cause.message : String(cause),
+        );
+      }
+      for (const message of propertyReasons)
+        failures.push(
+          `Protocol 0x${address.toString(16)}: Objective-C protocol ${protocolName} properties: ${message}`,
+        );
       const decodeReasons = [
+        ...propertyReasons,
+        ...(adopted.ok ? [] : ["protocol_list_unreadable"]),
         ...(skipped.length === 0 ? [] : ["protocol_method_selector_empty"]),
         ...(budgetTruncated ? ["max_records_reached"] : []),
       ];
@@ -143,11 +201,11 @@ export const createObjcProtocolReader = (input: {
         name: protocolName,
         methods: required,
         optional_methods: optional,
-        properties: [],
+        properties,
       });
       result.objc_protocol_records.push({
         name: protocolName,
-        adopted_protocols: adopted,
+        adopted_protocols: adopted.ok ? adopted.value : adopted.error.names,
         methods: required,
         optional_methods: optional,
         location: read.location(address),
@@ -166,5 +224,5 @@ export const createObjcProtocolReader = (input: {
       );
     }
   };
-  return { list, record };
+  return { readList, record };
 };

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   createCapturedWebScriptReconciler,
-  reconcileWebScript,
   stableWebResources,
   stableWebScriptKey,
 } from "./webInventory.js";
@@ -57,7 +56,7 @@ describe("stable web inventory", () => {
     );
   });
 
-  it("sorts resources deterministically and reconciles only exact URLs", () => {
+  it("sorts resources deterministically and reconciles observed raw URLs", () => {
     const inputs = [
       {
         url: "https://app.example.test/assets/vendor.js",
@@ -76,31 +75,45 @@ describe("stable web inventory", () => {
     ];
     const forward = stableWebResources([...inputs, ...inputs.slice(0, 1)]);
     const reverse = stableWebResources([...inputs].reverse());
+    const rawResources = [...inputs, ...inputs.slice(0, 1)].map((resource) => ({
+      ...resource,
+      rawUrl: resource.url,
+    }));
+    const reconcile = createCapturedWebScriptReconciler(rawResources, forward);
 
     expect(reverse).toEqual(forward);
-    expect(reconcileWebScript(script, forward)).toEqual({
+    expect(reconcile({ ...script, rawUrl: script.url })).toEqual({
       status: "exact",
       resource_key: forward.find(({ url }) => url === script.url)?.resource_key,
     });
     expect(
-      reconcileWebScript({ ...script, url: `${script.url}?v=2` }, forward),
+      reconcile({
+        ...script,
+        url: `${script.url}?v=2`,
+        rawUrl: `${script.url}?v=2`,
+      }),
     ).toEqual({ status: "unmatched", reason: "no_exact_sanitized_url" });
   });
 
   it("reports duplicate resource observations as ambiguous", () => {
     const duplicate = {
       url: script.url,
+      rawUrl: script.url,
       origin: "https://app.example.test",
       type: "Script",
       mime_type: "text/javascript",
       content_size: 1_024,
     };
-    const resources = stableWebResources([
-      duplicate,
-      { ...duplicate, content_size: 2_048 },
-    ]);
+    const rawResources = [duplicate, { ...duplicate, content_size: 2_048 }];
+    const resources = stableWebResources(
+      rawResources.map(({ rawUrl: _rawUrl, ...resource }) => resource),
+    );
+    const reconcile = createCapturedWebScriptReconciler(
+      rawResources,
+      resources,
+    );
 
-    expect(reconcileWebScript(script, resources)).toEqual({
+    expect(reconcile({ ...script, rawUrl: script.url })).toEqual({
       status: "ambiguous",
       candidate_resource_keys: resources
         .map(({ resource_key }) => resource_key)

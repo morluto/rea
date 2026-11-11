@@ -50,7 +50,7 @@ const fixture = async () => {
     root,
     provider,
     png: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4sAAAAASUVORK5CYII=",
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
       "base64",
     ),
   };
@@ -72,7 +72,6 @@ test("does not publish a screen capture cancelled before the commit point", asyn
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(abortReason);
@@ -106,7 +105,6 @@ test("retains a committed screen capture receipt when cancellation arrives after
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(abortReason);
@@ -124,7 +122,9 @@ test("retains a committed screen capture receipt when cancellation arrives after
       height: 1,
     },
   });
-  expect(await readFile(join(output, "screen.png"))).toEqual(f.png);
+  expect(
+    Buffer.compare(await readFile(join(output, "screen.png")), f.png),
+  ).toBe(0);
   await f.provider.close();
 });
 
@@ -171,7 +171,6 @@ test.each([1, 2])(
       operation: "capture_adb_screen",
       input: { serial: "device", output_directory: output },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected staged screen cleanup failure");
     const originatingError = result.error;
     const originatingCause = originatingError.cause;
@@ -262,7 +261,6 @@ test("retains the committed receipt and cleanup observation when cancellation ra
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cleanupIncomplete).toBe(true);
@@ -279,7 +277,7 @@ test("retains the committed receipt and cleanup observation when cancellation ra
     confidence: "observed",
     normalized_result: { local_path: destination, bytes: f.png.byteLength },
   });
-  expect(await readFile(destination)).toEqual(f.png);
+  expect(Buffer.compare(await readFile(destination), f.png)).toBe(0);
   await provider.close();
   expect(closeAttempts).toBe(2);
   expect(result.error.cleanupIncomplete).toBe(false);
@@ -300,7 +298,9 @@ test("publishes screen captures when the output filesystem does not support hard
     input: { serial: "device", output_directory: output },
   });
   expect(result.ok).toBe(true);
-  expect(await readFile(join(output, "screen.png"))).toEqual(f.png);
+  expect(
+    Buffer.compare(await readFile(join(output, "screen.png")), f.png),
+  ).toBe(0);
   await f.provider.close();
 });
 
@@ -353,7 +353,6 @@ test("cancellation after a failed hard link but before exclusive creation does n
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(abortReason);
@@ -392,7 +391,6 @@ test("retains a receipt when cancellation arrives after exclusive output creatio
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(abortReason);
@@ -401,7 +399,7 @@ test("retains a receipt when cancellation arrives after exclusive output creatio
     confidence: "observed",
     normalized_result: { local_path: destination, bytes: f.png.byteLength },
   });
-  expect(await readFile(destination)).toEqual(f.png);
+  expect(Buffer.compare(await readFile(destination), f.png)).toBe(0);
   await f.provider.close();
 });
 
@@ -452,13 +450,12 @@ test("closes and retains ownership when exclusive output stat fails", async () =
     operation: "capture_adb_screen",
     input: { serial: "device", output_directory: output },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected stat failure");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toContain(destination);
   expect(closeAttempts).toBe(0);
   expect(handleOpen).toBe(true);
-  expect(await readFile(destination)).toEqual(Buffer.alloc(0));
+  expect(Buffer.compare(await readFile(destination), Buffer.alloc(0))).toBe(0);
   vi.mocked(rm).mockImplementation(async (path, options) => {
     if (String(path) === destination && ++removeAttempts === 1)
       throw new Error("controlled rollback removal fault");
@@ -525,7 +522,6 @@ test("waits for descriptor close before rolling back an incomplete exclusive out
     operation: "capture_adb_screen",
     input: { serial: "device", output_directory: output },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected write failure");
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(result.error.cause).toBeInstanceOf(AggregateError);
@@ -589,7 +585,6 @@ test.each([false, true])(
       operation: "capture_adb_screen",
       input: { serial: "device", output_directory: f.output },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected close failure");
     expect(parseEvidence(result.error.partialObservation)).toMatchObject({
       operation: "capture_adb_screen",
@@ -598,7 +593,7 @@ test.each([false, true])(
     });
     expect(result.error.cleanupIncomplete).toBe(rootFails);
     if (rootFails) expect(result.error.cleanupResources).toEqual([runtimePath]);
-    expect(await readFile(f.destination)).toEqual(f.png);
+    expect(Buffer.compare(await readFile(f.destination), f.png)).toBe(0);
     expect(f.closeAttempts()).toBe(2);
     await f.provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -616,7 +611,6 @@ test("keeps a sticky publication close failure until provider close retries its 
     operation: "capture_adb_screen",
     input: { serial: "device", output_directory: f.output },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected close failure");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toContain(
@@ -627,7 +621,7 @@ test("keeps a sticky publication close failure until provider close retries its 
     confidence: "observed",
     normalized_result: { local_path: f.destination, bytes: f.png.byteLength },
   });
-  expect(await readFile(f.destination)).toEqual(f.png);
+  expect(Buffer.compare(await readFile(f.destination), f.png)).toBe(0);
   expect(f.closeAttempts()).toBe(2);
   const linkedFailure = (result.error.cause as AggregateError).errors[0] as {
     readonly cleanupIncomplete: boolean;
@@ -638,7 +632,7 @@ test("keeps a sticky publication close failure until provider close retries its 
   expect(f.closeAttempts()).toBe(3);
   expect(linkedFailure.cleanupIncomplete).toBe(false);
   expect(result.error.cleanupIncomplete).toBe(false);
-  expect(await readFile(f.destination)).toEqual(f.png);
+  expect(Buffer.compare(await readFile(f.destination), f.png)).toBe(0);
 });
 
 test("resolves an admission cleanup error when the retained runtime-root lease closes", async () => {
@@ -648,7 +642,6 @@ test("resolves an admission cleanup error when the retained runtime-root lease c
     operation: "capture_adb_screen",
     input: { serial: "device", output_directory: f.output },
   });
-  expect(first.ok).toBe(false);
   if (first.ok) throw new Error("expected publication close failure");
   expect(first.error.cleanupIncomplete).toBe(true);
   expect(f.closeAttempts()).toBe(2);
@@ -657,7 +650,6 @@ test("resolves an admission cleanup error when the retained runtime-root lease c
     operation: "capture_adb_screen",
     input: { serial: "device", output_directory: f.output },
   });
-  expect(admission.ok).toBe(false);
   if (admission.ok) throw new Error("expected retained cleanup refusal");
   const admissionError = admission.error;
   expect(admissionError.cleanupIncomplete).toBe(true);
@@ -668,7 +660,7 @@ test("resolves an admission cleanup error when the retained runtime-root lease c
   expect(f.closeAttempts()).toBe(4);
   expect(admissionError.cleanupIncomplete).toBe(false);
   expect(admissionError.cause).toBeInstanceOf(AggregateError);
-  expect(await readFile(f.destination)).toEqual(f.png);
+  expect(Buffer.compare(await readFile(f.destination), f.png)).toBe(0);
 });
 
 test("resolves the provider close aggregate after its failed root owner recovers", async () => {
@@ -678,7 +670,6 @@ test("resolves the provider close aggregate after its failed root owner recovers
     operation: "capture_adb_screen",
     input: { serial: "device", output_directory: f.output },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected publication close failure");
   expect(result.error.cleanupIncomplete).toBe(true);
 
@@ -691,7 +682,7 @@ test("resolves the provider close aggregate after its failed root owner recovers
   expect(f.closeAttempts()).toBe(4);
   expect(closeError).toMatchObject({ cleanupIncomplete: false });
   expect(result.error.cleanupIncomplete).toBe(false);
-  expect(await readFile(f.destination)).toEqual(f.png);
+  expect(Buffer.compare(await readFile(f.destination), f.png)).toBe(0);
 });
 
 test("retains incomplete cleanup on a cancelled capture while keeping cancellation typed", async () => {
@@ -726,7 +717,6 @@ test("retains incomplete cleanup on a cancelled capture while keeping cancellati
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cleanupIncomplete).toBe(true);

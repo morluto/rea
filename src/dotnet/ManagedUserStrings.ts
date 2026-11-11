@@ -7,11 +7,14 @@ import type {
   ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
 import type {
-  ManagedMethod,
+  DecodedMethod,
   ManagedUserString,
 } from "./ManagedMemberInspectorCore.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { readMetadataUserString } from "./ManagedMetadataHeaps.js";
+import {
+  readMetadataUserString,
+  type MetadataTokenFact,
+} from "./ManagedMetadataHeaps.js";
 import { readManagedValue } from "./ManagedReaderFailure.js";
 
 type UserStringInventory = NonNullable<ManagedMemberInspection["user_strings"]>;
@@ -40,7 +43,7 @@ export const parseUserStrings = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   parsed: {
-    readonly methods: readonly ManagedMethod[];
+    readonly methods: readonly DecodedMethod[];
     /** Methods that may be in scope but whose CIL was not fully scanned. */
     readonly unscannedMethods: number;
     /** Unreadable selected type names may hide a requested type. */
@@ -54,27 +57,27 @@ export const parseUserStrings = (
     (parsed.unreadableSelectedTypes ?? 0) === 0;
   const userStrings: ManagedUserString[] = [];
   const issues: ManagedParseIssue[] = [];
-  const tokens = new Set<string>();
+  const tokens = new Map<number, MetadataTokenFact>();
   try {
     // Only ldstr loads a literal; a malformed ldtoken can carry a 0x70 token.
-    for (const method of methods)
-      for (const { opcode, operand } of method.body.anchors)
-        if (opcode === "ldstr" && operand !== null && !tokens.has(operand)) {
+    for (const { tokenInstructions } of methods)
+      for (const { opcode, reference } of tokenInstructions)
+        if (opcode === "ldstr" && !tokens.has(reference.raw)) {
           budget.admitTransient(USER_STRING_TOKEN_BYTES, null);
-          tokens.add(operand);
+          tokens.set(reference.raw, reference);
         }
-    // Tokens are fixed-width lowercase hex, so string order is token order.
-    const references: string[] = [];
-    for (const token of [...tokens].sort()) {
-      if (token.startsWith("0x70")) references.push(token);
-      // An operand from another table names no #US item, with or without
-      // the stream.
+    // Unsigned token order is the same as their fixed-width lowercase hex order.
+    const references: MetadataTokenFact[] = [];
+    for (const reference of [...tokens.values()].sort(
+      (left, right) => left.raw - right.raw,
+    )) {
+      if (reference.table === 0x70) references.push(reference);
       else
         issues.push(
           admitManagedProjection(
             {
               code: "invalid-heap-index",
-              scope: `metadata.#US:${token}`,
+              scope: `metadata.#US:${reference.token}`,
               offset: null,
               detail: "ldstr operand does not name an item inside #US",
             },
@@ -97,17 +100,20 @@ export const parseUserStrings = (
       );
       return inventory(userStrings, issues, scanned);
     }
-    for (const token of references) {
+    for (const reference of references) {
       const failures: ManagedParseIssue[] = [];
       readManagedValue(() => {
         const {
           offset,
           value,
           issues: observed,
-        } = readMetadataUserString(bytes, layout, token);
+        } = readMetadataUserString(bytes, layout, reference);
         for (const issue of observed) failures.push(issue);
         userStrings.push(
-          admitManagedProjection({ token, offset, value }, budget),
+          admitManagedProjection(
+            { token: reference.token, offset, value },
+            budget,
+          ),
         );
       }, failures);
       for (const failure of failures)

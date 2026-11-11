@@ -1,6 +1,10 @@
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
+import {
+  analysisDetailOutputSchemaOf,
+  analysisDetailSchema,
+} from "./analysisDetail.js";
+import { browserScenarioSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
 import { browserScenarioInputSchema } from "../domain/browserScenario.js";
 import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -26,10 +30,15 @@ export const BROWSER_SCENARIO_TOOL_CONTRACTS = [
     name: "capture_browser_scenario",
     ...toolContractMetadata("capture_browser_scenario"),
     description:
-      "Run a controlled browser scenario when passive observation cannot exercise the application. Launch the selected executable or connect to a loopback CDP target, provide a start URL and actions, and select storage or artifacts when needed. Environment, empty storage, a URL-only final capture, and measured event-retention budgets are defaults. capture.network selects request_body, response_body, and header_values independently; capture.limits lets callers raise or lower the event count, retained-allocation estimates, network transaction count, and network content budgets. Selected content is returned inline with transaction and event references, byte digests, and explicit unavailable states. Budget omissions identify affected event kinds and network transactions. Credentials and declared secrets are redacted. Agents can run their own local fixture servers to control application responses. Actions run until completion or cancellation unless timeout_ms is set. Results are returned inline.",
+      'Drive a browser scenario when passive observation cannot exercise the app. Launch the selected executable or connect to a loopback CDP target; actions can change application state and make network requests. Supply browser, start_url and actions, e.g. {browser:{mode:"launch",executable_path:"/opt/chromium/chrome"},start_url:{url:"https://app.example.test/"},actions:[{step_id:"settle",action:"wait_for_timeout",duration_ms:250}]}. Empty storage and a URL-only final capture are defaults. Request actions use page fetch on the start origin; capture.network independently opts into request_body, response_body and header_values. Credentials and declared secrets are redacted. capture.limits controls retained event/content budgets; omissions identify affected events/transactions. Actions wait for completion or cancellation; per-action timeout_ms bounds a step. Default complete delivery returns Evidence inline. detail summary retains it and returns step outcomes, final/first-unsuccessful accessibility, and counts; inspect_analysis_view kind browser-scenario pages steps, events, transactions and UTF-16 text. Use inspect_web_page for observation without actions.',
     kind: "browser-provider",
-    inputSchema: browserScenarioInputSchema,
-    outputSchema: evidenceResultOf(browserScenarioCaptureSchema),
+    inputSchema: browserScenarioInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      browserScenarioCaptureSchema,
+      browserScenarioSummaryViewResultSchema,
+    ),
     examples: [
       { title: "Capture a deterministic browser scenario", input: example },
     ],

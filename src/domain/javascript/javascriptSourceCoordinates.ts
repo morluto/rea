@@ -39,4 +39,7 @@ export const javascriptSourceRangeSchema = z
         path: ["end"],
         message: "Source range end must not precede its start",
       });
-  });
+  })
+  .describe(
+    "One-based lines, zero-based UTF-16 columns; start inclusive, end exclusive.",
+  );

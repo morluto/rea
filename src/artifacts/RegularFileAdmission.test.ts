@@ -1,6 +1,8 @@
 import type { BigIntStats, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import {
@@ -10,6 +12,7 @@ import {
   RegularFileOperationCancelled,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const { mockOpen } = vi.hoisted(() => ({ mockOpen: vi.fn() }));
 
@@ -19,6 +22,44 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
 }));
 
 afterEach(() => mockOpen.mockReset());
+
+it("returns the original validated metadata snapshot with its actual descriptor", async () => {
+  const { open } =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const root = await createTestTempDirectory("rea-admission-snapshot-");
+  const path = join(root, "selected.bin");
+  const original = Buffer.from("admitted α测试\0\n");
+  await writeFile(path, original);
+  let validated: Stats | undefined;
+  let opened: FileHandle | undefined;
+  mockOpen.mockImplementationOnce(async (...args: Parameters<typeof open>) => {
+    const handle = await open(...args);
+    opened = handle;
+    const stat = handle.stat.bind(handle);
+    vi.spyOn(handle, "stat").mockImplementationOnce(async () => {
+      validated = await stat();
+      return validated;
+    });
+    return handle;
+  });
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  try {
+    expect(descriptor.handle).toBe(opened);
+    expect(descriptor.initial).toBe(validated);
+    expect(descriptor.initial.size).toBe(original.length);
+    await writeFile(
+      path,
+      "a later, longer replacement extent on the same inode",
+    );
+    expect(descriptor.initial).toBe(validated);
+    expect(descriptor.initial.size).toBe(original.length);
+    expect(descriptor.handle.stat).toHaveBeenCalledOnce();
+  } finally {
+    await descriptor.handle.close();
+  }
+});
 
 it.each(["cancellation after open", "non-regular metadata", "stat failure"])(
   "retains the exact owner when close fails after %s",

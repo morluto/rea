@@ -36,6 +36,7 @@ export const createEmptyIl2cppMetadataFixture = (): Il2cppMetadata => ({
   return_types: [],
   field_types: [],
   parameter_types: [],
+  generic_method_instances: null,
   parameters: [],
   string_literals: [],
   limitations: [],

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
@@ -68,7 +68,7 @@ const { createAgentEvaluationCommands } = await import(${JSON.stringify(
 const { OwnedCommandFailure, prepareOwnedCommand } = await import(${JSON.stringify(
         new URL("../../../dist/process/OwnedCommand.js", import.meta.url).href,
       )});
-const { closeVerifierResources } = await import(${JSON.stringify(
+const { withVerifierCleanup } = await import(${JSON.stringify(
         new URL("../../../scripts/lib/verifier-cleanup.mjs", import.meta.url)
           .href,
       )});
@@ -76,8 +76,7 @@ await prepareOwnedCommand();
 const root = ${JSON.stringify(root)}, fixture = ${JSON.stringify(fixture)};
 const commands = createAgentEvaluationCommands({ codex: fixture, evaluationRoot: root,
   evaluationEnvironment: process.env, timeoutMs: 1000, repositoryRoot: root });
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
 for (const name of ["runCodex", "runProcess", "readCommandVersion"]) {
   await assert.rejects(() => name === "runCodex" ? commands.runCodex("fixture", []) :
     name === "runProcess" ? commands.runProcess(fixture, [], root, 1000) : commands.readCommandVersion(fixture), error => {
@@ -109,12 +108,7 @@ await assert.rejects(() => commands.runProcess(fixture, [], root, 2000), error =
   assert.ok(error.snapshot.stderr.bytes <= 32768);
   return true;
 });
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources([() => commands.close()], primaryError);
-}
+}, [() => commands.close()]);
 console.log(JSON.stringify({ passed: true, timeoutHelpers: 3, controls: 7, childrenClosed: children.every(x => x.closed) }));
 `,
     );
@@ -181,7 +175,11 @@ registerHooks({ load(url, context, nextLoad) {
         ),
       ],
       {
-        env: { ...process.env, REA_AGENT_EVAL_ROOT: parent },
+        env: {
+          ...process.env,
+          REA_AGENT_EVAL_ROOT: parent,
+          REA_AGENT_EVAL_KEEP_FIXTURES: "false",
+        },
         timeoutMs: 10_000,
       },
     );
@@ -196,14 +194,13 @@ registerHooks({ load(url, context, nextLoad) {
     if (incomplete) {
       expect(result.stderr).toContain("Artifact cleanup remains incomplete");
       expect(result.stderr).toContain("fixture cleanup denied");
-      expect(await readFile(join(run, "codex/auth.json"), "utf8")).toBe(
-        "inert fixture",
-      );
+      expect((await stat(run)).isDirectory()).toBe(true);
     } else {
-      await expect(
-        readFile(join(run, "codex/auth.json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(run)).rejects.toMatchObject({ code: "ENOENT" });
     }
+    await expect(readFile(join(run, "codex/auth.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
 
@@ -280,7 +277,11 @@ registerHooks({ load(url, context, nextLoad) {
         ),
       ],
       {
-        env: { ...process.env, REA_AGENT_EVAL_ROOT: parent },
+        env: {
+          ...process.env,
+          REA_AGENT_EVAL_ROOT: parent,
+          REA_AGENT_EVAL_KEEP_FIXTURES: "false",
+        },
         timeoutMs: 10_000,
       },
     );
@@ -304,13 +305,14 @@ registerHooks({ load(url, context, nextLoad) {
     if (incomplete) {
       expect(result.stderr).toContain("Artifact cleanup remains incomplete");
       expect(result.stderr).toContain("darwin-fixture-reader");
-      expect(
-        await readFile(join(observed.run, "codex/auth.json"), "utf8"),
-      ).toBe("inert preparation fixture");
+      expect((await stat(observed.run)).isDirectory()).toBe(true);
     } else {
-      await expect(
-        readFile(join(observed.run, "codex/auth.json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(observed.run)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     }
+    await expect(
+      readFile(join(observed.run, "codex/auth.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

@@ -2,6 +2,7 @@ import { isMap, isSeq, type Node, type YAMLMap } from "yaml";
 import {
   parseEnvironment,
   parseEnvironmentValues,
+  type Environment,
 } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -190,7 +191,14 @@ export class DshCordisDocument {
     overrides: Readonly<Record<string, string>> = {},
     validation: "fragment" | "effective" = "effective",
     platform: NodeJS.Platform = process.platform,
-  ): Result<Readonly<Record<string, string>>, ConfigurationError> {
+  ): Result<
+    {
+      readonly values: Readonly<Record<string, string>>;
+      readonly configuration: Environment;
+      readonly unresolvedSettings: ReadonlySet<string>;
+    },
+    ConfigurationError
+  > {
     const config = this.#field("config");
     if (config instanceof CordisExpression)
       return err(
@@ -223,7 +231,7 @@ export class DshCordisDocument {
       return err(
         new ConfigurationError("Cordis server environment must be a mapping"),
       );
-    const literals: Record<string, string> = {};
+    const literals: Record<string, string> = Object.create(null);
     const unresolvedSettings = new Set<string>();
     for (const [key, value] of Object.entries(
       mergeEnvironmentOverrides<unknown>(raw ?? {}, overrides, platform),
@@ -246,8 +254,7 @@ export class DshCordisDocument {
         );
       literals[key] = value;
     }
-    const environment = literals;
-    const runtimeEnvironment = snapshotEnvironment(environment, platform);
+    const runtimeEnvironment = snapshotEnvironment(literals, platform);
     const unresolved = new Set(
       Object.keys(
         snapshotEnvironment(
@@ -260,7 +267,13 @@ export class DshCordisDocument {
       validation === "fragment"
         ? parseEnvironmentValues(runtimeEnvironment, unresolved)
         : parseEnvironment(runtimeEnvironment, unresolved);
-    return validated.ok ? ok(environment) : validated;
+    return validated.ok
+      ? ok({
+          values: literals,
+          configuration: validated.value,
+          unresolvedSettings: unresolved,
+        })
+      : validated;
   }
 
   desired(
@@ -436,6 +449,7 @@ export const parseDshCordisDocument = (
     servers: source.config === undefined ? {} : { rea: source.config },
     serversPath: [],
     dialect: "dsh",
+    environmentKey: "env",
     legacyServers: {},
   };
 };

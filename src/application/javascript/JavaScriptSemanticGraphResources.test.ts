@@ -1,10 +1,10 @@
+import { javaScriptSemanticQueryInputSchema } from "../../domain/javascript/javascriptSemanticQuerySchemas.js";
 import { expect, it } from "vitest";
 
 import { graphForJavaScript as graphFor } from "../../../tests/fixtures/javascriptSemanticGraph.js";
-import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
-import { resolveJavaScriptSemanticEvidence } from "../../domain/javascript/javascriptSemanticGraph.js";
+import { resolveJavaScriptSemanticEvidence } from "../../../tests/support/javascriptSemanticGraphFixture.js";
 
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
@@ -284,17 +284,67 @@ it("projects literal seeds and static object flow", () => {
         kind === "property-slot" && properties.name === "token",
     ),
   ).toBeDefined();
-  const literal = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "literal", value: "TOKEN" },
-    direction: "forward-influence",
-  });
+  const literal = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "literal", value: "TOKEN" },
+      direction: "forward-influence",
+    }),
+  );
   expect(literal.status).toBe("ambiguous");
-  expect(literal.summary.total_seed_matches).toBe(3);
-  const property = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "property", name: "token" },
-    direction: "forward-influence",
-  });
-  expect(property.status).toBe("found");
+  const targetName = (targetId: string): string => {
+    const target = graph.nodes.find(({ node_id }) => node_id === targetId);
+    if (target === undefined) throw new Error("Missing value target");
+    if (target.kind === "binding" && target.label !== null) return target.label;
+    const owner = graph.relations.find(
+      ({ relation, target_node_id }) =>
+        relation === "writes-property" && target_node_id === target.node_id,
+    );
+    const binding = graph.nodes.find(
+      ({ node_id }) => node_id === owner?.source_node_id,
+    );
+    if (binding === undefined) throw new Error("Missing property owner");
+    return `${binding.label}.${String(target.properties.name)}`;
+  };
+  const literalTargets = graph.relations
+    .filter(
+      ({ relation, source_node_id }) =>
+        relation === "defines" &&
+        literal.seed_node_ids.includes(source_node_id),
+    )
+    .map(({ target_node_id }) => targetName(target_node_id));
+  expect(literalTargets.sort()).toEqual([
+    "copy.token",
+    "read",
+    "source.token",
+    "token",
+  ]);
+  expect(literal.summary.total_seed_matches).toBe(literalTargets.length);
+  const property = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "property", name: "token" },
+      direction: "forward-influence",
+    }),
+  );
+  expect(property.status).toBe("ambiguous");
+  expect(property.seed_node_ids.map(targetName).sort()).toEqual([
+    "copy.token",
+    "source.token",
+  ]);
+  expect(property.unknowns).toEqual([]);
+  expect(property.relations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        relation: "destructures",
+        resolution: "resolved",
+      }),
+      expect.objectContaining({
+        relation: "reads-property",
+        resolution: "resolved",
+      }),
+    ]),
+  );
 });
 
 it("does not promote transformed return expressions to resolved aliases", () => {
@@ -310,7 +360,13 @@ it("does not promote transformed return expressions to resolved aliases", () => 
       ({ relation, target_node_id }) =>
         relation === "aliases" && target_node_id === returnNode.node_id,
     ),
-  ).toEqual([expect.objectContaining({ resolution: "candidate" })]);
+  ).toEqual([]);
+  expect(
+    graph.relations.filter(
+      ({ relation, target_node_id }) =>
+        relation === "influences" && target_node_id === returnNode.node_id,
+    ),
+  ).toEqual([expect.objectContaining({ resolution: "resolved" })]);
   const output = graph.nodes.find(
     ({ kind, label }) => kind === "binding" && label === "output",
   );
@@ -319,21 +375,21 @@ it("does not promote transformed return expressions to resolved aliases", () => 
   );
   if (output === undefined || input === undefined)
     throw new Error("Expected caller bindings");
-  const strict = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "semantic-node", node_id: output.node_id },
-    direction: "backward-provenance",
-  });
-  expect(strict.nodes.map(({ node_id }) => node_id)).not.toContain(
-    input.node_id,
+  const strict = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "semantic-node", node_id: output.node_id },
+      direction: "backward-provenance",
+    }),
   );
-  expect(strict.status).toBe("ambiguous");
+  expect(strict.nodes.map(({ node_id }) => node_id)).toContain(input.node_id);
+  expect(strict.status).toBe("partial");
 });
 
 it("uses unavailable evidence when no source produced semantic IR", () => {
-  const graph = buildJavaScriptSemanticGraph({
-    rootArtifactSha256: SHA256,
-    applicationGraph: { graph_id: GRAPH_ID, nodes: [] },
-    analysis: emptyAnalysis(),
+  const graph = createJavaScriptSemanticGraphProjection().finish(SHA256, {
+    graph_id: GRAPH_ID,
+    nodes: [],
   });
   const root = graph.nodes[0];
   if (root === undefined) throw new Error("Expected unavailable semantic root");
@@ -346,16 +402,32 @@ it("uses unavailable evidence when no source produced semantic IR", () => {
   );
 });
 
-const emptyAnalysis = (): JavaScriptArtifactAnalysis => ({
-  files: [],
-  packages: [],
-  json_modules: [],
-  html_scripts: [],
-  html_inline_scripts: [],
-  source_maps: [],
-  visited_ast_nodes: 0,
-  findings: 0,
-  modules: 0,
-  parse_failures: 0,
-  limitations: [],
+it("retains conditional Node timer and child effects without proving a loader", () => {
+  const graph = graphFor(`
+    const { spawn } = require('child_process');
+    const { setTimeout } = require('timers');
+    const child = spawn('tool', []); child.kill();
+    setTimeout(() => {}, 1);
+  `);
+  const child = graph.nodes.find((node) => node.kind === "child-process");
+  const timer = graph.nodes.find((node) => node.kind === "timer");
+  for (const node of [child, timer]) {
+    expect(node?.properties.builtin_authority).toBe("candidate");
+    if (node === undefined) throw new Error("Expected candidate node");
+    expect(
+      resolveJavaScriptSemanticEvidence(graph, node.evidence),
+    ).toMatchObject({ state: "inferred", confidence: "low" });
+  }
+  for (const kind of [
+    "spawns",
+    "schedules-timer",
+    "forwards-signal",
+  ] as const) {
+    const relation = graph.relations.find((item) => item.relation === kind);
+    expect(relation).toMatchObject({ resolution: "candidate" });
+    if (relation === undefined) throw new Error(`Expected ${kind} relation`);
+    expect(
+      resolveJavaScriptSemanticEvidence(graph, relation.evidence),
+    ).toMatchObject({ state: "inferred", confidence: "low" });
+  }
 });

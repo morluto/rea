@@ -1,19 +1,18 @@
+import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
+import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { RustBinaryPort } from "./RustBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
-  rustArchitectureForSubject,
   rustBinarySchema,
+  type InspectRustBinaryInput,
 } from "../../domain/rust/rustBinary.js";
 import { inspectRustBinaryRequestSchema } from "../../domain/rust/rustBinaryQuery.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import {
   requireAnalysisViewRetention,
   projectRetainedAnalysis,
@@ -27,7 +26,7 @@ export class RustBinaryService {
   constructor(readonly provider: RustBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */
@@ -39,18 +38,14 @@ export class RustBinaryService {
       evidenceById: undefined,
     },
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectRustBinaryRequestSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const { detail, view, ...parameters } = input.data;
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectRustBinaryRequestSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const { detail, view, ...parameters } = input.value;
     const compact = detail === "summary" || view !== undefined;
     if (compact) {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
@@ -59,7 +54,7 @@ export class RustBinaryService {
     const inspected = await this.provider.inspect(parameters, options);
     if (!inspected.ok) return inspected;
     const report = rustBinarySchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
+    if (!report.success || report.data.artifact.path !== input.value.path)
       return err(
         new AnalysisOutputError(
           OPERATION,
@@ -82,16 +77,16 @@ export class RustBinaryService {
 
 const evidenceFor = (
   provider: RustBinaryPort["identity"],
-  parameters: { readonly path: string },
+  parameters: InspectRustBinaryInput,
   value: ReturnType<typeof rustBinarySchema.parse>,
 ): Evidence => {
-  const architecture = rustArchitectureForSubject(value.architecture);
+  const architecture = binaryMetadataArchitecture(value.architecture);
   const section = value.auditable_metadata;
   return createEvidence(
     {
       path: value.artifact.path,
       sha256: value.artifact.sha256,
-      format: value.format === "macho" ? "mach-o" : value.format,
+      format: metadataReportSubjectFormat(value),
       ...(architecture === undefined ? {} : { architecture }),
     },
     provider,

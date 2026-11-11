@@ -8,6 +8,7 @@ import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
+import { analyzeJavaScriptApplicationInputSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("retains a failed nested reader through blocked work and scope cleanup", async () => {
@@ -40,7 +41,9 @@ it("retains a failed nested reader through blocked work and scope cleanup", asyn
     },
   );
 
-  const input = { input_path: bundle };
+  const input = analyzeJavaScriptApplicationInputSchema.parse({
+    input_path: bundle,
+  });
   const firstFailure = await reconstructJavaScriptArtifact(input, scope).catch(
     (cause: unknown) => cause,
   );

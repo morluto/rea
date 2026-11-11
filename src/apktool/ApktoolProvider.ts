@@ -1,3 +1,4 @@
+import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -8,7 +9,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
@@ -20,18 +21,17 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  ExecutionOptions,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
-import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import {
+  type ExecutionOptions,
+  type ProviderAvailability,
   createAnalysisExecution,
-  createAnalysisExecutionEvidence,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
+import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolResultSchemas,
+  apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
   MAX_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
@@ -57,8 +57,8 @@ import {
 } from "../process/OwnedCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
+import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
 import {
-  APKTOOL_COMMAND_ENV,
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
   apktoolInvocation,
@@ -71,13 +71,6 @@ import {
   parseApktoolYml,
   parseManifestPackage,
 } from "./ApktoolDecodeOutput.js";
-
-/** Stable identity for the Apktool resource-decoding provider. */
-export const APKTOOL_PROVIDER_IDENTITY = {
-  id: "apktool",
-  name: "Apktool",
-  version: null,
-} as const;
 
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
@@ -293,15 +286,7 @@ export class ApktoolProvider {
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
-    const ambient = snapshotEnvironment(process.env);
-    if (this.selectedEnvironment === undefined) return ambient;
-    // Child inheritance is sampled per operation. An explicit map keeps its
-    // launcher choice authoritative, including an omitted command selecting PATH.
-    return snapshotEnvironment({
-      ...ambient,
-      ...this.selectedEnvironment,
-      [APKTOOL_COMMAND_ENV]: this.selectedEnvironment[APKTOOL_COMMAND_ENV],
-    });
+    return this.selectedEnvironment ?? snapshotEnvironment(process.env);
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */
@@ -361,6 +346,8 @@ export class ApktoolProvider {
       if (cause instanceof ApktoolConfigurationFailure) {
         return apktoolConfigurationAvailability(cause);
       }
+      const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+      if (prerequisite !== undefined) return prerequisite;
       throw cause;
     }
   }
@@ -680,7 +667,7 @@ export class ApktoolProvider {
           : "complete";
 
       completedDecode.strings = [...projectedStrings.strings];
-      if (input.locales !== undefined || input.string_tables_only === true)
+      if (apktoolStringTablesRequested(input))
         completedDecode.string_tables = [...projectedStrings.tables];
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;
@@ -695,11 +682,12 @@ export class ApktoolProvider {
         ),
       );
     } catch (cause) {
-      const physical = artifactFilePrimaryFailure(cause);
+      const { cause: physical, origin } = artifactFilePrimaryFacts(cause);
       const primary =
-        physical instanceof AnalysisError
+        origin === "owned-or-classified" && physical instanceof AnalysisError
           ? physical
-          : physical instanceof ArtifactReaderFailure &&
+          : origin === "owned-or-classified" &&
+              physical instanceof ArtifactReaderFailure &&
               physical.reason === "cancelled"
             ? new AnalysisCancelledError(operation, {
                 cause: artifactFileCancellationCause(physical),

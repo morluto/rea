@@ -11,7 +11,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const solcModule = process.env.REA_VERIFY_SOLC_MODULE;
@@ -103,11 +106,10 @@ try {
         name: "inspect_evm_interface",
         arguments: { path, encoding },
       });
-      value = JSON.parse(mcpTextValue(reply));
-      if (expectedCategory !== undefined) {
-        assert.equal(reply.isError, true);
-        value = value.error;
-      } else assert.notEqual(reply.isError, true, mcpTextValue(reply));
+      value =
+        expectedCategory !== undefined
+          ? requireMcpToolError(reply)
+          : requireMcpOutput(reply, "inspect_evm_interface");
     }
     if (expectedCategory !== undefined) {
       assert.equal(value.category, expectedCategory, JSON.stringify(value));

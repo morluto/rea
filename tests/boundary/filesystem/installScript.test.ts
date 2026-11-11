@@ -24,27 +24,15 @@ const execFileAsync = promisify(execFile);
 const UNSUPPORTED_NODE_RECOVERY_LINUX_X64 =
   "REA installation failed: Node.js 20.0.0 is unsupported.\n" +
   "\n" +
-  "REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+. Install one via:\n" +
+  "REA requires Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+. Install one via:\n" +
   "  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)\n" +
   "  fnm:  fnm install 24 && fnm use 24      (https://github.com/Schniz/fnm)\n" +
   "  Direct download for linux/x64:\n" +
   "    https://nodejs.org/dist/latest-v24.x/  (grab the linux-x64 tarball)\n" +
   "Then rerun this installer.\n";
 
-describe("curl installer scenarios", { timeout: 20_000 }, () => {
-  it("installs only a pinned REA CLI with closed stdin", async () => {
-    const fixture = await createFixture();
-    const result = await runInstaller(fixture, ["--version", "0.3.0"]);
-    expect(result.stdout).toContain("REA 0.3.0 is installed");
-    expect(result.stdout).toContain("Run ");
-    expect(await readFile(fixture.npmLog, "utf8")).toContain(
-      "install --global --prefix",
-    );
-    expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
-    expect(await readdir(fixture.temporary)).toEqual([]);
-  });
-
-  it.each(["22.19.0", "24.11.0", "26.0.0"])(
+describe("installer Node.js admission", { timeout: 20_000 }, () => {
+  it.each(["22.23.4", "24.22.1", "26.12.1", "26.13.0", "24.22.1+build.5"])(
     "accepts supported Node %s without installing or replacing it",
     async (version) => {
       const fixture = await createFixture();
@@ -59,22 +47,42 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
     },
   );
 
-  it.each(["22.18.9", "24.10.9", "23.0.0", "26.0.0-rc.1"])(
-    "rejects unsupported Node %s before invoking npm",
-    async (version) => {
-      const fixture = await createFixture();
-      await expect(
-        runInstaller(fixture, ["--version", "0.3.0"], {
-          FAKE_NODE_VERSION: version,
-        }),
-      ).rejects.toMatchObject({
-        stderr: expect.stringContaining(`Node.js ${version} is unsupported`),
-      });
-      await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    },
-  );
+  it.each([
+    "22.19.0",
+    "22.23.3",
+    "24.11.0",
+    "24.22.0",
+    "23.0.0",
+    "26.0.0",
+    "26.12.0",
+    "26.12.1-rc.1",
+  ])("rejects unsupported Node %s before invoking npm", async (version) => {
+    const fixture = await createFixture();
+    await expect(
+      runInstaller(fixture, ["--version", "0.3.0"], {
+        FAKE_NODE_VERSION: version,
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining(`Node.js ${version} is unsupported`),
+    });
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
+
+describe("curl installer scenarios", { timeout: 20_000 }, () => {
+  it("installs only a pinned REA CLI with closed stdin", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(fixture, ["--version", "0.3.0"]);
+    expect(result.stdout).toContain("REA 0.3.0 is installed");
+    expect(result.stdout).toContain("Run ");
+    expect(await readFile(fixture.npmLog, "utf8")).toContain(
+      "install --global --prefix",
+    );
+    expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
+    expect(await readdir(fixture.temporary)).toEqual([]);
+  });
 
   it("resolves and validates the latest REA release tag", async () => {
     const fixture = await createFixture();
@@ -551,7 +559,7 @@ const createFixture = async (): Promise<InstallerFixture> => {
     executable(
       join(bin, "node"),
       `#!/bin/sh
-if [ "$1" = "-p" ]; then printf '%s\n' "\${FAKE_NODE_VERSION:-24.18.0}"; else exec ${shellQuote(process.execPath)} "$@"; fi
+if [ "$1" = "-p" ]; then printf '%s\n' "\${FAKE_NODE_VERSION:-24.22.1}"; else exec ${shellQuote(process.execPath)} "$@"; fi
 `,
     ),
     executable(

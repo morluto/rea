@@ -2,6 +2,8 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,
+  mkdir,
+  open,
   readFile,
   realpath,
   rm,
@@ -16,7 +18,12 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { silentLogger } from "../logger.js";
 import {
+  GHIDRA_SESSION_CAPABILITIES,
+  parseGhidraSessionInfo,
+} from "./GhidraSessionValues.js";
+import {
   ghidraSeedFailure,
+  ghidraSeedReportSchema,
   ghidraSeedLimitations,
   parseGhidraSeeds,
   resolveGhidraAnalysisSeeds,
@@ -133,9 +140,9 @@ describe("Ghidra seed commitment", () => {
     ).rejects.toMatchObject({
       _tag: "ProviderAdapterError",
       diagnostics: {
-        reason: expect.stringMatching(
-          /changed after the analysis profile was committed/u,
-        ),
+        code: "seed_changed",
+        path: resolved.value.path,
+        reason: "seed_changed",
       },
     });
   });
@@ -151,6 +158,70 @@ describe("Ghidra seed commitment", () => {
       throw new Error("Expected a commitment");
     expect(resolved.value.path).toBe(await realpath(path));
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an invalid file/.. traversal instead of reading a sibling seed file",
+    async () => {
+      const directory = await workspace();
+      await writeFile(join(directory, "file"), "not a directory");
+      await writeFile(join(directory, "seeds.tsv"), SEEDS);
+      const configured = `${directory}/file/../seeds.tsv`;
+      await expect(open(configured)).rejects.toMatchObject({ code: "ENOTDIR" });
+      const resolved = await resolveGhidraAnalysisSeeds(configured, resources);
+      expect(resolved.ok).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "preserves symlink/.. lookup against a sibling decoy",
+    async () => {
+      const directory = await workspace();
+      const selected = join(directory, "selected");
+      await mkdir(join(selected, "child"), { recursive: true });
+      await writeFile(join(selected, "seeds.tsv"), SEEDS);
+      await writeFile(join(directory, "seeds.tsv"), "0x1234\tcode\n");
+      const link = join(directory, "link");
+      await symlink(join(selected, "child"), link);
+      const configured = `${link}/../seeds.tsv`;
+      const resolved = await resolveGhidraAnalysisSeeds(configured, resources);
+      if (!resolved.ok || resolved.value === undefined)
+        throw new Error("Expected a commitment");
+      expect(resolved.value.configured_path).toBe(configured);
+      expect(resolved.value.path).toBe(
+        await realpath(join(selected, "seeds.tsv")),
+      );
+      const snapshot = await snapshotGhidraAnalysisSeeds(
+        resolved.value,
+        await workspace(),
+        resources,
+      );
+      expect(await readFile(snapshot, "utf8")).toBe(CANONICAL);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a configured traversal that becomes invalid before snapshotting",
+    async () => {
+      const directory = await workspace();
+      const child = join(directory, "child");
+      await mkdir(child);
+      await writeFile(join(directory, "seeds.tsv"), SEEDS);
+      const configured = `${child}/../seeds.tsv`;
+      const resolved = await resolveGhidraAnalysisSeeds(configured, resources);
+      if (!resolved.ok || resolved.value === undefined)
+        throw new Error("Expected a commitment");
+      await rm(child, { recursive: true });
+      await writeFile(child, "not a directory");
+      await expect(open(configured)).rejects.toMatchObject({ code: "ENOTDIR" });
+      await expect(
+        snapshotGhidraAnalysisSeeds(
+          resolved.value,
+          await workspace(),
+          resources,
+        ),
+      ).rejects.toMatchObject({ _tag: "ProviderAdapterError" });
+    },
+  );
 
   it("reports an unreadable seed file as a provider error", async () => {
     const resolved = await resolveGhidraAnalysisSeeds(
@@ -185,6 +256,79 @@ describe("Ghidra seed session verification", () => {
     label_failed: 0,
     unmapped: 0,
   };
+
+  it.each([100, 0])(
+    "rejects a handshake whose outcome counters report %i created functions",
+    (function_created) => {
+      const expected = {
+        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+        providerVersion: "12.1.4",
+        profileDigest: "a".repeat(64),
+        targetSha256: "b".repeat(64),
+      };
+      const parsed = parseGhidraSessionInfo(
+        {
+          name: "REA Ghidra bridge",
+          run_id: expected.runId,
+          profile_digest: expected.profileDigest,
+          provider: { id: "ghidra", version: expected.providerVersion },
+          read_only: false,
+          analysis_complete: true,
+          analysis_timed_out: false,
+          capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+          target: {
+            name: "fixture",
+            language_id: "x86:LE:64:default",
+            compiler_spec_id: "gcc",
+            image_base: "0x0",
+            default_address_space: "ram",
+            sha256: expected.targetSha256,
+          },
+          analysis_seeds: { ...report, function_created },
+        },
+        expected,
+      );
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: { code: "handshake_identity" },
+      });
+    },
+  );
+
+  it.each([
+    { function_created: 3, function_failed: 0, code_decoded: 0 },
+    { function_created: 0, function_failed: 0, code_decoded: 3 },
+    { function_created: 0, function_failed: 0, label_applied: 3 },
+  ])(
+    "rejects outcomes attributed to more seeds of a kind than committed: %j",
+    (changed) => {
+      const misattributed = { ...report, ...changed };
+      expect(ghidraSeedReportSchema.safeParse(misattributed).success).toBe(
+        true,
+      );
+      expect(
+        ghidraSeedFailure(commitment, misattributed, "xrefs"),
+      ).toBeDefined();
+    },
+  );
+
+  it("admits producer outcomes including aggregate unmapped seeds without inventing their kinds", () => {
+    for (const outcome of [
+      report,
+      {
+        ...report,
+        function_created: 0,
+        function_failed: 0,
+        code_decoded: 0,
+        label_applied: 0,
+        unmapped: 4,
+      },
+      { ...report, function_created: 0, code_decoded: 0, unmapped: 2 },
+    ]) {
+      expect(ghidraSeedReportSchema.safeParse(outcome).success).toBe(true);
+      expect(ghidraSeedFailure(commitment, outcome, "xrefs")).toBeUndefined();
+    }
+  });
 
   it("accepts exactly the committed seeds and reports their outcome", () => {
     expect(ghidraSeedFailure(commitment, report, "xrefs")).toBeUndefined();

@@ -1,4 +1,5 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
@@ -29,11 +30,12 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
-  SQLITE_PROVIDER_IDENTITY,
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   MAX_SQLITE_WORKER_TIMEOUT_MS,
 } from "../domain/sqlite/sqliteDatabase.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import { SqliteSnapshotAcquisitionFailure } from "./SqliteDatabaseSnapshot.js";
 
 /** Preserve diagnostics independently of worker exit and private-root cleanup. */
 export const capturedSqliteOutput = (
@@ -91,6 +93,23 @@ export const sqliteDatabaseFailure = (
   workerTimeoutMs = DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
 ): AnalysisError => {
   const operation = "inspect_sqlite_database";
+  if (cause instanceof SqliteSnapshotAcquisitionFailure) {
+    const failure = sqliteDatabaseFailure(
+      cause.operationCause,
+      path,
+      phase,
+      signal,
+      workerTimeoutMs,
+    );
+    const diagnostics = {
+      snapshot_acquisition: {
+        consistency: "unverified",
+        members: cause.completedMembers.map((member) => ({ ...member })),
+      },
+    };
+    failure.retainPrimaryDiagnostics(diagnostics);
+    return failure;
+  }
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.cleanup !== undefined) {
@@ -120,10 +139,7 @@ export const sqliteDatabaseFailure = (
           undefined,
           workerTimeoutMs,
         );
-      else if (signal?.aborted)
-        previous = new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-        });
+
       const error = createSqliteCleanupError(
         cause.cleanup.resources,
         {
@@ -153,13 +169,17 @@ export const sqliteDatabaseFailure = (
       return new AnalysisCancelledError(operation, {
         cause: artifactFileCancellationCause(cause),
       });
-    return new AnalysisInputError(operation, { cause }, [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: cause.message,
-      },
-    ]);
+    return new AnalysisInputError(
+      operation,
+      { cause, ...stableArtifactInputRecovery(cause) },
+      [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: cause.message,
+        },
+      ],
+    );
   }
   if (cause instanceof Error && cause.name === "AbortError")
     return new AnalysisCancelledError(operation, {
@@ -169,7 +189,7 @@ export const sqliteDatabaseFailure = (
           : cause,
     });
   if (cause instanceof OwnedCommandFailure) {
-    const projected = ownedCommandFailure(cause, workerTimeoutMs);
+    const projected = ownedCommandFailure(cause, path, workerTimeoutMs);
     if (projected !== undefined) return projected;
   }
   if (phase === "artifact-read" && cause instanceof Error && "code" in cause) {
@@ -226,6 +246,7 @@ export const sqliteDatabaseFailure = (
 
 const ownedCommandFailure = (
   cause: OwnedCommandFailure,
+  selectedPath: string,
   workerTimeoutMs: number,
 ): AnalysisError | undefined => {
   const operation = "inspect_sqlite_database";
@@ -291,7 +312,7 @@ const ownedCommandFailure = (
       {
         javascript_heap_bytes: 256 * 1024 * 1024,
       },
-      options,
+      { ...options, diagnostics: { selected_path: selectedPath } },
     );
   return undefined;
 };

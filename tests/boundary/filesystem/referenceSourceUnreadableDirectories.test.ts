@@ -20,6 +20,33 @@ const permissionChecksUnavailable =
   process.platform === "win32" || process.getuid?.() === 0;
 
 describe("reference source native unreadable directories", () => {
+  it.skipIf(permissionChecksUnavailable)(
+    "retains a root enumeration IO failure as an error and recovers after permission repair",
+    async () => {
+      const root = await createTestTempDirectory("rea-source-unreadable-root-");
+      await writeFile(join(root, "main.txt"), "root bytes");
+      await chmod(root, 0o100);
+      try {
+        const result = await importTree(root);
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            code: "io",
+            message: expect.stringContaining("EACCES"),
+            partial: { rootFailure: { code: "io" } },
+          },
+        });
+        if (!result.ok) expect(result.error.message).toContain(root);
+      } finally {
+        await chmod(root, 0o700);
+      }
+      const recovered = await importTree(root);
+      expect(recovered.ok && recovered.value.entries).toContainEqual(
+        expect.objectContaining({ path: "main.txt", content_state: "hashed" }),
+      );
+    },
+  );
+
   it.skipIf(permissionChecksUnavailable).each(["blocked", "src/blocked"])(
     "preserves a partial graph when %s cannot be enumerated",
     async (blocked) => {

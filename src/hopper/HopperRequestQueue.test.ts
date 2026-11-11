@@ -313,7 +313,6 @@ describe("HopperRequestQueue caller abort reasons", () => {
       {},
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(HopperCancelledError);
     expect(result.error.cause).toBe(reason);
@@ -326,7 +325,6 @@ describe("HopperRequestQueue caller abort reasons", () => {
     const pending = queue.run(1, "echo", {}, { signal: controller.signal });
     controller.abort(reason);
     const result = await pending;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error.cause).toBe(reason);
     expect(sent).toEqual([1]);
@@ -343,7 +341,6 @@ describe("HopperRequestQueue caller abort reasons", () => {
     const queued = queue.run(2, "queued", {}, { signal: controller.signal });
     controller.abort(reason);
     const result = await queued;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error.cause).toBe(reason);
     expect(queue.hasQueued(2)).toBe(false);
@@ -351,4 +348,18 @@ describe("HopperRequestQueue caller abort reasons", () => {
     await active;
     expect(sent).toEqual([1]);
   });
+});
+
+it("does not hand a waiting request to the sender until it reaches the wire", async () => {
+  const sent: number[] = [];
+  const queue = new HopperRequestQueue(({ id }) => sent.push(id));
+  const active = queue.run(1, "active", { value: "A" }, {});
+  const queued = queue.run(2, "queued", { value: "B" }, {});
+  expect(sent).toEqual([1]);
+  expect(queue.queuedCount()).toBe(1);
+  queue.accept(1, ok(null));
+  expect(sent).toEqual([1, 2]);
+  queue.accept(2, ok(null));
+  await active;
+  await queued;
 });

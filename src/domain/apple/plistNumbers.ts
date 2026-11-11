@@ -1,3 +1,4 @@
+import { copyPlistUidIdentity, plistUidValue } from "./plistUid.js";
 import type { JsonValue } from "../jsonValue.js";
 
 /** Source element types needed to distinguish large integers from integral reals. */
@@ -44,43 +45,58 @@ export const createPlistNumberCollector = () => {
   };
 };
 
+/** One association established from source literals, before adapter projection. */
+type PlistNumberSource =
+  | { readonly kind: "integer"; readonly decimal: string }
+  | { readonly kind: "real" }
+  | { readonly kind: "unknown" };
+
+/**
+ * Associate a decoded number with its source type. A retained JSON literal can
+ * narrow integer candidates that otherwise collide after numeric rounding.
+ * Missing or incomplete metadata never establishes a source type.
+ */
+export const resolvePlistNumberSource = (
+  value: number,
+  literals: PlistNumberLiterals | undefined,
+  sourceDecimal?: string,
+): PlistNumberSource => {
+  if (literals === undefined || literals.incomplete) return { kind: "unknown" };
+  const decimals = literals.integers.get(value);
+  const real = literals.reals.has(value);
+  const integer =
+    sourceDecimal === undefined
+      ? decimals !== undefined
+      : decimals?.has(sourceDecimal) === true;
+  if (real) return { kind: integer ? "unknown" : "real" };
+  if (!integer) return { kind: "unknown" };
+  const decimal =
+    sourceDecimal ?? (decimals?.size === 1 ? [...decimals][0] : undefined);
+  return decimal === undefined
+    ? { kind: "unknown" }
+    : { kind: "integer", decimal };
+};
+
 /** Preserve unambiguous exact integers; disclose rounded or unclassified numbers. */
 export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
   let exactIntegerCount = 0;
   let ambiguousNumberCount = 0;
   const mapNumber = (item: number): JsonValue => {
     if (Number.isSafeInteger(item) || !Number.isInteger(item)) return item;
-    if (literals.incomplete) {
-      ambiguousNumberCount += 1;
-      return item;
-    }
-    const decimals = literals.integers.get(item);
-    if (decimals === undefined) {
-      if (!literals.reals.has(item)) ambiguousNumberCount += 1;
-      return item;
-    }
-    const [decimal] = decimals;
-    if (
-      decimals.size !== 1 ||
-      decimal === undefined ||
-      literals.reals.has(item)
-    ) {
-      ambiguousNumberCount += 1;
+    const source = resolvePlistNumberSource(item, literals);
+    if (source.kind !== "integer") {
+      if (source.kind === "unknown") ambiguousNumberCount += 1;
       return item;
     }
     exactIntegerCount += 1;
-    return { $plist_type: "integer", decimal };
+    return { $plist_type: "integer", decimal: source.decimal };
   };
   const map = (item: JsonValue): JsonValue => {
     if (typeof item === "number") return mapNumber(item);
     if (Array.isArray(item)) return item.map(map);
     if (item !== null && typeof item === "object") {
-      const keys = Object.keys(item);
-      const marker = item[keys[0] ?? ""];
-      const reference =
-        keys.length === 1 &&
-        (keys[0] === "UID" || keys[0] === "CF$UID") &&
-        typeof marker === "number";
+      const marker = plistUidValue(item);
+      const reference = marker !== undefined;
       if (reference) {
         // Keep malformed numeric reference markers recognizable by the graph reader.
         if (
@@ -91,9 +107,11 @@ export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
           ambiguousNumberCount += 1;
         return item;
       }
-      return Object.fromEntries(
+      const projected = Object.fromEntries(
         Object.entries(item).map(([key, child]) => [key, map(child)]),
       );
+      copyPlistUidIdentity(item, projected);
+      return projected;
     }
     return item;
   };

@@ -1,10 +1,11 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
@@ -16,7 +17,9 @@ import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment
  * The registration command setup writes on the host running the tests. Windows
  * wraps it in `cmd.exe /d /c`, so the expected entry follows the host too.
  */
-const command = npxRegistrationCommand(process.platform);
+const command = currentClientRegistrationCommand({
+  platform: process.platform,
+});
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -50,6 +53,24 @@ describe("Factory Droid configuration paths", () => {
     ).toEqual([
       join("/home/a", ".factory", "skills", "reverse-engineer-anything"),
     ]);
+  });
+
+  it("uses Droid's selected home for configuration, discovery, and personal skills", () => {
+    const environment = { FACTORY_HOME_OVERRIDE: "/selected/home" };
+    expect(droidPath("/home/a", "darwin", environment)).toMatchObject({
+      configPath: join("/selected/home", ".factory", "mcp.json"),
+      markerPath: join("/selected/home", ".factory"),
+    });
+    expect(
+      skillDestinations("/home/a", ["droid"], environment).map(
+        ({ path }) => path,
+      ),
+    ).toEqual([
+      join("/selected/home", ".factory", "skills", "reverse-engineer-anything"),
+    ]);
+    expect(
+      droidPath("/home/a", "darwin", { FACTORY_HOME_OVERRIDE: "" }),
+    ).toEqual(droidPath("/home/a", "darwin"));
   });
 });
 

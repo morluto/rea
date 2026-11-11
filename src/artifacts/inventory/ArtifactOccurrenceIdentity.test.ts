@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import { inventoryArtifact } from "../../../tests/fixtures/artifactInventory.js";
 import { compareArtifacts } from "../../domain/artifactComparison.js";
-import { projectAppleApplication } from "../../domain/apple/appleApplication.js";
+import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
+import { projectAppleInventory } from "../../domain/apple/appleApplication.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { thinMach } from "../../domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
@@ -31,7 +31,7 @@ const observeArchive = async (order: readonly string[]) => {
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventory),
+      result: inventory,
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -115,8 +115,8 @@ describe("content identity and occurrence facts", () => {
         );
       await writeFile(path, await writer.close());
       const inventory = await inventoryArtifact(path);
-      const projection = projectAppleApplication({
-        inventory_evidence: [
+      const projectionResult = projectAppleInventory(
+        parseArtifactInventoryEvidence([
           createEvidence(
             { path, sha256: inventory.manifest.root_sha256, format: "zip" },
             {
@@ -127,13 +127,15 @@ describe("content identity and occurrence facts", () => {
             {
               operation: "inventory_artifact",
               parameters: {},
-              result: jsonValueSchema.parse(inventory),
+              result: inventory,
               confidence: "observed",
               authority: "shipped-artifact",
             },
           ),
-        ],
-      }).projection;
+        ]),
+      );
+      if (!projectionResult.ok) throw projectionResult.error;
+      const projection = projectionResult.value;
       expect(
         projection.components.javascript.map((component) => component.path),
       ).toEqual(["Demo.app/Contents/Resources/a.js"]);
@@ -159,27 +161,30 @@ describe("content identity and occurrence facts", () => {
     ).toHaveLength(1);
   });
 
-  it("reports only an occurrence permission change for identical content", async () => {
-    const root = await createTestTempDirectory("rea-permission-identity-");
-    const path = join(root, "payload.bin");
-    await writeFile(path, "same content\n", { mode: 0o600 });
-    const before = await inventoryArtifact(root);
-    await chmod(path, 0o700);
-    const after = await inventoryArtifact(root);
-    expect(before.nodes).toEqual(after.nodes);
-    expect(before.manifest.root_artifact_id).toBe(
-      after.manifest.root_artifact_id,
-    );
-    const oldFile = before.occurrences.find(
-      (item) => item.logical_path === "payload.bin",
-    );
-    const newFile = after.occurrences.find(
-      (item) => item.logical_path === "payload.bin",
-    );
-    expect(oldFile?.artifact_id).toBe(newFile?.artifact_id);
-    expect(oldFile?.executable).toBe(false);
-    expect(newFile?.executable).toBe(true);
-  });
+  it.skipIf(process.platform === "win32")(
+    "reports only an occurrence permission change for identical content",
+    async () => {
+      const root = await createTestTempDirectory("rea-permission-identity-");
+      const path = join(root, "payload.bin");
+      await writeFile(path, "same content\n", { mode: 0o600 });
+      const before = await inventoryArtifact(root);
+      await chmod(path, 0o700);
+      const after = await inventoryArtifact(root);
+      expect(before.nodes).toEqual(after.nodes);
+      expect(before.manifest.root_artifact_id).toBe(
+        after.manifest.root_artifact_id,
+      );
+      const oldFile = before.occurrences.find(
+        (item) => item.logical_path === "payload.bin",
+      );
+      const newFile = after.occurrences.find(
+        (item) => item.logical_path === "payload.bin",
+      );
+      expect(oldFile?.artifact_id).toBe(newFile?.artifact_id);
+      expect(oldFile?.executable).toBe(false);
+      expect(newFile?.executable).toBe(true);
+    },
+  );
 });
 
 describe("directly selected executable formats", () => {
@@ -228,7 +233,7 @@ describe("directly selected executable formats", () => {
         sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
         artifact_kind: "executable",
         artifact_format: "mach-o",
-        executable: mode === 0o755,
+        executable: process.platform === "win32" ? false : mode === 0o755,
       });
       expect(embedded).toEqual(direct);
     },

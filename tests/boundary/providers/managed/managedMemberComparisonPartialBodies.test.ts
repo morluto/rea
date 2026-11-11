@@ -164,3 +164,39 @@ describe("managed member partial body comparison", () => {
     });
   });
 });
+
+describe("managed locals signature comparison", () => {
+  it("compares observed presence but not build-local tokens", () => {
+    const inspectWithLocals = (token: number, path: string) => {
+      const body = Buffer.alloc(13);
+      body.writeUInt16LE(0x3003, 0);
+      body.writeUInt16LE(8, 2);
+      body.writeUInt32LE(1, 4);
+      body.writeUInt32LE(token, 8);
+      body[12] = 0x2a;
+      const standaloneSignatures = Array.from(
+        { length: token & 0x00ff_ffff },
+        () => Buffer.from([0x07, 0x01, 0x08]),
+      );
+      return inspect(
+        buildManagedPeFixture({ ilBody: body, standaloneSignatures }),
+        path,
+      );
+    };
+    const absent = inspectWithLocals(0, "/tmp/locals-absent.dll");
+    const presentOne = inspectWithLocals(0x11000001, "/tmp/locals-one.dll");
+    const presentTwo = inspectWithLocals(0x11000002, "/tmp/locals-two.dll");
+    expect(presentOne.result.methods[0]?.body.status).toBe("present");
+    expect(presentTwo.result.methods[0]?.body.status).toBe("present");
+    expect(compareManagedMembers(absent, presentOne).methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["metadata"],
+    });
+    expect(
+      compareManagedMembers(presentOne, presentTwo).methods[0],
+    ).toMatchObject({
+      status: "unchanged",
+      dimensions: [],
+    });
+  });
+});

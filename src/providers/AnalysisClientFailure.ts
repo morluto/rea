@@ -13,7 +13,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
-  resourceConstraintRecovery,
+  reattributedResourceConstraint,
   AnalysisOutputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
@@ -48,17 +48,26 @@ export const analysisClientFailureContext = (
             : {}),
         }
       : undefined;
-  const diagnostics =
+  const attribute = (
+    recorded: Readonly<Record<string, JsonValue>> | undefined,
+  ): Readonly<Record<string, JsonValue>> | undefined =>
     providerRequest === undefined
-      ? cause.diagnostics
+      ? recorded
       : {
           provider_request: providerRequest,
-          ...(cause.diagnostics === undefined
-            ? {}
-            : { provider_diagnostics: cause.diagnostics }),
+          ...(recorded === undefined ? {} : { provider_diagnostics: recorded }),
         };
+  const diagnostics = attribute(cause.diagnostics);
+  const invocationDiagnostics =
+    cause.invocationDiagnostics === undefined
+      ? undefined
+      : attribute(cause.invocationDiagnostics);
   return {
     cause,
+    ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.continuingCallerGuidance === undefined
+      ? {}
+      : { continuingCallerGuidance: cause.continuingCallerGuidance }),
     ...(cause.cleanupPrimary === undefined
       ? {}
       : {
@@ -75,6 +84,7 @@ export const analysisClientFailureContext = (
       ? {}
       : { capturedOutput: cause.capturedOutput }),
     ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(invocationDiagnostics === undefined ? {} : { invocationDiagnostics }),
     ...(cause.cleanupIncomplete
       ? {
           cleanup: {
@@ -174,6 +184,9 @@ export const analysisClientFailureForOperation = (
       {
         ...outcomeContext,
         operation,
+        ...(cause.completedObservation === undefined
+          ? {}
+          : { completedObservation: cause.completedObservation }),
         ...(cause.remediationAction === undefined
           ? {}
           : { remediationAction: cause.remediationAction }),
@@ -188,6 +201,7 @@ export const analysisClientFailureForOperation = (
       ...(cause.remediationAction === undefined
         ? {}
         : { remediationAction: cause.remediationAction }),
+      ...(cause.limit === undefined ? {} : { limit: cause.limit }),
     });
   else if (cause instanceof AnalysisOutputError)
     result = new AnalysisOutputError(operation, cause.reason, {
@@ -215,6 +229,18 @@ export const analysisClientFailureForOperation = (
         ...(cause.userMessage === undefined
           ? {}
           : { userMessage: cause.userMessage }),
+        ...(cause.remediationAction === undefined
+          ? {}
+          : { remediationAction: cause.remediationAction }),
+        ...(cause.fallbackRemediationAction === undefined
+          ? {}
+          : { fallbackRemediationAction: cause.fallbackRemediationAction }),
+        ...(cause.siblingOperations === undefined
+          ? {}
+          : { siblingOperations: cause.siblingOperations }),
+        ...(cause.siblingReasons === undefined
+          ? {}
+          : { siblingReasons: cause.siblingReasons }),
         retryable: cause.retryable,
       },
     );
@@ -233,13 +259,7 @@ export const analysisClientFailureForOperation = (
       context,
     );
   else if (cause instanceof AnalysisResourceConstraintError)
-    result = new AnalysisResourceConstraintError(
-      operation,
-      cause.resource,
-      cause.reason,
-      cause.reportedLimits,
-      { ...context, ...resourceConstraintRecovery(cause) },
-    );
+    result = reattributedResourceConstraint(operation, cause, context);
   else
     result = new ProviderAdapterError(providerId, operation, {
       ...context,

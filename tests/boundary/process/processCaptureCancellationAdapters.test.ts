@@ -67,11 +67,26 @@ const waitForExit = async (pid: number): Promise<void> => {
 const cleanupFixture = async (marker: Marker | undefined): Promise<void> => {
   if (marker === undefined) return;
   // Teardown uses the fixture's capture run token, never a bare PID kill.
-  await cleanupOwnedProcessGroup({
+  const result = await cleanupOwnedProcessGroup({
     runId: marker.runId,
     leaderPid: marker.rootPid,
     processGroupId: marker.rootPid,
   });
+  if (!result.cleaned)
+    throw new Error(`Fixture cleanup failed: ${result.reason}`);
+};
+
+const finishCleanup = async (steps: readonly (() => Promise<unknown>)[]) => {
+  const failures: unknown[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (cause: unknown) {
+      failures.push(cause);
+    }
+  }
+  if (failures.length > 0)
+    throw new AggregateError(failures, "Fixture cleanup failed");
 };
 
 itWithCaptureCapability.each(["SIGINT", "SIGTERM"] as const)(
@@ -110,9 +125,14 @@ itWithCaptureCapability.each(["SIGINT", "SIGTERM"] as const)(
     });
     let marker: Marker | undefined;
     onTestFinished(async () => {
-      await cleanupFixture(marker);
-      if (cli.exitCode === null && cli.signalCode === null) cli.kill("SIGKILL");
-      await closed;
+      await finishCleanup([
+        () => cleanupFixture(marker),
+        async () => {
+          if (cli.exitCode === null && cli.signalCode === null)
+            cli.kill("SIGKILL");
+          await closed;
+        },
+      ]);
     });
     marker = await readMarker(root);
     expect(await isRunning(marker.rootPid)).toBe(true);
@@ -256,10 +276,12 @@ itWithCaptureCapability(
     });
     let marker: Marker | undefined;
     onTestFinished(async () => {
-      await cleanupFixture(marker);
-      await client.close();
-      await server.close();
-      await session.close();
+      await finishCleanup([
+        () => cleanupFixture(marker),
+        () => client.close(),
+        () => server.close(),
+        () => session.close(),
+      ]);
     });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

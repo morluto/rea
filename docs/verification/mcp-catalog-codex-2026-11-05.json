@@ -1,0 +1,1027 @@
+{
+  "version": 1,
+  "date_utc": "2026-11-05",
+  "source_baseline": "ec3410998b70290847f930538e57d0af0ac1bffb",
+  "environment": {
+    "platform": "Linux-6.1.0-54-cloud-amd64-x86_64-with-glibc2.36",
+    "node": "v24.22.1",
+    "npm": "11.16.0",
+    "codex": "codex-cli 0.165.0",
+    "model_requested": "gpt-6.1-sol",
+    "reasoning": "low",
+    "resolved_model_identity": "unknown",
+    "cache_scope": "Fresh processes/profiles; warm OS/API prefix caches possible. Observed cached input is included."
+  },
+  "raw_artifact_root": "/home/yann/yann/rea-mcp-catalog-eval/.cache/catalog-eval",
+  "catalog": {
+    "path": "/home/yann/yann/rea-mcp-catalog-eval/dist/mcp-catalog.json",
+    "sha256": "f92bf1c16abb224b4702208ee54e12707d9312d106f7424ac2e44e3940ee6c41",
+    "bytes": 4029995,
+    "tool_count": 234,
+    "selected_tools": ["binary_session"],
+    "tools_json_bytes": 4018383,
+    "description_json_bytes": 148355,
+    "input_schema_json_bytes": 138747,
+    "output_schema_json_bytes": 3681386,
+    "scope": "Built server catalog, not submitted model context. Client filtering still discovers the server catalog."
+  },
+  "measurement_sources_sha256": {
+    "catalog-eval.py": "232b13eb625ba2b45c6f30ddc0840fd3ff5347812c8ba04ad4650245337cd3e1",
+    "agent-trial.py": "31e4180207c2f3fb9ecb2a777ecfdccb69dec7028f2e6022575591085e45d4db",
+    "codex_context.py": "79c5ec253c836f67d05e4da19f80283c1d40c292dcbb78f3f984095031bcc52c",
+    "resource-run.py": "7a9642ab86ba34290564f636eb080cacf38b4185a254028680b238bff172993b",
+    "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6",
+    "provider-environment.json": "59103e26d51bca9f82f18b43c5544de4522866ff79d9cfe718cc91cbab13d7be"
+  },
+  "load_trials": [
+    {
+      "repetition": 1,
+      "mode": "direct",
+      "arm": "none",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11118,
+        "cached_input_tokens": 4992,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 6126
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "7bb0c7cdd2de9e96d914b894501025c9a38007545a7c0ba69ec89e9b67fd7150",
+      "retained_context_sha256": "3b144d6967690df64cac69803c17238aa8fee7a1b7700dbe3089b65a2d4bceb6",
+      "resources": {
+        "elapsed_seconds": 14.084,
+        "cpu_seconds": 1.726859,
+        "peak_process_family_bytes": 197263360,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 1,
+      "mode": "direct",
+      "arm": "all",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11121,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1905
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "d85e4997858c8418b4d1a208541c4f08ebc38f80c9b24e22a8fa9471b2128f5b",
+      "retained_context_sha256": "043369767e917cccb92c5eb2f941f86fc123021068a3e861ebc528ef10b6d0eb",
+      "resources": {
+        "elapsed_seconds": 13.606,
+        "cpu_seconds": 2.629986,
+        "peak_process_family_bytes": 350830592,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 1,
+      "mode": "direct",
+      "arm": "selected",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11118,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1902
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "7c7b8096234d6fab79ed8c09f03291095a0a1936f4a821ca317a0219ef3af61e",
+      "retained_context_sha256": "eb3cb2abad8fad861e13f4b1a0ab9d58fc2f4a7da1d48a1b0c492c66e086653c",
+      "resources": {
+        "elapsed_seconds": 12.881,
+        "cpu_seconds": 2.542219,
+        "peak_process_family_bytes": 351158272,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 1,
+      "mode": "client-code",
+      "arm": "none",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11112,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1896
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "bff8c370cf6ee92f4768f4ab02271e6064a2dc3c17fd8330775850f18f4b7d1a",
+      "retained_context_sha256": "0716689f3e06ef22768b6b2a1a7e21445bd00f11fd894885e8c2f19307329f07",
+      "resources": {
+        "elapsed_seconds": 15.492,
+        "cpu_seconds": 1.862212,
+        "peak_process_family_bytes": 196980736,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 1,
+      "mode": "client-code",
+      "arm": "all",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11115,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1899
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "da50c705016a585201be8509f280aee158b8e84d43c56065c539d07c2d3cd64d",
+      "retained_context_sha256": "838a1a7fb916d7ff01ce0b34a2981d041477991ff113f2284fb2dcf4cfd2deb6",
+      "resources": {
+        "elapsed_seconds": 14.788,
+        "cpu_seconds": 2.684778,
+        "peak_process_family_bytes": 364081152,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 1,
+      "mode": "client-code",
+      "arm": "selected",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11115,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1899
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "52fc7e3bed7fda1d6f1ee03886e2aa8e6072d2da85953318468822150f3aec34",
+      "retained_context_sha256": "0ffd05dac2b61105dc3e668586921fe01b9742808a016858a78c175bc7848f93",
+      "resources": {
+        "elapsed_seconds": 13.792,
+        "cpu_seconds": 2.587098,
+        "peak_process_family_bytes": 352436224,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 2,
+      "mode": "client-code",
+      "arm": "selected",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11121,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1905
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "fd2147324479e63137ae2f8acc9746d70e56225c128f2ec25429796f2836faf8",
+      "retained_context_sha256": "fa6ad44c48da1ff316a4618da8178bac85402dcf26c13c72a52e1b2d28643569",
+      "resources": {
+        "elapsed_seconds": 14.791,
+        "cpu_seconds": 2.572715,
+        "peak_process_family_bytes": 348119040,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 2,
+      "mode": "client-code",
+      "arm": "all",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11121,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1905
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "e4ce2f31c53ae9fdcb7e917f7700add84f39dcee6f2d2c16e46f843bd95e2ed4",
+      "retained_context_sha256": "7f0a85262e1419356f46f7e1176dcbe20d8d1c3b108e3c89db4c46b0e8fbc976",
+      "resources": {
+        "elapsed_seconds": 13.49,
+        "cpu_seconds": 2.697786,
+        "peak_process_family_bytes": 349622272,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 2,
+      "mode": "client-code",
+      "arm": "none",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11118,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1902
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "4c19474977e782bc5b92ab1bed354ff9d8b050cf3ba32b83fb5d206350289156",
+      "retained_context_sha256": "8b6fe2584c93435ef1a04bd632ff431253c660fae082625de7704afb90726eed",
+      "resources": {
+        "elapsed_seconds": 14.693,
+        "cpu_seconds": 2.038174,
+        "peak_process_family_bytes": 191598592,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 2,
+      "mode": "direct",
+      "arm": "selected",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11115,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1899
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "9ed44dde66c7c61ec3e527a284e78455ee2bbec21af02ca8c09c3119ef0d6b7a",
+      "retained_context_sha256": "2cb4970caf1be698a1291aa4044284911c363181d78b85fe076098e5eadca732",
+      "resources": {
+        "elapsed_seconds": 12.78,
+        "cpu_seconds": 2.63344,
+        "peak_process_family_bytes": 376070144,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 2,
+      "mode": "direct",
+      "arm": "all",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11115,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1899
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "112d7f79df74670ca5c03e48ed494bd24e0c19c74c774de745e1b5792dbd1bb5",
+      "retained_context_sha256": "b3a208e08fa99d383fc8101218d1046da89f12b24fcb3f12669bda0ec16e603c",
+      "resources": {
+        "elapsed_seconds": 13.99,
+        "cpu_seconds": 2.834572,
+        "peak_process_family_bytes": 390422528,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 2,
+      "mode": "direct",
+      "arm": "none",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11118,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1902
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "46261f1778ab3d1963d19b6bf499953ba22bfa17aa9c9e51bd43483948445ed7",
+      "retained_context_sha256": "fea4491dcf29afa2502cd0583c0b05361b50c69693a3412a9f5a6ae3a3f422b9",
+      "resources": {
+        "elapsed_seconds": 14.092,
+        "cpu_seconds": 1.839927,
+        "peak_process_family_bytes": 200450048,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 3,
+      "mode": "direct",
+      "arm": "none",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11121,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1905
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "21c54ea3b9dd49ba9534c837b2c016c3a7e397e29c3f990287b5960a9217901d",
+      "retained_context_sha256": "f2bd1356c7bf0b6ac3547e73fbf340686c89149755fc1c216d64a7f712c3d875",
+      "resources": {
+        "elapsed_seconds": 13.999,
+        "cpu_seconds": 1.902008,
+        "peak_process_family_bytes": 205639680,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 3,
+      "mode": "direct",
+      "arm": "all",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11121,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1905
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "fcd5f7fe6cf094933ee7c957d4e18d84a596174fdcf7655d6e0ea0f524399a57",
+      "retained_context_sha256": "019d568d86a324f99ce0c1512240e56933055fc6f898e993de033195e8205105",
+      "resources": {
+        "elapsed_seconds": 15.395,
+        "cpu_seconds": 2.840376,
+        "peak_process_family_bytes": 362033152,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 3,
+      "mode": "direct",
+      "arm": "selected",
+      "status": "invalid",
+      "usage": {
+        "input_tokens": 11118,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1902
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "8e56b7f5f7f3f6c788092bedc9fd922bc5bc2b05f899d7b17a331e340aaeb1e1",
+      "retained_context_sha256": "8f6a6ac7f2e45b447fb026760679366a9103ccfc5b61fd634739380052468909",
+      "resources": {
+        "elapsed_seconds": 13.979,
+        "cpu_seconds": 2.374572,
+        "peak_process_family_bytes": 373174272,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      },
+      "client_errors": [
+        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+      ]
+    },
+    {
+      "repetition": 3,
+      "mode": "client-code",
+      "arm": "none",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11118,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1902
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "2f73790f6c166d7ef0f431b154b5db6a6847df7008e606537af83e487cfdf9ed",
+      "retained_context_sha256": "e2db00371547ec85cee1c6ac7c1de31151c509bea65a23631bf7ffc00f9304d5",
+      "resources": {
+        "elapsed_seconds": 13.384,
+        "cpu_seconds": 1.96487,
+        "peak_process_family_bytes": 209338368,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 3,
+      "mode": "client-code",
+      "arm": "all",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11118,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1902
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "de27cfa4fed633ee4834f7408a9d72530997630e0651655853c578364049def0",
+      "retained_context_sha256": "609867297100f977eea52ecee270beabbf628794a5eaa6c532593e871e1221f2",
+      "resources": {
+        "elapsed_seconds": 13.198,
+        "cpu_seconds": 2.631436,
+        "peak_process_family_bytes": 401825792,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "repetition": 3,
+      "mode": "client-code",
+      "arm": "selected",
+      "status": "valid",
+      "usage": {
+        "input_tokens": 11115,
+        "cached_input_tokens": 9216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "reasoning_output_tokens": 0,
+        "uncached_input_tokens": 1899
+      },
+      "runtime_revision": "5038280f96af74e4e116ce78c4b3b77017cc69ac",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "89a066866cf1275c2685d41866e322788bed7d3a0aa29f0ac4428c262a52bb83",
+      "retained_context_sha256": "24d8f0f6735ba70221b75c01c78f91f85ba2e6546d6639f5c56b3ec546920542",
+      "resources": {
+        "elapsed_seconds": 13.396,
+        "cpu_seconds": 2.490836,
+        "peak_process_family_bytes": 381198336,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    }
+  ],
+  "load_comparison": {
+    "pairs": [
+      {
+        "mode": "direct",
+        "arm": "all",
+        "repetition": 1,
+        "status": "invalid",
+        "input_token_delta": null
+      },
+      {
+        "mode": "direct",
+        "arm": "selected",
+        "repetition": 1,
+        "status": "invalid",
+        "input_token_delta": null
+      },
+      {
+        "mode": "client-code",
+        "arm": "all",
+        "repetition": 1,
+        "status": "valid",
+        "input_token_delta": 3
+      },
+      {
+        "mode": "client-code",
+        "arm": "selected",
+        "repetition": 1,
+        "status": "valid",
+        "input_token_delta": 3
+      },
+      {
+        "mode": "client-code",
+        "arm": "selected",
+        "repetition": 2,
+        "status": "valid",
+        "input_token_delta": 3
+      },
+      {
+        "mode": "client-code",
+        "arm": "all",
+        "repetition": 2,
+        "status": "valid",
+        "input_token_delta": 3
+      },
+      {
+        "mode": "direct",
+        "arm": "selected",
+        "repetition": 2,
+        "status": "invalid",
+        "input_token_delta": null
+      },
+      {
+        "mode": "direct",
+        "arm": "all",
+        "repetition": 2,
+        "status": "invalid",
+        "input_token_delta": null
+      },
+      {
+        "mode": "direct",
+        "arm": "all",
+        "repetition": 3,
+        "status": "invalid",
+        "input_token_delta": null
+      },
+      {
+        "mode": "direct",
+        "arm": "selected",
+        "repetition": 3,
+        "status": "invalid",
+        "input_token_delta": null
+      },
+      {
+        "mode": "client-code",
+        "arm": "all",
+        "repetition": 3,
+        "status": "valid",
+        "input_token_delta": 0
+      },
+      {
+        "mode": "client-code",
+        "arm": "selected",
+        "repetition": 3,
+        "status": "valid",
+        "input_token_delta": -3
+      }
+    ],
+    "groups": [
+      {
+        "mode": "client-code",
+        "arm": "all",
+        "valid_pairs": 3,
+        "attempted_pairs": 3,
+        "median_input_token_delta": 3,
+        "min_input_token_delta": 0,
+        "max_input_token_delta": 3
+      },
+      {
+        "mode": "client-code",
+        "arm": "selected",
+        "valid_pairs": 3,
+        "attempted_pairs": 3,
+        "median_input_token_delta": 3,
+        "min_input_token_delta": -3,
+        "max_input_token_delta": 3
+      },
+      {
+        "mode": "direct",
+        "arm": "all",
+        "valid_pairs": 0,
+        "attempted_pairs": 3,
+        "median_input_token_delta": null,
+        "min_input_token_delta": null,
+        "max_input_token_delta": null
+      },
+      {
+        "mode": "direct",
+        "arm": "selected",
+        "valid_pairs": 0,
+        "attempted_pairs": 3,
+        "median_input_token_delta": null,
+        "min_input_token_delta": null,
+        "max_input_token_delta": null
+      }
+    ]
+  },
+  "default_smoke": {
+    "runtime_revision": "61a364210d217bc4cac82ac6e7540f44e73f6100",
+    "statuses": ["valid", "valid", "valid"],
+    "report_sha256": "e7cbd97a735724d4ff24106ef469deb0022b92ff6dfa6bab54d06fb2777467c4"
+  },
+  "task_oracle": {
+    "path": "/home/yann/yann/rea-mcp-catalog-eval/node_modules/semver/package.json",
+    "sha256": "7c94cb7f2a53c27b20d76386ec144c062894dbcc909cfabd0f728c37874b1776",
+    "expected_fields": {
+      "package_name": "semver",
+      "package_version": "7.8.5",
+      "entry_file": "index.js"
+    },
+    "npm_resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
+    "npm_integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA=="
+  },
+  "task_prompt": "Use REA to statically determine the package name, version, and declared entry file of the local npm package at /home/yann/yann/rea-mcp-catalog-eval/node_modules/semver from package.json only. Select only package.json for source analysis; leave dependency modules unexamined. Return a concise JSON object with package_name, package_version, entry_file, evidence_ids, and limitations. Cite actual produced Evidence IDs. State that runtime behavior was not observed. Stop when these three metadata facts are supported.\n",
+  "task_prompt_sha256": "d95b8400eee2dc8442dfbc5336704a12bd5bb0aca372e73ecdd9b6687e05edb8",
+  "task_trials": [
+    {
+      "arm": "all",
+      "mode": "client-code",
+      "runtime_revision": "61a364210d217bc4cac82ac6e7540f44e73f6100",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "settings_sources_sha256": {
+        "agent-trial.py": "3776556d2a9b209c211022349c363120c91731a38cc68e02d84f779997958387",
+        "codex_context.py": "79c5ec253c836f67d05e4da19f80283c1d40c292dcbb78f3f984095031bcc52c",
+        "provider-environment.json": "59103e26d51bca9f82f18b43c5544de4522866ff79d9cfe718cc91cbab13d7be"
+      },
+      "usage": {
+        "input_tokens": 271084,
+        "cached_input_tokens": 228224,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 699,
+        "reasoning_output_tokens": 15
+      },
+      "per_response_usage": [
+        {
+          "input_tokens": 11349,
+          "cached_input_tokens": 9216,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 65,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 11414
+        },
+        {
+          "input_tokens": 20481,
+          "cached_input_tokens": 11264,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 75,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 20556
+        },
+        {
+          "input_tokens": 30845,
+          "cached_input_tokens": 20352,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 73,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 30918
+        },
+        {
+          "input_tokens": 31409,
+          "cached_input_tokens": 30720,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 69,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 31478
+        },
+        {
+          "input_tokens": 36632,
+          "cached_input_tokens": 31360,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 102,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 36734
+        },
+        {
+          "input_tokens": 37614,
+          "cached_input_tokens": 36608,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 68,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 37682
+        },
+        {
+          "input_tokens": 51227,
+          "cached_input_tokens": 37504,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 109,
+          "reasoning_output_tokens": 15,
+          "total_tokens": 51336
+        },
+        {
+          "input_tokens": 51527,
+          "cached_input_tokens": 51200,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 138,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 51665
+        }
+      ],
+      "mcp_calls": [
+        {
+          "server": "rea",
+          "tool": "analyze_javascript_application",
+          "arguments": {
+            "input_path": "/home/yann/yann/rea-mcp-catalog-eval/node_modules/semver",
+            "source_paths": ["package.json"],
+            "detail": "summary"
+          },
+          "status": "completed",
+          "error": null
+        },
+        {
+          "server": "rea",
+          "tool": "get_evidence_bundle",
+          "arguments": {
+            "detail": "records",
+            "filters": {
+              "evidence_id": "ev_77708c6f32646b879ed36c30f67ac2c592ce0ad4b78b284ad213d4e9a0eb98ef"
+            }
+          },
+          "status": "completed",
+          "error": null
+        },
+        {
+          "server": "rea",
+          "tool": "close_binary",
+          "arguments": {},
+          "status": "completed",
+          "error": null
+        }
+      ],
+      "answer": {
+        "package_name": "semver",
+        "package_version": "7.8.5",
+        "entry_file": "index.js",
+        "evidence_ids": [
+          "ev_77708c6f32646b879ed36c30f67ac2c592ce0ad4b78b284ad213d4e9a0eb98ef"
+        ],
+        "limitations": [
+          "Metadata derived only from package.json; entry_file is the declared main value.",
+          "Only package.json was selected for source analysis; dependency modules remained unexamined.",
+          "Runtime behavior was not observed."
+        ]
+      },
+      "factual_correctness": "passed for the three declared package.json fields only",
+      "produced_evidence_reference_presence": true,
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "229de2788bd0503689d7cb8f6276ed84efe0a8cc168233e17a0ad3a0efccbed9",
+      "retained_context_sha256": "b1da36b3269bacad55e3c534b1ff8f9d3e8f05dafda7b28d1e854a6944fe7727",
+      "resources": {
+        "elapsed_seconds": 48.952,
+        "cpu_seconds": 6.531794,
+        "peak_process_family_bytes": 704335872,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    },
+    {
+      "arm": "selected",
+      "mode": "client-code",
+      "runtime_revision": "61a364210d217bc4cac82ac6e7540f44e73f6100",
+      "runtime_fingerprint_sha256": "5dccf8e4e9a300a402153887ddd8f018e392be9b29630df9f3a30ea70265570c",
+      "settings_sources_sha256": {
+        "agent-trial.py": "3776556d2a9b209c211022349c363120c91731a38cc68e02d84f779997958387",
+        "codex_context.py": "79c5ec253c836f67d05e4da19f80283c1d40c292dcbb78f3f984095031bcc52c",
+        "provider-environment.json": "59103e26d51bca9f82f18b43c5544de4522866ff79d9cfe718cc91cbab13d7be"
+      },
+      "usage": {
+        "input_tokens": 160438,
+        "cached_input_tokens": 138496,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 637,
+        "reasoning_output_tokens": 0
+      },
+      "per_response_usage": [
+        {
+          "input_tokens": 11349,
+          "cached_input_tokens": 9216,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 65,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 11414
+        },
+        {
+          "input_tokens": 20139,
+          "cached_input_tokens": 11264,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 47,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 20186
+        },
+        {
+          "input_tokens": 20304,
+          "cached_input_tokens": 19968,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 34,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 20338
+        },
+        {
+          "input_tokens": 21617,
+          "cached_input_tokens": 20096,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 69,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 21686
+        },
+        {
+          "input_tokens": 26840,
+          "cached_input_tokens": 21504,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 127,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 26967
+        },
+        {
+          "input_tokens": 29702,
+          "cached_input_tokens": 26752,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 156,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 29858
+        },
+        {
+          "input_tokens": 30487,
+          "cached_input_tokens": 29696,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 139,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 30626
+        }
+      ],
+      "mcp_calls": [
+        {
+          "server": "rea",
+          "tool": "analyze_javascript_application",
+          "arguments": {
+            "input_path": "/home/yann/yann/rea-mcp-catalog-eval/node_modules/semver",
+            "source_paths": ["package.json"],
+            "detail": "summary"
+          },
+          "status": "completed",
+          "error": null
+        },
+        {
+          "server": "rea",
+          "tool": "inspect_analysis_view",
+          "arguments": {
+            "source": {
+              "kind": "retained-evidence",
+              "evidence_id": "ev_77708c6f32646b879ed36c30f67ac2c592ce0ad4b78b284ad213d4e9a0eb98ef"
+            },
+            "view": {
+              "kind": "javascript-facts",
+              "where": {
+                "paths": ["package.json"]
+              },
+              "include_available_property_keys": true,
+              "property_keys": [],
+              "offset": 0,
+              "limit": 20
+            }
+          },
+          "status": "completed",
+          "error": null
+        },
+        {
+          "server": "rea",
+          "tool": "inspect_analysis_view",
+          "arguments": {
+            "source": {
+              "kind": "retained-evidence",
+              "evidence_id": "ev_77708c6f32646b879ed36c30f67ac2c592ce0ad4b78b284ad213d4e9a0eb98ef"
+            },
+            "view": {
+              "kind": "javascript-facts",
+              "where": {
+                "paths": ["package.json"],
+                "kinds": ["package"]
+              },
+              "property_keys": [
+                "name",
+                "version",
+                "main",
+                "main_status",
+                "parse_status"
+              ],
+              "offset": 0,
+              "limit": 5
+            }
+          },
+          "status": "completed",
+          "error": null
+        }
+      ],
+      "answer": {
+        "package_name": "semver",
+        "package_version": "7.8.5",
+        "entry_file": "index.js",
+        "evidence_ids": [
+          "ev_3c19f3e54f80c0d9a9ae1479f2ea30f9da57f31c390e94a7019db5d22900d60a"
+        ],
+        "limitations": [
+          "Only package.json was selected for source analysis; dependency modules and 49 other inventoried files remained unexamined.",
+          "entry_file reflects the declared main field.",
+          "Runtime behavior was not observed."
+        ]
+      },
+      "factual_correctness": "passed for the three declared package.json fields only",
+      "produced_evidence_reference_presence": true,
+      "runtime_bytes_unchanged": true,
+      "events_sha256": "1b2cb64ba0f903d127ac0bf5d2b0fce923b015c036c957a065db0347f308aed9",
+      "retained_context_sha256": "cbbf91f27127190f146357e988c86940a2837d3d789879bec133204a8b0adf31",
+      "resources": {
+        "elapsed_seconds": 42.928,
+        "cpu_seconds": 5.727509,
+        "peak_process_family_bytes": 610402304,
+        "payload_exit_code": 0,
+        "payload_cleanup_verified": true
+      }
+    }
+  ],
+  "excluded_cohorts": [
+    {
+      "path": "matrix-1",
+      "reason": "Repository-nested workspace inherited project instructions/skills; aborted and invalidated."
+    },
+    {
+      "path": "isolated-1; final; final-task-*",
+      "reason": "Legacy flags did not establish distinct execution modes; exploratory traces excluded from mode claims."
+    },
+    {
+      "path": "package-*",
+      "reason": "Concurrent artifact rebuild interfered with runtime availability; whole cohort excluded, including two failed MCP handshakes."
+    }
+  ],
+  "limitations": [
+    "Only one Codex CLI/model/backend; no qualified eager/native or other-client comparison.",
+    "Nine host-disabled diagnostic trials are invalid despite successful marker replies.",
+    "One real small-package task per arm; no general quality, latency, or token advantage established.",
+    "Whole-turn usage includes discovery/continuations; per-response usage is not added a second time.",
+    "Raw submitted request bodies and independent billing reconciliation were not captured.",
+    "Remote inference resources, dependency acquisition/build cost and full dependency-tree byte identity are unmeasured.",
+    "Kernel peaks include observer/file cache at payload exit, not final scope counters."
+  ],
+  "resource_bounds_each_trial": {
+    "hard_memory_bytes": 4294967296,
+    "early_stop_bytes": 3221225472,
+    "cpu_quota_percent": 100,
+    "cpu_affinity": [63],
+    "task_ceiling": 192
+  },
+  "resource_events_each_trial": {
+    "memory.events": {
+      "low": 0,
+      "high": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    },
+    "pids.events": {
+      "max": 0
+    }
+  }
+}

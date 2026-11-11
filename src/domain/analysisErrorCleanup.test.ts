@@ -18,6 +18,7 @@ import {
 } from "./analysisErrorPresentation.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 import { createEvidence } from "./evidence.js";
+import { ArtifactOperationError } from "./artifactOperationError.js";
 
 it.each([false, true])(
   "keeps each owner's capture without text-based deduplication (matching: %s)",
@@ -117,6 +118,12 @@ it("keeps primary diagnostics separate from historical cleanup diagnostics with 
 });
 
 it.each([
+  new ArtifactOperationError(
+    "inspect_asset_catalog",
+    "integrity",
+    undefined,
+    "Asset catalog changed during inspection: Contents/Resources/Assets.car",
+  ),
   new AnalysisInputError("inspect", { diagnostics: { input: "original" } }, [
     {
       path: ["path"],
@@ -158,24 +165,45 @@ it.each([
     "fixture",
     ["owned-input"],
     { reason: "close denied" },
-    { operation: "inspect" },
+    {
+      operation: "inspect",
+      cleanup: { reason: "close denied", resources: ["owned-input"] },
+    },
   );
   const composed = analysisErrorWithCleanupFailure(
     primary,
     cleanup,
     "inspect",
   ).bindCleanupDependencies([primary, cleanup]);
-  expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
+  expect(composed.cleanup?.reason).toBe("close denied");
+  expect(composed.cleanup?.reason).not.toBe(
+    projectAnalysisError(cleanup).message,
+  );
+  const pending = projectAnalysisError(composed);
+  expect(pending.code).toBe("cleanup_incomplete");
+  expect(pending.category).toBe(original.category);
+  expect(analysisErrorCategory(composed)).toBe(original.category);
+  const { diagnostics: _diagnostics, ...semanticDetails } =
+    original.details ?? {};
+  expect(pending.details).toMatchObject({
+    ...semanticDetails,
+    cleanup: "incomplete",
+    execution_failure: original.code,
+    resources: ["owned-input"],
+  });
   cleanup.resolveCleanup();
   const projected = projectAnalysisError(composed);
   expect(projected).toMatchObject(original);
   expect(projected.details?.cleanup_history).toMatchObject({
-    primary_error:
-      primary.capturedOutput === undefined
-        ? original
-        : projectAnalysisErrorWithoutCapturedOutput(primary),
+    primary_error: { code: original.code, message: original.message },
     cleanup_error: { code: "cleanup_incomplete" },
   });
+  expect(projected.details?.cleanup_history).not.toHaveProperty(
+    "primary_error.details.partial_observation",
+  );
+  expect(projected.details?.cleanup_history).not.toHaveProperty(
+    "primary_error.details.captured_output",
+  );
   expect(projected.details).not.toHaveProperty("cleanup", "incomplete");
   expect(projected.details).not.toHaveProperty("resources");
   expect(analysisErrorCategory(composed)).toBe(original.category);
@@ -190,7 +218,9 @@ it.each([
 it.each(["inner", "outer"] as const)(
   "waits for both nested cleanup owners when %s resolves first",
   (first) => {
-    const primary = new AnalysisInputError("inspect");
+    const primary = new AnalysisInputError("inspect", undefined, [
+      { path: ["path"], reason: "missing_argument" },
+    ]);
     const innerCleanup = new ProviderCleanupError("fixture", ["input"], {});
     const outerCleanup = new ProviderCleanupError("fixture", ["workspace"], {});
     const inner = analysisErrorWithCleanupFailure(
@@ -203,9 +233,19 @@ it.each(["inner", "outer"] as const)(
     ).bindCleanupDependencies([inner, outerCleanup]);
     const released = first === "inner" ? innerCleanup : outerCleanup;
     const pending = first === "inner" ? outerCleanup : innerCleanup;
+    expect(projectAnalysisError(outer)).toMatchObject({
+      code: "cleanup_incomplete",
+      category: "invalid_input",
+      details: {
+        operation: "inspect",
+        issues: primary.issues,
+        execution_failure: "invalid_request",
+      },
+    });
     released.resolveCleanup();
     expect(outer.cleanupIncomplete).toBe(true);
     expect(projectAnalysisError(outer).code).toBe("cleanup_incomplete");
+    expect(projectAnalysisError(outer).category).toBe("invalid_input");
     pending.resolveCleanup();
     expect(outer.cleanupIncomplete).toBe(false);
     expect(projectAnalysisError(outer)).toMatchObject(
@@ -214,12 +254,113 @@ it.each(["inner", "outer"] as const)(
   },
 );
 
+it("preserves recovery and secondary failures owned by an intermediate cleanup", () => {
+  const primary = new AnalysisInputError("inspect");
+  const inner = analysisErrorWithCleanupFailure(
+    primary,
+    new ProviderCleanupError("fixture", ["input"], {}),
+  );
+  inner.retainSourcePublication({
+    kind: "omitted",
+    reason: "primary-authentication-failed",
+    source_closure: "not-established",
+  });
+  inner.retainSecondaryFailure(new AnalysisInputError("source"));
+  const outer = analysisErrorWithCleanupFailure(
+    inner,
+    new ProviderCleanupError("fixture", ["workspace"], {}),
+  );
+  expect(projectAnalysisError(outer)).toMatchObject({
+    details: {
+      completed_observation_omitted: {
+        reason: "primary-authentication-failed",
+        source_closure: "not-established",
+      },
+      secondary_failures: [{ code: "invalid_request" }],
+    },
+  });
+});
+
+it("prefers the outer publication source over the nested primary observation", () => {
+  const provider = { id: "fixture", name: "Fixture", version: null };
+  const source = createEvidence(undefined, provider, {
+    operation: "source",
+    parameters: {},
+    result: "source",
+  });
+  const nested = createEvidence(undefined, provider, {
+    operation: "nested",
+    parameters: {},
+    result: "nested",
+  });
+  const primary = new AnalysisCancelledError("inspect", {
+    partialObservation: nested,
+  });
+  const composed = analysisErrorWithCleanupFailure(
+    primary,
+    new ProviderCleanupError("fixture", ["input"], {}),
+  );
+  composed.partialObservation = source;
+  composed.retainSourcePublication({
+    kind: "omitted",
+    reason: "primary-authentication-failed",
+    source_closure: "not-established",
+  });
+  expect(projectAnalysisError(composed).details?.partial_observation).toEqual(
+    source,
+  );
+});
+
 it("does not infer cleanup success when a composition has no live owner binding", () => {
   const primary = new AnalysisInputError("inspect");
   const cleanup = new ProviderCleanupError("fixture", ["input"], {});
   const composed = analysisErrorWithCleanupFailure(primary, cleanup);
   cleanup.resolveCleanup();
   expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
+  expect(projectAnalysisError(composed).category).toBe("invalid_input");
+  expect(composed.cleanupIncomplete).toBe(true);
+});
+
+it("keeps the physical failure primary when later cleanup observes cancellation", () => {
+  const physical = Object.assign(new Error("selected file read EIO"), {
+    code: "EIO",
+  });
+  const primary = new ArtifactOperationError(
+    "inspect_asset_catalog",
+    "io",
+    undefined,
+    physical.message,
+    { cause: physical },
+  );
+  const reason = { request: "cancel after read failure" };
+  const cleanup = new ProviderCleanupError(
+    "fixture",
+    ["owned-input"],
+    {},
+    {
+      cause: new AnalysisCancelledError("inspect", { cause: reason }),
+    },
+  );
+  const composed = analysisErrorWithCleanupFailure(
+    primary,
+    cleanup,
+    "inspect",
+  ).bindCleanupDependencies([primary, cleanup]);
+  expect(projectAnalysisError(composed)).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "execution_failure",
+    details: {
+      operation: "inspect_asset_catalog",
+      reason: "io",
+      detail: physical.message,
+      execution_failure: "artifact_operation_failed",
+    },
+  });
+  expect(composed.cleanupPrimary?.cause).toBe(physical);
+  cleanup.resolveCleanup();
+  expect(projectAnalysisError(composed)).toMatchObject(
+    projectAnalysisError(primary),
+  );
 });
 
 it("retains an observation attached to the composite after the primary failed", () => {
@@ -249,4 +390,50 @@ it("retains an observation attached to the composite after the primary failed", 
     code: "invalid_request",
     details: { partial_observation: observation },
   });
+});
+
+it("retains an owner's finalization report independently of pending primary semantics", () => {
+  const report = {
+    owned_process_group: { state: "not_required" as const, reason: null },
+    terminal_renderer: { state: "not_required" as const, reason: null },
+    temporary_root: { state: "cleaned" as const, reason: null },
+  };
+  class ReportedCleanup extends ProviderCleanupError {
+    override readonly cleanupReport = report;
+  }
+  const primary = new AnalysisInputError("inspect", undefined, [
+    { path: ["path"], reason: "missing_argument" },
+  ]);
+  const finalized = new ReportedCleanup(
+    "fixture",
+    ["input"],
+    {},
+    {
+      cleanupPrimary: primary,
+    },
+  );
+  const later = new ProviderCleanupError("fixture", ["workspace"], {});
+  const outer = analysisErrorWithCleanupFailure(
+    finalized,
+    later,
+  ).bindCleanupDependencies([finalized, later]);
+  const assertReport = (error: typeof outer) => {
+    expect(projectAnalysisError(error)).toMatchObject({
+      category: "invalid_input",
+      details: {
+        operation: "inspect",
+        issues: primary.issues,
+        cleanup_report: report,
+      },
+    });
+  };
+  assertReport(finalized);
+  assertReport(outer);
+  expect(outer.cleanupIncomplete).toBe(true);
+  later.resolveCleanup();
+  assertReport(outer);
+  expect(outer.cleanupIncomplete).toBe(true);
+  finalized.resolveCleanup();
+  assertReport(outer);
+  expect(outer.cleanupIncomplete).toBe(false);
 });

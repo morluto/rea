@@ -5,6 +5,7 @@ import { isAbsolute, relative, sep } from "node:path";
 
 import {
   NonRegularFileReadError,
+  isSelectedRegularFileError,
   sameRegularFileState,
 } from "../../filesystem/RegularFile.js";
 import {
@@ -19,7 +20,9 @@ import {
 } from "../ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
-import { hasMachoMagic, readMachoImage } from "./MachoLoadCommandReader.js";
+import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
+import { readMachoImage } from "./MachoLoadCommandReader.js";
+import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
 
 /** One owner for dyld descriptor admission, physical identity and finalization. */
 export class DylibFileAccess {
@@ -33,9 +36,11 @@ export class DylibFileAccess {
     return this.#read(entry.adapterKey, async (file, initial) => {
       if (!sameArtifactSourceIdentity(entry.sourceIdentity, initial))
         throw changed(entry.adapterKey);
-      const bytes = new Uint8Array(4);
-      const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-      return hasMachoMagic(bytes.subarray(0, bytesRead));
+      const bytes = await readFileHandleRange(file, 0, 4, () =>
+        assertArtifactReadActive(this.signal),
+      );
+      assertArtifactReadActive(this.signal);
+      return hasMachoMagic(bytes);
     });
   }
 
@@ -48,13 +53,14 @@ export class DylibFileAccess {
           `Mach-O file extent is not safely addressable: ${path}`,
         );
       const facts = await readMachoImage(async (offset, length) => {
-        assertArtifactReadActive(this.signal);
-        const bytes = new Uint8Array(
+        const bytes = await readFileHandleRange(
+          file,
+          offset,
           Math.max(0, Math.min(length, size - offset)),
+          () => assertArtifactReadActive(this.signal),
         );
-        const { bytesRead } = await file.read(bytes, 0, bytes.length, offset);
         assertArtifactReadActive(this.signal);
-        return bytes.subarray(0, bytesRead);
+        return bytes;
       }, size);
       return { facts, identity };
     });
@@ -88,14 +94,20 @@ export class DylibFileAccess {
         path,
         this.resources,
         this.signal,
-        async (file) => {
+        async ({ handle: file }) => {
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(this.signal);
           const result = await operation(file, initial);
           // Parsed headers, magic and digest must refer to the same physical
           // version still selected by the pathname when the read completes.
           const opened = await file.stat({ bigint: true });
-          const named = await lstat(path, { bigint: true });
+          let named: BigIntStats;
+          try {
+            named = await lstat(path, { bigint: true });
+          } catch (cause) {
+            if (!isSelectedRegularFileError(cause)) throw cause;
+            throw changed(path, cause);
+          }
           if (
             !sameRegularFileState(initial, opened) ||
             !sameRegularFileState(initial, named)
@@ -152,8 +164,9 @@ const deniedDisplayPath = (root: string, path: string): string => {
   return inside === "" || outside ? path : inside;
 };
 
-const changed = (path: string): ArtifactReaderFailure =>
+const changed = (path: string, cause?: unknown): ArtifactReaderFailure =>
   new ArtifactReaderFailure(
     "integrity",
     `${path} changed while its dyld load commands were traced`,
+    cause === undefined ? undefined : { cause },
   );

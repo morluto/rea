@@ -52,7 +52,11 @@ export const readDirectoryIdentity = async (
   path: string,
 ): Promise<DirectoryIdentity> => {
   const metadata = await lstat(path, { bigint: true });
-  if (!metadata.isDirectory()) throw replacedDirectory(path);
+  if (!metadata.isDirectory())
+    throw new ArtifactReaderFailure(
+      "path",
+      `Output destination must be a directory: ${path}`,
+    );
   return { dev: metadata.dev, ino: metadata.ino };
 };
 

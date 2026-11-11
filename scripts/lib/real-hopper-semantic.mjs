@@ -1,17 +1,6 @@
 import assert from "node:assert/strict";
 
-/**
- * `requireFunctionDossierOracle` is only used inside `verifyRealHopperFixture`,
- * which runs against the real Hopper bridge after `build:cached`. Loading it
- * lazily keeps this module importable from `test:fast` (which docs promise to
- * run "without build" — see docs/testing.md § test scripts) so that mock-only
- * callers such as `requireCurrentDocument` and `resolveFixtureProcedure` do
- * not require `dist/`.
- */
-const loadFunctionDossierOracle = () =>
-  import("../../dist/application/RealHopperAssertions.js").then(
-    (module) => module.requireFunctionDossierOracle,
-  );
+import { requireFunctionDossierOracle } from "./real-hopper-assertions.mjs";
 
 /** Require truthful tri-state permissions from real Hopper memory regions. */
 export const requireTruthfulMemoryRegions = (segments) => {
@@ -99,7 +88,6 @@ export async function verifyRealHopperFixture({
   oracle,
   normalizedResult,
 }) {
-  const requireFunctionDossierOracle = await loadFunctionDossierOracle();
   const main = await resolveFixtureProcedure(
     client,
     options,
@@ -218,13 +206,13 @@ export async function verifyRealHopperFixture({
   );
   return {
     procedures: { main, entry, branch, leaf },
-    entryComments: entryDossier.comments.returned,
-    entryStrings: entryDossier.referenced_strings.returned,
-    entryCallees: entryDossier.callees.returned,
-    branchCallees: branchDossier.callees.returned,
-    branchBlocks: branchDossier.basic_blocks.returned,
-    leafStrings: leafDossier.referenced_strings.returned,
-    leafNames: leafDossier.referenced_names.returned,
+    entryComments: entryDossier.comments.length,
+    entryStrings: entryDossier.referenced_strings.length,
+    entryCallees: entryDossier.callees.length,
+    branchCallees: branchDossier.callees.length,
+    branchBlocks: branchDossier.basic_blocks.length,
+    leafStrings: leafDossier.referenced_strings.length,
+    leafNames: leafDossier.referenced_names.length,
   };
 }
 
@@ -331,7 +319,7 @@ export const analyzeFixtureProcedure = async (
   const reply = await client.callTool(
     {
       name: "analyze_function",
-      arguments: { procedure: procedure.address },
+      arguments: { procedure: procedure.address, detail: "complete" },
     },
     options,
   );

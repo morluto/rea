@@ -411,6 +411,7 @@ describe("JavaScript Application Graph: identity and evidence", () => {
       identity: {
         strategy: "runtime-instance",
         stability: "capture-only",
+        capture_evidence_id: `ev_${"c".repeat(64)}`,
         capture_sha256: "6".repeat(64),
         runtime_key: "script-preload",
       },
@@ -811,6 +812,50 @@ describe("JavaScript Application Graph: duplicate and orphan rejection", () => {
   });
 });
 
+it("rejects runtime identities without an explicit capture Evidence identifier", () => {
+  expect(() =>
+    createJavaScriptApplicationNode({
+      kind: "runtime-script-instance",
+      identity: {
+        strategy: "runtime-instance",
+        stability: "capture-only",
+        capture_sha256: APPLICATION_GRAPH_DIGESTS.capture,
+        runtime_key: "script-preload",
+      },
+      observations: [
+        {
+          label: null,
+          properties: {},
+          evidence: runtimeEvidence("script-preload"),
+        },
+      ],
+    }),
+  ).toThrow(/capture_evidence_id/u);
+});
+
+it("requires runtime identities to retain their capture Evidence provenance", () => {
+  const runtimeWithUnrelatedEvidence = createJavaScriptApplicationNode({
+    kind: "runtime-script-instance",
+    identity: {
+      strategy: "runtime-instance",
+      stability: "capture-only",
+      capture_evidence_id: `ev_${"d".repeat(64)}`,
+      capture_sha256: APPLICATION_GRAPH_DIGESTS.capture,
+      runtime_key: "script-preload",
+    },
+    observations: [
+      {
+        label: null,
+        properties: {},
+        evidence: runtimeEvidence("script-preload"),
+      },
+    ],
+  });
+  expect(() => graphForNode(runtimeWithUnrelatedEvidence)).toThrow(
+    /identity is not supported/u,
+  );
+});
+
 describe("JavaScript Application Graph: identity strategy requirements", () => {
   it("requires every identity strategy to have compatible supporting evidence", () => {
     const mismatchedPath = createJavaScriptApplicationNode({
@@ -841,6 +886,7 @@ describe("JavaScript Application Graph: identity strategy requirements", () => {
       identity: {
         strategy: "runtime-instance",
         stability: "capture-only",
+        capture_evidence_id: `ev_${"c".repeat(64)}`,
         capture_sha256: APPLICATION_GRAPH_DIGESTS.capture,
         runtime_key: "script-preload",
       },
@@ -886,17 +932,20 @@ describe("JavaScript Application Graph: identity strategy requirements", () => {
     );
   });
 
-  it("prevents static authorities from claiming runtime locations", () => {
-    const evidence = artifactEvidence(
-      APPLICATION_GRAPH_DIGESTS.asar,
-      "dist/module.js",
-      "ast-static-analysis",
-    );
-    evidence.location = runtimeEvidence("script-module").location;
-    expect(() => graphForNode(contentNode(evidence))).toThrow(
-      /cannot claim a runtime location/u,
-    );
-  });
+  it.each(["ast-static-analysis", "managed-static-analysis"] as const)(
+    "prevents %s from claiming runtime locations",
+    (authority) => {
+      const evidence = artifactEvidence(
+        APPLICATION_GRAPH_DIGESTS.asar,
+        "dist/module.js",
+        authority,
+      );
+      evidence.location = runtimeEvidence("script-module").location;
+      expect(() => graphForNode(contentNode(evidence))).toThrow(
+        /cannot claim a runtime location/u,
+      );
+    },
+  );
 
   it("enforces epistemic truthfulness and content-addressed artifacts", () => {
     const inferredAsObserved = inferredArtifactEvidence(

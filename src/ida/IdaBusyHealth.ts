@@ -1,5 +1,8 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
 import { idaRegistrationTimeoutGuidance } from "./IdaConfiguration.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
@@ -32,7 +35,7 @@ const isBusyStatus = (raw: JsonValue): boolean =>
 
 interface LastBusyHealth {
   readonly raw: JsonValue;
-  readonly operation: string;
+  readonly tool: string;
 }
 
 /**
@@ -61,6 +64,10 @@ export const readSettledHealth = async (
   const remaining = (): number => timeoutMs - (clock.now() - started);
   let lastBusy: LastBusyHealth | undefined;
   for (;;) {
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("server_health", {
+        cause: signal.reason,
+      });
     const budgetMs = remaining();
     if (budgetMs <= 0)
       throw lastBusy === undefined
@@ -74,7 +81,7 @@ export const readSettledHealth = async (
       raw = await connection.call(
         "server_health",
         { database },
-        { timeoutMs: requestTimeoutMs },
+        { timeoutMs: requestTimeoutMs, signal },
       );
     } catch (cause: unknown) {
       if (
@@ -83,15 +90,7 @@ export const readSettledHealth = async (
         cause.timeoutMs === requestTimeoutMs &&
         requestTimeoutMs < timeoutMs
       ) {
-        throw new AnalysisTimeoutError(lastBusy.operation, timeoutMs, {
-          cause: lastBusy.raw,
-          capturedOutput: cause.capturedOutput,
-          ...idaRegistrationTimeoutGuidance(timeoutMs, "readiness"),
-          diagnostics: {
-            health_request_operation: cause.operation,
-            health_request_timeout_ms: cause.timeoutMs,
-          },
-        });
+        throw busyTimeout(lastBusy, timeoutMs, cause);
       }
       throw cause;
     }
@@ -102,14 +101,29 @@ export const readSettledHealth = async (
     }
     const observedBusy = {
       raw,
-      operation: `server_health: headless worker still busy in ${busyToolName(busy.data.busy_tool)}`,
+      tool: busyToolName(busy.data.busy_tool),
     };
     lastBusy = observedBusy;
     const expired = (): AnalysisTimeoutError =>
       busyTimeout(observedBusy, timeoutMs);
     if (remaining() <= 0) throw expired();
-    await clock.delay(Math.min(BUSY_HEALTH_RETRY_MS, remaining()), signal);
-    signal?.throwIfAborted();
+    try {
+      await clock.delay(Math.min(BUSY_HEALTH_RETRY_MS, remaining()), signal);
+    } catch (cause: unknown) {
+      if (
+        signal?.aborted &&
+        cause instanceof Error &&
+        cause.name === "AbortError"
+      )
+        throw new AnalysisCancelledError("server_health", {
+          cause: signal.reason,
+        });
+      throw cause;
+    }
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("server_health", {
+        cause: signal.reason,
+      });
     if (remaining() <= 0) throw expired();
   }
 };
@@ -117,8 +131,24 @@ export const readSettledHealth = async (
 const busyTimeout = (
   lastBusy: LastBusyHealth,
   timeoutMs: number,
-): AnalysisTimeoutError =>
-  new AnalysisTimeoutError(lastBusy.operation, timeoutMs, {
+  requestFailure?: AnalysisTimeoutError,
+): AnalysisTimeoutError => {
+  const guidance = idaRegistrationTimeoutGuidance(timeoutMs, "readiness");
+  return new AnalysisTimeoutError("server_health", timeoutMs, {
     cause: lastBusy.raw,
-    ...idaRegistrationTimeoutGuidance(timeoutMs, "readiness"),
+    ...guidance,
+    userMessage: `${guidance.userMessage} The last reported busy tool was ${lastBusy.tool}.`,
+    diagnostics: {
+      busy_tool: lastBusy.tool,
+      ...(requestFailure === undefined
+        ? {}
+        : {
+            health_request_operation: requestFailure.operation,
+            health_request_timeout_ms: requestFailure.timeoutMs,
+          }),
+    },
+    ...(requestFailure === undefined
+      ? {}
+      : { capturedOutput: requestFailure.capturedOutput }),
   });
+};

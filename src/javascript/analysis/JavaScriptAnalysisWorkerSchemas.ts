@@ -1,29 +1,40 @@
-import { javaScriptSemanticUnknownOmissionsSchema } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import { z } from "zod";
-import { digestSchema } from "../../domain/digests.js";
-import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type {
-  JavaScriptSemanticProperty,
-  JavaScriptSemanticValue,
-} from "../../domain/javascript/javascriptSemanticValueTypes.js";
 import {
+  resolveJavaScriptSemanticPrecision,
+  javaScriptSemanticPrecisionSchema,
+} from "../../domain/javascript/javascriptSemanticPrecision.js";
+import {
+  javaScriptSemanticUnknownOmissionsSchema,
   javaScriptSemanticNodeSchema,
   javaScriptSemanticRelationSchema,
   javaScriptSemanticUnknownSchema,
   javaScriptSemanticFingerprintSchema,
   javaScriptSemanticEvidenceContextSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import { z } from "zod";
+import { digestSchema } from "../../domain/digests.js";
+import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { javaScriptRouteSourceFactsSchema } from "../../domain/javascript/javascriptRouteFacts.js";
+import { javaScriptStaticCoverageSchema } from "../../domain/javascript/javascriptStaticCoverage.js";
+import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import type {
+  JavaScriptSemanticProperty,
+  JavaScriptSemanticValue,
+} from "../../domain/javascript/javascriptSemanticValueTypes.js";
+import { javaScriptSemanticResourceLimitSchema } from "../../domain/javascript/javascriptSemanticValueTypes.js";
 
 const range =
   javaScriptSemanticNodeSchema.shape.identity.shape.source_range.unwrap();
-const count = z.number().int().nonnegative();
+const count = z.int().nonnegative();
 const strings = z.array(z.string());
 const pathContext = z.enum(["module-specifier", "filesystem-expression"]);
 const findingContext = {
   module_key: z.string().nullable(),
   module_runtime: z.string().optional(),
   location: range,
+};
+const electronFindingContext = {
+  ...findingContext,
+  loader_authority: z.literal("candidate").exactOptional(),
 };
 const withRuntime = <
   Value extends {
@@ -66,10 +77,17 @@ const locatedHandler = {
   ]),
   handler_location: range,
 };
+const ipcReceiver = z
+  .strictObject({
+    kind: z.enum(["web-contents", "main-frame"]),
+    owner_location: range,
+  })
+  .exactOptional();
 const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
-      ...findingContext,
+      ...electronFindingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -77,9 +95,12 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       channel_expression: z.null(),
     }),
     z.strictObject({
-      ...findingContext,
+      ...electronFindingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
+      invocation_channels: z.literal("literal").exactOptional(),
+      guarded_invocation_channels: strings.exactOptional(),
       ...shape,
       channel: z.null(),
       channel_expression: z.string(),
@@ -135,7 +156,10 @@ const ipc = z
     };
   });
 const windowShape = {
-  ...findingContext,
+  ...electronFindingContext,
+  window_constructor: z
+    .enum(["BaseWindow", "BrowserView", "WebContentsView"])
+    .exactOptional(),
   options_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences: z.array(
@@ -145,25 +169,29 @@ const windowShape = {
 };
 const bridgeShape = {
   resolution_basis: z.literal("wrapper-substitution").optional(),
-  ...findingContext,
+  ...electronFindingContext,
   world: z.enum(["main", "isolated"]),
   world_id: staticValue.nullable(),
   api_status: z.enum(["object-literal", "dynamic", "missing"]),
   members: strings,
   unknown_members: count,
 };
-const utilityShape = { ...findingContext, service_name: z.string().nullable() };
+const utilityShape = {
+  ...electronFindingContext,
+  service_name: z.string().nullable(),
+};
 const electron = z
   .strictObject({
     app_path_changes: z
-      .array(z.strictObject(findingContext).transform(withRuntime))
+      .array(z.strictObject(electronFindingContext).transform(withRuntime))
       .optional(),
     call_paths: z
       .array(
         z.strictObject({
+          loader_authority: z.literal("candidate").exactOptional(),
           entry_kind: z.enum(["bridge-member", "ipc-handler"]),
           entry: z.string(),
-          entry_path: strings.optional(),
+          entry_path: strings.exactOptional(),
           channel: z.string().nullable(),
           terminal: z.string(),
           resolution: z.literal("candidate"),
@@ -187,13 +215,6 @@ const electron = z
             z.strictObject({ expression: z.string(), location: range }),
           ),
         }),
-      )
-      .transform((paths) =>
-        paths.map(({ entry_kind, entry, entry_path, ...rest }) =>
-          entry_path === undefined
-            ? { entry_kind, entry, ...rest }
-            : { entry_kind, entry, entry_path, ...rest },
-        ),
       )
       .optional(),
     browser_windows: z.array(
@@ -242,7 +263,7 @@ const electron = z
     ipc: z.array(ipc),
     sender_validations: z.array(
       z.strictObject({
-        ...findingContext,
+        ...electronFindingContext,
         subject: z.enum([
           "sender-url",
           "sender-origin",
@@ -278,7 +299,7 @@ const electron = z
     ),
     native_addon_bindings: z.array(
       z.strictObject({
-        ...findingContext,
+        ...electronFindingContext,
         specifier: z.string(),
         binding_kind: z.enum(["import", "require", "re-export"]),
         module_kind: z.enum(["import", "require"]),
@@ -287,14 +308,70 @@ const electron = z
         dynamic_member_access: z.boolean().optional(),
       }),
     ),
+    dynamic_code: z
+      .array(
+        z
+          .strictObject({
+            ...findingContext,
+            api: z.enum(["vm.Script", "vm.compileFunction"]),
+            cached_data_status: z.enum(["declared", "absent", "unknown"]),
+            cached_data: z.union([
+              z.strictObject({
+                source_path: z.string(),
+                source_path_base: z
+                  .enum(["source-directory", "literal-path"])
+                  .optional(),
+                source_resolution_context: z.enum([
+                  "filesystem-expression",
+                  "module-specifier",
+                ]),
+                source_expression: z.null(),
+              }),
+              z.strictObject({
+                source_path: z.null(),
+                source_resolution_context: z.null(),
+                source_expression: z.string(),
+              }),
+            ]),
+            source_text: staticValue,
+          })
+          .transform(withRuntime),
+      )
+      .optional(),
+    protocols: z.array(
+      z
+        .strictObject({
+          ...electronFindingContext,
+          api: z.string(),
+          role: z.enum([
+            "os-default-client",
+            "privileged-scheme",
+            "handler",
+            "interceptor",
+          ]),
+          scheme: staticValue,
+          session: z.enum(["default-protocol", "default-session"]),
+          enabled_privileges: strings.nullable(),
+        })
+        .transform(withRuntime),
+    ),
   })
-  .transform(({ call_paths, app_path_changes, ...rest }) => ({
+  .transform(({ call_paths, app_path_changes, dynamic_code, ...rest }) => ({
     ...rest,
     ...(app_path_changes === undefined ? {} : { app_path_changes }),
     ...(call_paths === undefined ? {} : { call_paths }),
+    ...(dynamic_code === undefined ? {} : { dynamic_code }),
   }));
 const referenceShape = {
   ...findingContext,
+  operation: z.enum(["load", "resolve"]),
+  resolution_base_path: z.string().exactOptional(),
+  loader_authority: z.literal("candidate").exactOptional(),
+  // A `factory-loader` specifier is a recovered bundle module key rather than a
+  // package specifier, so the loader identity travels with the reference.
+  loader: z
+    .enum(["commonjs-loader", "factory-loader", "create-require"])
+    .exactOptional(),
   kind: z.enum([
     "static-import",
     "dynamic-import",
@@ -308,6 +385,8 @@ const referenceShape = {
 export const javaScriptWorkerStaticAnalysisSchema = z
   .strictObject({
     parse_status: z.enum(["complete", "partial", "failed"]),
+    analysis_coverage: javaScriptStaticCoverageSchema.exactOptional(),
+    routes: javaScriptRouteSourceFactsSchema.exactOptional(),
     parse_error_count: count,
     visited_ast_nodes: count,
     references: z.array(
@@ -385,7 +464,9 @@ export const javaScriptWorkerStaticAnalysisSchema = z
       z.strictObject({
         ...findingContext,
         role: z.enum(["preload", "renderer"]),
+        loader_authority: z.literal("candidate").exactOptional(),
         path: z.string(),
+        path_base: z.literal("source-directory").exactOptional(),
         resolution_context: pathContext,
         mechanism: z.string(),
       }),
@@ -421,13 +502,6 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     },
   })) satisfies z.ZodType<JavaScriptStaticAnalysis>;
 
-const resourceLimit = z.enum([
-  "primitive-candidates",
-  "primitive-bytes",
-  "expression-depth",
-  "getter-expansion",
-  "alias-selections",
-]);
 const primitive = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 const property: z.ZodType<JavaScriptSemanticProperty> = z.lazy(() =>
   z.strictObject({
@@ -475,7 +549,7 @@ const semanticValue: z.ZodType<JavaScriptSemanticValue> = z.lazy(() =>
       z.strictObject({
         status: z.enum(["unknown", "ambiguous", "cycle"]),
         reason: z.string(),
-        resourceLimit: resourceLimit.optional(),
+        resourceLimit: javaScriptSemanticResourceLimitSchema.optional(),
       }),
     ])
     .transform((value) => {
@@ -495,20 +569,26 @@ const semanticValue: z.ZodType<JavaScriptSemanticValue> = z.lazy(() =>
 );
 const origin = z
   .strictObject({
+    loaderAuthority: z.literal("candidate").optional(),
     specifier: z.string(),
     importedPath: strings,
     resolutionMode: z
       .enum(["import", "require", "compiler-dependent"])
       .optional(),
   })
-  .transform(({ resolutionMode, ...rest }) => ({
+  .transform(({ resolutionMode, loaderAuthority, ...rest }) => ({
     ...rest,
     ...(resolutionMode === undefined ? {} : { resolutionMode }),
+    ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
   }));
+const provenOrigin = origin.refine(
+  (value) => value.loaderAuthority !== "candidate",
+  "Candidate loader authority cannot establish exact module provenance.",
+);
 const provenance = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("module"),
-    origins: z.tuple([origin]),
+    origins: z.tuple([provenOrigin]),
     reason: z.null(),
   }),
   z.strictObject({
@@ -532,19 +612,28 @@ const coverage = z
     z.strictObject({
       status: z.literal("complete"),
       omittedCount: z.literal(0),
-      resourceLimits: z.array(resourceLimit).optional(),
+      resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("partial"),
       omittedCount: z.union([z.literal(0), z.null()]),
-      resourceLimits: z.array(resourceLimit).optional(),
+      resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("failed"),
       omittedCount: z.null(),
-      resourceLimits: z.array(resourceLimit).optional(),
+      resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
   ])
@@ -560,6 +649,7 @@ const coverage = z
   });
 const moduleLink = z
   .strictObject({
+    loaderAuthority: z.literal("candidate").optional(),
     resolutionMode: z
       .enum(["import", "require", "compiler-dependent"])
       .optional(),
@@ -578,9 +668,10 @@ const moduleLink = z
     callableId: z.string().nullable(),
     location: range,
   })
-  .transform(({ resolutionMode, ...rest }) => ({
+  .transform(({ resolutionMode, loaderAuthority, ...rest }) => ({
     ...rest,
     ...(resolutionMode === undefined ? {} : { resolutionMode }),
+    ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
   }));
 const definitionKind = z.enum([
   "import",
@@ -606,18 +697,24 @@ const scope = z.strictObject({
   bindingsComplete: z.boolean(),
   bindingIds: strings,
 });
-const binding = z.strictObject({
-  bindingId: z.string(),
-  scopeId: z.string(),
-  name: z.string(),
-  kind: definitionKind,
-  mutable: z.boolean(),
-  definitions: z.array(
-    z.strictObject({ kind: definitionKind, location: range }),
-  ),
-  value: semanticValue,
-  provenance,
-});
+const binding = z
+  .strictObject({
+    bindingId: z.string(),
+    scopeId: z.string(),
+    name: z.string(),
+    kind: definitionKind,
+    mutable: z.boolean(),
+    definitions: z.array(
+      z.strictObject({ kind: definitionKind, location: range }),
+    ),
+    value: semanticValue,
+    initializerValue: semanticValue.optional(),
+    provenance,
+  })
+  .transform(({ initializerValue, ...rest }) => ({
+    ...rest,
+    ...(initializerValue === undefined ? {} : { initializerValue }),
+  }));
 const callable = z.strictObject({
   callableId: z.string(),
   kind: z.enum(["function", "class", "method"]),
@@ -625,6 +722,7 @@ const callable = z.strictObject({
   containerScopeId: z.string(),
   bodyScopeId: z.string().nullable(),
   location: range,
+  computedKeyLocation: range.nullable(),
   returnSites: z.array(
     z.strictObject({
       returnSiteId: z.string(),

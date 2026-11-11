@@ -1,5 +1,9 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  ownMember,
+  pathSegmentMatches,
+} from "../../domain/analysisView/environmentStateRules.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   iterateUrlQueryParameters,
@@ -18,6 +22,8 @@ import {
 
 /** Caller arguments as the MCP tool receives them. */
 export type ReplayArguments = Readonly<Record<string, unknown>>;
+/** Raw query spelling from an observed request; null means no `?` delimiter. */
+export type ObservedQuery = string | null;
 
 /** What one tool call returns: the recorded response and where it came from. */
 export interface ReplayResult {
@@ -44,21 +50,9 @@ interface MatchScore {
   /** Path matches whose recorded segment equals the value as given, not only after decoding. */
   readonly verbatimMatches: number;
   readonly queryMatches: number;
+  readonly observedOrderMatches: number;
   readonly exact: boolean;
 }
-
-/** A path segment percent-decoded, or as written when it is not valid percent-encoding. */
-export const decodedPathSegment = (segment: string): string => {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
-};
-
-/** Replay's path rule: a supplied value matches a recorded segment equal to it verbatim or after percent-decoding. */
-export const pathValueMatches = (segment: string, value: string): boolean =>
-  segment === value || decodedPathSegment(segment) === value;
 
 /** Count how many supplied path and query values the recorded request line satisfies. */
 const scoreExchange = (
@@ -67,10 +61,11 @@ const scoreExchange = (
   queryArguments: ReadonlyMap<string, string>,
   exchange: RecordedExchange,
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): MatchScore => {
   const providedPaths: { index: number; value: string }[] = [];
   for (const param of tool.params) {
-    const value = args[pathArguments.get(param.name) ?? param.name];
+    const value = ownMember(args, pathArguments.get(param.name) ?? param.name);
     if (typeof value === "string")
       providedPaths.push({ index: param.index, value });
   }
@@ -87,29 +82,89 @@ const scoreExchange = (
   for (const { index, value } of providedPaths) {
     const segment = segments.get(index);
     if (segment === value) verbatimMatches += 1;
-    if (segment !== undefined && pathValueMatches(segment, value))
+    if (segment !== undefined && pathSegmentMatches(segment, value))
       pathMatches += 1;
   }
-  const supplied = new Map<string, string>();
+  const supplied = new Map<string, readonly string[]>();
   for (const [name, argument] of queryArguments) {
-    const value = args[argument];
-    if (typeof value === "string") supplied.set(name, value);
+    const value = ownMember(args, argument);
+    if (typeof value === "string") supplied.set(name, [value]);
+    else if (
+      Array.isArray(value) &&
+      value.every((item) => typeof item === "string")
+    )
+      supplied.set(name, value);
+  }
+  const recorded = new Map<string, string[]>();
+  const inspectQuery = supplied.size > 0 || observedQuery !== undefined;
+  const recordedPairs = inspectQuery
+    ? [
+        ...iterateUrlQueryParameters(
+          exchange.query ?? "",
+          observedQuery === undefined ? supplied : queryArguments,
+        ),
+      ]
+    : [];
+  for (const [name, value] of recordedPairs) {
+    const values = recorded.get(name) ?? [];
+    values.push(value);
+    recorded.set(name, values);
   }
   const matched = new Set<string>();
-  if (supplied.size > 0)
-    for (const [name, value] of iterateUrlQueryParameters(
-      exchange.query ?? "",
-    )) {
-      if (supplied.get(name) === value) matched.add(name);
-      if (matched.size === supplied.size) break;
-    }
+  for (const [name, values] of supplied) {
+    const actual = recorded.get(name);
+    if (
+      actual !== undefined &&
+      actual.length === values.length &&
+      actual.every((value, index) => value === values[index])
+    )
+      matched.add(name);
+  }
   const queryProvided = supplied.size;
   const queryMatches = matched.size;
+  const observedOccurrences = new Map<string, number>();
+  const observedPairs =
+    observedQuery === undefined
+      ? undefined
+      : [...iterateUrlQueryParameters(observedQuery ?? "", queryArguments)].map(
+          ([name, rawValue]) => {
+            const occurrence = observedOccurrences.get(name) ?? 0;
+            observedOccurrences.set(name, occurrence + 1);
+            const argument = queryArguments.get(name);
+            const value =
+              argument === undefined ? undefined : ownMember(args, argument);
+            const normalized =
+              typeof value === "string"
+                ? occurrence === 0
+                  ? value
+                  : rawValue
+                : Array.isArray(value) && typeof value[occurrence] === "string"
+                  ? value[occurrence]
+                  : rawValue;
+            return [name, normalized] as const;
+          },
+        );
+  const observedOrderMatches =
+    observedPairs === undefined
+      ? 0
+      : Number(
+          (observedQuery === null) === (exchange.query === null) &&
+            observedPairs.length === recordedPairs.length &&
+            observedPairs.every(
+              ([name, value], index) =>
+                recordedPairs[index]?.[0] === name &&
+                recordedPairs[index]?.[1] === value,
+            ),
+        );
   return {
     pathMatches,
     verbatimMatches,
     queryMatches,
-    exact: pathMatches === pathProvided && queryMatches === queryProvided,
+    observedOrderMatches,
+    exact:
+      pathMatches === pathProvided &&
+      queryMatches === queryProvided &&
+      (observedPairs === undefined || observedOrderMatches === 1),
   };
 };
 
@@ -118,13 +173,16 @@ const outranks = (score: MatchScore, best: MatchScore): boolean =>
     ? score.pathMatches > best.pathMatches
     : score.verbatimMatches !== best.verbatimMatches
       ? score.verbatimMatches > best.verbatimMatches
-      : score.queryMatches > best.queryMatches;
+      : score.queryMatches !== best.queryMatches
+        ? score.queryMatches > best.queryMatches
+        : score.observedOrderMatches > best.observedOrderMatches;
 
 /** Choose the record whose path segments, then verbatim spellings, then query values best match the call; ties keep manifest order. */
 export const selectReplayExchange = (
   tool: EnvironmentManifestTool,
   exchanges: ReadonlyMap<number, RecordedExchange>,
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ):
   | { readonly exchange: RecordedExchange; readonly exact: boolean }
   | undefined => {
@@ -139,13 +197,66 @@ export const selectReplayExchange = (
       argumentsMap.query,
       exchange,
       args,
+      observedQuery,
     );
     if (best === undefined || outranks(score, best.score))
       best = { exchange, score };
   }
-  return best === undefined
-    ? undefined
-    : { exchange: best.exchange, exact: best.score.exact };
+  if (best === undefined) return undefined;
+  const suppliedQueryNames = new Set(
+    [...argumentsMap.query].flatMap(([name, argument]) =>
+      ownMember(args, argument) === undefined ? [] : [name],
+    ),
+  );
+  const queryWasSupplied = suppliedQueryNames.size > 0;
+  const canInspectQuery = observedQuery !== undefined || queryWasSupplied;
+  const bestPairs = canInspectQuery
+    ? [
+        ...iterateUrlQueryParameters(
+          best.exchange.query ?? "",
+          suppliedQueryNames,
+        ),
+      ]
+    : [];
+  const orderAmbiguous =
+    observedQuery === undefined &&
+    queryWasSupplied &&
+    best.score.exact &&
+    tool.record_ordinals.some((ordinal) => {
+      const candidate = exchanges.get(ordinal);
+      if (
+        candidate === undefined ||
+        candidate.ordinal === best.exchange.ordinal
+      )
+        return false;
+      const score = scoreExchange(
+        tool,
+        argumentsMap.path,
+        argumentsMap.query,
+        candidate,
+        args,
+      );
+      if (
+        score.pathMatches !== best.score.pathMatches ||
+        score.verbatimMatches !== best.score.verbatimMatches ||
+        !score.exact
+      )
+        return false;
+      const pairs = [
+        ...iterateUrlQueryParameters(candidate.query ?? "", suppliedQueryNames),
+      ];
+      return (
+        pairs.length !== bestPairs.length ||
+        pairs.some(
+          ([name, value], index) =>
+            bestPairs[index]?.[0] !== name || bestPairs[index]?.[1] !== value,
+        )
+      );
+    });
+  return {
+    exchange: best.exchange,
+    exact: best.score.exact && !orderAmbiguous,
+  };
 };
 
 /** Whether the arguments name one recorded request line exactly: every path value supplied and matching, every supplied query value matching, and every recorded query parameter supplied with its recorded value. */
@@ -153,21 +264,45 @@ export const selectsRecordedLine = (
   tool: EnvironmentManifestTool,
   exchange: RecordedExchange,
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): boolean => {
   const argumentsMap = environmentToolArguments(tool);
   if (
     !tool.params.every(
       (param) =>
-        typeof args[argumentsMap.path.get(param.name) ?? param.name] ===
-        "string",
+        typeof ownMember(
+          args,
+          argumentsMap.path.get(param.name) ?? param.name,
+        ) === "string",
     ) ||
-    !scoreExchange(tool, argumentsMap.path, argumentsMap.query, exchange, args)
-      .exact
+    !scoreExchange(
+      tool,
+      argumentsMap.path,
+      argumentsMap.query,
+      exchange,
+      args,
+      observedQuery,
+    ).exact
   )
     return false;
+  const recorded = new Map<string, string[]>();
   for (const [name, value] of iterateUrlQueryParameters(exchange.query ?? "")) {
+    const values = recorded.get(name) ?? [];
+    values.push(value);
+    recorded.set(name, values);
+  }
+  for (const [name, values] of recorded) {
     const argument = argumentsMap.query.get(name);
-    if (argument === undefined || args[argument] !== value) return false;
+    const supplied = ownMember(args, argument ?? "");
+    if (
+      argument === undefined ||
+      (typeof supplied === "string"
+        ? values.length !== 1 || values[0] !== supplied
+        : !Array.isArray(supplied) ||
+          supplied.length !== values.length ||
+          !supplied.every((value, index) => value === values[index]))
+    )
+      return false;
   }
   return true;
 };
@@ -217,8 +352,14 @@ export const replayEnvironmentTool = (
   source: EnvironmentSource,
   tool: EnvironmentManifestTool,
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): Result<ReplayResult, AnalysisError> => {
-  const selected = selectReplayExchange(tool, source.exchanges, args);
+  const selected = selectReplayExchange(
+    tool,
+    source.exchanges,
+    args,
+    observedQuery,
+  );
   if (selected === undefined)
     return err(
       new AnalysisInputError(

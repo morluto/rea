@@ -1,7 +1,8 @@
+import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisView.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { inspectAnalysisView } from "../../src/application/analysisView/AnalysisViewService.js";
+import { inspectAnalysisViewValidated } from "../../src/application/analysisView/AnalysisViewService.js";
 import {
   loadEnvironmentSource,
   type EnvironmentSource,
@@ -39,9 +40,12 @@ export const environmentServeFixture = (
   const capture = analysisViewCaptureEvidence(
     environmentManifestCaptureFixture(),
   );
-  const manifest = inspectAnalysisView({
+  const manifest = inspectAnalysisViewValidated({
     source: { kind: "inline", evidence: capture },
-    view: { kind: "environment-manifest", template_rules: [...templateRules] },
+    view: analysisViewRequestSchema.parse({
+      kind: "environment-manifest",
+      template_rules: [...templateRules],
+    }),
   });
   if (!manifest.ok) throw manifest.error;
   return { manifest: manifest.value, capture };
@@ -118,9 +122,12 @@ export const environmentStateServeFixture = (
   ),
 ): EnvironmentStateServeFixture => {
   const project = (kind: "environment-manifest" | "environment-state") => {
-    const projected = inspectAnalysisView({
+    const projected = inspectAnalysisViewValidated({
       source: { kind: "inline", evidence: capture },
-      view: { kind, template_rules: [...ALL_TEMPLATE_RULES] },
+      view: analysisViewRequestSchema.parse({
+        kind,
+        template_rules: [...ALL_TEMPLATE_RULES],
+      }),
     });
     if (!projected.ok) throw projected.error;
     return projected.value;

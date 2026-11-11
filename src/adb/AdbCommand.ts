@@ -5,20 +5,28 @@ import {
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import type {
-  AnalysisCapturedOutput,
-  AnalysisError,
-} from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   execFileBytes,
+  execFileFailureCapturedOutput,
   ExecFileOutputCancelledError,
   execFileOutputFailure,
   type ExecFileOutputFailure,
+  spawnCapacityExhausted,
 } from "../process/ExecFileOutput.js";
 import { packageChangeFailureReason } from "./AdbShellOutput.js";
-import { isSuccessfulDaemonStartNotice } from "./AdbDeviceOutput.js";
+import {
+  isSuccessfulDaemonStartNotice,
+  isDaemonStartingNotice,
+  hasOnlySuccessfulAdbStartupNotices,
+} from "./AdbDeviceOutput.js";
+import {
+  adbHostCapacityRemediation,
+  type AdbBinarySelection,
+} from "./AdbConfiguration.js";
 
 const STDERR_EXCERPT_CHARACTERS = 512;
 
@@ -39,23 +47,6 @@ const LOCAL_FILE_DIAGNOSTICS = [
   ["reading", " locally failed:"],
 ] as const;
 
-/** Project parsed command-owner facts without reinterpreting the rejection. */
-export const adbCommandCapturedOutput = (
-  failure: ExecFileOutputFailure,
-): AnalysisCapturedOutput => ({
-  stdout: failure.stdout,
-  stderr: failure.stderr,
-  ...(failure.stdoutBytes === undefined
-    ? {}
-    : { stdout_bytes: failure.stdoutBytes }),
-  ...(failure.stderrBytes === undefined
-    ? {}
-    : { stderr_bytes: failure.stderrBytes }),
-  exit_code: typeof failure.code === "number" ? failure.code : null,
-  signal: failure.signal,
-  truncated: failure.outputTruncated,
-});
-
 /** Parsed command failure owned by this adapter, separate from its public tag. */
 class AdbProtocolError extends AnalysisProtocolError {
   constructor(
@@ -63,9 +54,18 @@ class AdbProtocolError extends AnalysisProtocolError {
     readonly commandFailure: ExecFileOutputFailure,
     cause: unknown,
   ) {
-    super(message, { cause });
+    super(message, {
+      cause,
+      capturedOutput: execFileFailureCapturedOutput(commandFailure),
+    });
   }
 }
+
+/** Return the retained process result only for command failures owned here. */
+export const adbCommandOutputFailure = (
+  error: AnalysisError,
+): ExecFileOutputFailure | undefined =>
+  error instanceof AdbProtocolError ? error.commandFailure : undefined;
 
 /** adb joins shell operands into a remote POSIX command; quote at that boundary. */
 const quoteShellOperand = (value: string): string =>
@@ -103,11 +103,31 @@ export interface AdbCommandTarget {
   readonly localPath?: string;
 }
 
+/** The host, not adb, lacked process, memory or descriptor capacity to start it. */
+export const adbSpawnCapacityError = (
+  operation: string,
+  spawnError: string,
+  cause: unknown,
+  diagnostics?: Readonly<Record<string, JsonValue>>,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    "capacity",
+    `The host could not start adb (${spawnError}) for ${operation}`,
+    { spawn_error: spawnError },
+    {
+      cause,
+      diagnostics,
+      retryable: true,
+      remediationAction: adbHostCapacityRemediation(spawnError),
+    },
+  );
+
 /** Run one bounded adb invocation and keep its exact failure shape. */
 export const runAdbCapture = async (
   operation: string,
   target: AdbCommandTarget,
-  binary: string,
+  selection: AdbBinarySelection,
   arguments_: readonly string[],
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
@@ -116,7 +136,8 @@ export const runAdbCapture = async (
     return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
   try {
     return ok(
-      await execFileBytes(binary, arguments_, {
+      await execFileBytes(selection.binary, arguments_, {
+        env: selection.environment,
         timeout: limits.timeoutMs,
         maxBuffer: limits.maxOutputBytes,
         stopSignal: "SIGTERM",
@@ -131,13 +152,17 @@ export const runAdbCapture = async (
           cause: cause.cause,
           ...(failure === undefined
             ? {}
-            : { capturedOutput: adbCommandCapturedOutput(failure) }),
+            : { capturedOutput: execFileFailureCapturedOutput(failure) }),
         }),
       );
     if (failure === undefined)
       return err(
         new AnalysisProtocolError(`adb failed for ${operation}`, { cause }),
       );
+    const detail = {
+      cause,
+      capturedOutput: execFileFailureCapturedOutput(failure),
+    };
     if (failure.outputTruncated) {
       const name = `The adb output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override)`;
       const allowance =
@@ -153,7 +178,7 @@ export const runAdbCapture = async (
           "memory",
           `adb output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
           { max_output_bytes: limits.maxOutputBytes },
-          { cause, ...allowance },
+          { ...detail, ...allowance },
         ),
       );
     }
@@ -168,12 +193,7 @@ export const runAdbCapture = async (
       const line = stderr
         .slice(diagnosticStart, newline === -1 ? stderr.length : newline)
         .trimEnd();
-      if (
-        !isSuccessfulDaemonStartNotice(line) &&
-        !/^\* daemon not running(?:; starting now at [^\r\n]*|\. starting it now on port \d+ \*)$/u.test(
-          line,
-        )
-      )
+      if (!isSuccessfulDaemonStartNotice(line) && !isDaemonStartingNotice(line))
         break;
       diagnosticStart = newline === -1 ? stderr.length : newline + 1;
     }
@@ -189,9 +209,12 @@ export const runAdbCapture = async (
       )
     )
       return err(
-        new AnalysisUnsupportedTargetError(operation, target.device, excerpt, {
-          cause,
-        }),
+        new AnalysisUnsupportedTargetError(
+          operation,
+          target.device,
+          excerpt,
+          detail,
+        ),
       );
     if (
       /No such file or directory|Permission denied|read: Permission denied/iu.test(
@@ -209,22 +232,27 @@ export const runAdbCapture = async (
           ? localPath
           : (target.path ?? target.device);
       return err(
-        new AnalysisUnsupportedTargetError(operation, path, excerpt, { cause }),
+        new AnalysisUnsupportedTargetError(operation, path, excerpt, detail),
       );
     }
     if (failure.killed)
       return err(
         new AnalysisTimeoutError(operation, limits.timeoutMs, {
-          cause,
+          ...detail,
           userMessage: `adb ${operation} reached its ${String(limits.timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
           remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
         }),
       );
+    // The host, not adb, lacked capacity to start it.
+    if (spawnCapacityExhausted(failure))
+      return err(adbSpawnCapacityError(operation, String(failure.code), cause));
     return err(
       new AdbProtocolError(
-        excerpt === ""
-          ? `adb exited with code ${String(failure.code)} for ${operation}`
-          : excerpt,
+        failure.spawnFailed === true
+          ? `adb could not be started (${String(failure.code)}) for ${operation}`
+          : excerpt === ""
+            ? `adb exited with code ${String(failure.code)} for ${operation}`
+            : excerpt,
         failure,
         cause,
       ),
@@ -273,31 +301,88 @@ export const packageChangeRefusal = (
       );
 };
 
-/** Only the clean false result of test -e establishes absence. */
+/** Parsed predicate and the complete output that supports it. */
+export interface AdbPathProbe {
+  readonly matches: boolean;
+  readonly capturedOutput: {
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly stdout_bytes: number;
+    readonly stderr_bytes: number;
+    readonly exit_code: 0 | 1;
+    readonly signal: null;
+    readonly truncated: false;
+  };
+}
+const completedAdbPathProbe = (
+  matches: boolean,
+  stderr: string,
+): AdbPathProbe => ({
+  matches,
+  capturedOutput: {
+    stdout: "",
+    stderr,
+    stdout_bytes: 0,
+    stderr_bytes: Buffer.byteLength(stderr),
+    exit_code: matches ? 0 : 1,
+    signal: null,
+    truncated: false,
+  },
+});
+const recognizedProbeStderr = (stderr: string): boolean =>
+  stderr === "" || hasOnlySuccessfulAdbStartupNotices(stderr);
+
+/** Only a complete false predicate, with no device diagnostics, establishes absence. */
 export const probeAdbPathExistence = async (
   operation: string,
   serial: string,
   path: string,
-  binary: string,
+  selection: AdbBinarySelection,
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
-): Promise<Result<boolean, AnalysisError>> => {
+): Promise<Result<AdbPathProbe, AnalysisError>> => {
+  return probeAdbPath(operation, serial, path, selection, limits, signal, "-e");
+};
+
+/** Completed predicate status is independent of recognized host startup notices. */
+export const probeAdbPathDirectory = async (
+  operation: string,
+  serial: string,
+  path: string,
+  selection: AdbBinarySelection,
+  limits: AdbRunLimits,
+  signal: AbortSignal | undefined,
+): Promise<Result<AdbPathProbe, AnalysisError>> =>
+  probeAdbPath(operation, serial, path, selection, limits, signal, "-d");
+
+const probeAdbPath = async (
+  operation: string,
+  serial: string,
+  path: string,
+  selection: AdbBinarySelection,
+  limits: AdbRunLimits,
+  signal: AbortSignal | undefined,
+  predicate: "-d" | "-e",
+): Promise<Result<AdbPathProbe, AnalysisError>> => {
+  const fact =
+    predicate === "-d" ? "destination_directory" : "destination_existence";
   const probed = await runAdbCapture(
     operation,
     { device: serial, path },
-    binary,
-    adbArguments(serial, ["shell", "test", "-e", path]),
+    selection,
+    adbArguments(serial, ["shell", "test", predicate, path]),
     { ...limits, volatileOutput: true },
     signal,
   );
   if (probed.ok) {
-    if (probed.value.stdout.length === 0 && probed.value.stderr.length === 0)
-      return ok(true);
+    const stderr = probed.value.stderr.toString("utf8");
+    if (probed.value.stdout.length === 0 && recognizedProbeStderr(stderr))
+      return ok(completedAdbPathProbe(true, stderr));
     return err(
       new AnalysisProtocolError(
-        "The ADB path existence probe returned unexpected output; destination existence is unknown",
+        `The ADB path ${predicate === "-d" ? "directory" : "existence"} probe returned unexpected output; destination status is unknown`,
         {
-          diagnostics: { destination_existence: "unknown" },
+          diagnostics: { [fact]: "unknown" },
           capturedOutput: {
             stdout: probed.value.stdout.toString("utf8"),
             stderr: probed.value.stderr.toString("utf8"),
@@ -321,14 +406,14 @@ export const probeAdbPathExistence = async (
     !failure.outputTruncated &&
     failure.collectionFailure !== true &&
     failure.stdout === "" &&
-    failure.stderr === ""
+    recognizedProbeStderr(failure.stderr)
   )
-    return ok(false);
+    return ok(completedAdbPathProbe(false, failure.stderr));
   return err(
     new AnalysisProtocolError(error.message, {
       cause: error.cause,
-      diagnostics: { destination_existence: "unknown" },
-      capturedOutput: adbCommandCapturedOutput(failure),
+      diagnostics: { [fact]: "unknown" },
+      capturedOutput: execFileFailureCapturedOutput(failure),
     }),
   );
 };

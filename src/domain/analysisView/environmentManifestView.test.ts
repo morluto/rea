@@ -39,6 +39,7 @@ const parentOf = (
 ) => {
   const evidence = analysisViewCaptureEvidence(capture);
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
@@ -259,8 +260,10 @@ it("templates uid literals, opaque tokens and identifier-like siblings when ever
       properties: { overwrite: "boolean", title: "string" },
     },
   });
-  expect(projected.limitations).toContain(
-    "Opt-in template rules after-uid-literal, opaque-token, sibling-variance merge recorded literals by shape; merged parameters may conflate distinct resources.",
+  expect(projected.limitations).toContainEqual(
+    expect.stringMatching(
+      /after-uid-literal.*opaque-token.*sibling-variance.*may conflate distinct resources/iu,
+    ),
   );
 });
 
@@ -351,6 +354,9 @@ it("derives value-free body shapes, observed query names and record pointers", (
       "status",
     ]);
   const silent = manifest([], environmentManifestCaptureFixture(), false);
+  expect(silent.tools.map((tool) => tool.name)).toEqual(
+    projected.tools.map((tool) => tool.name),
+  );
   expect(
     silent.tools.every((tool) => tool.query_parameter_names.length === 0),
   ).toBe(true);
@@ -422,8 +428,8 @@ it("excludes other origins, pages, assets and non-JSON groups with reasons and f
     "/health:non-json",
     "/status:non-json",
   ]);
-  expect(mixed.limitations).toContain(
-    "1 retained records without a usable request line are not represented in the manifest.",
+  expect(mixed.limitations).toContainEqual(
+    expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
   );
   expect(mixed.records.map((record) => record.content_type)).toEqual([
     "text/csv",
@@ -820,8 +826,10 @@ it("selects the origin with the most JSON-like records and names it from the hos
     status: "complete-within-view",
     total: 0,
   });
-  expect(empty.limitations).toContain(
-    "No retained record had a parseable origin; the manifest names no primary origin.",
+  expect(empty.limitations).toContainEqual(
+    expect.stringMatching(
+      /no retained record.*parseable origin.*no primary origin/iu,
+    ),
   );
 });
 
@@ -851,6 +859,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
   expect(
     projectAnalysisView(
       {
+        predicateType: layout.predicate_type,
         evidenceId: layout.evidence_id,
         operation: layout.operation,
         normalizedResult: layout.normalized_result,
@@ -868,6 +877,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     expect(
       projectAnalysisView(
         {
+          predicateType: "rea.analysis",
           evidenceId: `ev_${"a".repeat(64)}`,
           operation: "inspect_web_network_capture",
           normalizedResult,
@@ -888,7 +898,7 @@ it("refuses a path whose templated representation exceeds projection capacity", 
   });
 });
 
-it("omits a __proto__ body key explicitly instead of publishing a prototype", () => {
+it("preserves every own body key while publishing only its observed type", () => {
   const projected = manifest(
     [],
     syntheticCapture([
@@ -903,12 +913,14 @@ it("omits a __proto__ body key explicitly instead of publishing a prototype", ()
   const shape = projected.tools[0]?.body_shape;
   expect(shape).toEqual({
     type: "object",
-    properties: { constructor: "string", name: "number" },
+    properties: {
+      ["__proto__"]: "object",
+      constructor: "string",
+      name: "number",
+    },
   });
   expect(Object.getPrototypeOf(shape?.properties)).toBe(Object.prototype);
-  expect(projected.limitations).toContain(
-    "A top-level __proto__ key in a recorded JSON body is omitted from body_shape; it cannot be an own property of the published object.",
-  );
+  expect(Object.hasOwn(shape!.properties, "__proto__")).toBe(true);
   expect(JSON.stringify(projected)).not.toContain("admin");
 });
 
@@ -994,8 +1006,10 @@ it("does not compare routes beyond the sibling-variance segment limit and says s
     `/api/items/b2/${tail}`,
     "/api/things/{thing_id}",
   ]);
-  expect(projected.limitations).toContain(
-    "Routes with more than 32 segments are not compared by sibling-variance; they keep their grouped templates.",
+  expect(projected.limitations).toContainEqual(
+    expect.stringMatching(
+      /32 segments.*not compared.*sibling-variance.*grouped templates/iu,
+    ),
   );
 });
 
@@ -1062,7 +1076,95 @@ it("treats a +json suffix as JSON only on application media types", () => {
   expect(projected.tools[1]?.body_shape).toBeNull();
 });
 
-it("refuses a parent whose subject is absent or names another path or digest", () => {
+it("keeps a write answered with no body as a tool whatever its content type, but not one only redirected", () => {
+  const capture = syntheticCapture([
+    ["GET", "https://s.test/items/1", "application/json"],
+    ["GET", "https://s.test/items/2", "application/json"],
+    ["DELETE", "https://s.test/items/1", "text/html"],
+    ["DELETE", "https://s.test/items/2", "text/html"],
+    ["POST", "https://s.test/forms/1", "text/html"],
+    ["PUT", "https://s.test/pages/1", "text/html"],
+  ]);
+  const answer = (index: number, status: number, text?: string): void => {
+    const record = capture.records[index]!;
+    record.reported = {
+      ...(record.reported as Record<string, unknown>),
+      response: {
+        status,
+        content: {
+          mimeType: "text/html",
+          ...(text === undefined ? {} : { text }),
+        },
+      },
+    };
+  };
+  answer(2, 204);
+  answer(3, 200, "");
+  // A redirect is no answer, and a missing text may be a body the capture did not keep.
+  answer(4, 302, "");
+  answer(5, 200);
+  const projected = manifest([], capture);
+  expect(projected.tools.map(line)).toEqual([
+    "DELETE /items/{numeric}",
+    "GET /items/{numeric}",
+  ]);
+  expect(
+    projected.excluded.map((entry) => [entry.path_template, entry.reason]),
+  ).toEqual([
+    ["/forms/{numeric}", "ui-page-or-asset"],
+    ["/pages/{numeric}", "ui-page-or-asset"],
+  ]);
+});
+
+it("keeps opaque or redacted empty response text unknown when selecting bodiless writes", () => {
+  const capture = syntheticCapture([
+    ["POST", "https://s.test/opaque/1", "text/html"],
+    ["POST", "https://s.test/hidden/1", "text/html"],
+    ["POST", "https://s.test/base64/1", "text/html"],
+  ]);
+  for (const [index, record] of capture.records.entries()) {
+    record.reported = {
+      ...(record.reported as Record<string, unknown>),
+      response: {
+        status: 200,
+        content: {
+          mimeType: "text/html",
+          text: "",
+          ...(index === 0 ? { encoding: "opaque" } : {}),
+          ...(index === 2 ? { encoding: "base64" } : {}),
+        },
+      },
+    };
+    if (index === 1)
+      record.redactions = [
+        {
+          pointer: "/response/content",
+          reason: "explicit-sensitive-value",
+          scope: "property-name",
+        },
+      ];
+    if (index === 2)
+      record.binary_fields = [
+        {
+          pointer: "/response/content/text",
+          representation: "har-base64-content",
+          state: "retained",
+          content_base64: "",
+          bytes: 0,
+          sha256:
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+      ];
+  }
+  const projected = manifest([], capture);
+  expect(projected.tools.map(line)).toEqual(["POST /base64/{numeric}"]);
+  expect(projected.excluded.map((entry) => entry.path_template)).toEqual([
+    "/hidden/{numeric}",
+    "/opaque/{numeric}",
+  ]);
+});
+
+it("refuses a parent whose subject is absent or names another digest", () => {
   const parent = parentOf();
   const refusal = {
     ok: false,
@@ -1077,15 +1179,6 @@ it("refuses a parent whose subject is absent or names another path or digest", (
     projectAnalysisView({ ...withoutSubject, subject: null }, view()),
   ).toMatchObject(refusal);
   if (subject == null) throw new Error("Fixture evidence carries a subject");
-  expect(
-    projectAnalysisView(
-      {
-        ...parent,
-        subject: { ...subject, local_path: "/elsewhere/capture.har" },
-      },
-      view(),
-    ),
-  ).toMatchObject(refusal);
   expect(
     projectAnalysisView(
       {
@@ -1312,8 +1405,10 @@ it("shares no format-rule position and compares no route beyond the segment limi
     "PATCH /api/teams/t3",
     "GET /api/teams/{numeric}",
   ]);
-  expect(projected.limitations).toContain(
-    "Routes with more than 32 segments are not compared by prefix-variance; they keep their grouped templates.",
+  expect(projected.limitations).toContainEqual(
+    expect.stringMatching(
+      /32 segments.*not compared.*prefix-variance.*grouped templates/iu,
+    ),
   );
 });
 

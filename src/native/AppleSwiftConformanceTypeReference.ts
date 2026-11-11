@@ -1,3 +1,7 @@
+import {
+  createSwiftContextReader,
+  type SwiftContextReader,
+} from "./AppleSwiftNominalTypes.js";
 import type { PointerResolution } from "./AppleMachoFixups.js";
 import type {
   SwiftDispatchReaders,
@@ -26,6 +30,7 @@ export interface SwiftConformanceTypeReference {
   /** Descriptor, inline class-name, local ObjC class pointer, or raw target. */
   readonly target: bigint | null;
   readonly name: string | null;
+  readonly module: string | null;
   readonly binding: ReturnType<typeof swiftImportBinding> | null;
   readonly reason: string | null;
   readonly staticWitnessIdentity: boolean;
@@ -36,6 +41,7 @@ interface SwiftTypeReferenceInput {
   readonly descriptor: bigint;
   readonly flags: number;
   readonly read: SwiftDispatchReaders;
+  readonly contextReader?: SwiftContextReader;
   readonly relative: (
     field: bigint,
     kind: SwiftRelativeField,
@@ -50,6 +56,7 @@ const typeReferenceResult = (input: {
   readonly kind: number;
   readonly target: bigint | null;
   readonly name?: string | null;
+  readonly module?: string | null;
   readonly binding?: ReturnType<typeof swiftImportBinding> | null;
   readonly reason?: string | null;
   readonly generic?: boolean | null;
@@ -57,6 +64,7 @@ const typeReferenceResult = (input: {
   kind: input.kind,
   target: input.target,
   name: input.name ?? null,
+  module: input.module ?? null,
   binding: input.binding ?? null,
   reason: input.reason ?? null,
   staticWitnessIdentity:
@@ -121,20 +129,17 @@ const decodeNominalTypeReference = (
         reason: "Unsupported Swift type descriptor kind",
       });
 
-    const name = read.string(
-      requiredSwiftRelativeTarget(
-        relative,
-        target + 8n,
-        "typeName",
-        input.unresolvedReason,
-      ),
-    );
+    const contextReader =
+      input.contextReader ?? createSwiftContextReader({ ...read, relative });
+    const name = contextReader.typeName(target);
+    const context = contextReader.contextOf(target);
     return typeReferenceResult({
       kind,
       target,
-      name: name.length === 0 ? null : name,
+      name: context.path ?? name,
+      module: context.module,
       binding,
-      reason: name.length === 0 ? "Empty Swift conformance type name" : null,
+      reason: context.reason,
       generic: (descriptorFlags & 0x80) !== 0,
     });
   } catch (cause) {

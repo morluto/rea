@@ -45,8 +45,10 @@ tool, view kind, provider, network activity or write effect.
   value. Objects at the root or in one member keep precedence. `at` and
   `replaceAt` read and replace exactly these forms besides the root and one
   member, so the gate and renderers run unchanged.
-- An entity's state order is its earliest sighting on the timeline and it cites
-  its records in timeline order, whichever plan observed it first.
+- An entity's state order is its place on the first whole line its collection's
+  application order lists, else its earliest sighting on the timeline (see
+  the state view); it cites its records in timeline order, whichever plan
+  observed it first.
 - Each tool description reads `METHOD template; <returns>; recorded statuses
   …; replays retained records […]; evidence ev_…` after the untrusted-catalog
   warning. `<returns>` describes one level deep the first cited `2xx` record

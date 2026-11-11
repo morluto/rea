@@ -17,6 +17,7 @@ const gates = vi.hoisted(() => {
     hashClose: createGate(),
     identityRead: createGate(),
     opens: 0,
+    selectedPath: null as string | null,
     failClose: false,
     holdHashClose: false,
     holdIdentityRead: false,
@@ -32,31 +33,29 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
     ...original,
     openRegularFile: vi.fn(
       async (...args: Parameters<typeof original.openRegularFile>) => {
-        const handle = await original.openRegularFile(...args);
+        const descriptor = await original.openRegularFile(...args);
+        if (args[0] !== gates.selectedPath) return descriptor;
+        const { handle } = descriptor;
         const index = gates.opens++;
-        return {
-          get fd() {
-            return handle.fd;
-          },
-          stat: (...statArgs: Parameters<typeof handle.stat>) =>
-            handle.stat(...statArgs),
-          read: async (...readArgs: Parameters<typeof handle.read>) => {
-            if (index === 1 && gates.holdIdentityRead) {
-              gates.identityRead.enter();
-              await gates.identityRead.hold;
-            }
-            return handle.read(...readArgs);
-          },
-          close: async () => {
-            if (index === 1 && gates.holdHashClose) {
-              gates.hashClose.enter();
-              await gates.hashClose.hold;
-            }
-            if (gates.failClose)
-              throw new Error("controlled final close refusal");
-            await handle.close();
-          },
-        } as unknown as typeof handle;
+        const read = handle.read.bind(handle);
+        const close = handle.close.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+          if (index === 1 && gates.holdIdentityRead) {
+            gates.identityRead.enter();
+            await gates.identityRead.hold;
+          }
+          return read(...readArgs);
+        });
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          if (index === 1 && gates.holdHashClose) {
+            gates.hashClose.enter();
+            await gates.hashClose.hold;
+          }
+          if (gates.failClose)
+            throw new Error("controlled final close refusal");
+          await close();
+        });
+        return descriptor;
       },
     ),
   };
@@ -74,6 +73,7 @@ import { session } from "./kunaSessionFixture.js";
 
 beforeEach(() => {
   gates.opens = 0;
+  gates.selectedPath = null;
   gates.failClose = false;
   gates.holdHashClose = false;
   gates.holdIdentityRead = false;
@@ -94,6 +94,7 @@ it
   async (phase) => {
     const root = await createTestTempDirectory("rea-kuna-inspection-lifetime-");
     const executable = await writeFakeKuna(root);
+    gates.selectedPath = executable;
     const scope = new ArtifactResourceScope();
     const resourceScope: RetainedResourceScope = {
       retain: (owner, resource) =>
@@ -160,7 +161,7 @@ it
     gates.hashClose.release();
     gates.identityRead.release();
     const fixture = await session("rea-kuna-session-finalization-");
-    gates.opens = 0;
+    gates.selectedPath = fixture.kuna;
     gates.hashClose = gates.createGate();
     gates.identityRead = gates.createGate();
     gates.holdHashClose = phase !== "identity-read";

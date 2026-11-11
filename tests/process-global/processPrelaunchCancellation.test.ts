@@ -2,7 +2,7 @@ import { rm, stat, type FileHandle } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { captureProcessScenario } from "../../src/process/capture/ProcessHarness.js";
-import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../src/domain/process/processCapture.fixture.js";
 
 const control = vi.hoisted(() => ({
@@ -100,7 +100,7 @@ it.each(["none", "before", "open", "final-stat", "close"] as const)(
     if (stage === "before") controller.abort(reason);
     const removed: string[] = [];
     const result = await captureProcessScenario(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: process.execPath,
         arguments: ["--eval", "process.exit(0)"],
         working_directory: process.cwd(),

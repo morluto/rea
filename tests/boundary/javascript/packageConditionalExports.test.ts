@@ -4,12 +4,10 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import {
-  resolveArtifactPathByContext,
-  type ArtifactPathResolution,
-} from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
+import type { ArtifactPathResolution } from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { resolveStandaloneArtifactPath } from "../../support/javascriptArtifactPathResolution.js";
 const execute = promisify(execFile);
 const TARGETS = [
   "default.cjs",
@@ -138,7 +136,7 @@ const compareWithNode = async (
     node: node.target,
     node_error: node.error_code,
     files,
-    outcome: resolveArtifactPathByContext({
+    outcome: resolveStandaloneArtifactPath({
       declaredPath: specifier,
       sourcePath,
       context: "module-specifier",
@@ -338,7 +336,7 @@ describe("package exports before sibling files", () => {
     });
     // The Node control has one runtime directory. A different inventoried
     // container without its loader mapping cannot prove the metadata absent.
-    const outcome = resolveArtifactPathByContext({
+    const outcome = resolveStandaloneArtifactPath({
       declaredPath: "example",
       sourcePath: "main.js",
       context: "module-specifier",
@@ -618,7 +616,7 @@ describe("package self-reference scope boundaries", () => {
       resolved_path: "node_modules/example/specific.cjs",
       resolution_status: "resolved",
     });
-    const outcome = resolveArtifactPathByContext({
+    const outcome = resolveStandaloneArtifactPath({
       declaredPath: "example",
       sourcePath: "node_modules/example/main.js",
       context: "module-specifier",

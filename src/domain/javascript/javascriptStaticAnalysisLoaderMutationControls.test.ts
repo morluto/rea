@@ -77,3 +77,12 @@ it.each(cases)(
     );
   },
 );
+
+it("uses the restored call member after a local replacement", () => {
+  const source = `${named}const load=make(import.meta.url);load.call=()=>({kind:'local'});load.call=Function.prototype.call;load.call(null,'node:path');`;
+  const analysis = analyzeJavaScriptStaticSource(source);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.references.filter(({ kind }) => kind === "require")).toEqual([
+    expect.objectContaining({ kind: "require", specifier: null }),
+  ]);
+});
