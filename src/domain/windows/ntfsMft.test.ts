@@ -127,10 +127,17 @@ describe("MFT header facts", () => {
     });
   });
 
-  it.each([0, 49, 64, 72])(
-    "reports an invalid first attribute offset %i",
-    (offset) => {
-      const record = recordOf();
+  it.each([
+    [0, 1],
+    [49, 1],
+    [64, 1],
+    [72, 1],
+    [48, 1],
+    [48, 0],
+  ])(
+    "reports invalid first attribute offset %i with USA sequence %i",
+    (offset, sequenceNumber) => {
+      const record = recordOf({ sequenceNumber });
       new DataView(record.buffer).setUint16(20, offset, true);
       const parsed = parseMftImage(record);
       if (!parsed.ok) throw new Error(parsed.error.message);
@@ -139,20 +146,29 @@ describe("MFT header facts", () => {
     },
   );
 
-  it("reports a declared record number that contradicts its stream position", () => {
-    const bytes = streamOf(recordOf(), recordOf());
-    new DataView(bytes.buffer).setUint32(1024 + 44, 0, true);
-    const parsed = parseMftImage(bytes);
-    if (!parsed.ok) throw new Error(parsed.error.message);
-    expect(parsed.value.records[1]).toMatchObject({
-      index: 1,
-      declaredRecordNumber: 0,
-      recordNumberMatchesSlot: false,
-    });
-    expect(parsed.value.limitations.join(" ")).toContain(
-      "disagrees with their stream slot",
-    );
-  });
+  it.each([1, 0, 0xffff])(
+    "reports a contradictory declared record number with USA sequence %i",
+    (sequenceNumber) => {
+      const bytes = streamOf(recordOf(), recordOf({ sequenceNumber }));
+      new DataView(bytes.buffer).setUint32(1024 + 44, 0, true);
+      const parsed = parseMftImage(bytes);
+      if (!parsed.ok) throw new Error(parsed.error.message);
+      expect(parsed.value.records[1]).toMatchObject({
+        index: 1,
+        declaredRecordNumber: 0,
+        recordNumberMatchesSlot: false,
+        fixups: {
+          malformed: sequenceNumber === 0 || sequenceNumber === 0xffff,
+        },
+      });
+      expect(parsed.value.metadata.fixup_unverified_record_count).toBe(
+        sequenceNumber === 1 ? 0 : 1,
+      );
+      expect(parsed.value.limitations.join(" ")).toContain(
+        "disagrees with their stream slot",
+      );
+    },
+  );
 
   it("keeps the inline header window separate from the parsed record count", () => {
     const parsed = parseMftImage(

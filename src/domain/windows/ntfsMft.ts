@@ -373,8 +373,13 @@ const readRecord = (
     true,
   );
 
+  const usaLayoutValid = updateSequenceArrayFits(
+    usaOffset,
+    fixups.entries,
+    recordBytes / FIXUP_SECTOR_BYTES,
+  );
   const declaredRecordNumber =
-    !fixups.malformed && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
+    usaLayoutValid && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
       ? view.getUint32(RECORD_HEADER.recordNumber, true)
       : null;
 
@@ -396,7 +401,7 @@ const readRecord = (
       firstAttributeOffset % 8 === 0 &&
       firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
       firstAttributeOffset + 4 <= usedBytes &&
-      (fixups.malformed ||
+      (!usaLayoutValid ||
         firstAttributeOffset >= usaOffset + fixups.entries * 2),
     baseRecordReference:
       baseRecordReference === 0n
