@@ -53,6 +53,16 @@ it("uses the MFT decoder's record identity verdict", () => {
   ).toEqual({ kind: "unresolved" });
 });
 
+it("leaves unused zero-sequence records unresolved", () => {
+  const correlate = createUsnMftCorrelator([
+    { ...baseRecord, sequenceNumber: 0 },
+  ]);
+  expect(correlate({ fileReference: 7n, parentReference: 7n })).toEqual({
+    file: { kind: "unresolved" },
+    parent: { kind: "unresolved" },
+  });
+});
+
 it("keeps duplicates ambiguous and skips extensions and unverified records", () => {
   const correlate = createUsnMftCorrelator([
     baseRecord,

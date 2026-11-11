@@ -37,6 +37,7 @@ export const createUsnMftCorrelator = (
     // logical MFT stream. Extension records do not identify separate files.
     if (
       record.baseRecordReference !== null ||
+      record.sequenceNumber === 0 ||
       !record.extentValid ||
       record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES !== record.totalBytes
     )
