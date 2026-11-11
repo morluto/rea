@@ -2038,6 +2038,58 @@ describe("FAT64 dispatch slice validation", () => {
     );
   });
 
+  it("decodes the admitted capability variant rather than re-selecting", () => {
+    const variant = (subtype: number) => {
+      const bytes = fixture();
+      bytes.writeUInt32LE(subtype, 8);
+      return bytes;
+    };
+    const first = variant(0x81000002);
+    const second = variant(0x80000002);
+    const offset = 4096;
+    const secondOffset = offset + Math.ceil(first.length / 4096) * 4096;
+    const bytes = Buffer.alloc(secondOffset + second.length);
+    bytes.writeUInt32BE(0xcafebabe, 0);
+    bytes.writeUInt32BE(2, 4);
+    const writeEntry = (
+      index: number,
+      subtype: number,
+      sliceOffset: number,
+      size: number,
+    ) => {
+      const base = 8 + index * 20;
+      bytes.writeUInt32BE(0x0100000c, base);
+      bytes.writeUInt32BE(subtype, base + 4);
+      bytes.writeUInt32BE(sliceOffset, base + 8);
+      bytes.writeUInt32BE(size, base + 12);
+      bytes.writeUInt32BE(12, base + 16);
+    };
+    writeEntry(0, 0x81000002, offset, first.length);
+    writeEntry(1, 0x80000002, secondOffset, second.length);
+    first.copy(bytes, offset);
+    second.copy(bytes, secondOffset);
+    expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
+      "Ambiguous FAT architecture slice",
+    );
+    expect(
+      decodeAppleDispatchMetadata(
+        bytes,
+        100,
+        provenance,
+        "arm64",
+        undefined,
+        true,
+        {
+          offset: secondOffset,
+          size: second.length,
+        },
+      ).objc_classes[0],
+    ).toMatchObject({
+      name: "Fixture",
+      location: { file_offset: secondOffset + 512 },
+    });
+  });
+
   it("rejects a missing selected architecture", () => {
     expect(() =>
       decodeAppleDispatchMetadata(wrapped(), 100, provenance, "x86_64"),

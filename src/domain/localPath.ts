@@ -16,8 +16,13 @@ export const nulFreeStringSchema = z
   .string()
   .regex(/^[^\x00]*$/u, "Local filesystem paths cannot contain NUL");
 
-/** A selected local filesystem path: nonempty and free of NUL bytes. */
-export const localPathStringSchema = nulFreeStringSchema.min(1);
+/** A selected local filesystem path: nonempty, NUL-free, and representable without replacement. */
+export const localPathStringSchema = nulFreeStringSchema
+  .min(1)
+  .regex(
+    /^[^\uD800-\uDFFF]*$/u,
+    "Local filesystem paths must contain well-formed Unicode",
+  );
 
 /**
  * A Windows absolute path: rooted, UNC, or drive-qualified. The classes spell
