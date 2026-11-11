@@ -9,6 +9,7 @@ import {
   generateLargeFixture,
   sha256,
   sourceDigest,
+  parseConformanceFixtureManifest,
 } from "./lib/conformance-fixtures.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -17,19 +18,18 @@ const verifierRun = createVerifierRun();
 const manifestArgument = process.argv[2] ?? "build/conformance/manifest.json";
 const manifestPath = await realpath(resolve(manifestArgument));
 const sourceRoot = await resolveSourceRoot(manifestPath, process.argv[3]);
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (
-  !Array.isArray(manifest.fixtures) ||
-  (manifest.platform !== "darwin" && manifest.platform !== "linux")
-)
-  throw new Error("Unsupported conformance manifest");
+const manifest = parseConformanceFixtureManifest(
+  JSON.parse(await readFile(manifestPath, "utf8")),
+);
 if (manifest.platform !== process.platform)
   throw new Error(
     `Conformance manifest platform ${manifest.platform} does not match ${process.platform}`,
   );
 const root = dirname(manifestPath);
 const fileMarker = manifest.platform === "darwin" ? "Mach-O" : "ELF";
-const nmArguments = manifest.platform === "darwin" ? ["-gU"] : ["-g"];
+// Both GNU and LLVM nm define -j as names-only output, one symbol per line.
+const nmArguments =
+  manifest.platform === "darwin" ? ["-gU", "-j"] : ["-g", "-j"];
 
 for (const fixture of manifest.fixtures) await verifyFixture(fixture);
 
@@ -95,17 +95,24 @@ async function verifyFixture(fixture) {
     await exec("nm", [...nmArguments, artifactPath], {
       maxBuffer: 20 * 1024 * 1024,
     })
-  ).stdout;
+  ).stdout
+    .split(/\r?\n/u)
+    .filter(Boolean);
   const strings = (
     await exec("strings", [artifactPath], { maxBuffer: 20 * 1024 * 1024 })
-  ).stdout;
+  ).stdout
+    .split(/\r?\n/u)
+    .filter(Boolean);
   const expectations = fixture.expectations ?? {};
   for (const symbol of expectations.symbols ?? [])
     if (!symbols.includes(symbol))
       throw new Error(`${fixture.name}: missing symbol ${symbol}`);
-  for (const value of expectations.strings ?? [])
+  for (const value of expectations.stringMarkers ?? [])
     if (!strings.includes(value))
-      throw new Error(`${fixture.name}: missing string ${value}`);
+      throw new Error(`${fixture.name}: missing string marker ${value}`);
+  for (const value of expectations.stringFragments ?? [])
+    if (!strings.some((record) => record.includes(value)))
+      throw new Error(`${fixture.name}: missing string fragment ${value}`);
   verifyCount(
     symbols,
     expectations.symbolPrefix,
@@ -122,9 +129,7 @@ async function verifyFixture(fixture) {
 
 function verifyCount(output, prefix, expected, fixture) {
   if (prefix === undefined || expected === undefined) return;
-  const count = output
-    .split("\n")
-    .filter((line) => line.includes(prefix)).length;
+  const count = output.filter((record) => record.startsWith(prefix)).length;
   if (count !== expected)
     throw new Error(
       `${fixture}: expected ${expected} ${prefix} records, received ${count}`,

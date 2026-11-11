@@ -1,4 +1,9 @@
 export const LARGE_FIXTURE_COUNT: number;
+export function parseConformanceFixtureManifest(value: unknown): {
+  readonly schemaVersion: 2;
+  readonly platform: "darwin" | "linux";
+  readonly fixtures: readonly Record<string, unknown>[];
+};
 export const HOPPER_C_ORACLE: Readonly<{
   mainProcedure: "main";
   entryProcedure: "rea_entry";
