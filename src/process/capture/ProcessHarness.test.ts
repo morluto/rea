@@ -1,5 +1,6 @@
+import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
 import { assertProcessOwnershipInspectionActive } from "../ProcessInspectionCancellation.js";
-import { expect, it, vi } from "vitest";
+import { expect, it, vi, onTestFinished } from "vitest";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import {
@@ -72,6 +73,7 @@ it("retains cancellation and cleanup facts when ownership baseline inspection ab
         },
         cleanup: async () => undefined,
       },
+      createTestProcessCaptureResourceScope(),
     ),
   ).rejects.toMatchObject({
     reason: "cancelled",
@@ -104,6 +106,12 @@ it("keeps prelaunch snapshot evidence and the ownership failure when root cleanu
     executable: process.execPath,
     filesystem_observation_paths: ["/fixture/root"],
   });
+  const resources = new ProcessCaptureResourceScope();
+  let cleanupDenied = true;
+  onTestFinished(async () => {
+    cleanupDenied = false;
+    await resources.close();
+  });
   try {
     await prepareProcessCapture(
       scenario,
@@ -120,9 +128,10 @@ it("keeps prelaunch snapshot evidence and the ownership failure when root cleanu
           throw ownershipFailure;
         },
         cleanup: async () => {
-          throw new Error("root removal denied");
+          if (cleanupDenied) throw new Error("root removal denied");
         },
       },
+      resources,
     );
     throw new Error("expected preparation failure");
   } catch (cause: unknown) {

@@ -1,3 +1,4 @@
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -17,6 +18,7 @@ import {
 import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 import {
   AnalysisError,
+  primaryAnalysisError,
   type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
 import type {
@@ -250,4 +252,22 @@ export const normalizeCaptureFailure = (cause: unknown): unknown => {
   )
     return new ProcessCaptureInspectionFailure(cause);
   return cause;
+};
+
+/** Keep normalized inspection cancellation visible when its failure becomes a cleanup child. */
+export const retainCaptureInspectionCancellations = (
+  failure: AnalysisError,
+  inspection: ProcessCaptureInspectionFailure,
+): void => {
+  const primary = primaryAnalysisError(failure);
+  if (inspection.reason === "cancelled" && primary !== inspection)
+    analysisErrorWithCancellation(
+      primary,
+      new AnalysisCancelledError("capture_process", {
+        cause: inspection.cause,
+      }),
+    );
+  for (const secondary of inspection.secondaryFailures)
+    if (secondary instanceof AnalysisCancelledError)
+      analysisErrorWithCancellation(primary, secondary);
 };
