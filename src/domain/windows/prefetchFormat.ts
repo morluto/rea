@@ -17,6 +17,7 @@ const SIGNATURE_OFFSET = 4;
 const SIGNATURE = Buffer.from("SCCA", "ascii");
 /** A MAM-compressed container replaces the whole header with "MAM" and a header size. */
 const MAM_MAGIC = Buffer.from("MAM", "ascii");
+const MAM_HEADER_BYTES = MAM_MAGIC.length + 4;
 
 /** Common header: generation, signature, unknown, file size, name, hash, flags. */
 const COMMON_HEADER_BYTES = 84;
@@ -120,13 +121,21 @@ export const parsePrefetchFile = (
       kind: "limit",
       message: `The file exceeds the ${String(PREFETCH_MAX_FILE_BYTES)}-byte Prefetch allowance.`,
     });
-  // A MAM container replaces the header entirely, so it has no generation.
-  if (isMamContainer(bytes))
+  // A MAM container replaces the header entirely, so it has no generation. The
+  // signature alone does not make a container: a file that ends inside the
+  // fixed MAM header is truncated, not an intact unimplemented format.
+  if (isMamContainer(bytes)) {
+    if (bytes.length < MAM_HEADER_BYTES)
+      return err({
+        kind: "format",
+        message: "The file ends inside the MAM container header.",
+      });
     return err({
       kind: "unsupported",
       message:
         "The file is a MAM-compressed container, and this reader does not decode that container.",
     });
+  }
   const version = readVersionTag(bytes);
   if (version === null)
     return err({ kind: "format", message: "No Prefetch generation." });

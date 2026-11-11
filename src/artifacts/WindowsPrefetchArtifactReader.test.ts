@@ -110,6 +110,21 @@ it("refuses a MAM container without calling it corrupt", async () => {
   }
 });
 
+it("calls a file that ends inside the MAM header malformed, not unsupported", async () => {
+  const reader = await readerFor(
+    prefetchFixture({ version: "23", compressed: true }).subarray(0, 5),
+  );
+  try {
+    await expect(inventory(reader)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("MAM container header") as unknown,
+    });
+    expect(reader.formatMetadata()).toBeUndefined();
+  } finally {
+    await reader.close();
+  }
+});
+
 it.each([
   ["17", 0x78],
   ["23", 0x80],
