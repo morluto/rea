@@ -1,5 +1,23 @@
 @echo off
 setlocal EnableExtensions
+
+:: ---- Own console for the interactive session ------------------------------
+:: chcp, title and color mutate console state that setlocal cannot restore,
+:: so the UI runs in a dedicated console window that closes on exit; the
+:: caller's console keeps its code page, title and colors. The child marks
+:: itself with a sentinel first argument (an absolute dropped path can never
+:: equal it).
+if /i "%~1"=="__REA_CHILD__" (
+    shift
+    goto REA_CHILD
+)
+:: Automation (and piped stdin) skips the console relaunch: REA_TEST_INLINE
+:: runs the menu in the calling console instead of a dedicated window.
+if defined REA_TEST_INLINE goto REA_CHILD
+start "REA Quick Tools" cmd /d /c %~s0 __REA_CHILD__ %1
+exit /b 0
+
+:REA_CHILD
 chcp 65001 >nul
 title REA Quick Tools - Reverse Engineer Anything (Windows)
 color 0A

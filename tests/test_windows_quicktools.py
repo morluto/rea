@@ -126,6 +126,9 @@ class LauncherBehaviorTests(unittest.TestCase):
         self.record = entry_dir / "args.log"
         self.env = dict(os.environ)
         self.env["APPDATA"] = str(self.tmp)
+        # Run the menu inline so the feeder can drive its stdin; the desktop
+        # console relaunch is for interactive users only.
+        self.env["REA_TEST_INLINE"] = "1"
 
     def clear_log(self):
         self.record.write_text("", encoding="utf-8")

@@ -18,13 +18,7 @@ const CAPTURE_SHARED_INPUTS = [
 // Shared build inputs are classified once in plan.mjs rather than repeated in
 // every workflow.
 const PATH_SCOPES = {
-  python: [
-    "bridge/**/*.py",
-    "tests/support/analysis-efficiency/**",
-    "tests/test_windows_quicktools.py",
-    "tools/windows/**",
-    "scripts/run-python-tests.py",
-  ],
+  python: ["bridge/**/*.py", "tests/support/analysis-efficiency/**"],
   packet_capture: [
     "tests/boundary/captures/**",
     "tests/boundary/cli/captureCleanup.test.ts",
@@ -189,6 +183,7 @@ const PATH_SCOPES = {
     // The launcher's real cmd.exe behavior tests run in windows-curated.
     "tools/windows/**",
     "tests/test_windows_quicktools.py",
+    "scripts/run-python-tests.py",
     // Both host compilers must be exercised when their installation, options,
     // or entrypoints change; Linux's accelerated checker cannot stand in for Go.
     "scripts/run-typescript.*",
