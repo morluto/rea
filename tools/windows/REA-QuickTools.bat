@@ -14,7 +14,7 @@ if /i "%~1"=="__REA_CHILD__" (
 :: Automation (and piped stdin) skips the console relaunch: REA_TEST_INLINE
 :: runs the menu in the calling console instead of a dedicated window.
 if defined REA_TEST_INLINE goto REA_CHILD
-start "REA Quick Tools" cmd /d /c call "%~f0" __REA_CHILD__ %1
+start "REA Quick Tools" cmd /d /c ""%~f0" __REA_CHILD__ %1
 exit /b 0
 
 :REA_CHILD
