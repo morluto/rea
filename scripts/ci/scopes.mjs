@@ -18,7 +18,11 @@ const CAPTURE_SHARED_INPUTS = [
 // Shared build inputs are classified once in plan.mjs rather than repeated in
 // every workflow.
 const PATH_SCOPES = {
-  python: ["bridge/**/*.py", "tests/support/analysis-efficiency/**"],
+  python: [
+    "bridge/**/*.py",
+    "tests/support/analysis-efficiency/**",
+    "scripts/run-python-tests.py",
+  ],
   packet_capture: [
     "tests/boundary/captures/**",
     "tests/boundary/cli/captureCleanup.test.ts",
