@@ -1,8 +1,8 @@
 # NTFS $MFT and USN Journal inspection
 
 This specification records an implementation increment and its original problem
-statement. For current behavior and limitations, see the artifact inventory
-guide.
+statement. For current behavior and limitations, see the
+[NTFS workflow guide](../../../guides/native/ntfs-metadata.md).
 
 ## Problem and outcome
 
@@ -32,9 +32,23 @@ its own.
   `limit` failure with its boundary.
 - Return the first 32 decoded record headers with their source offsets and the
   number of omitted headers. Aggregate counts cover the full parsed stream.
-- Parse only the records' headers and fixups. Attributes, filenames, data
-  streams and the `$UsnJrnl:$J` journal are not decoded in this step, so no path,
-  file size, file reference correlation or change history is claimed.
+- Restore verified sector trailers in a per-record scratch buffer before
+  scanning attributes. The domain decoder retains resident `$FILE_NAME`
+  names, namespaces, parent references and source offsets. Report incomplete
+  coverage when the walk cannot finish or an attribute list may refer to
+  extensions. The first 32 record samples expose individual names, parent
+  references, namespaces, FILETIME values, sizes and attribute bits. Keep each
+  name attribute separate, including multiple names for one record.
+
+- Resolve a selected base record's resident attribute lists only within the
+  supplied MFT. Require full sequence/slot identity, verified fixups, base
+  ownership and exact attribute type/name/ID/VCN. Preserve physical and linked
+  facts separately, including each source offset.
+- Share at most 32 additional record decodes per detail page, and deliver at
+  most 32 reference results per base. Preserve discovered-entry omissions,
+  unavailable list values, ambiguity and partial record facts. Visit list source
+  identities once, including cyclic graphs. Nonresident volume payload recovery
+  remains outside the acquired-metadata boundary.
 
 ## Acceptance
 
@@ -47,5 +61,33 @@ Inventory tests cover the root occurrence's metadata and the coverage status
 when a fixup fails, and classification tests cover several file names for the
 same bytes.
 
-Not covered in this step: real `$MFT` files written by a Windows host, USN
-journal records, attribute decoding, and any correlation between the two.
+The paired acquisition workflow is available through
+`rea inspect-ntfs-journal ./mft ./journal --maxRows 50 --json` and MCP
+`inspect_ntfs_journal` with `mft_path` and `journal_path`. Select an acquired
+logical MFT stream and the journal data stream from the same volume. Each
+file has a 64 MiB working-set admission limit. Follow `nextFileOffset` as
+`start_file_offset` on MCP or `--startFileOffset` on CLI and compare the two
+input digests between pages.
+
+USN V2, V3 and V4 records are supported. V3/V4 opaque IDs remain unresolved
+against MFT references; V4 delivers bounded extent samples with omission counts.
+Both the journal events and the MFT metadata have independent continuation
+positions. Padding, malformed records and truncation appear as coverage rows.
+Record order follows the acquisition, and history completeness remains unknown.
+
+Automated CLI/MCP workflow tests use synthesized acquisitions. Real Windows 11 MFT
+records were inspected through the packaged Linux CLI; see the
+[verification record](../../../verification/ntfs-metadata-2026-11-11.md).
+Paired V2 streams from a public NTFS volume fixture also passed CLI/MCP
+verification against an independent parser. The fixture's original acquisition
+environment and Windows-host execution remain unverified.
+
+## Page reuse lifetime
+
+Use one MCP session for multi-page traversal. Its shared acquisition scope keeps
+one successful digest-bound pair and MFT/reference lookup, validates selected
+file state before each reuse, refuses changed/unverifiable sources, and clears
+retained data at scope shutdown or pair eviction. Failed acquisitions are not
+cached. Each fresh CLI process reacquires its inputs. See the
+[completed-task comparison](../../../verification/ntfs-journal-paging-2026-11-11.md)
+for measurements, lifecycle regressions and verification limits.

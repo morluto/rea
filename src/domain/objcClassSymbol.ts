@@ -8,8 +8,7 @@ export const objcClassSymbol = (
       readonly metaclass: boolean;
     }
   | undefined => {
-  const namespace = name.lastIndexOf("::");
-  const leaf = namespace < 0 ? name : name.slice(namespace + 2);
+  const leaf = objcSymbolLeaf(name);
   const match = /^_?(OBJC_(META)?CLASS_\$_([^\s]+))$/u.exec(leaf);
   if (match?.[1] === undefined || match[3] === undefined) return undefined;
   return {
@@ -17,4 +16,10 @@ export const objcClassSymbol = (
     symbol: match[1],
     metaclass: match[2] !== undefined,
   };
+};
+
+/** Preserve the exact runtime symbol leaf after a provider namespace. */
+export const objcSymbolLeaf = (name: string): string => {
+  const namespace = name.lastIndexOf("::");
+  return namespace < 0 ? name : name.slice(namespace + 2);
 };
