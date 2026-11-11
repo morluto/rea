@@ -417,7 +417,9 @@ function* readVersionNames(
     textBytes = nextTextBytes;
   };
   const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
-  if (verneed !== undefined) {
+  // sh_info is the requirement count. An empty table cannot supply names,
+  // so compressed storage of that table is not a failed requirement read.
+  if (verneed !== undefined && verneed.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,

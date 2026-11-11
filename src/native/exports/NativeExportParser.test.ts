@@ -189,6 +189,31 @@ it.each(
   },
 );
 
+it("skips an empty compressed requirement table without a version failure", () => {
+  const bytes = elfExportImage({
+    bits: 64,
+    little: true,
+    symbols: [{ name: "defined", version: 2 }],
+    versionDefinitions: ["lib.so", "DEFINED"],
+    versionRequirements: [{ index: 3, name: "REQUIRED" }],
+  });
+  const compressed = compressExportSection(bytes, 5);
+  const view = new DataView(
+    compressed.buffer,
+    compressed.byteOffset,
+    compressed.byteLength,
+  );
+  const table = Number(view.getBigUint64(40, true));
+  view.setUint32(table + 5 * 64 + 44, 0, true);
+  const result = parse(compressed);
+  const defined = result.exports.find(({ name }) => name === "defined");
+  if (defined === undefined || !("version" in defined))
+    throw new Error("Expected the ELF definition export");
+  expect(defined.version).toMatchObject({ index: 2, name: "DEFINED" });
+  expect(result.coverage.status).toBe("complete");
+  expect(result.issues).toEqual([]);
+});
+
 it("keeps requirement names when an empty compressed definition table declares no entries", () => {
   const bytes = elfExportImage({
     bits: 64,
