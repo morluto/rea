@@ -39,6 +39,11 @@ import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
 } from "./wasm/wasmArtifact.js";
+import {
+  DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+} from "./webBundleEndpointLiteralBudget.js";
 interface SettingDefinition {
   readonly environment?: string;
   readonly defaultValue: number | null;
@@ -46,6 +51,7 @@ interface SettingDefinition {
   readonly maximum: number;
   readonly unit: "bytes" | "ms" | "seconds" | "MiB" | "count";
   readonly appliesAt: "next_operation" | "next_worker" | "next_startup";
+  readonly updateMode: "runtime" | "restart";
   readonly provider: string;
   readonly relatedProviders?: readonly string[];
   readonly operations: readonly string[];
@@ -60,6 +66,7 @@ const timer = {
 /** Metadata aggregates existing owner definitions; no environment mutation or engine discovery. */
 export const ANALYSIS_SETTINGS = {
   "ghidra.decompile_max_payload_mib": {
+    updateMode: "runtime",
     environment: "REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB",
     defaultValue: null,
     minimum: 1,
@@ -77,6 +84,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "asar.max_listing_bytes": {
+    updateMode: "runtime",
     environment: "REA_ASAR_MAX_LISTING_BYTES",
     defaultValue: DEFAULT_ASAR_MAX_LISTING_BYTES,
     minimum: 1,
@@ -100,6 +108,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "ghidra.value_flow_max_operations": {
+    updateMode: "runtime",
     environment: "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
     defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
     minimum: 1,
@@ -114,6 +123,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "ghidra.value_flow_max_inputs_per_operation": {
+    updateMode: "runtime",
     environment: "REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION",
     defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
     minimum: 1,
@@ -128,6 +138,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "ghidra.value_flow_max_edges": {
+    updateMode: "runtime",
     environment: "REA_GHIDRA_VALUE_FLOW_MAX_EDGES",
     defaultValue: DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
     minimum: 1,
@@ -142,6 +153,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "asar.max_header_bytes": {
+    updateMode: "runtime",
     environment: "REA_ASAR_MAX_HEADER_BYTES",
     defaultValue: DEFAULT_ASAR_MAX_HEADER_BYTES,
     minimum: 1,
@@ -165,6 +177,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "ghidra.startup_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
     defaultValue: DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
@@ -185,6 +198,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "hopper.startup_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_HOPPER_STARTUP_TIMEOUT_MS",
     defaultValue: DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -205,6 +219,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "ghidra.decompile_timeout_seconds": {
+    updateMode: "runtime",
     environment: "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
     defaultValue: null,
     minimum: 1,
@@ -220,6 +235,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "jadx.operation_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_JADX_OPERATION_TIMEOUT_MS",
     defaultValue: DEFAULT_JADX_OPERATION_TIMEOUT_MS,
@@ -233,6 +249,7 @@ export const ANALYSIS_SETTINGS = {
     ],
   },
   "regex.matching_deadline_ms": {
+    updateMode: "runtime",
     ...timer,
     environment: "REA_REGEX_MATCHING_DEADLINE_MS",
     defaultValue: DEFAULT_REGEX_MATCHING_DEADLINE_MS,
@@ -242,6 +259,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["search_strings", "search_procedures"],
   },
   "regex.worker_heap_request_mib": {
+    updateMode: "runtime",
     environment: "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
     defaultValue: DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB,
     minimum: MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -253,6 +271,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["search_strings", "search_procedures"],
   },
   "capture.decoder_old_generation_mib": {
+    updateMode: "runtime",
     environment: "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
     defaultValue: DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
     minimum: CAPTURE_DECODER_SEMI_SPACE_MIB,
@@ -263,6 +282,7 @@ export const ANALYSIS_SETTINGS = {
     operations: ["inspect_web_network_capture"],
   },
   "javascript.analysis_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     defaultValue: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
     provider: "rea-javascript-application",
@@ -270,6 +290,7 @@ export const ANALYSIS_SETTINGS = {
     parameter: "analysis_timeout_ms",
   },
   "javascript.max_heap_mb": {
+    updateMode: "runtime",
     defaultValue: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
     minimum: JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
     maximum: JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
@@ -280,6 +301,7 @@ export const ANALYSIS_SETTINGS = {
     parameter: "max_heap_mb",
   },
   "wasm.command_timeout_ms": {
+    updateMode: "runtime",
     ...timer,
     defaultValue: DEFAULT_WASM_COMMAND_TIMEOUT_MS,
     maximum: MAX_WASM_COMMAND_TIMEOUT_MS,
@@ -288,6 +310,7 @@ export const ANALYSIS_SETTINGS = {
     parameter: "command_timeout_ms",
   },
   "native.matching_representation_bytes": {
+    updateMode: "runtime",
     environment: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
     defaultValue: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
     minimum: 1,
@@ -296,6 +319,17 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_operation",
     provider: "rea-function-comparison",
     operations: ["match_native_functions"],
+  },
+  "web.bundle_endpoint_literal_candidates": {
+    updateMode: "runtime",
+    environment: "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
+    defaultValue: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    minimum: MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    maximum: MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-cdp-browser",
+    operations: ["analyze_web_bundle"],
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 export const analysisSettingIds = Object.keys(
@@ -317,6 +351,23 @@ export const analysisSettingValueSchema = (id: AnalysisSettingId) => {
     ? number.nullable()
     : number;
 };
+/**
+ * Caller argument, then the accepted runtime override, then the built-in
+ * default. The third value is that default, not a launch-environment seed.
+ */
+export const selectedAnalysisSetting = (
+  request: number | undefined,
+  override: number | undefined,
+  fallback: number,
+): {
+  readonly value: number;
+  readonly source: "default" | "runtime" | "request";
+} => {
+  if (request !== undefined) return { value: request, source: "request" };
+  if (override !== undefined) return { value: override, source: "runtime" };
+  return { value: fallback, source: "default" };
+};
+
 /** Project one owner's accepted budget, including the explicit per-call precedence. */
 export const analysisSettingLimit = (
   setting: AnalysisSettingId,
@@ -334,7 +385,8 @@ export const analysisSettingLimit = (
     applies_at: definition.appliesAt,
     agent_editable: true,
     scope: "rea-runtime",
-    rea_restart_required: false,
+    update_mode: source === "request" ? "parameter" : definition.updateMode,
+    pending_restart: false,
     ...(definition.parameter === undefined
       ? {}
       : { parameter: definition.parameter }),

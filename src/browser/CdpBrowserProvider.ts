@@ -87,6 +87,8 @@ import { captureCdpScreenshot } from "./CdpScreenshot.js";
 import { comparePngScreenshots } from "./PngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { runtimeWebBundleEndpointLiteralAdmission } from "../config/webBundleEndpointLiteralCandidates.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   CdpTargetSessionOwner,
@@ -104,9 +106,17 @@ const CLEANUP_DOMAINS = [
 export class CdpBrowserProvider implements BrowserObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
   readonly #bundleAnalyzer: IsolatedWebBundleAnalyzer;
+  readonly #environment: Readonly<Record<string, string | undefined>>;
+  readonly #settings: AnalysisSettingsReader | undefined;
 
-  constructor(admission?: WebBundleAnalysisAdmission) {
+  constructor(
+    admission?: WebBundleAnalysisAdmission,
+    environment: Readonly<Record<string, string | undefined>> = process.env,
+    settings?: AnalysisSettingsReader,
+  ) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
+    this.#environment = environment;
+    this.#settings = settings;
   }
 
   async close(): Promise<void> {
@@ -250,6 +260,10 @@ export class CdpBrowserProvider implements BrowserObservationPort {
           captured.inspection.completeness.excluded,
         );
       }
+      const endpointLiterals = runtimeWebBundleEndpointLiteralAdmission(
+        this.#environment,
+        this.#settings,
+      );
       return await this.#bundleAnalyzer.analyze(
         captured.inspection,
         sourceMaps ?? {
@@ -260,6 +274,10 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         },
         input,
         options.signal,
+        {
+          maximumCount: endpointLiterals.maximumCount,
+          source: endpointLiterals.source,
+        },
       );
     } catch (cause: unknown) {
       // Capture and analyzer work can still throw the exact caller reason.

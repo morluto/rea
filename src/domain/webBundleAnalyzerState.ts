@@ -1,5 +1,9 @@
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
+import {
+  DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION,
+  type WebBundleEndpointLiteralAdmission,
+} from "./webBundleEndpointLiteralBudget.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type BrowserScript = WebPageInspection["scripts"]["items"][number];
@@ -23,9 +27,15 @@ export interface AnalysisAccumulator {
   readonly failedScripts: string[];
   readonly recoveredScripts: string[];
   readonly widenedScripts: string[];
+  readonly endpointLiterals: WebBundleEndpointLiteralAdmission;
+  endpointLiteralAdmitted: number;
+  endpointLiteralOmitted: number;
+  endpointLiteralOmittedExact: boolean;
 }
 
-export const createWebBundleAnalysisAccumulator = (): AnalysisAccumulator => ({
+export const createWebBundleAnalysisAccumulator = (
+  endpointLiterals: WebBundleEndpointLiteralAdmission = DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION,
+): AnalysisAccumulator => ({
   edges: [],
   routes: [],
   endpoints: [],
@@ -37,6 +47,10 @@ export const createWebBundleAnalysisAccumulator = (): AnalysisAccumulator => ({
   failedScripts: [],
   recoveredScripts: [],
   widenedScripts: [],
+  endpointLiterals,
+  endpointLiteralAdmitted: 0,
+  endpointLiteralOmitted: 0,
+  endpointLiteralOmittedExact: true,
 });
 
 export const isIncludedScript = (

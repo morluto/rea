@@ -2,6 +2,35 @@ import { z } from "zod";
 
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
 import { javaScriptRouteSourceFactsSchema } from "./javascript/javascriptRouteFacts.js";
+import {
+  MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+  WEB_BUNDLE_ENDPOINT_LITERAL_CODE,
+  WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID,
+} from "./webBundleEndpointLiteralBudget.js";
+
+const endpointLiteralCandidatesSchema = z.strictObject({
+  coverage: z.literal("partial"),
+  code: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_CODE),
+  setting: z.literal(WEB_BUNDLE_ENDPOINT_LITERAL_SETTING_ID),
+  admitted_count: z.number().int().nonnegative(),
+  omitted_by_count: z.number().int().nonnegative(),
+  omitted_by_count_exact: z.boolean(),
+  omitted_by_result_budget: z.number().int().nonnegative(),
+  omitted_count: z.number().int().positive(),
+  maximum_count: z
+    .number()
+    .int()
+    .min(MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES)
+    .max(MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES),
+  source: z.enum(["default", "setting", "runtime"]),
+  default_count: z.number().int().positive(),
+  floor_count: z.number().int().positive(),
+  maximum_setting_count: z.number().int().positive(),
+  update_mode: z.literal("runtime"),
+  pending_restart: z.literal(false),
+  ceiling: z.enum(["adjustable", "maximal"]),
+});
 
 const observationsSchema = z.strictObject({
   edges: webBundleAnalysisSchema.shape.observations.shape.chunks.shape.edges,
@@ -23,6 +52,7 @@ export const webBundleScriptAnalysisSchema = z
       route_facts: javaScriptRouteSourceFactsSchema.nullable().optional(),
       observations: observationsSchema,
       inferences: webBundleAnalysisSchema.shape.inferences,
+      endpoint_literal_candidates: endpointLiteralCandidatesSchema.optional(),
     }),
     z.strictObject({
       status: z.literal("unavailable"),

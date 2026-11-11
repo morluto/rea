@@ -136,6 +136,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    endpointLiterals?: import("../domain/webBundleEndpointLiteralBudget.js").WebBundleEndpointLiteralAdmission,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     if (this.#closed)
       return Promise.resolve(
@@ -162,6 +163,7 @@ export class IsolatedWebBundleAnalyzer {
       sourceMaps,
       input,
       signal,
+      endpointLiterals,
     ).finally(() => {
       this.#running = undefined;
       this.#controller = undefined;
@@ -175,6 +177,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    endpointLiterals?: import("../domain/webBundleEndpointLiteralBudget.js").WebBundleEndpointLiteralAdmission,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     const scripts = inspection.scripts.items.filter(isIncludedScript);
     const results: WebBundleScriptAnalysis[] = [];
@@ -216,6 +219,7 @@ export class IsolatedWebBundleAnalyzer {
           input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
           deadline.signal,
           input.semantic_precision,
+          endpointLiterals,
         );
         if (analyzed.ok) results.push(analyzed.value);
         else {

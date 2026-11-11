@@ -63,6 +63,12 @@ export type WabtVersionProbe = {
 
 type WabtFailureContext = {
   readonly commandTimeoutMs: number;
+  readonly commandTimeoutSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
   readonly limits?: WasmResourceLimits;
   readonly versionProbe?: WabtVersionProbe;
   readonly inputField?: readonly (string | number)[];
@@ -182,13 +188,17 @@ const classifyWabtFailure = (
     // Classify once before cleanup takes precedence, so the primary remains actionable.
     const timeoutMs =
       execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const timeoutSource =
+      execution?.commandTimeoutMs === undefined
+        ? "default"
+        : execution.commandTimeoutSource;
     const timeout =
       cause.reason === "timeout"
         ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
             limit: analysisSettingLimit(
               "wasm.command_timeout_ms",
               timeoutMs,
-              undefined,
+              timeoutSource,
             ),
             ...options,
             // The cleanup wrapper retains output once; its nested primary needs only recovery facts.

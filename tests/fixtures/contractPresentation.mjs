@@ -44,12 +44,17 @@ await withVerifierCleanup(async () => {
     const example = contract.examples[0];
     if (example === undefined)
       throw new Error(`Missing example for ${contract.name}`);
+    const advertised = catalog.tools.find(({ name }) => name === contract.name);
+    if (advertised === undefined)
+      throw new Error(`Missing advertised tool ${contract.name}`);
     responses.push({
       name: contract.name,
-      response: await client.callTool({
-        name: contract.name,
-        arguments: example.input,
-      }),
+      // Validate the selected advertised schema without compiling every unrelated
+      // tool's output schema through the SDK's catalog-wide validator cache.
+      response: await client.callTool(
+        { name: contract.name, arguments: example.input },
+        { toolDefinition: advertised },
+      ),
     });
   }
   process.stdout.write(JSON.stringify({ catalog: catalog.tools, responses }));

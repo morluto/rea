@@ -15,13 +15,11 @@ import type { JavaScriptRouteSourceFacts } from "./javascript/javascriptRouteFac
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
-import {
-  traverseJavaScriptAst,
-  completeSemanticSteps,
-} from "./javascript/javascriptSemanticTraversal.js";
+import * as javascriptSemanticTraversal from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
@@ -46,6 +44,7 @@ import {
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
 import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
 import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import { webBundleEndpointLiteral } from "./webBundleEndpointLiterals.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type ChunkEdge = BundleObservations["chunks"]["edges"][number];
@@ -66,16 +65,18 @@ export const analyzeScript = (
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
-  const index = completeSemanticSteps(
+  const index = javascriptSemanticTraversal.completeSemanticSteps(
     indexJavaScriptBindingsWithReceiversSteps(
       file.program,
       undefined,
       precision,
     ),
   );
-  completeSemanticSteps(index.indexAmbientWritesSteps());
+  javascriptSemanticTraversal.completeSemanticSteps(
+    index.indexAmbientWritesSteps(),
+  );
   const { receivers } = index;
-  const routeScan = completeSemanticSteps(
+  const routeScan = javascriptSemanticTraversal.completeSemanticSteps(
     JavaScriptRouteScan.createSteps(file, index, ({ node, value, mechanism }) =>
       addFinding({
         collection: accumulator.routes,
@@ -95,7 +96,9 @@ export const analyzeScript = (
     const proof = isIntrinsicMapLookup(node, index.bindings);
     if (proof !== undefined) return proof;
     if (!mutationFactsIndexed) {
-      completeSemanticSteps(index.indexMemberMutationFactsSteps());
+      javascriptSemanticTraversal.completeSemanticSteps(
+        index.indexMemberMutationFactsSteps(),
+      );
       mutationFactsIndexed = true;
     }
     return isIntrinsicMapLookup(node, index.bindings, index) === true;
@@ -106,10 +109,20 @@ export const analyzeScript = (
     receivers.rpcClientRoots,
     index,
   );
-  traverseJavaScriptAst(file, {
-    enter: (node, parent) => {
+  javascriptSemanticTraversal.traverseJavaScriptAst(file, {
+    enter: (node, parent, readAncestors) => {
       accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
+      inspectEndpointLiterals(script, node, parent, readAncestors, accumulator);
+      inspectWrapperLiteralArgument(
+        script,
+        node,
+        parent,
+        accumulator,
+        openReceiverFacts,
+        isMapLookup,
+        index.bindings,
+      );
       inspectNode(
         script,
         node,
@@ -143,7 +156,9 @@ export const analyzeScript = (
       });
   if (index.bindings.returnedReferenceWidenings.size > 0)
     accumulator.widenedScripts.push(script.script_key);
-  return completeSemanticSteps(routeScan.finishSteps());
+  return javascriptSemanticTraversal.completeSemanticSteps(
+    routeScan.finishSteps(),
+  );
 };
 
 const inspectNode = (
@@ -206,7 +221,10 @@ const inspectCall = (
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  if ((name === "require" || name.endsWith(".require")) && first !== undefined)
+  const requireCall = name === "require" || name.endsWith(".require");
+  const workerImportCall =
+    name === "importScripts" || name.endsWith(".importScripts");
+  if (requireCall && first !== undefined)
     addEdge({
       script,
       specifier: first,
@@ -214,7 +232,7 @@ const inspectCall = (
       node,
       accumulator,
     });
-  if (name === "importScripts" || name.endsWith(".importScripts"))
+  if (workerImportCall)
     for (const argument of node.arguments) {
       const specifier = stringValue(argument);
       if (specifier === undefined) continue;
@@ -249,7 +267,7 @@ const inspectCall = (
     addEndpointCandidate(
       script,
       node,
-      name,
+      `call:${name}:unverified-network-receiver`,
       networkEndpoint.value,
       accumulator,
     );
@@ -264,6 +282,87 @@ const inspectCall = (
     });
   if (isWebMcpRegistrationCallee(node.callee))
     addWebMcpDeclaration(script, node, accumulator);
+};
+
+/** Record a wrapper argument when traversal enters it, after its callee. */
+const inspectWrapperLiteralArgument = (
+  script: IncludedScript,
+  node: t.Node,
+  parent: t.Node | null,
+  accumulator: AnalysisAccumulator,
+  openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+  isMapLookup: (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ) => boolean,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  if (
+    parent === null ||
+    (!t.isCallExpression(parent) && !t.isOptionalCallExpression(parent)) ||
+    parent.arguments[0] !== node
+  )
+    return;
+  const name = calleeName(parent.callee);
+  if (
+    t.isNewExpression(parent) ||
+    name === "require" ||
+    name.endsWith(".require") ||
+    name === "importScripts" ||
+    name.endsWith(".importScripts") ||
+    isMapLookup(parent) ||
+    openReceiverFacts.get(parent.start ?? -1) === "window" ||
+    isUnmodifiedGlobalReference(parent.callee, bindings, "open") ||
+    endpointArgument(
+      name,
+      parent.arguments,
+      parent.callee,
+      openReceiverFacts.get(parent.start ?? -1),
+    ) !== undefined
+  )
+    return;
+  const literal = webBundleEndpointLiteral(node);
+  if (literal === undefined) return;
+  addEndpointCandidate(
+    script,
+    node,
+    literal.detector,
+    literal.value,
+    accumulator,
+  );
+};
+
+const inspectEndpointLiterals = (
+  script: IncludedScript,
+  node: t.Node,
+  parent: t.Node | null,
+  readAncestors: () => readonly t.Node[],
+  accumulator: AnalysisAccumulator,
+): void => {
+  // Record the node being entered, not its later siblings. Source-tree order
+  // then keeps a nested literal ahead of the same value in a following element.
+  // The traversal parent is the immediate ancestor. Copy the ancestor list only
+  // after this node is a URL-shaped initializer that still needs its grandparent.
+  const inArray = t.isArrayExpression(parent);
+  const initializer =
+    parent !== null && t.isVariableDeclarator(parent) && node === parent.init;
+  if (!inArray && !initializer) return;
+  const literal = webBundleEndpointLiteral(node);
+  if (literal === undefined) return;
+  if (!inArray && literal.detector !== "literal:url-shaped") return;
+  if (
+    initializer &&
+    !t.isVariableDeclaration(readAncestors().at(-2) ?? null, {
+      kind: "const",
+    })
+  )
+    return;
+  addEndpointCandidate(
+    script,
+    node,
+    literal.detector,
+    literal.value,
+    accumulator,
+  );
 };
 
 /** Match exact WebMCP receiver and method properties without flattening keys. */
@@ -324,18 +423,29 @@ interface AddFindingContext {
 const addEndpointCandidate = (
   script: IncludedScript,
   node: t.Node,
-  name: string,
+  detector: string,
   rawValue: string,
   accumulator: AnalysisAccumulator,
 ): void => {
   const value = sanitizeEndpointCandidate(rawValue);
-  const detector = `call:${name}:unverified-network-receiver`;
   const key = compositeKey([
     "endpoint-candidate",
     script.script_key,
     value,
     detector,
   ]);
+  if (accumulator.seen.has(key)) return;
+  const literalCandidate =
+    detector === "literal:path-shaped" || detector === "literal:url-shaped";
+  if (
+    literalCandidate &&
+    accumulator.endpointLiteralAdmitted >=
+      accumulator.endpointLiterals.maximumCount
+  ) {
+    accumulator.endpointLiteralOmitted += 1;
+    accumulator.endpointLiteralOmittedExact = false;
+    return;
+  }
   // This is a per-script candidate inventory, not a callsite list. Keep the
   // first representative source position without multiplying inline records.
   addUnique(accumulator, key, () =>
@@ -346,6 +456,7 @@ const addEndpointCandidate = (
       basis: [{ ...basis(script, detector), ...locationFields(node) }],
     }),
   );
+  if (literalCandidate) accumulator.endpointLiteralAdmitted += 1;
 };
 
 const addFinding = (context: AddFindingContext): void => {

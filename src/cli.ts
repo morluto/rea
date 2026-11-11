@@ -227,7 +227,7 @@ export const createCli = (
     jeb: () => registerJebCommands(cli, logger, environment),
     adb: () => registerAdbCommands(cli, logger, environment),
     browser: () => {
-      registerBrowserCommands(cli, logger);
+      registerBrowserCommands(cli, logger, environment);
       registerWebRuntimeCommands(cli, logger);
       registerWebNetworkCaptureCommands(cli, logger, environment);
       registerAdvancedBrowserCommands(cli, logger);

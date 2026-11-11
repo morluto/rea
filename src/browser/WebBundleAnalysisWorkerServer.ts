@@ -30,6 +30,8 @@ export interface WebBundleScriptAnalyzer {
   (
     script: IncludedScript,
     precision?: JavaScriptSemanticPrecisionInput,
+    endpointLiterals?: import("../domain/webBundleEndpointLiteralBudget.js").WebBundleEndpointLiteralAdmission,
+    resultBudgetBytes?: number,
   ): WebBundleScriptAnalysis;
 }
 
@@ -132,7 +134,17 @@ const analyzeJob = async (
     let result: WebBundleScriptAnalysis;
     try {
       result = webBundleScriptAnalysisSchema.parse(
-        analyze(script, request.semantic_precision),
+        analyze(
+          script,
+          request.semantic_precision,
+          request.endpoint_literal_candidates === undefined
+            ? undefined
+            : {
+                maximumCount: request.endpoint_literal_candidates.maximum_count,
+                source: request.endpoint_literal_candidates.source,
+              },
+          request.result_budget_bytes,
+        ),
       );
     } catch (cause) {
       throw new WebBundleWorkerOutputError(

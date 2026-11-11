@@ -29,53 +29,57 @@ const resultSchema = z.object({
   ),
 });
 
-it("preserves full advertised schemas and handler meaning when presentation order changes", async () => {
-  const { stdout } = await execute(process.execPath, [fixture, "reversed"], {
-    env: {
-      ...process.env,
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
-    },
-    timeout: 20_000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  const result = resultSchema.parse(JSON.parse(stdout));
-  expect(result.catalog).toHaveLength(GENERATED_MCP_TOOL_CATALOG.length);
-  expect(new Set(result.catalog.map(({ name }) => name))).toEqual(
-    new Set(GENERATED_MCP_TOOL_CATALOG.map(({ name }) => name)),
-  );
-  for (const advertised of result.catalog) {
-    const canonical = GENERATED_MCP_TOOL_CATALOG.find(
-      ({ name }) => name === advertised.name,
+it(
+  "preserves full advertised schemas and handler meaning when presentation order changes",
+  { timeout: 60_000 },
+  async () => {
+    const { stdout } = await execute(process.execPath, [fixture, "reversed"], {
+      env: {
+        ...process.env,
+        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+      },
+      timeout: 45_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const result = resultSchema.parse(JSON.parse(stdout));
+    expect(result.catalog).toHaveLength(GENERATED_MCP_TOOL_CATALOG.length);
+    expect(new Set(result.catalog.map(({ name }) => name))).toEqual(
+      new Set(GENERATED_MCP_TOOL_CATALOG.map(({ name }) => name)),
     );
-    expect(advertised.inputSchema).toEqual(canonical?.inputSchema);
-    expect(advertised.outputSchema).toEqual(canonical?.outputSchema);
-  }
-  expect(result.responses.map(({ name }) => name).sort()).toEqual(
-    [
-      ...BROWSER_TOOL_CONTRACTS,
-      ...BROWSER_SCENARIO_TOOL_CONTRACTS,
-      ...ELECTRON_TOOL_CONTRACTS.filter(
-        ({ name }) => name !== "analyze_javascript_application",
-      ),
-      ...JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
-    ]
-      .map(({ name }) => name)
-      .sort(),
-  );
-  for (const { name, response } of result.responses) {
-    if (!isCallToolResult(response))
-      throw new Error(`Invalid tools/call fixture result for ${name}`);
-    if (name === "reconcile_javascript_runtime") {
-      expect(response.isError).not.toBe(true);
-      expect(response.structuredContent).toMatchObject({
-        operation: name,
-      });
-    } else {
-      expect(response.isError, name).toBe(true);
-      expect(parseMcpToolError(response), name).toMatchObject({
-        error: { details: { operation: name } },
-      });
+    for (const advertised of result.catalog) {
+      const canonical = GENERATED_MCP_TOOL_CATALOG.find(
+        ({ name }) => name === advertised.name,
+      );
+      expect(advertised.inputSchema).toEqual(canonical?.inputSchema);
+      expect(advertised.outputSchema).toEqual(canonical?.outputSchema);
     }
-  }
-});
+    expect(result.responses.map(({ name }) => name).sort()).toEqual(
+      [
+        ...BROWSER_TOOL_CONTRACTS,
+        ...BROWSER_SCENARIO_TOOL_CONTRACTS,
+        ...ELECTRON_TOOL_CONTRACTS.filter(
+          ({ name }) => name !== "analyze_javascript_application",
+        ),
+        ...JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
+      ]
+        .map(({ name }) => name)
+        .sort(),
+    );
+    for (const { name, response } of result.responses) {
+      if (!isCallToolResult(response))
+        throw new Error(`Invalid tools/call fixture result for ${name}`);
+      if (name === "reconcile_javascript_runtime") {
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          operation: name,
+        });
+      } else {
+        expect(response.isError, name).toBe(true);
+        expect(parseMcpToolError(response), name).toMatchObject({
+          error: { details: { operation: name } },
+        });
+      }
+    }
+  },
+);

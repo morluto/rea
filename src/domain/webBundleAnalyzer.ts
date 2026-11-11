@@ -1,5 +1,11 @@
 import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import { analyzeScript } from "./webBundleAnalyzerInspection.js";
+import type { JsonValue } from "./jsonValue.js";
+import {
+  retainLiteralCandidatesWithinResultBudget,
+  webBundleEndpointLiteralLimit,
+  type WebBundleEndpointLiteralAdmission,
+} from "./webBundleEndpointLiteralBudget.js";
 import {
   createWebBundleAnalysisAccumulator,
   type IncludedScript,
@@ -13,24 +19,58 @@ import {
 export const analyzeCapturedWebScript = (
   script: IncludedScript,
   precision?: JavaScriptSemanticPrecisionInput,
+  endpointLiterals?: WebBundleEndpointLiteralAdmission,
+  resultBudgetBytes?: number,
 ): WebBundleScriptAnalysis => {
-  const accumulator = createWebBundleAnalysisAccumulator();
+  const accumulator = createWebBundleAnalysisAccumulator(endpointLiterals);
   const routeFacts = analyzeScript(script, accumulator, precision);
   const failed = accumulator.failedScripts.length > 0;
   const recovered = accumulator.recoveredScripts.length > 0;
-  return webBundleScriptAnalysisSchema.parse({
-    status: "analyzed",
+  const stableFacts = {
+    status: "analyzed" as const,
     script_key: script.script_key,
     parse_status: failed ? "failed" : recovered ? "recovered" : "parsed",
     visited_ast_nodes: accumulator.visitedNodes,
     widened_return_references: accumulator.widenedScripts.length > 0,
-    route_facts: routeFacts,
     observations: {
       edges: accumulator.edges,
       routes: accumulator.routes,
       endpoints: accumulator.endpoints,
       webmcp_declarations: accumulator.webMcp,
     },
-    inferences: accumulator.inferences,
+  };
+  // Route facts stay out of this measurement. The worker fits that optional
+  // facet into whatever result budget remains after these facts.
+  const fitted =
+    resultBudgetBytes === undefined
+      ? {
+          inferences: accumulator.inferences,
+          admittedCount: accumulator.endpointLiteralAdmitted,
+          omittedByCount: accumulator.endpointLiteralOmitted,
+          omittedByCountExact: accumulator.endpointLiteralOmittedExact,
+          omittedByResultBudget: 0,
+        }
+      : retainLiteralCandidatesWithinResultBudget(
+          stableFacts as unknown as JsonValue,
+          accumulator.inferences,
+          accumulator.endpointLiterals,
+          accumulator.endpointLiteralOmitted,
+          accumulator.endpointLiteralOmittedExact,
+          resultBudgetBytes,
+        );
+  const endpointLiteralCandidates = webBundleEndpointLiteralLimit(
+    accumulator.endpointLiterals,
+    fitted.admittedCount,
+    fitted.omittedByCount,
+    fitted.omittedByResultBudget,
+    fitted.omittedByCountExact,
+  );
+  return webBundleScriptAnalysisSchema.parse({
+    ...stableFacts,
+    route_facts: routeFacts,
+    inferences: fitted.inferences,
+    ...(endpointLiteralCandidates === undefined
+      ? {}
+      : { endpoint_literal_candidates: endpointLiteralCandidates }),
   });
 };

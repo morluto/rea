@@ -1,6 +1,7 @@
 import type { WebPageInspection } from "../../../src/domain/browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "../../../src/domain/webBundleAnalysis.js";
 import { analyzeCapturedWebScript } from "../../../src/domain/webBundleAnalyzer.js";
+import type { WebBundleEndpointLiteralAdmission } from "../../../src/domain/webBundleEndpointLiteralBudget.js";
 import { buildCapturedWebBundleAnalysis } from "../../../src/domain/webBundleAnalyzerResult.js";
 import { isIncludedScript } from "../../../src/domain/webBundleAnalyzerState.js";
 
@@ -13,11 +14,20 @@ export const analyzeWebBundleFixture = (
     processed: 0,
     items: [],
   },
+  endpointLiterals?: WebBundleEndpointLiteralAdmission,
+  resultBudgetBytes?: number,
 ): WebBundleAnalysis => {
   const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
   return buildCapturedWebBundleAnalysis(
     inspection,
     sourceMaps,
-    sourceScripts.map((script) => analyzeCapturedWebScript(script)),
+    sourceScripts.map((script) =>
+      analyzeCapturedWebScript(
+        script,
+        undefined,
+        endpointLiterals,
+        resultBudgetBytes,
+      ),
+    ),
   );
 };

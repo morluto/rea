@@ -47,16 +47,18 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 export const registerBrowserCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  registerTargetList(cli, logger);
-  registerPageInspection(cli, logger);
-  registerBundleAnalysis(cli, logger);
-  registerObservationSession(cli, logger);
+  registerTargetList(cli, logger, environment);
+  registerPageInspection(cli, logger, environment);
+  registerBundleAnalysis(cli, logger, environment);
+  registerObservationSession(cli, logger, environment);
 };
 
 const registerTargetList = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.listBrowserTargets, {
     description:
@@ -73,7 +75,10 @@ const registerTargetList = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "list-browser-targets", async () => {
-          const provider = createBrowserObservationProvider();
+          const provider = createBrowserObservationProvider(
+            undefined,
+            environment,
+          );
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -107,6 +112,7 @@ const registerTargetList = (
 const registerPageInspection = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.inspectWebPage, {
     description:
@@ -123,7 +129,10 @@ const registerPageInspection = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "inspect-web-page", async () => {
-          const provider = createBrowserObservationProvider();
+          const provider = createBrowserObservationProvider(
+            undefined,
+            environment,
+          );
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -167,6 +176,7 @@ const registerPageInspection = (
 const registerBundleAnalysis = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeWebBundle, {
     description:
@@ -223,7 +233,10 @@ const registerBundleAnalysis = (
                   signal,
                 );
           if (precision !== undefined && !precision.ok) return precision.error;
-          const provider = createBrowserObservationProvider();
+          const provider = createBrowserObservationProvider(
+            undefined,
+            environment,
+          );
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -281,6 +294,7 @@ const registerBundleAnalysis = (
 const registerObservationSession = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.observeWebSession, {
     description: "Observe user-driven page navigation during a chosen window",
@@ -299,7 +313,10 @@ const registerObservationSession = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "observe-web-session", async () => {
-          const provider = createBrowserObservationProvider();
+          const provider = createBrowserObservationProvider(
+            undefined,
+            environment,
+          );
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,

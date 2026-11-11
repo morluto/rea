@@ -37,7 +37,11 @@ export const createOptionalObservationFactories = (
       const { WebBundleAnalysisAdmission: Admission } =
         await import("../browser/IsolatedWebBundleAnalyzer.js");
       webBundleAdmission ??= new Admission();
-      return browser.createBrowserObservationProvider(webBundleAdmission);
+      return browser.createBrowserObservationProvider(
+        webBundleAdmission,
+        environment,
+        settings,
+      );
     },
     browserScenarioCapture: async () =>
       (await import("./browserScenario.js")).createBrowserScenarioProvider(
