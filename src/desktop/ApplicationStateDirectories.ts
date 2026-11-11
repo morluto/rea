@@ -102,9 +102,21 @@ export const stateDirectories = async (
     ...extra,
   ]);
   return Promise.all(
-    [...paths].map(async (path) => ({
-      path,
-      exists_at_start: (await lstat(path).catch(() => undefined)) !== undefined,
-    })),
+    [...paths].map(async (path) => {
+      try {
+        await lstat(path);
+        return { path, exists_at_start: true };
+      } catch (cause: unknown) {
+        const code = (cause as NodeJS.ErrnoException).code;
+        return code === "ENOENT" || code === "ENOTDIR"
+          ? { path, exists_at_start: false }
+          : {
+              path,
+              exists_at_start: null,
+              existence_error:
+                cause instanceof Error ? cause.message : String(cause),
+            };
+      }
+    }),
   );
 };

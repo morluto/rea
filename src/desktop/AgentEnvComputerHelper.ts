@@ -134,7 +134,7 @@ const sandboxFilters = (sandbox: string): readonly string[] => [
 ];
 
 /** Remove the containers of one sandbox REA's helper named, by their exact name and label; undefined once removed. */
-const removeSandbox = async (
+export const removeSandbox = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   sandbox: string,
 ): Promise<string | undefined> => {

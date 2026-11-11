@@ -7,32 +7,77 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  digestFile,
-  REVERSE_COMMAND_OUTPUT_LIMITATION,
-} from "../../src/application/reverse/ReverseEngineeringService.js";
+import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
-import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
 
-it("documents the shared combined capture limit for both command tools", () => {
-  expect(REVERSE_ENGINEERING_TOOL_CONTRACTS.map(({ name }) => name)).toEqual(
-    expect.arrayContaining(["inspect_with_objdump", "execute_rizin_command"]),
-  );
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("shared 16 MiB combined limit");
-  expect(
-    REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
-      ({ name }) => name === "inspect_with_objdump",
-    )?.description,
-  ).toContain("does not follow local debug links by default");
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("command_timeout_ms");
-});
+it.each(["objdump", "rizin"] as const)(
+  "recovers a bounded %s capture after the caller raises output admission",
+  async (provider) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-reverse-output-admission-"),
+    );
+    const path = join(directory, "input.bin");
+    await writeFile(path, "selected artifact");
+    const profile = {
+      executable: process.execPath,
+      arguments: ["-e", "process.stdout.write('complete-output')"],
+      identity: {
+        id: "fixture-command",
+        name: "Fixture command",
+        version: "1",
+      },
+    };
+    const service = new ReverseEngineeringService({
+      commands: { objdump: () => profile, rizin: () => profile },
+    });
+    const inspect = (max_output_bytes: number) =>
+      provider === "objdump"
+        ? service.inspectWithObjdump({
+            operation: "architectures",
+            max_output_bytes,
+          })
+        : service.executeRizinCommand({
+            path,
+            command: "iI",
+            max_output_bytes,
+          });
+    try {
+      const limited = await inspect(8);
+      if (!limited.ok) throw limited.error;
+      expect(limited.value.normalized_result).toMatchObject({
+        stdout: "complete",
+        output_budget_bytes: 8,
+        output_budget_source: "request",
+        output_truncated: true,
+        completion_status: "unknown",
+      });
+      expect(limited.value.parameters).toMatchObject({ max_output_bytes: 8 });
+      expect(limited.value.limitations).toContainEqual(
+        expect.stringContaining("max_output_bytes=8"),
+      );
+      const recovered = await inspect(32);
+      if (!recovered.ok) throw recovered.error;
+      expect(recovered.value.normalized_result).toMatchObject({
+        stdout: "complete-output",
+        output_budget_bytes: 32,
+        output_budget_source: "request",
+        output_truncated: false,
+        completion_status: "complete",
+      });
+      expect(recovered.value.parameters).toMatchObject({
+        max_output_bytes: 32,
+      });
+    } finally {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 describe("reverse engineering command services", () => {
   it("uses compatible local DWARF link flags and disables debuginfod through the environment", async () => {
@@ -101,12 +146,17 @@ describe("reverse engineering command services", () => {
         path: directory,
         operation: "file_headers",
       });
-      expect(result.ok).toBe(false);
-      if (!result.ok)
-        expect(result.error.cause).toMatchObject({
-          code: "EINVAL",
-          message: "Artifact digest requires a regular file",
-        });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          operation: "inspect_with_objdump",
+          cause: {
+            code: "EINVAL",
+            message: "Artifact digest requires a regular file",
+          },
+        },
+      });
       expect(invoked).toBe(false);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -177,8 +227,8 @@ describe("reverse engineering command services", () => {
           output_truncated: true,
           completion_status: "unknown",
         });
-        expect(result.value.limitations).toContain(
-          REVERSE_COMMAND_OUTPUT_LIMITATION,
+        expect(result.value.limitations).toContainEqual(
+          expect.stringContaining("max_output_bytes=16777216"),
         );
       }
     } finally {
@@ -439,29 +489,38 @@ describe("Rizin command service", () => {
     }
   });
 
-  it("rejects multiline Rizin command input before launching the provider", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-input-"));
-    const path = join(directory, "fixture.bin");
-    await writeFile(path, "fixture");
-    let invoked = false;
-    const service = new ReverseEngineeringService({
-      run: async () => {
-        invoked = true;
-        return { stdout: "", stderr: "" };
-      },
-    });
-
-    try {
-      const result = await service.executeRizinCommand({
-        path,
-        command: "iI\nq",
+  it.each(["iI\nq", "wx\u0000 00"])(
+    "rejects malformed Rizin command %j before launching the provider",
+    async (command) => {
+      const directory = await mkdtemp(join(tmpdir(), "rea-rizin-input-"));
+      const path = join(directory, "fixture.bin");
+      await writeFile(path, "fixture");
+      let invoked = false;
+      const service = new ReverseEngineeringService({
+        run: async () => {
+          invoked = true;
+          return { stdout: "", stderr: "" };
+        },
       });
-      expect(result.ok).toBe(false);
-      expect(invoked).toBe(false);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
+
+      try {
+        const result = await service.executeRizinCommand({
+          path,
+          command,
+        });
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisInputError",
+            operation: "execute_rizin_command",
+          },
+        });
+        expect(invoked).toBe(false);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves pre and post artifact digests when an unrestricted Rizin command changes the file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-rizin-mutation-"));

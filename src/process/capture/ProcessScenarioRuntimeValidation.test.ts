@@ -71,30 +71,19 @@ it("resolves a Windows executable through the canonical PATH spelling", async ()
     await mkdir(selected);
     await mkdir(ambient);
     await writeFile(join(selected, "tool.exe"), "");
-    await chmod(join(selected, "tool.exe"), 0o644);
+    await chmod(join(selected, "tool.exe"), 0o755);
     const scenario = processScenarioSchema.parse({
       executable: "tool.exe",
       working_directory: root,
       environment: { Path: selected },
     });
     const candidate = join(selected, "tool.exe");
-    try {
-      const resolved = await resolveProcessScenarioRuntimePaths(
-        scenario,
-        { PATH: ambient },
-        "win32",
-      );
-      expect(resolved.executable).toBe(candidate);
-    } catch (cause: unknown) {
-      const message =
-        cause instanceof AnalysisInputError
-          ? (cause.issues[0]?.message ?? cause.message)
-          : cause instanceof Error
-            ? cause.message
-            : String(cause);
-      expect(message).toContain(candidate);
-      expect(message).not.toContain(ambient);
-    }
+    const resolved = await resolveProcessScenarioRuntimePaths(
+      scenario,
+      { PATH: ambient },
+      "win32",
+    );
+    expect(resolved.executable).toBe(candidate);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

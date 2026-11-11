@@ -22,6 +22,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   callbacks,
   packageType,
   purpose,
+  precision,
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
@@ -33,7 +34,11 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   }
   await callbacks.phase("static");
   const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(file.text.value, parsed),
+    analyzeParsedJavaScriptStaticSourceSteps(
+      file.text.value,
+      parsed,
+      precision,
+    ),
   );
   if (purpose === "preload-discovery") {
     // Only declarations cross this preliminary pass. The normal pass owns
@@ -70,6 +75,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       parsed,
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
       capacity.nodes,
+      precision,
     ),
   );
   parsed = null;

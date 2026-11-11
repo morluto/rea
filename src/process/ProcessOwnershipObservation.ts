@@ -1,5 +1,5 @@
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
-import { readFile, stat as statPath } from "node:fs/promises";
+import { readFile, readlink, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -12,6 +12,7 @@ import {
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import {
   linuxEnvironmentRestriction,
+  linuxUidMapsDiffer,
   parseLinuxProcessIds,
   type LinuxEnvironmentRestriction,
 } from "./LinuxProcessStatus.js";
@@ -32,6 +33,7 @@ import {
 import { darwinHelperCacheDirectory } from "./DarwinHelperCache.js";
 import {
   ProcessRunTokenReadError,
+  readProcessRunToken,
   readProcessRunTokens,
 } from "./ProcessRunTokenObservations.js";
 import type {
@@ -81,7 +83,6 @@ export const observeOwnedProcessGroups = async (
       host,
       signal,
     );
-    const uncertainGroups = new Set<number>();
     const candidateProcesses = observationRows.filter((process) => {
       if (retainedPids.has(process.pid)) return true;
       const identity = firstIdentities.get(process.pid);
@@ -92,15 +93,8 @@ export const observeOwnedProcessGroups = async (
           groupIds.includes(identity.relation.processGroupId)
         )
           return true;
-        if (
-          groupIds.includes(process.processGroupId) &&
-          identity.relation?.state !== "observed"
-        )
-          uncertainGroups.add(process.processGroupId);
         return groupIds.includes(process.processGroupId);
       }
-      if (groupIds.includes(process.processGroupId))
-        uncertainGroups.add(process.processGroupId);
       return groupIds.includes(process.processGroupId);
     });
     const facts = await readProcessOwnershipFacts(
@@ -118,24 +112,26 @@ export const observeOwnedProcessGroups = async (
       scopeFacts: facts,
     });
     const observations = new Map<number, ProcessGroupObservation>(
-      groupIds.map((groupId) => [
-        groupId,
-        uncertainGroups.has(groupId)
-          ? {
-              state: "unverifiable",
-              reason: "native process-group membership could not be verified",
-            }
-          : { state: "empty" },
-      ]),
+      groupIds.map((groupId) => [groupId, { state: "empty" }]),
     );
     for (const fact of facts) {
-      if (fact.identityAfter.state === "absent") continue;
+      if (processIdentityHasExited(fact.identityAfter)) continue;
+      // An initial unreadable membership remains uncertain only while the
+      // final native fact does not establish that this candidate has exited.
+      if (
+        groupIds.includes(fact.process.processGroupId) &&
+        (fact.identityBefore.state !== "readable" ||
+          fact.identityBefore.relation?.state !== "observed")
+      )
+        observations.set(fact.process.processGroupId, {
+          state: "unverifiable",
+          reason: "native process-group membership could not be verified",
+        });
       const nativeGroupId =
         fact.identityAfter.state === "readable" &&
         fact.identityAfter.relation?.state === "observed"
           ? fact.identityAfter.relation.processGroupId
           : undefined;
-      if (processIdentityHasExited(fact.identityAfter)) continue;
       const candidateGroups = groupIds.filter(
         (groupId) =>
           nativeGroupId === groupId ||
@@ -1254,7 +1250,23 @@ export const createSystemProcessOwnershipHost = (
     ProcessOwnershipHost["processIdentities"]
   > = async (processes, signal, credentialPids) => {
     if (processes.length === 0) return new Map();
-    if (platform === "linux")
+    if (platform === "linux") {
+      const callerUserNamespace =
+        credentialPids !== undefined && credentialPids.size > 0
+          ? readlink("/proc/self/ns/user").catch(() => undefined)
+          : undefined;
+      let callerUidMap: Promise<string | undefined> | undefined;
+      const readUidMap = async (path: string): Promise<string | undefined> => {
+        try {
+          return await readFile(path, {
+            encoding: "utf8",
+            ...(signal === undefined ? {} : { signal }),
+          });
+        } catch (cause: unknown) {
+          if (isExpectedAbort(cause, signal)) throw cause;
+          return undefined;
+        }
+      };
       return new Map<number, ProcessIdentityObservation>(
         await Promise.all(
           processes.map(async ({ pid }) => {
@@ -1340,13 +1352,49 @@ export const createSystemProcessOwnershipHost = (
                 void cause;
               }
               signal?.throwIfAborted();
-              const environmentRestriction = linuxEnvironmentRestriction({
+              const restrictionFacts = {
                 uids,
                 gids: parseLinuxProcessIds(status, "Gid"),
                 procfsOwnerUid,
                 callerUid: process.geteuid?.(),
                 callerGid: process.getegid?.(),
-              });
+              };
+              let environmentRestriction =
+                linuxEnvironmentRestriction(restrictionFacts);
+              if (environmentRestriction === undefined) {
+                let userNamespaceDiffers: boolean | undefined;
+                try {
+                  const targetUserNamespace = await readlink(
+                    `/proc/${String(pid)}/ns/user`,
+                  );
+                  const callerNamespace = await callerUserNamespace;
+                  if (callerNamespace !== undefined)
+                    userNamespaceDiffers =
+                      callerNamespace !== targetUserNamespace;
+                } catch (cause: unknown) {
+                  void cause;
+                }
+                signal?.throwIfAborted();
+                if (userNamespaceDiffers === undefined) {
+                  // ns/user readlink shares environ's ptrace check. A differing
+                  // readable UID map can still establish distinct namespaces.
+                  const targetUidMap = await readUidMap(
+                    `/proc/${String(pid)}/uid_map`,
+                  );
+                  if (targetUidMap !== undefined) {
+                    callerUidMap ??= readUidMap("/proc/self/uid_map");
+                    userNamespaceDiffers = linuxUidMapsDiffer(
+                      targetUidMap,
+                      await callerUidMap,
+                    );
+                  }
+                }
+                environmentRestriction = linuxEnvironmentRestriction({
+                  ...restrictionFacts,
+                  userNamespaceDiffers,
+                });
+              }
+              signal?.throwIfAborted();
 
               let afterStatus: string;
               try {
@@ -1428,6 +1476,7 @@ export const createSystemProcessOwnershipHost = (
           }),
         ),
       );
+    }
     if (darwinTokens === undefined) return new Map();
     try {
       return await darwinTokens.identities(processes, signal);
@@ -1614,39 +1663,42 @@ export const observeProcessStartIdentity = async (
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
   expectedRunId?: string,
 ): Promise<ProcessIdentityObservation | undefined> => {
-  const process = (await host.listProcesses()).find(
-    (entry) => entry.pid === pid,
-  );
-  if (process === undefined || liveProcesses([process]).length === 0)
-    return undefined;
   if (host.processIdentities === undefined)
     return { state: "unavailable", reason: "process identity is unsupported" };
   const identity: ProcessIdentityObservation = (
-    await host.processIdentities([process])
+    await host.processIdentities([{ pid }])
   ).get(pid) ?? {
     state: "unavailable",
     reason: "process identity was not returned",
   };
+  if (identity.state === "absent" || processIdentityHasExited(identity))
+    return undefined;
   if (expectedRunId === undefined || identity.state !== "readable")
     return identity;
-  let owned = false;
-  for await (const { observation } of readProcessRunTokens(host, [process])) {
-    if (observation.state === "unavailable")
-      return {
-        state: "unavailable",
-        reason: `process ownership token could not be read for PID ${String(pid)}: ${observation.reason}`,
-      };
-    if (observation.runId !== expectedRunId)
-      return {
-        state: "unavailable",
-        reason: `process ownership token did not match the captured run for PID ${String(pid)}`,
-      };
-    owned = true;
+  const process = (await host.listProcesses()).find(
+    (entry) => entry.pid === pid,
+  );
+  let token: ProcessRunTokenObservation | undefined;
+  // Darwin's environment() admits a token only after `ps` lists the PID.
+  // The native reader already observed this live identity by PID, so an
+  // omitted row uses that reader directly instead of another process table.
+  if (process === undefined && host.runTokens !== undefined)
+    token = (await host.runTokens([{ pid }])).get(pid);
+  if (token === undefined) {
+    if (process === undefined) token = await readProcessRunToken(host, pid);
+    else
+      for await (const { observation } of readProcessRunTokens(host, [process]))
+        token = observation;
   }
-  if (!owned)
+  if (token === undefined || token.state === "unavailable")
     return {
       state: "unavailable",
-      reason: `process ownership token was not returned for PID ${String(pid)}`,
+      reason: `process ownership token could not be read for PID ${String(pid)}: ${token?.reason ?? "token was not returned"}`,
+    };
+  if (token.runId !== expectedRunId)
+    return {
+      state: "unavailable",
+      reason: `process ownership token did not match the captured run for PID ${String(pid)}`,
     };
   const confirmed = await observeProcessStartIdentity(pid, host);
   if (confirmed === undefined || confirmed.state !== "readable")

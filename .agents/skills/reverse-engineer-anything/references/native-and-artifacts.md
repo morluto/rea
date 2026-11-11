@@ -238,7 +238,10 @@ Xcode, atos, or target execution is required. The CLI equivalent is
 `inspect-apple-ips PATH`. Preserve artifact SHA-256, `bug_type` as a string,
 uppercase image UUIDs, and integer literals that exceed IEEE-754 range. Only
 `bug_type` `"309"` yields a crash body; other DiagnosticReports types return
-no crash result. Opened Mach-O and dSYM UUID joins remain unobserved. See
+no crash result. Select `join_path` for one local Mach-O or dSYM to match
+report images to slices by UUID and architecture. Preserve the selected
+artifact identity, slice facts and unjoined reasons; a joined static address
+does not resolve function names or dSYM symbols. See
 [Apple IPS crash reports](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 
 ## Linux kernel modules

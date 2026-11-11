@@ -444,7 +444,7 @@ cliTest(
 );
 
 cliTest(
-  "preserves exact large safetensors dimensions while bounding actual offsets",
+  "preserves exact large safetensors dimensions while rejecting impossible file offsets",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-shape-precision-");
     const path = join(root, "empty.safetensors");
@@ -524,8 +524,10 @@ cliTest(
     // the offset is converted to a host number.
     expect(offsetFailure.error).toMatchObject({
       code: "target_unavailable",
+      category: "unsupported_target",
       details: {
         constraint: "file_format_rejected",
+        path,
         reason: "Declared extent is outside the file",
       },
     });

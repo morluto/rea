@@ -20,7 +20,8 @@ it("throws a failed close with its cleanup owner even when the capture was cance
   const path = join(folder, "varicad2026-en_2.03_amd64.deb");
   await writeFile(path, "!<arch>\n");
   const cancel = new AbortController();
-  const owner = { close: async () => undefined } as never;
+  const close = vi.fn(async () => undefined);
+  const owner = { close } as never;
   vi.mocked(observeStableFile).mockImplementation(async (file, options) => {
     options.retainFailedClose(owner);
     cancel.abort();
@@ -46,5 +47,11 @@ it("throws a failed close with its cleanup owner even when the capture was cance
     cancel.signal,
   );
 
-  await expect(inspected).rejects.toBeInstanceOf(ArtifactFileCleanupFailure);
+  const failure = await inspected.catch((error: unknown) => error);
+  if (!(failure instanceof ArtifactFileCleanupFailure)) throw failure;
+  expect(failure.fileCleanupFailure.owner).toBe(owner);
+  expect(failure.fileCleanupFailure.path).toBe(path);
+  expect(close).not.toHaveBeenCalled();
+  await failure.cleanupLease.release();
+  expect(close).toHaveBeenCalledTimes(1);
 });

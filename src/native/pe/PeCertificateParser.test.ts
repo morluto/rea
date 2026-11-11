@@ -1274,3 +1274,49 @@ it("rejects malformed and repeated certificate extensions", () => {
     ).subject.text,
   ).toBe("commonName=Fixture");
 });
+
+it.each([[], [0x00, 0x01], [0xff, 0xff]].map((version) => ({ version })))(
+  "rejects malformed SignedData version INTEGER content $version",
+  ({ version }) => {
+    const original = pkcs7SignedDataFixture();
+    const signed = readAsn1(original).children[1]!.children[0]!;
+    const payload = contentInfo(
+      derSeq(
+        der(0x02, Buffer.from(version)),
+        ...signed.children
+          .slice(1)
+          .map((node) => original.subarray(node.start, node.end)),
+      ),
+    );
+    expect(() => parse(peCertificateFixture(false, payload))).toThrow(
+      /SignedData version INTEGER/u,
+    );
+  },
+);
+
+it.each([
+  { name: "short form", version: Buffer.from([0x02, 0x01, 0x01]) },
+  { name: "BER long form", version: Buffer.from([0x02, 0x81, 0x01, 0x01]) },
+])(
+  "retains a valid SignedData version with $name length encoding",
+  ({ version }) => {
+    const original = pkcs7SignedDataFixture();
+    const signed = readAsn1(original).children[1]!.children[0]!;
+    const payload = contentInfo(
+      derSeq(
+        version,
+        ...signed.children
+          .slice(1)
+          .map((node) => original.subarray(node.start, node.end)),
+      ),
+    );
+    const report = parse(peCertificateFixture(false, payload));
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      certificates: 1,
+    });
+    expect(report.entries[0]?.pkcs7?.signers[0]).toMatchObject({
+      serial_hex: "11223344",
+    });
+  },
+);
