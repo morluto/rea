@@ -10,7 +10,19 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { cliDecimalField } from "./options.js";
-import { inspectSqliteDatabaseInputSchema } from "../domain/sqlite/sqliteDatabase.js";
+import {
+  inspectSqliteDatabaseInputSchema,
+  sqliteTableSelectionSchema,
+  SQLITE_TABLE_REQUIRED_SELECTION_FIELDS,
+} from "../domain/sqlite/sqliteDatabase.js";
+
+const selectionAliases = {
+  table: "table",
+  columns: "column",
+  schema_scope: "schemaScope",
+  row_limit: "rowLimit",
+  row_offset: "rowOffset",
+} as const;
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */
 export const registerSqliteCommands = (
@@ -30,23 +42,15 @@ export const registerSqliteCommands = (
         workerTimeoutMs: cliDecimalField(
           inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
         ),
-        table: z
-          .string()
-          .optional()
-          .describe("Exact ordinary table name to read"),
-        column: z
-          .array(z.string())
-          .min(1)
-          .optional()
-          .describe(
-            "Repeat to select exact row columns in the requested order; requires table",
-          ),
-        schemaScope: z
-          .enum(["inventory", "selected_table", "database"])
-          .optional()
-          .describe(
-            "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
-          ),
+        table: sqliteTableSelectionSchema.shape.table.describe(
+          "Exact ordinary table name to read",
+        ),
+        column: sqliteTableSelectionSchema.shape.columns.describe(
+          "Repeat to select exact row columns in the requested order; requires table",
+        ),
+        schemaScope: sqliteTableSelectionSchema.shape.schema_scope.describe(
+          "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
+        ),
         rowLimit: cliDecimalField(
           inspectSqliteDatabaseInputSchema.shape.row_limit,
         ).describe(
@@ -58,34 +62,36 @@ export const registerSqliteCommands = (
           "Non-negative safe integer rows to skip before the window; default 0; requires table",
         ),
       })
-      // Mirror inspectSqliteDatabaseInputSchema: rowLimit, rowOffset, column,
-      // and selected_table scope all require an explicit table selection.
       .superRefine((options, context) => {
-        if (options.table !== undefined) return;
-        if (options.rowLimit !== undefined)
-          context.addIssue({
-            code: "custom",
-            path: ["rowLimit"],
-            message: "rowLimit requires an explicit table selection",
-          });
-        if (options.rowOffset !== undefined)
-          context.addIssue({
-            code: "custom",
-            path: ["rowOffset"],
-            message: "rowOffset requires an explicit table selection",
-          });
-        if (options.column !== undefined)
-          context.addIssue({
-            code: "custom",
-            path: ["column"],
-            message: "column requires an explicit table selection",
-          });
-        if (options.schemaScope === "selected_table")
-          context.addIssue({
-            code: "custom",
-            path: ["schemaScope"],
-            message: "selected_table schema scope requires table",
-          });
+        const selection = sqliteTableSelectionSchema.safeParse({
+          table: options.table,
+          columns: options.column,
+          schema_scope: options.schemaScope,
+          row_limit: options.rowLimit,
+          row_offset: options.rowOffset,
+        });
+        if (selection.success) return;
+        for (const issue of selection.error.issues) {
+          const path = issue.path.map((field) =>
+            typeof field === "string" && field in selectionAliases
+              ? selectionAliases[field as keyof typeof selectionAliases]
+              : field,
+          );
+          context.addIssue({ ...issue, path });
+        }
+      })
+      .meta({
+        dependentRequired: Object.fromEntries(
+          SQLITE_TABLE_REQUIRED_SELECTION_FIELDS.map((field) => [
+            selectionAliases[field],
+            ["table"],
+          ]),
+        ),
+        if: {
+          properties: { schemaScope: { const: "selected_table" } },
+          required: ["schemaScope"],
+        },
+        then: { required: ["table"] },
       }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

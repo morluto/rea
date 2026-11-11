@@ -57,7 +57,11 @@ const counts = (solves: readonly SolveRecord[]) => {
 export const bandOf = (solves: readonly SolveRecord[]): Band => {
   const { done, passes } = counts(solves);
   if (done >= ALL_SOLVES)
-    return passes <= MOST_BAND_PASSES ? "in_band" : "too_easy";
+    return passes === 0
+      ? "too_hard"
+      : passes <= MOST_BAND_PASSES
+        ? "in_band"
+        : "too_easy";
   if (done >= FIRST_SOLVES && passes === 0) return "too_hard";
   if (done >= FIRST_SOLVES && passes === done) return "too_easy";
   return "undecided";

@@ -158,7 +158,10 @@ it("does not skip malformed earlier metadata to report a later valid record", ()
   );
   fixture.bytes[512 + 15] = 0xff;
   expect(() => readGoBinaryImage(fixture.bytes)).toThrow(
-    /unsupported format bit/,
+    expect.objectContaining({
+      message: expect.stringMatching(/unsupported format bit/u),
+      undecodedContent: true,
+    }),
   );
 });
 

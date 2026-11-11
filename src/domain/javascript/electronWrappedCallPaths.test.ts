@@ -1,3 +1,4 @@
+import { Script } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
@@ -15,6 +16,90 @@ it("retains switch selection on a direct bridge exposure", () => {
     }),
   ]);
 });
+
+it.each(
+  ["return", "throw new Error('stop')", "break", "continue"].flatMap(
+    (completion) =>
+      [false, true].flatMap((wrapped) =>
+        [false, true].map((nested) => ({ completion, wrapped, nested })),
+      ),
+  ),
+)(
+  "excludes switch-case calls after $completion (wrapped=$wrapped, nested=$nested)",
+  ({ completion, wrapped, nested }) => {
+    const exposure = (channel: string) =>
+      `e.contextBridge.exposeInMainWorld("${channel}", {send:()=>e.ipcRenderer.send("${channel}")});`;
+    const body = `for (const item of [0]) { switch (mode) {
+      case "off": ${nested ? "{" : ""} ${completion}; ${wrapped ? 'e.ipcRenderer.send("dead");' : exposure("dead")} ${nested ? "}" : ""}
+      default: ${wrapped ? 'e.ipcRenderer.send("live");' : exposure("live")}
+    } }`;
+    const source = `const e=require("electron");
+      ${wrapped ? `e.contextBridge.exposeInMainWorld("api", {run(){${body}}});` : `function install(){${body}}`}
+    `;
+    expect(() => new Script(source)).not.toThrow();
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths?.some(({ channel }) => channel === "dead"),
+    ).toBe(false);
+    expect(
+      result.electron.call_paths?.some(({ channel }) => channel === "live"),
+    ).toBe(true);
+    // Unreachable syntax remains observed; only a derived invocation path is removed.
+    expect(result.electron.ipc.some(({ channel }) => channel === "dead")).toBe(
+      true,
+    );
+  },
+);
+
+it.each([false, true])(
+  "retains an earlier case-local return guard (wrapped=%s)",
+  (wrapped) => {
+    const target = wrapped
+      ? 'e.ipcRenderer.send("guarded");'
+      : 'e.contextBridge.exposeInMainWorld("api", {send:()=>e.ipcRenderer.send("guarded")});';
+    const body = `switch(mode){case "selected": if(blocked)return; ${target}}`;
+    const source = `const e=require("electron");
+    ${wrapped ? `e.contextBridge.exposeInMainWorld("api",{run(){${body}}});` : `function install(){${body}}`}
+  `;
+    expect(() => new Script(source)).not.toThrow();
+    const result = analyzeJavaScriptStaticSource(source);
+    const paths =
+      result.electron.call_paths?.filter(
+        ({ channel }) => channel === "guarded",
+      ) ?? [];
+    expect(paths.length).toBeGreaterThan(0);
+    expect(
+      paths.every(({ conditions }) =>
+        conditions.some(({ expression }) => expression === "!(blocked)"),
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each(
+  [
+    "while (true) { break; }",
+    "switch (inner) { case 0: break; }",
+    "for (const nested of [0]) { continue; }",
+    "local: { break local; }",
+  ].flatMap((inner) => [false, true].map((wrapped) => ({ inner, wrapped }))),
+)(
+  "retains outer-case continuation after $inner (wrapped=$wrapped)",
+  ({ inner, wrapped }) => {
+    const target = wrapped
+      ? 'e.ipcRenderer.send("live");'
+      : 'e.contextBridge.exposeInMainWorld("api", {send:()=>e.ipcRenderer.send("live")});';
+    const body = `switch (mode) { case "selected": ${inner} ${target} }`;
+    const source = `const e=require("electron");
+      ${wrapped ? `e.contextBridge.exposeInMainWorld("api", {run(){${body}}});` : `function install(){${body}}`}
+    `;
+    expect(() => new Script(source)).not.toThrow();
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths?.some(({ channel }) => channel === "live"),
+    ).toBe(true);
+  },
+);
 
 it("retains a conservative selection for stacked and fallthrough cases", () => {
   const result = analyzeJavaScriptStaticSource(`
@@ -649,6 +734,32 @@ it("connects exposed closures to IPC sends and text clipboard calls", () => {
   expect(ipcFinding).toBeDefined();
   expect(ipcPath?.steps.at(-1)).toBeDefined();
   expect(ipcFinding?.location).toEqual(ipcPath?.steps.at(-1)?.location);
+});
+it("uses a defineProperty value that replaces an exported sender", () => {
+  const result = analyzeJavaScriptStaticSource(`(() => {
+      const modules = {
+        2(module) { module.exports = require("electron"); },
+        9(module,exports,load) {
+          const electron=load(2),helper=load(5);
+          electron.contextBridge.exposeInMainWorld("desktop", {copy:helper.sender("defined:copy")});
+        },
+        5(module,exports,load) {
+          const electron=load(2);
+          exports.sender=function(){return ()=>{};};
+          Object.defineProperty(exports,"sender",{value:function(channel){return (...args)=>send(channel,...args);}});
+          function send(channel,...args){electron.ipcRenderer.send(channel,...args);}
+        }
+      };
+      function load(id) { const m={exports:{}}; modules[id].call(m.exports,m,m.exports,load); return m.exports; }
+      load(9);
+    })();`);
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({
+      entry: "desktop.copy",
+      channel: "defined:copy",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  );
 });
 it("resolves a helper factory listed after its bundle consumer", () => {
   const result = analyzeJavaScriptStaticSource(`(() => {

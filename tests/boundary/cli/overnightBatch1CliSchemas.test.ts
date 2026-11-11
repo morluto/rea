@@ -1,3 +1,6 @@
+import { join } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
 import { z } from "incur";
@@ -7,6 +10,7 @@ import type { ApktoolResourceAnalysisPort } from "../../../src/application/apkto
 import { ok } from "../../../src/domain/result.js";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { registerApktoolCommands } from "../../../src/cli/apktoolCommands.js";
+import { registerDecompileDirectoryCommand } from "../../../src/cli/decompileDirectoryCommand.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerSqliteCommands } from "../../../src/cli/sqliteCommands.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
@@ -50,6 +54,7 @@ const registry = () => {
   registerApktoolCommands(cli, silentLogger, {}, apktoolProvider);
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerSqliteCommands(cli, silentLogger, {});
+  registerDecompileDirectoryCommand(cli, silentLogger, runDirectAnalysis);
   const serve = async (argv: readonly string[]): Promise<unknown> => {
     let stdout = "";
     await cli.serve([...argv, "--json"], {
@@ -163,18 +168,20 @@ it("rejects an empty or NUL decode-android-resources path before launching apkto
   expect(apktoolExecute).toHaveBeenCalledTimes(1);
 });
 
-it.each([["analyze"], ["inspect"]])(
+it.each([["analyze"], ["inspect"], ["decompile-all", "--output", "out"]])(
   "rejects an empty or NUL --snapshot on %s before analysis and admits a plain path",
-  async (command) => {
+  async (command, ...required) => {
     const { serve, runDirectAnalysis } = registry();
-    expect(await serve([command, ".", "--snapshot", ""])).toMatchObject({
+    expect(
+      await serve([command, ".", ...required, "--snapshot", ""]),
+    ).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [
         expect.objectContaining({ path: "snapshot", code: "too_small" }),
       ],
     });
     expect(
-      await serve([command, ".", "--snapshot", "snap\x00shot"]),
+      await serve([command, ".", ...required, "--snapshot", "snap\x00shot"]),
     ).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [
@@ -182,7 +189,7 @@ it.each([["analyze"], ["inspect"]])(
       ],
     });
     expect(runDirectAnalysis).not.toHaveBeenCalled();
-    await serve([command, ".", "--snapshot", "snapshot.db"]);
+    await serve([command, ".", ...required, "--snapshot", "snapshot.db"]);
     expect(runDirectAnalysis).toHaveBeenCalled();
   },
 );
@@ -225,6 +232,10 @@ it("rejects an empty column array in the inspect-sqlite-database options schema"
 
 it("admits --table with --column and --row-limit to runtime validation", async () => {
   const { serve } = registry();
+  const missing = join(
+    await createTestTempDirectory("rea-sqlite-admission-"),
+    "missing.db",
+  );
   // The SQLite worker only runs from the built CLI, so this boundary test
   // proves admission with a missing snapshot: CLI validation passes and the
   // runtime refuses the absent file instead of the option combination. The
@@ -232,7 +243,7 @@ it("admits --table with --column and --row-limit to runtime validation", async (
   expect(
     await serve([
       "inspect-sqlite-database",
-      "missing.db",
+      missing,
       "--table",
       "t",
       "--column",
@@ -252,6 +263,36 @@ it("admits --table with --column and --row-limit to runtime validation", async (
           ),
         }),
       ],
+    },
+  });
+});
+
+it("advertises SQLite selection dependencies in CLI discovery", async () => {
+  const { serve } = registry();
+  const schema = await serve(["inspect-sqlite-database", "--schema"]);
+  const { options } = z
+    .object({ options: z.record(z.string(), z.unknown()) })
+    .parse(schema);
+  const validate = new Ajv2020({ strict: false }).compile(options);
+  expect(validate({ column: ["id"] })).toBe(false);
+  expect(validate({ schemaScope: "selected_table" })).toBe(false);
+  expect(validate({ table: "items", column: [] })).toBe(false);
+  expect(
+    validate({ table: "items", column: ["id"], schemaScope: "selected_table" }),
+  ).toBe(true);
+  expect(schema).toMatchObject({
+    options: {
+      dependentRequired: {
+        rowLimit: ["table"],
+        rowOffset: ["table"],
+        column: ["table"],
+      },
+      if: {
+        properties: { schemaScope: { const: "selected_table" } },
+        required: ["schemaScope"],
+      },
+      then: { required: ["table"] },
+      properties: { column: { minItems: 1 } },
     },
   });
 });

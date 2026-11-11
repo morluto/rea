@@ -1,7 +1,10 @@
 import { lstat, realpath, stat } from "node:fs/promises";
 import fs from "node:fs";
 import { join } from "node:path";
-import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory.js";
+import {
+  locateReferenceSourceGitDirectory,
+  ReferenceSourceGitDirectoryCancelled,
+} from "./ReferenceSourceGitDirectory.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
 
 import ignore from "ignore";
@@ -106,11 +109,6 @@ const resolveRoot = async (
       });
     return ok(canonicalRoot);
   } catch (cause: unknown) {
-    if (isAborted(signal))
-      return err({
-        ...failure("cancelled", "Reference source import cancelled"),
-        cause: signal?.reason,
-      });
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",
@@ -122,6 +120,9 @@ const resolveRoot = async (
         ? {}
         : { remediationAction: rootFailure.remediationAction }),
       cause,
+      ...(signal?.aborted === true
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
     });
   }
 };
@@ -182,6 +183,12 @@ const readPolicyFile = async (
             ),
             cleanup: retry.cleanup,
             cause: primaryCause,
+            ...(signal !== undefined &&
+            isAborted(signal) &&
+            !isIgnorePolicyCancellation(primary) &&
+            operationCancellation === undefined
+              ? { secondaryCancellation: { cause: signal.reason } }
+              : {}),
           });
         }
         if (retry.outcome.kind === "failed") {
@@ -202,6 +209,9 @@ const readPolicyFile = async (
         `Reference source policy could not be read at ${policyPath}: ${errorMessage(causeValue)}`,
       ),
       cause: causeValue,
+      ...(signal?.aborted === true && !isIgnorePolicyCancellation(cause)
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
     });
   }
 };
@@ -253,11 +263,16 @@ const readIgnoreCase = async (
     );
   } catch (cause: unknown) {
     if (readFailure !== undefined) return err(readFailure);
-    if (isAborted(signal) || isIgnorePolicyCancellation(cause))
+    if (
+      isIgnorePolicyCancellation(cause) ||
+      cause instanceof ReferenceSourceGitDirectoryCancelled
+    )
       return err({
         ...failure("cancelled", "Reference source import cancelled"),
         cause:
-          signal?.aborted === true ? signal.reason : ignorePolicyCause(cause),
+          cause instanceof ReferenceSourceGitDirectoryCancelled
+            ? cause.reason
+            : ignorePolicyCause(cause),
       });
     return err({
       ...failure(
@@ -265,6 +280,9 @@ const readIgnoreCase = async (
         `Reference source Git policy could not be read: ${errorMessage(cause)}`,
       ),
       cause,
+      ...(signal?.aborted === true
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
     });
   }
 };

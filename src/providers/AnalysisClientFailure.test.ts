@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPartialObservation.js";
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
@@ -130,4 +134,39 @@ it("preserves sibling operations, sibling reasons, and remediation action when r
   expect(attributed.fallbackRemediationAction).toBe("Review provider choices");
   expect(attributed.userMessage).toBe("Export failed");
   expect(attributed.retryable).toBe(true);
+});
+
+it("keeps the structured limit when a resource refusal changes operation", () => {
+  const limit = analysisSettingLimit(
+    "bridge.max_request_bytes",
+    8192,
+    "runtime",
+  );
+  const source = new AnalysisResourceConstraintError(
+    "cutter_command",
+    "transport",
+    "status exceeded the ceiling",
+    { max_request_bytes: 8192 },
+    { remediationAction: "Raise the ceiling.", retryable: false, limit },
+  );
+  const attributed = analysisClientFailureForOperation(
+    source,
+    "ghidra",
+    "binary_overview",
+  );
+  expect(attributed).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(attributed instanceof AnalysisResourceConstraintError))
+    throw new Error("expected a resource constraint");
+  expect(attributed.operation).toBe("binary_overview");
+  expect(attributed.limit).toEqual(source.limit);
+  expect(projectAnalysisError(attributed)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        setting: "bridge.max_request_bytes",
+        effective_value: 8192,
+        source: "runtime",
+      },
+    },
+  });
 });

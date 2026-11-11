@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 import {
   executableFormatHintSchema,
@@ -11,7 +12,6 @@ import {
 } from "../domain/rawBinary.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
-import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 
 /** Decimal integer argv text. Leading zeros stay decimal; `0x` and exponent spellings do not. */

@@ -112,7 +112,7 @@ export class AppleIpsProvider implements AppleIpsPort {
         );
         completedSnapshot = joinArtifact;
         assertArtifactReadActive(options?.signal);
-        return ok({
+        completedReport = {
           ...report,
           join: await resolveAppleIpsJoin(
             report,
@@ -123,7 +123,9 @@ export class AppleIpsProvider implements AppleIpsPort {
             },
             read,
           ),
-        });
+        };
+        assertArtifactReadActive(options?.signal);
+        return ok(completedReport);
       });
     } catch (cause) {
       const primary = appleIpsFailurePrimary(

@@ -2,6 +2,8 @@ import { unlink, writeFile } from "node:fs/promises";
 import { expect, it as test, vi } from "vitest";
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
+import { systemProcessOwnershipHost } from "../../../../src/process/ProcessOwnershipObservation.js";
+import { ExecFileOutputCancelledError } from "../../../../src/process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -260,5 +262,94 @@ it("keeps caller attribution and the selected path through workspace rollback re
     refuseClose?.mockRestore();
     roots.mockRestore();
     expect((await client.close()).ok).toBe(true);
+  }
+});
+
+it.each([
+  { stage: "copy", mode: "clean" },
+  { stage: "copy", mode: "refuse" },
+  { stage: "inspection", mode: "clean" },
+  { stage: "inspection", mode: "refuse" },
+] as const)(
+  "preserves workspace $stage cancellation and retries its $mode rollback",
+  async ({ stage, mode }) => {
+    const fixture = await session("rea-kuna-workspace-cancel-");
+    const lifetime = new AbortController();
+    const reason = { caller: "cancel target copy" };
+    const commands = new KunaTargetCommands(fixture.target, {
+      signal: lifetime.signal,
+    });
+    const create = PrivateRuntimeRoot.create;
+    let rootClose: ReturnType<typeof vi.spyOn> | undefined;
+    const roots = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        const root = await create(options);
+        if (mode === "refuse")
+          rootClose = vi
+            .spyOn(root, "close")
+            .mockRejectedValue(new Error("controlled rollback refusal"));
+        if (stage === "copy") lifetime.abort(reason);
+        return root;
+      });
+    let inspectionCalls = 0;
+    const prepare = systemProcessOwnershipHost.prepare;
+    const inspection = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockImplementation(async (signal) => {
+        if (stage === "inspection" && signal === lifetime.signal) {
+          inspectionCalls += 1;
+          lifetime.abort(reason);
+          throw new ExecFileOutputCancelledError(reason);
+        }
+        await prepare?.(signal);
+      });
+    try {
+      const result = await commands.prepare();
+      if (result.ok) throw new Error("Expected cancelled workspace admission");
+      expect(inspectionCalls).toBe(stage === "inspection" ? 1 : 0);
+      const primary = result.error.cleanupPrimary ?? result.error;
+      expect(primary).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(result.error.cleanupIncomplete).toBe(mode === "refuse");
+      if (mode === "refuse") {
+        expect((await commands.close()).ok).toBe(false);
+        rootClose?.mockRestore();
+        expect((await commands.close()).ok).toBe(true);
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(result.error.cleanupPrimary).toBe(primary);
+      }
+    } finally {
+      inspection.mockRestore();
+      roots.mockRestore();
+      rootClose?.mockRestore();
+      expect((await commands.close()).ok).toBe(true);
+    }
+  },
+);
+
+it("does not relabel a physical workspace failure when cancellation also arrives", async () => {
+  const fixture = await session("rea-kuna-workspace-physical-");
+  const lifetime = new AbortController();
+  const physical = new Error("controlled workspace creation failure");
+  const commands = new KunaTargetCommands(fixture.target, {
+    signal: lifetime.signal,
+  });
+  const roots = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementation(async () => {
+      lifetime.abort({ caller: "concurrent shutdown" });
+      throw physical;
+    });
+  try {
+    expect(await commands.prepare()).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError", cause: physical },
+    });
+  } finally {
+    roots.mockRestore();
+    expect((await commands.close()).ok).toBe(true);
   }
 });
