@@ -1953,3 +1953,32 @@ it("does not publish Deno entries from cancelled partial preparation", async () 
     await control.close();
   }
 });
+
+it.each(["https://example.test/mod.ts", "\uFEFFhttps://example.test/mod.ts"])(
+  "preserves the length-prefixed remote specifier %j in inventory identity",
+  async (specifier) => {
+    const body = Buffer.from("inert remote bytes");
+    const snapshot = await inventoryOf(
+      "specifier-spelling",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: specifier },
+          specifiers: [{ text: specifier, id: 1 }],
+          remoteModules: [{ specifierId: 1, data: body }],
+        }),
+      ),
+    );
+    const member = snapshot.occurrences.find(
+      (row) =>
+        row.format_metadata?.kind === "deno-standalone-entry" &&
+        row.format_metadata.role === "remote-module",
+    );
+    expect(member).toMatchObject({
+      format_metadata: { source_path: specifier, entry_point: true },
+    });
+    expect(
+      snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
+        ?.sha256,
+    ).toBe(createHash("sha256").update(body).digest("hex"));
+  },
+);
