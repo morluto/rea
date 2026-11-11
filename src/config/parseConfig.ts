@@ -5,7 +5,10 @@ import {
   type ConfigurationSettingIssue,
 } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { launchAnalysisSetting } from "./analysisSettings.js";
+import {
+  inspectAnalysisSettingSeeds,
+  launchAnalysisSetting,
+} from "./analysisSettings.js";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
 import { parseEnvironment } from "./environment.js";
 import { providerStartupTimeoutSchema } from "./providerStartupTimeout.js";
@@ -74,7 +77,10 @@ export const inspectNativeAnalysisConfiguration = (
   environment: Readonly<Record<string, string | undefined>>,
 ): NativeAnalysisConfigurationInspection => {
   const parsed = parseEnvironment(nativeAnalysisEnvironment(environment));
-  const issues = parsed.ok ? [] : parsed.error.settings;
+  const issues = [
+    ...(parsed.ok ? [] : parsed.error.settings),
+    ...inspectAnalysisSettingSeeds(nativeAnalysisEnvironment(environment)),
+  ];
   const configuredTimeout = environment.REA_HOPPER_STARTUP_TIMEOUT_MS;
   if (configuredTimeout === undefined) return { issues };
   const admitted = launchAnalysisSetting(

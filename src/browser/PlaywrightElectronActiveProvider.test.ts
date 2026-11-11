@@ -1,3 +1,7 @@
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
@@ -98,19 +102,34 @@ it.each([false, true])(
 it.each(["prepare", "baseline"] as const)(
   "classifies cancellation from ownership %s without masking physical failure",
   async (stage) => {
-    for (const kind of ["reason", "native-abort", "physical"] as const) {
+    for (const kind of [
+      "reason",
+      "normalized-exec",
+      "physical",
+      "same-reason",
+    ] as const) {
       const controller = new AbortController();
-      const reason = { cancelled: stage };
       const physical = new Error("ownership inspection failed");
+      const reason = kind === "same-reason" ? physical : { cancelled: stage };
       const launch = vi.fn(async () => {
         throw new Error("must not launch");
       });
       const fail = async () => {
         controller.abort(reason);
-        if (kind === "native-abort")
-          throw new ExecFileOutputCancelledError(reason);
-        throw kind === "reason" ? reason : physical;
+        if (kind === "normalized-exec")
+          throw ProcessOwnershipInspectionCancelled.from(
+            new ExecFileOutputCancelledError(reason),
+          );
+        throw kind === "reason"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : physical;
       };
+      const preparation =
+        stage === "baseline"
+          ? vi
+              .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+              .mockResolvedValue()
+          : undefined;
       const spy =
         stage === "prepare"
           ? vi
@@ -136,7 +155,7 @@ it.each(["prepare", "baseline"] as const)(
         );
         if (result.ok) throw new Error("Expected inspection failure");
         expect(launch).not.toHaveBeenCalled();
-        if (kind === "physical") {
+        if (kind === "physical" || kind === "same-reason") {
           expect(result.error.userCategory).not.toBe("cancelled");
           expect(primaryAnalysisError(result.error).cause).toBe(physical);
           expect(
@@ -145,11 +164,12 @@ it.each(["prepare", "baseline"] as const)(
             ),
           ).toBe(true);
         } else {
-          expect(result.error.userCategory).toBe("cancelled");
+          expect(projectAnalysisError(result.error).code).toBe("cancelled");
           expect(result.error.cause).toBe(reason);
         }
       } finally {
         spy.mockRestore();
+        preparation?.mockRestore();
         await provider.close();
       }
     }
@@ -305,7 +325,7 @@ it("joins a late launch acknowledgement and its cleanup after shutdown", async (
   expect(application.close).toHaveBeenCalledOnce();
   expect(closed).toBe(true);
   if (result.ok) throw new Error("Expected launch cancellation");
-  expect(result.error.userCategory).toBe("cancelled");
+  expect(projectAnalysisError(result.error).code).toBe("cancelled");
   expect(result.error.cause).toBe(reason);
 });
 
@@ -1373,6 +1393,73 @@ it.each(["process", "transport"] as const)(
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
     } finally {
       denied = false;
+      await provider.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "retains baseline batch observations and cancellation without ambient abort (mixed: %s)",
+  async (mixed) => {
+    const reason = { caller: "cancel native identity request" };
+    const observations = new Map([
+      [401, { state: "readable", identity: "recorded-native-start" } as const],
+    ]);
+    const batch = new ProcessOwnershipIdentityBatchFailure(
+      [
+        {
+          pid: 402,
+          requestIndex: 1,
+          cause: new ProcessOwnershipInspectionCancelled(reason),
+        },
+        ...(mixed
+          ? [
+              {
+                pid: 403,
+                requestIndex: 2,
+                cause: new Error("physical native read failure"),
+              },
+            ]
+          : []),
+      ],
+      observations,
+    );
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockResolvedValue();
+    const baseline = vi
+      .spyOn(ownershipObservation.systemProcessOwnershipHost, "captureBaseline")
+      .mockRejectedValue(batch);
+    const launch = vi.fn(async () => {
+      throw new Error("must not launch");
+    });
+    const provider = new PlaywrightElectronActiveProvider({}, launch);
+    try {
+      const result = await provider.capture({
+        ...electronActiveObservationInputSchema.parse({
+          executable_path: process.execPath,
+          application_path: process.execPath,
+        }),
+        application_root: dirname(process.execPath),
+      });
+      if (result.ok) throw new Error("Expected failed native identity batch");
+      const error = primaryAnalysisError(result.error);
+      if (mixed) {
+        expect(error.userCategory).not.toBe("cancelled");
+        expect(error.cause).toBe(batch);
+        expect(
+          error.secondaryFailures.some((failure) => failure.cause === reason),
+        ).toBe(true);
+      } else {
+        expect(projectAnalysisError(error).code).toBe("cancelled");
+        expect(error.cause).toBe(reason);
+        expect(error).toHaveProperty("inspectionFailure", batch);
+      }
+      expect(batch.observations).toBe(observations);
+      expect(launch).not.toHaveBeenCalled();
+    } finally {
+      prepare.mockRestore();
+      baseline.mockRestore();
       await provider.close();
     }
   },

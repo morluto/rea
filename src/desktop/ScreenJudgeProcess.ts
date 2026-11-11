@@ -191,7 +191,7 @@ export class ScreenJudgeProcess {
     cause: unknown,
   ): ProviderCleanupError | undefined {
     const owner = new RetainedCommandCleanup(folder, cause);
-    if (!owner.hasProcess) return undefined;
+    if (!owner.hasPendingCommandResources) return undefined;
     const completed = completedAnswer(cause);
     const original =
       cause instanceof OwnedCommandFailure && cause.reason === "cancelled"

@@ -149,8 +149,12 @@ its typed primary failure and captured output. Its live resource list follows
 both process and workspace ownership: proving process exit does not prove that
 the private workspace was removed, and retry updates earlier caller errors.
 If workspace setup fails, an unsuccessful rollback retains the original target
-or read failure together with its cleanup owner. Replacement stays blocked until
-that rollback is resolved; a clean rollback permits another setup attempt.
+or read failure together with its cleanup owner. Cancellation during input
+copying keeps the caller's reason; a physical read or write failure keeps its
+own diagnosis if cancellation follows. Failed copy-file cleanup retains the
+private workspace, and `close_binary` retries its remaining file owners before
+removing it. Replacement stays blocked until that rollback is resolved; a clean
+rollback permits another setup attempt.
 
 ## Provenance and limitations
 
@@ -164,7 +168,7 @@ that rollback is resolved; a clean rollback permits another setup attempt.
 REA writes Kuna's exports only inside `REA_KUNA_CACHE_DIR`:
 
 - `projects/<key>/` holds published, immutable exports with a manifest of file digests.
-- `staging/` holds builds whose processes may still be live.
+- `staging/` holds active builds and builds with pending process or file cleanup.
 - `trash/` holds retired builds and evicted exports awaiting removal.
 - `home/` is Kuna's HOME.
 
@@ -180,7 +184,33 @@ the manifest's file identity as well as the export files. These refusal and
 migration cases are verified with controlled Kuna-format exports; they do not
 establish behavior of an independently installed Kuna release.
 
-Builds publish by one rename, so a reader sees a complete export or none. If later staging retirement fails, the typed cleanup error retains the completed export's key, directory and manifest in `published_export`. The session adopts that verified project; later queries reuse its immutable files while `project_export.cleanup_incomplete` reports the retained owner's live state. `close_binary` retries only the remaining cleanup, and a successful retry resolves prior cleanup errors. A failed export followed by failed staging cleanup retains both failures; it does not invent a publication receipt. A session keeps the export it uses from eviction only within its own REA process. If another REA process sharing the cache evicts it, the session rebuilds it; meanwhile pseudocode falls back to single-function runs. A damaged or edited export is removed and rebuilt. REA retains the file state verified with each digest, checks it before warm-cache reuse, and checks open descriptors before and after reading text. Assembly indexes are checked against the same state; a changed file makes the whole report retry rather than mixing facets from different exports. Staging moves to `trash/` for removal only after REA proves its Kuna process stopped. Staging of a process it cannot prove stopped is never swept; REA keeps it owned, retries the stop on `close_binary`, and reports it until the stop is proven; that MCP error names the same-connection retry as `recovery.kind=retry_cleanup` ([retained cleanup retry](reference/mcp-contracts.md#retained-cleanup-retry)). Failed file removal also stays bound to its export and is retried by `close_binary`; closing does not report success while that cleanup remains. `rea doctor --provider kuna` reports the cache directory without creating it.
+Builds publish by one rename, so a reader sees a complete export or none. If
+later staging retirement fails, the typed cleanup error retains the completed
+export's key, directory and manifest in `published_export`. The session adopts
+that verified project; later queries reuse its immutable files while
+`project_export.cleanup_incomplete` reports the retained owner's live state.
+`close_binary` retries only the remaining cleanup, and a successful retry
+resolves prior cleanup errors. A failed export followed by failed staging
+cleanup retains both failures; it does not invent a publication receipt.
+
+A session keeps the export it uses from eviction only within its own REA
+process. If another REA process sharing the cache evicts it, the session
+rebuilds it; meanwhile pseudocode falls back to single-function runs. A
+damaged or edited export is removed and rebuilt. REA retains the file state
+verified with each digest, checks it before warm-cache reuse, and checks open
+descriptors before and after reading text. Assembly indexes are checked
+against the same state; a changed file makes the whole report retry rather
+than mixing facets from different exports.
+
+Staging moves to `trash/` for removal only after REA proves its Kuna process
+stopped and releases its copy-file handles. Staging of a process it cannot
+prove stopped is never swept; REA keeps it owned, retries the stop on
+`close_binary`, and reports it until the stop is proven; that MCP error names
+the same-connection retry as `recovery.kind=retry_cleanup` ([retained cleanup
+retry](reference/mcp-contracts.md#retained-cleanup-retry)). Failed file
+removal also stays bound to its export and is retried by `close_binary`;
+closing does not report success while that cleanup remains. `rea doctor
+--provider kuna` reports the cache directory without creating it.
 
 ## Verify with a real Kuna
 
