@@ -25,6 +25,7 @@ import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerKernelBuildConfigTool } from "./registerKernelBuildConfigTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
+import { registerReleaseExposureTool } from "./registerReleaseExposureTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
@@ -233,6 +234,7 @@ export const createServer = (
     peImports,
     windowsShortcut,
     electronFuses,
+    releaseExposure,
     pythonPyc,
     webNetworkCapture,
     javascriptRecovery,
@@ -547,6 +549,13 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
+      registerReleaseExposureTool(
+        server,
+        releaseExposure,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
       registerBinaryHardeningTool(
         server,
         binaryHardening,
@@ -850,13 +859,12 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
-      registerWebSourceLocationTool(
-        server,
-        webSourceLocation,
-        toolLogger,
+      registerWebSourceLocationTool(server, webSourceLocation, {
+        logger: toolLogger,
         recordEvidence,
-        analysisAdmission,
-      );
+        withAdmittedAnalysis: analysisAdmission,
+        evidenceById,
+      });
       registerJavaScriptRecoveryTool(
         server,
         new JavaScriptRecoveryService(javascriptRecovery),

@@ -1,3 +1,4 @@
+import { isProcessOwnershipInspectionCancellation } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
@@ -360,11 +361,6 @@ const abortReason = (signal: AbortSignal): unknown => {
   return error;
 };
 
-const isExpectedAbort = (cause: unknown, signal: AbortSignal): boolean =>
-  signal.aborted &&
-  (cause === signal.reason ||
-    (cause instanceof Error && cause.name === "AbortError"));
-
 type CompilationWaitOutcome =
   | { readonly kind: "completed"; readonly result: Result<string, unknown> }
   | { readonly kind: "cancelled"; readonly reason: unknown };
@@ -573,7 +569,8 @@ export const createDarwinProcessRunTokenReader = (
           env: compilerEnvironment,
         });
       } catch (cause: unknown) {
-        if (isExpectedAbort(cause, signal)) throw cause;
+        if (isProcessOwnershipInspectionCancellation(cause, signal))
+          throw cause;
         throw compilerInspectionError(cause, compilerTimeoutMs, compiler);
       }
       if (signal.aborted || closed) throw abortReason(signal);
@@ -652,7 +649,7 @@ export const createDarwinProcessRunTokenReader = (
           if (
             (failure instanceof DarwinProcessOwnershipInspectionError &&
               failure.cleanupFailure !== undefined) ||
-            !isExpectedAbort(
+            !isProcessOwnershipInspectionCancellation(
               operation.primaryFailure?.cause,
               operation.controller.signal,
             )
@@ -735,7 +732,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const read = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>> => {
     signal?.throwIfAborted();
@@ -776,7 +773,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const identities = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
     if (processes.length === 0) return new Map();

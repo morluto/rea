@@ -13,6 +13,8 @@ import {
 } from "../../domain/desktop/zipArchive.fixture.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { readZipView } from "./DesktopZipView.js";
 import { DESKTOP_OPERATION } from "./DesktopCaptureRefusals.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
@@ -183,7 +185,7 @@ it.each([
     if (accepted) {
       if (result instanceof Error) throw result;
       expect(result.normalized_result).toMatchObject({
-        task: { failing_on_seed: ["check-1"] },
+        tasks: [{ failing_on_seed: ["check-1"] }],
       });
     } else {
       expect(result).toBeInstanceOf(Error);
@@ -193,6 +195,25 @@ it.each([
     }
   },
 );
+
+it("retains typed cancellation at the retained ZIP reader boundary", async () => {
+  const bytes = zipArchive([{ name: "state.json", data: '{"value":"kept"}' }]);
+  expect(await readZipView(bytes)).toMatchObject({
+    ok: true,
+    value: { entry_count: 1, truncated: false },
+  });
+  const controller = new AbortController();
+  const reason = { code: "EACCES", source: "caller" };
+  controller.abort(reason);
+  const failure: unknown = await readZipView(bytes, controller.signal).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+  expect(failure.reason).toBe("cancelled");
+  expect(failure.cause).toBe(reason);
+  expect(failure.cancellation?.reason).toBe(reason);
+});
 
 describe("documents saved as zip archives", () => {
   it("reads each version into its entries and lists the change by entry and element name", async () => {
@@ -407,7 +428,7 @@ describe("paragraphs split into runs", () => {
     ]);
     if (whole.result instanceof Error) throw whole.result;
     expect(whole.result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["check-1", "check-2"] },
+      tasks: [{ failing_on_seed: ["check-1", "check-2"] }],
     });
 
     const first = await exportTask(folder, [

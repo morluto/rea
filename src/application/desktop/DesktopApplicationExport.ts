@@ -1,3 +1,4 @@
+import type { DesktopViewPolicyInput } from "../../domain/desktop/desktopViewPolicy.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import {
@@ -14,13 +15,11 @@ import {
   type HomePathCollision,
   type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
-import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import type { WithheldFile } from "../../domain/desktop/appWithheld.js";
 import {
   trashedFiles,
   runtimeSeeds,
   unownedChangedFolders,
-  unownedFoldersLimitation,
   unreadDconfLimitation,
 } from "../../domain/desktop/appExportUnowned.js";
 import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
@@ -32,10 +31,11 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
-import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   inspectDesktopApplicationState,
@@ -54,7 +54,8 @@ import {
 } from "./DesktopExportInstall.js";
 import {
   writeOutputTree,
-  writtenWithOpenHandles,
+  desktopOutputFailure,
+  type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
 import {
   retainedCopies,
@@ -71,7 +72,11 @@ import { exportLimitations } from "./DesktopExportLimitations.js";
 import { withRetainedContent } from "./DesktopRetainedContent.js";
 import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
-import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
+import {
+  admitDesktopTasks,
+  type AdmittedTasks,
+  type TaskSummary,
+} from "./DesktopTaskExport.js";
 import { taskReads } from "./DesktopExportReaders.js";
 
 const OPERATION = "export_desktop_application";
@@ -80,21 +85,25 @@ const SEED_MAX_BYTES = 1024 * 1024 * 1024;
 
 /** What the caller asked to export, after CLI parsing. */
 export interface DesktopExportRequest extends WithheldRequest {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   readonly capture: string;
   readonly directory: string;
   readonly name: string | undefined;
-  /** Task files to validate and add; a capture yields at most one. */
+  /** Task files to validate and add, each checked at its own end. */
   readonly tasks: readonly string[];
+  /** `NAME=CHECKPOINT` for each task checked at a checkpoint other than the end checkpoint. */
+  readonly taskEnds?: readonly string[] | undefined;
   /** Where the computer downloads the captured package file from, for an application installed from one. */
   readonly packageUrl?: string | undefined;
   /** Packages installed beside the application, such as a runtime piece a build request named. */
   readonly extraPackages?: readonly string[] | undefined;
   /** A JSON file naming the AppImage or tarball a build computer unpacked the application from. */
   readonly downloadInstall?: string | undefined;
+  /** The folder a build computer keeps a screenshot of each checkpoint in, a screen judge's examples. */
   readonly screens?: string | undefined;
   /** The checkpoint the seed is taken at; the baseline when omitted. */
   readonly seedCheckpoint?: string | undefined;
-  /** The checkpoint a task's end state is read at; the last when omitted. */
+  /** The checkpoint a task's end state is read at unless it names its own; the last when omitted. */
   readonly endCheckpoint?: string | undefined;
   /** The seed was made for the task, as in a build computer, rather than taken from the user's own data. */
   readonly syntheticSeed?: boolean | undefined;
@@ -120,7 +129,7 @@ export interface DesktopExportResult {
   readonly dconf_groups: number;
   readonly files: readonly string[];
   readonly limitations: readonly string[];
-  readonly task: AdmittedTask["summary"] | null;
+  readonly tasks: readonly TaskSummary[];
   /** Files withheld from the seed, each a secret setting a deploy takes from its environment variable. */
   readonly withheld_files: readonly WithheldFile[];
   /** Withheld files seeded all the same, with the person's consent. */
@@ -235,6 +244,7 @@ const planExport = async (
   });
   const launch = planLaunch(capture, electron, seeds, files);
   const plan: DesktopAppExportPlan = {
+    viewPolicy: request.viewPolicy,
     name: source,
     className: className(source),
     title: application.desktop_entry?.name ?? source,
@@ -295,7 +305,7 @@ const planExport = async (
 /** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
 const bundleText = (
   plan: DesktopAppExportPlan,
-  admitted: AdmittedTask | undefined,
+  admitted: AdmittedTasks | undefined,
   dconfHoldsIdentity: boolean,
   consent: string | undefined,
 ) => {
@@ -349,6 +359,7 @@ const runExport = async (
     request.capture,
     readers,
     signal,
+    { viewPolicy: request.viewPolicy },
   );
   if (stateEvidence instanceof AnalysisError) throw stateEvidence;
   const state = desktopApplicationStateSchema.parse(
@@ -378,28 +389,36 @@ const runExport = async (
     checkpoints,
     signal,
   });
-  const admitted = await admitDesktopTask(
-    request.tasks,
-    { ...plan, files, identity, ends, ...reads, seeded: new Set(seeds.keys()) },
+  const admitted = await admitDesktopTasks(
+    { paths: request.tasks, ends: request.taskEnds ?? [] },
+    {
+      ...plan,
+      files,
+      identity,
+      ends,
+      checkpoints,
+      ...reads,
+      seeded: new Set(seeds.keys()),
+    },
     signal,
   );
   const copy = await withheldCopy(request, plan, held.captured, signal);
   const text = bundleText(plan, admitted, dconf.holdsIdentity, held.consent);
   const { generated, readme } = text;
   let scrub = NO_SCRUB;
-  const unclosed = await withRetainedContent(
-    request.capture,
-    (content) =>
-      writeOutputTree(
-        request.directory,
-        async (tree) => {
+  const completion = await writeOutputTree(
+    copy.bundle,
+    (tree) =>
+      withRetainedContent(
+        request.capture,
+        async (content) => {
           const bundle = { generated, copies, identity, readme };
           scrub = await writeFiles(tree, content, bundle, signal);
         },
-        { operation: OPERATION, field: "directory" },
-        signal,
+        SEED_MAX_BYTES,
       ),
-    SEED_MAX_BYTES,
+    { operation: OPERATION, field: "directory" },
+    signal,
   );
   const limitations = exportLimitations(capture, plan, {
     install: install.limitations,
@@ -431,24 +450,121 @@ const runExport = async (
       ...copies.map((copy) => copy.path),
     ],
     limitations,
-    task: admitted?.summary ?? null,
+    tasks: admitted?.summaries ?? [],
     withheld_files: plan.withheld ?? [],
     consented_files: plan.consentedFiles ?? [],
   };
-  let copyUnclosed: Awaited<ReturnType<typeof copy.write>> = undefined;
+  let copyCompletion: Awaited<ReturnType<typeof copy.write>> = undefined;
   let copyFailure: { readonly cause: unknown } | undefined;
   try {
-    copyUnclosed = await copy.write();
+    copyCompletion = await copy.write();
   } catch (cause: unknown) {
     copyFailure = { cause };
   }
   return {
     result,
     captureEvidenceId: evidence.evidence_id,
-    unclosed,
-    copyUnclosed,
+    completion,
+    copyCompletion,
     copyFailure,
   };
+};
+
+/** Compose the already-published outputs after their complete Evidence exists. */
+const publishedExportFailure = (
+  request: DesktopExportRequest,
+  evidence: Evidence,
+  {
+    completion,
+    copyCompletion,
+    copyFailure,
+  }: {
+    readonly completion: DesktopOutputCompletion;
+    readonly copyCompletion: DesktopOutputCompletion | undefined;
+    readonly copyFailure: { readonly cause: unknown } | undefined;
+  },
+  signal: AbortSignal | undefined,
+): AnalysisError | undefined => {
+  const bundleFailure = desktopOutputFailure(
+    { provider: DESKTOP_PROVIDER.id, operation: OPERATION, what: "bundle" },
+    request.directory,
+    completion,
+    evidence,
+  );
+  const copyOutputFailure =
+    copyCompletion === undefined
+      ? undefined
+      : desktopOutputFailure(
+          {
+            provider: DESKTOP_PROVIDER.id,
+            operation: OPERATION,
+            what: "withheld copy",
+          },
+          request.withheldCopy ?? "",
+          copyCompletion,
+          evidence,
+        );
+  if (copyFailure !== undefined) {
+    const failure = desktopOperationFailure(
+      copyFailure.cause,
+      signal,
+      OPERATION,
+      "Desktop export",
+    );
+    if (completion.cancellation !== undefined)
+      analysisErrorWithCancellation(failure, completion.cancellation);
+    failure.retainPartialObservation(evidence);
+    if (bundleFailure?.cleanupIncomplete !== true) return failure;
+    if (copyFailure.cause instanceof AnalysisCancelledError)
+      return analysisErrorWithCancellation(bundleFailure, copyFailure.cause);
+    const cleanup = bundleFailure;
+    const combined = new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
+      cause: failure,
+      cleanupPrimary: failure,
+      partialObservation: evidence,
+      userMessage: `The bundle was written to ${request.directory}, but the withheld copy failed and bundle handles could not be closed.`,
+      cleanup: {
+        reason: "Bundle output handles could not be closed.",
+        resources: [request.directory],
+      },
+    });
+    combined.retainSecondaryFailure(cleanup);
+    combined.bindCleanupDependencies([cleanup, failure]);
+    return combined;
+  }
+  const failures = [bundleFailure, copyOutputFailure].filter(
+    (failure): failure is AnalysisError => failure !== undefined,
+  );
+  if (failures.length === 0) return undefined;
+  const cleanupFailures = failures.filter(
+    (failure) => !(failure instanceof AnalysisCancelledError),
+  );
+  if (cleanupFailures.length === 0) return failures[0]!;
+  for (const failure of failures)
+    if (failure instanceof AnalysisCancelledError)
+      analysisErrorWithCancellation(cleanupFailures[0], failure);
+  if (cleanupFailures.length === 1) return cleanupFailures[0]!;
+  const combined = new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
+    userMessage:
+      "The bundle and withheld copy were written, but their output handles could not be closed.",
+    partialObservation: evidence,
+    cleanup: {
+      reason: "Output handles could not be closed.",
+      resources: cleanupFailures.flatMap(
+        (failure) => failure.cleanupResources ?? [],
+      ),
+    },
+  });
+  for (const failure of cleanupFailures)
+    combined.retainSecondaryFailure(failure);
+  combined.bindCleanupDependencies(cleanupFailures);
+  for (const cancellation of [
+    completion.cancellation,
+    copyCompletion?.cancellation,
+  ])
+    if (cancellation !== undefined)
+      analysisErrorWithCancellation(combined, cancellation);
+  return combined;
 };
 
 /** Export one capture folder as an agentenv computer app bundle, reported as Evidence. */
@@ -458,8 +574,13 @@ export const exportDesktopApplication = async (
   signal?: AbortSignal,
 ): Promise<Evidence | AnalysisError> => {
   try {
-    const { result, captureEvidenceId, unclosed, copyUnclosed, copyFailure } =
-      await runExport(request, readers, signal);
+    const {
+      result,
+      captureEvidenceId,
+      completion,
+      copyCompletion,
+      copyFailure,
+    } = await runExport(request, readers, signal);
     const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
       predicateType: "rea.desktop-application-export",
       operation: OPERATION,
@@ -467,6 +588,7 @@ export const exportDesktopApplication = async (
         capture_evidence_id: captureEvidenceId,
         named: request.name !== undefined,
         tasks: request.tasks.length,
+        task_ends: [...(request.taskEnds ?? [])],
         package_url: request.packageUrl !== undefined,
         download_install: request.downloadInstall !== undefined,
         extra_packages: [...(request.extraPackages ?? [])],
@@ -477,6 +599,9 @@ export const exportDesktopApplication = async (
         withhold_to: request.withhold?.to ?? null,
         withhold_paths: [...(request.withhold?.paths ?? [])],
         seed_withheld: request.seedWithheld === true,
+        ...(request.viewPolicy === undefined
+          ? {}
+          : { view_policy: { ...request.viewPolicy } }),
       },
       result: {
         ...result,
@@ -496,71 +621,14 @@ export const exportDesktopApplication = async (
       authority: "analyst-inference",
       limitations: [...result.limitations],
     });
-    if (copyFailure !== undefined) {
-      const failure = desktopOperationFailure(
-        copyFailure.cause,
+    return (
+      publishedExportFailure(
+        request,
+        evidence,
+        { completion, copyCompletion, copyFailure },
         signal,
-        OPERATION,
-        "Desktop export",
-      );
-      failure.retainPartialObservation(evidence);
-      if (unclosed === undefined) return failure;
-      const cleanup = writtenWithOpenHandles(
-        { provider: DESKTOP_PROVIDER.id, operation: OPERATION, what: "bundle" },
-        request.directory,
-        unclosed,
-        evidence,
-      );
-      const combined = new ProviderAdapterError(
-        DESKTOP_PROVIDER.id,
-        OPERATION,
-        {
-          cause: failure,
-          cleanupPrimary: failure,
-          partialObservation: evidence,
-          userMessage: `The bundle was written to ${request.directory}, but the withheld copy failed and bundle handles could not be closed.`,
-          cleanup: {
-            reason: "Bundle output handles could not be closed.",
-            resources: [request.directory],
-          },
-        },
-      );
-      combined.retainSecondaryFailure(cleanup);
-      combined.bindCleanupDependencies([cleanup, failure]);
-      return combined;
-    }
-    const open = [
-      { what: "bundle", directory: request.directory, release: unclosed },
-      {
-        what: "withheld copy",
-        directory: request.withheldCopy ?? "",
-        release: copyUnclosed,
-      },
-    ].flatMap(({ release, ...written }) =>
-      release === undefined ? [] : [{ ...written, release }],
+      ) ?? evidence
     );
-    if (open.length === 0) return evidence;
-    const failures = open.map(({ what, directory, release }) =>
-      writtenWithOpenHandles(
-        { provider: DESKTOP_PROVIDER.id, operation: OPERATION, what },
-        directory,
-        release,
-        evidence,
-      ),
-    );
-    if (failures.length === 1) return failures[0]!;
-    const combined = new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
-      userMessage:
-        "The bundle and withheld copy were written, but their output handles could not be closed.",
-      partialObservation: evidence,
-      cleanup: {
-        reason: "Output handles could not be closed.",
-        resources: open.map(({ directory }) => directory),
-      },
-    });
-    for (const failure of failures) combined.retainSecondaryFailure(failure);
-    combined.bindCleanupDependencies(failures);
-    return combined;
   } catch (cause: unknown) {
     return desktopOperationFailure(cause, signal, OPERATION, "Desktop export");
   }

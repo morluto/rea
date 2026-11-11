@@ -101,6 +101,11 @@ export const readPeHeaders = (bytes: Buffer, fileSize = bytes.length) => {
       "unsupported",
       "DOS MZ images do not contain PE resource or certificate tables",
     );
+  if (observed.state === "declared" && observed.signature !== "PE")
+    throw new BinaryFormatFailure(
+      "unsupported",
+      `${observed.signature} images do not contain PE resource or certificate tables`,
+    );
   if (observed.state === "candidate" || observed.state === "signature-needed")
     requirePeRange(bytes, observed.offset, 24);
   if (observed.state !== "declared" || observed.signature !== "PE")
@@ -316,7 +321,10 @@ const openPeResourceTree = (
       maxEntries,
     );
   } catch (cause) {
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+    if (
+      (cause instanceof ArtifactReaderFailure && cause.reason === "format") ||
+      (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+    )
       return undefined;
     throw cause;
   }

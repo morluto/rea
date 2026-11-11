@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { buffer } from "node:stream/consumers";
 import type { FileHandle } from "node:fs/promises";
-import { writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -34,6 +35,38 @@ import {
   machOWithSegment,
 } from "./DenoStandalone.fixture.js";
 import { MAX_DENO_PATH_COMPONENT_BYTES } from "./DenoVirtualFs.js";
+import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
+
+it("keeps a confirmed Deno inventory when another pack recognizer is limited", async () => {
+  const original = denoElf();
+  // Add a valid empty section table without changing the existing PT_NOTE.
+  const bytes = Buffer.concat([original, Buffer.alloc(3 * 64)]);
+  bytes.writeBigUInt64LE(BigInt(original.length), 40);
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt16LE(3, 60);
+  bytes.writeUInt16LE(0, 62);
+  const path = await writeCarrier("deno-with-sections", bytes);
+  const inventory = await scanCanonicalArtifactInventory(path, {
+    readerLimits: resolveArtifactReaderLimits({
+      bun: { recognition_table_bytes: 191 },
+    }),
+  });
+  expect(inventory.manifest).toMatchObject({
+    root_format: "deno-standalone",
+    root_sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  expect(inventory.limitations).toContainEqual(
+    expect.stringContaining("Bun graph recognition remains unknown:"),
+  );
+  expect(inventory.limitations).toContainEqual(
+    expect.stringContaining(
+      "artifact_limits.bun.recognition_table_bytes (191 bytes)",
+    ),
+  );
+  expect(inventory.occurrences[0]?.limitations).toContainEqual(
+    expect.stringContaining("Bun graph recognition remains unknown:"),
+  );
+});
 
 const secret = "super-secret-value";
 
@@ -1787,3 +1820,165 @@ it("rejects a confirmed Deno section when header and segment widths disagree", a
     failure: { reason: "format" },
   });
 });
+
+async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const value of values) result.push(value);
+  return result;
+}
+
+it.each(["retry", "independent caller", "physical failure"] as const)(
+  "keeps Deno inventory available after failed preparation: %s",
+  async (scenario) => {
+    const path = await writeCarrier(
+      "retry",
+      denoElf(sectionFor(Buffer.from("source"))),
+    );
+    const reader = new DenoStandaloneArtifactReader(path);
+    const controller = new AbortController();
+    const reason = { stop: "first Deno inventory" };
+    const physicalFailure = Object.assign(
+      new Error("Deno preparation read failed"),
+      { code: "EIO" },
+    );
+    const observed = await open(path, "r");
+    const prototype = Object.getPrototypeOf(observed) as FileHandle;
+    const read = prototype.read;
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let firstRead = true;
+    const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+      this: FileHandle,
+      ...args: Parameters<typeof read>
+    ) {
+      const result = await read.apply(this, args);
+      if (firstRead) {
+        firstRead = false;
+        enter();
+        await gate;
+        if (scenario === "physical failure") throw physicalFailure;
+      }
+      return result;
+    });
+    const pending: Promise<unknown>[] = [];
+    try {
+      const first = collect(reader.entries(controller.signal));
+      const failure = first.then(
+        () => {
+          throw new Error("Expected cancelled Deno preparation");
+        },
+        (cause: unknown) => cause,
+      );
+      pending.push(failure);
+      await entered;
+      const concurrent =
+        scenario === "independent caller"
+          ? collect(reader.entries())
+          : undefined;
+      if (concurrent !== undefined) {
+        pending.push(concurrent);
+        void concurrent.catch(() => undefined);
+      }
+      controller.abort(reason);
+      release();
+      const rejected = await failure;
+      if (scenario === "physical failure")
+        expect(rejected).toMatchObject({ reason: "io" });
+      else {
+        expect(rejected).toMatchObject({ reason: "cancelled" });
+        expect((rejected as Error).cause).toBe(reason);
+      }
+      const entries = await (concurrent ?? collect(reader.entries()));
+      expect(entries.map((entry) => entry.path)).toEqual(["main.ts"]);
+      expect((await buffer(await reader.open(entries[0]!))).toString()).toBe(
+        "source",
+      );
+    } finally {
+      release();
+      await Promise.allSettled(pending);
+      spy.mockRestore();
+      await observed.close();
+      await reader.close();
+    }
+  },
+);
+
+it("does not publish Deno entries from cancelled partial preparation", async () => {
+  const contents = Buffer.from("abc");
+  const path = await writeCarrier(
+    "partial",
+    denoElf(
+      sectionFor(contents, [
+        { File: { n: "a.ts", o: [0, 1], u: true } },
+        { File: { n: "b.ts", o: [1, 1], u: true } },
+        { File: { n: "c.ts", o: [2, 1], u: true } },
+      ]),
+    ),
+  );
+  const reader = new DenoStandaloneArtifactReader(path);
+  const control = new DenoStandaloneArtifactReader(path);
+  const controller = new AbortController();
+  const reason = { stop: "partial Deno inventory" };
+  const expected = await collect(control.entries());
+  const reserve = ArtifactPathRegistry.prototype.reservePath;
+  const spy = vi
+    .spyOn(ArtifactPathRegistry.prototype, "reservePath")
+    .mockImplementation(function (
+      this: ArtifactPathRegistry,
+      ...args: Parameters<typeof reserve>
+    ) {
+      if (args[0] === "b.ts") controller.abort(reason);
+      return reserve.apply(this, args);
+    });
+  try {
+    await expect(
+      collect(reader.entries(controller.signal)),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    spy.mockRestore();
+    await expect(reader.open(expected[0]!)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    expect(
+      (await collect(reader.entries())).map((entry) => entry.path),
+    ).toEqual(["a.ts", "b.ts", "c.ts"]);
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
+it.each(["https://example.test/mod.ts", "\uFEFFhttps://example.test/mod.ts"])(
+  "preserves the length-prefixed remote specifier %j in inventory identity",
+  async (specifier) => {
+    const body = Buffer.from("inert remote bytes");
+    const snapshot = await inventoryOf(
+      "specifier-spelling",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: specifier },
+          specifiers: [{ text: specifier, id: 1 }],
+          remoteModules: [{ specifierId: 1, data: body }],
+        }),
+      ),
+    );
+    const member = snapshot.occurrences.find(
+      (row) =>
+        row.format_metadata?.kind === "deno-standalone-entry" &&
+        row.format_metadata.role === "remote-module",
+    );
+    expect(member).toMatchObject({
+      format_metadata: { source_path: specifier, entry_point: true },
+    });
+    expect(
+      snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
+        ?.sha256,
+    ).toBe(createHash("sha256").update(body).digest("hex"));
+  },
+);

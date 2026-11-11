@@ -642,7 +642,8 @@ export class ProviderProcessSupervisor {
   stop(
     options: ProviderProcessStopOptions = {},
   ): Promise<ProviderProcessStopResult> {
-    this.#stopRequested = true;
+    if (this.launch.ownsProcessLifetime && this.#exitObservation === undefined)
+      this.#stopRequested = true;
     this.#stopPromise ??= this.#stop(options).then((result) => {
       if (result.status === "incomplete") this.#stopPromise = undefined;
       return result;

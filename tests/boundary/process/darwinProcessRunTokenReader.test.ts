@@ -177,17 +177,9 @@ it("reports an actionable missing Swift compiler without installing it", async (
     },
   });
   try {
-    await expect(
-      reader.read([
-        {
-          pid: 1,
-          parentPid: 0,
-          processGroupId: 1,
-          state: "S",
-          command: "fixture",
-        },
-      ]),
-    ).rejects.toThrow(/requires the Apple Swift compiler via xcrun/u);
+    await expect(reader.read([{ pid: 1 }])).rejects.toThrow(
+      /requires the Apple Swift compiler via xcrun/u,
+    );
   } finally {
     await reader.close();
   }
@@ -1129,18 +1121,7 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
     const inspection =
       kind === "baseline"
         ? host.captureBaseline?.(controller.signal)
-        : host.runTokens?.(
-            [
-              {
-                pid: process.pid,
-                parentPid: process.ppid,
-                processGroupId: process.pid,
-                state: "S",
-                command: process.execPath,
-              },
-            ],
-            controller.signal,
-          );
+        : host.runTokens?.([{ pid: process.pid }], controller.signal);
     const baseline =
       inspection?.then(
         () => ({ state: "fulfilled" as const }),
@@ -1189,18 +1170,16 @@ it.skipIf(process.platform === "win32")(
     const baselineSpy = vi
       .spyOn(systemProcessOwnershipHost, "captureBaseline")
       .mockImplementation(async (signal) => {
-        await reader.identities(
-          [
-            {
-              pid: process.pid,
-              parentPid: process.ppid,
-              processGroupId: process.pid,
-              state: "S",
-              command: process.execPath,
-            },
-          ],
-          signal,
-        );
+        const processes = [
+          {
+            pid: process.pid,
+            parentPid: process.ppid,
+            processGroupId: process.pid,
+            state: "S",
+            command: process.execPath,
+          },
+        ];
+        await reader.identities(processes, signal);
         return [];
       });
     const launchSpy = vi.spyOn(electron, "launch");

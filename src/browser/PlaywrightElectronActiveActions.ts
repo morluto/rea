@@ -8,10 +8,11 @@ import type {
   ArtifactResourceOwner,
 } from "../artifacts/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
   electronActiveTimelineEventSchema,
   electronActiveProcessMetricSchema,
@@ -148,21 +149,29 @@ export const runElectronActions = async (
         options,
       });
     } catch (cause: unknown) {
-      stoppedBy = options.signal?.aborted ? "cancelled" : "failed";
-      actionError = safeActionErrorMessage(cause);
+      stoppedBy =
+        cause instanceof AnalysisCancelledError ||
+        (cause instanceof AnalysisError && cause.userCategory === "cancelled")
+          ? "cancelled"
+          : "failed";
+      actionError = describeValidationFailure(cause);
     }
-    const outcome =
-      actionError === null
-        ? { status: "completed" as const, error: null }
-        : { status: stoppedBy ?? "failed", error: actionError };
-    actions.push({
+    const actionRecord = {
       step_id: action.step_id,
       kind: action.kind,
       window_index: windowIndex,
       target,
-      ...outcome,
       elapsed_ms: Math.max(0, Math.round(performance.now() - actionStartedAt)),
-    });
+    };
+    const result: ElectronActions[number] =
+      actionError === null
+        ? { ...actionRecord, status: "completed", error: null }
+        : {
+            ...actionRecord,
+            status: stoppedBy ?? "failed",
+            error: actionError,
+          };
+    actions.push(result);
     if (handleOwner !== undefined) {
       cleanupError = await releaseActionWindow(
         resources,
@@ -225,7 +234,7 @@ const releaseActionWindow = async (
     "playwright-electron-active",
     released.lease.cleanupResources ?? [owner.resource],
     {
-      reason: safeActionErrorMessage(released.cause),
+      reason: describeValidationFailure(released.cause),
     },
     { cause: released.cause, operation: OPERATION },
   );
@@ -507,8 +516,4 @@ export const readFinalApplicationState = async (
       cancellation_grace_ms: CANCELLED_STATE_READ_TIMEOUT_MS,
     },
   });
-};
-
-const safeActionErrorMessage = (cause: unknown): string => {
-  return cause instanceof Error ? cause.message : "Electron action failed";
 };

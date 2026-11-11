@@ -769,8 +769,11 @@ export const stringValue = (
 /** Return a string or numeric argument literal. */
 export const argumentValue = (
   node: t.Node | null | undefined,
-): string | undefined =>
-  t.isNumericLiteral(node) ? String(node.value) : stringValue(node);
+): string | undefined => {
+  if (node === null || node === undefined) return undefined;
+  const value = unwrapJavaScriptExpression(node).node;
+  return t.isNumericLiteral(value) ? String(value.value) : stringValue(value);
+};
 
 /** Prefix a static argument value when one is available. */
 export const prefixedArgument = (

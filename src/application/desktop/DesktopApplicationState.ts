@@ -1,9 +1,21 @@
+import {
+  desktopViewPolicy,
+  desktopViewPolicyInputSchema,
+  type DesktopViewPolicy,
+  type DesktopViewPolicyInput,
+} from "../../domain/desktop/desktopViewPolicy.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
   type DesktopApplicationCapture,
@@ -58,11 +70,14 @@ const OPERATION = "inspect_desktop_application_state";
 /**
  * Readers for formats that need a tool or worker, supplied by composition. Each
  * database is staged with its retained log in a private directory the caller removes.
+ * Expected format/read failures return an error result. Cancellation throws a typed
+ * AnalysisCancelledError or ArtifactReaderFailure; cleanup failures retain their owner.
  */
 export interface DesktopStateReaders {
   readonly sqlite: (
     database: string,
     signal?: AbortSignal,
+    policy?: DesktopViewPolicy,
   ) => Promise<{ ok: true; view: JsonValue } | { ok: false; error: string }>;
   readonly dconf: (
     database: string,
@@ -84,44 +99,93 @@ export const readDesktopCapture = async (
   signal: AbortSignal | undefined,
 ): Promise<{ evidence: Evidence; capture: DesktopApplicationCapture }> => {
   const resources = new ArtifactResourceScope();
+  const outcome = await resources
+    .run(async () => {
+      const loaded = await readJsonFile(
+        join(folder, "capture.json"),
+        signal,
+        resources,
+        OPERATION,
+      );
+      if (!loaded.ok) {
+        if (loaded.error instanceof AnalysisError) throw loaded.error;
+        throw inputError(
+          `${join(folder, "capture.json")} could not be read as JSON.`,
+          "Pass a folder written by capture-desktop-application.",
+        );
+      }
+      const evidence = safeParseEvidence(loaded.value);
+      if (
+        !evidence.ok ||
+        evidence.value.operation !== DESKTOP_OPERATION ||
+        evidence.value.predicate_type !== "rea.desktop-application-capture" ||
+        evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
+        evidence.value.provider.version !== DESKTOP_PROVIDER.version
+      )
+        throw inputError(
+          "capture.json is not desktop application capture Evidence.",
+          "Pass a folder written by capture-desktop-application.",
+        );
+      const capture = desktopApplicationCaptureSchema.safeParse(
+        evidence.value.normalized_result,
+      );
+      if (!capture.success)
+        throw inputError(
+          `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
+          "Capture the application again.",
+        );
+      return { evidence: evidence.value, capture: capture.data };
+    })
+    .then(ok, (cause: unknown) => err(cause));
   try {
-    const loaded = await readJsonFile(
-      join(folder, "capture.json"),
-      signal,
-      resources,
-      OPERATION,
-    );
-    if (!loaded.ok) {
-      if (loaded.error instanceof AnalysisError) throw loaded.error;
-      throw inputError(
-        `${join(folder, "capture.json")} could not be read as JSON.`,
-        "Pass a folder written by capture-desktop-application.",
-      );
-    }
-    const evidence = safeParseEvidence(loaded.value);
-    if (
-      !evidence.ok ||
-      evidence.value.operation !== DESKTOP_OPERATION ||
-      evidence.value.predicate_type !== "rea.desktop-application-capture" ||
-      evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
-      evidence.value.provider.version !== DESKTOP_PROVIDER.version
-    )
-      throw inputError(
-        "capture.json is not desktop application capture Evidence.",
-        "Pass a folder written by capture-desktop-application.",
-      );
-    const capture = desktopApplicationCaptureSchema.safeParse(
-      evidence.value.normalized_result,
-    );
-    if (!capture.success)
-      throw inputError(
-        `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
-        "Capture the application again.",
-      );
-    return { evidence: evidence.value, capture: capture.data };
-  } finally {
     await resources.close();
+  } catch (cause: unknown) {
+    const cleanup = desktopOperationFailure(
+      cause,
+      signal,
+      OPERATION,
+      "Desktop capture input",
+    );
+    if (outcome.ok && !signal?.aborted)
+      throw cleanup.retainPartialObservation(outcome.value.evidence);
+    const primary = outcome.ok
+      ? new AnalysisCancelledError(OPERATION, {
+          cause: signal?.reason,
+        }).retainPartialObservation(outcome.value.evidence)
+      : desktopOperationFailure(
+          outcome.error,
+          undefined,
+          OPERATION,
+          "Desktop capture input",
+        );
+    if (!outcome.ok && signal?.aborted)
+      analysisErrorWithCancellation(
+        primary,
+        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+      );
+    throw analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      OPERATION,
+    ).bindCleanupDependencies([primary, cleanup]);
   }
+  if (!outcome.ok) {
+    if (!signal?.aborted) throw outcome.error;
+    throw analysisErrorWithCancellation(
+      desktopOperationFailure(
+        outcome.error,
+        undefined,
+        OPERATION,
+        "Desktop capture input",
+      ),
+      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+    );
+  }
+  if (signal?.aborted)
+    throw new AnalysisCancelledError(OPERATION, {
+      cause: signal.reason,
+    }).retainPartialObservation(outcome.value.evidence);
+  return outcome.value;
 };
 
 interface ViewContext {
@@ -130,6 +194,7 @@ interface ViewContext {
   readonly names: ReadonlySet<string>;
   readonly signal: AbortSignal | undefined;
   readonly index: StateIndex;
+  readonly policy: DesktopViewPolicy;
 }
 
 const dconfGroups = (text: string, names: ReadonlySet<string>) => {
@@ -242,7 +307,11 @@ const sqliteView = async (
       staged.push({ name: `state.db${sidecar.suffix}`, bytes: bytes.value });
   }
   return withStaged(staged, async ([database]) => {
-    const read = await context.readers.sqlite(database ?? "", context.signal);
+    const read = await context.readers.sqlite(
+      database ?? "",
+      context.signal,
+      context.policy,
+    );
     return read.ok ? { view: read.view, error: null } : failed(read.error);
   });
 };
@@ -273,9 +342,11 @@ const viewOf = async (
     case "json":
     case "keyfile":
     case "xml":
-      return outcomeOf(textualView(format, input.bytes));
+      return outcomeOf(textualView(format, input.bytes, context.policy));
     case "zip":
-      return outcomeOf(await readZipView(input.bytes, context.signal));
+      return outcomeOf(
+        await readZipView(input.bytes, context.signal, context.policy),
+      );
     case "dconf":
       return dconfView(input, context);
     case "sqlite":
@@ -330,7 +401,10 @@ const readVersion = async (
   path: string,
   context: ViewContext,
 ): Promise<void> => {
-  context.signal?.throwIfAborted();
+  if (context.signal?.aborted === true)
+    throw new AnalysisCancelledError(OPERATION, {
+      cause: context.signal.reason,
+    });
   if (!version.present) return;
   if (version.sha256 === null) {
     version.view_error = "content not retained";
@@ -341,7 +415,7 @@ const readVersion = async (
     version.view_error = `retained content ${bytes.error}`;
     return;
   }
-  const document = openStateDocument(path, bytes.value);
+  const document = openStateDocument(path, bytes.value, context.policy);
   version.format = document.format;
   if (document.compression !== undefined)
     version.compression = document.compression;
@@ -404,14 +478,15 @@ const describePath = async (
   };
 };
 
-const STATE_LIMITATIONS = [
+const stateLimitations = (policy: DesktopViewPolicy) => [
   "Roles are inferred from state directories, open files, window titles, selected paths and dconf key names; a path can be misattributed.",
   "Views cover retained content only; a file that existed before the capture but outside the content roots has no starting view.",
-  "SQLite views list at most 500 rows of at most 64 ordinary tables, text views at most 5,000 lines and XML views at most 5,000 nodes; changes between truncated views, or views with an unread table, are marked incomplete.",
-  "JSON and key file views read files of at most 4 MiB, JSON nested at most 500 levels and only numbers JavaScript holds exactly; other files of those formats have a view_error.",
+  `SQLite views list at most ${String(policy.sqlite_rows)} rows of ${String(policy.sqlite_tables)} ordinary tables, text views ${String(policy.text_lines)} lines and XML views ${String(policy.xml_nodes)} nodes; changes between truncated views, or views with an unread table, are marked incomplete. Increase the corresponding --view-policy budget and retry the same capture; no restart is needed.`,
+  `Each projected SQLite table view is bounded at sqlite_view_bytes=${String(policy.sqlite_view_bytes)} UTF-8 JSON bytes. A refused table keeps its error; other tables remain readable. Raise sqlite_view_bytes in --view-policy on the next call for that refusal. The separate SQLite worker reply and value/record limits may refuse earlier and are not raised by view policy.`,
+  `JSON and key file views read files of at most ${String(policy.parsed_bytes)} bytes and JSON nested at most ${String(policy.json_depth)} levels; only numbers JavaScript holds exactly are admitted. Increase parsed_bytes or json_depth in --view-policy for a budget refusal; byte budgets do not change numeric exactness or Evidence nesting.`,
   "dconf views keep only groups whose path names the application.",
-  "Zip views list at most 1,000 entries and read an entry only when it is unencrypted, stored or deflated, at most 16 MiB and at most 100 times its compressed size, up to 64 MiB per archive; databases and archives inside an archive are not read.",
-  "A gzip file's view is its document's, read only when it is at most 16 MiB and at most 100 times the file's size; a database inside one is not read, nor a gzip file inside an archive.",
+  `Zip views list at most ${String(policy.zip_entries)} entries and read an entry only when unencrypted, stored or deflated, at most ${String(policy.zip_entry_bytes)} bytes and ${String(policy.zip_ratio)} times its compressed size, up to ${String(policy.zip_bytes)} bytes per archive. Increase the corresponding --view-policy budget for a resource refusal; databases and archives inside an archive are not read.`,
+  `A gzip file's view is its document's, read only when it is at most ${String(policy.zip_entry_bytes)} bytes and at most ${String(policy.zip_ratio)} times the file's size; a database inside one is not read, nor a gzip file inside an archive.`,
 ];
 
 /** Read a capture folder into the application's state view. */
@@ -419,20 +494,46 @@ const inspectState = async (
   folder: string,
   readers: DesktopStateReaders,
   signal: AbortSignal | undefined,
+  options: DesktopStateViewOptions,
 ): Promise<Evidence> => {
+  const policy = desktopViewPolicy(options.viewPolicy);
   const { evidence, capture } = await readDesktopCapture(folder, signal);
   const names = applicationNames(capture);
   const facts = roleFacts(capture);
   const index = indexState(capture);
-  const paths = await withRetainedContent(folder, async (content) => {
-    const context: ViewContext = { content, readers, names, signal, index };
-    const described: DesktopStatePath[] = [];
-    for (const path of statePaths(index))
-      described.push(await describePath(capture, path, facts, context));
-    return described;
-  });
+  const candidates = statePaths(index);
+  for (const selected of options.paths ?? [])
+    if (!candidates.includes(selected))
+      throw new AnalysisInputError(
+        OPERATION,
+        {
+          userMessage: `Captured path ${JSON.stringify(selected)} was not found.`,
+          remediationAction:
+            "Use an exact path from this capture's state view; no current filesystem path is substituted.",
+        },
+        [{ path: ["paths"], reason: "invalid_value" }],
+      );
+  const paths = await withRetainedContent(
+    folder,
+    async (content) => {
+      const context: ViewContext = {
+        content,
+        readers,
+        names,
+        signal,
+        index,
+        policy,
+      };
+      const described: DesktopStatePath[] = [];
+      for (const path of candidates)
+        if (options.paths === undefined || options.paths.includes(path))
+          described.push(await describePath(capture, path, facts, context));
+      return described;
+    },
+    policy.file_bytes,
+  );
   const limitations = [
-    ...STATE_LIMITATIONS,
+    ...stateLimitations(policy),
     ...(capture.state.state_directories === undefined
       ? [
           "The capture does not record its state directories as walked, so files in a symlinked state directory may be classed as documents.",
@@ -440,6 +541,7 @@ const inspectState = async (
       : []),
   ];
   const result: DesktopApplicationState = {
+    effective_view_policy: policy,
     capture: {
       evidence_id: evidence.evidence_id,
       home: capture.host.home,
@@ -453,11 +555,18 @@ const inspectState = async (
     paths,
     limitations,
   };
-  signal?.throwIfAborted();
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
   return createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,
-    parameters: { capture_evidence_id: evidence.evidence_id },
+    parameters: {
+      capture_evidence_id: evidence.evidence_id,
+      ...(options.viewPolicy === undefined
+        ? {}
+        : { view_policy: { ...options.viewPolicy } }),
+      ...(options.paths === undefined ? {} : { paths: [...options.paths] }),
+    },
     result,
     confidence: "inferred",
     authority: "analyst-inference",
@@ -465,14 +574,35 @@ const inspectState = async (
   });
 };
 
+export interface DesktopStateViewOptions {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
+  /** Exact original captured paths; omission examines every retained path. */
+  readonly paths?: readonly string[] | undefined;
+}
+
 /** Inspect one capture folder, returning its state view Evidence or a failure. */
 export const inspectDesktopApplicationState = async (
   folder: string,
   readers: DesktopStateReaders,
   signal?: AbortSignal,
+  options: DesktopStateViewOptions = {},
 ): Promise<Evidence | AnalysisError> => {
   try {
-    return await inspectState(folder, readers, signal);
+    const admitted = desktopViewPolicyInputSchema.safeParse(
+      options.viewPolicy === undefined ? {} : options.viewPolicy,
+    );
+    if (!admitted.success)
+      return analysisInputErrorFromIssues(
+        OPERATION,
+        admitted.error.issues,
+        options.viewPolicy,
+      );
+    return await inspectState(folder, readers, signal, {
+      ...options,
+      ...(options.viewPolicy === undefined
+        ? {}
+        : { viewPolicy: admitted.data }),
+    });
   } catch (cause: unknown) {
     return desktopOperationFailure(
       cause,
