@@ -9,7 +9,11 @@ type RecordIdentity = Pick<
 type CorrelatableRecord = RecordIdentity &
   Pick<
     MftRecord,
-    "baseRecordReference" | "declaredRecordNumber" | "fixups" | "totalBytes"
+    | "baseRecordReference"
+    | "declaredRecordNumber"
+    | "fixups"
+    | "totalBytes"
+    | "extentValid"
   >;
 type JournalReferences = Pick<UsnRecordV2, "fileReference" | "parentReference">;
 
@@ -32,6 +36,7 @@ export const createUsnMftCorrelator = (
     // logical MFT stream. Extension records do not identify separate files.
     if (
       record.baseRecordReference !== null ||
+      !record.extentValid ||
       record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES !== record.totalBytes
     )
       continue;
