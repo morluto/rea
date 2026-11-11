@@ -1573,3 +1573,41 @@ it("retains binding-gap indices even when paging omits their call node", async (
   expect(trace.page_truncated).toBe(true);
   expect(trace.traversal.status).toBe("complete");
 });
+
+it("binds each exact call destination once when resolution repeats it", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": {
+        operations: [
+          {
+            ...node("call", "0x1010", "CALL"),
+            inputs: Array.from({ length: 1_001 }, () => scalar),
+          },
+        ],
+      },
+      "0x2000": {
+        operations: [],
+        parameters: [{ ordinal: 0, name: "fixed", data_type: "/int" }],
+      },
+    },
+    {
+      "0x1010": Array.from({ length: 16 }, () => ({
+        destination: "0x2000",
+        status: "direct" as const,
+      })),
+    },
+  );
+  const trace = await traced(graph.port, { procedure: "0x1000" });
+  const gaps = trace.unknowns.flatMap(({ call_inputs }) =>
+    call_inputs === undefined ? [] : [call_inputs],
+  );
+  expect(gaps).toHaveLength(1);
+  expect(gaps[0]?.input_indices).toEqual(
+    Array.from({ length: 999 }, (_, index) => index + 2),
+  );
+  expect(
+    trace.edges.filter(({ kind }) => kind === "argument-binding"),
+  ).toHaveLength(1);
+  expect(trace.edges.filter(({ kind }) => kind === "call")).toHaveLength(16);
+  expect(graph.analyzed).toEqual(["0x1000", "0x2000"]);
+});
