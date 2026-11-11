@@ -232,6 +232,15 @@ export interface ProviderProcessStopOptions {
   readonly killGraceMs?: number;
 }
 
+/** Non-JSON snapshot of the exact inspection facts retained by a stop attempt. */
+export interface ProviderProcessInspectionCleanup {
+  readonly causes: readonly unknown[];
+  readonly failures: readonly {
+    readonly failure: ProcessInspectionCleanupFailure;
+    readonly cause: unknown;
+  }[];
+}
+
 /** Exact disposition of one owned process stop attempt. */
 export type ProviderProcessStopResult =
   | {
@@ -247,13 +256,7 @@ export type ProviderProcessStopResult =
       readonly reason: string;
       readonly cleanupResult?: ProcessCleanupFailure;
       /** Current retained capabilities and their exact originating inspection facts; never JSON diagnostics. */
-      readonly inspectionCleanup?: {
-        readonly causes: readonly unknown[];
-        readonly failures: readonly {
-          readonly failure: ProcessInspectionCleanupFailure;
-          readonly cause: unknown;
-        }[];
-      };
+      readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
     };
 
 const incompleteCleanup = (

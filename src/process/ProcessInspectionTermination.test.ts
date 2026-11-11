@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
-import { OwnedCommandFailure } from "./OwnedCommand.js";
+import { OwnedCommandFailure, runOwnedCommand } from "./OwnedCommand.js";
 import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,
@@ -199,4 +199,72 @@ it("retries all mixed inspection owners and keeps original and retry errors live
   expect(retryError).toMatchObject({ cleanupIncomplete: false });
   expect(foreign.handle.fd).toBeGreaterThanOrEqual(0);
   expect(foreign.closes()).toBe(1);
+});
+
+it("retains stop-only inspection facts on the actual command failure after its supervisor releases the descriptor", async () => {
+  const file = await failedInspectionDescriptor();
+  const observations = new Map([
+    [
+      44,
+      {
+        state: "unavailable" as const,
+        reason: "retained identity observation",
+      },
+    ],
+  ]);
+  const batch = new ProcessOwnershipIdentityBatchFailure(
+    [{ pid: 42, requestIndex: 0, cause: file.failure }],
+    observations,
+  );
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42,
+    stdout: null,
+    stderr: null,
+    exitCode: 0,
+    signalCode: null,
+    kill: () => {
+      throw new Error("Unexpected child signal");
+    },
+  });
+  let cleanupCalls = 0;
+  const failure: unknown = await runOwnedCommand(
+    { command: "recorded-command", arguments: [], runId: "recorded-run" },
+    {
+      timeoutMs: null,
+      diagnosticBytes: 1024,
+    },
+    {
+      launcher: async () => {
+        setImmediate(() => child.emit("close", 0, null));
+        return {
+          process: child,
+          ownership: {
+            runId: "recorded-run",
+            leaderPid: 42,
+            processGroupId: 42,
+          },
+          cleanup: async () => {
+            if (++cleanupCalls === 1) throw batch;
+            return { cleaned: true, signaled: false };
+          },
+        };
+      },
+    },
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(OwnedCommandFailure);
+  if (!(failure instanceof OwnedCommandFailure)) throw failure;
+  onTestFinished(() => failure.cleanupOwner?.dispose());
+  expect(failure.inspectionCleanup?.causes[0]).toBe(batch);
+  expect(failure.inspectionCleanup?.failures[0]?.failure).toBe(file.failure);
+  expect(batch.observations).toBe(observations);
+  expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+  file.allow();
+  expect((await failure.cleanupOwner!.stop()).status).toBe("verified-cleanup");
+  expect(file.handle.fd).toBe(-1);
+  expect(cleanupCalls).toBe(2);
+  expect(failure.inspectionCleanup?.causes[0]).toBe(batch);
+  const retained = failure.inspectionCleanup?.causes[0];
+  if (!(retained instanceof ProcessOwnershipIdentityBatchFailure))
+    throw new Error("Expected retained batch after release");
+  expect(retained.observations).toBe(observations);
 });
