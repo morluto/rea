@@ -117,8 +117,9 @@ it("owns the word-sized absolute relocation type per machine", () => {
 });
 
 /**
- * `records` RELA records at `destination` against dynamic symbol 1, whose
- * `st_size` is `symbolSize`. `symbolTags` declares where the loader finds it.
+ * `records` RELA records at `destination` against dynamic symbol
+ * `symbolIndex` (1 unless given). Symbol 1 records `symbolSize` as its
+ * `st_size`, and `symbolTags` declares where the loader finds it.
  */
 const symbolicImage = (
   kind: bigint,
@@ -127,6 +128,7 @@ const symbolicImage = (
     readonly symbolTags?: readonly [bigint, bigint][];
     readonly destination?: bigint;
     readonly records?: number;
+    readonly symbolIndex?: number;
   } = {},
 ): Buffer => {
   const records = layout.records ?? 1;
@@ -147,7 +149,10 @@ const symbolicImage = (
   });
   for (let record = 0; record < records; record += 1) {
     bytes.writeBigUInt64LE(layout.destination ?? 0x300n, 0x100 + record * 24);
-    bytes.writeBigUInt64LE((1n << 32n) | kind, 0x108 + record * 24);
+    bytes.writeBigUInt64LE(
+      (BigInt(layout.symbolIndex ?? 1) << 32n) | kind,
+      0x108 + record * 24,
+    );
   }
   bytes.writeBigUInt64LE(symbolSize, 0x200 + 24 + 16);
   return bytes;
@@ -264,6 +269,7 @@ it.each([
       ],
     }),
   ],
+  ["symbol index 0", symbolicImage(5n, 8n, { symbolIndex: 0 })],
   [
     "a span past the address space",
     symbolicImage(5n, 0x10n, { destination: 0xffff_ffff_ffff_fff8n }),
