@@ -215,7 +215,8 @@ export const exportKunaProject = async (
 ): Promise<KunaExportOutcome> => {
   const { installation, signal } = request;
   const { configuration } = installation;
-  const deadline = Date.now() + kunaProjectDeadline(configuration).ms;
+  const projectDeadline = kunaProjectDeadline(configuration);
+  const deadline = Date.now() + projectDeadline.ms;
   const input = join(request.workspace, "input", basename(request.targetPath));
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
   await mkdir(request.output, { recursive: true, mode: 0o700 });
@@ -240,7 +241,7 @@ export const exportKunaProject = async (
       workspace: request.workspace,
       operation: KUNA_EXPORT_OPERATION,
       timeoutMs: deadline - Date.now(),
-      deadline: kunaProjectDeadline(configuration),
+      deadline: projectDeadline,
       outputBytes,
       signal,
       launcher: request.launcher,

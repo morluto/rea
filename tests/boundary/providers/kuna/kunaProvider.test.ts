@@ -20,6 +20,7 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
 import { KUNA_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaProviderCapabilities.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
@@ -1153,6 +1154,64 @@ it.each([
     }
   },
 );
+
+it("retains the producing project deadline after its runtime override is reset", async () => {
+  const { client, first } = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "kuna.project_timeout_ms": 300 } },
+    async () => {
+      const { open } = await session(
+        "rea-kuna-retained-deadline-",
+        { project: "hang" },
+        { REA_KUNA_PROJECT_TIMEOUT_MS: "invalid" },
+      );
+      const client = open();
+      const first = await client.execute("procedure_assembly", {
+        procedure: "main",
+      });
+      return { client, first };
+    },
+  );
+  try {
+    const later = await runWithAnalysisOperationSnapshot(
+      { revision: 2, overrides: {} },
+      () => client.execute("analyze_function", { procedure: "main" }),
+    );
+    for (const result of [first, later]) {
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        cause: {
+          _tag: "AnalysisTimeoutError",
+          timeoutMs: 300,
+          limit: {
+            setting: "kuna.project_timeout_ms",
+            effective_value: 300,
+            source: "runtime",
+          },
+        },
+      });
+    }
+    const fallback = await runWithAnalysisOperationSnapshot(
+      { revision: 2, overrides: {} },
+      () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+    );
+    expect(fallback).toMatchObject({
+      ok: true,
+      value: {
+        siblingUnavailability: {
+          cause: {
+            _tag: "AnalysisTimeoutError",
+            timeoutMs: 300,
+            limit: { setting: "kuna.project_timeout_ms", source: "runtime" },
+          },
+        },
+      },
+    });
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
 
 it("lets one caller stop waiting for the shared inventory without failing another", async () => {
   const { open } = await session("rea-kuna-shared-inventory-", {
