@@ -1,3 +1,5 @@
+import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
@@ -43,7 +45,80 @@ const repeatedBlock = (data: Buffer): Buffer => {
   ]);
 };
 
+it("retries UnityFs preparation cancelled during file reading", async () => {
+  const path = await fixture(buildUnityFs([{ path: "a", data: "x" }]));
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new UnityFsArtifactReader(path, admitted);
+  const controller = new AbortController();
+  const reason = { stage: "header read" };
+  const nativeRead = admitted.handle.read.bind(admitted.handle);
+  const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(nativeRead, admitted.handle, args);
+    controller.abort(reason);
+    return result;
+  }) as typeof admitted.handle.read);
+  try {
+    await expect(
+      (async () => {
+        for await (const _ of reader.entries(controller.signal)) {
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    read.mockRestore();
+    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
+it("does not publish UnityFs entries when final source verification fails", async () => {
+  const path = await fixture(buildUnityFs([{ path: "a", data: "x" }]));
+  const control = new UnityFsArtifactReader(path);
+  const reader = new UnityFsArtifactReader(path);
+  const expected = (await entries(control))[0]!;
+  const nativeRead = ArtifactFileSource.prototype.read;
+  const physical = Object.assign(
+    new Error("final source verification failed"),
+    { code: "EIO" },
+  );
+  let calls = 0;
+  const read = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, ...args) {
+      calls += 1;
+      if (calls === 2) return Promise.reject(physical);
+      return nativeRead.apply(this, args);
+    });
+  try {
+    await expect(entries(reader)).rejects.toBe(physical);
+    await expect(reader.open(expected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    read.mockRestore();
+    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
 describe("UnityFS allocation and malformed-input boundaries", () => {
+  it("rejects an oversized directory extending past the physical file", async () => {
+    const bytes = buildUnityFs([{ path: "data", data: "x" }]);
+    bytes.writeUInt32BE(17 * 1024 * 1024, 40);
+    const reader = new UnityFsArtifactReader(await fixture(bytes));
+    try {
+      await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+    } finally {
+      await reader.close();
+    }
+  });
+
   it.each(["encoded", "decoded"] as const)(
     "admits the %s directory budget before reading or decoding it",
     async (kind) => {
@@ -419,4 +494,9 @@ describe("UnityFS stream capacity and cache ownership", () => {
       await reader.close();
     }
   });
+});
+
+artifactPreparationRecoveryCases({
+  image: () => buildUnityFs([{ path: "a", data: "x" }]),
+  createReader: (path, admitted) => new UnityFsArtifactReader(path, admitted),
 });

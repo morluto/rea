@@ -428,7 +428,6 @@ it("applies a non-default capture deadline and releases its runtime", async () =
       capture_timeout_ms: 250,
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected capture timeout");
   expect(result.error._tag).toBe("AnalysisTimeoutError");
   expect(result.error.userMessage).toContain("250");
@@ -554,14 +553,12 @@ it("retains a failed capture reader and retries it before a fresh load", async (
   });
   try {
     const first = await decoder.inspect(input);
-    expect(first.ok).toBe(false);
     if (first.ok) throw new Error("Reader close failure must fail inspection");
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(first.error.cleanupResources).toContain(path);
     expect(decoderCalls).toBe(0);
 
     const refused = await decoder.inspect(input);
-    expect(refused.ok).toBe(false);
     if (refused.ok) throw new Error("Fresh read must wait for owner cleanup");
     expect(refused.error.cleanupIncomplete).toBe(true);
     expect(refused.error.cleanupResources).toContain(path);
@@ -848,7 +845,6 @@ it("retains completed capture facts and binds final root cleanup to its retry le
       format: "har",
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Root close failure must be reported");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(runtimePath).toBeDefined();
@@ -1029,9 +1025,14 @@ it.each([
           },
         },
       });
-      expect(projected.remediation.action).toContain("no runtime override");
       expect(projected.remediation.action).toContain(
-        "no completed capture Evidence",
+        `Increase max_reply_bytes above ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}`,
+      );
+      expect(projected.remediation.action).toContain(
+        "next inspect_web_network_capture call",
+      );
+      expect(projected.remediation.action).toContain(
+        "do not recreate a completed report from a refused decode",
       );
       expect(projected.remediation.action).not.toContain("rea doctor");
       expect(result.error.partialObservation).toMatchObject({

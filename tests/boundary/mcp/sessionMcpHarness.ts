@@ -34,6 +34,7 @@ const HOST_TOOLS_NOT_CONFIGURED: ProviderAvailability = {
   status: "unavailable",
   code: "not_configured",
   reason: "The target-free MCP fixture does not probe host tools.",
+  remediation: "Repair the fixture provider.",
   diagnostics: { source: "test_fixture" },
 };
 

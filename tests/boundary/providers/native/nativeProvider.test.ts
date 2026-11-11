@@ -30,6 +30,7 @@ import {
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
+import { fat } from "../../../../src/domain/binaryTarget.fixture.js";
 import {
   inspectPlistSchema,
   inspectSignatureSchema,
@@ -91,6 +92,13 @@ const inspectionFixture = async (high = false) => {
       ],
     }),
   );
+  return nativeMachoTargetForFile(path);
+};
+
+const architectureTargetFixture = async () => {
+  const root = await createTestTempDirectory("rea-native-architectures-");
+  const path = join(root, "fixture");
+  await writeFile(path, fat([0x01000007, 0x0100000c]));
   return nativeMachoTargetForFile(path);
 };
 
@@ -538,7 +546,7 @@ describe("native owned cancellation boundary", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controller = new AbortController();
       const cancellationReason = {
@@ -653,7 +661,7 @@ describe("native cancellation cleanup provenance", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controllers = [new AbortController(), new AbortController()];
       const cancellationReason = { source: "mixed native owner retry" };
@@ -790,7 +798,7 @@ describe("native returned cleanup ownership", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controller = new AbortController();
       const cancellationReason = { source: "native cleanup retry regression" };
@@ -838,7 +846,6 @@ describe("native returned cleanup ownership", () => {
         // aggregate marker when that retry is still incomplete.
         const closed = await client.close();
         expect(cleanupCalls).toBe(2);
-        expect(closed.ok).toBe(false);
         if (closed.ok) throw new Error("Expected cleanup to remain incomplete");
         expect(closed.error.cleanupIncomplete).toBe(true);
         expect(closed.error.cleanupResources).toEqual(
@@ -935,7 +942,7 @@ describe("native late cancellation with cleanup", () => {
       launcher,
     );
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
     try {
       const pending = client.execute(
@@ -1131,7 +1138,7 @@ describe("native command cleanup lifecycle", () => {
       },
     };
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
 
     const execution = client.execute("list_architectures", {});
@@ -1217,7 +1224,7 @@ describe("native command failure projection", () => {
       retryCleanup: async () => failures,
     };
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
     try {
       const result = await client.execute("list_architectures", {});
@@ -1231,7 +1238,6 @@ describe("native command failure projection", () => {
       ]);
 
       const closed = await client.close();
-      expect(closed.ok).toBe(false);
       if (closed.ok) throw new Error("Expected unknown owner cleanup facts");
       expect(closed.error.cleanupIncomplete).toBe(true);
       expect(closed.error.cleanupResources).toEqual([
@@ -1270,7 +1276,7 @@ describe("native command failure projection", () => {
       },
     };
     const result = await new NativeMacOSProvider({}, runner, "darwin")
-      .createClient(machoTarget("/private/fixture"))
+      .createClient(await architectureTargetFixture())
       .execute("list_architectures", {});
 
     expect(result.ok).toBe(false);
@@ -1311,7 +1317,7 @@ describe("native command failure projection", () => {
         },
       };
       const result = await new NativeMacOSProvider({}, runner, "darwin")
-        .createClient(machoTarget("/private/fixture"))
+        .createClient(await architectureTargetFixture())
         .execute("list_architectures", {});
 
       expect(result.ok).toBe(false);
@@ -1431,7 +1437,7 @@ describe("native macOS provider inspection", () => {
     const app = join(directory, "Fixture.app");
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
-    await writeFile(executable, "fixture");
+    await writeFile(executable, fat([0x01000007, 0x0100000c]));
     await writeFixturePlist(join(app, "Contents/Info.plist"));
     const externalPlist = join(directory, "Outside.plist");
     await writeFixturePlist(externalPlist);
@@ -1699,7 +1705,7 @@ describe("native macOS provider failures and parsing", () => {
       {},
       new FailingRunner("unavailable"),
       "darwin",
-    ).createClient(machoTarget("/fixture"));
+    ).createClient(await architectureTargetFixture());
     const unavailableResult = await unavailable.execute(
       "list_architectures",
       {},
@@ -1716,7 +1722,7 @@ describe("native macOS provider failures and parsing", () => {
       {},
       new FixtureRunner({ lipo: "malformed" }),
       "darwin",
-    ).createClient(machoTarget("/fixture"));
+    ).createClient(await architectureTargetFixture());
     const malformedResult = await malformed.execute("list_architectures", {});
     expect(!malformedResult.ok && malformedResult.error._tag).toBe(
       "AnalysisOutputError",
@@ -1730,7 +1736,7 @@ describe("native macOS provider failures and parsing", () => {
         {},
         new FailingRunner(reason),
         "darwin",
-      ).createClient(machoTarget("/fixture"));
+      ).createClient(await architectureTargetFixture());
       const result = await client.execute("list_architectures", {});
       expect(!result.ok && result.error._tag).toBe(tag);
     }

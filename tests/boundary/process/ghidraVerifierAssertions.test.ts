@@ -66,3 +66,48 @@ processTest(
     expect(result.exitCode, result.stderr).toBe(0);
   },
 );
+
+processTest(
+  "Ghidra cleanup rejects unreadable paths and accepts only confirmed absence",
+  async ({ processes }) => {
+    const assertionsUrl = new URL(
+      "../../../scripts/verify-real-ghidra-assertions.mjs",
+      import.meta.url,
+    ).href;
+    const source = `
+      import assert from "node:assert/strict";
+      import { createRequire, syncBuiltinESMExports } from "node:module";
+      const fs = createRequire(import.meta.url)("node:fs/promises");
+      const { assertCleanup } = await import(${JSON.stringify(assertionsUrl)});
+      const root = await fs.mkdtemp((await import("node:os")).tmpdir() + "/rea-ghidra-cleanup-test-");
+      try {
+        const dangling = root + "/dangling";
+        if (process.platform !== "win32") {
+          await fs.symlink(root + "/missing-target", dangling);
+          await assert.rejects(assertCleanup({ runtime_root: dangling }), /Ghidra cleanup left runtime_root/);
+        }
+      } finally { await fs.rm(root, { recursive: true, force: true }); }
+      let result = "exists";
+      fs.lstat = async () => {
+        if (result === "exists") return;
+        const error = new Error(result);
+        error.code = result;
+        throw error;
+      };
+      syncBuiltinESMExports();
+      const coordinates = { runtime_root: "/owned-runtime" };
+      await assert.rejects(assertCleanup(coordinates), /Ghidra cleanup left runtime_root/);
+      result = "ENOENT";
+      await assertCleanup(coordinates);
+      result = "EACCES";
+      await assert.rejects(assertCleanup(coordinates), { code: "EACCES" });
+    `;
+    const result = await processes.run(
+      process.execPath,
+      ["--input-type=module", "--eval", source],
+      { timeoutMs: 10_000 },
+    );
+    expect(result.signal, result.stderr).toBeNull();
+    expect(result.exitCode, result.stderr).toBe(0);
+  },
+);

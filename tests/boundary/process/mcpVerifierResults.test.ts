@@ -199,6 +199,8 @@ it("retains summary discovery in the generic lifecycle reader but refuses it as 
     total_retained_records: 0,
     matching_records: 0,
     unknown_revisions: 0,
+    direct_links: 0,
+    missing_direct_links: 0,
     records: [],
   };
   expect(

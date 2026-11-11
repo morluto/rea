@@ -74,6 +74,21 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     readLaunchNodeOptions(),
   );
   expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /5000 ms matching deadline \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /128 MiB worker heap request \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /regex\.matching_deadline_ms.*regex\.worker_heap_request_mib/iu,
+  );
+  if (heap.kind === "effective")
+    expect(REGEX_MATCHING_LIMITATION).toContain(`effective ${heap.mib} MiB`);
+  else
+    expect(REGEX_MATCHING_LIMITATION).toMatch(
+      /effective old-generation heap.*not established/iu,
+    );
   const deadline = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
@@ -457,7 +472,8 @@ it("stops a slow match at the configured deadline and names the setting", async 
     effective_value: 100,
     source: "setting",
     agent_editable: true,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   });
   expect(projected.remediation.action).toContain(
     regexMatchingDeadlineRecovery({ deadlineMs: 100, source: "setting" }),
@@ -583,6 +599,7 @@ it("names the rejected pattern field for a default invalid-pattern refusal", asy
   expect(projectAnalysisError(matched.error)).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
+    remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
     recovery: {
       kind: "inspect_input_contract",
       operation: "search_procedures",
@@ -593,7 +610,7 @@ it("names the rejected pattern field for a default invalid-pattern refusal", asy
         {
           path: ["pattern"],
           reason: "invalid_format",
-          message: "Supply a valid regular expression.",
+          message: expect.stringContaining("Invalid regular expression"),
         },
       ],
     },
@@ -620,6 +637,7 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
     code: "invalid_request",
     category: "invalid_input",
     message: expect.stringContaining("Invalid regex pattern"),
+    remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
     recovery: { kind: "inspect_input_contract", operation: "search_strings" },
     details: {
       operation: "search_strings",
@@ -627,7 +645,7 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
         {
           path: ["pattern"],
           reason: "invalid_format",
-          message: "Supply a valid regular expression.",
+          message: expect.stringContaining("Invalid regular expression"),
         },
       ],
     },

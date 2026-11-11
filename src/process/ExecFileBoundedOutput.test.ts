@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { execFileBoundedOutput } from "./ExecFileBoundedOutput.js";
 
 describe("execFileBoundedOutput", () => {
+  it("retains complete UTF-8 characters at both sides of truncated command output", async () => {
+    const text = `A🙂${"x".repeat(30)}🙂Z`;
+    const result = await execFileBoundedOutput(
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write(${JSON.stringify(text)}); process.stderr.write(${JSON.stringify(text)});`,
+      ],
+      { env: {}, limit: 8 },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("A … [output omitted] … Z");
+    expect(result.stderr).toBe("A … [output omitted] … Z");
+    expect(result.outputTruncated).toBe(true);
+  });
+
   it("lets a command finish after its output exceeds the capture limit", async () => {
     const result = await execFileBoundedOutput(
       process.execPath,

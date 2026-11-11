@@ -1,6 +1,7 @@
 import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPublication.js";
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
+import type { HopperRequestFailure } from "./HopperDownload.js";
 import type { HopperReleaseError } from "./HopperReleaseFeed.js";
 import type {
   SkillDestination,
@@ -13,6 +14,7 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
+import type { DesktopBuildSetupHost } from "./SetupDesktopBuild.js";
 import type {
   SetupFailureCode,
   SetupHopperInstallResult,
@@ -114,7 +116,11 @@ export interface SetupHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
-  installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
+  /** Cancellation stops downloads and later steps; a started package transaction finishes. */
+  installHopper(
+    replaceExisting: boolean,
+    signal?: AbortSignal,
+  ): Promise<SetupHopperInstallResult>;
   /** Retry retained owners. Returned or thrown errors with explicit cleanup
    * owners follow live release state; ownerless failures remain unconfirmed.
    * runSetup does not observe later direct calls to a caller-supplied host. */
@@ -142,6 +148,8 @@ export interface SetupHost {
   ): Promise<Result<void, SetupSkillInstallError>>;
   installSkill(clientIds: readonly string[]): Promise<SkillInstallResult>;
   doctor(scope?: DoctorScope): Promise<Awaited<ReturnType<typeof runDoctor>>>;
+  /** Present where setup can prepare this host for desktop builds. */
+  readonly desktopBuild?: DesktopBuildSetupHost;
 }
 /** Structured setup outcome carrying remediation instead of prompting. */
 export interface SetupResult {
@@ -159,6 +167,8 @@ export interface SetupResult {
   readonly clientStates: readonly SetupClientState[];
   readonly remediation?: string;
   readonly code?: SetupFailureCode;
+  /** The Hopper vendor request (stage, URL and observed outcome) whose failure stopped installation. */
+  readonly download?: HopperRequestFailure;
   /** Identified resources still retained after finalization; absent after confirmed release. */
   readonly cleanup?: AnalysisCleanupObservation | undefined;
 }
@@ -213,7 +223,12 @@ export interface SetupClientState {
 /** One concrete setup mutation disclosed before approval. */
 export interface SetupAction {
   readonly id: string;
-  readonly kind: "install_hopper" | "configure_client" | "install_skill";
+  readonly kind:
+    | "install_hopper"
+    | "configure_client"
+    | "install_skill"
+    | "install_agentenv"
+    | "pack_build_runtime";
   readonly label: string;
   readonly target: string;
   readonly detail: string;
@@ -227,6 +242,8 @@ export interface SetupAction {
 
 /** Explicit authorization supplied by an interactive or unattended CLI adapter. */
 export interface SetupOptions {
+  /** Caller cancellation, carried through approved effects and cleanup. */
+  readonly signal?: AbortSignal;
   readonly approved: boolean;
   readonly installHopper: boolean;
   readonly structured: boolean;
@@ -240,6 +257,10 @@ export interface SetupOptions {
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;
   readonly allDetectedClients?: boolean;
+  /** Pack the build-computer runtime and record the build settings in the selected registrations. */
+  readonly desktopBuild?: boolean;
+  /** With desktopBuild, install the pinned agentenv-framework with uv. */
+  readonly installAgentenv?: boolean;
   readonly onProgress?: (event: SetupProgressEvent) => void;
 }
 

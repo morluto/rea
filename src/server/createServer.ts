@@ -3,6 +3,7 @@ import {
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
 import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
@@ -13,33 +14,42 @@ import { registerCaptureTools } from "./registerCaptureTools.js";
 import { registerSignalTools } from "./registerSignalTools.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
+import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerNativeInitializersTool } from "./registerNativeInitializersTool.js";
+import { registerElfUnwindRangesTool } from "./registerElfUnwindRangesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
+import { registerKernelBuildConfigTool } from "./registerKernelBuildConfigTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
+import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
+import { registerWindowsShortcutTool } from "./registerWindowsShortcutTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import { registerEvmTools } from "./registerEvmTools.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
+import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { registerModelArtifactTools } from "./registerModelArtifactTools.js";
 import { registerGoTools } from "./registerGoTools.js";
 import { registerIl2cppTools } from "./registerIl2cppTools.js";
 import { registerRustTools } from "./registerRustTools.js";
 import { registerPythonPycTool } from "./registerPythonPycTool.js";
 import { registerErlangTools } from "./registerErlangTools.js";
+import { registerV8CodeCacheTool } from "./registerV8CodeCacheTool.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
+import { parseMcpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import { createToolResultDelivery } from "./toolResult.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
@@ -168,12 +178,22 @@ export const createServer = (
   const compactInputPresentation =
     selectCompactInputSchemaPresentation(environment);
   const selectedOutputSchemaProfile = outputSchemaProfile(environment);
+  const catalogProfile = parseMcpToolCatalogProfile(
+    environment.REA_MCP_TOOL_CATALOG_PROFILE,
+  );
+  if (!catalogProfile.ok) throw catalogProfile.error;
   const advertisedToolFamilies = selectAdvertisedToolFamilies(environment);
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
     environment,
   );
-  const delivery = selectToolResultDelivery(environment, options.delivery);
+  const baseDelivery = selectToolResultDelivery(environment, options.delivery);
+  const delivery =
+    session !== undefined &&
+    advertisedToolFamilies !== undefined &&
+    !advertisedToolFamilies.has("session")
+      ? baseDelivery.withNoTargetRecovery(SCOPED_NO_TARGET_RECOVERY)
+      : baseDelivery;
   const capabilities = createCapabilityServices({
     environment,
     providerEnvironment,
@@ -190,9 +210,11 @@ export const createServer = (
     webSourceLocation,
     webModuleTrace,
     desktopApplication,
+    desktopBuildComputers,
     goBinary,
     rustBinary,
     erlangBeam,
+    v8CodeCache,
     modelArtifact,
     gpuCodeObjects,
     il2cppMetadata,
@@ -200,11 +222,16 @@ export const createServer = (
     nativeExports,
     devicetree,
     elfNotes,
+    nativeInitializers,
+    elfUnwindRanges,
     appleIps,
     kernelModule,
+    kernelBuildConfig,
     peLoadConfig,
+    binaryHardening,
     peCertificates,
     peImports,
+    windowsShortcut,
     electronFuses,
     pythonPyc,
     webNetworkCapture,
@@ -271,15 +298,31 @@ export const createServer = (
             policy: (): AvailabilityPolicy => {
               const value = basePolicy();
               const failures = capabilities.observeProviderLoadFailures();
-              return Object.keys(failures).length === 0
-                ? value
-                : {
-                    ...value,
-                    optionalProviderLoadFailures: {
-                      ...value.optionalProviderLoadFailures,
-                      ...failures,
-                    },
-                  };
+              const commandFailures =
+                capabilities.observeCommandProviderFailures();
+              const hasFailures = Object.keys(failures).length > 0;
+              const hasCommandFailures =
+                Object.keys(commandFailures).length > 0;
+              if (!hasFailures && !hasCommandFailures) return value;
+              return {
+                ...value,
+                ...(hasFailures
+                  ? {
+                      optionalProviderLoadFailures: {
+                        ...value.optionalProviderLoadFailures,
+                        ...failures,
+                      },
+                    }
+                  : {}),
+                ...(hasCommandFailures
+                  ? {
+                      commandProviderFailures: {
+                        ...value.commandProviderFailures,
+                        ...commandFailures,
+                      },
+                    }
+                  : {}),
+              };
             },
           };
         })();
@@ -305,7 +348,10 @@ export const createServer = (
     previousOnclose?.();
     void closeProviders().catch((cause: unknown) => {
       logger.error(
-        { error: cause instanceof Error ? cause.message : String(cause) },
+        {
+          error: cause instanceof Error ? cause.message : String(cause),
+          ...retainedDebuggerDiagnostics(cause),
+        },
         "Provider cleanup failed during server shutdown",
       );
     });
@@ -332,6 +378,9 @@ export const createServer = (
     recordUnknown,
     evidenceById,
     withAdmittedAnalysis: analysisAdmission,
+    ...(session === undefined
+      ? {}
+      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
   };
   const evidenceOptions = {
     logger: toolLogger,
@@ -349,6 +398,12 @@ export const createServer = (
     enhanced: () =>
       registerEnhancedTools(server, {
         ...analysisOptions,
+        ...(session === undefined
+          ? {}
+          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
+        ...(session === undefined
+          ? {}
+          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
         analysisProfile:
           session === undefined
             ? undefined
@@ -450,6 +505,20 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
+      registerNativeInitializersTool(
+        server,
+        nativeInitializers,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerElfUnwindRangesTool(
+        server,
+        elfUnwindRanges,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
       registerAppleIpsTool(
         server,
         appleIps,
@@ -464,9 +533,23 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
+      registerKernelBuildConfigTool(
+        server,
+        kernelBuildConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
       registerPeLoadConfigTool(
         server,
         peLoadConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerBinaryHardeningTool(
+        server,
+        binaryHardening,
         toolLogger,
         recordEvidence,
         analysisAdmission,
@@ -481,6 +564,13 @@ export const createServer = (
       registerPeImportsTool(
         server,
         peImports,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerWindowsShortcutTool(
+        server,
+        windowsShortcut,
         toolLogger,
         recordEvidence,
         analysisAdmission,
@@ -566,6 +656,13 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
         evidenceById,
+      );
+      registerV8CodeCacheTool(
+        server,
+        v8CodeCache,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
       );
       registerWasmTools(
         server,
@@ -753,13 +850,12 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
-      registerWebSourceLocationTool(
-        server,
-        webSourceLocation,
-        toolLogger,
+      registerWebSourceLocationTool(server, webSourceLocation, {
+        logger: toolLogger,
         recordEvidence,
-        analysisAdmission,
-      );
+        withAdmittedAnalysis: analysisAdmission,
+        evidenceById,
+      });
       registerJavaScriptRecoveryTool(
         server,
         new JavaScriptRecoveryService(javascriptRecovery),
@@ -775,6 +871,7 @@ export const createServer = (
         recordEvidenceWithUnknown,
         withAdmittedAnalysis: analysisAdmission,
       });
+      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {
       if (session === undefined) return;
@@ -790,6 +887,7 @@ export const createServer = (
     },
   });
   registerGuidedPrompts(server, analysis, session);
+  if (catalogProfile.value === "hot-cold") server.enableProgressiveCatalog();
   return server;
 };
 

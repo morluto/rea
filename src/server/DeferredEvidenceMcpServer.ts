@@ -78,6 +78,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       "full",
       catalog.identity,
     );
+    for (const name of catalog.evidenceReferenceAlternatives)
+      this.registerEvidenceReferenceAlternative(name);
     for (const tool of catalog.tools) {
       const { name, inputSchema, outputSchema, ...metadata } = tool;
       let binding: DeferredTool;

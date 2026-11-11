@@ -7,16 +7,34 @@ import {
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
-import type { EnhancedResult } from "../EnhancedToolTypes.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { stopsTraversal } from "../CallRelationshipTraversal.js";
+import {
+  failedWithPartialResult,
+  type EnhancedResult,
+} from "../EnhancedToolTypes.js";
 import {
   renderSourceLimitations,
   type SourceLimitation,
 } from "../SourceLimitations.js";
+import {
+  bindNativeValueTraceCalls,
+  type NativeValueTraceCall,
+} from "./NativeValueTraceBindings.js";
 import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
+
+/** The located unknown where unconfirmed provider cleanup stopped a trace. */
+export const CLEANUP_STOPPED_VALUE_TRACE =
+  "Trace stopped because the provider did not confirm cleanup of resources it owns";
+
+/** Fallback when a dossier has no native value-flow facet for this procedure. */
+export const UNRECORDED_NATIVE_VALUE_FLOW =
+  "Native def-use was not recorded for this procedure.";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
@@ -28,14 +46,9 @@ export const traceNativeValues = async (
   const procedures: typeof nativeValueTraceSchema._output.procedures = [];
   const unknowns: typeof nativeValueTraceSchema._output.unknowns = [];
   const sourceLimitations: SourceLimitation[] = [];
-  const callBindings: {
-    caller: string;
-    callee: string;
-    call: string;
-    argument_count: number;
-    output: boolean;
-    evidence_id: string;
-  }[] = [];
+  const callBindings: NativeValueTraceCall[] = [];
+  const procedureAddresses = new Map<string, string>();
+  const completeParameterProcedures = new Set<string>();
   const pending = [{ procedure: input.procedure, depth: 0 }];
   const attempted = new Set<string>();
   const visited = new Set<string>();
@@ -52,6 +65,27 @@ export const traceNativeValues = async (
   let targetSha256: string | undefined;
   let decompilations = 0;
   let callSites = 0;
+  // A provider that cannot confirm cleanup of resources it owns stops the
+  // trace; its own failure becomes the outcome, holding the admitted work.
+  let stopped: AnalysisError | undefined;
+  /** Record a failed read after the validated seed; true when it ends the trace. */
+  const endsTrace = (
+    error: AnalysisError,
+    procedure: string,
+    address: string | null,
+  ): boolean => {
+    if (!stopsTraversal(error)) {
+      unknowns.push({ procedure, address, reason: error.message });
+      return false;
+    }
+    if (error.cleanupIncomplete)
+      budget.narrow("cleanup_incomplete", {
+        procedure,
+        address,
+        reason: CLEANUP_STOPPED_VALUE_TRACE,
+      });
+    return true;
+  };
   while (pending.length > 0) {
     if (signal?.aborted)
       return err(
@@ -86,27 +120,27 @@ export const traceNativeValues = async (
       {
         ...(signal === undefined ? {} : { signal }),
         ...(next.depth > 0 ? { selectorOrigin: "provider" as const } : {}),
+        retainEvidence: true,
       },
     );
     decompilations++;
     if (!execution.ok) {
       // A seed failure has no trace to qualify. Preserve the provider's typed
-      // refusal; failures after a validated seed remain partial observations.
-      if (next.depth === 0 || execution.error._tag === "AnalysisCancelledError")
-        return err(execution.error);
-      unknowns.push({
-        procedure: next.procedure,
-        address: null,
-        reason: execution.error.message,
-      });
+      // refusal; later failures are unknowns unless they end the trace.
+      if (next.depth === 0) return err(execution.error);
+      if (endsTrace(execution.error, next.procedure, null)) {
+        stopped = execution.error;
+        break;
+      }
       continue;
     }
-    const evidence = createAnalysisExecutionEvidence(
-      "analyze_function",
-      { procedure: next.procedure },
-      execution.value,
-      "observed",
-    );
+    const partialEvidence = () =>
+      createAnalysisExecutionEvidence(
+        "analyze_function",
+        { procedure: next.procedure },
+        execution.value,
+        "observed",
+      );
     const parsed = functionDossierSchema.safeParse(execution.value.result);
     if (!parsed.success || execution.value.subject == null)
       return err(
@@ -114,22 +148,34 @@ export const traceNativeValues = async (
           "trace_native_values",
           "Function dossier lacks validated facts or artifact identity",
           parsed.success ? undefined : { cause: parsed.error },
-        ).retainPartialObservation(evidence),
+        ).retainPartialObservation(partialEvidence()),
       );
     const dossier = parsed.data;
     const address = dossier.procedure.address;
-    if (visited.has(address)) continue;
-    visited.add(next.procedure);
-    visited.add(address);
     targetSha256 ??= execution.value.subject.sha256;
     if (execution.value.subject.sha256 !== targetSha256)
       return err(
         new AnalysisOutputError(
           "trace_native_values",
           "Cross-function target digest mismatch",
-        ).retainPartialObservation(evidence),
+        ).retainPartialObservation(partialEvidence()),
       );
-    const evidenceId = evidence.evidence_id;
+    const evidenceId = execution.value.evidenceId;
+    if (evidenceId === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "rea",
+          "trace_native_values",
+          "The function observation has no Evidence retention owner.",
+        ).retainPartialObservation(partialEvidence()),
+      );
+    // An alias still needs its own retained observation before it can
+    // establish identity, even when the canonical procedure was already seen.
+    procedureAddresses.set(next.procedure, address);
+    procedureAddresses.set(address, address);
+    if (visited.has(address)) continue;
+    visited.add(next.procedure);
+    visited.add(address);
     procedures.push({
       address,
       depth: next.depth,
@@ -138,11 +184,19 @@ export const traceNativeValues = async (
       analysis_profile_digest: execution.value.analysisProfile?.digest ?? null,
     });
     const flow = dossier.native_value_flow;
+    if (flow !== null)
+      sourceLimitations.push(
+        ...flow.limitations.map((limitation) => ({
+          provider: execution.value.provider,
+          operation: "analyze_function" as const,
+          limitation,
+        })),
+      );
     if (flow === null || !flow.available) {
       unknowns.push({
         procedure: address,
         address: null,
-        reason: flow?.reason ?? "Provider has no native def-use model",
+        reason: flow?.reason ?? UNRECORDED_NATIVE_VALUE_FLOW,
       });
       continue;
     }
@@ -194,6 +248,12 @@ export const traceNativeValues = async (
         break;
       parameterIds.set(parameter.ordinal, id);
     }
+    if (
+      !flow.truncated &&
+      parameterIds.size === flow.parameters.length &&
+      !budget.exhausted()
+    )
+      completeParameterProcedures.add(address);
     for (const use of flow.parameter_uses) {
       const source = parameterIds.get(use.ordinal);
       if (!ids.has(use.use) || source === undefined) continue;
@@ -252,13 +312,10 @@ export const traceNativeValues = async (
         signal === undefined ? {} : { signal },
       );
       if (!resolved.ok) {
-        if (resolved.error._tag === "AnalysisCancelledError")
-          return err(resolved.error);
-        unknowns.push({
-          procedure: address,
-          address: operation.address,
-          reason: resolved.error.message,
-        });
+        if (endsTrace(resolved.error, address, operation.address)) {
+          stopped = resolved.error;
+          break;
+        }
         continue;
       }
       const targets = nativeCallTargetsSchema.safeParse(resolved.value.result);
@@ -290,6 +347,9 @@ export const traceNativeValues = async (
           address: operation.address,
           reason: `Call target ${targets.data.status}`,
         });
+      // Preserve resolution rows, but finalize each exact call/destination
+      // binding once so repeated targets cannot multiply recovered-input groups.
+      const bindingDestinations = new Set<string>();
       for (const target of targets.data.targets) {
         const destination = target.procedure ?? target.address;
         if (
@@ -306,15 +366,21 @@ export const traceNativeValues = async (
           )
         )
           break;
-        if (target.status !== "candidate")
+        if (
+          target.status !== "candidate" &&
+          !bindingDestinations.has(destination)
+        ) {
+          bindingDestinations.add(destination);
           callBindings.push({
             caller: address,
             callee: destination,
             call: qualified(operation.id),
+            address: operation.address,
             argument_count: Math.max(0, operation.inputs.length - 1),
             output: operation.output !== null,
             evidence_id: evidenceId,
           });
+        }
         if (next.depth < input.max_depth && target.status !== "candidate")
           pending.push({ procedure: destination, depth: next.depth + 1 });
         else
@@ -330,8 +396,10 @@ export const traceNativeValues = async (
       }
     }
     // Remaining work is attributed to the rejecting budget recorded above.
-    if (budget.exhausted()) break;
+    if (stopped !== undefined || budget.exhausted()) break;
   }
+  // Cancellation leaves no outcome to qualify; unconfirmed cleanup keeps one.
+  if (stopped !== undefined && !stopped.cleanupIncomplete) return err(stopped);
   if (targetSha256 === undefined)
     return err(
       new AnalysisOutputError(
@@ -359,73 +427,13 @@ export const traceNativeValues = async (
           : "Call depth budget reached",
     });
   }
-  const parametersByProcedure = new Map<string, typeof nodes>();
-  const returnsByProcedure = new Map<string, typeof nodes>();
-  for (const node of nodes) {
-    if (node.kind === "parameter") {
-      const parameters = parametersByProcedure.get(node.procedure) ?? [];
-      parameters.push(node);
-      parametersByProcedure.set(node.procedure, parameters);
-    } else if (
-      node.operation?.opcode === "RETURN" &&
-      node.operation.inputs.length > 1
-    ) {
-      const returns = returnsByProcedure.get(node.procedure) ?? [];
-      returns.push(node);
-      returnsByProcedure.set(node.procedure, returns);
-    }
-  }
-  for (const binding of callBindings) {
-    const parameters = parametersByProcedure.get(binding.callee) ?? [];
-    if (parameters.length === 0)
-      unknowns.push({
-        procedure: binding.caller,
-        address: null,
-        reason: `Parameter bindings for ${binding.callee} are unavailable or omitted`,
-      });
-    for (const node of parameters) {
-      const ordinal = node.parameter?.ordinal;
-      if (ordinal === undefined || ordinal >= binding.argument_count) {
-        unknowns.push({
-          procedure: binding.caller,
-          address: null,
-          reason: `Argument ${ordinal ?? "unknown"} for ${binding.callee} was not recovered`,
-        });
-        continue;
-      }
-      if (
-        !budget.retainEdge(
-          {
-            source: binding.call,
-            target: node.id,
-            input_index: ordinal + 1,
-            kind: "argument-binding",
-            status: "derived",
-            evidence_id: binding.evidence_id,
-          },
-          binding.caller,
-        )
-      )
-        break;
-    }
-    if (binding.output)
-      for (const node of returnsByProcedure.get(binding.callee) ?? []) {
-        if (
-          !budget.retainEdge(
-            {
-              source: node.id,
-              target: binding.call,
-              input_index: 1,
-              kind: "return-binding",
-              status: "derived",
-              evidence_id: node.evidence_id,
-            },
-            binding.caller,
-          )
-        )
-          break;
-      }
-  }
+  bindNativeValueTraceCalls({
+    budget,
+    calls: callBindings,
+    procedureAddresses,
+    completeParameterProcedures,
+    unknowns,
+  });
   const page = nodes.slice(input.offset, input.offset + input.limit);
   const pageIds = new Set(page.map(({ id }) => id));
   // Every edge source is a retained node, so a page holding every node holds
@@ -456,7 +464,12 @@ export const traceNativeValues = async (
       ...renderSourceLimitations(sourceLimitations),
     ],
   });
-  if (Buffer.byteLength(JSON.stringify(result)) > 32 * 1024 * 1024)
+  const oversized =
+    Buffer.byteLength(JSON.stringify(result)) > 32 * 1024 * 1024;
+  // The stopping failure stays primary over output size and a later abort.
+  if (stopped !== undefined)
+    return oversized ? err(stopped) : failedWithPartialResult(stopped, result);
+  if (oversized)
     return err(
       new AnalysisOutputError(
         "trace_native_values",

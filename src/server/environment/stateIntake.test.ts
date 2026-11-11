@@ -1,3 +1,4 @@
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { expect, it, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -11,14 +12,17 @@ import {
 
 const inlineDocument = async (bytes: string) => {
   const files = new ArtifactResourceScope();
+  const responses = new ResponseBodyCleanup("state response body");
   try {
     return await partDocument(
       { kind: "file", file: { bytes } },
       DEFAULT_STATE_INTAKE,
       new AbortController().signal,
       files,
+      responses,
     );
   } finally {
+    await responses.close();
     await files.close();
   }
 };
@@ -78,4 +82,110 @@ it("downloads with redirects refused and the 30 s timeout by default", async () 
   } finally {
     fetched.mockRestore();
   }
+});
+
+it.each(["http-status", "declared-overflow", "stream-overflow"] as const)(
+  "returns %s while a teed response's other branch remains open",
+  async (scenario) => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new Uint8Array(
+            scenario === "stream-overflow" ? STATE_INTAKE_LIMIT_BYTES + 1 : 1,
+          ),
+        );
+      },
+    });
+    const [body, sibling] = source.tee();
+    const response = new Response(body, {
+      status: scenario === "http-status" ? 503 : 200,
+      ...(scenario === "declared-overflow"
+        ? {
+            headers: { "content-length": String(STATE_INTAKE_LIMIT_BYTES + 1) },
+          }
+        : {}),
+    });
+    const files = new ArtifactResourceScope();
+    const responses = new ResponseBodyCleanup("state response body");
+    const operation = partDocument(
+      { kind: "file", file: { uri: "https://state.example.test/state.json" } },
+      { fetchState: async () => response, timeoutMs: 1_000 },
+      new AbortController().signal,
+      files,
+      responses,
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        operation.then((result) => ({ kind: "result" as const, result })),
+        new Promise<{ kind: "deadline" }>((resolve) => {
+          timer = setTimeout(() => resolve({ kind: "deadline" }), 3_000);
+        }),
+      ]);
+      expect(outcome.kind).toBe("result");
+      expect(responses.cleanupResources).toEqual(["state response body"]);
+      await expect(responses.close()).rejects.toMatchObject({
+        reason: "unavailable",
+      });
+      if (outcome.kind === "result") {
+        expect(outcome.result).toMatchObject(
+          scenario === "http-status"
+            ? { ok: false, error: { data: { reason: "http-status" } } }
+            : {
+                ok: false,
+                error: {
+                  message: expect.stringContaining(
+                    String(STATE_INTAKE_LIMIT_BYTES),
+                  ),
+                },
+              },
+        );
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      await sibling.cancel();
+      await operation;
+      await responses.close();
+      await files.close();
+    }
+  },
+);
+
+it("retains the exact failure when response cancellation rejects", async () => {
+  const failure = new Error("controlled cancellation failure");
+  const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      throw failure;
+    },
+  });
+  const files = new ArtifactResourceScope();
+  const responses = new ResponseBodyCleanup("state response body");
+  const result = await partDocument(
+    { kind: "file", file: { uri: "https://state.example.test/state.json" } },
+    {
+      fetchState: async () => new Response(body, { status: 503 }),
+      timeoutMs: 1_000,
+    },
+    new AbortController().signal,
+    files,
+    responses,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { data: { reason: "http-status" } },
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const rejected: unknown = await responses
+    .close()
+    .catch((cause: unknown) => cause);
+  expect(rejected).toMatchObject({
+    reason: "unavailable",
+    cleanup: { resources: ["state response body"] },
+  });
+  expect((rejected as Error).cause).toBeInstanceOf(AggregateError);
+  expect(((rejected as Error).cause as AggregateError).errors).toContain(
+    failure,
+  );
+  expect(responses.cleanupResources).toEqual(["state response body"]);
+  await files.close();
 });

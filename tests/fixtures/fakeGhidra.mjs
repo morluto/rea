@@ -13,6 +13,7 @@ const {
   targetSha256,
   transport,
   mode = "success",
+  handshakeReports = {},
 } = configuration ?? {};
 
 if (
@@ -177,8 +178,55 @@ const handleOutputFailure = (socket, state) => {
 };
 
 const handleRequest = (socket, server, request, state) => {
+  if (state.mode.startsWith("checkpoint")) {
+    if (request.method === "set_address_name") {
+      state.checkpointDirty = true;
+      socket.write(
+        JSON.stringify({ id: request.id, ok: true, result: "renamed" }) + "\n",
+      );
+      return;
+    }
+    if (request.method === "checkpoint_program") {
+      void handleCheckpoint(socket, request, state);
+      return;
+    }
+  }
   if (request.method === "ping") {
     handlePing(socket, request, state);
+    return;
+  }
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    ) &&
+    request.method !== "shutdown"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra imported identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (
+    state.mode === "late_identity_failure" &&
+    request.method === "list_strings"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "import_identity_mismatch",
+          message: "Unexpected later failure",
+        },
+      })}\n`,
+    );
     return;
   }
   if (
@@ -264,15 +312,97 @@ const handleRequest = (socket, server, request, state) => {
       return;
     }
   }
+  // The bridge's per-procedure deadline: only this request fails.
+  if (
+    state.mode === "decompile_timed_out" &&
+    request.method === "procedure_pseudo_code"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "decompile_timed_out",
+          message:
+            "Ghidra decompilation of 0x1000 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)",
+        },
+      })}\n`,
+    );
+    return;
+  }
   if (request.method === "address_to_file_offset") {
     socket.write(
       `${JSON.stringify({ id: request.id, ...fileOffsetReply(request.params.address) })}\n`,
     );
     return;
   }
+  if (["valid_then_invalid", "valid_then_invalid_split"].includes(state.mode)) {
+    if (request.method === "list_procedures") return;
+    if (request.method === "list_strings") {
+      const valid = Buffer.from(
+        `${JSON.stringify({ id: request.id, ok: true, result: "completed" })}\n`,
+      );
+      const invalid = Buffer.concat([
+        Buffer.from(`{"id":${request.id + 1},"ok":true,"result":"`),
+        Buffer.from([0xff]),
+        Buffer.from('"}\n'),
+      ]);
+      if (state.mode === "valid_then_invalid")
+        socket.write(Buffer.concat([valid, invalid]));
+      else {
+        socket.write(valid);
+        setTimeout(() => socket.write(invalid), 5);
+      }
+      return;
+    }
+  }
+  if (request.method === "list_strings" && state.mode === "valid_utf8_end") {
+    socket.end(JSON.stringify({ id: request.id, ok: true, result: "�雪🦊" }));
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8_end") {
+    socket.end(
+      Buffer.concat([
+        Buffer.from(`{"id":${request.id},"ok":true,"result":"`),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    return;
+  }
+  if (
+    request.method === "list_strings" &&
+    state.mode === "invalid_utf8_split"
+  ) {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    setTimeout(
+      () =>
+        socket.write(Buffer.from([0x28, 0xa1, 0x22, 0x7d, 0x5d, 0x7d, 0x0a])),
+      5,
+    );
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8") {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xff]),
+        Buffer.from('"}]}\n'),
+      ]),
+    );
+    return;
+  }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
-      ? [stringItem("0x2000", "fixture 雪🦊")]
+      ? [stringItem("0x2000", "fixture �雪🦊")]
       : request.method === "list_strings" && state.mode === "oversized_result"
         ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
         : state.mode === "unicode_search" &&
@@ -321,7 +451,81 @@ const handleRequest = (socket, server, request, state) => {
   }
 };
 
+async function handleCheckpoint(socket, request, state) {
+  const { path, force } = request.params;
+  if (!force && !state.checkpointDirty) {
+    socket.write(
+      JSON.stringify({ id: request.id, ok: true, result: { saved: false } }) +
+        "\n",
+    );
+    return;
+  }
+  if (
+    !force &&
+    state.mode === "checkpoint_fail_close" &&
+    !state.failedCheckpoint
+  ) {
+    state.failedCheckpoint = true;
+    await writeFile(path, "controlled incomplete packed Program");
+    socket.write(
+      JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "checkpoint_failed",
+          message: "Controlled checkpoint failure",
+        },
+      }) + "\n",
+    );
+    return;
+  }
+  await writeFile(
+    path,
+    `fixture checkpoint ${state.checkpointDirty ? "edited" : "initial"}`,
+  );
+  if (
+    (force && state.mode === "checkpoint_hold_startup") ||
+    (!force && state.mode === "checkpoint_hold_close")
+  ) {
+    await new Promise((resolve) => {
+      const release = (message) => {
+        if (message === "release_checkpoint") {
+          process.off("message", release);
+          resolve();
+        }
+      };
+      process.on("message", release);
+      process.send?.({ event: "checkpoint-held" });
+    });
+  }
+  state.checkpointDirty = false;
+  socket.write(
+    JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: { saved: true, path },
+    }) + "\n",
+  );
+}
+
 const handlePing = (socket, request, state) => {
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    )
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra project identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
   if (state.mode === "remote_startup_error") {
     socket.write(
       `${JSON.stringify({
@@ -368,14 +572,17 @@ const handlePing = (socket, request, state) => {
     return;
   }
   if (state.mode === "hang_after_start" && state.pings.value > 1) return;
-  const result = sessionInfo({
-    runId: state.runId,
-    providerVersion:
-      state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
-    profileDigest: state.profileDigest,
-    targetSha256: state.targetSha256,
-    timedOut: state.mode === "analysis_timeout",
-  });
+  const result = {
+    ...sessionInfo({
+      runId: state.runId,
+      providerVersion:
+        state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
+      profileDigest: state.profileDigest,
+      targetSha256: state.targetSha256,
+      timedOut: state.mode === "analysis_timeout",
+    }),
+    ...handshakeReports,
+  };
   const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
   if (state.mode === "fragmented") {
     const split = Math.floor(response.length / 2);
@@ -493,6 +700,7 @@ const inventoryResultFor = (method, params) => {
             },
           ],
           skipped_not_loaded: [],
+          skipped_overlays: [],
         },
         complete: !paged,
         next_cursor: paged ? "fixture-second-page" : null,

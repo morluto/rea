@@ -152,9 +152,10 @@ const parseDocument = (
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
-  // Kimi also reads mcp.json with JSON.parse and an empty-file fallback.
-  if (format === "pi" || format === "kimi") {
-    if (format === "kimi" && text.trim().length === 0) return {};
+  // Kimi and LM Studio also read mcp.json with JSON.parse; an empty file holds
+  // nothing to preserve.
+  if (format === "pi" || format === "kimi" || format === "lm_studio") {
+    if (format !== "pi" && text.trim().length === 0) return {};
     return requireObject(JSON.parse(text), "The configuration root");
   }
   // An empty file, which some clients create before any server is added,
@@ -721,7 +722,18 @@ const tomlInlineKey = (key: string): string =>
 const tomlInlineValue = (value: unknown): string => {
   if (typeof value === "string") return tomlBasicString(value);
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "nan";
+    if (value === Infinity) return "inf";
+    if (value === -Infinity) return "-inf";
+    if (Object.is(value, -0)) return "-0.0";
+    // A float outside the safe integer range must not become an Int64 token.
+    return Number.isInteger(value) && !Number.isSafeInteger(value)
+      ? value.toFixed(1)
+      : String(value);
+  }
+  // TomlDate overrides toISOString to retain local date/time and offset kinds.
+  if (value instanceof Date) return value.toISOString();
   if (typeof value === "bigint") return String(value);
   if (Array.isArray(value))
     return `[${value.map((item) => tomlInlineValue(item)).join(", ")}]`;
@@ -733,7 +745,7 @@ const tomlInlineValue = (value: unknown): string => {
       .join(", ");
     return `{ ${body} }`;
   }
-  return '""';
+  throw new TypeError("Unsupported TOML inline value");
 };
 
 interface InlinePair {
@@ -1748,7 +1760,8 @@ export const clientRegistrationEntry = (
           : { environment: { ...environment } }),
       };
     case "kimi":
-      // Kimi infers stdio from command; it uses `transport`, not `type`.
+    case "lm_studio":
+      // Both infer stdio from command; Kimi uses `transport`, not `type`.
       return {
         command: executable,
         args,

@@ -8,7 +8,7 @@ import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const root = await PrivateRuntimeRoot.create({ prefix: "rea-bun-verifier-" });
-const commands = await createVerifierCommands();
+let commands;
 const run = (command, args, options = {}) =>
   commands.exec(command, args, {
     timeout: 120_000,
@@ -19,6 +19,7 @@ const run = (command, args, options = {}) =>
 // only after every owned command family has settled.
 let commandsClosed = false;
 await withVerifierCleanup(async () => {
+  commands = await createVerifierCommands();
   const source = join(root.path, "hello.ts");
   await writeFile(source, 'console.log("REA_BUN_VERIFICATION");\n');
   const docker = process.argv.includes("--docker");
@@ -104,7 +105,7 @@ await withVerifierCleanup(async () => {
   );
 }, [
   async () => {
-    await commands.close();
+    if (commands !== undefined) await commands.close();
     commandsClosed = true;
   },
   async () => {

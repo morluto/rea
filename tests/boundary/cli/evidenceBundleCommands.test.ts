@@ -22,8 +22,7 @@ import {
   updateResidualUnknown,
 } from "../../../src/domain/residualUnknown.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const revisionBundle = () => {
   const records = ["open", "investigate"].map((operation) =>
@@ -79,7 +78,7 @@ cliTest(
       [["compare", "bundle.json", ""], "right"],
       [["evidence-export", "missing.json", ""], "output"],
     ] as const) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [...args, "--json"],
         cwd: root,
       });
@@ -139,7 +138,7 @@ cliTest(
       ["evidence-export", { source: " bundle.json", output: " exported.json" }],
       ["compare", { left: " bundle.json", right: " other.json" }],
     ] as const) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [command, "--schema", "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -247,15 +246,21 @@ cliTest.for([
           : operation === "compare-left"
             ? ["compare", path, canonical]
             : ["compare", canonical, path];
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [...arguments_, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: JSON_BYTE_ORDER_MARK_MESSAGE,
-      remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+      remediation: {
+        action: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+      },
     });
     expect(await readFile(path, "utf8")).toBe(bom);
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -320,7 +325,7 @@ cliTest(
       await writeFile(source, JSON.stringify(bundle));
       for (const full of [false, true]) {
         const output = join(root, `${label}-${String(full)}.json`);
-        const result = await cli.run({
+        const result = await runFileCli(cli, {
           arguments: [
             "evidence-export",
             source,
@@ -382,7 +387,7 @@ cliTest(
       { ...bundle, unknowns: bundle.unknowns.slice(1) },
     ]) {
       await writeFile(path, JSON.stringify(invalid));
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["evidence-import", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -409,7 +414,7 @@ cliTest(
     );
     await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
 
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, detail: "complete" }),
@@ -461,12 +466,14 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const json = await cli.run({ arguments: [...base, "--json"] });
+    const json = await runFileCli(cli, { arguments: [...base, "--json"] });
     expect(json.exitCode, json.stderr).toBe(0);
     expect(json.stdout).toContain(JSON.stringify(result.text));
     expect(json.stdout).toContain(JSON.stringify(result.type));
     expect(json.stdout).toContain(JSON.stringify(result.literal));
-    const markdown = await cli.run({ arguments: [...base, "--format", "md"] });
+    const markdown = await runFileCli(cli, {
+      arguments: [...base, "--format", "md"],
+    });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     expect(markdown.stdout).toContain("left\\|right\\\\tail<br>next");
     expect(markdown.stdout).toContain("List&lt;string&gt;");
@@ -475,7 +482,7 @@ cliTest(
 );
 
 cliTest(
-  "diagnoses an obsolete explicit-null Evidence commitment without claiming the file was modified",
+  "diagnoses an obsolete explicit-null Evidence commitment",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
@@ -490,7 +497,7 @@ cliTest(
       records: [record],
     };
     await writeFile(path, JSON.stringify(bundle));
-    const imported = await cli.run({
+    const imported = await runFileCli(cli, {
       arguments: ["evidence-import", path, "--json"],
     });
     expect(imported.exitCode).toBe(1);

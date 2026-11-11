@@ -293,6 +293,7 @@ export type BinaryTarget =
           | "ines"
           | "godot-pck"
           | "unityfs"
+          | "wxapkg"
           | "uimage"
           | "dmg"
           | "pkg"
@@ -301,7 +302,8 @@ export type BinaryTarget =
           | "esp-image"
           | "uf2"
           | "dfuse"
-          | "fit";
+          | "fit"
+          | "ntfs-mft";
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

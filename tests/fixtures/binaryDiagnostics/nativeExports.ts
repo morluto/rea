@@ -1,5 +1,5 @@
 /** One PE export-address-table slot: code RVA, forwarder text, or unused. */
-export type PeFixtureFunction =
+type PeFixtureFunction =
   | { readonly rva: number }
   | { readonly forwarder: string }
   | null;
@@ -132,7 +132,7 @@ export const peRepeatedExportNamesImage = (
 };
 
 /** One `.dynsym` entry; `version` is its raw `.gnu.version` half-word. */
-export interface ElfFixtureSymbol {
+interface ElfFixtureSymbol {
   readonly name: string;
   readonly binding?: number;
   readonly type?: number;
@@ -145,7 +145,7 @@ export interface ElfFixtureSymbol {
   readonly nameOffset?: number;
 }
 
-export interface ElfFixtureVersionRequirement {
+interface ElfFixtureVersionRequirement {
   readonly index: number;
   readonly name: string;
 }

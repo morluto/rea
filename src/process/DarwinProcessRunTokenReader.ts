@@ -1,3 +1,4 @@
+import { isProcessOwnershipInspectionCancellation } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
@@ -73,6 +74,7 @@ const identityResponseSchema = z.strictObject({
             process_group_id: z.int().nonnegative(),
           })
           .optional(),
+        name: z.string().optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
@@ -132,7 +134,7 @@ export const resolveSwiftcCompileTimeoutMs = (
 };
 
 /** Name the existing swiftc deadline when a helper compile times out. */
-export const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
+const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
   `The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is ${String(timeoutMs)} ms (integer range 1..${String(MAX_NODE_TIMER_DELAY_MS)}; omitted default ${String(DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS)} ms). Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value.`;
 
 /** Bound on compiler diagnostics embedded in the inspection failure text. */
@@ -359,11 +361,6 @@ const abortReason = (signal: AbortSignal): unknown => {
   return error;
 };
 
-const isExpectedAbort = (cause: unknown, signal: AbortSignal): boolean =>
-  signal.aborted &&
-  (cause === signal.reason ||
-    (cause instanceof Error && cause.name === "AbortError"));
-
 type CompilationWaitOutcome =
   | { readonly kind: "completed"; readonly result: Result<string, unknown> }
   | { readonly kind: "cancelled"; readonly reason: unknown };
@@ -572,7 +569,8 @@ export const createDarwinProcessRunTokenReader = (
           env: compilerEnvironment,
         });
       } catch (cause: unknown) {
-        if (isExpectedAbort(cause, signal)) throw cause;
+        if (isProcessOwnershipInspectionCancellation(cause, signal))
+          throw cause;
         throw compilerInspectionError(cause, compilerTimeoutMs, compiler);
       }
       if (signal.aborted || closed) throw abortReason(signal);
@@ -646,13 +644,18 @@ export const createDarwinProcessRunTokenReader = (
       if (operation?.aborting === true) {
         const waited = await waitForCompilation(operation, signal);
         if (waited.kind === "cancelled") throw waited.reason;
-        if (
-          !waited.result.ok &&
-          waited.result.error instanceof
-            DarwinProcessOwnershipInspectionError &&
-          waited.result.error.cleanupFailure !== undefined
-        )
-          throw waited.result.error;
+        if (!waited.result.ok) {
+          const failure = waited.result.error;
+          if (
+            (failure instanceof DarwinProcessOwnershipInspectionError &&
+              failure.cleanupFailure !== undefined) ||
+            !isProcessOwnershipInspectionCancellation(
+              operation.primaryFailure?.cause,
+              operation.controller.signal,
+            )
+          )
+            throw failure;
+        }
         continue;
       }
       operation ??= beginCompilation();
@@ -729,7 +732,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const read = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>> => {
     signal?.throwIfAborted();
@@ -770,7 +773,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const identities = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
     if (processes.length === 0) return new Map();
@@ -819,6 +822,9 @@ export const createDarwinProcessRunTokenReader = (
                       processGroupId: result.relation.process_group_id,
                     },
                   }),
+              ...(result.name === undefined || result.name === ""
+                ? {}
+                : { name: result.name }),
             }
           : result.state === "absent"
             ? { state: "absent", reason: result.reason }

@@ -56,7 +56,6 @@ it("retains preflight read failure and exact descriptor across failed client cle
     await client.close();
   });
   const result = await client.execute("observe_native_calls", parameters);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected retained descriptor cleanup");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toEqual([path]);
@@ -194,7 +193,6 @@ for (const readFails of [false, true])
     const result = await client.execute("observe_native_calls", parameters, {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained hash close failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([path]);
@@ -242,7 +240,6 @@ it("retains a completed hash when cancellation arrives after successful descript
   const result = await client.execute("observe_native_calls", parameters, {
     signal: controller.signal,
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected final hash cancellation");
   expect(result.error).toMatchObject({
     _tag: "AnalysisCancelledError",
@@ -250,6 +247,7 @@ it("retains a completed hash when cancellation arrives after successful descript
     cleanupIncomplete: false,
     diagnostics: { completed_hash: { sha256: target.sha256 } },
   });
+  expect(result.error.cause).toBe(reason);
   expect(trace).not.toHaveBeenCalled();
 });
 
@@ -271,12 +269,12 @@ it("does not adopt an arbitrary thrown tracer cleanup marker", async () => {
     await client.close();
   });
   const result = await client.execute("observe_native_calls", parameters);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected opaque tracer failure");
   expect(result.error).toMatchObject({
     _tag: "ProviderAdapterError",
     cause: marker,
     cleanupIncomplete: false,
   });
+  expect(result.error.cause).toBe(marker);
   expect(result.error.cleanupResources).toEqual([]);
 });

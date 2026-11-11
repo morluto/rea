@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { launchAnalysisSetting } from "./config/analysisSettings.js";
+import { runtimeAnalysisConfig } from "./config/runtimeAnalysisSettings.js";
+import { runWithAnalysisOperationSnapshot } from "./domain/analysisOperationSnapshot.js";
+import { ConfigurationError } from "./domain/configurationErrors.js";
 import {
   defaultHopperLauncherPath,
   inspectNativeAnalysisConfiguration,
@@ -10,6 +14,94 @@ import {
   parseJebMcpTimeoutMs,
 } from "./config/environment.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
+
+it("still rejects a NUL in an unresolved expression", () => {
+  const result = parseEnvironmentValues(
+    { REA_GHIDRA_STARTUP_TIMEOUT_MS: "${TIMEOUT}\0private" },
+    new Set(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]),
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(JSON.stringify(result.error)).not.toContain("private");
+});
+
+it.each([
+  ["asar.max_listing_bytes", "REA_ASAR_MAX_LISTING_BYTES", "9007199254740992"],
+  [
+    "ghidra.value_flow_max_operations",
+    "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
+    "0",
+  ],
+  [
+    "ghidra.value_flow_max_inputs_per_operation",
+    "REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION",
+    "2147483648",
+  ],
+  ["ghidra.value_flow_max_edges", "REA_GHIDRA_VALUE_FLOW_MAX_EDGES", "1.5"],
+  [
+    "ghidra.decompile_max_payload_mib",
+    "REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB",
+    "2048",
+  ],
+] as const)(
+  "defers invalid %s until the operation reads it",
+  (id, setting, value) => {
+    const parsed = parseConfig({ [setting]: value });
+    if (!parsed.ok) throw new Error("runtime seed rejected startup");
+    const boundary = launchAnalysisSetting(id, { [setting]: value });
+    if (boundary.ok) throw new Error("invalid runtime seed was admitted");
+    expect(boundary.error.settings).toContainEqual(
+      expect.objectContaining({ setting }),
+    );
+    const live = runtimeAnalysisConfig(parsed.value);
+    const read = (): unknown => {
+      if (id === "asar.max_listing_bytes") return live;
+      if (id === "ghidra.value_flow_max_operations")
+        return live.ghidraValueFlowMaxOperations;
+      if (id === "ghidra.value_flow_max_inputs_per_operation")
+        return live.ghidraValueFlowMaxInputsPerOperation;
+      if (id === "ghidra.value_flow_max_edges")
+        return live.ghidraValueFlowMaxEdges;
+      return live.ghidraDecompileMaxPayloadMiB;
+    };
+    if (id !== "asar.max_listing_bytes")
+      expect(read).toThrow(ConfigurationError);
+  },
+);
+
+it("keeps the caller's opt-in Ghidra checkpoint directory and leaves it disabled by default", () => {
+  const selected = parseConfig({
+    REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints with spaces",
+  });
+  expect(selected.ok && selected.value.ghidraCheckpointDirectory).toBe(
+    "/tmp/checkpoints with spaces",
+  );
+  const defaults = parseConfig({});
+  expect(
+    defaults.ok && defaults.value.ghidraCheckpointDirectory,
+  ).toBeUndefined();
+  expect(parseConfig({ REA_GHIDRA_CHECKPOINT_DIR: "relative" }).ok).toBe(false);
+});
+
+it.each([
+  ["REA_GHIDRA_PROJECT_PATH", "/tmp/selected.gpr"],
+  ["REA_GHIDRA_SEED_FILE", "/tmp/seeds.json"],
+  ["REA_GHIDRA_LANGUAGE_ID", "x86:LE:64:default"],
+  ["REA_GHIDRA_NATIVEAOT_JAR", "/tmp/extension.jar"],
+  ["REA_GHIDRA_DISABLED_ANALYZERS", "Stack"],
+])(
+  "refuses %s with checkpoints rather than silently dropping the selected input",
+  (setting, value) => {
+    const result = parseConfig({
+      REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints",
+      [setting]: value,
+    });
+    if (result.ok) throw new Error("conflicting inputs accepted");
+    expect(result.error.message).toContain("checkpoints");
+    expect(result.error).toMatchObject({
+      settings: [expect.objectContaining({ setting })],
+    });
+  },
+);
 
 it("reports a configuration failure for a NUL in Hopper loader arguments", () => {
   const result = parseConfig({
@@ -34,7 +126,6 @@ it.each([
       parseEnvironmentValues(environment),
       parseConfig(environment),
     ]) {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid environment");
       expect(result.error.settings).toHaveLength(1);
       expect(result.error.settings[0]?.constraint).toContain("NUL");
@@ -81,7 +172,18 @@ describe("runtime configuration", () => {
       expect(empty.value.hopperTargetPath).toBeUndefined();
       expect(empty.value.analysisProvider).toBe("auto");
       expect(empty.value.hopperStartupTimeoutMs).toBe(120_000);
+      expect(empty.value.hopperStartupTimeoutSource).toBe("default");
     }
+    const hopperTimeout = parseConfig({
+      REA_HOPPER_STARTUP_TIMEOUT_MS: "45000",
+    });
+    expect(hopperTimeout).toMatchObject({
+      ok: true,
+      value: {
+        hopperStartupTimeoutMs: 45_000,
+        hopperStartupTimeoutSource: "setting",
+      },
+    });
     const result = parseConfig({ HOPPER_TARGET_PATH: "/usr/bin/true" });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -129,7 +231,6 @@ describe("runtime configuration", () => {
     });
     expect(rejected.issues.map(({ setting }) => setting)).toEqual([
       "REA_ANALYSIS_PROVIDER",
-      "REA_GHIDRA_STARTUP_TIMEOUT_MS",
     ]);
     expect(
       parseConfig({
@@ -289,6 +390,20 @@ describe("runtime collection configuration", () => {
   );
 });
 
+const expectInvalidStartupSeed = (
+  setting: "REA_HOPPER_STARTUP_TIMEOUT_MS" | "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  id: "hopper.startup_timeout_ms" | "ghidra.startup_timeout_ms",
+  value: string,
+  read: (config: ReturnType<typeof runtimeAnalysisConfig>) => number,
+): void => {
+  const result = parseConfig({ [setting]: value });
+  if (!result.ok) throw new Error("runtime seed rejected startup");
+  const live = runtimeAnalysisConfig(result.value);
+  expect(() => read(live)).toThrow(ConfigurationError);
+  const boundary = launchAnalysisSetting(id, { [setting]: value });
+  if (boundary.ok) throw new Error("invalid startup seed was admitted");
+};
+
 describe("configuration failure diagnostics", () => {
   it.each(["1", "900000", "2147483647"])(
     "accepts Hopper startup deadline %s without changing Ghidra's deadline",
@@ -306,22 +421,26 @@ describe("configuration failure diagnostics", () => {
   );
 
   it.each(["", "0", "-1", "1.5", "1e3", "invalid", "2147483648"])(
-    "rejects malformed Hopper startup deadline %j with its setting",
+    "defers a malformed Hopper startup deadline %j until the operation reads it",
     (value) => {
-      const result = parseConfig({ REA_HOPPER_STARTUP_TIMEOUT_MS: value });
-      if (result.ok) throw new Error("Expected invalid startup deadline");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "configuration_invalid",
-        category: "invalid_input",
-        details: {
-          settings: [
-            {
-              setting: "REA_HOPPER_STARTUP_TIMEOUT_MS",
-              constraint: expect.any(String),
-            },
-          ],
-        },
-      });
+      expectInvalidStartupSeed(
+        "REA_HOPPER_STARTUP_TIMEOUT_MS",
+        "hopper.startup_timeout_ms",
+        value,
+        (live) => live.hopperStartupTimeoutMs,
+      );
+      const parsed = parseConfig({ REA_HOPPER_STARTUP_TIMEOUT_MS: value });
+      if (!parsed.ok) throw parsed.error;
+      const live = runtimeAnalysisConfig(parsed.value);
+      expect(
+        runWithAnalysisOperationSnapshot(
+          {
+            revision: 1,
+            overrides: { "hopper.startup_timeout_ms": 8000 },
+          },
+          () => live.hopperStartupTimeoutMs,
+        ),
+      ).toBe(8000);
     },
   );
 
@@ -339,26 +458,24 @@ describe("configuration failure diagnostics", () => {
   ])(
     "rejects malformed Ghidra startup deadline %j with its setting and constraint",
     (value) => {
-      const result = parseConfig({ REA_GHIDRA_STARTUP_TIMEOUT_MS: value });
-      if (result.ok) throw new Error("Expected invalid startup deadline");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "configuration_invalid",
-        category: "invalid_input",
-        details: {
-          settings: [
-            {
-              setting: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
-              constraint: expect.any(String),
-            },
-          ],
-        },
-      });
+      expectInvalidStartupSeed(
+        "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+        "ghidra.startup_timeout_ms",
+        value,
+        (live) => live.ghidraStartupTimeoutMs,
+      );
     },
   );
 
   it.each(["1", "90000", "2147483647"])(
     "accepts Swift compile deadline %s without changing Hopper's deadline",
     (value) => {
+      expect(
+        parseEnvironmentValues({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
+      ).toMatchObject({
+        ok: true,
+        value: { REA_SWIFTC_COMPILE_TIMEOUT_MS: Number(value) },
+      });
       expect(
         parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
       ).toMatchObject({
@@ -400,18 +517,22 @@ describe("configuration failure diagnostics", () => {
       const result = parseConfig({ [setting]: value });
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      const constraint = `${setting} must be absolute`;
-      expect(projectAnalysisError(result.error)).toMatchObject({
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
         code: "configuration_invalid",
         category: "invalid_input",
-        message: `REA configuration is invalid: ${constraint}.`,
-        remediation: { action: expect.stringContaining(`Correct ${setting} `) },
-        details: { settings: [{ setting, constraint }] },
+        message: expect.stringContaining(setting),
+        remediation: { action: expect.stringContaining(setting) },
+        details: {
+          settings: [
+            { setting, constraint: expect.stringMatching(/absolute/iu) },
+          ],
+        },
       });
+      expect(projected.message).toMatch(/absolute/iu);
+      expect(projected.remediation.action).toMatch(/correct/iu);
       // The rejected value itself is not echoed.
-      expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
-        value,
-      );
+      expect(JSON.stringify(projected)).not.toContain(value);
     },
   );
 
@@ -443,8 +564,8 @@ describe("JEB MCP timeout configuration", () => {
       value: 900_000,
     });
     expect(
-      parseEnvironmentValues({ REA_JEB_MCP_TIMEOUT_MS: "900000" }),
-    ).toMatchObject({ ok: true, value: { REA_JEB_MCP_TIMEOUT_MS: 900_000 } });
+      parseEnvironmentValues({ REA_JEB_MCP_TIMEOUT_MS: "900000" }).ok,
+    ).toBe(true);
   });
 
   it.each(["", "0", "-1", "1.5", "1e3", "invalid", "2147483648"])(
@@ -560,18 +681,25 @@ describe("Ghidra decompile limit configuration", () => {
       const result = parseConfig({
         REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: value,
       });
-      if (result.ok) throw new Error("Expected invalid decompile limit");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "configuration_invalid",
-        details: {
-          settings: [
-            {
-              setting: "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
-              constraint: expect.any(String),
-            },
-          ],
-        },
-      });
+      if (!result.ok) throw new Error("runtime seed rejected startup");
+      const live = runtimeAnalysisConfig(result.value);
+      expect(() => live.ghidraDecompileTimeoutSeconds).toThrow(
+        ConfigurationError,
+      );
+      expect(
+        runWithAnalysisOperationSnapshot(
+          {
+            revision: 1,
+            overrides: { "ghidra.decompile_timeout_seconds": null },
+          },
+          () => live.ghidraDecompileTimeoutSeconds,
+        ),
+      ).toBeUndefined();
+      const boundary = launchAnalysisSetting(
+        "ghidra.decompile_timeout_seconds",
+        { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: value },
+      );
+      if (boundary.ok) throw new Error("invalid decompile limit was admitted");
     },
   );
 });

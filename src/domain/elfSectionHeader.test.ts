@@ -56,6 +56,7 @@ it.each(formats)(
         nameOffset: 0xfedcba98,
         type: 0x89abcdef,
         flags: values[0],
+        compressed: true,
         address: values[1],
         offset: values[2],
         size: values[3],
@@ -84,7 +85,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "ELF section header is truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },

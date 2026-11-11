@@ -5,7 +5,8 @@ import {
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { ok } from "../../domain/result.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { err, ok } from "../../domain/result.js";
 
 /** Simulated provider seam for value traces; not a real decompiler observation. */
 export const valueTraceSubject = {
@@ -91,6 +92,7 @@ interface StaticProcedure {
 
 interface GraphOptions {
   readonly sessionSubject?: boolean;
+  readonly procedureAliases?: Readonly<Record<string, string>>;
 }
 
 /** A static call graph whose call sites resolve to the listed destinations. */
@@ -129,7 +131,7 @@ export const staticValueGraph = (
                   : "direct",
               mechanism: ambiguous ? "computed" : "direct",
               targets: targets.map(({ destination, status }) => ({
-                address: destination,
+                address: options.procedureAliases?.[destination] ?? destination,
                 procedure: destination,
                 status,
                 basis: "provider-reference",
@@ -144,8 +146,9 @@ export const staticValueGraph = (
       }
       if (operation !== "analyze_function")
         throw new Error(`Unexpected native trace operation: ${operation}`);
-      const address = String(parameters.procedure);
-      analyzed.push(address);
+      const selector = String(parameters.procedure);
+      const address = options.procedureAliases?.[selector] ?? selector;
+      analyzed.push(selector);
       const facts = procedures[address];
       if (facts === undefined) throw new Error(`Unexpected ${address}`);
       const dossier = functionDossierSchema.parse(
@@ -213,5 +216,65 @@ export const valueTraceDiamond = (options: GraphOptions = {}) =>
       "0x1008": [{ destination: "0x3000", status: "direct" }],
       "0x2004": [{ destination: "0x3000", status: "direct" }],
     },
+    options,
+  );
+
+/**
+ * The diamond's reads with max_depth 1 when nothing fails. 0x2000's call to
+ * 0x3000 is resolved but not followed, because 0x3000 is already queued.
+ */
+export const VALUE_TRACE_DIAMOND_READS = [
+  "analyze_function:0x1000",
+  "resolve_native_call_targets:0x1004",
+  "resolve_native_call_targets:0x1008",
+  "analyze_function:0x2000",
+  "resolve_native_call_targets:0x2004",
+  "analyze_function:0x3000",
+] as const;
+export type ValueTraceDiamondRead = (typeof VALUE_TRACE_DIAMOND_READS)[number];
+
+/** Fail each listed `operation:selector` trace read and record every trace read. */
+export const failingValueTraceReads = (
+  port: AnalysisOperationPort,
+  failures: Partial<Record<ValueTraceDiamondRead, AnalysisError>>,
+) => {
+  const reads: string[] = [];
+  const failed = new Map(Object.entries(failures));
+  const failing: AnalysisOperationPort = {
+    execute: async (operation, parameters, options) => {
+      if (
+        operation !== "analyze_function" &&
+        operation !== "resolve_native_call_targets"
+      )
+        return ok(createAnalysisExecution(null, valueTraceProvider));
+      const read = `${operation}:${String(parameters.procedure ?? parameters.address)}`;
+      reads.push(read);
+      const failure = failed.get(read);
+      return failure === undefined
+        ? port.execute(operation, parameters, options)
+        : err(failure);
+    },
+  };
+  return { port: failing, reads };
+};
+
+/** Three recovered call arguments, with only the first parameter recovered. */
+export const valueTraceUnboundArguments = (options: GraphOptions = {}) =>
+  staticValueGraph(
+    {
+      "0x1000": {
+        operations: [
+          {
+            ...pcodeOperation("call", "0x1010", "CALL"),
+            inputs: Array.from({ length: 4 }, () => pcodeScalar),
+          },
+        ],
+      },
+      "0x2000": {
+        operations: [pcodeOperation("return", "0x2010", "RETURN")],
+        parameters: [{ ordinal: 0, name: "fixed", data_type: "/int" }],
+      },
+    },
+    { "0x1010": [{ destination: "0x2000", status: "direct" }] },
     options,
   );

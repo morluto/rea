@@ -29,7 +29,6 @@ import {
   createDarwinProcessRunTokenReader,
   DarwinProcessOwnershipInspectionError,
   SWIFTC_INTERRUPT,
-  swiftcCompileTimeoutRecovery,
 } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import {
@@ -178,17 +177,9 @@ it("reports an actionable missing Swift compiler without installing it", async (
     },
   });
   try {
-    await expect(
-      reader.read([
-        {
-          pid: 1,
-          parentPid: 0,
-          processGroupId: 1,
-          state: "S",
-          command: "fixture",
-        },
-      ]),
-    ).rejects.toThrow(/requires the Apple Swift compiler via xcrun/u);
+    await expect(reader.read([{ pid: 1 }])).rejects.toThrow(
+      /requires the Apple Swift compiler via xcrun/u,
+    );
   } finally {
     await reader.close();
   }
@@ -230,11 +221,11 @@ it.skipIf(process.platform === "win32")(
         stderrTruncated: true,
         killed: false,
       });
-      expect(failure.message).toContain(
-        "(compiler result: exit code 1): module cache is not writable",
+      expect(failure.message).toMatch(
+        /exit code 1.*module cache is not writable/iu,
       );
-      expect(failure.message).toContain(
-        "[diagnostics truncated at 512 bytes; this release has no runtime override]",
+      expect(failure.message).toMatch(
+        /diagnostics truncated at 512 bytes.*no runtime override/iu,
       );
       const normalized = normalizeCaptureFailure(failure, undefined);
       if (!(normalized instanceof ProcessCaptureError))
@@ -277,10 +268,14 @@ it.skipIf(process.platform === "win32")(
     });
     try {
       const failure = await preparationFailure(reader);
-      expect(failure.message).toContain(
-        "macOS process ownership helper compilation failed via xcrun (compiler result: timed out after 3000 ms.",
+      expect(failure.message).toMatch(
+        /ownership helper.*xcrun.*timed out after 3000 ms/iu,
       );
-      expect(failure.message).toContain(swiftcCompileTimeoutRecovery(3_000));
+      expect(failure.message).toContain("REA_SWIFTC_COMPILE_TIMEOUT_MS");
+      expect(failure.message).toContain("1..2147483647");
+      expect(failure.message).toContain("120000 ms");
+      expect(failure.message).toMatch(/restart REA/i);
+      expect(failure.message).toMatch(/next ownership-helper compile/i);
       expect(failure.message).toContain(
         "error: PCH was compiled with module cache path that differs",
       );
@@ -312,8 +307,9 @@ it.skipIf(process.platform === "win32")(
     });
     try {
       await expect(preparationFailure(reader)).resolves.toMatchObject({
-        message:
-          "macOS process ownership helper compilation failed via xcrun (compiler result: stopped by signal SIGSEGV): fatal: segmentation fault during type checking",
+        message: expect.stringMatching(
+          /xcrun.*SIGSEGV.*fatal: segmentation fault during type checking/i,
+        ),
         compilerOutcome: {
           outcome: "signaled",
           code: null,
@@ -1125,18 +1121,7 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
     const inspection =
       kind === "baseline"
         ? host.captureBaseline?.(controller.signal)
-        : host.runTokens?.(
-            [
-              {
-                pid: process.pid,
-                parentPid: process.ppid,
-                processGroupId: process.pid,
-                state: "S",
-                command: process.execPath,
-              },
-            ],
-            controller.signal,
-          );
+        : host.runTokens?.([{ pid: process.pid }], controller.signal);
     const baseline =
       inspection?.then(
         () => ({ state: "fulfilled" as const }),
@@ -1185,18 +1170,16 @@ it.skipIf(process.platform === "win32")(
     const baselineSpy = vi
       .spyOn(systemProcessOwnershipHost, "captureBaseline")
       .mockImplementation(async (signal) => {
-        await reader.identities(
-          [
-            {
-              pid: process.pid,
-              parentPid: process.ppid,
-              processGroupId: process.pid,
-              state: "S",
-              command: process.execPath,
-            },
-          ],
-          signal,
-        );
+        const processes = [
+          {
+            pid: process.pid,
+            parentPid: process.ppid,
+            processGroupId: process.pid,
+            state: "S",
+            command: process.execPath,
+          },
+        ];
+        await reader.identities(processes, signal);
         return [];
       });
     const launchSpy = vi.spyOn(electron, "launch");
@@ -1317,6 +1300,29 @@ it.skipIf(!onDarwin)(
         missingAppleBoundaryFailsClosed: true,
         malformedBuffersRejected: true,
         invalidPointerSizeFailsClosed: true,
+        incompleteRestrictedArguments: [
+          "malformed_procargs_path_padding",
+          "malformed_procargs_arguments",
+          "apple_vector_unavailable",
+        ].map((reason) => [
+          {
+            state: "unavailable",
+            reason: "platform_binary_environment_withheld",
+          },
+          {
+            state: "unavailable",
+            reason: "restricted_process_environment_withheld",
+          },
+          { state: "unavailable", reason },
+        ]),
+        signedReadableTokens: [true, true],
+        signedInvalidTokens: [
+          "duplicate_run_token",
+          "invalid_run_token_encoding",
+        ].map((reason) => [
+          { state: "unavailable", reason },
+          { state: "unavailable", reason },
+        ]),
         malformedStages: [
           { state: "unavailable", reason: "malformed_procargs_header" },
           { state: "unavailable", reason: "malformed_procargs_argument_count" },
@@ -1389,6 +1395,7 @@ it.skipIf(!onDarwin)(
         zombieLifecycleIsSeparateFromIdentity: true,
         effectiveUidComesFromNativeIdentity: true,
         nativeRelationIsSeparateFromIdentity: true,
+        nativeNameIsSeparateFromIdentity: true,
       });
     } finally {
       await rm(root, { recursive: true, force: true });

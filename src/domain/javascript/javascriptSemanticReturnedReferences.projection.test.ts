@@ -205,3 +205,21 @@ it("widens a cycle that rewrites the path head while increasing its depth", () =
     returnedExpression(parsed.program, "target"),
   );
 });
+
+it("retains both finite class-prototype callable selections", () => {
+  const { parsed, state } = indexed(`
+    class C { first(){return firstResult} second(){return secondResult} }
+    const selected=flag?C.prototype.first:C.prototype.second;
+    selected();
+  `);
+  const [read] = callReads(parsed.program, "selected");
+  if (read === undefined)
+    throw new Error("Missing selected prototype method call");
+  const result = createSemanticReturnedReferences(state)(read);
+  expect(result.precision).toBe("exact");
+  expect(
+    result.references
+      .map(({ node }) => (t.isIdentifier(node) ? node.name : null))
+      .sort(),
+  ).toEqual(["firstResult", "secondResult"]);
+});

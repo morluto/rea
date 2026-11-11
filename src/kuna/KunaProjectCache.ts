@@ -48,6 +48,7 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
+import type { KunaDeadline } from "./KunaConfiguration.js";
 import {
   kunaExportFileNames,
   exportKunaProject,
@@ -235,6 +236,8 @@ export interface KunaProjectRequest {
   readonly targetSha256: string;
   readonly signal?: AbortSignal;
   readonly onStatus?: (status: KunaExportStatus) => void;
+  /** Deadline accepted by the session that started this export. */
+  readonly deadline?: KunaDeadline;
 }
 
 /** One build whose process tree REA could not prove stopped. */
@@ -244,6 +247,8 @@ interface RetainedProcess {
   /** Retries stopping the process tree, when the launcher left one. */
   readonly owner: ProviderProcessSupervisor | undefined;
   readonly staging: string;
+  /** One exact owner's stop and staging retirement, shared by concurrent closes. */
+  retry: Promise<void> | undefined;
 }
 
 interface RetainedHashFile {
@@ -354,7 +359,7 @@ export class KunaProjectCache {
   #maintenance: Promise<void> | undefined;
   #maintenanceRequested = false;
   /** Builds whose process tree could not be proven stopped; their staging stays. */
-  readonly #retainedProcesses: RetainedProcess[] = [];
+  readonly #retainedProcesses = new Set<RetainedProcess>();
   /** Only resources whose process cleanup is proven may be retried as files. */
   readonly #retainedFiles = new Map<
     string,
@@ -394,7 +399,7 @@ export class KunaProjectCache {
   /** Report cleanup owners retained after failed process or file cleanup. */
   get hasPendingCleanup(): boolean {
     return (
-      this.#retainedProcesses.length > 0 ||
+      this.#retainedProcesses.size > 0 ||
       this.#retainedFiles.size > 0 ||
       this.#retainedHashFiles.size > 0
     );
@@ -556,7 +561,11 @@ export class KunaProjectCache {
     request: KunaProjectRequest,
   ): Promise<Result<KunaProject, AnalysisError>> {
     if (request.signal?.aborted === true)
-      return err(new AnalysisCancelledError(KUNA_EXPORT_OPERATION));
+      return err(
+        new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
+          cause: request.signal.reason,
+        }),
+      );
     const key = kunaProjectKey({
       targetSha256: request.targetSha256,
       targetBasename: basename(request.targetPath),
@@ -627,16 +636,21 @@ export class KunaProjectCache {
   async #retryProcesses(
     selected: (retained: RetainedProcess) => boolean,
   ): Promise<void> {
-    for (const retained of this.#retainedProcesses.filter(selected)) {
-      const stopped = await retained.owner?.stop();
-      if (stopped === undefined || stopped.status === "incomplete") continue;
-      this.#retainedProcesses.splice(
-        this.#retainedProcesses.indexOf(retained),
-        1,
-      );
-      this.#resolveCleanupOwner(retained);
-      await this.#retireStaging(retained.staging, retained.key);
+    for (const retained of [...this.#retainedProcesses].filter(selected)) {
+      if (!this.#retainedProcesses.has(retained)) continue;
+      retained.retry ??= this.#retryProcess(retained).finally(() => {
+        retained.retry = undefined;
+      });
+      await retained.retry;
     }
+  }
+
+  async #retryProcess(retained: RetainedProcess): Promise<void> {
+    const stopped = await retained.owner?.stop();
+    if (stopped === undefined || stopped.status === "incomplete") return;
+    this.#resolveCleanupOwner(retained);
+    await this.#retireStaging(retained.staging, retained.key);
+    this.#retainedProcesses.delete(retained);
   }
 
   /** Retry only stopped file resources belonging to the closing task, or all. */
@@ -728,7 +742,7 @@ export class KunaProjectCache {
 
   #retainedCleanupFailures(key?: string): CleanupFailureOwner[] {
     return [
-      ...this.#retainedProcesses
+      ...[...this.#retainedProcesses]
         .filter((retained) => key === undefined || retained.key === key)
         .map((retained) => ({
           error: retained.error,
@@ -878,7 +892,13 @@ export class KunaProjectCache {
         settled = true;
         leave();
         if (entry.waiters === 0) entry.controller.abort();
-        resolve(err(new AnalysisCancelledError(KUNA_EXPORT_OPERATION)));
+        resolve(
+          err(
+            new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
+              cause: request.signal?.reason,
+            }),
+          ),
+        );
       };
       request.signal?.addEventListener("abort", onAbort, { once: true });
       void entry.promise.then((result) => {
@@ -987,6 +1007,7 @@ export class KunaProjectCache {
       launcher: this.#launcher,
       retainFailedFileClose: (owner, resource) =>
         this.#retainHashFile(owner, key, staging, resource),
+      ...(request.deadline === undefined ? {} : { deadline: request.deadline }),
     });
     if (outcome.kind === "retained") {
       const retained: RetainedProcess = {
@@ -994,8 +1015,9 @@ export class KunaProjectCache {
         error: outcome.error,
         owner: outcome.owner,
         staging,
+        retry: undefined,
       };
-      this.#retainedProcesses.push(retained);
+      this.#retainedProcesses.add(retained);
       this.#bindCleanupError(outcome.error, [
         retained,
         this.#stagingCleanupOwner(staging),

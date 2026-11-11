@@ -47,7 +47,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { workflowAnalysisProfile } from "../WorkflowAnalysisProfile.js";
 import {
   hasOnlyProfilelessNativeDispatchEntries,
-  isProfilelessNativeDispatchSnapshot,
+  profilelessSnapshotMismatch,
 } from "./ProfilelessNativeWorkflowSnapshot.js";
 
 const SNAPSHOT_MUTATION_RECOVERY =
@@ -124,6 +124,17 @@ export abstract class BinarySessionRecords {
     const recorded = this.#records.recordEvidence(evidence);
     if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
     return recorded;
+  }
+
+  admitRecoveryObservation(
+    input: unknown,
+    operation: string,
+    additional: {
+      readonly valueBytes: number;
+      readonly serializedUtf16Bytes: number;
+    },
+  ): Result<void, AnalysisError> {
+    return this.#records.admitRecoveryObservation(input, operation, additional);
   }
 
   hasEvidence(evidenceId: string): boolean {
@@ -267,16 +278,20 @@ export abstract class BinarySessionRecords {
         ),
       );
     const profile = active?.profile ?? active?.profilelessWorkflowProfile;
-    if (
-      active?.profile === null &&
-      (profile === undefined ||
-        !isProfilelessNativeDispatchSnapshot(snapshot, active.target, profile))
-    )
-      return err(
-        new AnalysisSnapshotMismatchError(
-          "Analysis snapshot profile_mismatch: the snapshot is not bound to the active native dispatch reader",
-        ),
+    if (active?.profile === null) {
+      const mismatch = profilelessSnapshotMismatch(
+        snapshot,
+        active.target,
+        profile,
       );
+      if (mismatch !== undefined)
+        return err(
+          new AnalysisSnapshotMismatchError(
+            "Analysis snapshot is not bound to the active native dispatch reader",
+            mismatch,
+          ),
+        );
+    }
     const imported = this.#snapshot.import(
       snapshot,
       active === undefined
@@ -295,11 +310,11 @@ export abstract class BinarySessionRecords {
     return imported;
   }
 
-  protected matchesSnapshot(
+  protected snapshotMismatch(
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | null,
-  ): boolean {
-    return this.#snapshot.matches(target, profile ?? undefined);
+  ) {
+    return this.#snapshot.mismatch(target, profile ?? undefined);
   }
 
   protected selectSnapshot(
@@ -319,14 +334,16 @@ export abstract class BinarySessionRecords {
     >,
   ): AnalysisExecution | undefined {
     if (this.#snapshotInvalidated) return undefined;
-    return this.#snapshot.lookup(target, profile, operation, parameters);
+    return this.#snapshot.lookup(target, profile, operation, parameters, (id) =>
+      this.evidenceForAnalysis(id),
+    );
   }
 
   protected recordSnapshot(
     input: Parameters<AnalysisSnapshotCache["record"]>[0],
   ): void {
     if (this.#snapshotInvalidated) return;
-    this.#snapshot.record(input);
+    this.#snapshot.record(input, (id) => this.evidenceForAnalysis(id));
     this.#emitSnapshotChanged();
   }
 
