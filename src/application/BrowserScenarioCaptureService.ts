@@ -39,34 +39,42 @@ export const captureBrowserScenario = async (
     );
   const captured = await provider.captureScenario(scenario, options);
   if (!captured.ok) {
-    const partial = captured.error.partialObservation;
-    if (
-      partial !== undefined &&
-      "kind" in partial &&
-      partial.kind === "browser-scenario-observation"
-    ) {
-      const report = browserScenarioCaptureSchema.safeParse(partial.capture);
-      // Only a completed capture becomes Evidence. A JSON-safe incomplete
-      // observation stays on the owner error, including typed cancellation.
-      if (
-        report.success &&
-        report.data.steps.every(({ status }) => status === "completed")
-      ) {
-        captured.error.partialObservation = createBrowserScenarioEvidence(
-          scenario,
-          report.data,
-          provider.identity(),
-        );
-        return captured;
-      }
-    }
-    return err(
-      keepIncompleteObservation(
-        captured.error,
-        OPERATION,
-        "Browser scenario provider retained a non-JSON incomplete observation.",
-      ),
+    keepIncompleteObservation(
+      captured.error,
+      OPERATION,
+      "Browser scenario provider retained a non-JSON incomplete observation.",
     );
+    const seen = new Set<AnalysisError>();
+    const promoted = new Map<object, Evidence>();
+    let owner: AnalysisError | undefined = captured.error;
+    while (owner !== undefined && !seen.has(owner)) {
+      seen.add(owner);
+      const partial = owner.partialObservation;
+      if (
+        partial !== undefined &&
+        "kind" in partial &&
+        partial.kind === "browser-scenario-observation"
+      ) {
+        const report = browserScenarioCaptureSchema.safeParse(partial.capture);
+        // Every cleanup primary may become the selected error after release.
+        if (
+          report.success &&
+          report.data.steps.every(({ status }) => status === "completed")
+        ) {
+          const evidence =
+            promoted.get(partial) ??
+            createBrowserScenarioEvidence(
+              scenario,
+              report.data,
+              provider.identity(),
+            );
+          promoted.set(partial, evidence);
+          owner.partialObservation = evidence;
+        }
+      }
+      owner = owner.cleanupPrimary;
+    }
+    return captured;
   }
   const report = browserScenarioCaptureSchema.safeParse(captured.value);
   if (!report.success)

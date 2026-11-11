@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -86,6 +87,39 @@ it("converts a raw scenario capture retained after cleanup failure", async () =>
   if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
 });
 
+it.each([false, true])(
+  "retains completed scenario Evidence after cleanup resolves (wrapper facts: %s)",
+  async (wrapperFacts) => {
+    const partial = { kind: "browser-scenario-observation" as const, capture };
+    const primary = new AnalysisCancelledError("capture_browser_scenario", {
+      partialObservation: partial,
+    });
+    const failure = new BrowserObservationError(
+      "capture_browser_scenario",
+      "cleanup_failed",
+      {
+        cleanupPrimary: primary,
+        cleanup: {
+          reason: "browser close failed",
+          resources: ["browser process"],
+        },
+        ...(wrapperFacts ? { partialObservation: partial } : {}),
+      },
+    );
+    const result = await runScenario(failure, scenarioIdentity);
+    if (result.ok) throw new Error("Expected cleanup failure");
+    expect(result.error).toBe(failure);
+    failure.resolveCleanup();
+    expect(resolvedAnalysisError(failure)).toBe(primary);
+    expect(parseEvidence(primary.partialObservation)).toMatchObject({
+      operation: "capture_browser_scenario",
+      normalized_result: capture,
+    });
+    if (wrapperFacts)
+      expect(failure.partialObservation).toBe(primary.partialObservation);
+  },
+);
+
 it.each([
   null,
   { request: "opaque cancellation" },
@@ -168,6 +202,29 @@ it("keeps startup cancellation and its incomplete capture", async () => {
   });
   const result = await runScenario(failure);
   expectKeptPartial(expectOwnerError(result, failure, reason), partial);
+});
+
+it("interprets only the retained observation's own JSON fields", async () => {
+  let reads = 0;
+  const partial = Object.defineProperty(
+    { capture: { completed: "source fact" } },
+    "kind",
+    {
+      get: () => {
+        reads++;
+        throw new Error("Hidden kind is not part of the observation");
+      },
+    },
+  );
+  const failure = new AnalysisCancelledError("capture_browser_scenario", {
+    partialObservation: partial as never,
+  });
+  const result = await runScenario(failure);
+  expectOwnerError(result, failure, failure.cause);
+  expect(reads).toBe(0);
+  expect(failure.partialObservation).toEqual({
+    capture: { completed: "source fact" },
+  });
 });
 
 it.each([{ steps: [undefined] }, { started_at: Number.NaN }])(
