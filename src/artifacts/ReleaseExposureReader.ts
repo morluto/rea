@@ -1944,9 +1944,9 @@ const noteScriptReference = (
 const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   const spellings = state.scriptTargets.get(target);
-  retractLinkerMapGuesses(state, location);
   const spelling = anchoredLocation(state, location);
   if (spellings?.has(spelling)) return;
+  retractLinkerMapGuesses(state, location);
   state.scriptTargetBytes += Buffer.byteLength(spelling);
   if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES) {
     state.skippedMaps += 1;
@@ -2058,11 +2058,12 @@ const noteLocalMapReference = (
  */
 const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
-  // A map read before its declaration may have settled as a linker map.
-  state.skippedMaps += retractLinkerMapGuesses(state, location);
   const spellings = state.mapTargets.get(target);
   const spelling = anchoredLocation(state, location);
   if (spellings?.has(spelling)) return;
+  // Retract once per exact declaration; repeating it must not consume peers
+  // that only share its normalized lookup key.
+  state.skippedMaps += retractLinkerMapGuesses(state, location);
   state.mapTargetBytes += Buffer.byteLength(spelling);
   if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES) {
     state.skippedMaps += 1;
