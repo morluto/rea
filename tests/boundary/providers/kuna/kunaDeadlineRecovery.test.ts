@@ -27,7 +27,11 @@ it("retries inventory after a reset exposes an invalid function deadline", async
     const refused = await client.execute("list_procedures", {});
     expect(refused).toMatchObject({
       ok: false,
-      error: { _tag: "ConfigurationError" },
+      error: {
+        _tag: "ConfigurationError",
+        settings: [{ setting: "REA_KUNA_TIMEOUT_MS", update_mode: "runtime" }],
+        remediationAction: expect.stringContaining("kuna.function_timeout_ms"),
+      },
     });
     const retried = await runWithAnalysisOperationSnapshot(snapshot, () =>
       client.execute(
@@ -71,7 +75,13 @@ it.each([
       const refused = await client.execute(operation, parameters);
       expect(refused).toMatchObject({
         ok: false,
-        error: { _tag: "ConfigurationError" },
+        error: {
+          _tag: "ConfigurationError",
+          settings: [
+            { setting: "REA_KUNA_PROJECT_TIMEOUT_MS", update_mode: "runtime" },
+          ],
+          remediationAction: expect.stringContaining("kuna.project_timeout_ms"),
+        },
       });
       const retried = await runWithAnalysisOperationSnapshot(snapshot, () =>
         client.execute(operation, parameters, {
