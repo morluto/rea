@@ -218,13 +218,13 @@ export const planEspFlashLayout = (input: EspFlashPlanInput): EspFlashPlan => {
       limitations.push(
         `Partition ${name} at ${offsetText(part.offset)} starts before the end of the partition table at ${offsetText(tableEnd)}; gen_esp32part.py rejects such a table.`,
       );
-    if (placed.fileOffset < 0)
-      limitations.push(
-        `Partition ${name} at ${offsetText(part.offset)} begins before the dump's first byte at flash ${offsetText(input.origin.value)}; it is not read.`,
-      );
-    else if (placed.availability === "empty")
+    if (placed.availability === "empty")
       limitations.push(
         `Partition ${name} at ${offsetText(part.offset)} declares zero bytes.`,
+      );
+    else if (placed.fileOffset < 0)
+      limitations.push(
+        `Partition ${name} at ${offsetText(part.offset)} begins before the dump's first byte at flash ${offsetText(input.origin.value)}; it is not read.`,
       );
     else if (placed.availability === "missing")
       limitations.push(
@@ -236,8 +236,10 @@ export const planEspFlashLayout = (input: EspFlashPlanInput): EspFlashPlan => {
       );
     // Every partition from the dump's first byte on is an entry holding the
     // bytes the file has, none when it lies past the end, so comparison sees
-    // what the file lacks instead of a missing path.
-    if (placed.fileOffset >= 0) regions.push(placed);
+    // what the file lacks instead of a missing path. A zero-byte declaration
+    // has no bytes to read, including one that starts before the origin.
+    if (placed.availability === "empty" || placed.fileOffset >= 0)
+      regions.push(placed);
   }
   limitations.push(...overlaps(regions));
   const boot = espBootPartitions(input.table.partitions);

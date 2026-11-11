@@ -211,6 +211,40 @@ describe("ESP flash layout overlaps", () => {
     },
   );
 
+  it("retains a zero-byte partition declared before the selected flash origin", () => {
+    const origin = 0x1_0000;
+    const offset = 0x9000;
+    const plan = planEspFlashLayout(
+      input({
+        origin: { value: origin, source: "caller" },
+        tableAddress: origin,
+        bootloader: undefined,
+        table: table([
+          { label: "empty", type: 1, subtype: 0x82, offset, size: 0 },
+        ]),
+      }),
+    );
+    expect(plan.regions).toContainEqual(
+      expect.objectContaining({
+        path: "partitions/empty.bin",
+        role: "partition",
+        flashAddress: offset,
+        fileOffset: offset - origin,
+        length: 0,
+        available: 0,
+        availability: "empty",
+      }),
+    );
+    expect(
+      plan.limitations.filter((limitation) =>
+        limitation.startsWith("Partition empty"),
+      ),
+    ).toEqual([
+      "Partition empty at 0x9000 starts before the end of the partition table at 0x11000; gen_esp32part.py rejects such a table.",
+      "Partition empty at 0x9000 declares zero bytes.",
+    ]);
+  });
+
   it("reports every region inside a longer one", () => {
     const plan = planEspFlashLayout(
       input({
