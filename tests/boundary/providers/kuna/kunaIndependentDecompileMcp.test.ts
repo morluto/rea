@@ -79,11 +79,17 @@ it("runs a cold independent request without starting a project export", async ()
     };
     expect(failure.error).toMatchObject({
       code: "provider_timeout",
-      remediation: {
-        action:
-          "Raise REA_KUNA_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
+      details: {
+        timeout_ms: 300,
+        limit: {
+          setting: "kuna.function_timeout_ms",
+          effective_value: 300,
+          update_mode: "runtime",
+          pending_restart: false,
+          minimum: 1,
+          maximum: 2147483647,
+        },
       },
-      details: { timeout_ms: 300 },
     });
     expect(
       (await fakeKunaCalls(kuna)).filter(

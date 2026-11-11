@@ -131,12 +131,14 @@ Windows ChangeTime admission waits out a fresh timestamp before recording a
 baseline. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS` (default 2000 ms, floor 1 ms,
 maximum 60000 ms), `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS` (default 25 ms,
 floor 1 ms, maximum 1000 ms), and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`
-(default 40, floor 1, maximum 1000) are launch settings. Unset keeps those
-defaults. An invalid value is a configuration error: it names the setting, the
-rejected value, source `setting`, the default, the floor, and the maximum, and
-says to set a positive decimal integer in the environment that starts REA and
-then restart REA. There is no runtime override. Setup forwards an explicit
-selection. When the poll budget runs out, admission keeps the last observation
+(default 40, floor 1, maximum 1000) are runtime settings. Unset keeps those
+defaults. An invalid launch value is a configuration error: it names the
+setting, the rejected value, source `setting`, the default, the floor, the
+maximum, and `update_mode: "runtime"`. It omits `pending_restart` because
+the rejected value is not an accepted configuration. Change the
+active value with `update_analysis_settings`. The launch seed must be a
+positive decimal integer in that range. Setup forwards an explicit selection.
+When the poll budget runs out, admission keeps the last observation
 instead of failing the readable file. Raising a setting only changes how long
 that wait can last. It does not change Windows ChangeTime itself.
 

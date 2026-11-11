@@ -367,15 +367,15 @@ it("names the setting that owns a single-function deadline", async () => {
     if (result.ok) throw new Error("the hanging run answered");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
-      message: expect.stringMatching(
-        /kuna decompile.*REA_KUNA_TIMEOUT_MS.*300 ms/i,
-      ),
-      remediation: {
-        action: expect.stringMatching(
-          /raise.*REA_KUNA_TIMEOUT_MS.*restart REA/i,
-        ),
+      details: {
+        timeout_ms: 300,
+        limit: {
+          setting: "kuna.function_timeout_ms",
+          effective_value: 300,
+          update_mode: "runtime",
+          pending_restart: false,
+        },
       },
-      details: { timeout_ms: 300 },
     });
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
