@@ -1,3 +1,4 @@
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { expect, it } from "vitest";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -346,4 +347,43 @@ it("omits redundant raw scenario JSON for an unchanged capture", async () => {
   );
   if (!result.ok) throw result.error;
   expect(result.value.raw_result).toBeNull();
+});
+
+it("retains only post-redaction scenario source while preserving harmless metadata", async () => {
+  const selected = browserScenarioInputSchema.parse({
+    ...scenario,
+    secrets: [
+      { secret_id: "selected", environment_variable: "DECLARED_VALUE" },
+    ],
+  });
+  const secret = "explicit-source-secret";
+  const privacy = resolveScenarioSecrets(selected, { DECLARED_VALUE: secret });
+  const sanitized = privacy.sanitizeUrl(
+    `https://transport-user:transport-password@fixture.test/?selected=${secret}&token=public-local-value`,
+  );
+  const source = {
+    ...capture,
+    steps: capture.steps.map((step) => ({
+      ...step,
+      before_url: {
+        ...sanitized,
+        provider_metadata: { source_id: "harmless-source" },
+      },
+    })),
+  };
+  const result = await captureBrowserScenario(
+    {
+      identity: () => scenarioIdentity,
+      captureScenario: async () => ok(source),
+    },
+    selected,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.raw_result).toEqual(source);
+  const recorded = JSON.stringify(result.value);
+  for (const privateValue of [secret, "transport-user", "transport-password"])
+    expect(recorded).not.toContain(privateValue);
+  expect(recorded).toContain("harmless-source");
+  expect(recorded).toContain("public-local-value");
+  expect(sanitized.redacted).toBe(true);
 });
