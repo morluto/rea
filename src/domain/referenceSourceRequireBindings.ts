@@ -15,6 +15,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSem
 import { semanticEffectPathMatches } from "./javascript/javascriptSemanticEffectPathIndex.js";
 import { semanticDefiniteEffectPrecedesReference } from "./javascript/javascriptSemanticMutationInitializers.js";
 import {
+  assignmentValueSources,
   semanticRequireCallAt,
   semanticRequireLoaderAt,
   semanticSelectedMemberMayHaveChanged,
@@ -292,6 +293,10 @@ const memberLeaves = (
     ];
   if (t.isLogicalExpression(value))
     return [...memberLeaves(value.left), ...memberLeaves(value.right)];
+  if (t.isAssignmentExpression(value))
+    return assignmentValueSources(value).flatMap((source) =>
+      memberLeaves(source),
+    );
   return [];
 };
 
