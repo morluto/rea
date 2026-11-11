@@ -569,8 +569,8 @@ const modules = {
       },
     }),
   ),
-  cutter: service(({ providerEnvironment }) =>
-    createCutterBridgeService(providerEnvironment),
+  cutter: service(({ providerEnvironment, settings }) =>
+    createCutterBridgeService(providerEnvironment, { read: settings }),
   ),
   browserObservation: capability(
     ({ options }) => options.browserObservation,

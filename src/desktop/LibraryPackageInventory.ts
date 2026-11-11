@@ -9,6 +9,8 @@ import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
 import {
   readElfDependencies,
   type ElfDependencies,
+  type ElfDependenciesFailure,
+  type ElfLibraryIdentity,
 } from "../domain/desktop/elfDependencies.js";
 import {
   installableLibraryPackages,
@@ -46,7 +48,8 @@ const elfDependencies = async (
   path: string,
   signal: AbortSignal | undefined,
   policy: DesktopLibraryPolicy,
-): Promise<Result<ElfDependencies, string>> => {
+  expected?: ElfLibraryIdentity,
+): Promise<Result<ElfDependencies, ElfDependenciesFailure>> => {
   const options = {
     symlinks: "follow" as const,
     ...(signal === undefined ? {} : { signal }),
@@ -57,6 +60,7 @@ const elfDependencies = async (
         (offset, length) => readFileHandleRange(handle, offset, length),
         initial.size,
         policy,
+        expected,
       ),
     );
   } catch (cause: unknown) {
@@ -64,7 +68,11 @@ const elfDependencies = async (
       throw hostCloseFailure(cause);
     signal?.throwIfAborted();
     if (!isRefusedRead(cause)) throw cause;
-    return err("the file could not be read");
+    return err({
+      kind: "unreadable",
+      identity: null,
+      reason: "the file could not be read",
+    });
   }
 };
 
@@ -157,7 +165,9 @@ export const inspectLibraryPackages = async (
   });
   const root = await elfDependencies(executable, signal, policy);
   if (!root.ok)
-    return none(`the libraries of ${executable} were not read: ${root.error}`);
+    return none(
+      `the libraries of ${executable} were not read: ${root.error.reason}`,
+    );
   const cache = await linkerCache(runQuery, signal);
   if (cache === undefined)
     return none("ldconfig -p did not list the dynamic linker cache");
@@ -165,7 +175,8 @@ export const inspectLibraryPackages = async (
     { path: executable, dependencies: root.value },
     parseLinkerCache(cache),
     {
-      dependencies: (path) => elfDependencies(path, signal, policy),
+      dependencies: (path, expected) =>
+        elfDependencies(path, signal, policy, expected),
       isFile: isHostFile,
     },
     policy.libraries,

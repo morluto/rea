@@ -8,30 +8,11 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-
-/**
- * The physical spelling of a path that may not exist yet: the real path of
- * its longest existing ancestor followed by the rest. Walks, exclusions and
- * state directories compare in this spelling, so a symbolic link in the
- * caller's spelling cannot make one directory look like two.
- */
-export const canonicalPath = async (path: string): Promise<string> => {
-  const absolute = resolve(path);
-  const rest: string[] = [];
-  for (let current = absolute; ; current = dirname(current)) {
-    try {
-      return join(await realpath(current), ...rest.reverse());
-    } catch {
-      if (dirname(current) === current) return absolute;
-      rest.push(basename(current));
-    }
-  }
-};
 
 /** Why the output folder cannot hold a private capture. */
 export type OutputRefusal = "not_a_directory" | "foreign_owner" | "not_empty";
@@ -43,7 +24,14 @@ export type OutputRefusal = "not_a_directory" | "foreign_owner" | "not_empty";
 export const prepareOutputDirectory = async (
   output: string,
 ): Promise<{ readonly path: string } | { readonly refusal: OutputRefusal }> => {
-  await mkdir(output, { recursive: true, mode: 0o700 });
+  try {
+    await mkdir(output, { recursive: true, mode: 0o700 });
+  } catch (cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" || code === "ENOTDIR")
+      return { refusal: "not_a_directory" };
+    throw cause;
+  }
   const stats = await lstat(output);
   if (!stats.isDirectory()) return { refusal: "not_a_directory" };
   const uid = process.getuid?.();

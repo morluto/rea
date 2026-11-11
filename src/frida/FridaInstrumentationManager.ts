@@ -49,7 +49,7 @@ import {
   type FridaOwnedCaptureLimit,
 } from "./fridaCaptureLimits.js";
 import {
-  fridaCapturePolicySchema,
+  resolveFridaCapturePolicy,
   type FridaCapturePolicy,
 } from "../domain/fridaCapturePolicy.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -305,9 +305,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   async #startSession(
     input: StartFridaSessionInput,
   ): Promise<Result<FridaSessionObservation, AnalysisError>> {
-    const policy = fridaCapturePolicySchema.safeParse(
-      input.captureLimits ?? {},
-    );
+    const policy = resolveFridaCapturePolicy(input.captureLimits ?? {});
     if (!policy.success)
       return err(
         analysisInputErrorFromIssues(
@@ -1539,6 +1537,11 @@ const boundedJsonValue = (
           break;
         }
         const key = boundedKey.value;
+        // Redaction can collapse source names; never replace a retained fact.
+        if (Object.hasOwn(output, key)) {
+          limit ??= "unrepresentable";
+          break;
+        }
         const keyBytes = jsonStringByteLength(key) + 1;
         const remaining = budget - usedBytes - separatorBytes - keyBytes - 1;
         if (remaining < 8) {

@@ -14,7 +14,10 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
+import {
+  isProcessOwnershipInspectionCancellation,
+  prepareProcessOwnershipInspection,
+} from "../process/ProcessOwnershipObservation.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
@@ -353,14 +356,17 @@ export class KunaTargetCommands {
         prefix: copied.prefix,
       });
     } catch (cause: unknown) {
-      const primary = new ProviderAdapterError(
-        KUNA_PROVIDER_ID,
-        "kuna:workspace",
-        {
-          cause,
-          userMessage: `Kuna workspace failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-        },
-      );
+      const primary = isProcessOwnershipInspectionCancellation(
+        cause,
+        this.lifetime.signal,
+      )
+        ? new AnalysisCancelledError("kuna:workspace", {
+            cause: this.lifetime.signal.reason,
+          })
+        : new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
+            cause,
+            userMessage: `Kuna workspace failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          });
       return this.#workspaceFailure(primary, owned);
     }
   }

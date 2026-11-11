@@ -25,6 +25,10 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import {
+  requireCheckpointCliRefusal,
+  assertCheckpointRefusalPreservesManifest,
+} from "./lib/ghidra-checkpoint-refusal.mjs";
+import {
   createVerifierRun,
   completeVerifierRun,
   assertVerifierCleanupComplete,
@@ -108,18 +112,6 @@ async function cli(procedure, flags = [], path = target) {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   return JSON.parse(stdout);
-}
-async function refuseCli(procedure, flags, expected) {
-  let refusal;
-  try {
-    await cli(procedure, flags);
-  } catch (cause) {
-    assert.equal(cause.code, 1, cause.stderr);
-    refusal = JSON.parse(cause.stdout);
-  }
-  assert.ok(refusal, "CLI unexpectedly accepted unavailable checkpoint state");
-  assert.equal(refusal.code, expected, JSON.stringify(refusal));
-  return refusal;
 }
 async function connect(environment = {}) {
   const owner = createVerifierMcpOwner();
@@ -346,9 +338,8 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase(
     "an older immutable REA snapshot refuses the changed checkpoint",
     async () => {
-      const refusal = await refuseCli(
-        "rea_checkpoint_leaf",
-        ["--snapshot", snapshotPath],
+      const refusal = await requireCheckpointCliRefusal(
+        () => cli("rea_checkpoint_leaf", ["--snapshot", snapshotPath]),
         "evidence_integrity_mismatch",
       );
       assert.ok(refusal.details.binding_mismatch.profile_digest);
@@ -390,12 +381,16 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase(
     "target/profile mismatch is refused without replacing the saved state",
     async () => {
+      const attemptedBytes = Buffer.from(
+        JSON.stringify({ ...current, target_sha256: "0".repeat(64) }),
+      );
       try {
-        await writeFile(
+        await writeFile(manifestPath, attemptedBytes);
+        await assertCheckpointRefusalPreservesManifest(
+          () => cli("rea_checkpoint_retained"),
           manifestPath,
-          JSON.stringify({ ...current, target_sha256: "0".repeat(64) }),
+          attemptedBytes,
         );
-        await refuseCli("rea_checkpoint_retained", [], "configuration_invalid");
       } finally {
         await writeFile(manifestPath, bytes);
       }
@@ -405,9 +400,14 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase(
     "malformed manifest is refused without a fresh import",
     async () => {
+      const attemptedBytes = Buffer.from("{");
       try {
-        await writeFile(manifestPath, "{");
-        await refuseCli("rea_checkpoint_retained", [], "configuration_invalid");
+        await writeFile(manifestPath, attemptedBytes);
+        await assertCheckpointRefusalPreservesManifest(
+          () => cli("rea_checkpoint_retained"),
+          manifestPath,
+          attemptedBytes,
+        );
       } finally {
         await writeFile(manifestPath, bytes);
       }
@@ -426,7 +426,10 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       await copyFile(packed, backup);
       try {
         await writeFile(packed, "corrupted packed data");
-        await refuseCli("rea_checkpoint_retained", [], "configuration_invalid");
+        await requireCheckpointCliRefusal(
+          () => cli("rea_checkpoint_retained"),
+          "configuration_invalid",
+        );
       } finally {
         await copyFile(backup, packed);
       }

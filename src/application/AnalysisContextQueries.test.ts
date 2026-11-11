@@ -668,3 +668,79 @@ it.each([false, true])(
     );
   },
 );
+
+it.each([
+  "admission",
+  "current_document",
+  "current_address",
+  "resolve_containing_procedure",
+])(
+  "stops navigation at cancelled %s without dispatching another observation",
+  async (stage) => {
+    const controller = new AbortController();
+    const reason = { requested: stage };
+    if (stage === "admission") controller.abort(reason);
+    const calls: string[] = [];
+    const operations = [
+      "current_document",
+      "current_address",
+      "resolve_containing_procedure",
+    ];
+    const result = await getNavigationContext(
+      {
+        execute: async (operation) => {
+          calls.push(operation);
+          if (operation === stage) controller.abort(reason);
+          return ok(
+            createAnalysisExecution(
+              operation === "current_document"
+                ? "fixture"
+                : operation === "current_address"
+                  ? "0x1000"
+                  : {
+                      query_address: "0x1000",
+                      found: false,
+                      procedure: null,
+                      reason: "not_in_procedure",
+                    },
+              provider,
+            ),
+          );
+        },
+      },
+      {},
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(calls).toEqual(
+      stage === "admission"
+        ? []
+        : operations.slice(0, operations.indexOf(stage) + 1),
+    );
+  },
+);
+
+it("preserves a physical navigation failure delivered with cancellation", async () => {
+  const controller = new AbortController();
+  const failure = new AnalysisOutputError(
+    "current_address",
+    "physical observation failure",
+  );
+  const calls: string[] = [];
+  const result = await getNavigationContext(
+    {
+      execute: async (operation) => {
+        calls.push(operation);
+        controller.abort(failure);
+        return err(failure);
+      },
+    },
+    { document: "fixture" },
+    controller.signal,
+  );
+  expect(result).toEqual(err(failure));
+  expect(calls).toEqual(["current_address"]);
+});
