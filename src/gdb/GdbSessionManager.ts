@@ -1143,6 +1143,7 @@ export class GdbSessionManager {
                 ...startupEvidencePayload,
                 records: [...startupEvidencePayload.records],
               },
+              authority: "controlled-replay",
               subjectUnavailableReason:
                 "No usable debugger session became ready during GDB startup.",
               limitations: [
@@ -1350,6 +1351,7 @@ export class GdbSessionManager {
                     : {}),
                   completion_status: result.completion_status,
                 },
+                authority: "controlled-replay",
                 subjectUnavailableReason:
                   "The active GDB inferior identity is not established by the debugger session identifier.",
                 limitations: [
@@ -1396,6 +1398,7 @@ export class GdbSessionManager {
                   parameters: { session_id: sessionId, command },
                   result: { ...result, records: [...result.records] },
                   rawResult: { ...result, records: [...result.records] },
+                  authority: "controlled-replay",
                   subjectUnavailableReason:
                     "The active GDB inferior identity is not established by the debugger session identifier.",
                   limitations: [
@@ -1956,6 +1959,7 @@ export class GdbSessionManager {
             },
             result: { ...partial, records: [...partial.records] },
             rawResult: { ...partial, records: [...partial.records] },
+            authority: "controlled-replay",
             subjectUnavailableReason:
               "The active GDB inferior identity is not established by the debugger session identifier.",
             limitations: [
@@ -2217,6 +2221,7 @@ export class GdbSessionManager {
           },
           result: { ...partial, records: [...partial.records] },
           rawResult: { ...partial, records: [...partial.records] },
+          authority: "controlled-replay",
           subjectUnavailableReason:
             "The active GDB inferior identity is not established by the debugger session identifier.",
           limitations: [
@@ -2306,6 +2311,7 @@ export class GdbSessionManager {
           },
           result: { ...partial, records: [...partial.records] },
           rawResult: { ...partial, records: [...partial.records] },
+          authority: "controlled-replay",
           subjectUnavailableReason:
             "The active GDB inferior identity is not established by the debugger session identifier.",
           limitations: [
