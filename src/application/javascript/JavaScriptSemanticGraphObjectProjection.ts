@@ -120,7 +120,7 @@ const objectTarget = (
     objectNode: slot,
     slot,
     slotApplicability: "resolved",
-    presence: fact.presence,
+    presence: operation.sourcePresence ?? fact.presence,
     receiverResolved:
       receiver.presence === "present" &&
       semanticContainer(receiver.value) !== null,
