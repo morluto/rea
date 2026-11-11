@@ -698,7 +698,18 @@ describe("evidence metadata imports and snapshot cache", () => {
       ok: true,
       value: {
         entries: before.value.entries,
-        evidence_bundle: { records: expect.arrayContaining([addition]) },
+        // The import keeps the caller's record and adds the session's own
+        // provider selection to it, so the display fields are the imported ones.
+        evidence_bundle: {
+          records: expect.arrayContaining([
+            expect.objectContaining({
+              evidence_id: addition.evidence_id,
+              operation: addition.operation,
+              parameters: addition.parameters,
+              subject: addition.subject,
+            }),
+          ]),
+        },
       },
     });
     const callsAfterInitialRead = [...calls];
@@ -767,7 +778,14 @@ describe("Evidence display metadata refresh", () => {
         });
         expect(changed).toHaveBeenCalledTimes(1);
         unsubscribe();
-        expect(session.evidenceById(evidence.evidence_id)).toEqual(relocated);
+        expect(session.evidenceById(evidence.evidence_id)).toMatchObject({
+          ...relocated,
+          // Nothing recorded the unrelated record, so the import supplies the
+          // session's own selection beside the caller's display metadata.
+          ...(scope === "active"
+            ? {}
+            : { provider_selection: expect.any(Object) }),
+        });
         const refreshed = session.exportAnalysisSnapshot();
         if (!refreshed.ok) throw refreshed.error;
         if (scope === "active") {

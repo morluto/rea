@@ -79,17 +79,11 @@ const SNAPSHOT_MUTATION_RECOVERY =
 const attributeImportedProviderSelection = (
   bundle: EvidenceBundle,
   providerSelection: ProviderSelectionProvenance,
-  retained: (evidenceId: string) => Evidence | undefined,
 ): EvidenceBundle =>
   createImmutableEvidenceBundle(
-    bundle.records.map((record) => {
-      // A record the ledger already holds is the session's own attribution;
-      // rederiving it here would replace the caller's display metadata with
-      // the session's copy, so attribution is reserved for new records.
-      const existing = retained(record.evidence_id);
-      if (existing !== undefined) return record;
-      return withEvidenceProviderSelection(record, providerSelection);
-    }),
+    bundle.records.map((record) =>
+      withEvidenceProviderSelection(record, providerSelection),
+    ),
     bundle.unknowns,
   );
 
@@ -297,7 +291,6 @@ export abstract class BinarySessionRecords {
       attributeImportedProviderSelection(
         authenticated.value,
         providerSelection,
-        (evidenceId) => this.evidenceForAnalysis(evidenceId),
       ),
     );
   }
