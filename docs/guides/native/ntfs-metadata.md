@@ -63,10 +63,13 @@ remains `unknown`: supplied bytes alone cannot establish missing captures,
 wrap, absent rename partners or a complete activity history. Multiple reasons,
 rename rows and parent changes remain distinct source facts.
 
-Verification covers synthesized paired acquisitions through CLI/MCP and
-[unmodified Windows 11 MFT records through the packaged Linux CLI](../../verification/ntfs-metadata-2026-11-11.md).
-Real paired journal captures and Windows-host execution remain unverified. Nonresident payload recovery
-and automatic extension-list assembly are outside the implemented coverage.
+Verification covers synthesized paired acquisitions,
+[unmodified Windows 11 MFT records through the packaged Linux CLI](../../verification/ntfs-metadata-2026-11-11.md),
+and [paired V2 streams from a public NTFS volume fixture checked against an independent parser](../../verification/ntfs-metadata-2026-11-11.md#paired-volume-fixture-verification)
+through CLI/MCP on Linux. The fixture's original acquisition provenance, real
+V3/V4 captures and Windows-host execution remain unverified. Nonresident payload
+recovery and automatic extension-list assembly are outside the implemented
+coverage.
 
 Format references: [Microsoft USN V3](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v3),
 [USN V4](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v4),
