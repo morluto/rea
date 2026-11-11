@@ -650,19 +650,17 @@ const classifyDeclarationRecord = (
 
 /**
  * Without observed content on both sides, the containers' declared digests
- * are the remaining content evidence. Claims of one algorithm that differ
- * are a metadata difference, but they are unverified, so they do not make
- * the path changed; equal claims add nothing. Observed bytes replace both.
+ * are the remaining content evidence. Claims of one algorithm that differ,
+ * and a claim present on only one side, are a metadata difference. They are
+ * unverified, so they do not make the path changed. Equal claims add nothing.
+ * The signal is the structured claim, not a reader limitation that restates it.
+ * Observed bytes replace both.
  */
 const declaredDigestsDiffer = (input: OccurrencePair): boolean => {
   const left = input.leftOccurrence?.declared_integrity;
   const right = input.rightOccurrence?.declared_integrity;
-  return (
-    left !== undefined &&
-    right !== undefined &&
-    left.algorithm === right.algorithm &&
-    left.digest !== right.digest
-  );
+  if (left === undefined || right === undefined) return left !== right;
+  return left.algorithm === right.algorithm && left.digest !== right.digest;
 };
 
 const changedDimensions = (input: {

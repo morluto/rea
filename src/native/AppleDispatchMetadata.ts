@@ -45,6 +45,7 @@ import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
+  type AdmittedMachoSlice,
 } from "./AppleMachoSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
@@ -68,8 +69,9 @@ export function* decodeAppleDispatchMetadataSteps(
   architecture = "arm64",
   objcClassImportAddresses?: readonly string[],
   objcClassImportAddressesComplete = true,
+  admittedSlice?: AdmittedMachoSlice,
 ): Generator<void, ObjcSwiftMetadata, void> {
-  const layout = parseMachoLayout(bytes, architecture);
+  const layout = parseMachoLayout(bytes, architecture, admittedSlice);
   const { segments, sections, offset } = layout;
   const fixups = yield* parsePointerFixupsSteps(
     bytes,
@@ -393,6 +395,7 @@ export const inspectAppleDispatchMetadata = async (
     target.architecture,
     options.objcClassImportAddresses,
     options.objcClassImportAddressesComplete ?? true,
+    target.format === "mach-o-universal" ? target.universalSlice : undefined,
   );
   let next = steps.next();
   while (!next.done) {
