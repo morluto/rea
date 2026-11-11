@@ -783,7 +783,7 @@ it.each([
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
-    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
