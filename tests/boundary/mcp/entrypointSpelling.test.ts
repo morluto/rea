@@ -51,6 +51,16 @@ describe("entrypoint spelling rules", () => {
     expect(read).toEqual([]);
   });
 
+  it.each([["\\\\server\\share\\rea.mjs"], ["//server/share/rea.mjs"]])(
+    "keeps a share spelling absolute off Windows: %s",
+    (candidate) => {
+      // `resolve` would prepend the working directory to this spelling on a POSIX host, where it
+      // is not absolute, so the lexical form has to use Windows semantics. Both spellings name
+      // the same share, so they also have to produce one form.
+      expect(selectedFile(candidate)).toBe("\\\\server\\share\\rea.mjs");
+    },
+  );
+
   it("reads a local spelling once", () => {
     const { read, resolveSpelling } = recordingResolver();
     selectedFile("/opt/rea/rea.mjs", resolveSpelling);

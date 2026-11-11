@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, win32 } from "node:path";
 
 import {
   javaScriptRuntime,
@@ -41,15 +41,24 @@ const nativeRealpath: RealpathResolver = (candidate) =>
 /**
  * The file a spelling selects, falling back to the lexical path when it cannot be read.
  *
- * A network share is never dereferenced: reading one starts SMB traffic and can block on
- * ambient Windows authentication. `realpathSync.native` matches the launcher's own traversal
- * for everything else, which is the reason `entrypointIdentity` prefers it.
+ * A network share is compared lexically and never dereferenced. The lexical form uses Windows
+ * semantics even off Windows, because `resolve` would otherwise prepend the working directory to
+ * a `\\server\share` spelling on a POSIX host, where that spelling is not absolute.
+ *
+ * One residual stays open and is stated rather than hidden: on Windows a mapped drive letter
+ * reaches a share too, and a letter cannot be classified without an I/O call of its own — the
+ * same call this guard is avoiding. Since `expected_server_path` is caller input, a caller can
+ * still name a mapped drive. Handling it needs a volume query with its own budget, not a wider
+ * pattern here.
+ *
+ * `realpathSync.native` matches the launcher's own traversal, which is why
+ * `entrypointIdentity` prefers it.
  */
 export const selectedFile = (
   candidate: string,
   readRealpath: RealpathResolver = nativeRealpath,
 ): string => {
-  if (isNetworkSharePath(candidate)) return resolve(candidate);
+  if (isNetworkSharePath(candidate)) return win32.resolve(candidate);
   try {
     return readRealpath(candidate);
   } catch {
