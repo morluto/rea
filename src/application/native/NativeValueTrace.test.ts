@@ -1611,3 +1611,56 @@ it("binds each exact call destination once when resolution repeats it", async ()
   expect(trace.edges.filter(({ kind }) => kind === "call")).toHaveLength(16);
   expect(graph.analyzed).toEqual(["0x1000", "0x2000"]);
 });
+
+it("requires an Evidence owner for aliases of an already analyzed procedure", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": { operations: [node("call", "0x1010", "CALL")] },
+      "0x2000": { operations: [] },
+    },
+    {
+      "0x1010": [
+        { destination: "callee", status: "direct" },
+        { destination: "also_callee", status: "direct" },
+      ],
+    },
+    { procedureAliases: { callee: "0x2000", also_callee: "0x2000" } },
+  );
+  let expected: ReturnType<typeof createAnalysisExecutionEvidence> | undefined;
+  const result = await executeComposedWorkflow(graph.port, (owned) =>
+    traceNativeValuesCore(
+      {
+        execute: async (operation, parameters, options) => {
+          const execution = await owned.execute(operation, parameters, options);
+          if (
+            !execution.ok ||
+            operation !== "analyze_function" ||
+            parameters.procedure !== "also_callee"
+          )
+            return execution;
+          const { evidenceId: _evidenceId, ...unowned } = execution.value;
+          expected = createAnalysisExecutionEvidence(
+            operation,
+            parameters,
+            unowned,
+            "observed",
+          );
+          return ok(unowned);
+        },
+      },
+      { procedure: "0x1000" },
+    ),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      operation: "trace_native_values",
+    },
+  });
+  if (result.ok)
+    throw new Error("An unowned alias must not establish binding identity");
+  expect(expected).toBeDefined();
+  expect(result.error.partialObservation).toEqual(expected);
+  expect(graph.analyzed).toEqual(["0x1000", "callee", "also_callee"]);
+});
