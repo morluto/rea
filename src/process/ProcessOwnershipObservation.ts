@@ -1162,7 +1162,7 @@ export const reobserveUnavailableTokenFacts = async (
   return current;
 };
 
-const isExpectedAbort = (
+export const isProcessOwnershipInspectionCancellation = (
   cause: unknown,
   signal: AbortSignal | undefined,
 ): boolean =>
@@ -1263,7 +1263,8 @@ export const createSystemProcessOwnershipHost = (
             ...(signal === undefined ? {} : { signal }),
           });
         } catch (cause: unknown) {
-          if (isExpectedAbort(cause, signal)) throw cause;
+          if (isProcessOwnershipInspectionCancellation(cause, signal))
+            throw cause;
           return undefined;
         }
       };
@@ -1335,7 +1336,8 @@ export const createSystemProcessOwnershipHost = (
                   ...(signal === undefined ? {} : { signal }),
                 });
               } catch (cause: unknown) {
-                if (isExpectedAbort(cause, signal)) throw cause;
+                if (isProcessOwnershipInspectionCancellation(cause, signal))
+                  throw cause;
                 return [pid, readableIdentity(parsed)] as const;
               }
               signal?.throwIfAborted();
@@ -1403,7 +1405,8 @@ export const createSystemProcessOwnershipHost = (
                   ...(signal === undefined ? {} : { signal }),
                 });
               } catch (cause: unknown) {
-                if (isExpectedAbort(cause, signal)) throw cause;
+                if (isProcessOwnershipInspectionCancellation(cause, signal))
+                  throw cause;
                 return [pid, readableIdentity(parsed)] as const;
               }
               signal?.throwIfAborted();
@@ -1427,7 +1430,8 @@ export const createSystemProcessOwnershipHost = (
                 readableIdentity(verified, uids[1], environmentRestriction),
               ] as const;
             } catch (cause: unknown) {
-              if (isExpectedAbort(cause, signal)) throw cause;
+              if (isProcessOwnershipInspectionCancellation(cause, signal))
+                throw cause;
               if (
                 cause instanceof Error &&
                 "code" in cause &&
@@ -1481,7 +1485,7 @@ export const createSystemProcessOwnershipHost = (
     try {
       return await darwinTokens.identities(processes, signal);
     } catch (cause: unknown) {
-      if (isExpectedAbort(cause, signal)) throw cause;
+      if (isProcessOwnershipInspectionCancellation(cause, signal)) throw cause;
       const reason = errorMessage(cause);
       return new Map(
         processes.map(({ pid }) => [
@@ -1495,7 +1499,7 @@ export const createSystemProcessOwnershipHost = (
     try {
       return await listProcesses(signal);
     } catch (cause: unknown) {
-      if (isExpectedAbort(cause, signal)) throw cause;
+      if (isProcessOwnershipInspectionCancellation(cause, signal)) throw cause;
       const failure = execFileOutputFailure(cause);
       if (
         spawnCapacityExhausted(failure) ||
@@ -1628,7 +1632,8 @@ export const createSystemProcessOwnershipHost = (
       try {
         return (await darwinTokens?.read(processes, signal)) ?? new Map();
       } catch (cause: unknown) {
-        if (isExpectedAbort(cause, signal)) throw cause;
+        if (isProcessOwnershipInspectionCancellation(cause, signal))
+          throw cause;
         void cause;
         return new Map(
           processes.map(({ pid }) => [

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
@@ -15,6 +15,8 @@ import {
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   webBundleHeapExhaustedReason,
   webBundleHeapExhaustedRemediation,
@@ -22,6 +24,7 @@ import {
 } from "../domain/webBundleAnalysis.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import {
   spawnOwnedProviderProcess,
   type ProviderProcessHandle,
@@ -296,6 +299,108 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) finish();
   });
 };
+
+it("preserves physical ownership inspection failure when cancellation follows", async () => {
+  const controller = new AbortController();
+  const reason = { cancelled: "late" };
+  const physical = new Error("inspection physically failed");
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw physical;
+    });
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(
+      makeScript("0"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisOutputError);
+    expect(error.cause).toBe(physical);
+    expect(
+      error.secondaryFailures.some((failure) => failure.cause === reason),
+    ).toBe(true);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it.each(["reason", "native-abort"] as const)(
+  "retains %s cancellation from ownership inspection",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancel" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw kind === "reason"
+          ? reason
+          : new DOMException("aborted", "AbortError");
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisCancelledError);
+      expect(error.cause).toBe(reason);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
+
+it("retains ownership-helper cleanup until worker close retries it", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel" };
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
+        cancellation: { reason },
+        cleanupFailure: cleanup,
+        cleanupOwner: owner,
+      });
+    });
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(
+      makeScript("0"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
 
 it("reuses one real owned worker for completed facts from consecutive scripts", async () => {
   const children: ProviderProcessHandle[] = [];

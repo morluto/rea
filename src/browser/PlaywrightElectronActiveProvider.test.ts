@@ -1,6 +1,8 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -91,6 +93,118 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(["prepare", "baseline"] as const)(
+  "classifies cancellation from ownership %s without masking physical failure",
+  async (stage) => {
+    for (const kind of ["reason", "native-abort", "physical"] as const) {
+      const controller = new AbortController();
+      const reason = { cancelled: stage };
+      const physical = new Error("ownership inspection failed");
+      const launch = vi.fn(async () => {
+        throw new Error("must not launch");
+      });
+      const fail = async () => {
+        controller.abort(reason);
+        if (kind === "native-abort")
+          throw new DOMException("aborted", "AbortError");
+        throw kind === "reason" ? reason : physical;
+      };
+      const spy =
+        stage === "prepare"
+          ? vi
+              .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+              .mockImplementation(fail)
+          : vi
+              .spyOn(
+                ownershipObservation.systemProcessOwnershipHost,
+                "captureBaseline",
+              )
+              .mockImplementation(fail);
+      const provider = new PlaywrightElectronActiveProvider({}, launch);
+      try {
+        const result = await provider.capture(
+          {
+            ...electronActiveObservationInputSchema.parse({
+              executable_path: process.execPath,
+              application_path: process.execPath,
+            }),
+            application_root: dirname(process.execPath),
+          },
+          { signal: controller.signal },
+        );
+        if (result.ok) throw new Error("Expected inspection failure");
+        expect(launch).not.toHaveBeenCalled();
+        if (kind === "physical") {
+          expect(result.error.userCategory).not.toBe("cancelled");
+          expect(primaryAnalysisError(result.error).cause).toBe(physical);
+          expect(
+            primaryAnalysisError(result.error).secondaryFailures.some(
+              (failure) => failure.cause === reason,
+            ),
+          ).toBe(true);
+        } else {
+          expect(result.error.userCategory).toBe("cancelled");
+          expect(result.error.cause).toBe(reason);
+        }
+      } finally {
+        spy.mockRestore();
+        await provider.close();
+      }
+    }
+  },
+);
+
+it("retains failed ownership-helper cleanup until provider close retries it", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel" };
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
+        cancellation: { reason },
+        cleanupFailure: cleanup,
+        cleanupOwner: owner,
+      });
+    });
+  const launch = vi.fn(async () => {
+    throw new Error("must not launch");
+  });
+  const provider = new PlaywrightElectronActiveProvider({}, launch);
+  try {
+    const result = await provider.capture(
+      {
+        ...electronActiveObservationInputSchema.parse({
+          executable_path: process.execPath,
+          application_path: process.execPath,
+        }),
+        application_root: dirname(process.execPath),
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected failed cleanup");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain("helper-root");
+    await provider.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await provider.close();
+  }
+});
 
 it("joins a late launch acknowledgement and its cleanup after shutdown", async () => {
   stubVerifiedElectronCleanup();

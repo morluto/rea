@@ -1,3 +1,5 @@
+import { retainProcessInspectionCleanup } from "./ProcessInspectionCleanup.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
@@ -35,6 +37,7 @@ import type {
 } from "../process/ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import {
+  isProcessOwnershipInspectionCancellation,
   observeOwnedProcessLineage,
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
@@ -126,7 +129,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     try {
       if (options.signal?.aborted === true)
         throw new BrowserObservationError(OPERATION, "cancelled");
-      await prepareProcessOwnershipInspection(options.signal);
+      await inspectOwnership(
+        () => prepareProcessOwnershipInspection(options.signal),
+        options.signal,
+        this.#resources,
+      );
       const startupDeadline = performance.now() + STARTUP_TIMEOUT_MS;
       paths = {
         executable: input.executable_path,
@@ -155,8 +162,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         await preflight;
         throw interruption;
       }
-      const captureBaseline =
-        await systemProcessOwnershipHost.captureBaseline?.(options.signal);
+      const captureBaseline = await inspectOwnership(
+        () => systemProcessOwnershipHost.captureBaseline?.(options.signal),
+        options.signal,
+        this.#resources,
+      );
       if (options.signal?.aborted)
         throw new BrowserObservationError(OPERATION, "cancelled");
       const applicationArgs = [
@@ -337,6 +347,41 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     return captureOutcomeWithCancellation(outcome, options.signal);
   }
 }
+
+// The process inspector can reject with the signal reason or a native AbortError.
+// Normalize only its own boundary so unrelated physical errors remain primary.
+const inspectOwnership = async <T>(
+  inspect: () => Promise<T> | undefined,
+  signal: AbortSignal | undefined,
+  resources: ArtifactResourceScope,
+): Promise<T | undefined> => {
+  try {
+    return await inspect();
+  } catch (cause: unknown) {
+    if (cause instanceof DarwinProcessOwnershipInspectionError) {
+      const primary =
+        cause.cancellation === undefined
+          ? providerError(cause)
+          : new BrowserObservationError(OPERATION, "cancelled", {
+              cause: cause.cancellation.reason,
+            });
+      throw retainProcessInspectionCleanup(
+        cause,
+        primary,
+        resources,
+        OPERATION,
+      );
+    }
+    if (
+      isProcessOwnershipInspectionCancellation(cause, signal) &&
+      !(cause instanceof AnalysisError && cause.cleanupIncomplete)
+    )
+      throw new BrowserObservationError(OPERATION, "cancelled", {
+        cause: signal?.reason,
+      });
+    throw cause;
+  }
+};
 
 /** Keep existing failures and their cleanup owners when cancellation arrives later. */
 const captureOutcomeWithCancellation = (
