@@ -29,7 +29,9 @@ vi.mock("../metadata/BinaryContainer.js", async (importOriginal) => {
 import {
   elf32RelativeInitializers,
   elf64PieInitializers,
+  elf64AliasedInitializers,
   elfRelocatableCtors,
+  elfUnmappedInitializerTargets,
   macho32Initializers,
   machoArm64FatInitializers,
   machoArm64Initializers,
@@ -70,6 +72,55 @@ const read = async (
         : { architecture: page.architecture }),
     }),
   );
+
+it.each([
+  { type: 2 as const, metadataAllocated: false },
+  { type: 3 as const, metadataAllocated: false },
+  { type: 2 as const, metadataAllocated: true },
+])(
+  "keeps section metadata from inventing linked target file offsets ($type / $metadataAllocated)",
+  async (options) => {
+    const report = await read(elfUnmappedInitializerTargets(options));
+    expect(
+      report.entries.map((entry) => [entry.value_va, entry.value_file_offset]),
+    ).toEqual([
+      ["0x0", null],
+      ["0x10", null],
+      ["0x401000", 0x100],
+    ]);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      examined_entries: 3,
+      total_entries: 3,
+    });
+  },
+);
+
+it("preserves a real mapping to file offset zero instead of treating zero as missing", async () => {
+  const bytes = elfUnmappedInitializerTargets({ type: 3 });
+  bytes.writeBigUInt64LE(0n, 64 + 16);
+  bytes.writeBigUInt64LE(0n, 64 + 24);
+  const report = await read(bytes);
+  expect(
+    report.entries.slice(0, 2).map((entry) => entry.value_file_offset),
+  ).toEqual([0, 0x10]);
+});
+
+it("does not use metadata to back a target in a load segment's zero-fill tail", async () => {
+  const bytes = elfUnmappedInitializerTargets();
+  bytes.writeBigUInt64LE(0x2000n, 176 + 40);
+  bytes.writeBigUInt64LE(0x403000n, 0x140);
+  bytes.writeBigUInt64LE(0x403000n, 0x400 + 3 * 64 + 16);
+  const report = await read(bytes);
+  expect(report.entries[0]).toMatchObject({
+    value_va: "0x403000",
+    value_file_offset: null,
+  });
+  expect(report.entries[2]).toMatchObject({
+    value_va: "0x401000",
+    value_file_offset: 0x100,
+  });
+});
 
 /** One ELF64 section header for {@link withExtraSections}. */
 const sectionHeader = (
@@ -1293,6 +1344,112 @@ describe("Initializer target semantics", () => {
     const bytes = machoArm64Initializers();
     bytes.writeUInt32LE(0x0200000c, 4);
     await expect(read(bytes)).rejects.toThrow(BinaryFormatFailure);
+  });
+});
+
+describe("ELF initializer relocation identity", () => {
+  it("reuses one section relocation for repeated declarations of the same virtual slot", async () => {
+    const bytes = elf64AliasedInitializers();
+    bytes.writeBigUInt64LE(0x200n, 0x300 + 2 * 16 + 8);
+    const report = await read(bytes);
+    expect(report.status).toBe("parsed");
+    expect(
+      report.entries
+        .filter((entry) => entry.slot_va === "0x200")
+        .map((entry) => [entry.value_va, entry.resolution]),
+    ).toEqual([
+      ["0x100", "relative_addend"],
+      ["0x100", "relative_addend"],
+    ]);
+  });
+
+  it("does not attribute an i386 REL's in-place addend to an unrelocated alias", async () => {
+    const bytes = elf32RelativeInitializers();
+    bytes.writeUInt16LE(3, 44);
+    const alias = 116;
+    bytes.writeUInt32LE(1, alias);
+    bytes.writeUInt32LE(0x100, alias + 4);
+    bytes.writeUInt32LE(0x1100, alias + 8);
+    bytes.writeUInt32LE(4, alias + 16);
+    bytes.writeUInt32LE(4, alias + 20);
+    bytes.writeUInt32LE(6, alias + 24);
+    bytes.writeUInt32LE(1, alias + 28);
+    bytes.writeUInt32LE(0x1100, 0x124);
+    // Only the section declaration still names the REL table.
+    for (let index = 2; index <= 4; index++)
+      bytes.writeInt32LE(0x70000000 + index, 0x120 + index * 8);
+    const unrelocated = await read(bytes);
+    expect(unrelocated.entries[0]).toMatchObject({
+      slot_va: "0x1100",
+      value_va: "0x80",
+      resolution: "raw",
+    });
+    // Moving the same REL to that address uses its own stored in-place word.
+    bytes.writeUInt32LE(0x1100, 0x180);
+    expect((await read(bytes)).entries[0]).toMatchObject({
+      slot_va: "0x1100",
+      value_va: "0x80",
+      resolution: "relative_addend",
+    });
+  });
+
+  it.each([false, true])(
+    "keeps section RELA writes on their virtual-address owner (both aliases relocated: %s)",
+    async (both) => {
+      const bytes = elf64AliasedInitializers();
+      if (both) bytes.writeBigUInt64LE(0x1200n, 0x4b0);
+      const report = await read(bytes);
+      expect(report.status).toBe("parsed");
+      expect(
+        report.entries
+          .filter((entry) =>
+            ["preinit_array", "init_array"].includes(entry.kind),
+          )
+          .map((entry) => [entry.slot_va, entry.value_va, entry.resolution]),
+      ).toEqual([
+        ["0x200", "0x100", "relative_addend"],
+        ["0x1200", both ? "0x110" : "0x0", both ? "relative_addend" : "raw"],
+      ]);
+    },
+  );
+
+  it("keeps a partial relocation on one alias from clobbering the other", async () => {
+    const bytes = elf64AliasedInitializers();
+    bytes.writeBigUInt64LE(0x1204n, 0x4b0);
+    bytes.writeBigUInt64LE(10n, 0x4b8); // R_X86_64_32, overlapping the alias's last four bytes.
+    const report = await read(bytes);
+    expect(report.status).toBe("incomplete");
+    expect(
+      report.entries.find((entry) => entry.kind === "preinit_array"),
+    ).toMatchObject({
+      value_va: "0x100",
+      resolution: "relative_addend",
+    });
+    expect(
+      report.entries.find((entry) => entry.kind === "init_array"),
+    ).toMatchObject({
+      value_va: null,
+      resolution: "unresolved",
+    });
+  });
+
+  it("keeps relocatable section identities distinct when their source bytes alias", async () => {
+    const bytes = elfRelocatableCtors();
+    // The .init_array bytes now alias .ctors's relocated middle slot.
+    bytes.writeBigUInt64LE(0x208n, 0x500 + 7 * 64 + 24);
+    const report = await read(bytes);
+    expect(report.status).toBe("parsed");
+    expect(
+      report.entries.map((entry) => [
+        entry.kind,
+        entry.slot_file_offset,
+        entry.value_va,
+        entry.symbol?.name,
+      ]),
+    ).toEqual([
+      ["init_array", 0x208, "0x8", "init_b"],
+      ["ctors", 0x208, "0x0", "ctor"],
+    ]);
   });
 });
 

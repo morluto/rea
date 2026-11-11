@@ -213,8 +213,8 @@ rejects it. The file is read, never loaded or executed.
 
 A position-independent `libil2cpp.so` stores zero in most pointer slots and
 keeps the value in `R_AARCH64_RELATIVE` or `R_X86_64_RELATIVE` relocations
-(`DT_RELA`). The reader writes those values into a private copy before
-searching it, so addresses are the link-time addresses and RVAs are relative to
+(`DT_RELA`). The reader indexes loader values by virtual address while keeping
+the source bytes unchanged, so addresses are the link-time addresses and RVAs are relative to
 the first loaded segment. Android packed
 relocations (`DT_ANDROID_RELA`) are refused. No target code is executed.
 
@@ -455,7 +455,7 @@ Format and selection failures name `binary_path`; capacity refusals remain typed
 
 Scans yield cooperatively in bounded batches. Name-address retention and reverse-trie construction are each limited to 65,536 entries/nodes and fallback module-array candidates to 64 (`native-index-capacity`); exceeding capacity does not prove absence. Rendered type text has a 64 MiB UTF-8 cache-workspace guard, separate from the 64 MiB encoded-report admission, and 64 nested rendering frames (`native-type-text-capacity` / `type-nesting-capacity`). Genuine cycles are malformed; unsupported type kinds are explicit coverage failures. Native row/text admission runs before allocation or retention. Unused generic parameter names are read on demand from the same stable metadata snapshot. There is no cross-inspection file cache; validated immutable Evidence is reused for session views.
 
-ELF RELATIVE writes into zero-fill are kept as a private virtual-pointer overlay. Unresolved supported-width symbol relocations, including RELA PLT entries, remain unknown only for the bytes their ELF ABI relocation type covers; an adjacent 32-bit relocation does not make a separate 64-bit method slot unknown. Stored zeros never establish no-body. COPY, TLS descriptor, REL, packed APS2 and other unsupported relocation encodings fail closed. Input bytes are unchanged.
+ELF RELATIVE writes use a virtual-pointer overlay for both file-backed and zero-fill locations. Distinct virtual addresses that share source file bytes retain independent values; an untouched alias keeps its stored bytes. Unresolved supported-width symbol relocations, including RELA PLT entries, remain unknown only for the bytes their ELF ABI relocation type covers; an adjacent 32-bit relocation does not make a separate 64-bit method slot unknown. Stored zeros never establish no-body. COPY, TLS descriptor, REL, packed APS2 and other unsupported relocation encodings fail closed. Input bytes are unchanged.
 
 ELF relocation tables and file-backed destinations may span adjacent load ranges when every range agrees on the file translation. Any overlapping zero-fill declaration makes those bytes ambiguous; REA refuses the table or relocation destination instead of choosing the stored file bytes. Missing file bytes remain distinct from conflicting owners: supported unresolved relocations outside file-backed memory retain their unknown overlay, while ambiguous destinations refuse linking. Registration coverage uses the same file/zero-fill ownership checks as pointer reads.
 

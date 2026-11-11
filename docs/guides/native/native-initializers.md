@@ -54,7 +54,11 @@ Each `entries[]` item reports:
   limitation says so.
 - `value_va`, `value_file_offset` and `section`: the resolved target address,
   its file offset and its containing section. These are null when the value
-  was not established. A file offset is also null when load segments map the
+  was not established. In a linked ELF, file offsets come only from `PT_LOAD`:
+  an unmapped or zero-filled target keeps its observed address but has a null
+  file offset, even if a section header declares bytes at that address. ET_REL
+  targets retain their relocation symbol's section-relative coordinates.
+  A file offset is also null when load segments map the
   address ambiguously (overlapping segments with different file offsets, or
   file and zero-fill memory), and the report is then `incomplete`.
 - `symbol`: a defined symbol whose value equals the target exactly, or the
@@ -97,6 +101,11 @@ table reaches only the section named by its `sh_info`. In a linked image, a relo
 (such as one kept by `--emit-relocs`) was already applied by the static
 linker, so the slot's stored word is used rather than applying the record
 again.
+
+Relocation ownership follows virtual addresses in linked images and section
+identity plus offset in relocatable objects. Distinct slots that share source
+file bytes keep independent values and overlap checks; a write to one does not
+relocate or invalidate the other.
 
 An absolute relocation against an `STT_GNU_IFUNC` symbol is `unresolved`: the
 symbol value is the resolver, and the loader stores whatever the resolver

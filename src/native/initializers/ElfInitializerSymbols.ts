@@ -337,12 +337,27 @@ export const relocationFromEntry = (
   };
 };
 
+/** A slot's relocation identity is its virtual address, or its section and address in ET_REL. */
+export interface ElfInitializerSlot {
+  readonly va: bigint;
+  readonly sectionIndex: number | null;
+}
+
+/** One coordinate rule shared by relocation production and slot lookup. */
+export const elfInitializerSlotKey = (
+  slot: ElfInitializerSlot,
+  relocatable: boolean,
+): string =>
+  relocatable
+    ? sectionSymbolKey(slot.sectionIndex ?? -1, slot.va)
+    : slot.va.toString(16);
+
 interface SectionRelocInput extends ImageFacts {
   readonly sections: readonly NativeSection[];
   /** ET_REL: `r_offset` is relative to the section named by `sh_info`. */
   readonly relocatable: boolean;
-  /** File offsets of slots not covered by dynamic relocations. */
-  readonly wanted: ReadonlySet<number>;
+  /** Slots not covered by dynamic relocations; source offsets do not establish write ownership. */
+  readonly wanted: readonly ElfInitializerSlot[];
   readonly tables: ReadonlyMap<number, readonly ElfInitializerSymbol[]>;
   readonly notes: InitializerNotes;
   /** File offset of `width` bytes at a linked-image address. */
@@ -379,15 +394,15 @@ const recordTarget = (
 
 /** Index of the first wanted slot whose word could overlap a write starting at `at`. */
 const firstOverlap = (
-  wanted: readonly number[],
-  at: number,
+  wanted: readonly ElfInitializerSlot[],
+  at: bigint,
   word: number,
 ): number => {
   let low = 0;
   let high = wanted.length;
   while (low < high) {
     const mid = (low + high) >>> 1;
-    if ((wanted[mid] ?? at) <= at - word) low = mid + 1;
+    if ((wanted[mid]?.va ?? at) <= at - BigInt(word)) low = mid + 1;
     else high = mid;
   }
   return low;
@@ -395,9 +410,9 @@ const firstOverlap = (
 
 /** Section relocations found for wanted slots, and whether every applicable record was read. */
 export interface SectionRelocationScan {
-  readonly found: ReadonlyMap<number, SlotRelocation>;
+  readonly found: ReadonlyMap<string, SlotRelocation>;
   /** Slots a narrower, offset or repeated record overlaps; their value is unknown. */
-  readonly clobbered: ReadonlySet<number>;
+  readonly clobbered: ReadonlySet<string>;
   /**
    * False when a relocation section was skipped, ended early or lies past the
    * record budget, so an unmatched slot may still have an unread relocation.
@@ -406,32 +421,6 @@ export interface SectionRelocationScan {
 }
 
 const SHF_ALLOC = 2n;
-
-/**
- * Whether records in `section` could reach a wanted slot. ET_REL records only
- * reach the section named by `sh_info`; a linked image's records may reach any
- * address.
- */
-const reachesWanted = (
-  input: SectionRelocInput,
-  wanted: readonly number[],
-  section: NativeSection,
-): boolean => {
-  if (!input.relocatable) return true;
-  const target = input.sections[section.info];
-  if (target === undefined) return true;
-  if (!target.file_backed) return false;
-  const from = Number(target.offset);
-  const to = from + Number(target.size);
-  let low = 0;
-  let high = wanted.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if ((wanted[mid] ?? to) < from) low = mid + 1;
-    else high = mid;
-  }
-  return (wanted[low] ?? to) < to;
-};
 
 /** Relocation sections this reader applies: every one in ET_REL, SHF_ALLOC ones otherwise. */
 const applicable = (
@@ -446,21 +435,39 @@ const applicable = (
 
 /**
  * Section REL/RELA records for slots that dynamic tables do not cover, keyed by
- * slot file offset. In a linked image, a relocation section without SHF_ALLOC
+ * slot identity. In a linked image, a relocation section without SHF_ALLOC
  * is a link-time record the static linker already applied (for example from
  * `--emit-relocs`), so the slot already holds its result and is not reapplied.
  */
 export const sectionRelocations = async (
   input: SectionRelocInput,
 ): Promise<SectionRelocationScan> => {
-  const found = new Map<number, SlotRelocation>();
-  const clobbered = new Set<number>();
-  if (input.wanted.size === 0) return { found, clobbered, complete: true };
-  const wanted = [...input.wanted].sort((left, right) => left - right);
+  const found = new Map<string, SlotRelocation>();
+  const clobbered = new Set<string>();
+  if (input.wanted.length === 0) return { found, clobbered, complete: true };
+  // Linked writes use virtual addresses; ET_REL writes additionally belong to
+  // sh_info's section, even when two sections reuse the same file bytes.
+  const bySection = new Map<number | null, Map<bigint, ElfInitializerSlot>>();
+  for (const slot of input.wanted) {
+    const key = input.relocatable ? slot.sectionIndex : null;
+    const slots = bySection.get(key) ?? new Map<bigint, ElfInitializerSlot>();
+    slots.set(slot.va, slot);
+    bySection.set(key, slots);
+  }
+  const sorted = new Map(
+    [...bySection].map(([section, slots]) => [
+      section,
+      [...slots.values()].sort((left, right) =>
+        left.va < right.va ? -1 : left.va > right.va ? 1 : 0,
+      ),
+    ]),
+  );
+  const wantedBy = (section: NativeSection): readonly ElfInitializerSlot[] =>
+    sorted.get(input.relocatable ? section.info : null) ?? [];
   const word = wordOf(input.bits);
   let complete = true;
   const skip = (section: NativeSection): void => {
-    if (reachesWanted(input, wanted, section)) complete = false;
+    if (wantedBy(section).length > 0) complete = false;
   };
   // One budget across every header, so many headers over one range cannot multiply the work.
   let budget = SECTION_RELOCATION_RECORD_SCAN;
@@ -485,6 +492,7 @@ export const sectionRelocations = async (
     }
     const symbols = input.tables.get(section.link);
     const target = input.relocatable ? input.sections[section.info] : undefined;
+    const wanted = wantedBy(section);
     if (input.relocatable && target === undefined) {
       input.notes.add(
         "A relocation section names a target section that does not exist, so its records were not applied.",
@@ -520,13 +528,18 @@ export const sectionRelocations = async (
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
       const span = elfRelocationWidth(input.machine, parsed.value.type) ?? word;
       if (span === 0) continue;
-      const written = recordTarget(input, target, parsed.value.offset, 1);
-      if (written === null) {
+      if (recordTarget(input, target, parsed.value.offset, 1) === null) {
         skip(section);
         continue;
       }
-      const fullWrite =
-        recordTarget(input, target, parsed.value.offset, span) !== null;
+      const written = parsed.value.offset + (target?.address ?? 0n);
+      const writtenFileOffset = recordTarget(
+        input,
+        target,
+        parsed.value.offset,
+        span,
+      );
+      const fullWrite = writtenFileOffset !== null;
       if (!fullWrite) {
         complete = false;
         input.notes.add(
@@ -539,26 +552,32 @@ export const sectionRelocations = async (
         next += 1
       ) {
         const slot = wanted[next];
-        if (slot === undefined || slot >= written + span) break;
-        if (clobbered.has(slot)) continue;
+        if (slot === undefined || slot.va >= written + BigInt(span)) break;
+        const key = elfInitializerSlotKey(slot, input.relocatable);
+        if (clobbered.has(key)) continue;
         if (
           fullWrite &&
-          slot === written &&
+          slot.va === written &&
           span === word &&
-          !found.has(slot)
+          !found.has(key)
         ) {
           const inplace =
             encoding === "rel"
-              ? readPointerWord(input.bytes, slot, input.bits, input.little)
+              ? readPointerWord(
+                  input.bytes,
+                  writtenFileOffset,
+                  input.bits,
+                  input.little,
+                )
               : null;
           found.set(
-            slot,
+            key,
             relocationFromEntry(input, parsed.value, symbols, inplace),
           );
           continue;
         }
-        found.delete(slot);
-        clobbered.add(slot);
+        found.delete(key);
+        clobbered.add(key);
       }
     }
     if (stopped) {

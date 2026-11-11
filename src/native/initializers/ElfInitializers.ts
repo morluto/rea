@@ -27,12 +27,14 @@ import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.j
 import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
+  elfInitializerSlotKey,
   readPointerWord,
   relocationFromEntry,
   sectionRelocations,
   sectionSymbolKey,
   type ElfInitializerSymbol,
   type SlotRelocation,
+  type ElfInitializerSlot,
 } from "./ElfInitializerSymbols.js";
 import {
   finishInitializerReport,
@@ -77,7 +79,7 @@ interface DynTag {
   readonly valueOffset: number;
 }
 
-interface ArraySlot {
+interface ArraySlot extends ElfInitializerSlot {
   readonly mappingMismatch?: boolean;
   readonly va: bigint;
   readonly fileOffset: number | null;
@@ -193,14 +195,13 @@ const readDynamicTags = (
 
 /**
  * File offset of `size` bytes at `address`: a whole slot, or a target's first
- * byte. `mappings` is built once per image, so each lookup is logarithmic. Only
- * a genuinely unmapped span falls back to section headers; an ambiguous one
- * stays unknown and makes the report incomplete.
+ * byte. Only load mappings establish linked addresses: section declarations
+ * cannot supply backing for an unmapped or zero-filled address. Ambiguous
+ * mappings stay unknown and make the report incomplete.
  */
 const fileOffsetFor = (
   scan: ElfScan,
   mappings: FileMappingIndex,
-  index: ElfSectionIndex,
   address: bigint,
   size: number,
 ): number | null => {
@@ -208,11 +209,8 @@ const fileOffsetFor = (
     return mappings.offset(address, size);
   } catch (cause) {
     if (!(cause instanceof BinaryMappingFailure)) throw cause;
-    if (cause.reason === "ambiguous") {
-      note(scan, AMBIGUOUS_MAPPING);
-      return null;
-    }
-    return index.fileOffsetAt(address, size);
+    if (cause.reason === "ambiguous") note(scan, AMBIGUOUS_MAPPING);
+    return null;
   }
 };
 
@@ -234,22 +232,16 @@ const vaForFile = (
   return null;
 };
 
-/** Address lookups over the section headers, built once per image. */
+/** Section-name labels, independent of load-address translation. */
 interface ElfSectionIndex {
   /** Name of the smallest SHF_ALLOC section containing `address`; earlier headers win ties. */
   readonly nameAt: (address: bigint) => string | null;
-  /**
-   * File offset of `width` bytes at `address` in the first file-backed section,
-   * in header order, that covers `address`. Null when that section ends before
-   * the span does.
-   */
-  readonly fileOffsetAt: (address: bigint, width: number) => number | null;
 }
 
 const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
-  const ranges = (keep: (section: NativeSection) => boolean) =>
+  const named = buildAddressRangeIndex(
     sections.flatMap((section) =>
-      keep(section)
+      section.size !== 0n && (section.flags & 2n) !== 0n
         ? [
             {
               start: section.address,
@@ -258,9 +250,7 @@ const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
             },
           ]
         : [],
-    );
-  const named = buildAddressRangeIndex(
-    ranges((section) => section.size !== 0n && (section.flags & 2n) !== 0n),
+    ),
     (left, right) =>
       left.size < right.size
         ? -1
@@ -268,23 +258,10 @@ const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
           ? 1
           : left.index - right.index,
   );
-  const backed = buildAddressRangeIndex(
-    ranges((section) => section.file_backed && !section.compressed),
-    (left, right) => left.index - right.index,
-  );
   return {
     nameAt(address) {
       const name = named.at(address)?.value.name;
       return name == null || name.length === 0 ? null : name;
-    },
-    fileOffsetAt(address, width) {
-      const section = backed.at(address)?.value;
-      if (
-        section === undefined ||
-        address + BigInt(width) > section.address + section.size
-      )
-        return null;
-      return Number(section.offset) + Number(address - section.address);
     },
   };
 };
@@ -296,7 +273,8 @@ const slotsFromSpan = (
   label: string,
   locate: (address: bigint) => number | null,
   sectionName: string | null,
-): Slot[] => {
+  sectionIndex: number | null = null,
+): ArraySlot[] => {
   const stride = BigInt(wordOf(scan.bits));
   if (byteSize < 0n || byteSize % stride !== 0n)
     note(
@@ -315,7 +293,7 @@ const slotsFromSpan = (
       scan,
       `${label} declares ${declared.toString()} slots. Scanning stopped at the ${String(MAX_NATIVE_INITIALIZER_ENTRIES)}-slot budget, so later slots were not read.`,
     );
-  const slots: Slot[] = [];
+  const slots: ArraySlot[] = [];
   let missed = false;
   for (let index = 0; index < count; index += 1) {
     const va = base + BigInt(index) * stride;
@@ -324,7 +302,7 @@ const slotsFromSpan = (
       missed = true;
       continue;
     }
-    slots.push({ va, fileOffset, sectionName });
+    slots.push({ va, fileOffset, sectionName, sectionIndex });
   }
   if (missed)
     note(
@@ -397,6 +375,7 @@ const sectionSource = (
       label,
       withinSection(section, wordOf(scan.bits)),
       section.name,
+      section.index,
     ),
   };
 };
@@ -845,8 +824,8 @@ const collectEntries = (
   scan: ElfScan,
   sources: readonly Source[],
   loaded: WriteLoad,
-  sectionRels: ReadonlyMap<number, SlotRelocation>,
-  sectionClobbered: ReadonlySet<number>,
+  sectionRels: ReadonlyMap<string, SlotRelocation>,
+  sectionClobbered: ReadonlySet<string>,
   symbols: readonly ElfInitializerSymbol[] | undefined,
   names: SymbolNames,
   trustRaw: boolean,
@@ -882,11 +861,10 @@ const collectEntries = (
                 slot,
                 scan.relocatable ? undefined : loaded.writes.get(slot.va),
                 (!scan.relocatable && loaded.clobbered.has(slot.va)) ||
-                  (slot.fileOffset !== null &&
-                    sectionClobbered.has(slot.fileOffset)),
-                slot.fileOffset === null
-                  ? undefined
-                  : sectionRels.get(slot.fileOffset),
+                  sectionClobbered.has(
+                    elfInitializerSlotKey(slot, scan.relocatable),
+                  ),
+                sectionRels.get(elfInitializerSlotKey(slot, scan.relocatable)),
                 symbols,
                 trustRaw,
               )
@@ -981,9 +959,9 @@ export const readElfInitializers = async (
   const index = indexSections(directory.sections);
   const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
   const locate = (address: bigint): number | null =>
-    fileOffsetFor(scan, mappings, index, address, wordOf(scan.bits));
+    fileOffsetFor(scan, mappings, address, wordOf(scan.bits));
   const locateTarget = (address: bigint): number | null =>
-    fileOffsetFor(scan, mappings, index, address, 1);
+    fileOffsetFor(scan, mappings, address, 1);
   const declaredSources = collectSources(
     scan,
     tags,
@@ -1025,16 +1003,14 @@ export const readElfInitializers = async (
   assertArtifactReadActive(signal);
   const symbols = loadElfSymbolIndex(scan, directory.sections, scan.notes);
   if (symbols.incomplete) scan.incomplete = true;
-  const uncovered = new Set(
-    sources.flatMap((source) =>
-      source.slots.flatMap((slot) =>
-        slot.direct === undefined &&
-        slot.fileOffset !== null &&
-        (scan.relocatable ||
-          (!loaded.writes.has(slot.va) && !loaded.clobbered.has(slot.va)))
-          ? [slot.fileOffset]
-          : [],
-      ),
+  const uncovered = sources.flatMap((source) =>
+    source.slots.flatMap((slot) =>
+      slot.direct === undefined &&
+      slot.fileOffset !== null &&
+      (scan.relocatable ||
+        (!loaded.writes.has(slot.va) && !loaded.clobbered.has(slot.va)))
+        ? [slot]
+        : [],
     ),
   );
   const notesBeforeRelocs = scan.notes.recorded;
@@ -1045,7 +1021,7 @@ export const readElfInitializers = async (
     tables: symbols.tables,
     notes: scan.notes,
     fileOffset: (address, width) =>
-      fileOffsetFor(scan, mappings, index, address, width),
+      fileOffsetFor(scan, mappings, address, width),
     signal,
   });
   if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)
