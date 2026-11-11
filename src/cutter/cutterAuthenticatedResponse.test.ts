@@ -42,6 +42,7 @@ it("decodes an authenticated response split at escape and proof boundaries", () 
     output:
       'quote " slash \\ newline \n unit \u0001 line \u2028 snow 雪 emoji 😀',
     empty: "",
+    replacement: "\uFFFD",
   });
   const frame = envelope(response);
   const parsed = JSON.parse(frame.toString("utf8")) as {
@@ -104,6 +105,13 @@ it("refuses a malformed envelope, a bad escape, and an unfinished frame", () => 
   refuse(Buffer.from(`{"ok":false,"proof":"${PROOF}"}`));
   refuse(Buffer.from(`{"response":"\\x","proof":"${PROOF}"}`));
   refuse(Buffer.from(`{"response":"\\uD800","proof":"${PROOF}"}`));
+  refuse(
+    Buffer.concat([
+      Buffer.from('{"response":"'),
+      Buffer.from([0xff]),
+      Buffer.from(`","proof":"${PROOF}"}`),
+    ]),
+  );
   refuse(Buffer.from(`{"response":"ok","proof":"${"AB".repeat(32)}"}`));
   refuse(Buffer.from(`{"response":"ok","proof":"${PROOF}"} `));
   const decoder = new CutterAuthenticatedResponseDecoder(ceiling);
@@ -160,9 +168,20 @@ it("reads one challenge and one response without buffering a third frame", () =>
   );
 });
 
-it("refuses an oversized authentication challenge before the response", () => {
+it("refuses oversized or invalid UTF-8 authentication challenges before the response", () => {
   const frames = new CutterBridgeResponseFrames(limit(4096));
   expect(() => frames.push(Buffer.alloc(2049, 0x7b), () => true)).toThrow(
     "invalid authentication challenge",
   );
+  const malformed = new CutterBridgeResponseFrames(limit(4096));
+  expect(() =>
+    malformed.push(
+      Buffer.concat([
+        Buffer.from('{"extra":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}\n'),
+      ]),
+      () => true,
+    ),
+  ).toThrow("invalid authentication challenge");
 });

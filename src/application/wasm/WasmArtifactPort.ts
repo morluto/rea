@@ -15,6 +15,8 @@ export type WasmArtifactExecution = Omit<AnalysisExecution, "subject"> & {
 /** Effective operation budget, separate from caller-authored Evidence parameters. */
 export interface WasmArtifactExecutionOptions extends ExecutionOptions {
   readonly commandTimeoutMs?: number;
+  /** Selection owner for `commandTimeoutMs`. Absent when the caller did not record it. */
+  readonly commandTimeoutSource?: "default" | "runtime" | "request" | undefined;
 }
 
 /** Replaceable offline WASM inspection engine, independent of target execution and network clients. */

@@ -48,6 +48,13 @@ const descriptor = z.strictObject({
   minimum: z.number(),
   maximum: z.number(),
   applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
+  update_mode: z.enum(["runtime", "restart"]),
+  pending_restart: z
+    .boolean()
+    .optional()
+    .describe(
+      "Whether an accepted configuration is waiting for restart. Omitted when the launch value is invalid and there is no accepted runtime override.",
+    ),
   provider: z.string(),
   operations: z.array(z.string()),
   environment: z.string().optional(),
@@ -83,7 +90,7 @@ export const updateAnalysisSettingsResultSchema =
       }),
     ),
     active_work_changed: z.literal(false),
-    rea_restart_required: z.literal(false),
+    pending_restart: z.literal(false),
   });
 export const ANALYSIS_SETTINGS_TOOL_CONTRACTS = [
   {

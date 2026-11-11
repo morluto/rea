@@ -1,4 +1,4 @@
-import { StateResponseCleanup } from "./StateResponseCleanup.js";
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { expect, it, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -12,7 +12,7 @@ import {
 
 const inlineDocument = async (bytes: string) => {
   const files = new ArtifactResourceScope();
-  const responses = new StateResponseCleanup();
+  const responses = new ResponseBodyCleanup("state response body");
   try {
     return await partDocument(
       { kind: "file", file: { bytes } },
@@ -106,7 +106,7 @@ it.each(["http-status", "declared-overflow", "stream-overflow"] as const)(
         : {}),
     });
     const files = new ArtifactResourceScope();
-    const responses = new StateResponseCleanup();
+    const responses = new ResponseBodyCleanup("state response body");
     const operation = partDocument(
       { kind: "file", file: { uri: "https://state.example.test/state.json" } },
       { fetchState: async () => response, timeoutMs: 1_000 },
@@ -159,7 +159,7 @@ it("retains the exact failure when response cancellation rejects", async () => {
     },
   });
   const files = new ArtifactResourceScope();
-  const responses = new StateResponseCleanup();
+  const responses = new ResponseBodyCleanup("state response body");
   const result = await partDocument(
     { kind: "file", file: { uri: "https://state.example.test/state.json" } },
     {

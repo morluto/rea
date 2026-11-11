@@ -278,12 +278,21 @@ export class PwntoolsDecoder<
       ...resolvePwntoolsLimits(selectedLimits.data),
       command_timeout_ms: timeoutMs,
     };
+    let inputBytesSource:
+      | "default"
+      | "setting"
+      | "runtime"
+      | "request"
+      | undefined;
     const context = {
       operation: OPERATION,
       providerId: this.identity.id,
       timeoutMs,
       get producerLimits() {
         return producerLimits;
+      },
+      get inputBytesSource() {
+        return inputBytesSource;
       },
     };
     const replySchema = z.discriminatedUnion("ok", [
@@ -365,6 +374,7 @@ export class PwntoolsDecoder<
           : {
               configured: true as const,
               bytes: selectedLimits.data.input_bytes,
+              source: "request" as const,
             };
       if (!inputLimit.configured)
         throw pwntoolsUnavailable(
@@ -377,6 +387,7 @@ export class PwntoolsDecoder<
             configurationKey: "REA_PWNTOOLS_MAX_INPUT_BYTES",
           },
         );
+      inputBytesSource = inputLimit.source;
       phase = "artifact-read";
       producerLimits = {
         ...resolvePwntoolsLimits(selectedLimits.data, inputLimit.bytes),

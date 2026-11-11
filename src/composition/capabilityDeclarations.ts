@@ -49,6 +49,7 @@ import {
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
   PE_RESOURCES_PROVIDER,
+  RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
@@ -485,6 +486,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, {
         group: "PYTHON_PYC_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  releaseExposure: {
+    providers: [
+      providerBinding(RELEASE_EXPOSURE_PROVIDER, {
+        group: "RELEASE_EXPOSURE_TOOL_CONTRACTS",
       }),
     ],
   },

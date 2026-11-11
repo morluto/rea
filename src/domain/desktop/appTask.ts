@@ -1,3 +1,4 @@
+import { isPortableBundleName } from "../portableBundleName.js";
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
@@ -403,12 +404,11 @@ const screenProblem = (
 /** Parse a task file and settle its check ids, or say what is wrong with it. */
 export const parseDesktopTask = (
   value: unknown,
-  isPortableName: (name: string) => boolean,
 ): Result<DesktopTask, string> => {
   const parsed = desktopTaskSchema.safeParse(value);
   if (!parsed.success) return err(describeValidationFailure(parsed.error));
   const { name, prompt, checks, readers } = parsed.data;
-  if (!isPortableName(name) || name === "smoke")
+  if (!isPortableBundleName(name) || name === "smoke")
     return err(
       `name ${JSON.stringify(name)} must be a portable bundle name other than smoke: lowercase letters, digits and hyphens.`,
     );

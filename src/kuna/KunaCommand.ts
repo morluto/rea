@@ -8,6 +8,7 @@ import {
   AnalysisError,
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
@@ -413,10 +414,15 @@ const commandFailure = (
     });
   else if (cause.reason === "timeout") {
     const { setting, ms } = request.deadline;
+    const analysisSetting =
+      setting === "REA_KUNA_TIMEOUT_MS"
+        ? "kuna.function_timeout_ms"
+        : "kuna.project_timeout_ms";
     primary = new AnalysisTimeoutError(operation, ms, {
       ...details,
-      userMessage: `kuna ${subcommand} did not finish within ${setting} (${String(ms)} ms).`,
-      remediationAction: `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.`,
+      limit: analysisSettingLimit(analysisSetting, ms, request.deadline.source),
+      userMessage: `kuna ${subcommand} did not finish within ${analysisSetting} (${String(ms)} ms).`,
+      remediationAction: `${analysisSetting} is ${String(ms)} ms. It can be changed at runtime with update_analysis_settings. The launch seed is ${setting}.`,
     });
   }
   // The same input overflows the same fixed buffer; waiting cannot help.

@@ -1,3 +1,4 @@
+import { bridgeRequestOversizeError } from "../config/bridgeMaxRequestBytes.js";
 import { z } from "zod";
 import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "./GhidraLiteralSearch.js";
 import {
@@ -742,7 +743,7 @@ describe("Ghidra platform support", () => {
         executable_role: target.executableRole,
         managed: target.managed,
         native_aot_metadata: {
-          contract_revision: "rtr-9.1-x64-pe-read-only-v8",
+          contract_revision: "rtr-9.1-x64-pe-read-only-v10",
           source_bytes: 128 * 1024 * 1024,
           work_units: 64 * 1024 * 1024,
           working_memory_bytes: 64 * 1024 * 1024,
@@ -1343,15 +1344,7 @@ describe("Ghidra client projection", () => {
       {
         operation: "list_procedures",
         input: { document: null },
-        options: {
-          decompileTimeoutSeconds: null,
-          decompileMaxPayloadMiB: null,
-          valueFlowLimits: {
-            max_operations: 3000,
-            max_inputs_per_operation: 64,
-            max_edges: 12000,
-          },
-        },
+        options: {},
       },
     ]);
     expect(result).toMatchObject({
@@ -1868,7 +1861,8 @@ describe("Ghidra decompiler failure projection", () => {
             applies_at: "next_operation",
             agent_editable: true,
             scope: "rea-runtime",
-            rea_restart_required: false,
+            update_mode: "runtime",
+            pending_restart: false,
           },
         },
       });
@@ -1883,6 +1877,36 @@ describe("Ghidra decompiler failure projection", () => {
       expect(action).not.toContain("rea doctor");
     }
   });
+});
+
+it("preserves a bridge request limit when reattributing a Ghidra session failure", async () => {
+  const refusal = bridgeRequestOversizeError(
+    "procedure_pseudo_code",
+    { maximumBytes: 8192, source: "runtime" },
+    9000,
+    "Ghidra",
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: () => Promise.resolve(ok(sessionInfo())),
+    callTool: () =>
+      Promise.resolve(
+        err(
+          new GhidraSessionError(
+            "protocol",
+            "Bridge request refused",
+            {},
+            { cause: refusal },
+          ),
+        ),
+      ),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const client = await createElfClient(ghidra);
+  const result = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  if (result.ok) throw new Error("Expected bridge limit refusal");
+  expect(result.error.limit).toEqual(refusal.limit);
 });
 
 describe("Ghidra decompile deadline for a finished invocation", () => {
@@ -1983,7 +2007,8 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
         minimum: 1,
         maximum: 2_147_483,
         agent_editable: true,
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       };
       expect(invocation.details?.limit).toEqual({
         ...enforced,
@@ -4365,7 +4390,8 @@ describe("Ghidra startup deadline for a finished invocation", () => {
     setting: "ghidra.startup_timeout_ms",
     effective_value: 250,
     agent_editable: true,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   };
   const invocationLimit = {
     ...startupLimit,
@@ -6695,3 +6721,219 @@ describe("Windows Ghidra readiness repair", () => {
       });
   });
 });
+
+const namingReplyCases: readonly {
+  readonly label: string;
+  readonly operation: "set_address_name" | "set_addresses_names";
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly reply: {
+    readonly results: Record<string, boolean>;
+    readonly failures: Record<string, JsonValue>;
+    readonly conflicts: JsonValue[];
+  };
+  readonly accepted: boolean;
+  readonly expected?: JsonValue;
+}[] = [
+  {
+    label: "an unrelated single address",
+    operation: "set_address_name",
+    parameters: { address: "0x1000", name: "renamed" },
+    reply: { results: { "0x9000": true }, failures: {}, conflicts: [] },
+    accepted: false,
+  },
+  {
+    label: "an unrelated batch address",
+    operation: "set_addresses_names",
+    parameters: { names: { "0x1000": "renamed" } },
+    reply: { results: { "0x9000": true }, failures: {}, conflicts: [] },
+    accepted: false,
+  },
+  {
+    label: "distinct source spellings of the same address",
+    operation: "set_addresses_names",
+    parameters: { names: { "0x1000": "first", "ram:0x1000": "second" } },
+    reply: {
+      results: { "0x1000": false, "ram:0x1000": false },
+      failures: {
+        "0x1000": {
+          address: "0x1000",
+          reason: "conflicting_alias_names",
+          conflict: null,
+        },
+        "ram:0x1000": {
+          address: "0x1000",
+          reason: "conflicting_alias_names",
+          conflict: null,
+        },
+      },
+      conflicts: [],
+    },
+    accepted: true,
+    expected: { "0x1000": false, "ram:0x1000": false },
+  },
+  {
+    label: "a matching reported rename failure",
+    operation: "set_address_name",
+    parameters: { address: "0X001000", name: "renamed" },
+    reply: {
+      results: { "0X001000": false },
+      failures: {
+        "0X001000": {
+          address: "0x1000",
+          reason: "readback_mismatch",
+          conflict: null,
+        },
+      },
+      conflicts: [],
+    },
+    accepted: true,
+    expected: false,
+  },
+];
+
+it.each(namingReplyCases)(
+  "binds naming reply identity for $label through the public provider client",
+  async ({ operation, parameters, reply, accepted, expected }) => {
+    const ghidra = provider(installationHost(), () => ({
+      start: async () => ok(sessionInfo()),
+      callTool: async () => ok(reply),
+      close: async () => ok(null),
+    }));
+    const client = await createElfClient(ghidra);
+    try {
+      const result = await client.execute(operation, parameters);
+      if (!accepted) {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisOutputError",
+            diagnostics: { bridge_result: reply, mutation_outcome: "unknown" },
+          },
+        });
+        return;
+      }
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toEqual(expected);
+      expect(result.value.rawResult).toMatchObject({
+        failures: reply.failures,
+      });
+    } finally {
+      await client.close();
+      await ghidra.closeOwnedResources();
+    }
+  },
+);
+
+it.each([
+  [
+    "ghidra.decompile_timeout_seconds",
+    "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+    null,
+  ],
+  [
+    "ghidra.decompile_max_payload_mib",
+    "REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB",
+    null,
+  ],
+  [
+    "ghidra.value_flow_max_operations",
+    "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
+    100,
+  ],
+  [
+    "ghidra.value_flow_max_inputs_per_operation",
+    "REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION",
+    100,
+  ],
+  ["ghidra.value_flow_max_edges", "REA_GHIDRA_VALUE_FLOW_MAX_EDGES", 100],
+] as const)(
+  "admits unrelated Ghidra work with invalid %s, and rejects only its owning operation",
+  async (setting, environmentName, override) => {
+    const environment = {
+      GHIDRA_INSTALL_DIR: INSTALL,
+      [environmentName]: "invalid",
+    };
+    const parsed = parseConfig(environment);
+    if (!parsed.ok) throw parsed.error;
+    const settings = new AnalysisSettings(environment);
+    let created = 0;
+    const called: string[] = [];
+    const ghidra = new GhidraProvider(
+      runtimeAnalysisConfig(parsed.value, settings.read),
+      silentLogger,
+      {},
+      installationHost(),
+      (options) => {
+        created += 1;
+        return {
+          start: async () => {
+            const info = sessionInfo();
+            return ok({
+              ...info,
+              profile_digest: options.profileDigest,
+              target: { ...info.target, sha256: options.targetSha256 },
+            });
+          },
+          callTool: async (operation) => {
+            called.push(operation);
+            return operation === "address_name"
+              ? ok("fixture")
+              : err(new GhidraSessionError("protocol", "fixture reached"));
+          },
+          close: async () => ok(null),
+        };
+      },
+    );
+    const target = executableTarget("elf", "x86_64");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("Expected bound Ghidra profile");
+    const client = ghidra.createClient(target, resolved.value.profile);
+    const analyze = () =>
+      settings.run(() =>
+        client.execute("analyze_function", { procedure: "0x1000" }),
+      );
+    try {
+      expect(
+        await settings.run(() => client.execute("health", {})),
+      ).toMatchObject({ ok: true });
+      expect(created).toBe(1);
+      expect(
+        await settings.run(() =>
+          client.execute("address_name", { address: "0x1000" }),
+        ),
+      ).toMatchObject({ ok: true });
+      const refused = await analyze();
+      expect(refused).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "ConfigurationError",
+          settings: [expect.objectContaining({ setting: environmentName })],
+        },
+      });
+      expect(called).toEqual(["address_name"]);
+      expect(
+        settings.update({
+          changes: [{ setting, action: "set", value: override }],
+        }).ok,
+      ).toBe(true);
+      const accepted = await analyze();
+      expect(accepted).not.toMatchObject({
+        ok: false,
+        error: { _tag: "ConfigurationError" },
+      });
+      expect(called).toEqual(["address_name", "analyze_function"]);
+      expect(
+        settings.update({ changes: [{ setting, action: "reset" }] }).ok,
+      ).toBe(true);
+      expect(await analyze()).toMatchObject({
+        ok: false,
+        error: { _tag: "ConfigurationError" },
+      });
+      expect(called).toEqual(["address_name", "analyze_function"]);
+    } finally {
+      await client.close();
+      await ghidra.closeOwnedResources();
+    }
+  },
+);

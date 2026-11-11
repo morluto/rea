@@ -48,6 +48,7 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
+import type { KunaDeadline } from "./KunaConfiguration.js";
 import {
   kunaExportFileNames,
   exportKunaProject,
@@ -235,6 +236,8 @@ export interface KunaProjectRequest {
   readonly targetSha256: string;
   readonly signal?: AbortSignal;
   readonly onStatus?: (status: KunaExportStatus) => void;
+  /** Deadline accepted by the session that started this export. */
+  readonly deadline?: KunaDeadline;
 }
 
 /** One build whose process tree REA could not prove stopped. */
@@ -1004,6 +1007,7 @@ export class KunaProjectCache {
       launcher: this.#launcher,
       retainFailedFileClose: (owner, resource) =>
         this.#retainHashFile(owner, key, staging, resource),
+      ...(request.deadline === undefined ? {} : { deadline: request.deadline }),
     });
     if (outcome.kind === "retained") {
       const retained: RetainedProcess = {

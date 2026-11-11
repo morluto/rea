@@ -189,7 +189,7 @@ describe("application workflow MCP parity", () => {
       expect(full.isError).not.toBe(true);
       expect(full.structuredContent).toMatchObject({
         normalized_result: {
-          summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
+          summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
           property_inventories: expect.arrayContaining([
             expect.objectContaining({
               side: "right",
@@ -197,14 +197,24 @@ describe("application workflow MCP parity", () => {
               properties: expect.arrayContaining(["/depth"]),
             }),
           ]),
-          changes: [
-            {
+          changes: expect.arrayContaining([
+            expect.objectContaining({
               status: "added",
               path: "/depth",
               presence: { left: "absent", right: "present" },
               right: { availability: "literal", value: 1 },
-            },
-          ],
+            }),
+            ...["heading", "paragraph", "strong"].map((value) =>
+              expect.objectContaining({
+                path: "/text",
+                discriminant: { path: "/type", value },
+                status: "unknown",
+                left: expect.objectContaining({ availability: "unknown" }),
+                right: expect.objectContaining({ availability: "unknown" }),
+              }),
+            ),
+          ]),
+          coverage: { status: "partial" },
         },
       });
       const advertised = (await client.listTools()).tools.find(
@@ -317,8 +327,16 @@ describe("repeated partial export comparisons", () => {
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
         const evidence = parseEvidence(response.structuredContent);
         expect(evidence.normalized_result).toMatchObject({
-          changes: [],
-          summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
+          changes: [
+            expect.objectContaining({
+              path: "/count",
+              status: "unknown",
+              presence: { left: "unknown-coverage", right: "unknown-coverage" },
+              left: expect.objectContaining({ availability: "unknown" }),
+              right: expect.objectContaining({ availability: "unknown" }),
+            }),
+          ],
+          summary: { added: 0, removed: 0, changed: 0, unknown: 1 },
           coverage: { status: "partial" },
         });
         return evidence.evidence_id;

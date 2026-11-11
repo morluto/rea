@@ -174,5 +174,6 @@ export const withGpgvKeyCheck = async <Value>(
       throw resources.cleanupFailure(outcome, [removed]);
   }
   if (outcome.kind === "failed") throw outcome.cause;
+  signal?.throwIfAborted();
   return outcome.value;
 };

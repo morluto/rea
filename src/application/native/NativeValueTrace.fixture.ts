@@ -92,6 +92,7 @@ interface StaticProcedure {
 
 interface GraphOptions {
   readonly sessionSubject?: boolean;
+  readonly procedureAliases?: Readonly<Record<string, string>>;
 }
 
 /** A static call graph whose call sites resolve to the listed destinations. */
@@ -130,7 +131,7 @@ export const staticValueGraph = (
                   : "direct",
               mechanism: ambiguous ? "computed" : "direct",
               targets: targets.map(({ destination, status }) => ({
-                address: destination,
+                address: options.procedureAliases?.[destination] ?? destination,
                 procedure: destination,
                 status,
                 basis: "provider-reference",
@@ -145,8 +146,9 @@ export const staticValueGraph = (
       }
       if (operation !== "analyze_function")
         throw new Error(`Unexpected native trace operation: ${operation}`);
-      const address = String(parameters.procedure);
-      analyzed.push(address);
+      const selector = String(parameters.procedure);
+      const address = options.procedureAliases?.[selector] ?? selector;
+      analyzed.push(selector);
       const facts = procedures[address];
       if (facts === undefined) throw new Error(`Unexpected ${address}`);
       const dossier = functionDossierSchema.parse(
@@ -255,3 +257,24 @@ export const failingValueTraceReads = (
   };
   return { port: failing, reads };
 };
+
+/** Three recovered call arguments, with only the first parameter recovered. */
+export const valueTraceUnboundArguments = (options: GraphOptions = {}) =>
+  staticValueGraph(
+    {
+      "0x1000": {
+        operations: [
+          {
+            ...pcodeOperation("call", "0x1010", "CALL"),
+            inputs: Array.from({ length: 4 }, () => pcodeScalar),
+          },
+        ],
+      },
+      "0x2000": {
+        operations: [pcodeOperation("return", "0x2010", "RETURN")],
+        parameters: [{ ordinal: 0, name: "fixed", data_type: "/int" }],
+      },
+    },
+    { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+    options,
+  );

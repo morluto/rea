@@ -3,6 +3,9 @@ import { expect, it, vi } from "vitest";
 const source = vi.hoisted(() => ({
   present: true,
   reason: "process_not_in_snapshot",
+  identity: undefined as string | undefined,
+  runId: undefined as string | undefined,
+  reads: [] as number[][],
 }));
 vi.mock("./ExecFileOutput.js", () => ({
   execFileOutput: async () => ({
@@ -11,12 +14,33 @@ vi.mock("./ExecFileOutput.js", () => ({
 }));
 vi.mock("./DarwinProcessRunTokenReader.js", () => ({
   createDarwinProcessRunTokenReader: () => ({
-    read: async () =>
-      new Map([[100, { state: "unavailable", reason: source.reason }]]),
+    read: async (processes: readonly { readonly pid: number }[]) => {
+      source.reads.push(processes.map(({ pid }) => pid));
+      return new Map(
+        processes.map(({ pid }) => [
+          pid,
+          source.runId === undefined
+            ? { state: "unavailable" as const, reason: source.reason }
+            : { state: "readable" as const, runId: source.runId },
+        ]),
+      );
+    },
+    identities: async (processes: readonly { readonly pid: number }[]) =>
+      new Map(
+        processes.map(({ pid }) => [
+          pid,
+          source.identity === undefined
+            ? { state: "absent" as const, reason: "not-in-snapshot" as const }
+            : { state: "readable" as const, identity: source.identity },
+        ]),
+      ),
   }),
 }));
 
-import { createSystemProcessOwnershipHost } from "./ProcessOwnershipObservation.js";
+import {
+  createSystemProcessOwnershipHost,
+  observeProcessStartIdentity,
+} from "./ProcessOwnershipObservation.js";
 import { ProcessRunTokenReadError } from "./ProcessRunTokenObservations.js";
 
 it.each([
@@ -26,7 +50,11 @@ it.each([
 ])(
   "retains native run-token availability at the host adapter: %j",
   async (state) => {
-    Object.assign(source, state);
+    Object.assign(source, state, {
+      identity: undefined,
+      runId: undefined,
+      reads: [],
+    });
     const host = createSystemProcessOwnershipHost("darwin", {});
     const failure = await host
       .environment(100)
@@ -39,3 +67,18 @@ it.each([
     });
   },
 );
+
+it("binds an omitted Darwin PID through the native token reader", async () => {
+  Object.assign(source, {
+    present: false,
+    reason: "process_not_in_snapshot",
+    identity: "start-1",
+    runId: "captured-run",
+    reads: [],
+  });
+  const host = createSystemProcessOwnershipHost("darwin", {});
+  await expect(
+    observeProcessStartIdentity(100, host, "captured-run"),
+  ).resolves.toEqual({ state: "readable", identity: "start-1" });
+  expect(source.reads).toEqual([[100]]);
+});

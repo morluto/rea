@@ -28,7 +28,12 @@ const OID_NAMES: Readonly<Record<string, string>> = {
 
 /** A fixed per-payload decoder allowance and its limit. */
 export interface PeCertificateDecodeAllowance {
-  readonly allowance: "asn1-nodes" | "decoded-text";
+  readonly allowance:
+    | "asn1-nodes"
+    | "asn1-depth"
+    | "decoded-text"
+    | "oid-bytes"
+    | "oid-arc-bytes";
   readonly limit: number;
 }
 
@@ -62,9 +67,15 @@ export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
     if (cause instanceof Asn1BerFailure)
       throw new PeCertificateAsn1Failure(
         cause.message,
-        cause.kind === "budget-exceeded"
-          ? { allowance: "asn1-nodes", limit: cause.limit ?? ASN1_NODE_BUDGET }
-          : null,
+        cause.constraint === null
+          ? null
+          : {
+              allowance:
+                cause.constraint.resource === "nodes"
+                  ? "asn1-nodes"
+                  : "asn1-depth",
+              limit: cause.constraint.limit,
+            },
       );
     throw cause;
   }
@@ -112,12 +123,14 @@ export const decodeOid = (content: Buffer): string => {
     case "empty":
       return fail("Empty OBJECT IDENTIFIER.");
     case "byte-limit":
-      return fail(
+      throw new PeCertificateAsn1Failure(
         `OBJECT IDENTIFIER exceeds ${String(decoded.error.limit)} bytes.`,
+        { allowance: "oid-bytes", limit: decoded.error.limit },
       );
     case "arc-limit":
-      return fail(
+      throw new PeCertificateAsn1Failure(
         `OBJECT IDENTIFIER arc exceeds ${String(decoded.error.limit)} bytes.`,
+        { allowance: "oid-arc-bytes", limit: decoded.error.limit },
       );
     case "non-minimal":
       return fail("Non-minimal OBJECT IDENTIFIER component.");
@@ -217,11 +230,7 @@ const decodeDirectoryString = (
 // X.690 8.3.1 and 8.3.2 hold for BER as well as DER: an INTEGER has at least
 // one content octet, and its first nine bits are never all zeros or all ones.
 // Padded encodings would otherwise collapse onto the minimal serial's hex.
-const integerHex = (
-  content: Buffer,
-  budget: DecodedNameBudget,
-  label: string,
-): string => {
+const requireIntegerContent = (content: Buffer, label: string): void => {
   if (content.length === 0) return fail(`${label} INTEGER is empty.`);
   const second = content[1];
   if (
@@ -230,6 +239,14 @@ const integerHex = (
       (content[0] === 0xff && second >= 0x80))
   )
     return fail(`${label} INTEGER is not minimally encoded.`);
+};
+
+const integerHex = (
+  content: Buffer,
+  budget: DecodedNameBudget,
+  label: string,
+): string => {
+  requireIntegerContent(content, label);
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
   chargeDecodedName(budget, (content.length - start) * 2);
@@ -280,6 +297,7 @@ interface Attribute {
   readonly oid: string;
   readonly oid_name: string | null;
   readonly value: string;
+  readonly rdn_index: number;
 }
 
 const decodeName = (
@@ -290,7 +308,7 @@ const decodeName = (
   readonly attributes: readonly Attribute[];
 } => {
   const attributes: Attribute[] = [];
-  for (const rdn of sequence(node, "Name")) {
+  for (const [rdnIndex, rdn] of sequence(node, "Name").entries()) {
     if (rdn.tag !== 0x31) return fail("Name RDN is not a SET.");
     if (rdn.children.length === 0) return fail("Name RDN is empty.");
     for (const attribute of rdn.children) {
@@ -310,16 +328,29 @@ const decodeName = (
         oid,
         oid_name: oidName(oid),
         value: decodeDirectoryString(valueNode, budget),
+        rdn_index: rdnIndex,
       });
     }
   }
-  const text = attributes
-    .map((attribute) => {
-      const key = attribute.oid_name ?? attribute.oid;
-      return `${key}=${attribute.value}`;
-    })
-    .join(", ");
-  return { text, attributes };
+  // RFC 4514 joins one RDN's attributes with "+" and RDNs with a comma.
+  // Keep encoded order: reversing RDNs would change every existing name.
+  const renderedRdns: string[] = [];
+  let openRdn = -1;
+  let openAttributes: string[] = [];
+  const finishRdn = (): void => {
+    if (openAttributes.length > 0) renderedRdns.push(openAttributes.join("+"));
+  };
+  for (const attribute of attributes) {
+    if (attribute.rdn_index !== openRdn) {
+      finishRdn();
+      openRdn = attribute.rdn_index;
+      openAttributes = [];
+    }
+    const key = attribute.oid_name ?? attribute.oid;
+    openAttributes.push(`${key}=${attribute.value}`);
+  }
+  finishRdn();
+  return { text: renderedRdns.join(", "), attributes };
 };
 
 // RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and
@@ -703,6 +734,7 @@ const parseSignedData = (
   const [version, digestSet, encapContentInfo] = children;
   if (version === undefined || version.tag !== 0x02)
     return fail("SignedData is missing version.");
+  requireIntegerContent(version.content, "SignedData version");
   if (digestSet === undefined || digestSet.tag !== 0x31)
     return fail("SignedData is missing digestAlgorithms.");
   if (
