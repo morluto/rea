@@ -607,7 +607,8 @@ value for `value_equals`, `value_absent` and `member_count`. With
 `output: "lines"`, they supply the lines for `lines_present`, `lines_absent`
 and `line_count`. A check selects a reader with `"reader": "READER-ID"`
 and must give that reader's file as its `file`. Every reader must be used by
-at least one check.
+at least one check. Marked output must be valid UTF-8. Invalid bytes in a
+marked line report a reader error.
 
 Readers execute commands, including any code in `argv` or `stdin`; review
 them before exporting or running a task. The runner uses a private copy, a

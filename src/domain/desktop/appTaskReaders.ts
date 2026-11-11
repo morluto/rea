@@ -53,7 +53,7 @@ POLL_S = 0.05
 DRAIN_S = 2.0
 MAX_LINES = 5000
 MAX_SAFE_INTEGER = 2**53 - 1
-LINE_BREAK = re.compile(r"\r?\n")
+LINE_BREAK = re.compile(rb"\r?\n")
 SESSION = ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY")
 NEVER = ("DBUS_SESSION_BUS_ADDRESS", "SESSION_MANAGER", "XDG_RUNTIME_DIR")
 FRESH = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_CACHE_HOME", ".cache"),
@@ -167,7 +167,11 @@ def _run(arguments: dict, source: str, work: str) -> dict:
         return {"error": f"the reader ran past its {timeout} s{_tail(stderr)}"}
     if process.returncode != 0:
         return {"error": f"the reader exited {process.returncode}{_tail(stderr)}"}
-    lines = [line[len(MARKER):] for line in LINE_BREAK.split(printed.decode("utf-8", "replace")) if line.startswith(MARKER)]
+    marker = MARKER.encode("ascii")
+    try:
+        lines = [line[len(marker):].decode("utf-8") for line in LINE_BREAK.split(printed) if line.startswith(marker)]
+    except UnicodeDecodeError:
+        return {"error": "the reader's marked output is not valid UTF-8"}
     if not lines:
         return {"error": f"the reader printed no line starting with {json.dumps(MARKER)}{_tail(stderr)}"}
     return _view(arguments["output"], lines)
