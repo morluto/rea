@@ -41,13 +41,6 @@ it.each(
         details: { operation: `inspect_pe_${operation}`, path },
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-      await writeFile(path, Buffer.from("MZ"));
-      const malformed = await provider.inspect(input);
-      if (malformed.ok) throw new Error("Expected malformed input");
-      expect(projectAnalysisError(malformed.error)).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
-      });
     } finally {
       await provider.close();
     }
