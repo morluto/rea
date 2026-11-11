@@ -1,5 +1,6 @@
 import {
   captureDecoderHeapRecovery,
+  captureDecoderHeapContinuingRecovery,
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../../src/config/captureDecoderHeap.js";
@@ -112,7 +113,9 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     expect(JSON.stringify(response)).not.toContain("caller-marked");
     expect(JSON.stringify(response)).not.toContain("rea doctor");
     const remediation = String(exhausted.error.remediation?.action ?? "");
-    expect(remediation).toContain(captureDecoderHeapRecovery(testHeap));
+    expect(remediation).toContain(
+      captureDecoderHeapContinuingRecovery(testHeap),
+    );
     const failed: unknown = await execute(
       process.execPath,
       [
