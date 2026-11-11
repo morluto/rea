@@ -1,3 +1,8 @@
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewFileLimitMessage,
+  type DesktopViewPolicy,
+} from "../../domain/desktop/desktopViewPolicy.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
@@ -15,6 +20,7 @@ import {
   identityLeftIn,
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
+import { withoutRecoveryList } from "../../domain/desktop/seedRecoveryList.js";
 import { scrubSeed } from "../../domain/desktop/seedScrub.js";
 import {
   isTextualFormat,
@@ -95,6 +101,40 @@ const retainedBytes = async (
 };
 
 /**
+ * A seed as it ships: LibreOffice's recovery list left out, then the
+ * identity scrubbed, a gzip seed's inside its document. LibreOffice writes
+ * its registry uncompressed, so a gzip seed holds no recovery list to drop.
+ */
+const shippedSeed = (
+  bytes: Buffer,
+  seed: NonNullable<RetainedCopy["seed"]>,
+  identity: HostIdentity,
+) => {
+  const recovered = withoutRecoveryList(seed.home, bytes);
+  const scrub = scrubSeed(recovered ?? bytes, seed, identity);
+  return {
+    bytes: scrub.bytes ?? recovered,
+    holdsIdentity: scrub.holdsIdentity,
+    scrubbed: scrub.bytes !== undefined && scrub.recompressed !== true,
+    recompressed: scrub.recompressed === true,
+    recovered: recovered !== undefined,
+  };
+};
+
+/** A seed's bytes as the bundle ships them, for a task's reader to read at the seed. */
+export const shippedSeedBytes = async (
+  content: RetainedContent,
+  copy: RetainedCopy,
+  identity: HostIdentity,
+  signal: AbortSignal | undefined,
+): Promise<Buffer> => {
+  const bytes = await retainedBytes(content, copy, signal);
+  return copy.seed === undefined
+    ? bytes
+    : (shippedSeed(bytes, copy.seed, identity).bytes ?? bytes);
+};
+
+/**
  * The view of each rewritten seed, including a formerly unreadable gzip
  * seed, as the bundle ships it: the computer starts from these bytes.
  */
@@ -103,6 +143,7 @@ export const shippedSeedViews = async (
   copies: readonly RetainedCopy[],
   identity: HostIdentity,
   signal: AbortSignal | undefined,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): Promise<ReadonlyMap<string, TaskFileView>> => {
   const views = new Map<string, TaskFileView>();
   for (const copy of copies) {
@@ -113,17 +154,25 @@ export const shippedSeedViews = async (
     )
       continue;
     const bytes = await retainedBytes(content, copy, signal);
-    const shipped = scrubSeed(bytes, seed, identity).bytes;
+    const shipped = shippedSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;
-    const document = openStateDocument(seed.home, shipped);
+    if (shipped.length > policy.file_bytes) {
+      views.set(seed.home, {
+        format: null,
+        view: null,
+        error: desktopViewFileLimitMessage(policy),
+      });
+      continue;
+    }
+    const document = openStateDocument(seed.home, shipped, policy);
     const { format } = document;
     const view =
       "error" in document
         ? err(document.error)
         : format === "zip"
-          ? await readZipView(document.bytes, signal)
+          ? await readZipView(document.bytes, signal, policy)
           : isTextualFormat(format)
-            ? textualView(format, document.bytes)
+            ? textualView(format, document.bytes, policy)
             : undefined;
     views.set(seed.home, {
       format,
@@ -138,11 +187,11 @@ export const shippedSeedViews = async (
 
 /**
  * Write the generated files, then each retained file as it is read, so one at
- * a time is in memory: a seed whose text names the capture host becomes a
- * generated file with its own digest, and a gzip seed whose document did not
- * change is listed apart as recompressed. The README follows, listing them.
- * Every file is listed as unscrubbed whose path or content still holds the
- * identity.
+ * a time is in memory: a seed whose text names the capture host, or that
+ * holds LibreOffice's recovery list, becomes a generated file with its own
+ * digest, and a gzip seed whose document did not change is listed apart as
+ * recompressed. The README follows, listing them. Every file is listed as
+ * unscrubbed whose path or content still holds the identity.
  */
 export const writeFiles = async (
   tree: SafeOutputTree,
@@ -153,6 +202,7 @@ export const writeFiles = async (
   const scrubbed: string[] = [];
   const recompressed: string[] = [];
   const unscrubbed: string[] = [];
+  const recovered: string[] = [];
   const write = async (
     path: string,
     bytes: Buffer,
@@ -184,20 +234,27 @@ export const writeFiles = async (
   for (const file of bundle.generated) await generated(file);
   for (const copy of bundle.copies) {
     const bytes = await retainedBytes(content, copy, signal);
-    const scrub =
+    const shipped =
       copy.seed === undefined
         ? undefined
-        : scrubSeed(bytes, copy.seed, bundle.identity);
-    const holdsIdentity = scrub?.holdsIdentity === true;
-    if (scrub?.bytes === undefined)
+        : shippedSeed(bytes, copy.seed, bundle.identity);
+    const holdsIdentity = shipped?.holdsIdentity === true;
+    if (shipped?.recovered === true) recovered.push(copy.name);
+    if (shipped?.bytes === undefined)
       await write(copy.path, bytes, { sha256: copy.digest, holdsIdentity });
     else {
-      (scrub.recompressed === true ? recompressed : scrubbed).push(copy.path);
-      await write(copy.path, scrub.bytes, { holdsIdentity });
+      if (shipped.scrubbed) scrubbed.push(copy.path);
+      else if (shipped.recompressed) recompressed.push(copy.path);
+      await write(copy.path, shipped.bytes, { holdsIdentity });
     }
   }
   await generated(
-    bundle.readme({ scrubbed, recompressed, unscrubbed: [...unscrubbed] }),
+    bundle.readme({
+      scrubbed,
+      recompressed,
+      unscrubbed: [...unscrubbed],
+      recovered,
+    }),
   );
-  return { scrubbed, recompressed, unscrubbed };
+  return { scrubbed, recompressed, unscrubbed, recovered };
 };

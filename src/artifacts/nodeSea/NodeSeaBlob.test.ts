@@ -2,7 +2,7 @@ import { setImmediate } from "node:timers/promises";
 
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { DEFAULT_NODE_SEA_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
 import {
   NODE_SEA_MAGIC,
   decodeNodeSeaBlob,
@@ -134,79 +134,82 @@ it.each([
   },
 );
 
-const limitOf = async (bytes: Buffer): Promise<ArtifactReaderFailure> => {
-  try {
-    await decodeNodeSeaBlob(bytes);
-  } catch (cause) {
-    if (cause instanceof ArtifactReaderFailure) return cause;
-    throw cause;
-  }
-  throw new Error("expected a limit failure");
-};
-
-it("refuses an asset table over its count bound before creating records", async () => {
-  const assets = Array.from({ length: 100_001 }, (_, index) => ({
-    name: `asset-${String(index)}`,
-    body: "",
-  }));
-  const failure = await limitOf(buildNodeSeaBlob({ assets }));
-  expect(failure).toMatchObject({
-    reason: "limit",
-    message: expect.stringMatching(
-      /asset count.*100000.*no runtime override/iu,
-    ),
-  });
-});
-
-it("refuses asset names over the decoded name budget", async () => {
-  const name = "n".repeat(4 * 1024 * 1024 + 1);
-  const failure = await limitOf(
-    buildNodeSeaBlob({
-      assets: [
-        { name: `a${name}`, body: "" },
-        { name: `b${name}`, body: "" },
-      ],
+it("rejects impossible asset rows before applying resource admission", async () => {
+  const prefix = buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] });
+  const count = Buffer.alloc(8);
+  count.writeBigUInt64LE(2n);
+  const bytes = Buffer.concat([prefix.subarray(0, -25), count]);
+  await expect(
+    decodeNodeSeaBlob(bytes, undefined, {
+      ...DEFAULT_NODE_SEA_READER_LIMITS,
+      asset_count: 1,
     }),
-  );
-  expect(failure).toMatchObject({
-    reason: "limit",
-    message: expect.stringMatching(
-      /asset names.*8388608.*no runtime override/iu,
-    ),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/Node SEA.*truncated/iu),
+    readerLimit: undefined,
   });
 });
 
 it.each([
-  {
-    label: "count",
-    accepted: () => Array.from({ length: 4096 }, () => "x"),
-    args: () => Array.from({ length: 4097 }, () => "x"),
-    boundary: "capacity",
-    warning: /exec argv count.*4096.*no runtime override/iu,
-  },
-  {
-    label: "text",
-    accepted: () => ["x".repeat(1024 * 1024)],
-    args: () => ["x".repeat(1024 * 1024 + 1)],
-    boundary: "memory",
-    warning: /exec argv text.*1048576.*no runtime override/iu,
-  },
+  { field: "asset_count" as const, limit: 1, raised: 2 },
+  { field: "asset_name_bytes" as const, limit: 2, raised: 3 },
+  { field: "argument_count" as const, limit: 1, raised: 2 },
+  { field: "argument_bytes" as const, limit: 2, raised: 3 },
 ])(
-  "admits exec argument $label at its bound and refuses more",
-  async ({ accepted, args, boundary, warning }) => {
-    const atLimit = accepted();
-    expect(
-      (await decodeNodeSeaBlob(buildNodeSeaBlob({ execArgv: atLimit })))
-        .execArgv,
-    ).toEqual(atLimit);
-    const failure = await limitOf(buildNodeSeaBlob({ execArgv: args() }));
-    expect(failure).toMatchObject({
-      reason: "limit",
-      boundary,
-      message: expect.stringMatching(warning),
+  "recovers the same blob after raising $field",
+  async ({ field, limit, raised }) => {
+    const bytes = buildNodeSeaBlob({
+      assets: [
+        { name: "a", body: "one" },
+        { name: "bb", body: "two" },
+      ],
+      execArgv: ["x", "yz"],
     });
+    await expect(
+      decodeNodeSeaBlob(bytes, undefined, {
+        ...DEFAULT_NODE_SEA_READER_LIMITS,
+        [field]: limit,
+      }),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: {
+        parameter: `artifact_limits.node_sea.${field}`,
+        effective_value: limit,
+      },
+    });
+    const recovered = await decodeNodeSeaBlob(bytes, undefined, {
+      ...DEFAULT_NODE_SEA_READER_LIMITS,
+      [field]: raised,
+    });
+    expect(recovered.assets.map((asset) => asset.name)).toEqual(["a", "bb"]);
+    expect(recovered.execArgv).toEqual(["x", "yz"]);
   },
 );
+
+it("applies blob byte admission even when called without a carrier reader", async () => {
+  const bytes = buildNodeSeaBlob({ main: "hello" });
+  await expect(
+    decodeNodeSeaBlob(bytes, undefined, {
+      ...DEFAULT_NODE_SEA_READER_LIMITS,
+      blob_bytes: bytes.length - 1,
+    }),
+  ).rejects.toMatchObject({
+    reason: "limit",
+    readerLimit: {
+      parameter: "artifact_limits.node_sea.blob_bytes",
+      required_value: bytes.length,
+    },
+  });
+  expect(
+    (
+      await decodeNodeSeaBlob(bytes, undefined, {
+        ...DEFAULT_NODE_SEA_READER_LIMITS,
+        blob_bytes: bytes.length,
+      })
+    ).mainScript?.length,
+  ).toBe(5);
+});
 
 it("rejects non-zero trailing bytes and keeps zero padding", async () => {
   const padded = buildNodeSeaBlob({ trailing: Buffer.alloc(8) });

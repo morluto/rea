@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά** · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά** · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -280,6 +280,12 @@ agent-env run ./my-env
 [Οδηγός δημιουργίας περιβάλλοντος](https://rea.tools/guides/rl-environments/) ·
 [Αναφορά περιβαλλόντων](../agent-environments.md) ·
 [Δείτε το demo στο X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Περιβάλλοντα εφαρμογών επιφάνειας εργασίας
+
+Το REA μπορεί επίσης να δημιουργήσει περιβάλλον για μια εφαρμογή επιφάνειας εργασίας Linux, την οποία ο πράκτορας χρησιμοποιεί μέσω στιγμιότυπων οθόνης, ποντικιού και πληκτρολογίου. Από ένα αίτημα μίας γραμμής, όπως «Φτιάξε μου ένα περιβάλλον Gnote όπου ο πράκτορας προσθέτει ελαιόλαδο στη σημείωση με τη λίστα αγορών», ο πράκτοράς σας εγκαθιστά την εφαρμογή σε έναν τοπικό υπολογιστή κατασκευής, γράφει την εργασία, εξάγει το περιβάλλον και ελέγχει την εργασία σε έναν νέο υπολογιστή. Ο υπολογιστής που το κατασκευάζει χρειάζεται Linux σε amd64 ή arm64, Docker και την έκδοση του πλαισίου agentenv που ορίζει ο οδηγός.
+
+[Ρύθμιση περιβαλλόντων εφαρμογών επιφάνειας εργασίας](../desktop-build-computer.md)
 
 ## Συχνές ερωτήσεις
 

@@ -205,17 +205,53 @@ const pythonCodeObjectSchema = z.strictObject({
 });
 export type PythonPycCodeObject = z.infer<typeof pythonCodeObjectSchema>;
 
-export const pythonPycHeaderSchema = z.strictObject({
-  magic: z.number().int().min(0).max(0xffff),
-  python_version: z.string().min(1),
-  code_layout: z.enum(PYTHON_PYC_CODE_LAYOUTS),
-  flags: uint,
-  hash_based: z.boolean(),
-  check_source: z.boolean(),
-  source_hash_hex: z.string().nullable(),
-  source_mtime: uint.nullable(),
-  source_size: uint.nullable(),
-});
+export const pythonPycHeaderSchema = z
+  .strictObject({
+    magic: z.number().int().min(0).max(0xffff),
+    python_version: z.string().min(1),
+    code_layout: z.enum(PYTHON_PYC_CODE_LAYOUTS),
+    flags: uint,
+    hash_based: z.boolean(),
+    check_source: z.boolean(),
+    source_hash_hex: z
+      .string()
+      .regex(/^[0-9a-f]{16}$/u)
+      .nullable(),
+    source_mtime: uint.nullable(),
+    source_size: uint.nullable(),
+  })
+  .superRefine((header, context) => {
+    for (const [field, flag] of [
+      ["hash_based", PYTHON_PYC_HASH_BASED],
+      ["check_source", PYTHON_PYC_CHECK_SOURCE],
+    ] as const)
+      if (header[field] !== ((header.flags & flag) !== 0))
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} disagrees with its recorded header flag.`,
+        });
+    if (header.hash_based === (header.source_hash_hex === null))
+      context.addIssue({
+        code: "custom",
+        path: ["source_hash_hex"],
+        message:
+          "Hash-based pycs require an 8-byte source hash; others must omit it.",
+      });
+    if (header.hash_based === (header.source_mtime !== null))
+      context.addIssue({
+        code: "custom",
+        path: ["source_mtime"],
+        message: "Timestamp pycs require mtime; hash-based pycs must omit it.",
+      });
+    if (header.hash_based === (header.source_size !== null))
+      context.addIssue({
+        code: "custom",
+        path: ["source_size"],
+        message:
+          "Timestamp pycs require source_size; hash-based pycs must omit it.",
+      });
+  });
 
 /** Bounded CPython 3.7–3.13 pyc observation; marshal is walked, bytecode is not decompiled. */
 export const pythonPycSchema = z
@@ -251,29 +287,6 @@ export const pythonPycSchema = z
         code: "custom",
         path: ["coverage", "marshal_bytes"],
         message: "Marshal byte count disagrees with the header-stripped file.",
-      });
-    }
-    if (report.header.hash_based === (report.header.source_hash_hex === null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["header", "source_hash_hex"],
-        message:
-          "Hash-based pycs require an 8-byte source hash; others must omit it.",
-      });
-    }
-    if (report.header.hash_based === (report.header.source_mtime !== null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["header", "source_mtime"],
-        message: "Timestamp pycs require mtime; hash-based pycs must omit it.",
-      });
-    }
-    if (report.header.hash_based === (report.header.source_size !== null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["header", "source_size"],
-        message:
-          "Timestamp pycs require source_size; hash-based pycs must omit it.",
       });
     }
     if (report.coverage.code_objects !== report.code_objects.length) {

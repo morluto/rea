@@ -72,6 +72,41 @@ it("retains a publication receipt when formatting fails after the invocation con
   expect(Buffer.concat(chunks).toString("utf8")).toContain("/tmp/result.json");
 });
 
+it.each([
+  { format: "md", value: "\u0000", window: false },
+  { format: "toon", value: "\ud800", window: false },
+  { format: "toon", value: "\ud800", window: true },
+] as const)(
+  "retains the committed receipt when $format cannot encode output (token window: $window)",
+  async ({ format, value, window }) => {
+    const chunks: Buffer[] = [];
+    const receipt = { path: "/authored/retained.json", bytes: 123 };
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "--format",
+        format,
+        ...(window ? ["--token-limit", "1000"] : []),
+      ]),
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      }),
+    );
+    if (output === undefined) throw new Error("Missing output owner");
+    await withCliEvidencePublication(async () => {
+      recordCliEvidencePublication(receipt);
+      expect(await output.write({ value }, { ...metadata, format })).toBe(true);
+    });
+    expect(output.error).toMatchObject({
+      code: "invalid_request",
+      details: { diagnostics: { evidence_bundle: receipt } },
+    });
+    expect(Buffer.concat(chunks).toString("utf8")).toContain(receipt.path);
+  },
+);
+
 describe("CLI formatting stage admission", () => {
   it("preserves native CTA sentinel output", async () => {
     const replies: string[] = [];

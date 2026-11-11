@@ -83,7 +83,8 @@ export const captureStorage = async (
     // Like IndexedDB names, a missing, non-array or partly unusable cache
     // list is an incomplete enumeration rather than an empty one.
     Array.isArray(cacheField) &&
-    caches.length === cacheField.length;
+    caches.length === cacheField.length &&
+    caches.every(({ id }) => id !== undefined);
   const keysExclusion = !context.input.include_storage_keys
     ? undefined
     : local.exclusion === "provider_unavailable" ||
@@ -127,7 +128,7 @@ const capturedCaches = (
   values.flatMap((cache) => {
     const name = cdpStringValue(cache.cacheName);
     const id = cdpStringValue(cache.cacheId);
-    return name === undefined || id === undefined ? [] : [{ name, id }];
+    return name === undefined ? [] : [{ name, id }];
   });
 
 const storageItems = async (
@@ -154,9 +155,14 @@ const storageItems = async (
     if (!Array.isArray(entry)) return [];
     const key = cdpStringValue(entry[0]);
     const value = cdpStringValue(entry[1]);
-    return key === undefined || value === undefined ? [] : [{ key, value }];
+    return key === undefined ? [] : [{ key, value }];
   });
-  return { items, complete: items.length === entries.length };
+  return {
+    items,
+    complete:
+      items.length === entries.length &&
+      items.every(({ value }) => value !== undefined),
+  };
 };
 
 const stringArray = (value: unknown): readonly string[] =>

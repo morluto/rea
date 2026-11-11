@@ -2,7 +2,10 @@ import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { evmCompilerSelection } from "../domain/evm/evmInterface.js";
+import {
+  evmCompilerSelection,
+  selectedEvmProducerLimits,
+} from "../domain/evm/evmInterface.js";
 import type { SolcArtifact } from "../domain/evm/solcArtifact.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -15,7 +18,7 @@ import { evmWorkerRequestSchema } from "./EvmInterfaceWorkerContract.js";
 import { evmoleInterfaceReplySchema } from "./EvmoleInterfaceAdapter.js";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
 import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
-
+import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 class UnsupportedContainer extends Error {}
 
 /** Admit bounded encoded parts before allocating a complete worker reply. */
@@ -46,6 +49,7 @@ const main = async (): Promise<void> => {
   const request = evmWorkerRequestSchema.parse(
     JSON.parse(await readFile(requestPath, "utf8")),
   );
+  const limits = selectedEvmProducerLimits(request.producer_limits);
   let reply: unknown;
   let compilerFailureContext:
     | {
@@ -54,7 +58,9 @@ const main = async (): Promise<void> => {
       }
     | undefined;
   try {
-    const carrier = await readFile(request.snapshot_path);
+    const carrier = (
+      await readStableArtifact(request.snapshot_path, limits.input_bytes)
+    ).bytes;
     const compilerSelection = evmCompilerSelection(request.encoding);
     if (compilerSelection !== undefined)
       compilerFailureContext = {
@@ -170,7 +176,10 @@ const main = async (): Promise<void> => {
       ...compilerFailureContext,
     };
   }
-  const admitted = encodeReply(reply, request.file_size_bytes);
+  const admitted = encodeReply(
+    reply,
+    Math.min(request.file_size_bytes, limits.output_bytes),
+  );
   let encoded: string;
   if (admitted.ok) encoded = admitted.value;
   else {
@@ -180,7 +189,7 @@ const main = async (): Promise<void> => {
         ...admitted.error,
         ...compilerFailureContext,
       },
-      request.file_size_bytes,
+      Math.min(request.file_size_bytes, limits.output_bytes),
     );
     encoded = failure.ok
       ? failure.value

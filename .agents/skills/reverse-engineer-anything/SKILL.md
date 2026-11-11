@@ -17,9 +17,9 @@ readiness or provider commands.
 
 Installing this skill supplies instructions; it does not register the REA MCP
 server, install analysis engines, or add tools to an already-running agent.
-The exception is a Claude Code or Codex plugin install: the plugin bundles
-this skill and registers its own `rea` server, outside the state that
-`rea setup` and `rea doctor` manage.
+The exception is a Claude Code, Codex, or Cursor Marketplace plugin install:
+the plugin bundles this skill and registers its own `rea` server, outside the
+state that `rea setup` and `rea doctor` manage.
 
 If REA tools are available and their registration is not known to be stale,
 proceed directly to the target. Do not run diagnostics or setup before every
@@ -213,8 +213,9 @@ explicit path or endpoint and do not need it.
   `raw` or `hex` encoding, or a `solc-json` compiler-selection object naming the
   exact source unit, contract and creation/deployed kind. Preserve
   carrier/decoded digests. The owned worker deadline is `timeout_ms` (default
-  30000 ms, range 1..2147483647, next call); fixed byte, address-space and CPU
-  allowances stay unchanged. Treat selectors,
+  30000 ms, range 1..2147483647, next call). Select byte, address-space and CPU
+  allowances separately through `producer_limits`; tighter inherited OS limits
+  remain enforced, and the 256 MiB worker heap is independent. Treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
   lookup or target execution. For the complete inferred interface without hex or
   duplicate stdout, discover support and select `detail: "summary"`; complete
@@ -315,6 +316,14 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- Code that runs before `main` or at exit in ELF or Mach-O:
+  `inspect_native_initializers` with the explicit local file (and
+  `architecture` for a universal Mach-O). This built-in inspection requires no
+  disassembler. Preserve slot and target addresses, the `resolution` of each
+  entry, and its limitations. An `unresolved` slot is not a zero pointer, and a
+  missing table is not proof that no constructor exists. See the
+  [initializer guide](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
+
 - ELF unwind function ranges: `inspect_elf_unwind_ranges` with the explicit
   local ELF32/ELF64 file. This built-in target-free inspection requires no
   disassembler. Preserve FDE start, end, size, containing section, exact
@@ -330,7 +339,9 @@ explicit path or endpoint and do not need it.
   exception facts, lossless integer registers, usedImages UUIDs, and
   documented classification matches. Only `bug_type` `"309"` yields a crash
   body; other types, including `"288"` stackshots, return no crash result.
-  Opened Mach-O and dSYM UUID joins remain unobserved. See the
+  Select an optional `join_path` for UUID-and-architecture matching to one
+  local Mach-O or dSYM; preserve slice identity and unjoined reasons. Joined
+  static addresses do not resolve function names or dSYM symbols. See the
   [Apple IPS guide](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 - Linux kernel module metadata: `inspect_kernel_module` with the explicit local
   ELF32/ELF64 relocatable file. This built-in target-free inspection requires

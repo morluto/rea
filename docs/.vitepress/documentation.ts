@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF and Mach-O initializer functions",
+        source: "guides/native/native-initializers.md",
+        route: "/native-initializers",
+      },
+      {
         text: "ELF unwind function ranges",
         source: "guides/native/elf-unwind-ranges.md",
         route: "/elf-unwind-ranges",
@@ -62,6 +67,11 @@ export const documentationSections = [
         text: "Windows Shell Link shortcuts",
         source: "guides/native/windows-shortcut.md",
         route: "/windows-shortcut",
+      },
+      {
+        source: "guides/native/ntfs-metadata.md",
+        route: "/ntfs-metadata",
+        text: "Acquired NTFS metadata",
       },
     ],
   },
@@ -352,6 +362,11 @@ export const documentationSections = [
         text: "Settings and recovery",
         source: "design/limits-and-recovery.md",
         route: "/design/limits-and-recovery",
+      },
+      {
+        text: "REA limit inventory",
+        source: "design/rea-limit-inventory.md",
+        route: "/design/rea-limit-inventory",
       },
       {
         text: "MCP tool design",

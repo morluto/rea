@@ -18,7 +18,12 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { silentLogger } from "../logger.js";
 import {
+  GHIDRA_SESSION_CAPABILITIES,
+  parseGhidraSessionInfo,
+} from "./GhidraSessionValues.js";
+import {
   ghidraSeedFailure,
+  ghidraSeedReportSchema,
   ghidraSeedLimitations,
   parseGhidraSeeds,
   resolveGhidraAnalysisSeeds,
@@ -251,6 +256,79 @@ describe("Ghidra seed session verification", () => {
     label_failed: 0,
     unmapped: 0,
   };
+
+  it.each([100, 0])(
+    "rejects a handshake whose outcome counters report %i created functions",
+    (function_created) => {
+      const expected = {
+        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+        providerVersion: "12.1.4",
+        profileDigest: "a".repeat(64),
+        targetSha256: "b".repeat(64),
+      };
+      const parsed = parseGhidraSessionInfo(
+        {
+          name: "REA Ghidra bridge",
+          run_id: expected.runId,
+          profile_digest: expected.profileDigest,
+          provider: { id: "ghidra", version: expected.providerVersion },
+          read_only: false,
+          analysis_complete: true,
+          analysis_timed_out: false,
+          capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+          target: {
+            name: "fixture",
+            language_id: "x86:LE:64:default",
+            compiler_spec_id: "gcc",
+            image_base: "0x0",
+            default_address_space: "ram",
+            sha256: expected.targetSha256,
+          },
+          analysis_seeds: { ...report, function_created },
+        },
+        expected,
+      );
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: { code: "handshake_identity" },
+      });
+    },
+  );
+
+  it.each([
+    { function_created: 3, function_failed: 0, code_decoded: 0 },
+    { function_created: 0, function_failed: 0, code_decoded: 3 },
+    { function_created: 0, function_failed: 0, label_applied: 3 },
+  ])(
+    "rejects outcomes attributed to more seeds of a kind than committed: %j",
+    (changed) => {
+      const misattributed = { ...report, ...changed };
+      expect(ghidraSeedReportSchema.safeParse(misattributed).success).toBe(
+        true,
+      );
+      expect(
+        ghidraSeedFailure(commitment, misattributed, "xrefs"),
+      ).toBeDefined();
+    },
+  );
+
+  it("admits producer outcomes including aggregate unmapped seeds without inventing their kinds", () => {
+    for (const outcome of [
+      report,
+      {
+        ...report,
+        function_created: 0,
+        function_failed: 0,
+        code_decoded: 0,
+        label_applied: 0,
+        unmapped: 4,
+      },
+      { ...report, function_created: 0, code_decoded: 0, unmapped: 2 },
+    ]) {
+      expect(ghidraSeedReportSchema.safeParse(outcome).success).toBe(true);
+      expect(ghidraSeedFailure(commitment, outcome, "xrefs")).toBeUndefined();
+    }
+  });
 
   it("accepts exactly the committed seeds and reports their outcome", () => {
     expect(ghidraSeedFailure(commitment, report, "xrefs")).toBeUndefined();

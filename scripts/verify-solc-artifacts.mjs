@@ -80,6 +80,7 @@ try {
       detail,
       fileSizeLimit,
       timeoutMs,
+      producerLimits,
     } = options;
     const input = {
       path,
@@ -89,6 +90,9 @@ try {
           : encoding,
       ...(detail === undefined ? {} : { detail }),
       ...(timeoutMs === undefined ? {} : { timeout_ms: timeoutMs }),
+      ...(producerLimits === undefined
+        ? {}
+        : { producer_limits: producerLimits }),
     };
     if (!expectedError)
       assert.ok(
@@ -133,6 +137,8 @@ try {
         );
       if (detail !== undefined) args.push("--detail", detail);
       if (timeoutMs !== undefined) args.push("--timeout-ms", String(timeoutMs));
+      if (producerLimits !== undefined)
+        args.push("--producer-limits", JSON.stringify(producerLimits));
       let failed = false,
         stdout;
       try {
@@ -487,6 +493,25 @@ try {
   const limitedText = JSON.stringify(limited);
   assert.ok(Buffer.byteLength(limitedText) < 4096);
   await writeFile(limitedPath, limitedText);
+  for (const mode of ["cli", "mcp"]) {
+    const refused = await inspect(mode, limitedPath, "solc-json", {
+      selection,
+      producerLimits: { output_bytes: 1024 },
+      expectedError: true,
+      expectedCategory: "resource_constraint",
+    });
+    const error = mode === "mcp" ? refused.error : refused;
+    assert.match(error.remediation.action, /producer_limits.output_bytes/);
+    const recovered = await inspect(mode, limitedPath, "solc-json", {
+      selection,
+      producerLimits: { output_bytes: 65536 },
+    });
+    assert.equal(
+      recovered.normalized_result.artifact.sha256,
+      sha256(limitedText),
+    );
+    assert.equal(recovered.parameters.producer_limits.output_bytes, 65536);
+  }
   const limitedFailure = await inspect("cli", limitedPath, "solc-json", {
     selection,
     fileSizeLimit: 4096,

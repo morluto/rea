@@ -199,6 +199,20 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## ELF and Mach-O initializer functions
+
+Use `inspect_native_initializers` for an explicit local ELF or Mach-O image
+when the question is which functions run before `main` or at exit: ELF
+`DT_PREINIT_ARRAY`, `DT_INIT`, `DT_INIT_ARRAY`, `DT_FINI`, `DT_FINI_ARRAY` and
+legacy `.ctors`/`.dtors`, or Mach-O `__mod_init_func`, `__init_offsets` and
+`__mod_term_func`. Pass `architecture` for a universal Mach-O. The CLI
+equivalent is `inspect-native-initializers PATH`. PIE slots are resolved
+through RELATIVE, RELR and section relocations, and Mach-O slots through
+chained fixups. Keep each entry's `resolution`: `unresolved` means the value was
+not established, and `unresolved_import` names an external symbol. Page with
+`offset` and `limit`. See
+[ELF and Mach-O initializer functions](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
+
 ## ELF unwind function ranges
 
 Use `inspect_elf_unwind_ranges` for an explicit local ELF32/ELF64 image when
@@ -224,7 +238,10 @@ Xcode, atos, or target execution is required. The CLI equivalent is
 `inspect-apple-ips PATH`. Preserve artifact SHA-256, `bug_type` as a string,
 uppercase image UUIDs, and integer literals that exceed IEEE-754 range. Only
 `bug_type` `"309"` yields a crash body; other DiagnosticReports types return
-no crash result. Opened Mach-O and dSYM UUID joins remain unobserved. See
+no crash result. Select `join_path` for one local Mach-O or dSYM to match
+report images to slices by UUID and architecture. Preserve the selected
+artifact identity, slice facts and unjoined reasons; a joined static address
+does not resolve function names or dSYM symbols. See
 [Apple IPS crash reports](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 
 ## Linux kernel modules
@@ -522,8 +539,7 @@ the framing LF still fits. Cutter measures, signs, and writes a fitting
 response in bounded chunks. The bridge searches only the newly read bytes
 for the framing LF. The client unescapes each socket chunk into one response
 string before parsing it, so this ceiling does not keep the paged wire frame
-and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
-and start Hopper or Cutter from that same environment. An out-of-band bridge
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. `bridge.max_request_bytes` can be changed at runtime with `update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`. Start Hopper or Cutter from that same environment so the bridge keeps the ceiling it started with until that bridge starts again. An out-of-band bridge
 without the setting stays at 16777216 bytes. The client reports that mismatch
 during discovery only after the hello proves a live authenticated bridge, and
 does not send a status request or the command. A stale descriptor is ignored.

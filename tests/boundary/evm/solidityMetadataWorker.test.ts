@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { selectedEvmProducerLimits } from "../../../src/domain/evm/evmInterface.js";
 import { solidityMetadataSchema } from "../../../src/domain/evm/solidityMetadata.js";
 import { evmWorkerRequestSchema } from "../../../src/evm/EvmInterfaceWorkerContract.js";
-import { EVM_INTERFACE_LIMITS } from "../../../src/evm/EvmoleRelease.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** Real compiled worker and unchanged WASM engine; no Linux provider-admission claim. */
@@ -49,7 +49,8 @@ it.each([
           snapshot_path: snapshot,
           reply_path: reply,
           failure_marker_path: join(directory, "resource.failure"),
-          file_size_bytes: EVM_INTERFACE_LIMITS.outputBytes,
+          file_size_bytes: selectedEvmProducerLimits(undefined).file_bytes,
+          producer_limits: selectedEvmProducerLimits(undefined),
           encoding: "hex",
         }),
       ),

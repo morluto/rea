@@ -1,3 +1,4 @@
+import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import {
   observeElfStringTableEntry,
   elfStringTableText,
@@ -32,7 +33,7 @@ const finishGnuHashCount = async (
   for (let step = walk.next(); ; step = walk.next()) {
     if (step.done === true) return step.value;
     await yieldToEventLoop();
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
   }
 };
 
@@ -194,7 +195,7 @@ export const readElfSymbols = async (
   symbolNames: readonly string[],
   signal?: AbortSignal,
 ): Promise<ElfSymbolInventory> => {
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   const failure = (reason: string): ElfSymbolInventory => ({
     symbols: [],
     failures: [{ reason }],
@@ -218,7 +219,7 @@ export const readElfSymbols = async (
   for (let index = 0; index < e_phnum; index += 1) {
     if (index % 4096 === 0) {
       await yieldToEventLoop();
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
     }
     const base = e_phoff + index * e_phentsize;
     const parsedProgram = readElfProgramHeader(
@@ -284,7 +285,7 @@ export const readElfSymbols = async (
     for (let index = 0; index < e_shnum; index += 1) {
       if (index % 4096 === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const header = e_shoff + index * e_shentsize;
       const parsedSection = readElfSectionHeader(
@@ -362,7 +363,7 @@ export const readElfSymbols = async (
     ) {
       if ((base - dynamicSegment.offset) % (4096 * dynamicEntrySize) === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const parsedEntry = readElfDynamicEntry(
         bytes.subarray(base, base + dynamicEntrySize),
@@ -469,7 +470,7 @@ export const readElfSymbols = async (
     for (let index = 0; index < table.count; index += 1) {
       if (index % 4096 === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const base = table.offset + index * entrySize;
       const parsedSymbol = readElfSymbol(

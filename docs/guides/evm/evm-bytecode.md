@@ -177,7 +177,8 @@ CLI keeps its existing complete result.
 ## Resource and lifecycle limits
 
 Compiler JSON is preflighted to 128 nesting levels and 65,536 AST nodes before
-recursive tree allocation. A conservative 512-byte node estimate reserves about
+recursive tree allocation. It retains a fixed 4 MiB parser ceiling even when
+`producer_limits.input_bytes` raises carrier admission. A conservative 512-byte node estimate reserves about
 32 MiB per tree within the worker heap; this is an allocation estimate, not a
 measured memory guarantee. Oversized nested metadata keeps its raw text with
 `resource-limited` parse status and unknown compiler/settings. Recorded compiler
@@ -190,16 +191,25 @@ the carrier identity, exact selection and compiler diagnostics when they fit.
 If diagnostics alone exceed the reply budget, the failure explicitly reports
 `compiler_diagnostics_omitted: "reply-budget"`.
 
-Inputs are limited to 4 MiB, complete replies to 16 MiB and combined diagnostic
-output to 1 MiB. An owned worker has a 256 MiB JavaScript heap; its profile
-maxima are 3 GiB virtual address space and 30 CPU seconds, with tighter inherited
-limits retained. The worker command deadline is
-`timeout_ms` (default 30000 ms, integer 1 through 2147483647) on the next call,
-or `--timeout-ms` on `rea inspect-evm-interface`. Omission keeps 30000 ms.
-Those byte, address-space, and CPU ceilings have no runtime override, and
-`timeout_ms` does not raise them. An oversized selected carrier returns a
-non-retryable `resource_constraint` with resource `file-size` and its fixed
-input allowance in `reported_limits.maximum_input_bytes`.
+Per-call `producer_limits` selects `input_bytes`, `output_bytes`,
+`diagnostic_bytes`, `address_space_bytes`, `file_bytes` and `cpu_seconds`.
+Omission keeps 4 MiB input, 16 MiB reply/file, 1 MiB diagnostics, 3 GiB address
+space and 30 CPU seconds. Omitted `file_bytes` follows the selected
+`output_bytes`, so raising the reply allowance does not silently meet the old
+file-write allowance. Explicit file limits remain independent. These fields
+accept positive safe integers; changes apply to the next call without a REA
+restart. The CLI accepts the same exact policy as JSON, for example:
+
+```sh
+rea inspect-evm-interface ./runtime.hex hex --producer-limits '{"input_bytes":8388608,"output_bytes":33554432}'
+```
+
+The owned worker's 256 MiB JavaScript heap remains separate. The worker command
+deadline is `timeout_ms` (default 30000 ms, integer 1 through 2147483647), or
+`--timeout-ms` on the CLI. Raising it does not raise producer, heap or client
+limits. An oversized carrier reports non-retryable `resource_constraint` with
+`reported_limits.maximum_input_bytes` and recovery naming
+`producer_limits.input_bytes`.
 Complete-reply allowance refusals use the same non-retryable resource family,
 with `reported_limits.maximum_reply_bytes`; malformed JSON remains unreadable
 output. This refusal leaves no complete report to retrieve through another
@@ -207,7 +217,7 @@ delivery channel. Virtual address space differs from resident memory. The worker
 soft/hard limits, reports its configured soft limits inline and leaves hard limits
 unchanged. WASM trap reservations are disabled
 so the engine can run within that virtual limit; actual memory is not equated to
-its 3 GiB allowance. Limits fail without partial success. Stable snapshots,
+the selected address-space allowance. Limits fail without partial success. Stable snapshots,
 private files and owned processes are cleaned independently of caller cancellation.
 Invalid-input, unsupported, cancellation, timeout and malformed-reply failures
 retain bounded stdout/stderr under `details.captured_output`, including whether

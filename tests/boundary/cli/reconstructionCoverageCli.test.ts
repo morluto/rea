@@ -20,18 +20,37 @@ const currentCoverage = () => {
   };
 };
 
-const evaluate = async (cli: TestCli, coverage: unknown) => {
+const evaluate = async (
+  cli: TestCli,
+  coverage: unknown,
+  boundaryId = "replacement.cli",
+) => {
   const root = await createTestTempDirectory("rea-coverage-cli-");
   const input = join(root, "request.json");
-  await writeFile(
-    input,
-    JSON.stringify({ coverage, boundary_id: "replacement.cli" }),
-  );
+  await writeFile(input, JSON.stringify({ coverage, boundary_id: boundaryId }));
   return cli.run({
     arguments: ["evaluate-reconstruction-coverage", input, "--json"],
     cwd: root,
   });
 };
+
+cliTest(
+  "distinguishes malformed boundary IDs from unknown IDs",
+  async ({ cli }) => {
+    const coverage = currentCoverage();
+    for (const [boundaryId, reason] of [
+      ["replacement cli", "invalid_format"],
+      ["replacement.other", "invalid_value"],
+    ] as const) {
+      const result = await evaluate(cli, coverage, boundaryId);
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["boundary_id"], reason }] },
+      });
+    }
+  },
+);
 
 cliTest(
   "evaluates complete inline coverage through the compiled CLI",

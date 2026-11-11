@@ -472,7 +472,8 @@ it("stops a slow match at the configured deadline and names the setting", async 
     effective_value: 100,
     source: "setting",
     agent_editable: true,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   });
   expect(projected.remediation.action).toContain(
     regexMatchingDeadlineRecovery({ deadlineMs: 100, source: "setting" }),

@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · **Português (Brasil)** · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Faça engenharia reversa de qualquer coisa
 
@@ -278,6 +278,12 @@ O REA exporta um ambiente executável com um teste básico para verificar se ele
 [Guia para criar um ambiente](https://rea.tools/guides/rl-environments/) ·
 [Referência de ambientes](../agent-environments.md) ·
 [Veja a demonstração no X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Ambientes de aplicativos de desktop
+
+O REA também pode criar um ambiente de um aplicativo de desktop Linux, que um agente usa por capturas de tela, mouse e teclado. A partir de um pedido de uma linha, como "Crie um ambiente do Gnote em que o agente adiciona azeite à nota da lista de compras", seu agente instala o aplicativo em um computador de build local, escreve a tarefa, exporta o ambiente e verifica a tarefa em um computador novo. A máquina que o cria precisa de Linux em amd64 ou arm64, Docker e da versão do framework agentenv fixada pelo guia.
+
+[Configurar ambientes de aplicativos de desktop](../desktop-build-computer.md)
 
 ## Perguntas frequentes
 

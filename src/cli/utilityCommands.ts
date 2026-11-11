@@ -3,13 +3,16 @@ import { z } from "incur";
 import { cliDecimalField, cliIntegerArgument } from "./options.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
-import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import { createHistoricalSourceSummary } from "../domain/referenceSourceSummary.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
-import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import {
+  referenceSourceImportAnalysisError,
+  type ReferenceSourceImportOptions,
+} from "../application/ReferenceSourceImportTypes.js";
+import { err } from "../domain/result.js";
+import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
@@ -347,29 +350,45 @@ const registerReferenceSourceCommand = (
   cli.command(CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
-      root: z
-        .string()
-        .describe("Local source directory to import as historical reference"),
+      root: localPathStringSchema.describe(
+        "Local source directory to import as historical reference",
+      ),
     }),
-    options: z.object({
-      excludePaths: z
-        .string()
-        .optional()
-        .describe(
-          "JSON array of Git-ignore rules to exclude. Rules use Git-ignore syntax, including wildcards, directory suffixes, and negations; they are not literal path matches. An empty array adds no caller exclusions.",
-        ),
-      detail: z
-        .enum(["full", "summary"])
-        .default("full")
-        .describe(
-          "Complete committed graph or compact historical-source summary",
-        ),
-      outlineDepth: cliIntegerArgument(0)
-        .optional()
-        .describe(
-          "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
-        ),
-    }),
+    options: z
+      .object({
+        excludePaths: z
+          .string()
+          .optional()
+          .describe(
+            "JSON array of Git-ignore rules to exclude. Rules use Git-ignore syntax, including wildcards, directory suffixes, and negations; they are not literal path matches. An empty array adds no caller exclusions.",
+          ),
+        detail: z
+          .enum(["full", "summary"])
+          .default("full")
+          .describe(
+            "Complete committed graph or compact historical-source summary",
+          ),
+        outlineDepth: cliIntegerArgument(0)
+          .optional()
+          .describe(
+            "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
+          ),
+      })
+      .superRefine((options, context) => {
+        if (options.outlineDepth !== undefined && options.detail !== "summary")
+          context.addIssue({
+            code: "custom",
+            path: ["outlineDepth"],
+            message: "--outline-depth requires --detail summary",
+          });
+      })
+      .meta({
+        if: { required: ["outlineDepth"] },
+        then: {
+          required: ["detail"],
+          properties: { detail: { const: "summary" } },
+        },
+      }),
     run: ({ args, options }) =>
       logCliCommand(
         logger,
@@ -379,39 +398,29 @@ const registerReferenceSourceCommand = (
             options.excludePaths,
           );
           if (!excludePaths.ok) return excludePaths.failure;
-          if (
-            options.outlineDepth !== undefined &&
-            options.detail !== "summary"
-          )
-            return {
-              error: "Import failed",
-              ...projectAnalysisError(
-                new AnalysisInputError(
-                  "import-reference-source",
-                  { userMessage: "--outline-depth requires --detail summary" },
-                  [
-                    {
-                      path: ["outlineDepth"],
-                      reason: "invalid_value",
-                      message: "--outline-depth requires --detail summary",
-                    },
-                  ],
-                ),
-              ),
-            };
           const config = parseConfig(environment);
           if (!config.ok)
             return {
               error: "Import failed",
               ...projectAnalysisError(config.error),
             };
-          return runReferenceSourceImport(
-            args.root,
-            config.value.referenceSourcePolicy,
-            excludePaths.rules,
-            options.detail === "summary"
-              ? (options.outlineDepth ?? 2)
-              : undefined,
+          return withCommandCancellation((signal) =>
+            runReferenceSourceImport(
+              {
+                root: args.root,
+                caller: "rea-cli",
+                policy: config.value.referenceSourcePolicy,
+                importer: PRODUCT_IDENTITY.packageName,
+                importerVersion: PRODUCT_IDENTITY.packageVersion,
+                signal,
+                ...(excludePaths.rules === undefined
+                  ? {}
+                  : { excludePaths: excludePaths.rules }),
+              },
+              options.detail === "summary"
+                ? (options.outlineDepth ?? 2)
+                : undefined,
+            ),
           );
         },
         isCliOperationFailure,
@@ -420,104 +429,25 @@ const registerReferenceSourceCommand = (
 };
 
 const runReferenceSourceImport = async (
-  root: string,
-  policy: ReferenceSourcePolicy,
-  excludePaths: readonly string[] | undefined,
+  options: ReferenceSourceImportOptions & { readonly signal: AbortSignal },
   outlineDepth: number | undefined,
 ): Promise<unknown> => {
   const resources = new ArtifactResourceScope();
-  let outcome:
-    | {
-        readonly kind: "result";
-        readonly imported: Awaited<ReturnType<typeof importReferenceSource>>;
-      }
-    | { readonly kind: "thrown"; readonly cause: unknown };
-  try {
-    outcome = {
-      kind: "result",
-      imported: await importReferenceSource(
-        {
-          root,
-          caller: "rea-cli",
-          policy,
-          importer: PRODUCT_IDENTITY.packageName,
-          importerVersion: PRODUCT_IDENTITY.packageVersion,
-          ...(excludePaths === undefined ? {} : { excludePaths }),
-        },
-        resources,
-      ),
-    };
-  } catch (cause: unknown) {
-    outcome = { kind: "thrown", cause };
-  }
-
-  let closeOutcome:
-    | { readonly kind: "closed" }
-    | { readonly kind: "failed"; readonly cause: unknown };
-  try {
-    await resources.close();
-    closeOutcome = { kind: "closed" };
-  } catch (cause: unknown) {
-    closeOutcome = { kind: "failed", cause };
-  }
-
-  if (outcome.kind === "thrown") {
-    if (closeOutcome.kind === "failed")
-      throw new AggregateError(
-        [outcome.cause, closeOutcome.cause],
-        "Reference source import and cleanup both failed",
-        { cause: outcome.cause },
-      );
-    throw outcome.cause;
-  }
-
-  const imported = outcome.imported;
-  if (!imported.ok) {
-    const cleanup =
-      closeOutcome.kind === "closed"
-        ? imported.error.cleanup
-        : mergeReferenceSourceCleanup(
-            imported.error.cleanup,
-            ArtifactReaderFailure.cleanupObservation(
-              closeOutcome.cause,
-              "reference source",
-            ),
-          );
-    return {
-      error: "Import failed",
-      ...projectReferenceSourceImportError({
-        ...imported.error,
-        ...(cleanup === undefined ? {} : { cleanup }),
-      }),
-    };
-  }
-
-  if (closeOutcome.kind === "failed")
-    return {
-      error: "Import failed",
-      ...projectReferenceSourceImportError({
-        tag: "reference-source-import",
-        code: "io",
-        message: "Reference source cleanup failed after import",
-        cleanup: ArtifactReaderFailure.cleanupObservation(
-          closeOutcome.cause,
-          "reference source",
-        ),
-        cause: closeOutcome.cause,
-      }),
-    };
+  const result = await finishAnalysisCommand(
+    async () => {
+      const imported = await importReferenceSource(options, resources);
+      return imported.ok
+        ? imported
+        : err(referenceSourceImportAnalysisError(imported.error));
+    },
+    resources,
+    "filesystem",
+    "import_reference_source",
+    options.signal,
+    "reference source",
+  );
+  if (!result.ok) return { error: "Import failed", ...result.error };
   return outlineDepth === undefined
-    ? imported.value
-    : createHistoricalSourceSummary(imported.value, outlineDepth);
+    ? result.value
+    : createHistoricalSourceSummary(result.value, outlineDepth);
 };
-
-const mergeReferenceSourceCleanup = (
-  first: AnalysisCleanupObservation | undefined,
-  second: AnalysisCleanupObservation,
-): AnalysisCleanupObservation =>
-  first === undefined
-    ? second
-    : {
-        reason: `${first.reason}; ${second.reason}`,
-        resources: [...new Set([...first.resources, ...second.resources])],
-      };

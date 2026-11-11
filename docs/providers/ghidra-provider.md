@@ -65,7 +65,8 @@ escaping, before allocating the serialized request or sending it. The framing
 newline is excluded. An oversized request returns `resource_constraint` with
 the effective setting, its source, and the exact payload byte count.
 
-Set the value in the environment that starts REA, then restart REA to apply it.
+`bridge.max_request_bytes` can be changed at runtime with
+`update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`.
 This setting is enforced by the REA client; the Java bridge has no corresponding
 request ceiling.
 
@@ -95,6 +96,40 @@ data, not independent proof of the original source encoding. Procedure searches
 and trace matches likewise retain Ghidra's external and thunk classification.
 The Ghidra analysis profile identifies this search projection, so older
 snapshots with unqualified search rows cannot replay under the new profile.
+
+## Decompiler and value-flow budgets
+
+Use `inspect_analysis_settings` or a result's named recovery to inspect
+`ghidra.value_flow_max_operations` (default 3000),
+`ghidra.value_flow_max_inputs_per_operation` (default 64), and
+`ghidra.value_flow_max_edges` (default 12000). Each accepts a positive Java
+integer count. `update_analysis_settings` applies changes to the next operation
+on the same Program without restarting REA. Launch seeds use the corresponding
+`REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS`,
+`REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION`, and
+`REA_GHIDRA_VALUE_FLOW_MAX_EDGES` environment settings.
+For a one-shot CLI retry, set the named seed in the environment that launches
+the next `rea` invocation; the completed invocation's Program is no longer
+active. Runtime MCP changes preserve the current Program. A changed launch seed
+only affects a running MCP server after that server restarts.
+
+The returned `native_value_flow.limits` and `limits_reached` distinguish accepted
+budgets from actual exhaustion. Truncation keeps omitted counts and names the
+setting to adjust. The edge budget applies independently to def-use and
+parameter-use collections. New function dossiers are reobserved rather than
+replayed from snapshots; completed Evidence remains available for historical
+inspection. Other observation caches keep their existing policy.
+
+`ghidra.decompile_max_payload_mib` controls the native decompiler's response
+payload, separately from p-code projection and decompile time. Its launch seed
+is `REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB`; explicit values are 1..2047 MiB to
+avoid overflow in Ghidra's signed integer byte conversion. Omission or runtime
+`null` preserves the installed provider's default. Changes apply before the
+next native decompile, and native option changes clear its old cached function
+state. A failed decompile preserves the original diagnostic and reports the
+effective payload allowance; payload recovery applies only when that diagnostic
+identifies payload exhaustion. Raising these controls does not raise the MCP
+client's deadline or receive buffer.
 
 ## PE debug-symbol coverage
 

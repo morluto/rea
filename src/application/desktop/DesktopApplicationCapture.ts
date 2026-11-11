@@ -1,27 +1,31 @@
+import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
 import { arch, hostname, userInfo } from "node:os";
-import { dirname } from "node:path";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
-import { unretainedOpenedLimitation } from "../../domain/desktop/appExportUnowned.js";
+import {
+  unretainedOpenedDirectories,
+  unretainedOpenedLimitation,
+} from "../../domain/desktop/appExportUnowned.js";
 import {
   checkpointTaken,
   type DesktopApplicationCapture,
   type DesktopCaptureEvent,
   type DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
-import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
+  DesktopSessionCleanupError,
   runDesktopSession,
   runningApplicationWindows,
   type SessionRequest,
 } from "../../desktop/DesktopApplicationSession.js";
 import { inspectLinuxApplication } from "../../desktop/LinuxApplicationInventory.js";
+import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import {
   discardFailedCapture,
@@ -29,11 +33,7 @@ import {
   projectFailure,
   publishedCaptureCleanup,
 } from "./DesktopCaptureFailure.js";
-import {
-  CaptureFile,
-  canonicalPath,
-  prepareOutputDirectory,
-} from "./DesktopCaptureOutput.js";
+import { CaptureFile, prepareOutputDirectory } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
@@ -56,6 +56,7 @@ const POLL_INTERVAL_MS = 500;
 
 /** What the caller asked to capture, after CLI parsing. */
 export interface DesktopCaptureRequest {
+  readonly libraryPolicy?: DesktopLibraryPolicyInput;
   readonly desktopEntry: string | undefined;
   readonly executable: string | undefined;
   readonly arguments: readonly string[];
@@ -88,8 +89,6 @@ export interface DesktopCaptureHost {
 export interface DesktopCaptureErrorOutput extends AnalysisErrorProjection {
   readonly error: "Desktop capture failed";
 }
-
-const unique = (paths: readonly string[]) => [...new Set(paths)];
 
 /** The host's name and the user's, each left out when the system cannot say, as for a user with no passwd entry. */
 const hostIdentity = (): { hostname?: string; user?: string } => {
@@ -177,6 +176,9 @@ const captureEvidence = (
       state_path_count: request.statePaths.length,
       exclude_count: request.excludes.length,
       package_file: request.packageFile !== undefined,
+      ...(request.libraryPolicy === undefined
+        ? {}
+        : { library_policy: request.libraryPolicy }),
     },
     result: capture,
     confidence: "observed",
@@ -228,7 +230,7 @@ const admit = async (
     throw outputRefusal(request.output, prepared.refusal);
   return {
     display,
-    home: await canonicalPath(home),
+    home: await canonicalCallerPath(home),
     output: prepared.path,
     inventory,
     limitations,
@@ -240,7 +242,7 @@ const admit = async (
 
 type Admitted = Awaited<ReturnType<typeof admit>>;
 
-/** Record the baseline, run the session and publish `capture.json`. */
+/** Record the baseline, run the session and assemble its Evidence. */
 const recordCapture = async (
   request: DesktopCaptureRequest,
   host: DesktopCaptureHost,
@@ -248,7 +250,6 @@ const recordCapture = async (
     readonly admitted: Admitted;
     readonly scope: CaptureScope;
     readonly store: DesktopContentStore;
-    readonly captureFile: CaptureFile;
   },
   signal: AbortSignal | undefined,
 ) => {
@@ -261,13 +262,14 @@ const recordCapture = async (
     store,
   );
   const recorder = new CheckpointRecorder(scope, store);
-  const acknowledge = async () => {
+  const acknowledge = async (titles: readonly string[] = []) => {
     const taken = recorder.checkpoints.at(-1);
     if (taken === undefined) return;
     const event = checkpointTaken(
       taken,
       home,
       context.scope.selectedPaths.map(({ physical }) => physical),
+      titles,
     );
     await host.report(
       `Recorded checkpoint ${taken.name}: ${String(event.changes)} change(s), ${String(event.retained_files)} file(s) retained.`,
@@ -288,20 +290,19 @@ const recordCapture = async (
     maxDurationMs: request.maxDurationSeconds * 1000,
     pollIntervalMs: POLL_INTERVAL_MS,
     nextRequest: host.nextRequest,
-    checkpoint: async (name, trigger, atMs, openedFiles) => {
+    checkpoint: async (name, trigger, atMs, seen) => {
       await host.report(`Recording checkpoint ${name}.`);
-      recorder.openedFiles = openedFiles;
+      recorder.openedFiles = seen.openedFiles;
       await recorder.record(name, trigger, atMs, signal);
-      await acknowledge();
+      await acknowledge(seen.titles);
     },
     report: host.report,
     signal,
   });
   const { session, unreleased } = outcome;
-  const unretained = unique(
-    session.opened_files
-      .map((file) => dirname(file.path))
-      .filter((directory) => !isWithinAny(directory, scope.contentRoots)),
+  const unretained = unretainedOpenedDirectories(
+    session.opened_files.map((file) => file.path),
+    { ...scope, home },
   );
   const capture: DesktopApplicationCapture = {
     host: {
@@ -324,7 +325,7 @@ const recordCapture = async (
       content_files: store.files,
       content_bytes: store.bytes,
       omitted_content: [...store.omissions],
-      unretained_opened_directories: unretained,
+      unretained_opened_directories: [...unretained],
     },
     limitations: [
       ...admitted.limitations,
@@ -337,8 +338,7 @@ const recordCapture = async (
     ],
   };
   const evidence = captureEvidence(request, capture);
-  const published = await context.captureFile.publish(evidence);
-  return { evidence, published, session, unreleased };
+  return { evidence, session, unreleased };
 };
 
 const runCapture = async (
@@ -356,22 +356,26 @@ const runCapture = async (
   );
   await store.prepare();
   const captureFile = new CaptureFile(output);
-  let recorded: Awaited<ReturnType<typeof recordCapture>>;
+  let recorded: Awaited<ReturnType<typeof recordCapture>> | undefined;
+  let published: string;
   try {
     recorded = await recordCapture(
       request,
       host,
-      { admitted, scope, store, captureFile },
+      { admitted, scope, store },
       signal,
     );
+    published = await captureFile.publish(recorded.evidence);
   } catch (cause: unknown) {
     // Nothing was published, so a failure or cancellation removes what was written.
     throw failedCaptureError(
-      cause,
+      recorded?.unreleased === undefined
+        ? cause
+        : new DesktopSessionCleanupError(cause, recorded.unreleased),
       await discardFailedCapture(store, captureFile),
     );
   }
-  const { evidence, published, session, unreleased } = recorded;
+  const { evidence, session, unreleased } = recorded;
   const cleanup = await publishedCaptureCleanup(published, store, unreleased);
   if (cleanup !== undefined) throw cleanup;
   // A cancellation that arrives during publication must not read as success.
