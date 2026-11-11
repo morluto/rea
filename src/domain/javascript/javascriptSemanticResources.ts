@@ -11,10 +11,12 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   readExactJavaScriptLiteral,
+  isNullishJavaScriptSyntax,
   isObjectPrototypeSetter,
   primitiveOwnKeys,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
+  staticObjectProperty,
   staticObjectPropertyReader,
   staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
@@ -83,6 +85,11 @@ export const collectJavaScriptSemanticResources = (
         candidate.specifier,
         context,
       ) &&
+        !rejectsSocketOptionsPort(
+          candidate.node,
+          candidate.specifier,
+          context,
+        ) &&
         !rejectsTlsProtocolVersionLiteral(
           candidate.node,
           candidate.specifier,
@@ -592,7 +599,24 @@ const rejectsSocketLiteralArguments = (
   const port = node.arguments[0];
   if (port === undefined) return specifier === "net";
   if (t.isSpreadElement(port)) return false;
-  const value = unwrapJavaScriptExpression(port).node;
+  return rejectsPortValueNode(
+    unwrapJavaScriptExpression(port).node,
+    specifier,
+    context,
+  );
+};
+
+/**
+ * Whether a port value is one Node rejects.
+ *
+ * This is the single reader for both the positional argument and the `port` member of an
+ * options object, so a rule learned for one spelling cannot drift from the other.
+ */
+const rejectsPortValueNode = (
+  value: t.Node,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
   if (
     specifier === "net" &&
     (t.isUnaryExpression(value, { operator: "void" }) ||
@@ -830,6 +854,118 @@ const rejectsTlsProtocolVersionLiteral = (
   return false;
 };
 
+/**
+ * Whether an options object gives `net`/`tls` a port Node rejects.
+ *
+ * `net.connect` and `tls.connect` judge the same port value whether it arrives positionally
+ * or as a member, but only the positional slot was read. Measured on Node 24.22.1:
+ *
+ * | call | outcome |
+ * | --- | --- |
+ * | `net.connect({port: -1})`, `{port: 70000}`, `{port: "x"}`, `{port: null}` | THREW `ERR_SOCKET_BAD_PORT` |
+ * | `net.connect({port: 8080})`, `{port: "8080"}`, `{port: 0}` | socket created |
+ * | `tls.connect({port: -1})` | THREW `ERR_SOCKET_BAD_PORT` |
+ * | `net.connect({path: "/tmp/x.sock", port: -1})` | socket created — the path becomes the Unix socket |
+ *
+ * Two shapes stay undecided rather than guessed:
+ *
+ * - A later options object. `tls` merges slot 1 over slot 0, so the effective port can come
+ *   from either: `tls.connect({port: -1}, {port: 443})` connects while
+ *   `tls.connect({port: 443}, {port: -1})` throws. This reader does not model that merge.
+ * - An accessor. A getter runs while Node copies the members and can write the port first:
+ *   `net.connect({get side() { this.port = 80; }, port: -1})` connects.
+ */
+const rejectsSocketOptionsPort = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return false;
+  const options = unwrapJavaScriptExpression(first).node;
+  if (!t.isObjectExpression(options)) return false;
+  // The merge in `tls` can replace the port, so an open second object decides nothing here.
+  const second = node.arguments[1];
+  if (second !== undefined && !t.isSpreadElement(second)) {
+    const secondValue = unwrapJavaScriptExpression(second).node;
+    if (t.isObjectExpression(secondValue)) return false;
+  }
+  // A getter or setter can write the port before Node copies it.
+  if (
+    options.properties.some(
+      (property) => t.isObjectMethod(property) && property.kind !== "method",
+    )
+  )
+    return false;
+  // A path that is present and not provably empty selects the Unix socket, and the port is
+  // never read. A path this reader cannot price may be a real one, so it stays undecided.
+  const pathMember = staticObjectProperty(
+    options,
+    "path",
+    isNullishJavaScriptSyntax,
+  );
+  if (pathMember.status === "explicit") {
+    const written = unwrapJavaScriptExpression(pathMember.value).node;
+    const empty =
+      isNullishJavaScriptSyntax(written) ||
+      (t.isStringLiteral(written) && written.value.length === 0) ||
+      (t.isTemplateLiteral(written) &&
+        written.expressions.length === 0 &&
+        (written.quasis[0]?.value.cooked ?? "").length === 0) ||
+      (t.isBooleanLiteral(written) && !written.value) ||
+      (t.isNumericLiteral(written) && written.value === 0);
+    if (!empty) return false;
+  } else if (pathMember.status !== "missing") return false;
+  const portMember = staticObjectProperty(
+    options,
+    "port",
+    isNullishJavaScriptSyntax,
+  );
+  if (portMember.status !== "explicit") return false;
+  const writtenPort = unwrapJavaScriptExpression(portMember.value).node;
+  // The member spelling differs from the positional one for these three shapes.
+  if (t.isStringLiteral(writtenPort)) return !usablePortText(writtenPort.value);
+  if (
+    t.isTemplateLiteral(writtenPort) &&
+    writtenPort.expressions.length === 0
+  ) {
+    const cooked = writtenPort.quasis[0]?.value.cooked;
+    return cooked === null || cooked === undefined
+      ? false
+      : !usablePortText(cooked);
+  }
+  if (rejectsNonScalarPort(writtenPort)) return true;
+  return rejectsPortValueNode(writtenPort, specifier, context);
+};
+
+/**
+ * Whether a string reads as a port Node accepts.
+ *
+ * A string in the positional slot is a pipe/Unix path, so only an empty one fails there. The
+ * `port` member is different: Node coerces it with `Number`, so `"8080"` connects while `"x"`
+ * throws `ERR_SOCKET_BAD_PORT`. Measured on Node 24.22.1.
+ */
+const usablePortText = (text: string): boolean => {
+  if (text.trim().length === 0) return false;
+  const value = Number(text);
+  return Number.isInteger(value) && value >= 0 && value <= 65535;
+};
+
+/**
+ * Whether a known non-number, non-string port member is a type error.
+ *
+ * Measured on Node 24.22.1, `net.connect({port: {}})` and `net.connect({port: []})` throw
+ * `ERR_INVALID_ARG_TYPE` rather than reaching the port range check.
+ */
+const rejectsNonScalarPort = (value: t.Node): boolean =>
+  t.isObjectExpression(value) ||
+  t.isArrayExpression(value) ||
+  t.isRegExpLiteral(value) ||
+  t.isArrowFunctionExpression(value) ||
+  t.isFunctionExpression(value) ||
+  t.isClassExpression(value) ||
+  t.isUnaryExpression(value, { operator: "!" }) ||
+  t.isUnaryExpression(value, { operator: "typeof" });
 /** Only `net`/`tls` sockets take a port in argument 0. */
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
