@@ -40,6 +40,16 @@ its own.
   references, namespaces, FILETIME values, sizes and attribute bits. Keep each
   name attribute separate, including multiple names for one record.
 
+- Resolve a selected base record's resident attribute lists only within the
+  supplied MFT. Require full sequence/slot identity, verified fixups, base
+  ownership and exact attribute type/name/ID/VCN. Preserve physical and linked
+  facts separately, including each source offset.
+- Share at most 32 additional record decodes per detail page, and deliver at
+  most 32 reference results per base. Preserve discovered-entry omissions,
+  unavailable list values, ambiguity and partial record facts. Visit list source
+  identities once, including cyclic graphs. Nonresident volume payload recovery
+  remains outside the acquired-metadata boundary.
+
 ## Acceptance
 
 Synthesized fixtures cover a clean record, a failed fixup, a missing update
@@ -65,10 +75,12 @@ Both the journal events and the MFT metadata have independent continuation
 positions. Padding, malformed records and truncation appear as coverage rows.
 Record order follows the acquisition, and history completeness remains unknown.
 
-CLI/MCP paired workflows use synthesized acquisitions. Real Windows 11 MFT
+Automated CLI/MCP workflow tests use synthesized acquisitions. Real Windows 11 MFT
 records were inspected through the packaged Linux CLI; see the
 [verification record](../../../verification/ntfs-metadata-2026-11-11.md).
-Real paired journal captures and Windows-host execution remain pending.
+Paired V2 streams from a public NTFS volume fixture also passed CLI/MCP
+verification against an independent parser. The fixture's original acquisition
+environment and Windows-host execution remain unverified.
 
 ## Page reuse lifetime
 

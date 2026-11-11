@@ -39,7 +39,7 @@ export const ntfsJournalInputSchema = z.strictObject({
     .max(MFT_INLINE_HEADER_LIMIT)
     .default(0)
     .describe(
-      "MFT record details to include (0–32). Default 0 returns inventory counts; select 1–32 to inspect names and attributes.",
+      "MFT record details to include (0–32). Default 0 returns inventory counts. Detail pages share a 32-additional-record budget for extension metadata, with up to 32 attribute-list reference results per base record and explicit partial coverage.",
     ),
   mft_record_start: offset
     .default(0)
