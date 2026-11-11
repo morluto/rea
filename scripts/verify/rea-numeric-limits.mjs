@@ -94,6 +94,7 @@ const stringBindings = (sourceFile) => {
 };
 
 const boundLimitName = (node, bindings) => {
+  if (node === undefined) return undefined;
   const expression = unwrapExpression(node);
   const literal = literalText(expression);
   if (literal !== undefined) return literal;
@@ -142,9 +143,50 @@ const rememberNumericArgument = (discovered, path, node, bindings) => {
       expression,
       true,
     );
-  ts.forEachChild(expression, (child) =>
-    rememberNumericArgument(discovered, path, child, bindings),
-  );
+  // Propagate numeric context only through values, not tests, receivers or
+  // arguments to an unrelated function call.
+  if (ts.isConditionalExpression(expression)) {
+    rememberNumericArgument(discovered, path, expression.whenTrue, bindings);
+    rememberNumericArgument(discovered, path, expression.whenFalse, bindings);
+  } else if (
+    ts.isBinaryExpression(expression) &&
+    [
+      ts.SyntaxKind.QuestionQuestionToken,
+      ts.SyntaxKind.BarBarToken,
+      ts.SyntaxKind.PlusToken,
+      ts.SyntaxKind.MinusToken,
+      ts.SyntaxKind.AsteriskToken,
+      ts.SyntaxKind.SlashToken,
+      ts.SyntaxKind.PercentToken,
+      ts.SyntaxKind.AsteriskAsteriskToken,
+      ts.SyntaxKind.LessThanLessThanToken,
+      ts.SyntaxKind.GreaterThanGreaterThanToken,
+      ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+      ts.SyntaxKind.AmpersandToken,
+      ts.SyntaxKind.BarToken,
+      ts.SyntaxKind.CaretToken,
+    ].includes(expression.operatorToken.kind)
+  ) {
+    rememberNumericArgument(discovered, path, expression.left, bindings);
+    rememberNumericArgument(discovered, path, expression.right, bindings);
+  } else if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  ) {
+    rememberNumericArgument(discovered, path, expression.right, bindings);
+  } else if (
+    ts.isPrefixUnaryExpression(expression) &&
+    [
+      ts.SyntaxKind.PlusToken,
+      ts.SyntaxKind.MinusToken,
+      ts.SyntaxKind.TildeToken,
+    ].includes(expression.operator)
+  ) {
+    rememberNumericArgument(discovered, path, expression.operand, bindings);
+  } else if (ts.isTemplateExpression(expression)) {
+    for (const span of expression.templateSpans)
+      rememberNumericArgument(discovered, path, span.expression, bindings);
+  }
 };
 
 /**
@@ -183,23 +225,65 @@ const isParseAccess = (expression) =>
   (expression.name.text === "safeParse" || expression.name.text === "parse");
 
 /** Number() and a numeric schema read their argument. Other parsers do not. */
-const parsesNumericArgument = (node) => {
+const parsesNumericArgument = (node, globalConverter) => {
   if (!ts.isCallExpression(node)) return false;
   const expression = unwrapExpression(node.expression);
   if (
     ts.isIdentifier(expression) &&
-    (expression.text === "Number" ||
-      expression.text === "parseInt" ||
-      expression.text === "parseFloat")
+    ["Number", "parseInt", "parseFloat"].includes(expression.text) &&
+    globalConverter(expression)
+  )
+    return true;
+  if (
+    isPropertyAccess(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "Number" &&
+    globalConverter(expression.expression) &&
+    (expression.name.text === "parseInt" ||
+      expression.name.text === "parseFloat")
   )
     return true;
   return isParseAccess(expression) && numericSchemaText(expression.expression);
 };
 
-const numericParse = (node) => {
+const numericParse = (node, globalConverter) => {
   if (!ts.isCallExpression(node)) return false;
   const expression = unwrapExpression(node.expression);
-  return parsesNumericArgument(node) || isParseAccess(expression);
+  return (
+    parsesNumericArgument(node, globalConverter) || isParseAccess(expression)
+  );
+};
+
+/** Distinguish local bindings from the standard numeric converters. */
+const globalConverterLookup = (sourceFile) => {
+  let declared;
+  let checker;
+  return (identifier) => {
+    if (declared === undefined) {
+      declared = new Set();
+      const find = (node) => {
+        if (
+          ts.isIdentifier(node) &&
+          ["Number", "parseInt", "parseFloat"].includes(node.text) &&
+          ts.isDeclarationName(node)
+        )
+          declared.add(node.text);
+        ts.forEachChild(node, find);
+      };
+      find(sourceFile);
+    }
+    if (!declared.has(identifier.text)) return true;
+    if (checker === undefined) {
+      const options = { noLib: true, noResolve: true };
+      const host = ts.createCompilerHost(options);
+      host.getSourceFile = (name) =>
+        name === sourceFile.fileName ? sourceFile : undefined;
+      checker = ts
+        .createProgram([sourceFile.fileName], options, host)
+        .getTypeChecker();
+    }
+    return checker.getSymbolAtLocation(identifier) === undefined;
+  };
 };
 
 const readLifecycle = (node) => {
@@ -244,6 +328,7 @@ export const discoverNumericLimitUses = (files) => {
       ts.ScriptKind.TS,
     );
     const bindings = stringBindings(sourceFile);
+    const globalConverter = globalConverterLookup(sourceFile);
     const visit = (node) => {
       if (
         ts.isPropertyAccessExpression(node) ||
@@ -258,7 +343,7 @@ export const discoverNumericLimitUses = (files) => {
           node,
         );
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-        const parsesNumber = parsesNumericArgument(node);
+        const parsesNumber = parsesNumericArgument(node, globalConverter);
         for (const argument of node.arguments ?? []) {
           if (parsesNumber)
             rememberNumericArgument(
@@ -273,10 +358,22 @@ export const discoverNumericLimitUses = (files) => {
               relativePath,
               boundLimitName(argument, bindings),
               node,
-              numericParse(node),
+              numericParse(node, globalConverter),
             );
         }
       }
+      if (
+        ts.isPrefixUnaryExpression(node) &&
+        (node.operator === ts.SyntaxKind.PlusToken ||
+          node.operator === ts.SyntaxKind.MinusToken ||
+          node.operator === ts.SyntaxKind.TildeToken)
+      )
+        rememberNumericArgument(
+          discovered,
+          relativePath,
+          node.operand,
+          bindings,
+        );
       if (
         ts.isBinaryExpression(node) &&
         node.operatorToken.kind === ts.SyntaxKind.InKeyword
