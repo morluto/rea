@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -28,6 +29,8 @@ import {
 } from "../../domain/webSourceLocation.js";
 import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
+import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
@@ -117,21 +120,46 @@ export const runSourceMapCommand = async (
       options?.signal,
     );
   } catch (cause: unknown) {
+    const signal = options?.signal;
+    const preparation =
+      cause !== signal?.reason &&
+      cause instanceof DarwinProcessOwnershipInspectionError
+        ? cause
+        : undefined;
+    const knownPhysical =
+      cause !== signal?.reason &&
+      (cause instanceof AnalysisError ||
+        cause instanceof ProcessAdmissionError ||
+        (preparation !== undefined && preparation.cancellation === undefined));
+    const physical =
+      cause instanceof AnalysisError
+        ? cause
+        : new ProviderAdapterError(PROVIDER, OPERATION, {
+            cause,
+            ...(preparation?.capturedOutput === undefined
+              ? {}
+              : { capturedOutput: preparation.capturedOutput }),
+            diagnostics: {
+              map_path: path,
+              error_message: message(cause),
+              phase: "process_ownership_preparation",
+            },
+          });
+    const primary = signal?.aborted
+      ? analysisErrorWithCancellation(
+          knownPhysical ? physical : undefined,
+          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+        )
+      : physical;
+    if (preparation?.cleanupFailure === undefined) return err(primary);
+    const owner = new PreparationCleanup(preparation, path);
+    retainedCleanup.owner = owner;
     return err(
-      options?.signal?.aborted === true
-        ? new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          })
-        : cause instanceof AnalysisError
-          ? cause
-          : new ProviderAdapterError(PROVIDER, OPERATION, {
-              cause,
-              diagnostics: {
-                map_path: path,
-                error_message: message(cause),
-                phase: "process_ownership_preparation",
-              },
-            }),
+      analysisErrorWithCleanupFailure(
+        primary,
+        preparation.cleanupFailure,
+        OPERATION,
+      ).bindCleanupDependencies([preparation.cleanupFailure], owner),
     );
   }
   const deadline = new ProviderStartupDeadline(
@@ -162,15 +190,17 @@ export const runSourceMapCommand = async (
   }
   const cleanup = await command.close();
   const observation = result.ok ? result.value : undefined;
-  const completed =
-    result.ok && options?.signal?.aborted
-      ? err(
+  const completed = options?.signal?.aborted
+    ? err(
+        analysisErrorWithCancellation(
+          result.ok ? undefined : result.error,
           new AnalysisCancelledError(OPERATION, {
             cause: options.signal.reason,
             partialObservation: observation,
           }),
-        )
-      : result;
+        ),
+      )
+    : result;
   if (cleanup === undefined) return completed;
   if (observation !== undefined) cleanup.retainPartialObservation(observation);
   retainedCleanup.owner = command;
@@ -184,6 +214,40 @@ export const runSourceMapCommand = async (
         ).bindCleanupDependencies([cleanup], command),
       );
 };
+
+/** Keep the exact Darwin helper owner available after failed preparation cleanup. */
+class PreparationCleanup implements SourceMapCleanupOwner {
+  constructor(
+    readonly preparation: DarwinProcessOwnershipInspectionError,
+    readonly path: string,
+  ) {}
+
+  get cleanupResources(): readonly string[] {
+    return this.preparation.cleanupFailure?.cleanupResources ?? [];
+  }
+
+  async close(): Promise<ProviderCleanupError | undefined> {
+    const cleanup = this.preparation.cleanupFailure;
+    if (cleanup === undefined || !cleanup.cleanupIncomplete) return undefined;
+    try {
+      if (this.preparation.cleanupOwner !== undefined)
+        await this.preparation.cleanupOwner.close();
+    } catch (cause: unknown) {
+      return new SourceMapCleanupFailure(cleanup.cleanupResources, {
+        map_path: this.path,
+        cleanup_failures: [message(cause)],
+      }).bindCleanupDependencies([cleanup], this);
+    }
+    return cleanup.cleanupIncomplete
+      ? new SourceMapCleanupFailure(cleanup.cleanupResources, {
+          map_path: this.path,
+          cleanup_failures: [
+            "Ownership preparation cleanup remains incomplete",
+          ],
+        }).bindCleanupDependencies([cleanup], this)
+      : undefined;
+  }
+}
 
 class OwnedCodec implements SourceMapCleanupOwner {
   readonly #runId = `rea-source-map-${randomUUID()}`;
