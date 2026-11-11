@@ -2625,6 +2625,21 @@ describe("ReleaseExposureService Go relative flag paths", () => {
   });
 });
 
+describe("ReleaseExposureService Go linker sysroot operand", () => {
+  it.each([
+    ["-ldflags", "-extldflags=-Wl,--sysroot=private-sdk"],
+    ["-ldflags", "-extldflags '-Wl,--sysroot,private-sdk'"],
+    ["-ldflags", "-extldflags '-Xlinker --sysroot=private-sdk'"],
+    ["-ldflags", "-extldflags '-Xlinker --sysroot -Xlinker private-sdk'"],
+    ["CGO_LDFLAGS", "-Wl,--sysroot=private-sdk"],
+  ])("reads the linker sysroot in %s %s as a path", async (key, value) => {
+    const report = await goReport(goModule([{ key, value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual(["private-sdk"]);
+  });
+});
+
 describe("ReleaseExposureService Go linker file operands", () => {
   it.each([
     ["CGO_LDFLAGS", "-Wl,-Map=-"],

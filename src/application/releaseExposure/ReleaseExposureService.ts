@@ -1122,9 +1122,11 @@ const GO_COMPILER_PATH_FLAG =
  * `--retain-symbols-file` read a file, as `--script` does, and `-Map` writes
  * the linker map to one. `--just-symbols` reads a symbol file; it is the long
  * spelling of `-R`, but only `-R` turns into `-rpath` for a directory.
+ * `--sysroot` sets the linker's own sysroot directory, apart from the one the
+ * compiler driver reads.
  */
 const LINKER_PATH_FLAG =
-  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILRT]|-{1,2}(?:dynamic-linker|dynamic-list|just-symbols|library-path|Map|retain-symbols-file|rpath|rpath-link|script|version-script)(?==|$))=?(.*)$/su;
+  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILRT]|-{1,2}(?:dynamic-linker|dynamic-list|just-symbols|library-path|Map|retain-symbols-file|rpath|rpath-link|script|sysroot|version-script)(?==|$))=?(.*)$/su;
 type NativeImageFormat = ReleaseExposureNativeImage["format"];
 /**
  * A runtime search path the image's loader expands, which names no directory
