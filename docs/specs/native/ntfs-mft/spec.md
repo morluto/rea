@@ -30,6 +30,8 @@ its own.
   With a fallback record size, stop at the first invalid signature.
 - Bound the whole file at a fixed 512 MiB ceiling and report the ceiling as a
   `limit` failure with its boundary.
+- Return the first 32 decoded record headers with their source offsets and the
+  number of omitted headers. Aggregate counts cover the full parsed stream.
 - Parse only the records' headers and fixups. Attributes, filenames, data
   streams and the `$UsnJrnl:$J` journal are not decoded in this step, so no path,
   file size, file reference correlation or change history is claimed.

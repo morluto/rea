@@ -470,7 +470,7 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "MFT inventory reports each FILE record's header, flags, record extent and update-sequence fixup result. Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
+      "MFT inventory reports whole-stream counts and a bounded sample of the first 32 decoded FILE record headers, with the omitted-header count. Attributes, filenames, data streams and the $UsnJrnl:$J journal are not decoded, so no path, file size or change history is established.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
   }),

@@ -1,6 +1,9 @@
 import type { Readable } from "node:stream";
 
-import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import {
+  ntfsMftMetadataSchema,
+  type ArtifactFormatMetadata,
+} from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import { createMftDecoder, type MftImage } from "../domain/windows/ntfsMft.js";
 import {
@@ -21,8 +24,8 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 /**
  * An MFT stream is its own content: the FILE records describe the source
- * volume, not members inside the stream, so the root occurrence carries every
- * fact and no entries are enumerated.
+ * volume, not members inside the stream, so header facts are attached to
+ * the root occurrence.
  */
 export class NtfsMftArtifactReader implements ArtifactReader {
   readonly format = "ntfs-mft" as const;
@@ -40,7 +43,9 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {
-    return this.#metadata === undefined ? undefined : { ...this.#metadata };
+    return this.#metadata === undefined
+      ? undefined
+      : structuredClone(this.#metadata);
   }
 
   async prepareContainer(
@@ -119,7 +124,7 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const image = await this.#decode(signal);
     await this.#source.read(signal);
-    this.#metadata = image.metadata;
+    this.#metadata = ntfsMftMetadataSchema.parse(image.metadata);
     this.#limitations = image.limitations;
   }
 

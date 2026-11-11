@@ -24,6 +24,16 @@ const expectMftInventory = (value: unknown): void => {
     kind: "ntfs-mft",
     record_count: 1,
     fixup_unverified_record_count: 0,
+    record_headers: [
+      {
+        index: 0,
+        fileOffset: 0,
+        sequenceNumber: 1,
+        declaredRecordNumber: null,
+        fixups: { verifiedSectors: 2 },
+      },
+    ],
+    omitted_record_headers: 0,
   });
 };
 
