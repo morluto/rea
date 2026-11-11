@@ -82,7 +82,7 @@ const readInspectionFile = async (
     return await withOwnedFileHandle(
       path,
       owner,
-      { signal },
+      signal === undefined ? {} : { signal },
       async (handle) => {
         const bytes: Buffer[] = [];
         for await (const chunk of readFileHandleChunks(handle, {
@@ -1517,7 +1517,8 @@ export const createSystemProcessOwnershipHost = (
       const failures: { pid: number; requestIndex: number; cause: unknown }[] =
         [];
       results.forEach((result, requestIndex) => {
-        if (result.status === "fulfilled") observations.set(...result.value);
+        if (result.status === "fulfilled")
+          observations.set(result.value[0], result.value[1]);
         else
           failures.push({
             pid: processes[requestIndex]!.pid,
