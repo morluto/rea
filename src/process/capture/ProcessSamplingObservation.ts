@@ -1,3 +1,7 @@
+import {
+  normalizeCaptureFailure,
+  ProcessCaptureInspectionFailure,
+} from "./ProcessCaptureError.js";
 import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
@@ -69,6 +73,8 @@ export const readSamplingSource = async <T>(
   try {
     return ok(await read());
   } catch (cause: unknown) {
+    const inspection = normalizeCaptureFailure(cause);
+    if (inspection instanceof ProcessCaptureInspectionFailure) throw inspection;
     if (isSamplingAbort(cause, signal))
       return err({ kind: "cancelled", reason: signal.reason });
     if (

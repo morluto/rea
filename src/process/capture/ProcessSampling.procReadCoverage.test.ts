@@ -36,8 +36,10 @@ const fixture = vi.hoisted(() => ({
   >(),
   runId: "fixture-run-token",
   runIdFailure: undefined as string | undefined,
+  runIdCause: undefined as unknown,
   runIdAvailability: undefined as "absent" | "unavailable" | undefined,
   runIdReads: 0,
+  runIdReadResolve: undefined as (() => void) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -145,9 +147,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("../ProcessOwnership.js", () => ({
+vi.mock("../ProcessOwnership.js", async (original) => ({
+  ...(await original<typeof import("../ProcessOwnership.js")>()),
+  cleanupOwnedProcessGroup: async () => {
+    throw new Error("Unexpected native process cleanup");
+  },
   readProcessRunId: async () => {
     fixture.runIdReads += 1;
+    fixture.runIdReadResolve?.();
+    if (fixture.runIdCause !== undefined) throw fixture.runIdCause;
     if (
       fixture.runIdFailure !== undefined &&
       fixture.runIdAvailability !== undefined
@@ -165,7 +173,8 @@ vi.mock("../ProcessOwnership.js", () => ({
   },
 }));
 
-vi.mock("../ExecFileOutput.js", () => ({
+vi.mock("../ExecFileOutput.js", async (original) => ({
+  ...(await original<typeof import("../ExecFileOutput.js")>()),
   execFileOutput: async () => {
     fixture.psReads += 1;
     if (fixture.psFailure !== undefined)
@@ -176,6 +185,9 @@ vi.mock("../ExecFileOutput.js", () => ({
   },
 }));
 
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
+import { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
+import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { readLinuxProcessStat } from "./LinuxProcessSampling.js";
@@ -253,8 +265,10 @@ const setUpFixture = (): void => {
   fixture.statReads.clear();
   fixture.statMutations.clear();
   fixture.runIdFailure = undefined;
+  fixture.runIdCause = undefined;
   fixture.runIdAvailability = undefined;
   fixture.runIdReads = 0;
+  fixture.runIdReadResolve = undefined;
   for (const pid of [100, 200, 300, 400]) fixture.tasks.set(pid, [String(pid)]);
   fixture.children.set("100:100", "200 400");
   fixture.children.set("200:200", "300");
@@ -262,15 +276,18 @@ const setUpFixture = (): void => {
 
 const start = () => {
   const samples: ProcessSample[] = [];
+  const resourceScope = new ProcessCaptureResourceScope();
   const stop = startProcessSampler({
     rootPid: 100,
     runId: fixture.runId,
     started: 0,
     limit: 20,
     samples,
+    resourceScope,
   });
   onTestFinished(async () => {
     await stop();
+    await resourceScope.close();
   });
   return { samples, stop };
 };
@@ -676,3 +693,47 @@ it.each(["absent", "unavailable"] as const)(
     }
   },
 );
+
+it("adopts the failed run-token descriptor into the actual capture scope before stopping future samples", async () => {
+  setUpFixture();
+  const file = await failedInspectionDescriptor();
+  const resourceScope = new ProcessCaptureResourceScope();
+  fixture.runIdCause = file.failure;
+  vi.useFakeTimers();
+  const attempted = new Promise<void>((resolve) => {
+    fixture.runIdReadResolve = resolve;
+  });
+  const stop = startProcessSampler({
+    rootPid: 100,
+    runId: fixture.runId,
+    resourceScope,
+    started: 0,
+    limit: 20,
+    samples: [],
+  });
+  onTestFinished(async () => {
+    file.allow();
+    await resourceScope.close();
+    await stop().catch((cause: unknown) => {
+      if (!(cause instanceof ProcessCaptureInspectionFailure)) throw cause;
+    });
+    vi.useRealTimers();
+  });
+  await attempted;
+  await vi.advanceTimersByTimeAsync(200);
+  expect(fixture.runIdReads).toBe(1);
+  const failure: unknown = await stop().catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessCaptureInspectionFailure);
+  if (!(failure instanceof ProcessCaptureInspectionFailure))
+    throw new Error("Expected exact retained inspection failure");
+  expect(failure.inspectionFailure).toBe(file.failure);
+  expect(failure.cleanupIncomplete).toBe(true);
+  await expect(resourceScope.retryCleanup()).rejects.toBeDefined();
+  expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+  file.allow();
+  await resourceScope.retryCleanup();
+  expect(file.handle.fd).toBe(-1);
+  expect(failure.cleanupIncomplete).toBe(false);
+  await expect(stop()).rejects.toBe(failure);
+  expect(failure.inspectionFailure).toBe(file.failure);
+});

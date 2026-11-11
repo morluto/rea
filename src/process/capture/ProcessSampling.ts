@@ -1,3 +1,5 @@
+import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
+import type { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
 import type { ProcessSamplingCoverage } from "../../domain/process/processCaptureCoverage.js";
 import type {
   ProcessSample,
@@ -367,6 +369,7 @@ const sampleProcesses = async (
 export const startProcessSampler = (options: {
   readonly rootPid: number;
   readonly runId: string;
+  readonly resourceScope: ProcessCaptureResourceScope;
   readonly started: number;
   readonly limit: number;
   readonly samples: ProcessSample[];
@@ -386,6 +389,7 @@ export const startProcessSampler = (options: {
   let samplingWasInterrupted = false;
   let firstSamplingFailure: string | null = null;
   let rootInitialized = false;
+  let inspectionFailure: ProcessCaptureInspectionFailure | undefined;
 
   const sample = (): void => {
     if (stopped || pending !== undefined) return;
@@ -443,6 +447,13 @@ export const startProcessSampler = (options: {
         }
       })
       .catch((cause: unknown) => {
+        const inspection = options.resourceScope.retainInspectionFailure(cause);
+        if (inspection !== undefined) {
+          inspectionFailure = inspection;
+          stopped = true;
+          clearInterval(timer);
+          return;
+        }
         if (isSamplingAbort(cause, controller.signal)) {
           samplingWasInterrupted = true;
         } else {
@@ -469,6 +480,7 @@ export const startProcessSampler = (options: {
     clearInterval(timer);
     abortCurrent?.();
     await pending;
+    if (inspectionFailure !== undefined) throw inspectionFailure;
     const failureCount = samplingFailures + (samplingWasInterrupted ? 1 : 0);
     const interrupted =
       "Sampler shutdown interrupted an unfinished process observation; unexamined processes remain unknown";
