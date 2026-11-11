@@ -128,17 +128,29 @@ export const downloadHopperPackage = async (
       expire("stalled", HOPPER_DOWNLOAD_STALL_MS);
     }, HOPPER_DOWNLOAD_STALL_MS);
   };
+  const selectedSignal =
+    options.signal === undefined
+      ? deadline.signal
+      : AbortSignal.any([options.signal, deadline.signal]);
+  // Node may replace falsy abort reasons during body reads. Send a unique,
+  // truthy reason through fetch so only its own rejection can be attributed.
+  const transport = new AbortController();
+  const transportReason = {};
+  const cancelTransport = () => transport.abort(transportReason);
+  if (selectedSignal.aborted) cancelTransport();
+  else
+    selectedSignal.addEventListener("abort", cancelTransport, { once: true });
   try {
     progressed(0);
     return await readHopperResponse(url, reported, {
-      signal:
-        options.signal === undefined
-          ? deadline.signal
-          : AbortSignal.any([options.signal, deadline.signal]),
+      signal: transport.signal,
       maxBytes,
       progressed,
     });
-  } catch (cause: unknown) {
+  } catch (observed: unknown) {
+    const cause = isHopperRequestCancellation(observed, transport.signal)
+      ? selectedSignal.reason
+      : observed;
     if (isHopperRequestCancellation(cause, options.signal)) throw cause;
     if (
       expired !== undefined &&
@@ -154,6 +166,7 @@ export const downloadHopperPackage = async (
       });
     throw cause;
   } finally {
+    selectedSignal.removeEventListener("abort", cancelTransport);
     clearTimeout(overall);
     clearTimeout(stall);
   }
@@ -199,11 +212,7 @@ const readHopperResponse = async (
   let bytes = 0;
   try {
     while (true) {
-      const chunk = await reader.read().catch((cause: unknown) => {
-        // Node replaces a falsy abort reason with a fresh body AbortError.
-        if (isSubstitutedFetchBodyAbort(cause, signal)) throw signal.reason;
-        throw cause;
-      });
+      const chunk = await reader.read();
       if (chunk.done) return ok(Buffer.concat(chunks, bytes));
       if (chunk.value.byteLength > maxBytes - bytes) {
         await releaseBody(reader);
@@ -233,18 +242,6 @@ const releaseBody = async (
     void cause;
   }
 };
-
-/** A body read aborted after headers, when Node did not preserve a falsy reason. */
-const isSubstitutedFetchBodyAbort = (
-  cause: unknown,
-  signal: AbortSignal,
-): boolean =>
-  signal.aborted &&
-  !signal.reason &&
-  cause !== signal.reason &&
-  cause instanceof DOMException &&
-  cause.name === "AbortError" &&
-  cause.code === DOMException.ABORT_ERR;
 
 const networkDetail = (cause: TypeError): string => {
   const underlying = cause.cause instanceof Error ? cause.cause.message : "";
