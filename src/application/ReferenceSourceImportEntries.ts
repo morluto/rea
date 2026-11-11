@@ -6,6 +6,7 @@ import type { JavaScriptPackageType } from "../domain/javascript/javascriptSourc
 import { logicalPathEscapesRoot } from "../domain/artifactIdentity.js";
 import {
   createReferenceSourcePathLookup,
+  rebaseReferenceSourceTarget,
   decodeReferenceSourceModuleUrlPath,
   isPortableAbsoluteReferenceTarget,
   type ReferenceSourcePathLookup,
@@ -630,7 +631,7 @@ const appendReadEntry = (
       entry.targetState === "internal" ||
       (entry.targetState === "missing" &&
         !isPortableAbsoluteReferenceTarget(entry.target))
-        ? posix.relative(posix.dirname(entry.path), entry.target) || "."
+        ? rebaseReferenceSourceTarget(entry.path, entry.target)
         : entry.target,
     target_state: entry.targetState,
     classifications,
