@@ -1,8 +1,4 @@
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import {
-  ProcessOwnershipInspectionCancelled,
-  ProcessOwnershipIdentityBatchFailure,
-} from "../process/ProcessInspectionCancellation.js";
+import { processInspectionFailure } from "../providers/OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -87,15 +83,9 @@ export class NativeCommandFailure extends Error {
     this.cleanupFailures = options?.cleanupFailures ?? [];
     this.cleanupMarker = options?.cleanupMarker;
     this.preparationFailure =
-      options?.cause instanceof DarwinProcessOwnershipInspectionError ||
-      options?.cause instanceof ProcessOwnershipInspectionCancelled ||
-      options?.cause instanceof ProcessOwnershipIdentityBatchFailure ||
-      options?.cause instanceof RegularFileCleanupFailure
-        ? options.cause
-        : options?.cause instanceof NativeCommandFailure ||
-            options?.cause instanceof OwnedCommandFailure
-          ? options.cause.preparationFailure
-          : undefined;
+      options?.cause instanceof NativeCommandFailure
+        ? options.cause.preparationFailure
+        : processInspectionFailure(options?.cause);
     this.detail = options?.detail ?? this.preparationFailure?.message ?? null;
   }
 }

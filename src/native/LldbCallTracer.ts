@@ -1,3 +1,4 @@
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
@@ -575,14 +576,14 @@ export class LldbCallTracer implements NativeCallTracer {
     try {
       await this.#inspectionResources.retryCleanup();
     } catch (cause: unknown) {
-      unresolved.push(
-        new ProviderCleanupError(
-          PROVIDER,
-          this.#inspectionResources.cleanupResources,
-          { reason: "LLDB discovery inspection cleanup remains incomplete" },
-          { operation: OPERATION, cause },
-        ),
+      const failure = new ProviderCleanupError(
+        PROVIDER,
+        this.#inspectionResources.cleanupResources,
+        { reason: "LLDB discovery inspection cleanup remains incomplete" },
+        { operation: OPERATION, cause },
       );
+      bindArtifactFileCleanup(cause, failure);
+      unresolved.push(failure);
     }
     for (const [owner, marker] of retained) {
       let released = false;

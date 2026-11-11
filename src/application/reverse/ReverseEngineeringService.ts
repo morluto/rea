@@ -1,12 +1,12 @@
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
-import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
 } from "../../process/ProcessInspectionCancellation.js";
 import {
   retainProcessInspectionCleanup,
+  processInspectionFailure,
   processInspectionCancellationError,
 } from "../../providers/OwnedCommandCleanup.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -626,34 +626,30 @@ export class ReverseEngineeringService {
     } catch (cause) {
       const ownedCause =
         cause instanceof OwnedOutputFailure ? cause.cause : cause;
-      const preparation =
-        ownedCause instanceof OwnedCommandFailure
-          ? ownedCause.preparationFailure
-          : ownedCause;
-      const inspection =
-        preparation instanceof DarwinProcessOwnershipInspectionError ||
-        preparation instanceof RegularFileCleanupFailure ||
-        preparation instanceof ProcessOwnershipInspectionCancelled ||
-        preparation instanceof ProcessOwnershipIdentityBatchFailure
-          ? preparation
-          : undefined;
+      const inspection = processInspectionFailure(ownedCause);
       if (
         inspection !== undefined &&
         !(inspection instanceof DarwinProcessOwnershipInspectionError)
       ) {
         const cancellation = processInspectionCancellationError(
-          inspection,
+          ownedCause,
           operation,
         );
         earlyFailure =
-          inspection instanceof ProcessOwnershipInspectionCancelled ||
-          (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
-            inspection.origin === "cancelled")
-            ? cancellation
-            : new ProviderAdapterError("process-ownership", operation, {
-                cause: inspection,
-                diagnostics: { stage: "ownership_preparation" },
-              });
+          ownedCause instanceof OwnedCommandFailure &&
+          ownedCause.reason === "timeout"
+            ? new AnalysisTimeoutError(operation, timeoutMs, {
+                cause: ownedCause,
+                ...reverseCommandTimeoutGuidance(timeoutMs),
+              })
+            : inspection instanceof ProcessOwnershipInspectionCancelled ||
+                (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
+                  inspection.origin === "cancelled")
+              ? cancellation
+              : new ProviderAdapterError("process-ownership", operation, {
+                  cause: inspection,
+                  diagnostics: { stage: "ownership_preparation" },
+                });
       }
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;

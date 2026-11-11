@@ -58,30 +58,40 @@ it.each([false, true])(
   },
 );
 
-it("preserves reverse inspection cancellation without consulting ambient signal state", async () => {
-  const reason = new Error("exact inspection caller value");
-  const preparation = new ProcessOwnershipInspectionCancelled(reason);
-  const root = await createTestTempDirectory(
-    "rea-reverse-cancelled-inspection-",
-  );
-  const path = join(root, "artifact");
-  await writeFile(path, "inert artifact");
-  const service = new TestReverseEngineeringService({
-    runOwned: async () => {
-      throw new OwnedCommandFailure(
-        "cancelled",
-        "inspection cancelled",
-        null,
-        null,
-        { preparationFailure: preparation, cancellation: { reason } },
+it.each(["cancelled", "timeout"] as const)(
+  "preserves reverse inspection %s without consulting ambient signal state",
+  async (origin) => {
+    const reason = new Error("exact inspection caller value");
+    const preparation = new ProcessOwnershipInspectionCancelled(reason);
+    const root = await createTestTempDirectory(
+      "rea-reverse-cancelled-inspection-",
+    );
+    const path = join(root, "artifact");
+    await writeFile(path, "inert artifact");
+    const service = new TestReverseEngineeringService({
+      runOwned: async () => {
+        throw new OwnedCommandFailure(
+          origin,
+          "inspection stopped",
+          null,
+          null,
+          { preparationFailure: preparation, cancellation: { reason } },
+        );
+      },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (result.ok) throw new Error("Expected inspection cancellation");
+    const primary = primaryAnalysisError(result.error);
+    expect(primary._tag).toBe(
+      origin === "cancelled"
+        ? "AnalysisCancelledError"
+        : "AnalysisTimeoutError",
+    );
+    if (origin === "cancelled") expect(primary.cause).toBe(reason);
+    else
+      expect(primary.secondaryFailures.map((failure) => failure.cause)).toEqual(
+        [reason],
       );
-    },
-  });
-  const result = await service.executeRizinCommand({ path, command: "iI" });
-  if (result.ok) throw new Error("Expected inspection cancellation");
-  expect(primaryAnalysisError(result.error)._tag).toBe(
-    "AnalysisCancelledError",
-  );
-  expect(primaryAnalysisError(result.error).cause).toBe(reason);
-  await service.close();
-});
+    await service.close();
+  },
+);
