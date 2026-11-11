@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   ElfPointerRelocationFailure,
   elfAbsoluteRelocationType,
+  elfCopyRelocationType,
   elfRelocationWidth,
   readElfRelocationWritesSteps,
   type ElfPointerWrite,
@@ -116,6 +117,16 @@ it("owns the word-sized absolute relocation type per machine", () => {
   expect(elfAbsoluteRelocationType(8)).toBeUndefined();
 });
 
+it("owns the COPY relocation type per machine and gives it no fixed width", () => {
+  expect(elfCopyRelocationType(62)).toBe(5);
+  expect(elfCopyRelocationType(3)).toBe(5);
+  expect(elfCopyRelocationType(183)).toBe(1024);
+  expect(elfCopyRelocationType(40)).toBe(20);
+  expect(elfCopyRelocationType(8)).toBeUndefined();
+  expect(elfRelocationWidth(62, 5)).toBeUndefined();
+  expect(elfRelocationWidth(183, 1024)).toBeUndefined();
+});
+
 /**
  * `records` RELA records at `destination` against dynamic symbol
  * `symbolIndex` (1 unless given). Symbol 1 records `symbolSize` as its
@@ -179,30 +190,57 @@ const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
   return bytes;
 };
 
-const walk = (
-  bytes: Buffer,
-  unsupported?: "record",
-  machine = EM_X86_64,
-  bits: 32 | 64 = 64,
-) => {
-  const writes: ElfPointerWrite[] = [];
-  const steps = readElfRelocationWritesSteps(
-    bytes,
-    {
-      bits,
-      little: true,
-      machine,
-      dynamicSegments: [{ offset: 0n, size: 0x100n }],
-      mappings: [{ address: 0n, offset: 0, size: bytes.length }],
-      zeroFills: [],
-    },
-    unsupported === undefined ? {} : { unsupported },
-  );
-  let next = steps.next();
-  for (; !next.done; next = steps.next())
-    if (next.value !== undefined) writes.push(next.value);
-  return { writes, result: next.value };
-};
+const walker =
+  (wholeExtents: boolean) =>
+  (
+    bytes: Buffer,
+    unsupported?: "record",
+    machine = EM_X86_64,
+    bits: 32 | 64 = 64,
+  ) => {
+    const writes: ElfPointerWrite[] = [];
+    const steps = readElfRelocationWritesSteps(
+      bytes,
+      {
+        bits,
+        little: true,
+        machine,
+        dynamicSegments: [{ offset: 0n, size: 0x100n }],
+        mappings: [{ address: 0n, offset: 0, size: bytes.length }],
+        zeroFills: [],
+      },
+      { wholeExtents, ...(unsupported === undefined ? {} : { unsupported }) },
+    );
+    let next = steps.next();
+    for (; !next.done; next = steps.next())
+      if (next.value !== undefined) writes.push(next.value);
+    return { writes, result: next.value };
+  };
+/** A consumer that asked for whole COPY and TLS descriptor extents. */
+const walk = walker(true);
+/** A consumer that tracks one pointer per write. */
+const walkPointers = walker(false);
+
+it.each([
+  ["an x86-64 COPY", symbolicImage(5n, 8n), 62, 64, 5],
+  ["an x86-64 TLS descriptor", symbolicImage(36n, 0n), 62, 64, 36],
+  ["an AArch64 TLS descriptor", symbolicImage(1031n, 0n), 183, 64, 1031],
+  ["an i386 TLS descriptor", symbolicImage32(41, 0), 3, 32, 41],
+  ["an ARM TLS descriptor", symbolicImage32(13, 0), 40, 32, 13],
+] as const)(
+  "leaves %s undecoded for a consumer that did not ask for whole extents",
+  (_name, bytes, machine, bits, kind) => {
+    const { writes, result } = walkPointers(bytes, "record", machine, bits);
+    expect(writes).toEqual([]);
+    expect(result).toMatchObject({
+      issues: [`ELF relocation kind ${String(kind)} is not decoded`],
+      pointer_coverage_known: false,
+    });
+    expect(() => walkPointers(bytes, undefined, machine, bits)).toThrow(
+      ElfPointerRelocationFailure,
+    );
+  },
+);
 
 it.each([
   ["x86-64", 62, 64, 5],

@@ -1212,6 +1212,29 @@ it.each([
   },
 );
 
+it.each([
+  ["an x86-64 TLS descriptor", 62, 36, undefined],
+  ["an AArch64 TLS descriptor", 183, 1031, undefined],
+  ["an x86-64 COPY of a pointer-sized symbol", 62, 5, 8n],
+  ["an x86-64 COPY of a 24-byte symbol", 62, 5, 24n],
+  ["an AArch64 COPY of a 24-byte symbol", 183, 1024, 24n],
+] as const)(
+  "fails closed on %s instead of reading the bytes it writes as stored words",
+  (_, machine, kind, symbolSize) => {
+    // The write starts at 0x2f8, eight bytes below the method pointer at
+    // 0x300, which a two-word write or a 24-byte copy runs through.
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      unresolvedRelocations: [{ offset: 0x2f8, kind }],
+      ...(symbolSize === undefined ? {} : { symbolSize }),
+    });
+    expect(failure(bytes)).toEqual({
+      reason: "unsupported-pointer-encoding",
+      kind: "unsupported",
+    });
+  },
+);
+
 it("reads a relative relocation into a zero-filled pointer array as a known value", () => {
   const bytes = createElfFixture(createIl2cppBinaryFixture(), {
     zeroFilledTable: true,

@@ -507,6 +507,8 @@ export interface ElfFixtureOptions {
   readonly relaEntry?: bigint;
   /** Move mscorlib.dll's method pointers into zero-fill past the file end. */
   readonly zeroFilledTable?: boolean;
+  /** Declare DT_SYMTAB / DT_SYMENT with dynamic symbol 1 of this `st_size`, which sizes a COPY. */
+  readonly symbolSize?: bigint;
 }
 
 /** A valid large RELA image; extra file-backed pointers do not add IL2CPP registrations. */
@@ -583,11 +585,17 @@ export const createElfFixture = (
       0n,
       relocation.kind,
     ]);
+  // The null symbol, then symbol 1 with only its size set.
+  const symbols = Buffer.alloc(options.symbolSize === undefined ? 0 : 48);
+  if (options.symbolSize !== undefined)
+    symbols.writeBigUInt64LE(options.symbolSize, 24 + 16);
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +
-    (options.androidPacked === true ? 1 : 0);
-  const fileSize = SIZE + relocations.length * 24 + tagCount * 16;
+    (options.androidPacked === true ? 1 : 0) +
+    (options.symbolSize === undefined ? 0 : 2);
+  const fileSize =
+    SIZE + relocations.length * 24 + tagCount * 16 + symbols.length;
   if (options.zeroFilledTable === true) {
     // The second module record's methodPointers field (MODULES + 0x40 + 16).
     const slot = FIXTURE_BINARY_BASE + BigInt(0x400 + 0x40 + 16);
@@ -615,6 +623,12 @@ export const createElfFixture = (
     ...(options.androidPacked === true
       ? [[0x60000011n, 0n] as [bigint, bigint]]
       : []),
+    ...(options.symbolSize === undefined
+      ? []
+      : ([
+          [6n, FIXTURE_BINARY_BASE + BigInt(fileSize - symbols.length)],
+          [11n, 24n],
+        ] as [bigint, bigint][])),
     [0n, 0n],
   ];
   const dynamic = Buffer.alloc(tags.length * 16);
@@ -622,7 +636,7 @@ export const createElfFixture = (
     dynamic.writeBigInt64LE(tag, index * 16);
     dynamic.writeBigUInt64LE(value, index * 16 + 8);
   });
-  const file = Buffer.concat([body, rela, dynamic]);
+  const file = Buffer.concat([body, rela, dynamic, symbols]);
   if (file.length !== fileSize) throw new Error("ELF fixture size drifted");
   const withDynamic = options.dynamic !== false;
   // ELF64 header: little-endian shared object, no section headers.

@@ -100,9 +100,14 @@ covers. When such a table is skipped for an unexpected entry size, cannot be
 read, or lies past the record budget, every slot it could reach that has no
 relocation found is `unresolved`, and a `.ctors` slot is not dropped as a
 sentinel. A section record that writes only part of a slot, starts inside it,
-or repeats it also leaves the slot `unresolved`. In a linked image, a record
-that writes memory with no file bytes, such as zero-fill `.bss`, changes only
-the slots it overlaps in memory. In a relocatable object a
+or repeats it also leaves the slot `unresolved`. In a linked image, a section
+`COPY` record covers the size that its table's linked symbol records, as a
+dynamic one does. When that symbol was not read, or the section `COPY` sizes
+add up to more than the file's byte count, the table counts as not fully read.
+A record that writes memory with no file bytes, such as zero-fill `.bss`,
+changes only the slots it overlaps in memory, provided its extent is known: a
+kind with a fixed width, or a sized `COPY`. A record of any other kind there
+leaves its table not fully read. In a relocatable object a
 table reaches only the section named by its `sh_info`. In a linked image, a relocation section without `SHF_ALLOC`
 (such as one kept by `--emit-relocs`) was already applied by the static
 linker, so the slot's stored word is used rather than applying the record

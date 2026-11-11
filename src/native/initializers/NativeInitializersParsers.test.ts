@@ -950,6 +950,39 @@ describe("ELF relocation coverage", () => {
   });
 });
 
+/**
+ * elf64PieInitializers whose leading RELA record is read only as a section
+ * record: DT_RELA starts at the second one. With `fileEnd`, the load is also
+ * split at the preinit_array slot (0x240), so memory from `fileEnd` up to that
+ * slot is zero-fill.
+ */
+const sectionOnlyRecord = (
+  offset: bigint,
+  info: bigint,
+  fileEnd?: bigint,
+): Buffer => {
+  const bytes = elf64PieInitializers();
+  bytes.writeBigUInt64LE(0x498n, 0x300 + 8 * 16 + 8);
+  bytes.writeBigUInt64LE(72n, 0x300 + 9 * 16 + 8);
+  bytes.writeBigUInt64LE(offset, 0x480);
+  bytes.writeBigUInt64LE(info, 0x488);
+  if (fileEnd === undefined) return bytes;
+  bytes.writeUInt16LE(3, 56);
+  bytes.writeBigUInt64LE(fileEnd, 64 + 32);
+  bytes.writeBigUInt64LE(0x240n, 64 + 40);
+  bytes.writeUInt32LE(1, 176);
+  bytes.writeUInt32LE(6, 180);
+  for (const field of [184, 192, 200]) bytes.writeBigUInt64LE(0x240n, field);
+  for (const field of [208, 216])
+    bytes.writeBigUInt64LE(BigInt(bytes.length - 0x240), field);
+  bytes.writeBigUInt64LE(1n, 224);
+  return bytes;
+};
+
+/** R_X86_64_COPY of dynamic symbol 1, whose `st_size` is at 0x548. */
+const COPY_OF_SYMBOL_1 = (1n << 32n) | 5n;
+const SYMBOL_1_SIZE = 0x538 + 16;
+
 describe("ELF COPY relocations and writes without file bytes", () => {
   it.each([
     ["file-backed bytes", 0x700n],
@@ -1022,25 +1055,33 @@ describe("ELF COPY relocations and writes without file bytes", () => {
   ] as const)(
     "judges a section record without file bytes by the memory it overlaps: %s",
     async (_case, kind, resolution, status) => {
-      const bytes = elf64PieInitializers();
-      // Split the load at the preinit_array slot, so the first segment ends
-      // in four zero-fill bytes at 0x23c.
-      bytes.writeUInt16LE(3, 56);
-      bytes.writeBigUInt64LE(0x23cn, 64 + 32);
-      bytes.writeBigUInt64LE(0x240n, 64 + 40);
-      bytes.writeUInt32LE(1, 176);
-      bytes.writeUInt32LE(6, 180);
-      for (const field of [184, 192, 200])
-        bytes.writeBigUInt64LE(0x240n, field);
-      for (const field of [208, 216])
-        bytes.writeBigUInt64LE(BigInt(bytes.length - 0x240), field);
-      bytes.writeBigUInt64LE(1n, 224);
-      // DT_RELA drops the leading record, which stays in .rela.dyn as a
-      // symbolic write at 0x23c, just below the slot at 0x240.
-      bytes.writeBigUInt64LE(0x498n, 0x300 + 8 * 16 + 8);
-      bytes.writeBigUInt64LE(72n, 0x300 + 9 * 16 + 8);
-      bytes.writeBigUInt64LE(0x23cn, 0x480);
-      bytes.writeBigUInt64LE((1n << 32n) | kind, 0x488);
+      // The first segment ends in four zero-fill bytes at 0x23c, where the
+      // record writes, just below the slot at 0x240.
+      const report = await read(
+        sectionOnlyRecord(0x23cn, (1n << 32n) | kind, 0x23cn),
+      );
+      expect(report.entries[0]).toMatchObject({
+        kind: "preinit_array",
+        slot_va: "0x240",
+        value_va: resolution === "raw" ? "0x100" : null,
+        resolution,
+      });
+      expect(report.status).toBe(status);
+    },
+  );
+});
+
+describe("ELF COPY relocations read as section records", () => {
+  it.each([
+    ["ends at the slot", 16n, "raw", "parsed"],
+    ["reaches the slot's first byte", 17n, "unresolved", "incomplete"],
+    ["runs through the slot", 24n, "unresolved", "incomplete"],
+  ] as const)(
+    "sizes a COPY into zero-fill memory by its symbol: %s",
+    async (_case, size, resolution, status) => {
+      // Zero-fill runs from the record at 0x230 up to the slot at 0x240.
+      const bytes = sectionOnlyRecord(0x230n, COPY_OF_SYMBOL_1, 0x230n);
+      bytes.writeBigUInt64LE(size, SYMBOL_1_SIZE);
       const report = await read(bytes);
       expect(report.entries[0]).toMatchObject({
         kind: "preinit_array",
@@ -1051,6 +1092,122 @@ describe("ELF COPY relocations and writes without file bytes", () => {
       expect(report.status).toBe(status);
     },
   );
+
+  it.each([
+    ["ends at the slot", 8n, "raw", "parsed"],
+    ["runs through the slot", 16n, "unresolved", "incomplete"],
+  ] as const)(
+    "sizes a COPY over file bytes by its symbol: %s",
+    async (_case, size, resolution, status) => {
+      const bytes = sectionOnlyRecord(0x238n, COPY_OF_SYMBOL_1);
+      bytes.writeBigUInt64LE(size, SYMBOL_1_SIZE);
+      const report = await read(bytes);
+      expect(report.entries[0]).toMatchObject({
+        kind: "preinit_array",
+        slot_va: "0x240",
+        value_va: resolution === "raw" ? "0x100" : null,
+        resolution,
+      });
+      expect(report.status).toBe(status);
+      expect(
+        report.limitations.includes(
+          "1 initializer slot(s) are partly overwritten or relocated more than once by section relocations and are listed as unresolved.",
+        ),
+      ).toBe(resolution === "unresolved");
+    },
+  );
+
+  it.each([
+    ["names symbol 0", (bytes: Buffer) => bytes.writeBigUInt64LE(5n, 0x488)],
+    [
+      "names a symbol past its table",
+      (bytes: Buffer) => bytes.writeBigUInt64LE((2n << 32n) | 5n, 0x488),
+    ],
+    [
+      "links to a section that is not a symbol table",
+      // .rela.dyn is section 6; .dynstr is section 8.
+      (bytes: Buffer) => bytes.writeUInt32LE(8, 0x800 + 6 * 64 + 40),
+    ],
+  ])(
+    "keeps stored words unresolved when a section COPY %s",
+    async (_case, change) => {
+      // Neither destination is within a word of a slot: file bytes at 0x700
+      // and zero-fill memory at 0xc10.
+      for (const destination of [0x700n, 0xc10n]) {
+        const bytes = sectionOnlyRecord(destination, COPY_OF_SYMBOL_1);
+        bytes.writeBigUInt64LE(0xd00n, 64 + 40);
+        bytes.writeBigUInt64LE(8n, SYMBOL_1_SIZE);
+        change(bytes);
+        const report = await read(bytes);
+        expect(report.entries[0]).toMatchObject({
+          kind: "preinit_array",
+          value_va: null,
+          resolution: "unresolved",
+        });
+        expect(report.status).toBe("incomplete");
+        expect(report.limitations).toContain(
+          "A section COPY relocation's write size is not established; slots without a relocation are unresolved.",
+        );
+      }
+    },
+  );
+
+  it("limits section COPY sizes together to the file byte count", async () => {
+    const sized = (size: bigint) => {
+      const bytes = sectionOnlyRecord(0xc10n, COPY_OF_SYMBOL_1);
+      bytes.writeBigUInt64LE(0x2000n, 64 + 40);
+      bytes.writeBigUInt64LE(size, SYMBOL_1_SIZE);
+      return read(bytes);
+    };
+    const within = await sized(0xc00n);
+    expect(within.entries[0]?.resolution).toBe("raw");
+    expect(within.status).toBe("parsed");
+    const beyond = await sized(0xc01n);
+    expect(beyond.entries[0]?.resolution).toBe("unresolved");
+    expect(beyond.status).toBe("incomplete");
+    expect(beyond.limitations).toContain(
+      "Section COPY relocation sizes exceed the file byte count allowance; slots without a relocation are unresolved.",
+    );
+  });
+
+  it("takes the one word of a RELATIVE record as an established extent", async () => {
+    // R_X86_64_RELATIVE into zero-fill memory, ending a word below the slot.
+    const report = await read(sectionOnlyRecord(0x230n, 8n, 0x230n));
+    expect(report.entries[0]).toMatchObject({
+      kind: "preinit_array",
+      slot_va: "0x240",
+      value_va: "0x100",
+      resolution: "raw",
+    });
+    expect(report.status).toBe("parsed");
+  });
+
+  it("does not take the word assumed for an unknown kind as proof that a slot beside zero-fill memory is untouched", async () => {
+    // Kind 99 has no known width. Its record sits 16 bytes below the slot.
+    const report = await read(
+      sectionOnlyRecord(0x230n, (1n << 32n) | 99n, 0x230n),
+    );
+    expect(report.entries[0]).toMatchObject({
+      kind: "preinit_array",
+      slot_va: "0x240",
+      value_va: null,
+      resolution: "unresolved",
+    });
+    expect(report.status).toBe("incomplete");
+  });
+
+  it("keeps the one-word assumption for a COPY kind in a relocatable object", async () => {
+    const bytes = elfRelocatableCtors();
+    // The .ctors record against `ctor`, a symbol of size 0, becomes kind 5.
+    bytes.writeBigUInt64LE(COPY_OF_SYMBOL_1, 0x308);
+    const report = await read(bytes);
+    expect(
+      report.entries.map((entry) => [entry.kind, entry.resolution]),
+    ).toEqual([
+      ["init_array", "symbol_addend"],
+      ["ctors", "unresolved"],
+    ]);
+  });
 });
 
 describe("Unreadable symbol names", () => {

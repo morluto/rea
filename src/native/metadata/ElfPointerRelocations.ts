@@ -223,6 +223,10 @@ export const elfAbsoluteRelocationType = (
   machine: number,
 ): number | undefined => RELOCATION_KINDS.get(machine)?.absolute;
 
+/** COPY relocation type, whose write is as wide as its symbol's `st_size`. */
+export const elfCopyRelocationType = (machine: number): number | undefined =>
+  RELOCATION_KINDS.get(machine)?.copy;
+
 /** Bytes written by a relocation; type zero is a no-op and unknown types remain undefined. */
 export const elfRelocationWidth = (
   machine: number,
@@ -291,6 +295,12 @@ export interface ElfRelocationStreamResult {
 type RelocationOptions = {
   readonly unsupported?: "reject" | "record";
   readonly requireDynamic?: boolean;
+  /**
+   * Yield COPY and TLS descriptor records as writes of unknown value over
+   * their whole extent, which can exceed one pointer. Unset, they stay
+   * undecoded kinds, for consumers that track one pointer per write.
+   */
+  readonly wholeExtents?: boolean;
 };
 
 /** Decode once from immutable bytes; consumers choose streaming or sparse retention. */
@@ -306,7 +316,8 @@ export function* readElfRelocationWritesSteps(
       "ELF relative pointers require a matching AArch64, x86-64, ARM or i386 image",
     );
   const relative = kinds.relative;
-  const copy = kinds.copy;
+  const wholeExtents = options.wholeExtents === true;
+  const copy = wholeExtents ? kinds.copy : undefined;
   const unknownWidths = kinds.widths;
   if (options.requireDynamic === true && input.dynamicSegments.length === 0)
     throw new ElfPointerRelocationFailure(
@@ -489,7 +500,7 @@ export function* readElfRelocationWritesSteps(
       }
       if (kind !== relative || symbolIndex !== 0) {
         const width = unknownWidths.get(kind);
-        if (width === undefined) {
+        if (width === undefined || (width > word && !wholeExtents)) {
           unsupported(`ELF relocation kind ${kind} is not decoded`);
           continue;
         }

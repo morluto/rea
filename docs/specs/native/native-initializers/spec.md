@@ -32,9 +32,13 @@ slot's location, resolved target and how that target was obtained. The
   Thumb bit is cleared for target section and file-offset lookup only. A slot with no
   relocation found is `unresolved` when a dynamic table, or a section table
   that could reach it, was not fully read; such a `.ctors` slot is not dropped
-  as a sentinel. A `COPY` relocation covers the bytes of its dynamic symbol's
-  size and a TLS descriptor two words; a linked image's section record that
-  writes memory with no file bytes covers only the slots it overlaps there. A
+  as a sentinel. A `COPY` relocation covers the bytes of its symbol's size and
+  a TLS descriptor two words. The size comes from the dynamic symbol table for
+  a dynamic record and from the table's linked symbols for a section record of
+  a linked image; an unread size leaves coverage unknown. A linked image's
+  section record that writes memory with no file bytes covers only the slots
+  it overlaps there when its extent is established, by a fixed width or a
+  `COPY` size, and otherwise leaves its table not fully read. A
   linked image's non-`SHF_ALLOC` relocation sections were
   applied at link time and are not reapplied. A Mach-O stored pointer word is
   used only when no undecoded bind stream or external relocation could
@@ -78,7 +82,8 @@ unsupported relocation machines, slot, symbol and relocation budgets,
 over-long names, tallied repeated observations, a near-maximal section table
 with a full slot budget, cancellation in the relocation walks, skipped section
 relocation tables, partly overwritten slots, `COPY` and TLS descriptor extents,
-section records that write memory without file bytes, retained link-time
+section `COPY` records sized by their symbol, section records that write
+memory without file bytes, retained link-time
 relocations, unreadable names, Mach-O chained fixups, `LC_DYLD_INFO` rebases, 32-bit images
 with undecoded binds, `MH_OBJECT` section relocations, `__init_offsets`, the
 shared and repeated `LC_SYMTAB` budget, and universal slices. CLI acceptance, filesystem boundary
