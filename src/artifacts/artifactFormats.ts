@@ -14,6 +14,7 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
+import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
@@ -341,6 +342,16 @@ const NON_ZIP_FORMATS = {
       "uImage inventory establishes the 64-byte legacy header facts and stored payload bytes. Compressed payloads are not decompressed, and the image is not executed.",
     createReader: (path, options) =>
       new UImageArtifactReader(path, sourceOf(options)),
+  }),
+  "android-boot-image": container("android-boot-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android boot image inventory establishes header facts and stored component bytes. Payloads are not decompressed, the v4 signature and AVB footer are not verified, and the image is not executed.",
+    createReader: (path, options) =>
+      new AndroidBootImageArtifactReader(path, sourceOf(options)),
   }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),

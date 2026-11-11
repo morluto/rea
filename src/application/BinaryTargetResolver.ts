@@ -83,6 +83,7 @@ import {
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
+import { hasAndroidBootImageMagic } from "../domain/androidBootImageFormat.js";
 import { hasUImageMagic } from "../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../domain/unityfsFormat.js";
 import {
@@ -802,6 +803,7 @@ const detectArtifactFormat = async (
   if (hasUnityFsHeader(magic)) return "unityfs";
   if (hasWxapkgEncryptedMagic(magic) || hasWxapkgHeader(magic)) return "wxapkg";
   if (hasUImageMagic(magic)) return "uimage";
+  if (hasAndroidBootImageMagic(magic)) return "android-boot-image";
   const hexRecords = detectHexRecordEncoding(magic);
   if (hexRecords !== undefined) return hexRecords;
   if (hasUf2Block(magic)) return "uf2";
@@ -910,6 +912,7 @@ const isArchiveFormat = (
     "unityfs",
     "wxapkg",
     "uimage",
+    "android-boot-image",
     "dmg",
     "pkg",
     "intel-hex",

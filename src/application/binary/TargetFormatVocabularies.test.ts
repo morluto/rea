@@ -122,6 +122,7 @@ const TARGETS: TargetFixtures = {
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
   uimage: { ...archive, format: "uimage" },
+  "android-boot-image": { ...archive, format: "android-boot-image" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
   dmg: { ...archive, format: "dmg" },
