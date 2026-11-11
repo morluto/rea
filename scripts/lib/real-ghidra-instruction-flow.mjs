@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 
 /** Verify decoded return evidence and distinct non-return flows on owned fixtures. */
-export async function verifyGhidraInstructionFlow(call, names, cli) {
+export async function verifyGhidraInstructionFlow(call, names, cli, target) {
+  // inventory.c emits these controls only for an x86-64 ELF compilation.
+  // Provider name omission cannot establish whether that source branch applied.
+  const applicabilityKnown =
+    target?.format !== undefined && target?.architecture !== undefined;
+  const controlsRequired =
+    target?.format === "elf" && target?.architecture === "x86_64";
   const leaf = names.find((item) =>
     item.value.endsWith("rea_ghidra_inventory_leaf"),
   );
@@ -31,6 +37,11 @@ export async function verifyGhidraInstructionFlow(call, names, cli) {
   let checked = 0;
   for (const [symbol, mnemonic, bytes] of controls) {
     const procedure = names.find((item) => item.value === symbol);
+    if (controlsRequired)
+      assert.ok(
+        procedure,
+        `Source fixture lacks expected decoder control ${symbol}`,
+      );
     if (procedure === undefined) continue;
     const before = await call("resolve_containing_procedure", {
       address: procedure.address,
@@ -71,10 +82,11 @@ export async function verifyGhidraInstructionFlow(call, names, cli) {
     decoded_pcode_return: true,
     return_cli_mcp_parity: true,
     explicit_x86_elf_controls: checked,
-    explicit_control_scope:
-      checked === 0
-        ? "Not present on this host-native fixture format/architecture"
-        : "x86-64 ELF",
+    explicit_control_scope: !applicabilityKnown
+      ? "Unknown: source fixture format/architecture was not supplied"
+      : controlsRequired
+        ? "x86-64 ELF"
+        : "Not compiled for this fixture format/architecture",
     generic_unknown_preserved: true,
   };
 }
