@@ -95,17 +95,6 @@ const addressedSlices = <Slice extends FatSlice>(
     ? family
     : family.filter((slice) => exactSelector(slice) === architecture);
 
-/** The value that addresses exactly this slice, if any. */
-const selectorFor = <Slice extends FatSlice>(
-  family: readonly Slice[],
-  slice: Slice,
-  architecture: MachoSliceArchitecture,
-): MachoSliceArchitecture | undefined =>
-  familyValues(architecture).find((value) => {
-    const addressed = addressedSlices(family, value);
-    return addressed.length === 1 && addressed[0] === slice;
-  });
-
 /**
  * Select the thin image to inspect without lipo. A universal Mach-O needs the
  * caller's architecture. A family name selects the family's only slice; when
@@ -140,13 +129,28 @@ export const selectNativeImage = (
       cpuType ===
       MACHO_CPU_TYPES[architecture === "arm64e" ? "arm64" : architecture],
   );
+  // Selectors are advertised only for slices whose header agrees with their
+  // FAT declaration; an unverified declaration is not a working choice.
+  const identityIssues = new Map(
+    sameFamily.map((declared) => {
+      const read = readUniversalMachoSlice(bytes, fat, declared);
+      return [declared, read.ok ? undefined : read.error.message] as const;
+    }),
+  );
+  const verifiedSliceFor = (value: MachoSliceArchitecture) => {
+    const addressed = addressedSlices(sameFamily, value);
+    return addressed.length === 1 &&
+      addressed[0] !== undefined &&
+      identityIssues.get(addressed[0]) === undefined
+      ? addressed[0]
+      : undefined;
+  };
   const matches = addressedSlices(sameFamily, architecture);
   const [slice] = matches;
   if (slice === undefined || matches.length > 1) {
     const choices = familyValues(architecture).filter(
       (value) =>
-        value !== architecture &&
-        addressedSlices(sameFamily, value).length === 1,
+        value !== architecture && verifiedSliceFor(value) !== undefined,
     );
     const select =
       choices.length === 0
@@ -167,8 +171,14 @@ export const selectNativeImage = (
   const unread = sameFamily
     .filter((other) => other !== slice)
     .map((other) => {
-      const selector = selectorFor(sameFamily, other, architecture);
-      return `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)} (${selector === undefined ? "no architecture value selects it" : `architecture ${selector} selects it`})`;
+      const place = `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)}`;
+      const issue = identityIssues.get(other);
+      if (issue !== undefined)
+        return `${place} (unverified: ${issue}; no architecture value reads it)`;
+      const selector = familyValues(architecture).find(
+        (value) => verifiedSliceFor(value) === other,
+      );
+      return `${place} (${selector === undefined ? "no architecture value selects it" : `architecture ${selector} selects it`})`;
     });
   return ok({
     bytes: selected.value,

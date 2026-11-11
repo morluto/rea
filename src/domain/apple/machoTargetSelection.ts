@@ -56,7 +56,7 @@ export const MACHO_CPU_TYPES = {
 export const machoSliceArchitectureSchema = z
   .enum(["x86", "x86_64", "arm", "arm64", "arm64e"])
   .describe(
-    "Architecture of the slice to read from a universal (FAT) Mach-O. Required for universal files and rejected for every other image. A CPU family with one slice is selected by its family name; arm64e reads only an arm64e slice. When several slices share a family, the value must name the slice's subtype, as lipo -thin does: arm64 reads the arm64 slice and arm64e the arm64e slice.",
+    "Architecture of the slice to read from a universal (FAT) Mach-O. Required for universal files and rejected for every other image. A CPU family with one slice is selected by its family name; arm64e reads only an arm64e slice. When several slices share a family, the value must name the slice's subtype, as lipo -thin does: arm64 reads the arm64 or arm64v8 slice, arm64e the arm64e or arm64e.x1 slice, and x86_64 the x86_64 slice but not x86_64h; capability bits are ignored. A value that matches no slice or several, such as arm64e beside arm64e.x1, is refused.",
   ) satisfies z.ZodType<keyof typeof MACHO_CPU_TYPES | "arm64e">;
 export type MachoSliceArchitecture = z.infer<
   typeof machoSliceArchitectureSchema

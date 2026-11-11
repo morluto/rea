@@ -9,15 +9,18 @@ const CPU_X86_64 = 0x01000007;
 const CPU_ARM64 = 0x0100000c;
 const ALIGN = 0x1000;
 
-/** A FAT32 file whose 4 KiB-aligned slices are the arm64 initializer image with each declared CPU. */
-const fat = (cpus: readonly (readonly [number, number])[]) => {
+/**
+ * A FAT32 file whose 4 KiB-aligned slices are the arm64 initializer image with
+ * each declared CPU; a third entry overrides the embedded header's subtype.
+ */
+const fat = (cpus: readonly (readonly [number, number, number?])[]) => {
   const thin = machoArm64Initializers();
   const stride = Math.ceil(thin.length / ALIGN) * ALIGN;
   const offsets = cpus.map((_, index) => ALIGN + index * stride);
   const bytes = Buffer.alloc(ALIGN + cpus.length * stride);
   bytes.writeUInt32BE(0xcafebabe, 0);
   bytes.writeUInt32BE(cpus.length, 4);
-  for (const [index, [cpuType, cpuSubtype]] of cpus.entries()) {
+  for (const [index, [cpuType, cpuSubtype, headerSubtype]] of cpus.entries()) {
     const entry = 8 + index * 20;
     bytes.writeUInt32BE(cpuType, entry);
     bytes.writeUInt32BE(cpuSubtype, entry + 4);
@@ -26,14 +29,14 @@ const fat = (cpus: readonly (readonly [number, number])[]) => {
     bytes.writeUInt32BE(12, entry + 16);
     const image = Buffer.from(thin);
     image.writeUInt32LE(cpuType, 4);
-    image.writeUInt32LE(cpuSubtype, 8);
+    image.writeUInt32LE(headerSubtype ?? cpuSubtype, 8);
     image.copy(bytes, offsets[index]);
   }
   return { bytes, offsets };
 };
 
 const select = (
-  cpus: readonly (readonly [number, number])[],
+  cpus: readonly (readonly [number, number, number?])[],
   architecture: MachoSliceArchitecture,
 ) => {
   const file = fat(cpus);
@@ -64,6 +67,20 @@ describe("selectNativeImage subtype names", () => {
       "arm64e",
     );
     expect(x1.offset).toBe(x1.offsets[1]);
+  });
+
+  it("refuses arm64e beside arm64e.x1, which the value names alike", () => {
+    expect(
+      select(
+        [
+          [CPU_ARM64, 2],
+          [CPU_ARM64, 12],
+        ],
+        "arm64e",
+      ).message,
+    ).toBe(
+      "Universal Mach-O holds several arm64e slices (arm64 (subtype 0x2), arm64 (subtype 0xc)); no slice was selected.",
+    );
   });
 
   it("ignores capability bits when naming a subtype", () => {
@@ -146,6 +163,50 @@ describe("selectNativeImage subtype names", () => {
     ).toBe(
       "Universal Mach-O holds arm64 (subtype 0x2), arm64 (subtype 0xc); no slice has the arm64 subtype.",
     );
+  });
+});
+
+describe("selectNativeImage family reads and unread slices", () => {
+  it("does not advertise a selector for a slice whose header disagrees with its declaration", () => {
+    // Declared arm64e, but the embedded header says arm64.
+    const mismatched = [CPU_ARM64, 2, 0] as const;
+    const read = select([[CPU_ARM64, 0], mismatched], "arm64");
+    expect(read.offset).toBe(read.offsets[0]);
+    expect(read.limitations).toEqual([
+      `Only the selected arm64 slice (arm64 (subtype 0x0) at file offset ${String(read.offsets[0])}) was read; this universal Mach-O also holds arm64 (subtype 0x2) at file offset ${String(read.offsets[1])} (unverified: FAT architecture 1 CPU type/subtype disagrees with its Mach-O header; no architecture value reads it).`,
+    ]);
+    expect(
+      select([[CPU_ARM64, 0], [CPU_ARM64, 0], mismatched], "arm64").message,
+    ).toBe(
+      "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x0), arm64 (subtype 0x2)); no slice was selected.",
+    );
+  });
+
+  it("fails as malformed when the requested slice's header disagrees with its declaration", () => {
+    const file = fat([
+      [CPU_ARM64, 0],
+      [CPU_ARM64, 2, 0],
+    ]);
+    const result = selectNativeImage(file.bytes, "arm64e");
+    expect(result.ok ? undefined : result.error).toEqual({
+      kind: "malformed",
+      message:
+        "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header",
+    });
+  });
+
+  it("fails the whole file when a sibling's declared range leaves it", () => {
+    const file = fat([
+      [CPU_ARM64, 0],
+      [CPU_ARM64, 2],
+    ]);
+    // Declare the second slice past the end of the file.
+    file.bytes.writeUInt32BE(file.bytes.length, 8 + 20 + 12);
+    const result = selectNativeImage(file.bytes, "arm64");
+    expect(result.ok ? undefined : result.error).toEqual({
+      kind: "malformed",
+      message: "FAT architecture 1 slice range extends beyond the file",
+    });
   });
 
   it("reads a lone arm64e slice by the arm64 family name", () => {

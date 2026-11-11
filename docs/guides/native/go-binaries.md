@@ -179,11 +179,14 @@ several slices share the family, the value must name the slice's subtype, as
 Capability bits are ignored when subtypes are compared. REA does not choose a
 slice by preference. When no slice or several slices carry the named subtype,
 the request fails on `architecture` and names any other value that selects
-exactly one slice. Other subtypes, such as `x86_64h` and the `x86` (i386) and
-32-bit `arm` subtypes, have no value of their own; they are read only as the
-only slice of their family. `limitations` lists the same-family slices that were
-not read and the value, if any, that selects each. `architecture` on any other
-image is rejected rather than ignored.
+exactly one verified slice; `arm64e` beside `arm64e.x1`, for example, is
+refused. Other subtypes, such as `x86_64h` and the `x86` (i386) and 32-bit `arm`
+subtypes, have no value of their own; they are read only as the only slice of
+their family. `limitations` lists the same-family slices that were not read and
+the value, if any, that selects each. A slice whose Mach-O header does not match
+its FAT declaration, such as a different CPU subtype, is listed as unverified,
+and no value is offered for it. `architecture` on any other image is rejected
+rather than ignored.
 
 For ELF images without a named build-info section, discovery checks each
 nonempty writable, non-executable load segment in program-header order. This
