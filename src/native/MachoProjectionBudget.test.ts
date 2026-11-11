@@ -100,3 +100,69 @@ it("reserves the projection envelope for an empty command table", async () => {
     });
   }
 });
+
+it("bounds a growing linker option before reading its remaining payload", async () => {
+  const commandSize = 8208;
+  const image = Buffer.alloc(32 + commandSize);
+  image.writeUInt32LE(0xfeedfacf, 0);
+  image.writeUInt32LE(1, 16);
+  image.writeUInt32LE(commandSize, 20);
+  image.writeUInt32LE(0x2d, 32);
+  image.writeUInt32LE(commandSize, 36);
+  image.writeUInt32LE(1, 40);
+  image.fill(0x41, 44, 44 + 8000);
+  const projectedBudget = 8192 + 2048 + 256 + 32 * 24;
+  const read = async (offset: number, size: number) => {
+    if (offset >= 44 + 4096)
+      throw new Error("linker option read beyond its projection allowance");
+    return image.subarray(offset, offset + size);
+  };
+  await expect(
+    readMachoCommandNames(read, image.length, 16384, 2, projectedBudget),
+  ).rejects.toMatchObject({
+    maximum: projectedBudget,
+    unit: "projected_bytes",
+  });
+});
+
+it.each([
+  ["rpath", 0x8000001c, 12],
+  ["fileset", 0x80000035, 32],
+] as const)(
+  "bounds %s strings before reading their declared extent",
+  async (_name, command, nameOffset) => {
+    const commandSize = 8208;
+    const image = Buffer.alloc(32 + commandSize);
+    image.writeUInt32LE(0xfeedfacf, 0);
+    image.writeUInt32LE(1, 16);
+    image.writeUInt32LE(commandSize, 20);
+    image.writeUInt32LE(command, 32);
+    image.writeUInt32LE(commandSize, 36);
+    image.writeUInt32LE(nameOffset, command === 0x80000035 ? 56 : 40);
+    const stringAt = 32 + nameOffset;
+    image.fill(0x41, stringAt, stringAt + 8000);
+    const projectedBudget = 8192 + 2048 + 32 * 24;
+    const read = async (offset: number, size: number) => {
+      if (offset === stringAt && size > 33)
+        throw new Error("string read beyond its projection allowance");
+      return image.subarray(offset, offset + size);
+    };
+    await expect(
+      readMachoCommandNames(read, image.length, 16384, 1, projectedBudget),
+    ).rejects.toMatchObject({
+      maximum: projectedBudget,
+      unit: "projected_bytes",
+    });
+    image[stringAt + 32] = 0;
+    const parsed = await readMachoCommandNames(
+      async (offset, size) => image.subarray(offset, offset + size),
+      image.length,
+      16384,
+      1,
+      projectedBudget,
+    );
+    const name =
+      parsed.commands[0]?.commandString ?? parsed.commands[0]?.fileset?.entryId;
+    expect(name).toHaveLength(32);
+  },
+);
