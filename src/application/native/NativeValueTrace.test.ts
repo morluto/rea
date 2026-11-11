@@ -27,6 +27,7 @@ import {
   pcodeScalar as scalar,
   staticValueGraph,
   valueTraceDiamond,
+  valueTraceUnboundArguments,
   valueTraceProvider as provider,
   valueTraceSubject as subject,
 } from "./NativeValueTrace.fixture.js";
@@ -395,6 +396,7 @@ const callBindingAnalysis = (input: {
   readonly caller: ReturnType<typeof jsonValueSchema.parse>;
   readonly callee: ReturnType<typeof jsonValueSchema.parse>;
   readonly targetLimitations?: readonly string[];
+  readonly calleeSelector?: string;
 }): AnalysisOperationPort => ({
   execute: async (operation, parameters) => {
     if (operation === "resolve_native_call_targets")
@@ -408,7 +410,7 @@ const callBindingAnalysis = (input: {
             targets: [
               {
                 address: input.calleeAddress,
-                procedure: input.calleeAddress,
+                procedure: input.calleeSelector ?? input.calleeAddress,
                 status: "direct",
                 basis: "provider-reference",
                 references: [],
@@ -424,7 +426,7 @@ const callBindingAnalysis = (input: {
       throw new Error(`Unexpected native trace operation: ${operation}`);
     if (
       parameters.procedure !== input.callerAddress &&
-      parameters.procedure !== input.calleeAddress
+      parameters.procedure !== (input.calleeSelector ?? input.calleeAddress)
     )
       throw new Error(`Unexpected procedure: ${String(parameters.procedure)}`);
     return ok(
@@ -1431,5 +1433,66 @@ describe("native value traversal limits and policies", () => {
       ],
     });
     expect(limited.analyzed).toEqual(["0x1000"]);
+  });
+});
+
+describe("recovered call input bindings", () => {
+  it("locates recovered operands without inventing formal or variadic parameters", async () => {
+    const trace = await traced(valueTraceUnboundArguments().port, {
+      procedure: "0x1000",
+    });
+    const call = trace.nodes.find(({ id }) => id === "0x1000/call")!;
+    expect(
+      trace.edges.filter(({ kind }) => kind === "argument-binding"),
+    ).toMatchObject([
+      { source: call.id, target: "0x2000/parameter:0", input_index: 1 },
+    ]);
+    expect(trace.unknowns).toContainEqual({
+      procedure: "0x1000",
+      address: "0x1010",
+      reason: expect.stringContaining("no recovered parameter binding"),
+      call_inputs: {
+        call_node_id: call.id,
+        destination: "0x2000",
+        evidence_id: call.evidence_id,
+        input_indices: [2, 3],
+      },
+    });
+    expect(trace.traversal).toEqual({ status: "complete" });
+  });
+
+  it("uses the analyzed callee identity for named call destinations", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const caller = nativeFlowDossier(base, {
+      address: "0x1000",
+      name: "caller",
+      operations: [node("call", "0x1010", "CALL")],
+      parameters: [],
+    });
+    const callee = nativeFlowDossier(base, {
+      address: "0x2000",
+      name: "callee",
+      operations: [node("return", "0x2010", "RETURN")],
+      parameters: [{ ordinal: 0, name: "value", data_type: "/int" }],
+    });
+    const trace = await traced(
+      callBindingAnalysis({
+        callerAddress: "0x1000",
+        calleeAddress: "0x2000",
+        calleeSelector: "callee",
+        caller,
+        callee,
+      }),
+      { procedure: "0x1000" },
+    );
+    expect(
+      trace.edges.filter(({ kind }) => kind === "argument-binding"),
+    ).toMatchObject([
+      { source: "0x1000/call", target: "0x2000/parameter:0", input_index: 1 },
+    ]);
+    expect(
+      trace.edges.filter(({ kind }) => kind === "return-binding"),
+    ).toMatchObject([{ source: "0x2000/return", target: "0x1000/call" }]);
+    expect(trace.unknowns).toEqual([]);
   });
 });

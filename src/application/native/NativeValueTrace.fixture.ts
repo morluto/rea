@@ -255,3 +255,24 @@ export const failingValueTraceReads = (
   };
   return { port: failing, reads };
 };
+
+/** Three recovered call arguments, with only the first parameter recovered. */
+export const valueTraceUnboundArguments = (options: GraphOptions = {}) =>
+  staticValueGraph(
+    {
+      "0x1000": {
+        operations: [
+          {
+            ...pcodeOperation("call", "0x1010", "CALL"),
+            inputs: Array.from({ length: 4 }, () => pcodeScalar),
+          },
+        ],
+      },
+      "0x2000": {
+        operations: [pcodeOperation("return", "0x2010", "RETURN")],
+        parameters: [{ ordinal: 0, name: "fixed", data_type: "/int" }],
+      },
+    },
+    { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+    options,
+  );
