@@ -162,11 +162,12 @@ const parsePng = (
         throw new TypeError("Invalid PNG transparency order");
       sawTransparency = true;
       if (header.colorType === 2 && data.length === 6) {
+        const sampleMask = (1 << header.bitDepth) - 1;
         transparentColor = [
           data.readUInt16BE(0),
           data.readUInt16BE(2),
           data.readUInt16BE(4),
-        ];
+        ].map((value) => value & sampleMask);
       } else if (
         (header.colorType === 0 && data.length === 2) ||
         (header.colorType === 3 &&
@@ -459,7 +460,6 @@ const expandRgba = (
     rgba[target] = decoded[source] ?? 0;
     rgba[target + 1] = decoded[source + 1] ?? 0;
     rgba[target + 2] = decoded[source + 2] ?? 0;
-    // PNG tRNS keys are 16-bit values; values above 255 cannot match 8-bit samples.
     rgba[target + 3] =
       transparentColor !== undefined &&
       transparentColor.every(
