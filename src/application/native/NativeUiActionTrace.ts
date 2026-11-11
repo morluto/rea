@@ -257,7 +257,7 @@ export const traceNativeUiAction = async (
     nodes: expanded.nodes,
     edges: expanded.edges,
     coverage: [...graph.coverage, ...coverage],
-    truncated: graph.truncated || expanded.truncated,
+    truncated: graph.truncated || initial.truncated || expanded.truncated,
   });
   const trace = traceNativeInvestigationGraph(finalGraph, {
     start: selected.nodeId,
@@ -268,19 +268,35 @@ export const traceNativeUiAction = async (
       max_edges: input.max_edges,
     },
   });
+  // Expansion starts from the bounded initial trace; its omitted relationships
+  // cannot be recovered merely by tracing that reduced graph again.
+  const initialCutoffReason =
+    initial.truncated && initial.reason !== "source_graph_truncated"
+      ? initial.reason
+      : null;
+  const reason =
+    trace.reason === "source_graph_truncated"
+      ? (initialCutoffReason ??
+        (expanded.truncated
+          ? "native_call_traversal_bound_reached"
+          : trace.reason))
+      : trace.reason;
   return ok(
     jsonValueSchema.parse(
       nativeInvestigationTraceSchema.parse({
         ...trace,
-        truncated: trace.truncated || expanded.truncated || graph.truncated,
-        reason:
-          expanded.truncated && trace.reason === null
-            ? "native_call_traversal_bound_reached"
-            : graph.truncated && trace.reason === null
-              ? "native_trace_output_bound_reached"
-              : trace.reason,
+        reason,
         limitations: [
           ...trace.limitations,
+          ...(initialCutoffReason !== null && initialCutoffReason !== reason
+            ? [
+                `The initial UI graph trace stopped traversal: ${initialCutoffReason}.`,
+              ]
+            : []),
+          ...(expanded.truncated &&
+          reason !== "native_call_traversal_bound_reached"
+            ? ["Native call expansion stopped at a traversal bound."]
+            : []),
           ...renderSourceLimitations(expanded.limitations),
         ],
       }),
