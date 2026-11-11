@@ -206,13 +206,13 @@ export async function verifyRealHopperFixture({
   );
   return {
     procedures: { main, entry, branch, leaf },
-    entryComments: entryDossier.comments.returned,
-    entryStrings: entryDossier.referenced_strings.returned,
-    entryCallees: entryDossier.callees.returned,
-    branchCallees: branchDossier.callees.returned,
-    branchBlocks: branchDossier.basic_blocks.returned,
-    leafStrings: leafDossier.referenced_strings.returned,
-    leafNames: leafDossier.referenced_names.returned,
+    entryComments: entryDossier.comments.length,
+    entryStrings: entryDossier.referenced_strings.length,
+    entryCallees: entryDossier.callees.length,
+    branchCallees: branchDossier.callees.length,
+    branchBlocks: branchDossier.basic_blocks.length,
+    leafStrings: leafDossier.referenced_strings.length,
+    leafNames: leafDossier.referenced_names.length,
   };
 }
 

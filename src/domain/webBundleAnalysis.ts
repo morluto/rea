@@ -67,7 +67,7 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
       webBundleTotalTimeoutDescription,
     ),
     source_map_fetch_timeout_ms: optionalBrowserDeadlineMs(
-      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. A fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Response/representation and decoder budgets are independent source_map_limits fields.`,
+      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. After response cleanup completes, a fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Pending or failed response cleanup is reported as an error with its retained owner. Response/representation and decoder budgets are independent source_map_limits fields.`,
     ),
   })
   .superRefine((input, context) => {

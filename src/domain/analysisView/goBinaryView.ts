@@ -20,6 +20,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -322,10 +323,18 @@ export const projectGoBinaryView = (
       ),
     });
   }
+  if (info === null)
+    return ok({
+      kind: "go" as const,
+      view,
+      ...shared,
+      page: { collection: view.collection, rows: [] },
+      coverage: unavailableViewCoverage(),
+    });
   if (view.collection === "dependencies") {
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
     const selected = selectViewRows(
-      info?.module.dependencies ?? [],
+      info.module.dependencies,
       view,
       (row, index) =>
         (indices?.has(index) ?? true) && (paths?.has(row.path) ?? true),
@@ -353,7 +362,7 @@ export const projectGoBinaryView = (
   }
   const keys = view.keys === undefined ? undefined : new Set(view.keys);
   const selected = selectViewRows(
-    info?.module.settings ?? [],
+    info.module.settings,
     view,
     (row, index) =>
       (indices?.has(index) ?? true) && (keys?.has(row.key) ?? true),
