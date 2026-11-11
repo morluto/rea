@@ -211,6 +211,11 @@ const localPropertyMethods = (
         true,
         current.memberReadAt,
         current.capturedSelections,
+        false,
+        // A spread copy escapes the copied values. That must not make the
+        // source's own accessors unknown, or the next read escapes the
+        // receiver itself.
+        accessor === "invoke",
       );
       if (selected === undefined) return undefined;
       for (const source of selected.sources)

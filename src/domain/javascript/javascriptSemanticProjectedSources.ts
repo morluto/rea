@@ -190,6 +190,7 @@ export function semanticProjectedSourceFactsAtRead(
   memberReadAt?: t.Node,
   capturedSelections?: readonly SemanticCapturedSelection[],
   retainEligibility?: boolean,
+  valueEscapesHideSources?: boolean,
 ):
   | {
       readonly sources: readonly (Omit<ProjectedSource, "path"> & {
@@ -219,6 +220,9 @@ const projectedSourceFactsAtRead = (
   memberReadAt: t.Node = reference,
   capturedSelections: readonly SemanticCapturedSelection[] = [],
   retainEligibility = false,
+  // Accessor lookup reads source syntax. A prior value escape does not hide
+  // that syntax; unknown writes and invocations still fail closed.
+  valueEscapesHideSources = true,
 ):
   | {
       readonly sources: readonly ProjectedSource[];
@@ -365,6 +369,7 @@ const projectedSourceFactsAtRead = (
           (replacement.assignedSources?.[0]?.target?.start ?? -1)));
   if (
     includeUnknown &&
+    valueEscapesHideSources &&
     semanticSomeEffectPathCandidate(
       binding.escapedPaths,
       path,
