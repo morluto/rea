@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { selectedEvmProducerLimits } from "../../../src/domain/evm/evmInterface.js";
 import { solidityMetadataSchema } from "../../../src/domain/evm/solidityMetadata.js";
+import { evmWorkerRequestSchema } from "../../../src/evm/EvmInterfaceWorkerContract.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** Real compiled worker and unchanged WASM engine; no Linux provider-admission claim. */
@@ -43,13 +44,16 @@ it.each([
     await writeFile(snapshot, hex);
     await writeFile(
       request,
-      JSON.stringify({
-        snapshot_path: snapshot,
-        reply_path: reply,
-        failure_marker_path: join(directory, "resource.failure"),
-        encoding: "hex",
-        producer_limits: selectedEvmProducerLimits(undefined),
-      }),
+      JSON.stringify(
+        evmWorkerRequestSchema.parse({
+          snapshot_path: snapshot,
+          reply_path: reply,
+          failure_marker_path: join(directory, "resource.failure"),
+          file_size_bytes: selectedEvmProducerLimits(undefined).file_bytes,
+          producer_limits: selectedEvmProducerLimits(undefined),
+          encoding: "hex",
+        }),
+      ),
     );
     await promisify(execFile)(
       process.execPath,

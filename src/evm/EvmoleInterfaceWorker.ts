@@ -3,78 +3,166 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import {
+  evmCompilerSelection,
+  selectedEvmProducerLimits,
+} from "../domain/evm/evmInterface.js";
+import type { SolcArtifact } from "../domain/evm/solcArtifact.js";
+import { jsonParts } from "../domain/jsonSerialization.js";
+import { err, ok, type Result } from "../domain/result.js";
+import {
   decodeEvmBytecodeCarrier,
   EvmCarrierFailure,
 } from "./EvmBytecodeCarrier.js";
+import { selectSolcArtifact } from "../domain/evm/solcArtifactSelection.js";
+import { evmWorkerRequestSchema } from "./EvmInterfaceWorkerContract.js";
 import { evmoleInterfaceReplySchema } from "./EvmoleInterfaceAdapter.js";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
 import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
-import {
-  evmProducerLimitsSchema,
-  selectedEvmProducerLimits,
-} from "../domain/evm/evmInterface.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-
-const requestSchema = z.strictObject({
-  snapshot_path: z.string(),
-  reply_path: z.string(),
-  failure_marker_path: z.string(),
-  encoding: z.enum(["raw", "hex"]),
-  producer_limits: evmProducerLimitsSchema,
-});
 class UnsupportedContainer extends Error {}
+
+/** Admit bounded encoded parts before allocating a complete worker reply. */
+const encodeReply = (
+  reply: unknown,
+  budget: number,
+): Result<string, { reason: "output-limit"; message: string }> => {
+  const parts: string[] = [];
+  let bytes = 0;
+  for (const part of jsonParts(reply)) {
+    bytes += Buffer.byteLength(part);
+    if (bytes > budget) {
+      parts.length = 0;
+      return err({
+        reason: "output-limit",
+        message: `Complete interface evidence exceeds the ${String(budget)} byte reply budget.`,
+      });
+    }
+    parts.push(part);
+  }
+  return ok(parts.join(""));
+};
 
 const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined)
     throw new EvmAdmissionError("request_path_missing");
-  const request = requestSchema.parse(
+  const request = evmWorkerRequestSchema.parse(
     JSON.parse(await readFile(requestPath, "utf8")),
   );
   const limits = selectedEvmProducerLimits(request.producer_limits);
   let reply: unknown;
+  let compilerFailureContext:
+    | {
+        compiler_diagnostics?: SolcArtifact["diagnostics"];
+        carrier_sha256: string;
+      }
+    | undefined;
   try {
-    const bytes = decodeEvmBytecodeCarrier(
-      (await readStableArtifact(request.snapshot_path, limits.input_bytes))
-        .bytes,
-      request.encoding,
-    );
-    if (bytes[0] === 0xef && bytes[1] === 0x00)
-      throw new UnsupportedContainer(
-        "Container marker EF00 is outside the verified flat-bytecode interface profile.",
-      );
-    const modulePath = import.meta.resolve("evmole/no_tla");
-    const metadata = z
-      .object({ version: z.literal("0.9.3") })
-      .parse(
-        JSON.parse(
-          await readFile(new URL("../package.json", modulePath), "utf8"),
-        ),
-      );
-    const engine = await import("evmole/no_tla");
-    engine.initSync({
-      module: await readFile(
-        new URL(import.meta.resolve("evmole/evmole_bg.wasm")),
-      ),
-    });
-    const raw = evmoleInterfaceReplySchema.parse(
-      engine.contractInfo(Buffer.from(bytes).toString("hex"), {
-        selectors: true,
-        arguments: true,
-        stateMutability: true,
-      }),
-    );
-    reply = {
-      ok: true,
-      version: metadata.version,
-      bytecode: {
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-        bytes: bytes.length,
-        hex: Buffer.from(bytes).toString("hex"),
-        metadata: inspectSolidityMetadata(bytes),
-      },
-      raw,
-    };
+    const carrier = (
+      await readStableArtifact(request.snapshot_path, limits.input_bytes)
+    ).bytes;
+    const compilerSelection = evmCompilerSelection(request.encoding);
+    if (compilerSelection !== undefined)
+      compilerFailureContext = {
+        carrier_sha256: createHash("sha256").update(carrier).digest("hex"),
+      };
+    const selected =
+      compilerSelection === undefined
+        ? null
+        : selectSolcArtifact(carrier, compilerSelection);
+    if (selected !== null && !selected.ok) {
+      if (
+        selected.error.compiler_diagnostics !== undefined &&
+        compilerFailureContext !== undefined
+      )
+        compilerFailureContext = {
+          ...compilerFailureContext,
+          compiler_diagnostics: selected.error.compiler_diagnostics,
+        };
+      reply = {
+        ok: false,
+        reason: selected.error.reason,
+        message: selected.error.message,
+        ...compilerFailureContext,
+      };
+    } else {
+      const compilerArtifact = selected?.ok
+        ? selected.value.artifact
+        : undefined;
+      if (
+        compilerArtifact !== undefined &&
+        compilerFailureContext !== undefined
+      )
+        compilerFailureContext = {
+          ...compilerFailureContext,
+          compiler_diagnostics: compilerArtifact.diagnostics,
+        };
+      let bytes: Uint8Array | null;
+      if (selected?.ok) bytes = selected.value.bytes;
+      else if (typeof request.encoding === "string")
+        bytes = decodeEvmBytecodeCarrier(carrier, request.encoding);
+      else
+        throw new Error("Compiler encoding has no parsed compiler selection.");
+      const compilerFacts =
+        compilerArtifact === undefined
+          ? {}
+          : {
+              compiler_artifact: compilerArtifact,
+              carrier_sha256: compilerFailureContext?.carrier_sha256,
+            };
+      if (bytes === null) {
+        reply = {
+          ok: true,
+          version: "0.9.3",
+          bytecode: {
+            sha256: null,
+            bytes: selected?.ok ? selected.value.byteLength : null,
+            hex: null,
+            metadata: null,
+          },
+          raw: null,
+          ...compilerFacts,
+        };
+      } else {
+        if (bytes[0] === 0xef && bytes[1] === 0x00)
+          throw new UnsupportedContainer(
+            "Container marker EF00 is outside the verified flat-bytecode interface profile.",
+          );
+        const modulePath = import.meta.resolve("evmole/no_tla");
+        const metadata = z
+          .object({ version: z.literal("0.9.3") })
+          .parse(
+            JSON.parse(
+              await readFile(new URL("../package.json", modulePath), "utf8"),
+            ),
+          );
+        const engine = await import("evmole/no_tla");
+        engine.initSync({
+          module: await readFile(
+            new URL(import.meta.resolve("evmole/evmole_bg.wasm")),
+          ),
+        });
+        const raw = evmoleInterfaceReplySchema.parse(
+          engine.contractInfo(Buffer.from(bytes).toString("hex"), {
+            selectors: true,
+            arguments: true,
+            stateMutability: true,
+          }),
+        );
+        reply = {
+          ok: true,
+          version: metadata.version,
+          bytecode: {
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            bytes: bytes.length,
+            hex: Buffer.from(bytes).toString("hex"),
+            metadata: inspectSolidityMetadata(bytes),
+          },
+          raw,
+          ...compilerFacts,
+        };
+      }
+    }
   } catch (cause: unknown) {
     reply = {
       ok: false,
@@ -85,15 +173,37 @@ const main = async (): Promise<void> => {
             ? "unsupported"
             : "decoder",
       message: cause instanceof Error ? cause.message : String(cause),
+      ...compilerFailureContext,
     };
   }
-  let encoded = JSON.stringify(reply);
-  if (Buffer.byteLength(encoded) > limits.output_bytes)
-    encoded = JSON.stringify({
-      ok: false,
-      reason: "output-limit",
-      message: `Complete interface evidence exceeds producer_limits.output_bytes (${String(limits.output_bytes)} bytes).`,
-    });
+  const admitted = encodeReply(
+    reply,
+    Math.min(request.file_size_bytes, limits.output_bytes),
+  );
+  let encoded: string;
+  if (admitted.ok) encoded = admitted.value;
+  else {
+    const failure = encodeReply(
+      {
+        ok: false,
+        ...admitted.error,
+        ...compilerFailureContext,
+      },
+      Math.min(request.file_size_bytes, limits.output_bytes),
+    );
+    encoded = failure.ok
+      ? failure.value
+      : JSON.stringify({
+          ok: false,
+          ...admitted.error,
+          ...(compilerFailureContext === undefined
+            ? {}
+            : {
+                carrier_sha256: compilerFailureContext.carrier_sha256,
+                compiler_diagnostics_omitted: "reply-budget",
+              }),
+        });
+  }
   try {
     await writeFile(request.reply_path, encoded, { flag: "wx", mode: 0o600 });
   } catch (cause: unknown) {

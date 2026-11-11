@@ -211,11 +211,12 @@ explicit path or endpoint and do not need it.
   is identity and integrity, not a trust or authenticity verdict.
   See the [APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md).
 - Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
-  `raw` or `hex` encoding. The owned worker deadline is `timeout_ms` (default
+  `raw` or `hex` encoding, or a `solc-json` compiler-selection object naming the
+  exact source unit, contract and creation/deployed kind. Preserve
+  carrier/decoded digests. The owned worker deadline is `timeout_ms` (default
   30000 ms, range 1..2147483647, next call). Select byte, address-space and CPU
   allowances separately through `producer_limits`; tighter inherited OS limits
-  remain enforced, and the 256 MiB worker heap is independent. Preserve
-  carrier/decoded digests and treat selectors,
+  remain enforced, and the 256 MiB worker heap is independent. Treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
   lookup or target execution. For the complete inferred interface without hex or
   duplicate stdout, discover support and select `detail: "summary"`; complete

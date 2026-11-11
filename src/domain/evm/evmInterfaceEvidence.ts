@@ -10,7 +10,7 @@ import type { JsonValue } from "../jsonValue.js";
 interface EvmInterfaceObservation {
   readonly subject: EvidenceSubjectTarget & { readonly format: "file" };
   readonly provider: EvidenceProvider;
-  readonly result: JsonValue;
+  readonly result: unknown;
   readonly rawResult: JsonValue | null;
   readonly locations: readonly EvidenceLocation[];
   readonly limitations: readonly string[];

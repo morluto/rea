@@ -39,19 +39,28 @@ export const evmReplyBudgetFailure = (
   reason: string,
   options: AnalysisErrorOptions,
   limits: EvmProducerLimits = selectedEvmProducerLimits(undefined),
+  effectiveFileBytes = limits.file_bytes,
 ) =>
   new AnalysisResourceConstraintError(
     "inspect_evm_interface",
     "file-size",
     reason,
     {
-      maximum_reply_bytes: limits.output_bytes,
-      parameter: "producer_limits.output_bytes",
+      maximum_reply_bytes: Math.min(limits.output_bytes, effectiveFileBytes),
+      parameter:
+        limits.output_bytes <= effectiveFileBytes
+          ? "producer_limits.output_bytes"
+          : "producer_limits.file_bytes",
     },
     {
       ...options,
       retryable: false,
-      remediationAction: evmProducerLimitRecovery(limits, "output_bytes"),
+      remediationAction: evmProducerLimitRecovery(
+        limits,
+        limits.output_bytes <= effectiveFileBytes
+          ? "output_bytes"
+          : "file_bytes",
+      ),
     },
   );
 
