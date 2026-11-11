@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.9.0",
   "base": "160d821ac9a0310afcb8d1fc427862dd6508add5",
-  "target": "81b305bd1aeb778ec90e2066ba391a93c966ec0a",
+  "target": "d6c6b1553d50693ad0ad81cf387d8558450993ed",
   "commits": [
     {
       "sha": "bc143125edd223b7e0d315d5ea7efdc270c29f9e",
@@ -36202,6 +36202,23 @@
         }
       ],
       "pullRequests": [10141]
+    },
+    {
+      "sha": "d6c6b1553d50693ad0ad81cf387d8558450993ed",
+      "subject": "fix(captures): keep escaped JSON strings flat in the capture parser (#10139)",
+      "body": "fix(captures): keep escaped JSON strings flat in the capture parser (#10139)\n\nparseCaptureJson retained the strings jsonc-parser 3.3.1 builds fragment by\nfragment around each escape, which V8 keeps as ropes several times larger\nthan their text. Escape-heavy HAR captures therefore exhausted the 192 MiB\ndecoder heap from about 15 MB, well inside the 32 MiB input budget.\n\nEach string token is now decoded with JSON.parse from its accepted source\nspan, which yields the same value as one flat string. jsonc-parser reports\nmalformed strings through onError before the value callback, so JSON.parse\nonly sees tokens it already accepted. HAR, qlog and Playwright trace\ndecoding share this parser.\n\nFixes #10132",
+      "parents": ["81b305bd1aeb778ec90e2066ba391a93c966ec0a"],
+      "authors": [
+        {
+          "name": "Crimino",
+          "email": "165955909+mecrimino@users.noreply.github.com",
+          "user": {
+            "login": "mecrimino",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10139]
     }
   ],
   "pullRequests": [
@@ -55863,6 +55880,31 @@
         "oid": "c5c1ff45faf58d4e0aaa696f87f28cd0293a9016"
       },
       "issues": []
+    },
+    {
+      "number": 10139,
+      "title": "fix(captures): keep escaped JSON strings flat in the capture parser",
+      "url": "https://github.com/morluto/rea/pull/10139",
+      "author": {
+        "login": "mecrimino",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "d6c6b1553d50693ad0ad81cf387d8558450993ed"
+      },
+      "issues": [
+        {
+          "number": 10132,
+          "url": "https://github.com/morluto/rea/issues/10132",
+          "author": {
+            "login": "fcumaoglu",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
     },
     {
       "number": 10141,
