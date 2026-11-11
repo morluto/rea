@@ -1,6 +1,7 @@
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
+import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 
@@ -17,6 +18,8 @@ export interface ArtifactInventoryOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv> | undefined;
   /** ASAR header/index admission resolved from the owner's environment; default when absent. */
   readonly asarHeaderAdmission?: AsarHeaderAdmission | undefined;
+  /** Accepted operation snapshot. Format readers resolve runtime ceilings from it. */
+  readonly analysisSettings?: AnalysisSettingsReader | undefined;
   /**
    * Caller inputs when the target was explicitly selected as an ESP flash
    * image; detection with defaults applies otherwise.

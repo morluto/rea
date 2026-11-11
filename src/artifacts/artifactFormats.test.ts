@@ -44,6 +44,7 @@ type FormatsWithReaders =
   | "dfuse"
   | "esp-flash-image"
   | "fit"
+  | "regf-hive"
   | "ntfs-mft";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =

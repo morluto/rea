@@ -215,6 +215,7 @@ export interface ArtifactReader {
     | "dfuse"
     | "esp-flash-image"
     | "fit"
+    | "regf-hive"
     | "ntfs-mft"
     | "file";
   entries(

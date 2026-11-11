@@ -347,6 +347,9 @@ class ArtifactClient implements AnalysisClient {
               ? {}
               : { occurrenceIds: parsed.occurrence_ids }),
             environment: this.environment,
+            ...(this.settings === undefined
+              ? {}
+              : { analysisSettings: this.settings }),
             asarHeaderAdmission: runtimeAsarHeaderAdmission(
               this.environment,
               this.settings,
@@ -562,6 +565,9 @@ class ArtifactClient implements AnalysisClient {
       selectedPath: this.target.artifactSelectedPath,
       resourceScope: this.#resourceScope,
       environment: this.environment,
+      ...(this.settings === undefined
+        ? {}
+        : { analysisSettings: this.settings }),
       asarHeaderAdmission: runtimeAsarHeaderAdmission(
         this.environment,
         this.settings,

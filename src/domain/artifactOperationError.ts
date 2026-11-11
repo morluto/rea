@@ -11,13 +11,32 @@ import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
 
-/** Admission named by the producing reader, with its effective byte ceiling and its source. */
-export interface ArtifactAdmissionLimit {
-  readonly kind: "asar-header" | "asar-listing";
-  readonly requiredBytes?: number;
-  readonly maximumBytes: number;
-  readonly source: "default" | "setting" | "runtime";
+/** Whole-file ceiling facts, separate from ASAR admission. */
+export interface FileByteAdmissionLimit {
+  readonly code: string;
+  readonly setting: string;
+  readonly fileBytes: number | null;
+  readonly defaultBytes: number;
+  readonly floorBytes: number;
+  readonly maximumSettingBytes: number;
+  readonly updateMode: "runtime";
+  readonly pendingRestart: false;
 }
+
+/** Admission named by the producing reader, with its effective byte ceiling and its source. */
+export type ArtifactAdmissionLimit =
+  | {
+      readonly kind: "asar-header" | "asar-listing";
+      readonly requiredBytes?: number;
+      readonly maximumBytes: number;
+      readonly source: "default" | "setting" | "runtime";
+    }
+  | {
+      readonly kind: "regf-hive-file";
+      readonly maximumBytes: number;
+      readonly source: "default" | "setting" | "runtime";
+      readonly fileLimit: FileByteAdmissionLimit;
+    };
 
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {

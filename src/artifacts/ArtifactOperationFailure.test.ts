@@ -54,7 +54,8 @@ it("preserves adjustable reader admission facts and gives cleanup priority", () 
         required_value: 2,
         unit: "count",
         applies_at: "next_operation",
-        rea_restart_required: false,
+        update_mode: "parameter",
+        pending_restart: false,
       },
     },
   });

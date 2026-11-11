@@ -216,7 +216,8 @@ it("names the default header admission budget and its setting when source select
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
     },
   });

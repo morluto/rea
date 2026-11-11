@@ -872,6 +872,11 @@ it.each([
     "REA_GHIDRA_COMPILER_SPEC_ID",
   ],
   [
+    "registry hive file ceiling below its floor",
+    { REA_REGF_HIVE_MAX_FILE_BYTES: "4095" },
+    "REA_REGF_HIVE_MAX_FILE_BYTES",
+  ],
+  [
     "Windows ChangeTime drift window of zero",
     { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "0" },
     "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",

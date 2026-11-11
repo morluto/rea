@@ -103,6 +103,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "dfuse",
   "esp-flash-image",
   "fit",
+  "regf-hive",
   "ntfs-mft",
   "unknown",
 ] as const;
@@ -125,6 +126,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "uf2",
   "dfuse",
   "fit",
+  "regf-hive",
   "ntfs-mft",
   "mach-o-universal",
   "mach-o",

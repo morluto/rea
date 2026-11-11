@@ -89,7 +89,8 @@ it.each(["max_input_bytes", "max_reply_bytes", "max_nesting_depth"] as const)(
           parameter: control,
           effective_value: selected,
           source: "request",
-          rea_restart_required: false,
+          update_mode: "parameter",
+          pending_restart: false,
         },
       },
     });

@@ -11,6 +11,7 @@ import { recognizeEspImage } from "../../domain/firmware/espImage.js";
 import { hasUf2Block } from "../../domain/firmware/uf2.js";
 import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
+import { hasRegfHiveSignature } from "../../domain/windows/registryHive.js";
 import { hasMftFileRecordHeader } from "../../domain/windows/ntfsMft.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
@@ -623,6 +624,7 @@ export const classifyArtifactBytes = (
     return "dfuse";
   if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
   if (hasFitImagesNode(prefix)) return "fit";
+  if (hasRegfHiveSignature(prefix)) return "regf-hive";
   if (hasMftFileRecordHeader(prefix)) return "ntfs-mft";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
