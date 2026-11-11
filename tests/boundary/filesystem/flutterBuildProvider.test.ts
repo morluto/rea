@@ -1162,6 +1162,42 @@ it.each([
   },
 );
 
+it("preserves an independent abort-shaped digest stream failure when the caller also aborts", async () => {
+  const path = await buildApk("digest-physical-abort.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+  ]);
+  const controller = new AbortController();
+  const reason = { caller: "stop after physical stream failure" };
+  const physical = Object.assign(new Error("digest read failed"), {
+    name: "AbortError",
+    code: "EIO",
+  });
+  const nativeFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const streamMock = vi.mocked(createReadStream);
+  streamMock.mockImplementation((streamPath, options) => {
+    const stream = nativeFs.createReadStream(streamPath, options);
+    if (streamPath !== path) {
+      stream.once("readable", () => {
+        stream.destroy(physical);
+        controller.abort(reason);
+      });
+    }
+    return stream;
+  });
+  onTestFinished(() => {
+    streamMock.mockReset();
+  });
+  const provider = new FlutterBuildProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.execute(
+    { operation: "inspect_dart_aot", input: { path } },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("expected physical stream failure");
+  expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(physical);
+});
+
 it.each([undefined, "arm64-v8a", "x86_64", "mips"])(
   "applies the library cap only to selected ABI %s",
   async (abi) => {
@@ -1751,16 +1787,24 @@ it.each([
   },
 );
 
-it.each(["source", "image"] as const)(
-  "preserves a rejected %s read when the exact physical error is also the abort reason",
-  async (stage) => {
+it.each([
+  ["source", "Error", "EIO"],
+  ["image", "Error", "EIO"],
+  ["source", "AbortError", "EIO"],
+  ["image", "AbortError", "EIO"],
+  ["source", "Error", "ABORT_ERR"],
+  ["image", "Error", "ABORT_ERR"],
+] as const)(
+  "preserves a rejected %s read with %s/%s when the exact physical error is also the abort reason",
+  async (stage, name, code) => {
     const path = await buildApk("same-physical-reason.apk", [
       { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
     ]);
     const originalBytes = await readFile(path);
     const controller = new AbortController();
     const physical = Object.assign(new Error("physical read failed"), {
-      code: "EIO",
+      name,
+      code,
     });
     const rejectRead = (
       handle: Awaited<ReturnType<typeof fsPromises.open>>,
@@ -1812,7 +1856,7 @@ it.each(["source", "image"] as const)(
     expect(result.error.cause).toBe(physical);
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(removeRoot).toHaveBeenCalledOnce();
-    expect(await readFile(path)).toEqual(originalBytes);
+    expect((await readFile(path)).equals(originalBytes)).toBe(true);
   },
 );
 

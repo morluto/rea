@@ -98,14 +98,31 @@ const sha256File = async (
   path: string,
   signal: AbortSignal | undefined,
 ): Promise<string> => {
+  assertArtifactReadActive(signal);
   const hash = createHash("sha256");
-  const stream = createReadStream(path, signal === undefined ? {} : { signal });
-  for await (const chunk of stream) {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
-    hash.update(chunk as Buffer);
+  const owner = new AbortController();
+  const marker = {};
+  const abort = () => owner.abort(marker);
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const stream = createReadStream(path, { signal: owner.signal });
+    for await (const chunk of stream) {
+      if (signal?.aborted === true)
+        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      hash.update(chunk as Buffer);
+    }
+    return hash.digest("hex");
+  } catch (cause) {
+    if (
+      cause instanceof Error &&
+      cause.name === "AbortError" &&
+      cause.cause === marker
+    )
+      throw new AnalysisCancelledError(operation, { cause: signal?.reason });
+    throw cause;
+  } finally {
+    signal?.removeEventListener("abort", abort);
   }
-  return hash.digest("hex");
 };
 
 /** One owned snapshot root: a read-only copy of the admitted input. */
@@ -165,20 +182,11 @@ const emptyFacts = (): LibraryFacts => ({
 /** Use the producing reader's cancellation facts rather than its wrapper error. */
 const observedCancellation = (
   cause: unknown,
-  signal?: AbortSignal,
 ): { readonly reason: unknown } | undefined => {
   const file = regularFileCancellation(cause);
   if (file !== undefined) return file;
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
     return { reason: artifactFileCancellationCause(cause) };
-  if (
-    (cause instanceof Error && cause.name === "AbortError") ||
-    (typeof cause === "object" &&
-      cause !== null &&
-      "code" in cause &&
-      cause.code === "ABORT_ERR")
-  )
-    return { reason: signal?.aborted === true ? signal.reason : cause };
   return undefined;
 };
 
@@ -244,10 +252,9 @@ const mapOwnedIoFailure = (
   operation: string,
   cause: unknown,
   workspacePath: string | null,
-  signal?: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cancellation = observedCancellation(cause, signal);
+  const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
       cause: cancellation.reason,
@@ -407,7 +414,7 @@ export class FlutterBuildProvider {
       root = await mkdtemp(join(tmpdir(), "rea-flutter-"));
     } catch (cause) {
       // No workspace exists yet; the errno path names the attempted template.
-      throw mapOwnedIoFailure(operation, cause, null, signal);
+      throw mapOwnedIoFailure(operation, cause, null);
     }
     this.ownedRoots.set(root, new Set());
     this.rootLeases.set(
@@ -510,7 +517,7 @@ export class FlutterBuildProvider {
       const sha256 = await sha256File(operation, snapshotPath, signal);
       return { root, path: snapshotPath, bytes: info.size, sha256 };
     } catch (cause) {
-      const primary = mapOwnedIoFailure(operation, cause, root, signal);
+      const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
       if (!released)
         throw this.withCleanup(
@@ -689,9 +696,7 @@ export class FlutterBuildProvider {
         this.executeOwned(request, options),
       );
     } catch (cause) {
-      return err(
-        mapOwnedIoFailure(request.operation, cause, null, options?.signal),
-      );
+      return err(mapOwnedIoFailure(request.operation, cause, null));
     }
   }
 
@@ -752,12 +757,7 @@ export class FlutterBuildProvider {
             );
     } catch (cause) {
       result = err(
-        mapOwnedIoFailure(
-          request.operation,
-          cause,
-          snapshot?.root ?? null,
-          signal,
-        ),
+        mapOwnedIoFailure(request.operation, cause, snapshot?.root ?? null),
       );
     }
     const cleanup =
