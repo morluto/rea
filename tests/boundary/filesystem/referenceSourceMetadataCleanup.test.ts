@@ -5,8 +5,10 @@ import {
   realpath as fsRealpath,
   stat as fsStat,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { constants } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
@@ -391,9 +393,14 @@ it.each([
   },
 );
 
-it.each([false, true])(
-  "retains a physical Git metadata read failure and late cancellation through cleanup (close fails: %s)",
-  async (closeFails) => {
+it.each([
+  { closeFails: false, sameReason: false },
+  { closeFails: false, sameReason: true },
+  { closeFails: true, sameReason: false },
+  { closeFails: true, sameReason: true },
+])(
+  "retains physical Git read failure through late cancellation (close fails: $closeFails, same reason: $sameReason)",
+  async ({ closeFails, sameReason }) => {
     const root = await createTestTempDirectory("rea-reference-vcs-eio-");
     const gitdir = join(root, ".git");
     await mkdir(gitdir);
@@ -402,19 +409,34 @@ it.each([false, true])(
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
     const reason = { source: "caller" };
-    const physical = Object.assign(new Error("metadata read failed"), {
-      code: "EIO",
-    });
+    let physical: unknown;
+    const handles: FileHandle[] = [];
     let allowClose = false;
     openMock.mockImplementation(async (...args) => {
-      const handle = await actual.open(...args);
-      if (resolve(String(args[0])) !== resolve(head)) return handle;
-      vi.spyOn(handle, "read").mockImplementation(async () => {
-        throw physical;
+      if (resolve(String(args[0])) !== resolve(head))
+        return actual.open(...args);
+      const flags = args[1];
+      if (typeof flags !== "number")
+        throw new Error("Expected numeric regular-file admission flags");
+      // Preserve admission flags; neither O_TRUNC nor a write is used.
+      const handle = await actual.open(
+        args[0],
+        flags | constants.O_WRONLY,
+        args[2],
+      );
+      handles.push(handle);
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+        try {
+          return await read(...readArgs);
+        } catch (cause: unknown) {
+          physical = cause;
+          throw cause;
+        }
       });
       const close = handle.close.bind(handle);
       vi.spyOn(handle, "close").mockImplementation(async () => {
-        controller.abort(reason);
+        controller.abort(sameReason ? physical : reason);
         if (closeFails && !allowClose) throw new Error("close failed");
         await close();
       });
@@ -426,14 +448,37 @@ it.each([false, true])(
         resources,
         controller.signal,
       );
+      expect(physical).toMatchObject({ code: "EBADF" });
+      const cancellation = sameReason ? physical : reason;
+      expect(controller.signal.reason).toBe(cancellation);
       expect(result).toMatchObject({
         ok: false,
         error: {
           code: "io",
-          secondaryCancellation: { cause: reason },
+          secondaryCancellation: { cause: cancellation },
           ...(closeFails ? { cleanup: { resources: [head] } } : {}),
         },
       });
+      if (result.ok) throw new Error("Physical metadata failure was ignored");
+      expect(result.error.secondaryCancellation?.cause).toBe(cancellation);
+      expect(resources.cleanupResources).toEqual(closeFails ? [head] : []);
+      let retained: unknown = result.error.cause;
+      while (
+        retained !== physical &&
+        retained instanceof Error &&
+        retained.cause !== undefined
+      )
+        retained = retained.cause;
+      expect(retained).toBe(physical);
+      expect(
+        handles.every((handle) =>
+          closeFails ? handle.fd >= 0 : handle.fd === -1,
+        ),
+      ).toBe(true);
+      allowClose = true;
+      await resources.close();
+      expect(handles.every((handle) => handle.fd === -1)).toBe(true);
+      expect(resources.hasPending).toBe(false);
     } finally {
       allowClose = true;
       await resources.close();
