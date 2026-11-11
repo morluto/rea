@@ -46,78 +46,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const filesystem = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...filesystem,
-    readFile: async (...args: Parameters<typeof filesystem.readFile>) => {
-      const [path, options] = args;
-      const filename = String(path);
-      if (!filename.startsWith("/proc/")) return filesystem.readFile(...args);
-      fixture.reads.push(filename);
-      const code = fixture.failures.get(filename);
-      if (code !== undefined) throw Object.assign(new Error(code), { code });
-      if (fixture.abortErrors.has(filename)) {
-        const error = new Error("unexpected abort-shaped filesystem error");
-        error.name = "AbortError";
-        throw error;
-      }
-      if (filename === fixture.holdPath) {
-        fixture.holdStarted = true;
-        fixture.holdStartedResolve?.();
-        const signal =
-          typeof options === "object" && options !== null && "signal" in options
-            ? options.signal
-            : undefined;
-        await new Promise<never>((_resolve, reject) => {
-          if (signal?.aborted) {
-            const error = Object.assign(new Error("sampling cancelled"), {
-              cause: signal.reason,
-            });
-            error.name = "AbortError";
-            reject(error);
-            return;
-          }
-          signal?.addEventListener(
-            "abort",
-            () => {
-              fixture.abortObserved = true;
-              fixture.abortObservedResolve?.();
-              const error = Object.assign(new Error("sampling cancelled"), {
-                cause: signal?.reason,
-              });
-              error.name = "AbortError";
-              reject(error);
-            },
-            { once: true },
-          );
-        });
-      }
-      const statMatch = /^\/proc\/(\d+)\/stat$/u.exec(filename);
-      let value: string | Buffer;
-      if (statMatch !== null) {
-        const pid = Number(statMatch[1]);
-        const reads = (fixture.statReads.get(pid) ?? 0) + 1;
-        fixture.statReads.set(pid, reads);
-        if (pid === fixture.statWaitPid && reads >= fixture.statWaitCount)
-          fixture.statWaitResolve?.();
-        value = statLine(pid, reads);
-      } else {
-        const childMatch = /^\/proc\/(\d+)\/task\/(\d+)\/children$/u.exec(
-          filename,
-        );
-        if (childMatch !== null)
-          value =
-            fixture.children.get(`${childMatch[1]}:${childMatch[2]}`) ?? "";
-        else if (/^\/proc\/\d+\/cmdline$/u.test(filename))
-          value = Buffer.from(`fixture-command-${filename.split("/")[2]}\0`);
-        else throw new Error(`Unexpected proc fixture read: ${filename}`);
-      }
-      if (
-        typeof options === "object" &&
-        options !== null &&
-        "encoding" in options &&
-        options.encoding === "utf8"
-      )
-        return typeof value === "string" ? value : value.toString("utf8");
-      return Buffer.isBuffer(value) ? value : Buffer.from(value);
-    },
     readdir: async (...args: Parameters<typeof filesystem.readdir>) => {
       const [path] = args;
       const filename = String(path);
@@ -146,6 +74,60 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
+
+vi.mock("../ProcessInspectionFile.js", () => ({
+  readProcessInspectionFile: async (filename: string, signal?: AbortSignal) => {
+    if (!filename.startsWith("/proc/"))
+      throw new Error(`Unexpected inspection fixture path: ${filename}`);
+    fixture.reads.push(filename);
+    const code = fixture.failures.get(filename);
+    if (code !== undefined) throw Object.assign(new Error(code), { code });
+    if (fixture.abortErrors.has(filename)) {
+      const error = new Error("unexpected abort-shaped filesystem error");
+      error.name = "AbortError";
+      throw error;
+    }
+    if (filename === fixture.holdPath) {
+      fixture.holdStarted = true;
+      fixture.holdStartedResolve?.();
+      await new Promise<never>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new ProcessOwnershipInspectionCancelled(signal.reason));
+          return;
+        }
+        signal?.addEventListener(
+          "abort",
+          () => {
+            fixture.abortObserved = true;
+            fixture.abortObservedResolve?.();
+            reject(new ProcessOwnershipInspectionCancelled(signal?.reason));
+          },
+          { once: true },
+        );
+      });
+    }
+    const statMatch = /^\/proc\/(\d+)\/stat$/u.exec(filename);
+    let value: string | Buffer;
+    if (statMatch !== null) {
+      const pid = Number(statMatch[1]);
+      const reads = (fixture.statReads.get(pid) ?? 0) + 1;
+      fixture.statReads.set(pid, reads);
+      if (pid === fixture.statWaitPid && reads >= fixture.statWaitCount)
+        fixture.statWaitResolve?.();
+      value = statLine(pid, reads);
+    } else {
+      const childMatch = /^\/proc\/(\d+)\/task\/(\d+)\/children$/u.exec(
+        filename,
+      );
+      if (childMatch !== null)
+        value = fixture.children.get(`${childMatch[1]}:${childMatch[2]}`) ?? "";
+      else if (/^\/proc\/\d+\/cmdline$/u.test(filename))
+        value = Buffer.from(`fixture-command-${filename.split("/")[2]}\0`);
+      else throw new Error(`Unexpected proc fixture read: ${filename}`);
+    }
+    return value.toString();
+  },
+}));
 
 vi.mock("../ProcessOwnership.js", async (original) => ({
   ...(await original<typeof import("../ProcessOwnership.js")>()),
@@ -188,6 +170,7 @@ vi.mock("../ExecFileOutput.js", async (original) => ({
 import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
 import { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
+import { ProcessOwnershipInspectionCancelled } from "../ProcessInspectionCancellation.js";
 import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { readLinuxProcessStat } from "./LinuxProcessSampling.js";

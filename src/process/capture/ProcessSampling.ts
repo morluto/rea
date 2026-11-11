@@ -1,7 +1,7 @@
 import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
 import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
 import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
-import type { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
+import type { ProcessCaptureError } from "./ProcessCaptureError.js";
 import type { ProcessSamplingCoverage } from "../../domain/process/processCaptureCoverage.js";
 import type {
   ProcessSample,
@@ -18,7 +18,9 @@ import {
   type SampledProcessRow as ProcessRow,
 } from "./LinuxProcessSampling.js";
 import {
-  isSamplingAbort,
+  settleSamplingReads,
+  samplingInspectionFailures,
+  SamplingReadBatchFailure,
   mergeSamplingDiagnostics,
   readProcSamplingSource,
   readSamplingSource,
@@ -103,7 +105,7 @@ const sampleLinux = async (
     );
     const batch = level.slice(0, batchSize);
     level = level.slice(batchSize);
-    const observations = await Promise.all(
+    const observations = await settleSamplingReads(
       batch.map(({ pid, expectedParent }) =>
         inspectLinuxProcess(pid, expectedParent, signal, identities),
       ),
@@ -200,7 +202,7 @@ const sampleLinuxFallback = async (
     );
     const candidates = batch.filter(({ pid }) => !visited.has(pid));
     for (const { pid } of candidates) visited.add(pid);
-    const observations = await Promise.all(
+    const observations = await settleSamplingReads(
       candidates.map(({ pid, expectedParent }) =>
         inspectLinuxProcessMetadata(
           pid,
@@ -367,6 +369,25 @@ const sampleProcesses = async (
   return samplingObservation(samples, rows.diagnostics);
 };
 
+/** A private stop intent qualifies only explicit pure cancellation from every rejected read. */
+const isOwnedSamplingShutdown = (cause: unknown, reason: unknown): boolean => {
+  const inspections = samplingInspectionFailures(cause);
+  return (
+    inspections.length > 0 &&
+    (!(cause instanceof SamplingReadBatchFailure) ||
+      cause.userCategory === "cancelled") &&
+    inspections.every(
+      (inspection) =>
+        isProcessOwnershipInspectionCancellation(
+          inspection.inspectionFailure,
+        ) &&
+        processInspectionCancellations(inspection.inspectionFailure).every(
+          (fact) => fact.reason === reason,
+        ),
+    )
+  );
+};
+
 /** Start bounded process-tree sampling and expose an awaited stop. */
 export const startProcessSampler = (options: {
   readonly rootPid: number;
@@ -393,7 +414,7 @@ export const startProcessSampler = (options: {
   let samplingWasInterrupted = false;
   let firstSamplingFailure: string | null = null;
   let rootInitialized = false;
-  let inspectionFailure: ProcessCaptureInspectionFailure | undefined;
+  let inspectionFailure: ProcessCaptureError | undefined;
 
   const sample = (): void => {
     if (stopped || pending !== undefined) return;
@@ -451,36 +472,27 @@ export const startProcessSampler = (options: {
         }
       })
       .catch((cause: unknown) => {
-        const inspection = options.resourceScope.retainInspectionFailure(cause);
-        if (inspection !== undefined) {
-          if (
-            stopRequested &&
-            isProcessOwnershipInspectionCancellation(
-              inspection.inspectionFailure,
-            ) &&
-            processInspectionCancellations(inspection.inspectionFailure).every(
-              (fact) => fact.reason === shutdownReason,
-            )
-          ) {
+        const inspections = samplingInspectionFailures(cause);
+        for (const inspection of inspections)
+          options.resourceScope.retainInspectionFailure(inspection);
+        if (inspections.length > 0) {
+          if (stopRequested && isOwnedSamplingShutdown(cause, shutdownReason)) {
             samplingWasInterrupted = true;
             return;
           }
-          inspectionFailure = inspection;
+          inspectionFailure =
+            cause instanceof SamplingReadBatchFailure ? cause : inspections[0];
           stopped = true;
           clearInterval(timer);
           return;
         }
-        if (isSamplingAbort(cause, controller.signal)) {
-          samplingWasInterrupted = true;
-        } else {
-          samplingFailures += 1;
-          firstSamplingFailure ??=
-            cause instanceof Error
-              ? `${cause.name}: ${cause.message}`
-              : typeof cause === "string"
-                ? cause
-                : `Unexpected sampling rejection (${typeof cause})`;
-        }
+        samplingFailures += 1;
+        firstSamplingFailure ??=
+          cause instanceof Error
+            ? `${cause.name}: ${cause.message}`
+            : typeof cause === "string"
+              ? cause
+              : `Unexpected sampling rejection (${typeof cause})`;
       })
       .then(() => {
         abortCurrent = undefined;

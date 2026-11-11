@@ -1,15 +1,12 @@
+import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
 import {
   assertProcessOwnershipInspectionActive,
-  ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
   rethrowProcessOwnershipInspectionFailure,
   waitForProcessOwnershipInspection,
 } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
-import { open, readlink, stat as statPath } from "node:fs/promises";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { withOwnedFileHandle } from "../filesystem/OwnedRegularFile.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readlink, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -68,35 +65,6 @@ const rethrowInspectionFailure = (cause: unknown): void => {
   )
     throw cause;
   rethrowProcessOwnershipInspectionFailure(cause);
-};
-
-/** procfs extents are synthetic: read to EOF through an owned descriptor. */
-const readInspectionFile = async (
-  path: string,
-  signal?: AbortSignal,
-): Promise<string> => {
-  assertProcessOwnershipInspectionActive(signal);
-  const owner = new OwnedFileHandle(await open(path, "r"));
-  try {
-    return await withOwnedFileHandle(
-      path,
-      owner,
-      signal === undefined ? {} : { signal },
-      async (handle) => {
-        const bytes: Buffer[] = [];
-        for await (const chunk of readFileHandleChunks(handle, {
-          signal,
-          cancellationFailure: (reason) =>
-            new ProcessOwnershipInspectionCancelled(reason),
-        }))
-          bytes.push(chunk as Buffer);
-        return Buffer.concat(bytes).toString("utf8");
-      },
-    );
-  } catch (cause: unknown) {
-    rethrowInspectionFailure(cause);
-    throw cause;
-  }
 };
 
 /** Observe multiple groups from one process snapshot and one token batch. */
@@ -1298,7 +1266,7 @@ export const createSystemProcessOwnershipHost = (
       let callerUidMap: Promise<string | undefined> | undefined;
       const readUidMap = async (path: string): Promise<string | undefined> => {
         try {
-          return await readInspectionFile(path, signal);
+          return await readProcessInspectionFile(path, signal);
         } catch (cause: unknown) {
           rethrowInspectionFailure(cause);
           return undefined;
@@ -1317,7 +1285,7 @@ export const createSystemProcessOwnershipHost = (
               { state: "unavailable", reason: "invalid_process_id" } as const,
             ] as const;
           try {
-            const stat = await readInspectionFile(
+            const stat = await readProcessInspectionFile(
               `/proc/${String(pid)}/stat`,
               signal,
             );
@@ -1371,7 +1339,7 @@ export const createSystemProcessOwnershipHost = (
 
             let status: string;
             try {
-              status = await readInspectionFile(
+              status = await readProcessInspectionFile(
                 `/proc/${String(pid)}/status`,
                 signal,
               );
@@ -1440,7 +1408,7 @@ export const createSystemProcessOwnershipHost = (
 
             let afterStatus: string;
             try {
-              afterStatus = await readInspectionFile(
+              afterStatus = await readProcessInspectionFile(
                 `/proc/${String(pid)}/stat`,
                 signal,
               );
@@ -1638,7 +1606,7 @@ export const createSystemProcessOwnershipHost = (
       assertProcessOwnershipInspectionActive(signal);
       if (platform === "linux")
         return parseProcessEnvironment(
-          await readInspectionFile(`/proc/${pid}/environ`, signal),
+          await readProcessInspectionFile(`/proc/${pid}/environ`, signal),
         );
       if (platform === "darwin") {
         const process = (await listProcesses(signal)).find(

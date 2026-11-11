@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
 import {
@@ -129,4 +132,30 @@ it("propagates actual typed cancellation while keeping ordinary EIO optional and
     error: { kind: "unavailable", systemCode: "EIO" },
   });
   expect(scope.retainInspectionFailure(physical)).toBeUndefined();
+});
+
+it("keeps an actual physical filesystem rejection when it is reused as the sampling abort reason", async () => {
+  const directory = await createTestTempDirectory("rea-sampling-origin-");
+  const controller = new AbortController();
+  let physical: unknown;
+  const result = await readSamplingSource(
+    "authored optional file",
+    controller.signal,
+    async () => {
+      try {
+        return await readFile(join(directory, "absent"), {
+          signal: controller.signal,
+        });
+      } catch (cause) {
+        physical = cause;
+        controller.abort(cause);
+        throw cause;
+      }
+    },
+  );
+  expect(controller.signal.reason).toBe(physical);
+  expect(result).toMatchObject({
+    ok: false,
+    error: { kind: "unavailable", systemCode: "ENOENT" },
+  });
 });

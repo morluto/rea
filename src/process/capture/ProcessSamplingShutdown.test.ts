@@ -5,7 +5,14 @@ import {
   ProcessOwnershipIdentityBatchFailure,
 } from "../ProcessInspectionCancellation.js";
 import { systemProcessOwnershipHost } from "../ProcessOwnershipObservation.js";
-import { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
+import {
+  SamplingReadBatchFailure,
+  settleSamplingReads,
+} from "./ProcessSamplingObservation.js";
+import {
+  normalizeCaptureFailure,
+  ProcessCaptureInspectionFailure,
+} from "./ProcessCaptureError.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 
@@ -37,7 +44,7 @@ vi.mock("../ExecFileOutput.js", async (original) => ({
   },
 }));
 
-it.each(["plain", "all-cancel", "mixed-fd"] as const)(
+it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
   "settles an actual pending run-token read during sampler-owned stop (%s)",
   async (kind) => {
     const file =
@@ -53,6 +60,7 @@ it.each(["plain", "all-cancel", "mixed-fd"] as const)(
       started = resolve;
     });
     let original: unknown;
+    const physical = new Error("opaque physical sibling rejection");
     const observations = new Map([
       [
         44,
@@ -72,6 +80,19 @@ it.each(["plain", "all-cancel", "mixed-fd"] as const)(
         try {
           assertProcessOwnershipInspectionActive(signal);
         } catch (cancellation) {
+          if (kind === "opaque-peer")
+            return settleSamplingReads([
+              Promise.reject(normalizeCaptureFailure(cancellation)),
+              Promise.reject(physical),
+            ]).then(
+              () => {
+                throw new Error("Expected failed peers");
+              },
+              (cause: unknown) => {
+                original = cause;
+                throw cause;
+              },
+            );
           original =
             kind === "plain"
               ? cancellation
@@ -106,7 +127,11 @@ it.each(["plain", "all-cancel", "mixed-fd"] as const)(
       file?.allow();
       await scope.close();
       await stop().catch((cause: unknown) => {
-        if (!(cause instanceof ProcessCaptureInspectionFailure)) throw cause;
+        if (
+          !(cause instanceof ProcessCaptureInspectionFailure) &&
+          !(cause instanceof SamplingReadBatchFailure)
+        )
+          throw cause;
       });
       vi.restoreAllMocks();
       if (platform !== undefined)
@@ -114,7 +139,18 @@ it.each(["plain", "all-cancel", "mixed-fd"] as const)(
     });
     await ready;
     const outcome = stop();
-    if (file === undefined) {
+    if (kind === "opaque-peer") {
+      const failure: unknown = await outcome.catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(SamplingReadBatchFailure);
+      if (!(failure instanceof SamplingReadBatchFailure))
+        throw new Error("Expected physical batch");
+      expect(failure).toBe(original);
+      expect(failure.userCategory).toBeUndefined();
+      expect(failure.outcomes[1]).toEqual({
+        status: "rejected",
+        reason: physical,
+      });
+    } else if (file === undefined) {
       await expect(outcome).resolves.toMatchObject({
         partial: true,
         coverage: {
