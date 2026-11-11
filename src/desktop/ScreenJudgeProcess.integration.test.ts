@@ -65,25 +65,32 @@ it.skipIf(process.platform === "win32")(
       new Uint8Array([1]),
       controller.signal,
     );
+    void running.catch(() => undefined);
     let pid = 0;
-    await vi.waitFor(
-      async () => {
-        pid = Number(await readFile(marker, "utf8"));
-        expect(pid).toBeGreaterThan(0);
-      },
-      { timeout: 10000 },
-    );
-    controller.abort(new Error("cancelled by caller"));
-    await expect(running).rejects.toThrow();
-    let state = "";
     try {
-      state = execFileSync("ps", ["-p", String(pid), "-o", "stat="], {
-        encoding: "utf8",
-      }).trim();
-    } catch {
-      /* Process no longer exists. */
+      await vi.waitFor(
+        async () => {
+          pid = Number(await readFile(marker, "utf8"));
+          expect(pid).toBeGreaterThan(0);
+        },
+        { timeout: 10000 },
+      );
+      controller.abort(new Error("cancelled by caller"));
+      await expect(running).rejects.toThrow();
+      let state = "";
+      try {
+        state = execFileSync("ps", ["-p", String(pid), "-o", "stat="], {
+          encoding: "utf8",
+        }).trim();
+      } catch {
+        /* Process no longer exists. */
+      }
+      expect(state === "" || state.startsWith("Z")).toBe(true);
+      expect(await judge.close()).toMatchObject({ verified: true });
+    } finally {
+      controller.abort(new Error("test cleanup"));
+      await running.catch(() => undefined);
+      expect(await judge.close()).toMatchObject({ verified: true });
     }
-    expect(state === "" || state.startsWith("Z")).toBe(true);
-    expect(await judge.close()).toMatchObject({ verified: true });
   },
 );

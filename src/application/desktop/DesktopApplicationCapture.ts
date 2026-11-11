@@ -1,3 +1,4 @@
+import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
 import { arch, hostname, userInfo } from "node:os";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
@@ -57,6 +58,7 @@ const POLL_INTERVAL_MS = 500;
 
 /** What the caller asked to capture, after CLI parsing. */
 export interface DesktopCaptureRequest {
+  readonly libraryPolicy?: DesktopLibraryPolicyInput;
   readonly desktopEntry: string | undefined;
   readonly executable: string | undefined;
   readonly arguments: readonly string[];
@@ -176,6 +178,9 @@ const captureEvidence = (
       state_path_count: request.statePaths.length,
       exclude_count: request.excludes.length,
       package_file: request.packageFile !== undefined,
+      ...(request.libraryPolicy === undefined
+        ? {}
+        : { library_policy: request.libraryPolicy }),
     },
     result: capture,
     confidence: "observed",

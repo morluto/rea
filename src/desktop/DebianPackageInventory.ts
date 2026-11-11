@@ -1,3 +1,4 @@
+import type { DesktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { readdir } from "node:fs/promises";
 
 import {
@@ -41,6 +42,7 @@ export type DebianPackageHost = AptRepositoryHost;
 
 /** What package identification reads with and adds to. */
 export interface InventoryContext {
+  readonly libraryPolicy?: DesktopLibraryPolicy;
   readonly host: DebianPackageHost;
   readonly signal: AbortSignal | undefined;
   readonly limitations: string[];
@@ -138,6 +140,7 @@ const installFacts = async (
           installed.name ?? "",
           runQuery,
           context.signal,
+          context.libraryPolicy,
         ),
   );
   context.limitations.push(...vendor.limitations);

@@ -141,7 +141,7 @@ describe("English Unicode case collisions", () => {
     ).toBe(true);
   });
 
-  it("stays linear for large case-variant subtrees", () => {
+  it("bounds diagnostic lengths for large case-variant subtrees", () => {
     const count = 5_000;
     const paths = Array.from({ length: count }, (_, index) => [
       `Foo/a${String(index)}.txt`,

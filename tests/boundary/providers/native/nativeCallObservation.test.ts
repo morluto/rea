@@ -13,10 +13,7 @@ import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js"
 import { EvidenceIntegrityError } from "../../../../src/domain/evidenceErrors.js";
 import { nativeCallPartialObservationSchema } from "../../../../src/domain/native/nativeCallPartialObservation.js";
 import { nativeCallObservationResultSchema } from "../../../../src/domain/native/nativeCallObservation.js";
-import {
-  NATIVE_CALL_BREAKPOINT_LOCATION_BUDGET_LIMITATION,
-  NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION,
-} from "../../../../src/native/NativeCallObservation.js";
+import { NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION } from "../../../../src/native/NativeCallObservation.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
 import type {
   NativeCallTrace,
@@ -304,7 +301,7 @@ describe("observe_native_calls projection: keeps locations within the metadata b
   });
 });
 
-describe("observe_native_calls projection: reports partial observation coverage", () => {
+describe("observe_native_calls projection: bounded breakpoint metadata", () => {
   it("retains normal exit and location counts when breakpoint metadata is bounded", async () => {
     const observed = await observe(
       new FixtureTracer(
@@ -326,12 +323,16 @@ describe("observe_native_calls projection: reports partial observation coverage"
           terminated: true,
         }),
       ),
-      { breakpoints: BREAKPOINTS },
+      {
+        breakpoints: BREAKPOINTS,
+        capture_limits: { breakpoint_location_bytes: 1024 },
+      },
     );
     if (!observed.ok) throw observed.error;
     const result = nativeCallObservationResultSchema.parse(
       observed.value.result,
     );
+    expect(result.capture_limits?.breakpoint_location_bytes).toBe(1024);
     expect(result.process).toMatchObject({
       outcome: "exited",
       exit_status: 0,
@@ -346,15 +347,19 @@ describe("observe_native_calls projection: reports partial observation coverage"
       resource_limit_reached: false,
       unresolved_breakpoints: [],
     });
-    expect(result.limitations).toContain(
-      NATIVE_CALL_BREAKPOINT_LOCATION_BUDGET_LIMITATION,
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining(
+        "capture_limits.breakpoint_location_bytes (1024 bytes)",
+      ),
     );
     expect(result.limitations).not.toContain(
       NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION,
     );
     expect(result.limitations.join(" ")).not.toContain("process was killed");
   });
+});
 
+describe("observe_native_calls projection: reports partial observation coverage", () => {
   it("marks event limits, unresolved breakpoints and unconfirmed exits", async () => {
     const tracer = new FixtureTracer(
       ok({
@@ -413,7 +418,7 @@ describe("observe_native_calls projection: reports partial observation coverage"
           /Breakpoints 1.*matched no code.*calls could not be observed/iu,
         ),
         expect.stringMatching(
-          /1048576 bytes.*per stream.*counted but not kept.*no runtime override/iu,
+          /capture_limits\.output_bytes.*1048576.*per stream.*counted but not kept.*earlier omitted output cannot be recovered/iu,
         ),
         expect.stringMatching(
           /could not confirm.*process 4242 exited.*check for it/iu,
@@ -591,6 +596,7 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     _tag: "AnalysisCancelledError",
     cause: reason,
   });
+  expect(result.error.cause).toBe(reason);
   const partial = nativeCallPartialObservationSchema.parse(
     result.error.partialObservation,
   );
@@ -601,25 +607,4 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     status: "partial",
     reason: "cancelled",
   });
-});
-
-it("grows repeated source-location JSON by the location object, not by a token estimate", () => {
-  const path = "/not-acquired/é space/fixture.pas";
-  const located = {
-    ...LOCATION,
-    source_location: { file_path: path, line: 23, column: null },
-  };
-  const absent = { ...located, source_location: null };
-  const copies = 3;
-  const withPath = Buffer.byteLength(
-    JSON.stringify(Array.from({ length: copies }, () => located)),
-  );
-  const withoutPath = Buffer.byteLength(
-    JSON.stringify(Array.from({ length: copies }, () => absent)),
-  );
-  const perCopy =
-    Buffer.byteLength(JSON.stringify(located.source_location)) -
-    Buffer.byteLength("null");
-  expect(withPath - withoutPath).toBe(copies * perCopy);
-  expect(perCopy).toBeGreaterThan(Buffer.byteLength(path));
 });
