@@ -2,8 +2,13 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
 import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
 
+import { isAbsolute, resolve, sep } from "node:path";
+
 import { Cli, z } from "incur";
-import { localPathStringSchema } from "../domain/localPath.js";
+import {
+  localPathStringSchema,
+  nulFreeStringSchema,
+} from "../domain/localPath.js";
 
 import { logCliCommand } from "../cliLogging.js";
 import {
@@ -64,7 +69,7 @@ const registerElectronFuseCommand = (
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
     args: z.object({
-      path: localPathStringSchema.describe(
+      path: nulFreeStringSchema.describe(
         "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
       ),
     }),
@@ -75,7 +80,7 @@ const registerElectronFuseCommand = (
           return finishAnalysisCommand(
             () =>
               service.inspect(
-                { path: absoluteCallerPath(args.path) },
+                { path: absoluteElectronFusePath(args.path) },
                 { signal },
               ),
             service,
@@ -86,6 +91,16 @@ const registerElectronFuseCommand = (
         }),
       ),
   });
+};
+
+/** Anchor relative input without changing which file symlink/.. selects. */
+const absoluteElectronFusePath = (path: string): string => {
+  if (path === "") return path;
+  // Win32 resolves dot components before directory links, including drive-relative paths.
+  if (sep === "\\") return resolve(path);
+  if (isAbsolute(path)) return path;
+  const base = process.cwd();
+  return `${base}${base.endsWith(sep) ? "" : sep}${path}`;
 };
 
 const registerElectronActiveCommand = (
