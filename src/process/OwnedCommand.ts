@@ -35,8 +35,9 @@ import {
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
 
-/** Preparation transfers only explicit native/file owner protocols. */
+/** Preparation retains explicit inspection cancellation and native/file owners. */
 export type ProcessOwnershipPreparationFailure =
+  | ProcessOwnershipInspectionCancelled
   | DarwinProcessOwnershipInspectionError
   | RegularFileCleanupFailure
   | ProcessOwnershipIdentityBatchFailure;
@@ -135,12 +136,13 @@ function throwCommandPreparationFailure(
   interruption: "cancelled" | "timeout" | undefined,
 ): never {
   // A caller's raw abort reason remains opaque even if it is a typed error.
+  const cancellation = ProcessOwnershipInspectionCancelled.from(cause);
   const preparationFailure =
     cause instanceof DarwinProcessOwnershipInspectionError ||
     cause instanceof RegularFileCleanupFailure ||
     cause instanceof ProcessOwnershipIdentityBatchFailure
       ? cause
-      : undefined;
+      : cancellation;
   // Preparation owns its physical outcome and any retained helper resources.
   if (
     preparationFailure instanceof RegularFileCleanupFailure ||
@@ -150,7 +152,6 @@ function throwCommandPreparationFailure(
       preparationFailure.cancellation === undefined)
   )
     throw preparationFailure;
-  const cancellation = ProcessOwnershipInspectionCancelled.from(cause);
   const preparationCancellation =
     preparationFailure instanceof DarwinProcessOwnershipInspectionError
       ? preparationFailure.cancellation
