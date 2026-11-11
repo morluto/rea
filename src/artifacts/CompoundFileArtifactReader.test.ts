@@ -1,10 +1,13 @@
 import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { CompoundFileArtifactReader } from "./CompoundFileArtifactReader.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 
 const SECTOR = 512;
 const END = 0xffff_fffe;
@@ -266,4 +269,84 @@ it("refuses a version the container does not define", async () => {
       await write("version-2.automaticDestinations-ms", bytes),
     ),
   ).rejects.toThrow(/only versions 3 and 4 are supported/u);
+});
+
+it("retries a shared preparation cancelled by another traversal", async () => {
+  const reader = new CompoundFileArtifactReader(
+    await write(
+      "shared.automaticDestinations-ms",
+      compoundFile({
+        entries: rootWith(1, [
+          { name: "Stream", type: 2, start: 2, size: 512 },
+        ]),
+      }),
+    ),
+  );
+  const controller = new AbortController();
+  let entered: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      entered();
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      assertArtifactReadActive(signal);
+      return read.call(this, signal);
+    });
+  try {
+    const cancelled = reader
+      .entries(controller.signal)
+      [Symbol.asyncIterator]()
+      .next();
+    const cancelledResult = expect(cancelled).rejects.toMatchObject({
+      reason: "cancelled",
+    });
+    await started;
+    const collect = async (): Promise<string[]> => {
+      const paths: string[] = [];
+      for await (const entry of reader.entries()) paths.push(entry.path);
+      return paths;
+    };
+    const other = collect();
+    controller.abort("cancelled first traversal");
+    await cancelledResult;
+    await expect(other).resolves.toContain("Stream");
+  } finally {
+    controller.abort();
+    spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("verifies a consumed stream before delivering it complete", async () => {
+  const path = await write(
+    "late-truncate.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [{ name: "Stream", type: 2, start: 2, size: 4096 }]),
+      fat: [END, END, 3, 4, 5, 6, 7, 8, 9, END],
+      totalSectors: 12,
+    }),
+  );
+  const reader = new CompoundFileArtifactReader(path);
+  try {
+    let entry: Awaited<ReturnType<typeof reader.open>> extends never
+      ? never
+      : Parameters<typeof reader.open>[0] | undefined;
+    for await (const member of reader.entries())
+      if (member.path === "Stream") entry = member;
+    if (entry === undefined) throw new Error("Missing Stream entry");
+    // Truncate the carrier after the inventory was built, so the range read
+    // delivers fewer bytes than the entry declares.
+    await writeFile(path, Buffer.alloc(0));
+    await expect(reader.open(entry)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+  } finally {
+    await reader.close();
+  }
 });

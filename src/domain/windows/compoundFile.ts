@@ -429,8 +429,15 @@ export const parseCompoundFile = (
   let unlistedFatSectors = 0;
   const seenFatSectors = new Set<number>();
   for (const sector of fatSectorIds) {
+    // A block the DIFAT chain itself occupies is container structure, not FAT
+    // cells: the last word of a DIFAT sector is simultaneously a FAT cell, so
+    // reading it as one would let an ENDOFCHAIN pointer make an arbitrary
+    // sector look like a complete stream.
     const usable =
-      sector < sectorCount && !isMarker(sector) && !seenFatSectors.has(sector);
+      sector < sectorCount &&
+      !isMarker(sector) &&
+      !seenDifat.has(sector) &&
+      !seenFatSectors.has(sector);
     if (usable) {
       seenFatSectors.add(sector);
       const offset = sectorOf(sector, sectorBytes);
@@ -455,7 +462,7 @@ export const parseCompoundFile = (
     );
   if (unlistedFatSectors !== 0)
     limitations.push(
-      `${String(unlistedFatSectors)} declared FAT sector(s) lie outside the file and were not read`,
+      `${String(unlistedFatSectors)} declared FAT sector(s) lie outside the file or are already owned by the DIFAT chain and were not read`,
     );
   if (table.length === 0)
     return err(failure("the header lists no FAT sector within the file"));
@@ -556,9 +563,25 @@ export const parseCompoundFile = (
       `${String(undefinedTypes)} directory entr(ies) declare an object type the format does not define; they are listed without a role`,
     );
 
-  const rootIndex = raw.findIndex((entry) => entry.type === "root-storage");
+  // CFB fixes the root storage at directory entry 0; a later type-5 record is
+  // an extra root, and following it would present an arbitrary storage's child
+  // tree as the canonical hierarchy.
+  const extraRoots = raw.filter(
+    (entry, index) => index !== 0 && entry.type === "root-storage",
+  ).length;
+  if (extraRoots !== 0)
+    limitations.push(
+      `${String(extraRoots)} directory entr(ies) outside entry 0 declare a root storage; the format fixes the root at entry 0, so their subtrees are not presented as the hierarchy`,
+    );
+  const rootIndex = raw.length > 0 && raw[0]?.type === "root-storage" ? 0 : -1;
   if (rootIndex === -1)
-    return err(failure("the directory stream holds no root storage entry"));
+    return err(
+      failure(
+        raw.some((entry) => entry.type === "root-storage")
+          ? "directory entry 0 is not the root storage the format fixes there"
+          : "the directory stream holds no root storage entry",
+      ),
+    );
 
   // Walk each storage's red-black tree so every reachable entry is named by its
   // path. A cycle or a link outside the table is reported, not followed.

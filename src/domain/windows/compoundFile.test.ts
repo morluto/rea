@@ -363,3 +363,45 @@ it("refuses a DIFAT that names more FAT sectors than the file holds", () => {
     /DIFAT names .* FAT sector/u,
   );
 });
+
+it("refuses a FAT block that the DIFAT chain already owns", () => {
+  // One 512-byte DIFAT sector that names itself as the first FAT sector. Its
+  // last word is simultaneously a FAT cell, so reading it as FAT cells would
+  // let an ENDOFCHAIN pointer make an arbitrary sector look complete.
+  const bytes = compoundFile({
+    entries: root(undefined, []),
+    fat: [END, END, END, END],
+    totalSectors: 12,
+  });
+  // firstDifatSector = 9 (past the fixture's directory), one DIFAT sector.
+  bytes.writeUInt32LE(9, 0x44);
+  bytes.writeUInt32LE(1, 0x48);
+  // The DIFAT sector lists sector 9 (itself) as FAT, then ENDOFCHAIN, and
+  // fills the remaining 126 words with FREE so only that one block is named.
+  bytes.writeUInt32LE(9, 10 * SECTOR);
+  bytes.writeUInt32LE(END, 10 * SECTOR + 4);
+  for (let index = 2; index < 128; index += 1)
+    bytes.writeUInt32LE(FREE, 10 * SECTOR + index * 4);
+  const image = parseCompoundFile(bytes);
+  expect(image.ok).toBe(true);
+  if (!image.ok) return;
+  expect(image.value.limitations).toContainEqual(
+    expect.stringMatching(/already owned by the DIFAT chain/u),
+  );
+});
+
+it("refuses a directory whose root storage is not entry 0", () => {
+  const bytes = compoundFile({
+    entries: [
+      { name: "NotRoot", type: 1, start: END, size: 0, right: 1 },
+      { name: "Root Entry", type: 5, start: END, size: 0 },
+    ],
+  });
+  const result = parseCompoundFile(bytes);
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      message: expect.stringMatching(/entry 0 is not the root storage/u),
+    },
+  });
+});

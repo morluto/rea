@@ -1,4 +1,4 @@
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 
 import type { CompoundFileMetadata } from "../domain/artifactFormatMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
@@ -16,7 +16,10 @@ import {
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { normalizeArtifactPath } from "./ArtifactPaths.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  artifactReadCancelledBy,
+} from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -34,7 +37,9 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   readonly #entries = new Map<string, ArtifactEntry>();
   /** Logical path to source ordinal, so `open` finds the entry it was given. */
   readonly #byPath = new Map<string, string>();
-  #prepared: Promise<void> | undefined;
+  #prepared:
+    | { signal: AbortSignal | undefined; promise: Promise<void> }
+    | undefined;
   #metadata: CompoundFileMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
@@ -63,8 +68,30 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      for (;;) {
+        const pending = (this.#prepared ??= {
+          signal,
+          promise: this.#prepare(signal),
+        });
+        try {
+          await pending.promise;
+          break;
+        } catch (cause: unknown) {
+          // A preparation bound to another caller's signal stays cached when
+          // that caller aborts, so this traversal retries under its own signal
+          // instead of inheriting a cancellation it never received.
+          if (this.#prepared === pending) this.#prepared = undefined;
+          if (
+            pending.signal !== signal &&
+            signal?.aborted !== true &&
+            artifactReadCancelledBy(cause, pending.signal)
+          ) {
+            this.#assertOpen(signal);
+            continue;
+          }
+          throw cause;
+        }
+      }
     });
     // Only an entry without a name or outside the root's tree has no path; the
     // parse already names each of those in its limitations.
@@ -100,11 +127,51 @@ export class CompoundFileArtifactReader implements ArtifactReader {
         );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
-      return readFileHandleChunks(handle, {
+      const label = "compound file";
+      const source = readFileHandleChunks(handle, {
         start: stored.byteOffset,
         end: stored.byteOffset + stored.declaredSize - 1,
         signal,
+        cancellationFailure: (reason) =>
+          new ArtifactReaderFailure("cancelled", `${label} read cancelled`, {
+            cause: reason,
+          }),
       });
+      const output = new PassThrough();
+      // Retirement can destroy the stream before its consumer listens.
+      output.on("error", () => undefined);
+      let delivered = 0;
+      // A carrier truncated or rewritten after the pre-read would otherwise
+      // publish whatever bytes happened to arrive, so the delivered length and
+      // the source identity are checked once the range has been consumed.
+      const verify = async (): Promise<void> => {
+        this.#assertOpen(signal);
+        if (delivered !== stored.declaredSize)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `${label} entry ended early: ${stored.path}`,
+          );
+        await this.#source.read(signal);
+      };
+      void this.#scope
+        .run(async () => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of source as AsyncIterable<Buffer>) {
+            delivered += chunk.length;
+            chunks.push(chunk);
+          }
+          await verify();
+          for (const chunk of chunks) output.write(chunk);
+          output.end();
+        })
+        .catch((cause: unknown) =>
+          output.destroy(
+            cause instanceof Error
+              ? cause
+              : new Error(`${label} read failed`, { cause }),
+          ),
+        );
+      return output;
     });
   }
 
