@@ -314,9 +314,6 @@ export const auditReleaseExposureInputSchema = z.strictObject({
 
 export type ReleaseExposureReport = z.infer<typeof releaseExposureReportSchema>;
 export type ReleaseExposureCheck = z.infer<typeof releaseExposureCheckSchema>;
-export type AuditReleaseExposureInput = z.infer<
-  typeof auditReleaseExposureInputSchema
->;
 
 export interface ReleaseExposureTargetFact {
   readonly selected_path: string;

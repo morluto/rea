@@ -36,6 +36,7 @@ import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
 } from "../../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
@@ -70,6 +71,7 @@ class RetainedProcessCaptureFailure extends ArtifactReaderFailure {
     failure: ArtifactReaderFailure,
     readonly outcome: Result<Evidence, unknown>,
     readonly owner: AnalysisCleanupLease,
+    readonly primary: AnalysisError | undefined,
   ) {
     super(
       failure.reason,
@@ -195,7 +197,12 @@ export const captureProcessScenarioFile = async (
           captureOutcome.ok ? captureOutcome.value : undefined,
           priorIncomplete ? undefined : [owner],
         );
-        throw new RetainedProcessCaptureFailure(failure, captureOutcome, owner);
+        throw new RetainedProcessCaptureFailure(
+          failure,
+          captureOutcome,
+          owner,
+          primary instanceof AnalysisError ? primary : undefined,
+        );
       }
       if (!captureOutcome.ok) throw captureOutcome.error;
       return captureOutcome.value;
@@ -482,22 +489,21 @@ const withProcessInputResources = async (
       outcome.ok ? outcome.value : undefined,
       leases,
     );
-    if (leases !== undefined || !(cause instanceof ArtifactReaderFailure))
-      throw failure;
-    // Preserve the independently owned local leases even when the primary's
-    // full retry authority is unknown. Do not claim they cover both failures.
-    throw new ArtifactReaderFailure(
-      failure.reason,
-      failure.message,
-      {
-        cause: new AggregateError(
-          [failure, cause],
-          "Process and input cleanup remain incomplete",
-        ),
-        ...artifactFailureFacts(failure),
-      },
-      failure.details,
-    );
+    const typedPrimary =
+      primary instanceof AnalysisError
+        ? primary
+        : primary instanceof RetainedProcessCaptureFailure
+          ? primary.primary
+          : undefined;
+    const error = new ProviderAdapterError(PROCESS_PROVIDER.id, operation, {
+      cause: failure,
+      cleanupPrimary: typedPrimary,
+      cleanup: failure.cleanup,
+      partialObservation: failure.partialObservation,
+      userMessage: failure.userMessage ?? failure.message,
+    });
+    bindArtifactFileCleanup(failure, error);
+    return cliAnalysisError(error);
   }
   if (
     !outcome.ok &&
