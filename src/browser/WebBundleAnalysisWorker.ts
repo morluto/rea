@@ -326,7 +326,11 @@ export class WebBundleAnalysisWorker {
       try {
         await this.#start(deadline);
       } catch (cause: unknown) {
-        if (processInspectionFailure(cause) !== undefined)
+        if (
+          processInspectionFailure(cause) !== undefined ||
+          (this.#runtime.launchFailure !== undefined &&
+            Object.is(this.#runtime.launchFailure.cause, cause))
+        )
           ownershipInspectionFailure = this.#inspectionFailure(cause, deadline);
         throw cause;
       }
