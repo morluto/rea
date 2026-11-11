@@ -6,29 +6,26 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import {
-  OwnedCommandFailure,
-  prepareOwnedCommand,
-  runOwnedCommand,
-} from "../process/OwnedCommand.js";
+import * as owned from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { resolveKiloRegistrationWorktree } from "./McpRegistrationGit.js";
 import type { McpRegistrationLocationContext } from "./McpRegistrationLocations.js";
 
-vi.mock("../process/OwnedCommand.js", async (original) => ({
-  ...(await original<typeof import("../process/OwnedCommand.js")>()),
-  prepareOwnedCommand: vi.fn(),
-  runOwnedCommand: vi.fn(),
-}));
-
 let resources: ArtifactResourceScope;
 beforeEach(() => {
   resources = new ArtifactResourceScope();
-  vi.mocked(prepareOwnedCommand).mockReset().mockResolvedValue(undefined);
-  vi.mocked(runOwnedCommand).mockReset();
+  vi.spyOn(owned, "prepareOwnedCommand").mockResolvedValue(undefined);
+  vi.spyOn(owned, "runOwnedCommand").mockRejectedValue(
+    new Error("An inert Git outcome must be selected by the fixture"),
+  );
 });
 afterEach(async () => {
-  await resources.close();
+  try {
+    await resources.close();
+  } finally {
+    vi.mocked(owned.prepareOwnedCommand).mockRestore();
+    vi.mocked(owned.runOwnedCommand).mockRestore();
+  }
 });
 
 const context = async (
@@ -43,7 +40,7 @@ const context = async (
     environment: {},
     setup: [],
     resources,
-    signal,
+    ...(signal === undefined ? {} : { signal }),
   };
 };
 
@@ -52,14 +49,14 @@ it.each(["process", "timeout", "output-limit"] as const)(
   async (reason) => {
     const abort = new AbortController();
     const opaque = { operator: "cancel", detail: new Error("opaque reason") };
-    const failure = new OwnedCommandFailure(
+    const failure = new owned.OwnedCommandFailure(
       reason,
       "Physical Git observation failed",
       null,
       null,
       { cancellation: { reason: opaque }, cause: new Error("physical cause") },
     );
-    vi.mocked(runOwnedCommand).mockImplementation(async () => {
+    vi.mocked(owned.runOwnedCommand).mockImplementation(async () => {
       abort.abort(opaque);
       throw failure;
     });
@@ -81,8 +78,8 @@ it.each(["process", "timeout", "output-limit"] as const)(
 
 it("retains primary cancellation and its opaque caller reason", async () => {
   const opaque = { operator: "cancel", detail: new Error("opaque reason") };
-  vi.mocked(runOwnedCommand).mockRejectedValue(
-    new OwnedCommandFailure(
+  vi.mocked(owned.runOwnedCommand).mockRejectedValue(
+    new owned.OwnedCommandFailure(
       "cancelled",
       "Git observation cancelled",
       null,
@@ -108,7 +105,7 @@ it("retains the exact incomplete UTF-8 snapshot behind the Git observation failu
     exitCode: 0,
     signal: null,
   };
-  vi.mocked(runOwnedCommand).mockResolvedValue(snapshot);
+  vi.mocked(owned.runOwnedCommand).mockResolvedValue(snapshot);
   const observed: unknown = await resolveKiloRegistrationWorktree(
     await context(),
   ).catch((cause: unknown) => cause);

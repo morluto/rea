@@ -130,7 +130,9 @@ describe("setup workflow", () => {
     expect(result.remediation).toContain("permission denied");
     expect(result.remediation).toContain("/fixture/codex.json.rea.backup");
   });
+});
 
+describe("setup recovery and readiness guidance", () => {
   it("explains skill installation recovery", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
@@ -1039,7 +1041,9 @@ describe("setup cancellation during installation and cleanup", () => {
     });
     expect(host.configurations).toBe(0);
   });
+});
 
+describe("setup cancellation during final cleanup", () => {
   it("reports cancellation during final cleanup with the completed setup result", async () => {
     const clients = {
       codex: { status: "configured", backupPath: "/fixture/codex.toml.bak" },

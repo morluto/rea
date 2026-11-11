@@ -516,7 +516,9 @@ describe("JSON client configuration migration and provider paths", () => {
       status: "unchanged",
     });
   });
+});
 
+describe("invalid JSON client configuration preservation", () => {
   it("refuses malformed existing JSON without overwriting it", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");

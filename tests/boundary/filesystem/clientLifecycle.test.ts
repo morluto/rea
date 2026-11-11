@@ -2385,7 +2385,9 @@ describe("client configuration filesystem failure reporting", () => {
     expect(await readFile(config, "utf8")).toBe(current);
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(initial);
   });
+});
 
+describe("managed skill removal outcomes", () => {
   it("reports a managed-path removal failure", async () => {
     const home = await createTestTempDirectory("rea-uninstall-remove-");
     const skillRoot = join(home, ".agents/skills/reverse-engineer-anything");

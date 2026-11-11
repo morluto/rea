@@ -395,7 +395,9 @@ describe("setup client selection", () => {
     expect(host.hopperInstalls).toBe(0);
     expect(host.skillInstalls).toBe(0);
   });
+});
 
+describe("automatic client readiness and selection identity", () => {
   it.each([undefined, false])(
     "omits manual clients from automatic readiness while preserving detection (skill: %s)",
     async (installSkill) => {
@@ -587,7 +589,9 @@ describe("setup plan application", () => {
     expect(host.hopperInstalls).toBe(0);
     expect(host.doctorCalls).toBe(2);
   });
+});
 
+describe("explicit setup authorization and dry runs", () => {
   it("requires the Hopper flag for unattended setup", async () => {
     const host = new FakeSetupHost();
     const result = await runSetup(options(true), host);

@@ -84,17 +84,17 @@ const gitFailure = (
         };
   const cancellation =
     cause instanceof OwnedCommandFailure ? cause.cancellation : undefined;
+  const primaryCancellation =
+    cause instanceof OwnedCommandFailure && cause.reason === "cancelled";
   const cancelled =
     cancellation === undefined
       ? undefined
       : new AnalysisCancelledError("Kilo project root discovery", {
           cause: cancellation.reason,
-          ...(cleanup === undefined ? {} : { cleanup }),
+          ...(!primaryCancellation || cleanup === undefined ? {} : { cleanup }),
         });
   const failure =
-    cause instanceof OwnedCommandFailure &&
-    cause.reason === "cancelled" &&
-    cancelled !== undefined
+    primaryCancellation && cancelled !== undefined
       ? cancelled
       : new ConfigurationError(
           "Kilo project root could not be established by read-only Git metadata. Repair Git or repository access, or register globally; no client settings were written.",
