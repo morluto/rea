@@ -1,3 +1,7 @@
+import {
+  adbTransportIdentitySchema,
+  adbTransportIdSchema,
+} from "./adbTransportIdentity.js";
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
@@ -482,14 +486,14 @@ const client = z.strictObject({
   installed_path: z.string().min(1).nullable(),
 });
 
-const device = z.strictObject({
+export const adbDeviceObservationSchema = z.strictObject({
   serial: z.string().min(1),
   state: adbDeviceStateSchema,
   transport: z.enum(["usb", "tcp", "unknown"]),
   product: z.string().nullable(),
   model: z.string().nullable(),
   device: z.string().nullable(),
-  transport_id: z.int().positive().nullable(),
+  transport_identity: adbTransportIdentitySchema,
   /**
    * Inferred device kind with its evidence basis. The serial prefix and the
    * `device:` metadata line are observations; the kind itself is derived.
@@ -497,6 +501,33 @@ const device = z.strictObject({
   kind: z.enum(["emulator", "physical", "unknown"]),
   kind_basis: z.enum(["emulator_serial_prefix", "usb_transport", "none"]),
 });
+
+export type AdbDeviceObservation = z.output<typeof adbDeviceObservationSchema>;
+
+/** Provider facts before the shared CLI/MCP numeric projection. */
+export const adbDeviceListObservationSchema = z.strictObject({
+  client,
+  devices: z.array(adbDeviceObservationSchema),
+  may_have_started_adb_server: z.boolean(),
+});
+
+const device = adbDeviceObservationSchema
+  .omit({ transport_identity: true })
+  .extend({
+    transport_id: z
+      .int()
+      .positive()
+      .nullable()
+      .describe(
+        "Exact numeric projection when safely representable; otherwise null. transport_id_text retains the full reported identity.",
+      ),
+    transport_id_text: adbTransportIdSchema
+      .nullable()
+      .describe(
+        "Canonical positive unsigned 64-bit transport ID as decimal text; null when invalid or not reported.",
+      ),
+    transport_id_status: z.enum(["reported", "not_reported", "invalid"]),
+  });
 
 const pulledArtifact = z.strictObject({
   device_path: z.string().min(1),
