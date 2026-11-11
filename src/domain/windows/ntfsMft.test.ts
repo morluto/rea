@@ -76,7 +76,7 @@ const streamOf = (...records: readonly Uint8Array[]): Uint8Array => {
   return stream;
 };
 
-describe("parseMftImage", () => {
+describe("MFT header facts", () => {
   it("inventories a clean record's header and verified fixups", () => {
     const parsed = parseMftImage(streamOf(recordOf({ sequenceNumber: 5 })));
     expect(parsed.ok).toBe(true);
@@ -154,7 +154,9 @@ describe("parseMftImage", () => {
     ]);
     expect(parsed.value.limitations).toEqual([]);
   });
+});
 
+describe("MFT fixup coverage", () => {
   it("keeps a record whose sector trailer is not the sequence number, and reports it", () => {
     const parsed = parseMftImage(
       streamOf(recordOf(), recordOf({ sequenceNumber: 9, corruptSector: 1 })),
@@ -225,7 +227,9 @@ describe("parseMftImage", () => {
     });
     expect(parsed.value.metadata.fixup_unverified_record_count).toBe(1);
   });
+});
 
+describe("MFT record slots", () => {
   it("distinguishes extension records from base records", () => {
     const parsed = parseMftImage(
       streamOf(
