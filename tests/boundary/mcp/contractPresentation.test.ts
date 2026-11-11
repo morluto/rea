@@ -41,7 +41,9 @@ it(
         REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       },
-      timeout: 20_000,
+      // A prepared full/full catalog run needs about 32s on two CPU cores.
+      // Keep the child deadline below the outer test/cleanup deadline.
+      timeout: 60_000,
       signal: cancellation.signal,
       maxBuffer: 16 * 1024 * 1024,
     });
