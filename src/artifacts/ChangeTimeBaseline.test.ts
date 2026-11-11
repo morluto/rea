@@ -232,6 +232,8 @@ it("throws the caller's typed cancellation rather than the raw reason", async ()
 });
 
 it("uses a Windows settle override before rejecting an invalid launch seed", async () => {
+  const delays: number[] = [];
+  let reads = 0;
   const observed = await runWithAnalysisOperationSnapshot(
     {
       revision: 1,
@@ -242,16 +244,28 @@ it("uses a Windows settle override before rejecting an invalid launch seed", asy
       },
     },
     () =>
-      settleChangeTimeBaseline(async () => statsAt(1_000), {
-        environment: {
-          REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "nope",
-          REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "0",
-          REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001",
+      settleChangeTimeBaseline(
+        async () => {
+          reads += 1;
+          return statsAt(1_000);
         },
-        platform: "linux",
-      }),
+        {
+          now: () => 1_010,
+          sleep: async (delay) => {
+            delays.push(delay);
+          },
+          environment: {
+            REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "nope",
+            REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "0",
+            REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001",
+          },
+          platform: "win32",
+        },
+      ),
   );
   expect(observed.ctimeMs).toBe(1_000);
+  expect(reads).toBe(5);
+  expect(delays).toEqual([10, 10, 10, 10]);
 });
 
 it("does not consume Windows limits on other hosts and preserves cancellation during the read", async () => {

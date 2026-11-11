@@ -134,8 +134,9 @@ These stay out of `update_analysis_settings`.
 
 ## Restart-only non-numeric settings
 
-No floor or maximum. They are read from the launch environment (startup). None of them set `effect`. Recovery text tells the caller to change the launch
-environment, which takes effect on the next process. They stay
+No floor or maximum. They are read from the launch environment at startup.
+Recovery text tells the caller to change the launch environment, which takes
+effect on the next process. They stay
 restart-only because they choose a command, a binary, a filesystem root, the
 browser sandbox, secret patterns, the provider, or the shape of the MCP server
 or logger.

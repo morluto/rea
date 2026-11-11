@@ -462,7 +462,9 @@ most 64 procedures and retains at most 4 MiB of encoded scan results. A composed
 workflow reuses its own index and clears it when the workflow finishes. The
 default cooperative scan budget is
 2,000 ms; set `REA_HOPPER_CALLER_SCAN_BUDGET_MS` to a positive integer number of
-milliseconds before starting REA to change it. The default limits additional
+milliseconds before starting REA to change the launch value, or use
+`update_analysis_settings` with `hopper.caller_scan_budget_ms` for newly accepted
+operations. The default limits additional
 work on the serial Hopper bridge; larger documents may need a higher setting.
 Results report the examined procedure count and any budget interruption.
 An individual page, native caller list, and target instruction list each have
