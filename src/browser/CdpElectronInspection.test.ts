@@ -877,3 +877,82 @@ it.each([2, 3])(
     });
   },
 );
+
+it.each([
+  { stage: 2, loader: undefined },
+  { stage: 2, loader: "" },
+  { stage: 3, loader: undefined },
+  { stage: 3, loader: "" },
+  { stage: 0, loader: undefined },
+])(
+  "retains uncertainty when a known main loader is missing at read $stage",
+  async ({ stage, loader }) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-missing-loader-"));
+    temporary.push(root);
+    const main = join(root, "main.html");
+    await writeFile(main, "main");
+    const mainUrl = pathToFileURL(main).href;
+    let reads = 0;
+    let listener: (event: CdpEvent) => void = () => {};
+    const emitScript = (hash: string, id: number) => {
+      listener({
+        method: "Runtime.executionContextCreated",
+        params: { context: { id, auxData: { frameId: "main" } } },
+      });
+      listener({
+        method: "Debugger.scriptParsed",
+        params: { scriptId: hash, url: mainUrl, executionContextId: id, hash },
+      });
+    };
+    const connection = {
+      onEvent: (value: typeof listener) => {
+        listener = value;
+        return () => {};
+      },
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          reads++;
+          return {
+            frameTree: {
+              frame: {
+                id: "main",
+                url: mainUrl,
+                ...(reads === stage
+                  ? loader === undefined
+                    ? {}
+                    : { loaderId: loader }
+                  : { loaderId: "loader-main" }),
+              },
+            },
+          };
+        }
+        if (method === "Debugger.enable") emitScript("before", 7);
+        if (method === "Page.getResourceTree") {
+          emitScript("after", 8);
+          return { frameTree: { resources: [] } };
+        }
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    const result = await inspectRaceConnection(connection, mainUrl);
+    for (const section of ["frames", "scripts", "workers"] as const)
+      expect(
+        result.completeness.attach_limited_sections.includes(section),
+      ).toBe(stage !== 0);
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "before",
+        frame_scope: "authorized",
+      }),
+    );
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "after",
+        frame_scope: stage === 2 ? "unknown" : "authorized",
+      }),
+    );
+  },
+);

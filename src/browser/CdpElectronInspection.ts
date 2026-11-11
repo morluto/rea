@@ -368,6 +368,7 @@ const retainFrameDocument = (
 const invalidateFrameGenerations = (
   id: string,
   state: ElectronInspectionState,
+  identity: "changed" | "unproven" = "changed",
 ): void => {
   const pending = [id];
   const changed = new Set<string>();
@@ -375,7 +376,8 @@ const invalidateFrameGenerations = (
     const current = pending.pop();
     if (current === undefined || changed.has(current)) continue;
     changed.add(current);
-    if (current === state.mainFrameId) state.navigationDuringCapture = true;
+    if (identity === "changed" && current === state.mainFrameId)
+      state.navigationDuringCapture = true;
     state.frameGenerations.set(
       current,
       (state.frameGenerations.get(current) ?? 0) + 1,
@@ -409,13 +411,24 @@ const seedFrameDocuments = (
   generations: ReadonlyMap<string, number>,
   documents: ReadonlyMap<string, ElectronFrameDocument>,
   state: ElectronInspectionState,
-): void => {
+): Set<string> => {
+  const unproven = new Set<string>();
   const tree = recordValue(recordValue(result)?.frameTree);
-  if (tree === undefined) return;
+  if (tree === undefined) return unproven;
   for (const entry of walkFrameTrees(tree)) {
     const facts = cdpFrameRecordFacts(recordValue(entry.frame));
     const id = facts.frameId;
     const document = frameDocument(facts);
+    if (
+      id !== null &&
+      document === undefined &&
+      documents.has(id) &&
+      state.frameDocuments.get(id) === documents.get(id) &&
+      (generations.get(id) ?? 0) === (state.frameGenerations.get(id) ?? 0)
+    ) {
+      unproven.add(id);
+      invalidateFrameGenerations(id, state, "unproven");
+    }
     if (
       id !== null &&
       document !== undefined &&
@@ -430,6 +443,7 @@ const seedFrameDocuments = (
       retainFrameDocument(id, document, state);
     }
   }
+  return unproven;
 };
 
 const authorizeInitialFrames = async (
@@ -561,7 +575,12 @@ const assertStableMainFrame = async (
     context.sessionId,
     context.signal,
   );
-  seedFrameDocuments(result, generations, documents, state);
+  const unprovenDocuments = seedFrameDocuments(
+    result,
+    generations,
+    documents,
+    state,
+  );
   const completeness = new CdpCaptureCompleteness();
   const inventory = await captureFrames(
     result,
@@ -575,6 +594,7 @@ const assertStableMainFrame = async (
     main.file_path !== expectedPath ||
     state.navigationDuringCapture ||
     (state.mainFrameId !== undefined &&
+      !unprovenDocuments.has(state.mainFrameId) &&
       (generations.get(state.mainFrameId) ?? 0) !==
         (state.frameGenerations.get(state.mainFrameId) ?? 0))
   )
