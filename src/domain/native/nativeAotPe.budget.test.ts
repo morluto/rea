@@ -371,3 +371,30 @@ it("retains the index memory refusal after successful hydration", () => {
   expect(report.reason).toMatchObject({ code: "system_object_root_unproven" });
   expect(report.coverage.truncation_reason).toBe("working-memory-budget");
 });
+
+it("reports a frozen-string scan stopped during a budgeted image read", () => {
+  const bytes = nativeAotPeFixture();
+  const sha = nativeAotPeDigest(bytes);
+  const limits = {
+    sourceBytes: bytes.length,
+    workUnits: 3260,
+    workingMemoryBytes: 64 * 1024,
+  };
+  const complete = parseNativeAotPe(bytes, sha, REPORT_BUDGET).summary;
+  expect(complete.status).toBe("complete");
+  expect(complete.frozen_strings).not.toHaveLength(0);
+  const partial = parseNativeAotPe(
+    bytes,
+    sha,
+    REPORT_BUDGET,
+    undefined,
+    limits,
+  ).summary;
+  expect(partial).toMatchObject({
+    status: "partial",
+    truncated: true,
+    reason: { code: "truncated", truncation_reason: "work-unit-budget" },
+    coverage: { truncation_reason: "work-unit-budget" },
+  });
+  expect(partial.frozen_strings).toEqual(complete.frozen_strings);
+});

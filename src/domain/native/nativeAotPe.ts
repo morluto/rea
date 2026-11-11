@@ -30,7 +30,7 @@ export const NATIVE_AOT_MAX_WORK_UNITS = 64 * 1024 * 1024;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
 /** Version of the built-in read-only PE metadata interpretation in profiles. */
 export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v9";
+  "rtr-9.1-x64-pe-read-only-v10";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;
@@ -1706,14 +1706,27 @@ export const parseNativeAotPe = (
         frozenScanTruncated = true;
         break;
       }
-      frozenScanBytesExamined += 8;
       const table = readU64(image.read(address, 8, budget));
-      if (table === null || !isRecoveredStringTable(table)) {
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
+      frozenScanBytesExamined += 8;
+      const recovered = table !== null && isRecoveredStringTable(table);
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
+      if (!recovered) {
         address += 8n;
         continue;
       }
       frozenCandidates++;
       const length = readU32(image.read(address + 8n, 4, budget));
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
       if (length === null || address + 14n + BigInt(length) * 2n > frozen.end) {
         address += 8n;
         continue;
@@ -1723,12 +1736,16 @@ export const parseNativeAotPe = (
         frozenScanTruncated = true;
         break;
       }
-      frozenStringDataBytesExamined += stringBytes;
       // NativeAOT's System.String layout is the object header, 32-bit length,
       // UTF-16 payload, then the terminating code unit. The payload starts at
       // +12, not +16 (the latter silently shifts every decoded string by two
       // characters and includes adjacent object padding).
       const raw = image.read(address + 12n, stringBytes, budget);
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
+      frozenStringDataBytesExamined += stringBytes;
       if (raw === null || raw.readUInt16LE(length * 2) !== 0) {
         address += 8n;
         continue;
