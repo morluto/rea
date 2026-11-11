@@ -688,8 +688,10 @@ after target content was read.
 
 ## Offline API contract declarations
 
-`inspect_api_contract` reads local OpenAPI 3.0/3.1/3.2 JSON (default) or
-GraphQL SDL (`format: "graphql-sdl"`) without an active target or network requests.
+`inspect_api_contract` reads local OpenAPI 3.0/3.1/3.2 JSON (default,
+`format: "openapi-json"`), the same declarations from OpenAPI YAML
+(`format: "openapi-yaml"`), or GraphQL SDL (`format: "graphql-sdl"`) without
+an active target or network requests.
 OpenAPI inventories inline path operations and unresolved Path Items. GraphQL
 inventories type/field declarations; optional `operations_path` adds operation
 owners, aliases, SDL field bindings and explicit fragment-spread edges without

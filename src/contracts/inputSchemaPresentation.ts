@@ -693,21 +693,32 @@ const presentDiscriminatedRoot = (
   const fallback = branches.find(
     (branch) => !requiredProperties(branch).includes(discriminator),
   );
-  const literal = (
+  // A branch may select one literal or an enumerated set of them.
+  const literals = (
     branch: Readonly<Record<string, unknown>> | undefined,
-  ): unknown => {
+  ): readonly string[] | undefined => {
     const properties = branch?.properties;
     const schema = isObject(properties) ? properties[discriminator] : undefined;
-    return isObject(schema) ? schema.const : undefined;
+    if (!isObject(schema)) return undefined;
+    if (typeof schema.const === "string") return [schema.const];
+    return Array.isArray(schema.enum) &&
+      schema.enum.length > 0 &&
+      schema.enum.every((value) => typeof value === "string")
+      ? schema.enum
+      : undefined;
   };
-  const selected = literal(requiredBranch),
-    otherwise = literal(fallback);
+  const selectedValues = literals(requiredBranch),
+    otherwiseValues = literals(fallback);
+  const selected = selectedValues?.[0],
+    otherwise = otherwiseValues?.[0];
   if (
     requiredBranch === undefined ||
     fallback === undefined ||
-    typeof selected !== "string" ||
-    typeof otherwise !== "string" ||
-    selected === otherwise
+    selectedValues === undefined ||
+    otherwiseValues === undefined ||
+    selected === undefined ||
+    otherwise === undefined ||
+    selectedValues.some((value) => otherwiseValues.includes(value))
   )
     throw new TypeError(
       "A presented root discriminator requires distinct literals and one default alternative",
@@ -760,7 +771,12 @@ const presentDiscriminatedRoot = (
       ? {}
       : { description: canonical.description }),
     if: {
-      properties: { [discriminator]: { const: selected } },
+      properties: {
+        [discriminator]:
+          selectedValues.length === 1
+            ? { const: selected }
+            : { enum: selectedValues },
+      },
       required: [discriminator],
     },
     then: constraints(requiredBranch),
