@@ -1,0 +1,391 @@
+import {
+  kiloLocation,
+  kiloProjectLocation,
+} from "./McpRegistrationKiloLocations.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
+import { supportedClients } from "./SupportedClients.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  selectedPath,
+  fromSetup,
+  present,
+  fixedProjectLocation,
+  clineLocation,
+  clineCliLocation,
+  fxLocation,
+  gooseLocation,
+  junieLocation,
+  kiroLocation,
+  mastraLocation,
+  mcporterLocation,
+  zedLocation,
+  ampLocation,
+  type McpRegistrationLocationContext,
+  type McpRegistrationGlobalLocation,
+  type McpRegistrationLocation,
+  type McpRegistrationInlineConfiguration,
+} from "./McpRegistrationLocations.js";
+
+interface ClientDescriptor {
+  readonly displayName: string;
+  readonly format: ClientConfigurationFormat;
+  readonly globalLocation: (
+    context: McpRegistrationLocationContext,
+  ) => Promise<McpRegistrationGlobalLocation>;
+  readonly projectLocation?: (
+    context: McpRegistrationLocationContext,
+  ) => Promise<McpRegistrationLocation>;
+  readonly projectFormat?: ClientConfigurationFormat;
+}
+
+/** Reviewed add-mcp 2.6.1 client contracts plus Incur's separate Amp contract. */
+export const MCP_REGISTRATION_CLIENTS = {
+  antigravity: {
+    displayName: "Antigravity",
+    format: "json",
+    globalLocation: fromSetup("antigravity"),
+  },
+  cline: {
+    displayName: "Cline VSCode Extension",
+    format: "json",
+    globalLocation: clineLocation,
+  },
+  "cline-cli": {
+    displayName: "Cline CLI",
+    format: "json",
+    globalLocation: clineCliLocation,
+  },
+  "claude-code": {
+    displayName: "Claude Code",
+    format: "claude_code",
+    globalLocation: fromSetup("claude_code"),
+    projectLocation: fixedProjectLocation([".mcp.json"]),
+  },
+  "claude-desktop": {
+    displayName: "Claude Desktop",
+    format: "json",
+    globalLocation: fromSetup("claude_desktop"),
+  },
+  codex: {
+    displayName: "Codex",
+    format: "toml",
+    globalLocation: fromSetup("codex"),
+    projectLocation: fixedProjectLocation([".codex/config.toml"]),
+  },
+  cursor: {
+    displayName: "Cursor",
+    format: "json",
+    globalLocation: fromSetup("cursor"),
+    projectLocation: fixedProjectLocation([".cursor/mcp.json"]),
+  },
+  "factory-droid": {
+    displayName: "Factory Droid",
+    format: "json",
+    globalLocation: fromSetup("droid"),
+    projectLocation: fixedProjectLocation([".factory/mcp.json"]),
+  },
+  fx: {
+    displayName: "fx",
+    format: "fx",
+    globalLocation: fxLocation,
+  },
+  "gemini-cli": {
+    displayName: "Gemini CLI",
+    format: "json",
+    globalLocation: fromSetup("gemini_cli"),
+    projectLocation: fixedProjectLocation([".gemini/settings.json"]),
+  },
+  goose: {
+    displayName: "Goose",
+    format: "goose",
+    globalLocation: gooseLocation,
+  },
+  "github-copilot-cli": {
+    displayName: "GitHub Copilot CLI",
+    format: "copilot_cli",
+    globalLocation: fromSetup("copilot_cli"),
+    projectLocation: fixedProjectLocation([".mcp.json", ".github/mcp.json"]),
+    projectFormat: "copilot_cli_project",
+  },
+  "grok-build": {
+    displayName: "Grok Build",
+    format: "grok",
+    globalLocation: fromSetup("grok_build"),
+    projectLocation: fixedProjectLocation([".grok/config.toml"]),
+  },
+  hermes: {
+    displayName: "Hermes Agent",
+    format: "hermes",
+    globalLocation: fromSetup("hermes"),
+  },
+  junie: {
+    displayName: "Junie",
+    format: "json",
+    globalLocation: junieLocation,
+    projectLocation: fixedProjectLocation([".junie/mcp/mcp.json"]),
+  },
+  "kilo-code": {
+    displayName: "Kilo Code",
+    format: "kilo",
+    globalLocation: kiloLocation,
+    projectLocation: kiloProjectLocation,
+  },
+  "kimi-code": {
+    displayName: "Kimi Code",
+    format: "kimi",
+    globalLocation: fromSetup("kimi"),
+    projectLocation: fixedProjectLocation([".kimi-code/mcp.json"]),
+  },
+  "kiro-cli": {
+    displayName: "Kiro CLI",
+    format: "json",
+    globalLocation: kiroLocation,
+    projectLocation: fixedProjectLocation([".kiro/settings/mcp.json"]),
+  },
+  mastracode: {
+    displayName: "Mastra Code",
+    format: "json",
+    globalLocation: mastraLocation,
+    projectLocation: fixedProjectLocation([".mastracode/mcp.json"]),
+  },
+  mcporter: {
+    displayName: "MCPorter",
+    format: "json",
+    globalLocation: mcporterLocation,
+    projectLocation: fixedProjectLocation(["config/mcporter.json"]),
+  },
+  opencode: {
+    displayName: "OpenCode",
+    format: "opencode",
+    globalLocation: fromSetup("opencode"),
+    projectLocation: fixedProjectLocation([
+      "opencode.jsonc",
+      "opencode.json",
+      ".opencode/opencode.jsonc",
+      ".opencode/opencode.json",
+    ]),
+  },
+  pi: {
+    displayName: "Pi",
+    format: "pi",
+    globalLocation: fromSetup("pi"),
+    projectLocation: fixedProjectLocation([".pi/mcp.json"]),
+  },
+  vscode: {
+    displayName: "VS Code",
+    format: "vscode",
+    globalLocation: fromSetup("vscode"),
+    projectLocation: fixedProjectLocation([".vscode/mcp.json"]),
+  },
+  windsurf: {
+    displayName: "Windsurf",
+    format: "json",
+    globalLocation: fromSetup("windsurf"),
+  },
+  zed: {
+    displayName: "Zed",
+    format: "zed",
+    globalLocation: zedLocation,
+    projectLocation: fixedProjectLocation([".zed/settings.json"]),
+  },
+  amp: {
+    displayName: "Amp",
+    format: "amp",
+    globalLocation: ampLocation,
+  },
+} as const satisfies Record<string, ClientDescriptor>;
+
+export type McpRegistrationClientId = keyof typeof MCP_REGISTRATION_CLIENTS;
+
+const ALIASES = {
+  "cline-vscode": "cline",
+  codeium: "windsurf",
+  cascade: "windsurf",
+  droid: "factory-droid",
+  factory: "factory-droid",
+  gemini: "gemini-cli",
+  "github-copilot": "vscode",
+  grok: "grok-build",
+  "hermes-agent": "hermes",
+  kilo: "kilo-code",
+  kilocode: "kilo-code",
+  kimi: "kimi-code",
+  kiro: "kiro-cli",
+  mastra: "mastracode",
+  "pi-agent": "pi",
+} as const satisfies Record<string, McpRegistrationClientId>;
+
+const isClientId = (value: string): value is McpRegistrationClientId =>
+  Object.hasOwn(MCP_REGISTRATION_CLIENTS, value);
+
+export const resolveMcpRegistrationClientId = (
+  input: string,
+): McpRegistrationClientId | undefined => {
+  const lower = input.toLowerCase();
+  if (isClientId(lower)) return lower;
+  return Object.entries(ALIASES).find(([alias]) => alias === lower)?.[1];
+};
+
+export interface McpRegistrationClient {
+  readonly id: McpRegistrationClientId;
+  readonly displayName: string;
+  readonly configPath: string;
+  /** Complete known file layers in native precedence; configPath alone grants write authority. */
+  readonly configPaths?: readonly string[];
+  readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
+  readonly scope: "global" | "project";
+  readonly format: ClientConfigurationFormat;
+  readonly privateProfile?: true;
+}
+
+export interface McpRegistrationSelection {
+  readonly agents: readonly string[];
+  readonly global: boolean;
+  readonly cwd: string;
+  readonly home: string;
+  readonly platform: NodeJS.Platform;
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly signal?: AbortSignal;
+}
+
+type CatalogFailure = ConfigurationError | AnalysisCancelledError;
+const checkCancellation = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted)
+    throw new AnalysisCancelledError("MCP registration selection", {
+      cause: signal.reason,
+    });
+};
+
+const selectedIds = (agents: readonly string[]): McpRegistrationClientId[] => {
+  const ids: McpRegistrationClientId[] = [];
+  for (const agent of agents) {
+    const id = resolveMcpRegistrationClientId(agent);
+    if (id === undefined)
+      throw new ConfigurationError(
+        `Unknown MCP client ${agent}. Select a supported --agent value.`,
+      );
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+};
+
+const projectTarget = async (
+  id: McpRegistrationClientId,
+  context: McpRegistrationLocationContext,
+): Promise<McpRegistrationClient> => {
+  const descriptor: ClientDescriptor = MCP_REGISTRATION_CLIENTS[id];
+  if (descriptor.projectLocation === undefined)
+    throw new ConfigurationError(
+      `${descriptor.displayName} has no project-scoped registration. Remove --no-global or select a project-capable client; no settings were written.`,
+    );
+  const resolved = await descriptor.projectLocation(context);
+  return {
+    id,
+    displayName: descriptor.displayName,
+    ...resolved,
+    scope: "project",
+    format: descriptor.projectFormat ?? descriptor.format,
+  };
+};
+
+const globalTarget = async (
+  id: McpRegistrationClientId,
+  context: McpRegistrationLocationContext,
+): Promise<{ client: McpRegistrationClient; markers: readonly string[] }> => {
+  const descriptor: ClientDescriptor = MCP_REGISTRATION_CLIENTS[id];
+  const resolved = await descriptor.globalLocation(context);
+  return {
+    client: {
+      id,
+      displayName: descriptor.displayName,
+      configPath: selectedPath(resolved.configPath, context),
+      ...(resolved.configPaths === undefined
+        ? {}
+        : {
+            configPaths: resolved.configPaths.map((path) =>
+              selectedPath(path, context),
+            ),
+          }),
+      scope: "global",
+      format: descriptor.format,
+      ...(resolved.inlineConfiguration === undefined
+        ? {}
+        : { inlineConfiguration: resolved.inlineConfiguration }),
+      ...(id === "fx" ? { privateProfile: true } : {}),
+    },
+    markers: resolved.markers.map((marker) => selectedPath(marker, context)),
+  };
+};
+
+/** Resolve all selected paths before any registration writer receives authority. */
+export const resolveMcpRegistrationClients = async (
+  selection: McpRegistrationSelection,
+  resources: ArtifactResourceScope,
+): Promise<Result<readonly McpRegistrationClient[], CatalogFailure>> => {
+  try {
+    checkCancellation(selection.signal);
+    const ids = selectedIds(selection.agents);
+    const context: McpRegistrationLocationContext = {
+      ...selection,
+      resources,
+      setup: selection.global
+        ? supportedClients(
+            selection.home,
+            selection.platform,
+            selection.environment,
+          )
+        : [],
+    };
+    if (!selection.global) {
+      // Default selection also includes Amp and therefore cannot become project writes.
+      if (ids.length === 0)
+        throw new ConfigurationError(
+          "Default MCP registration includes global-only Amp. Select project-capable --agent values or remove --no-global; no settings were written.",
+        );
+      const clients: McpRegistrationClient[] = [];
+      for (const id of ids) {
+        checkCancellation(selection.signal);
+        clients.push(await projectTarget(id, context));
+      }
+      checkCancellation(selection.signal);
+      return ok(clients);
+    }
+    if (ids.length > 0) {
+      const clients: McpRegistrationClient[] = [];
+      for (const id of ids) {
+        checkCancellation(selection.signal);
+        clients.push((await globalTarget(id, context)).client);
+      }
+      checkCancellation(selection.signal);
+      return ok(clients);
+    }
+    const all: McpRegistrationClient[] = [];
+    const detected: McpRegistrationClient[] = [];
+    for (const id of Object.keys(MCP_REGISTRATION_CLIENTS).filter(isClientId)) {
+      checkCancellation(selection.signal);
+      if (id === "amp") continue;
+      const { client, markers } = await globalTarget(id, context);
+      all.push(client);
+      // Examine every marker: unreadability cannot turn a partial observation into absence.
+      const statuses: boolean[] = [];
+      for (const marker of markers) statuses.push(await present(marker));
+      if (statuses.some(Boolean)) detected.push(client);
+    }
+    const amp = (await globalTarget("amp", context)).client;
+    checkCancellation(selection.signal);
+    return ok([...(detected.length === 0 ? all : detected), amp]);
+  } catch (cause: unknown) {
+    return err(
+      cause instanceof ConfigurationError ||
+        cause instanceof AnalysisCancelledError
+        ? cause
+        : new ConfigurationError(
+            "Could not resolve MCP registration locations.",
+            { cause },
+          ),
+    );
+  }
+};

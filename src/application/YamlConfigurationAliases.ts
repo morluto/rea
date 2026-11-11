@@ -4,6 +4,7 @@ import {
   isMap,
   isNode,
   isSeq,
+  isScalar,
   visit,
   type Document,
   type Node,
@@ -33,7 +34,7 @@ const copyAliasComments = (source: Alias, copy: Node): Node => {
 const aliasTarget = (source: Alias, context: AliasCopies): Node => {
   const target = context.targets.get(source);
   if (target === undefined)
-    throw new TypeError("Cannot preserve an unresolved Hermes YAML alias");
+    throw new TypeError("Cannot preserve an unresolved YAML alias");
   return target;
 };
 
@@ -41,7 +42,7 @@ const aliasTarget = (source: Alias, context: AliasCopies): Node => {
 const validateAliasValue = (source: Node, context: AliasCopies): void => {
   if (context.validated.has(source)) return;
   if (context.visiting.has(source))
-    throw new TypeError("Cannot preserve cyclic Hermes YAML aliases");
+    throw new TypeError("Cannot preserve cyclic YAML aliases");
   context.visiting.add(source);
   visit(source, {
     Alias: (_key, node) =>
@@ -62,7 +63,7 @@ const newAnchorName = (anchor: string, context: AliasCopies): string => {
 /** Reuse the surviving owner; a later same-name definition must not capture it. */
 const survivingAlias = (target: Node, context: AliasCopies): Alias => {
   if (isAlias(target) || target.anchor === undefined)
-    throw new TypeError("Invalid Hermes YAML alias target");
+    throw new TypeError("Invalid YAML alias target");
   if (!context.reusedNames.has(target.anchor)) return new Alias(target.anchor);
   let name = context.survivingNames.get(target);
   if (name === undefined) {
@@ -88,7 +89,7 @@ const copyAliasValue = (
     );
   }
   if (context.visiting.has(source))
-    throw new TypeError("Cannot preserve cyclic Hermes YAML aliases");
+    throw new TypeError("Cannot preserve cyclic YAML aliases");
   const retained = context.retained.get(source);
   if (
     retained !== undefined &&
@@ -98,7 +99,7 @@ const copyAliasValue = (
     return new Alias(retained.anchor);
   const copy = cloned ?? source.clone();
   if (!isNode(copy) || isAlias(copy))
-    throw new TypeError("Invalid Hermes YAML value copy");
+    throw new TypeError("Invalid YAML value copy");
   context.copied.add(source);
   if (source.anchor !== undefined) {
     copy.anchor = newAnchorName(source.anchor, context);
@@ -126,7 +127,7 @@ const copyAliasValue = (
 };
 
 /** Preserve other consumers before removing anchored configuration nodes. */
-export const preserveHermesAliasValues = (
+export const preserveYamlAliasValues = (
   document: Document,
   previous: readonly unknown[],
 ): ReadonlySet<Node> => {
@@ -193,4 +194,41 @@ export const preserveHermesAliasValues = (
     },
   });
   return context.copied;
+};
+
+/** Copy original bindings so moved aliases cannot bind to later anchors. */
+export const copyYamlAliasSource = (
+  source: unknown,
+  document: Document,
+  visiting = new Set<Node>(),
+): unknown => {
+  const node = isAlias(source) ? source.resolve(document) : source;
+  if (isAlias(source) && node === undefined)
+    throw new TypeError("Cannot edit an unresolved YAML alias");
+  if (!isNode(node)) return node;
+  if (visiting.has(node))
+    throw new TypeError("Cannot edit cyclic YAML aliases");
+  visiting.add(node);
+  const copied = node.clone();
+  if (isScalar(copied) || isMap(copied) || isSeq(copied)) delete copied.anchor;
+  if (isSeq(node) && isSeq(copied))
+    copied.items = node.items.map((item) =>
+      copyYamlAliasSource(item, document, visiting),
+    );
+  else if (isMap(node) && isMap(copied))
+    copied.items.forEach((pair, index) => {
+      const original = node.items[index];
+      if (original === undefined) return;
+      pair.key = copyYamlAliasSource(original.key, document, visiting);
+      pair.value = copyYamlAliasSource(original.value, document, visiting);
+    });
+  if (isAlias(source)) {
+    delete copied.commentBefore;
+    delete copied.comment;
+    if (source.commentBefore !== undefined)
+      copied.commentBefore = source.commentBefore;
+    if (source.comment !== undefined) copied.comment = source.comment;
+  }
+  visiting.delete(node);
+  return copied;
 };

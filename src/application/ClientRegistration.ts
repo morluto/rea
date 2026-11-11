@@ -13,6 +13,7 @@ import {
 import {
   clientConfigurationRecordSchema,
   clientRegistrationEntry,
+  clientRegistrationLauncherEntry,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
@@ -100,14 +101,26 @@ const registrationError = (error: z.ZodError): ConfigurationError =>
 /** Launcher identity remains usable when unrelated readiness settings are invalid. */
 export const parseClientRegistrationLauncher = (
   value: unknown,
-  client: SetupClient,
+  dialect: ClientRegistrationDialect | undefined,
 ): Result<{ command: string; args: string[] }, ConfigurationError> => {
   const parsed =
-    client.format === "opencode"
+    dialect === "opencode" ||
+    dialect === "opencode_v2" ||
+    dialect === "fx" ||
+    dialect === "kilo"
       ? opencodeLauncherSchema
           .transform(normalizeOpencodeLauncher)
           .safeParse(value)
-      : launcherSchema.safeParse(value);
+      : dialect === "goose"
+        ? z
+            .object({
+              cmd: z.string().min(1),
+              args: z.array(z.string()).default([]),
+            })
+            .passthrough()
+            .transform((entry) => ({ command: entry.cmd, args: entry.args }))
+            .safeParse(value)
+        : launcherSchema.safeParse(value);
   return parsed.success
     ? ok({ command: parsed.data.command, args: parsed.data.args })
     : err(registrationError(parsed.error));
@@ -118,7 +131,7 @@ export const clientRegistrationOwnership = (
   value: unknown,
   client: SetupClient,
 ): ClientRegistrationCommandIdentity => {
-  const parsed = parseClientRegistrationLauncher(value, client);
+  const parsed = parseClientRegistrationLauncher(value, client.format);
   return parsed.ok
     ? classifyClientRegistrationCommand(
         [parsed.value.command, ...parsed.value.args],
@@ -209,20 +222,103 @@ export const parseClientRegistration = (
 // These fields select REA's connection and activation. Everything else belongs
 // to the caller/client, including future policy keys. Client-specific timeout
 // defaults and preservation rules are applied below.
-const managedConnectionKeys = new Set([
+const launcherConnectionKeys = new Set([
   "command",
   "args",
-  "env",
-  "environment",
+  "cmd",
   "type",
   "transport",
+  "url",
+  "httpUrl",
+  "uri",
+]);
+
+const managedConnectionKeys = new Set([
+  ...launcherConnectionKeys,
+  "env",
+  "environment",
   "enabled",
   "disabled",
   "enable",
   "serverName",
-  "url",
-  "httpUrl",
 ]);
+
+/** Explicit launcher replacement preserves policy and native environment, while
+ * superseding connection selectors that could keep the old remote transport.
+ * Goose's single env alias becomes envs; declaring both remains ambiguous. */
+export const replaceClientRegistrationLauncher = (
+  dialect: ClientRegistrationDialect,
+  command: readonly string[],
+  previous: unknown,
+  inherited?: unknown,
+): Result<Record<string, unknown>, ConfigurationError> => {
+  const source = clientConfigurationRecordSchema.safeParse(previous);
+  const retained: Record<string, unknown> = source.success
+    ? Object.fromEntries(
+        Object.entries(source.data).filter(
+          ([key]) => !launcherConnectionKeys.has(key),
+        ),
+      )
+    : {};
+  if (dialect === "goose" && Object.hasOwn(retained, "env")) {
+    if (Object.hasOwn(retained, "envs"))
+      return err(
+        new ConfigurationError(
+          "Goose environment is ambiguous: keep only envs or its env alias, not both.",
+          {
+            settings: [
+              {
+                setting: "envs",
+                constraint: "env and envs declare the same native field",
+              },
+            ],
+          },
+        ),
+      );
+    const alias = jsonRecordSchema(z.string()).safeParse(retained.env);
+    if (!alias.success)
+      return err(
+        new ConfigurationError("Invalid Goose env alias", {
+          cause: alias.error,
+          settings: [
+            {
+              setting: "env",
+              constraint: "Expected a mapping of string environment values",
+            },
+          ],
+        }),
+      );
+    retained.envs = alias.data;
+    delete retained.env;
+  }
+  const defaults = clientRegistrationEntry(dialect, command, {});
+  // Layered native clients inherit policy without copying it into the edited
+  // fragment. Defaults must not override an explicitly configured lower layer.
+  const inheritedPolicy = clientConfigurationRecordSchema.safeParse(inherited);
+  if (inheritedPolicy.success)
+    for (const key of Object.keys(defaults))
+      if (
+        !launcherConnectionKeys.has(key) &&
+        (Object.hasOwn(inheritedPolicy.data, key) ||
+          (dialect === "opencode" &&
+            key === "enabled" &&
+            Object.hasOwn(inheritedPolicy.data, "disabled")))
+      )
+        delete defaults[key];
+  // V1 already accepts a disabled policy. Adding enabled:true would override
+  // that existing activation dialect when OpenCode migrates the row.
+  if (
+    dialect === "opencode" &&
+    source.success &&
+    Object.hasOwn(source.data, "disabled")
+  )
+    delete defaults.enabled;
+  return ok({
+    ...defaults,
+    ...retained,
+    ...clientRegistrationLauncherEntry(dialect, command),
+  });
+};
 
 /** Whether a rea setup repair for this target preserves the row's
  * `enable: false` instead of dropping it. Shared registration doubles as
@@ -249,7 +345,7 @@ export const refreshClientRegistration = (
   const existing = source.success ? source.data : {};
   const policy = validateClientPolicy(existing, client);
   if (!policy.ok) return policy;
-  const prior = parseClientRegistrationLauncher(existing, client);
+  const prior = parseClientRegistrationLauncher(existing, dialect);
   const priorCommand = prior.ok
     ? [prior.value.command, ...prior.value.args]
     : undefined;
