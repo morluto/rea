@@ -651,6 +651,13 @@ be verified. See [MCP contracts](../reference/mcp-contracts.md) for session life
 [Ghidra first-query deadlines](../reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+One-shot binary analysis validates the selected operation's input before creating
+a provider session, opening the target, or replaying a snapshot. Invalid selectors
+and option combinations report their input errors before target or provider
+availability errors. An already-cancelled request keeps its cancellation reason.
+Caller-selected paths and request parameters remain separate from parsed execution
+arguments in Evidence.
+
 A one-shot command attempts provider-session and runtime cleanup before reporting
 a failure. If cleanup remains incomplete, inspect the reported resources and
 follow the error's remediation. [Same-session cleanup retry](../reference/mcp-contracts.md#retained-cleanup-retry),
@@ -1412,6 +1419,28 @@ Evidence and missing source records, see
 [Evidence publication and source recovery](../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 Other outputs have their own receipt shapes; for example,
 [environment export](#export-an-environment-bundle) reports a published directory.
+
+A failure that carries partial Evidence in `details.partial_observation`, such
+as `provider_timeout` or `resource_constraint`, publishes that partial Evidence
+to `--evidence_output` under the same new-file and atomic rules, then keeps its
+error code, message and remediation when cleanup is confirmed. With `--detail summary`,
+`details.partial_observation` holds the summary view of the partial Evidence
+instead of the complete record, and `details.diagnostics.evidence_bundle`
+reports the written path and byte count. Linked source records must all be
+available before publication; missing sources leave the destination unchanged
+and are reported in `details.source_closure`. A provider cleanup failure can
+still publish its captured Evidence without clearing the cleanup error or its
+resource ownership. If publication is refused before commit, for example because
+the file already exists, the complete partial Evidence stays inline and `details.diagnostics.evidence_bundle_error` gives the
+refusal's code, message and a limitation. A refusal after commit keeps the
+receipt in `details.diagnostics.evidence_bundle` and the delivered view: when
+staging cleanup stays incomplete, the code becomes `cleanup_incomplete`, the
+original failure is retained in `details.execution_failure`, and `details` also carries `published`,
+`published_path`, `bytes`, `cleanup: "incomplete"` and `resources`, as for a
+successful run, and a later cancellation reports `cancelled` in
+`evidence_bundle_error` with the signal's exit status. Without
+`--evidence_output`, and for cancellation before publication or raw provider
+observations, the failure output is unchanged.
 
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a

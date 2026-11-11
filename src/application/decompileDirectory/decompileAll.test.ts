@@ -1010,7 +1010,7 @@ describe("decompile_all partial results", () => {
     if (!result.ok)
       expect(result.error.userMessage).toContain("before address start");
     expect(calls).toHaveLength(0);
-    await expect(readFile(directory())).rejects.toThrow();
+    await expect(stat(directory())).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

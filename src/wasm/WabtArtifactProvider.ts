@@ -40,7 +40,10 @@ import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.j
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   wasmArtifactSchema,
+  WABT_SOURCE_COMMIT,
+  WABT_VERSION,
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+  wasmResourceLimits,
   type InspectWasmArtifactInput,
   type WasmArtifact,
 } from "../domain/wasm/wasmArtifact.js";
@@ -57,9 +60,6 @@ import {
 import { WabtRuntime } from "./WabtRuntime.js";
 import {
   WABT_PROVIDER_IDENTITY,
-  WABT_LIMITS,
-  WABT_SOURCE_COMMIT,
-  WABT_VERSION,
   admitWabtVersion,
   wabtReleaseLine,
 } from "./WabtRelease.js";
@@ -147,6 +147,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
     environment: Readonly<NodeJS.ProcessEnv>,
     options?: WasmArtifactExecutionOptions,
   ): Promise<Result<WasmArtifactExecution, AnalysisError>> {
+    const limits = wasmResourceLimits(input);
     let runtime: WabtRuntime | undefined;
     let phase: "configuration" | "artifact" | "producer" = "configuration";
     let result: Result<WasmArtifactExecution, AnalysisError>;
@@ -211,7 +212,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       try {
         const snapshot = await readStableArtifact(
           path,
-          WABT_LIMITS.inputBytes,
+          limits.inputBytes,
           options?.signal,
           undefined,
           this.#resources,
@@ -262,7 +263,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         await access(path, constants.X_OK);
         const binary = await readStableArtifact(
           path,
-          WABT_LIMITS.toolBytes,
+          limits.toolBytes,
           options?.signal,
           undefined,
           this.#resources,
@@ -291,7 +292,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         if (snapshotHash === undefined) return;
         const bytes = await readStableArtifact(
           snapshotPath,
-          WABT_LIMITS.inputBytes,
+          limits.inputBytes,
           options?.signal,
           undefined,
           this.#resources,
@@ -325,7 +326,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           },
           {
             timeoutMs: commandTimeoutMs,
-            diagnosticBytes: WABT_LIMITS.outputBytes,
+            diagnosticBytes: limits.outputBytes,
             acceptNonZeroExit,
           },
           {
@@ -342,7 +343,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         });
         const current = await readStableArtifact(
           command.path,
-          WABT_LIMITS.toolBytes,
+          limits.toolBytes,
           options?.signal,
           undefined,
           this.#resources,
@@ -423,7 +424,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           ({ selection: _selection, ...command }) => command,
         ),
         timeout_ms: commandTimeoutMs,
-        output_budget_bytes: WABT_LIMITS.outputBytes,
+        output_budget_bytes: limits.outputBytes,
       };
       capturedOutput = undefined;
       phase = "artifact";
@@ -586,7 +587,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         debugModuleNames,
         debugNameMetadata: decodedNameMetadata,
         interface: interfaceFacts,
-      } = parseWabtWat(wat.stdout.text);
+      } = parseWabtWat(wat.stdout.text, input.max_interface_bytes);
       // WAT framing reads module names, not every inner name map. A producer
       // warning may concern a skipped body or another custom section; without
       // section attribution it cannot establish complete debug-name coverage.
@@ -649,7 +650,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         "Imports and exports retain exact top-level WABT WAT forms. Names remain escaped producer text; unescaped objdump display names are not parsed as unambiguous identifiers.",
         "JavaScript references are AST-observed static literals only. Candidate matches are associations, not proven data flow, URL-to-file identity or runtime loading. Computed references and aliases are not resolved.",
         "No target execution or implicit fetch. WABT tools are trusted caller-supplied executables; SHA-256 identifies their bytes, not publisher authenticity. No OS memory sandbox is claimed.",
-        `Each WABT command has a ${String(commandTimeoutMs)} ms deadline and a fixed 32 MiB combined output budget. The deadline is not a whole-inspection budget. Oversized output fails instead of producing truncated success.`,
+        `Each WABT command has a ${String(commandTimeoutMs)} ms deadline and a ${String(limits.outputBytes)} byte combined output budget (max_output_bytes). The deadline is not a whole-inspection budget. Oversized output fails instead of producing truncated success.`,
         ...(compatibleLimitation === undefined ? [] : [compatibleLimitation]),
         ...optionalLimitations,
       ];
@@ -694,6 +695,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         phase === "artifact" ? artifactInput.path : input.path,
         {
           commandTimeoutMs,
+          limits,
           inputField: artifactInput.field,
           observedOutput: capturedOutput,
           ...(versionProbe === undefined ? {} : { versionProbe }),

@@ -1,9 +1,9 @@
+import type { FileMapping } from "../domain/virtualFileMapping.js";
 import { isUtf8 } from "node:buffer";
 import {
-  DEFAULT_MAX_GO_STRING_LITERALS,
-  MAX_GO_STRING_AGGREGATE_BYTES,
-  MAX_GO_STRING_HEADER_SCAN_BYTES,
-  MAX_GO_STRING_LITERAL_BYTES,
+  GO_ANALYSIS_BUDGET_DEFAULTS,
+  type GoAnalysisBudgets,
+  type GoStringBudgetKey,
   type GoStringLiteral,
   type GoStringLiterals,
 } from "../domain/go/goBinary.js";
@@ -12,12 +12,10 @@ import {
   createFileMappingIndex,
   imageFileMappings,
   type BinaryContainer,
-  type FileMapping,
   type FileMappingIndex,
   type LoadRegion,
 } from "../native/metadata/BinaryContainer.js";
 
-const MAX_TRACKED_CANDIDATES = 100_000;
 const MAX_REJECTED_SLICE_CACHE = 4096;
 const PE_MEM_READ = 0x40000000;
 const PE_MEM_EXECUTE = 0x20000000;
@@ -48,9 +46,11 @@ interface HeaderScanSpan {
 export const recoverGoStringLiterals = (
   bytes: Buffer,
   container: BinaryContainer,
-  maxItems: number = DEFAULT_MAX_GO_STRING_LITERALS,
+  budgets: GoAnalysisBudgets = GO_ANALYSIS_BUDGET_DEFAULTS,
   checkActive?: () => void,
 ): GoStringLiterals => {
+  const limitsReached = new Set<GoStringBudgetKey>();
+  const maxItems = budgets.max_string_literals;
   checkActive?.();
   const index = createFileMappingIndex(
     imageFileMappings(container),
@@ -93,16 +93,17 @@ export const recoverGoStringLiterals = (
   const minTargetAddr = firstTarget.address;
   const maxTargetEnd = lastTarget.address + BigInt(lastTarget.size);
 
-  const accepted = new Map<number, CandidateLiteral>();
-  const rejected = new Set<number>();
+  const accepted = new Map<string, CandidateLiteral>();
+  const rejected = new Set<string>();
   const candidates: CandidateLiteral[] = [];
-  let remainingBudget = MAX_GO_STRING_HEADER_SCAN_BYTES;
+  let remainingBudget = budgets.max_string_header_scan_bytes;
   let budgetTruncated = false;
   let steps = 0;
 
   outer: for (const { startOffset, endOffset } of headerSpans) {
     if (remainingBudget < wordBytes * 2) {
       budgetTruncated = true;
+      limitsReached.add("max_string_header_scan_bytes");
       break;
     }
     remainingBudget -= wordBytes;
@@ -116,6 +117,7 @@ export const recoverGoStringLiterals = (
       if ((++steps & 0xffff) === 0) checkActive?.();
       if (remainingBudget < wordBytes) {
         budgetTruncated = true;
+        limitsReached.add("max_string_header_scan_bytes");
         break outer;
       }
       remainingBudget -= wordBytes;
@@ -124,13 +126,18 @@ export const recoverGoStringLiterals = (
       const rawLen = word1;
       word0 = word1;
 
-      if (rawLen < 1n || rawLen > BigInt(MAX_GO_STRING_LITERAL_BYTES)) continue;
+      if (rawLen < 1n) continue;
       if (ptr < minTargetAddr || ptr >= maxTargetEnd) continue;
       const targetIndex = lastSpanAtOrBelow(targets, ptr);
       if (targetIndex < 0) continue;
       const target = targets[targetIndex] as FileMapping;
       if (ptr + rawLen > target.address + BigInt(target.size)) continue;
 
+      if (rawLen > BigInt(budgets.max_string_literal_bytes)) {
+        limitsReached.add("max_string_literal_bytes");
+        budgetTruncated = true;
+        continue;
+      }
       const byteLen = Number(rawLen);
       const sliceOffset = target.offset + Number(ptr - target.address);
       if (
@@ -139,7 +146,7 @@ export const recoverGoStringLiterals = (
       )
         continue;
 
-      const key = sliceOffset * 8192 + byteLen;
+      const key = `${String(sliceOffset)}:${String(byteLen)}`;
       const existing = accepted.get(key);
       if (existing !== undefined) {
         existing.referenceCount += 1;
@@ -149,11 +156,13 @@ export const recoverGoStringLiterals = (
       }
       if (rejected.has(key)) continue;
 
-      if (candidates.length >= MAX_TRACKED_CANDIDATES) {
+      if (candidates.length >= budgets.max_string_candidates) {
+        limitsReached.add("max_string_candidates");
         budgetTruncated = true;
         break outer;
       }
       if (remainingBudget < byteLen) {
+        limitsReached.add("max_string_header_scan_bytes");
         budgetTruncated = true;
         break outer;
       }
@@ -187,8 +196,11 @@ export const recoverGoStringLiterals = (
   for (const candidate of candidates) {
     if (
       items.length >= maxItems ||
-      aggregateBytes + candidate.bytes > MAX_GO_STRING_AGGREGATE_BYTES
+      aggregateBytes + candidate.bytes > budgets.max_string_bytes
     ) {
+      limitsReached.add(
+        items.length >= maxItems ? "max_string_literals" : "max_string_bytes",
+      );
       outputTruncated = true;
       break;
     }
@@ -210,6 +222,7 @@ export const recoverGoStringLiterals = (
     aggregate_bytes: aggregateBytes,
     max_items: maxItems,
     truncated: budgetTruncated || outputTruncated,
+    ...(limitsReached.size === 0 ? {} : { limits_reached: [...limitsReached] }),
   };
 };
 

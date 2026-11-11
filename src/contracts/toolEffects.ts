@@ -159,6 +159,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_il2cpp_metadata: evidence,
   inspect_model_artifact: evidence,
   inspect_api_contract: evidence,
+  inspect_ntfs_journal: evidence,
   inspect_playwright_trace: evidence,
   inspect_gpu_code_objects: evidence,
   inspect_rust_binary: evidence,
@@ -802,6 +803,15 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   // Keeps the person's consent with the computer for the export to ship.
   record_build_consent: effects({
     mutatesSession: true,
+    idempotent: false,
+  }),
+  // Runs the bundle's task in fresh computers and writes its record into the bundle.
+  measure_build_task: effects({
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   close_build_computer: effects({

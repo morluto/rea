@@ -551,7 +551,70 @@ describe("browser scenario text and selection boundaries", () => {
         reason: "capture budget",
         text: null,
       },
-      coverage: { status: "empty", exhausted: true },
+      coverage: { status: "unavailable", total: null, exhausted: false },
     });
+  });
+});
+
+it("keeps scenario text pages on Unicode boundaries and distinguishes unavailable from captured empty text", async () => {
+  const capture = quizCapture("completed");
+  capture.steps[1]!.artifacts.accessibility = tree("A💡B");
+  const original = JSON.stringify(capture);
+  const request = {
+    kind: "browser-scenario" as const,
+    collection: "text" as const,
+    step_index: 1,
+    artifact: "accessibility" as const,
+    offset: 0,
+    limit: 2,
+  };
+  const first = await view(capture, request);
+  expect(first).toMatchObject({
+    items: { text: "A", sha256: tree("A💡B").value.sha256 },
+    coverage: { examined: 1, total: 4, next_offset: 1, exhausted: false },
+  });
+  expect(await view(capture, { ...request, offset: 1 })).toMatchObject({
+    items: { text: "💡" },
+    coverage: { examined: 2, total: 4, next_offset: 3 },
+  });
+  for (const selection of [
+    { offset: 2, limit: 2 },
+    { offset: 1, limit: 1 },
+  ]) {
+    const result = await inspectAnalysisView({
+      source: { kind: "inline", evidence: scenarioCaptureEvidence(capture) },
+      view: { ...request, ...selection },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  }
+  expect(JSON.stringify(capture)).toBe(original);
+  for (const artifact of [
+    { state: "not_requested" as const },
+    { state: "missing" as const, reason: "page closed" },
+    {
+      state: "truncated" as const,
+      observed: 100,
+      retained: 40,
+      reason: "capture budget",
+    },
+  ]) {
+    capture.steps[1]!.artifacts.accessibility = artifact;
+    expect(await view(capture, request)).toMatchObject({
+      items: { state: artifact.state, text: null },
+      coverage: {
+        status: "unavailable",
+        total: null,
+        exhausted: false,
+        next_offset: null,
+      },
+    });
+  }
+  capture.steps[1]!.artifacts.accessibility = tree("");
+  expect(await view(capture, request)).toMatchObject({
+    items: { state: "captured", text: "" },
+    coverage: { status: "empty", total: 0, exhausted: true },
   });
 });

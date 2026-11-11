@@ -173,10 +173,26 @@ present. `architecture` on any other image is rejected rather than ignored.
 
 Package and dependency counts are checked against the minimum required JSON
 representation before graph allocation or schema cloning. Oversized graphs
-report the output byte budget; the compiler-path capacity reports
-`maximum_rustc_hashes` in hashes, independently of byte limits.
+report the output byte budget.
+
+The inferred compiler-path facet keeps at most `max_rustc_hashes` distinct
+hashes by default (64). Reaching that selection leaves the dependency report
+available and adds `rustc_commit.coverage` with partial status and the effective
+limit. Increase `max_rustc_hashes` (CLI `--max-rustc-hashes`) on the next call
+to retain a larger prefix; no restart is required. The complete-report byte
+allowance still applies. Optional compiler paths are shortened before they can
+displace independently observed dependency facts.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
 `ppc` to `powerpc`. Unknown families such as `ppc64` remain unknown rather than
 being inferred from a related spelling.
+
+Input and complete-report admission are caller choices through `producer_limits`:
+`input_bytes` defaults to 256 MiB and `output_bytes` to 8 MiB. Both accept positive
+safe integers and apply to the next call without restarting REA. On CLI, use
+`--producer-limits '{"input_bytes":536870912,"output_bytes":16777216}'`.
+Graph expansion and compiler-path retention consume the same selected report
+allowance. The independent compressed dependency limit (1 MiB), inflated JSON
+limits (8 MiB and 64 times the consumed stream), parser nesting and transport
+budgets remain enforced; increasing report admission does not raise those.

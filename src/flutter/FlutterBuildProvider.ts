@@ -22,6 +22,8 @@ import {
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   MAX_FLUTTER_LIBRARY_PATH_BYTES,
+  dartPoolPolicy,
+  type DartPoolPolicy,
   type FlutterRequest,
 } from "../domain/flutter/flutterBuildAnalysis.js";
 import {
@@ -79,8 +81,6 @@ const APK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_FLUTTER_ABIS = 32;
 const flutterBudget = (allowance: string, kind: "parser" | "input") =>
   fixedAllowanceOptions(allowance, kind);
-const MAX_POOL_URIS = 500;
-const MAX_POOL_TOKENS = 2_000;
 /** A complete AOT image carries exactly one VM and one isolate section. */
 const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
@@ -731,6 +731,7 @@ export class FlutterBuildProvider {
               snapshot,
               reader,
               libraries,
+              dartPoolPolicy(request.input.pool_policy),
             )
           : await this.identifyFlutterBuild(
               path,
@@ -1085,6 +1086,7 @@ export class FlutterBuildProvider {
     snapshot: OwnedSnapshot,
     reader: ZipArtifactReader,
     libraries: readonly FlutterLibrary[],
+    poolPolicy: DartPoolPolicy,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const candidates = libraries.filter((library) => library.kind === "libapp");
     if (candidates.length === 0)
@@ -1296,7 +1298,7 @@ export class FlutterBuildProvider {
         ),
       );
     }
-    const pool = await projectStringPool(isolateData, signal);
+    const pool = await projectStringPool(isolateData, signal, poolPolicy);
     const snapshotPartial =
       inventory.failures.length > 0 ||
       aliasedDataSymbols ||
@@ -1309,9 +1311,9 @@ export class FlutterBuildProvider {
     const poolPartial =
       isolateData === null ||
       pool.collectionCapped ||
-      pool.packageUriCount > MAX_POOL_URIS ||
-      pool.dartUriCount > MAX_POOL_URIS ||
-      pool.classLikeTokenCount > MAX_POOL_TOKENS;
+      pool.packageUriCount > poolPolicy.uri_limit ||
+      pool.dartUriCount > poolPolicy.uri_limit ||
+      pool.classLikeTokenCount > poolPolicy.token_limit;
     return ok(
       createAnalysisExecution(
         {
@@ -1328,12 +1330,16 @@ export class FlutterBuildProvider {
             sections,
           },
           string_pool: {
+            policy: { ...poolPolicy },
             coverage: poolPartial ? "partial" : "complete",
-            package_uris: pool.packageUris.slice(0, MAX_POOL_URIS),
+            package_uris: pool.packageUris.slice(0, poolPolicy.uri_limit),
             package_uri_count_at_least: pool.packageUriCount,
-            dart_uris: pool.dartUris.slice(0, MAX_POOL_URIS),
+            dart_uris: pool.dartUris.slice(0, poolPolicy.uri_limit),
             dart_uri_count_at_least: pool.dartUriCount,
-            class_like_tokens: pool.classLikeTokens.slice(0, MAX_POOL_TOKENS),
+            class_like_tokens: pool.classLikeTokens.slice(
+              0,
+              poolPolicy.token_limit,
+            ),
             class_like_token_count_at_least: pool.classLikeTokenCount,
             printable_run_count: pool.printableRunCount,
           },
@@ -1349,7 +1355,7 @@ export class FlutterBuildProvider {
             "Snapshot hash sources are the headers at the start of the VM and isolate data symbols; complete decoding supports kind 3 (the Dart 2.14 FullAOT layout), a valid hash and a declared length that fits its symbol, including the four magic bytes; other kind values remain observed with partial coverage",
             "String-pool entries are byte-pattern observations from the isolate data section, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser",
             "class_like_tokens are identifier-shaped runs and include incidental matches",
-            "string-pool counts are lower bounds: collection stops at twice each projection bound, and any value beyond that is counted only through the capped flag",
+            "URI/token counts are lower bounds for runs matching pool_policy.contains: distinct collection stops at twice each selected projection bound. printable_run_count counts complete printable runs before filtering; overflowed runs are omitted, never fabricated as prefixes",
             ...inventory.failures.map((failure) => failure.reason),
             ...(sections.length < symbolNames.length
               ? [
@@ -1372,24 +1378,23 @@ export class FlutterBuildProvider {
                 (section) =>
                   `${section.name} has an incomplete or invalid snapshot header: kind ${String(section.header.kind)} (AOT app requires 3), declared length ${String(section.header.headerLength)} excludes the four magic bytes, symbol size ${String(section.size)}, valid hash ${String(section.header.hash !== null)}`,
               ),
-            ...(pool.collectionCapped
+            ...pool.limitsReached.map(
+              (limit) =>
+                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit} (CLI --pool-policy JSON); no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
+            ),
+            ...(pool.dartUriCount > poolPolicy.uri_limit
               ? [
-                  "String-pool collection or printable-run capacity was exceeded; counts are lower bounds and overflowed runs are omitted",
+                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
                 ]
               : []),
-            ...(pool.dartUriCount > MAX_POOL_URIS
+            ...(pool.packageUriCount > poolPolicy.uri_limit
               ? [
-                  `dart_uris reports ${String(MAX_POOL_URIS)} of at least ${String(pool.dartUriCount)} distinct URIs`,
+                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
                 ]
               : []),
-            ...(pool.packageUriCount > MAX_POOL_URIS
+            ...(pool.classLikeTokenCount > poolPolicy.token_limit
               ? [
-                  `package_uris reports ${String(MAX_POOL_URIS)} of at least ${String(pool.packageUriCount)} distinct URIs`,
-                ]
-              : []),
-            ...(pool.classLikeTokenCount > MAX_POOL_TOKENS
-              ? [
-                  `class_like_tokens reports ${String(MAX_POOL_TOKENS)} of at least ${String(pool.classLikeTokenCount)} distinct tokens`,
+                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (CLI --pool-policy JSON) on a new call, no restart required`,
                 ]
               : []),
           ],
@@ -1409,6 +1414,7 @@ export class FlutterBuildProvider {
 const projectStringPool = async (
   section: Buffer | null,
   signal: AbortSignal | undefined,
+  poolPolicy: DartPoolPolicy,
 ): Promise<{
   packageUris: string[];
   packageUriCount: number;
@@ -1418,38 +1424,44 @@ const projectStringPool = async (
   classLikeTokenCount: number;
   printableRunCount: number;
   collectionCapped: boolean;
+  limitsReached: readonly Exclude<keyof DartPoolPolicy, "contains">[];
 }> => {
   const packages = new Set<string>();
   const darts = new Set<string>();
   const tokens = new Set<string>();
   let runCount = 0;
-  let collectionCapped = false;
+  const limitsReached = new Set<Exclude<keyof DartPoolPolicy, "contains">>();
   const COLLECTION_SLACK = 2;
-  /** One printable run never materializes beyond this length. */
-  const MAX_RUN_BYTES = 1024;
-  const packageBudget = MAX_POOL_URIS * COLLECTION_SLACK;
-  const dartBudget = MAX_POOL_URIS * COLLECTION_SLACK;
-  const tokenBudget = MAX_POOL_TOKENS * COLLECTION_SLACK;
+  // Input bytes bound useful capacity before slack multiplication; large safe
+  // integer requests never overflow the collection-budget arithmetic.
+  const packageBudget =
+    Math.min(poolPolicy.uri_limit, section?.length ?? 0) * COLLECTION_SLACK;
+  const dartBudget = packageBudget;
+  const tokenBudget =
+    Math.min(poolPolicy.token_limit, section?.length ?? 0) * COLLECTION_SLACK;
   if (section !== null) {
     let run = "";
     const consider = (text: string): void => {
       if (text.length < 5) return;
       runCount += 1;
+      if (
+        poolPolicy.contains !== undefined &&
+        !text.includes(poolPolicy.contains)
+      )
+        return;
       if (text.startsWith("package:")) {
         if (!packages.has(text) && packages.size >= packageBudget)
-          collectionCapped = true;
+          limitsReached.add("uri_limit");
         else packages.add(text);
       } else if (text.startsWith("dart:")) {
         if (!darts.has(text) && darts.size >= dartBudget)
-          collectionCapped = true;
+          limitsReached.add("uri_limit");
         else darts.add(text);
-      } else if (
-        text.length <= 128 &&
-        text.length >= 5 &&
-        IDENTIFIER_PATTERN.test(text)
-      ) {
-        if (!tokens.has(text) && tokens.size >= tokenBudget)
-          collectionCapped = true;
+      } else if (IDENTIFIER_PATTERN.test(text)) {
+        if (text.length > poolPolicy.token_bytes)
+          limitsReached.add("token_bytes");
+        else if (!tokens.has(text) && tokens.size >= tokenBudget)
+          limitsReached.add("token_limit");
         else tokens.add(text);
       }
     };
@@ -1463,10 +1475,11 @@ const projectStringPool = async (
           // materializes: growth stops at the cap and the entire run is
           // discarded at its delimiter, since a truncated prefix would be
           // fabricated evidence rather than an observation.
-          if (run.length < MAX_RUN_BYTES) run += String.fromCharCode(byte);
+          if (run.length < poolPolicy.run_bytes)
+            run += String.fromCharCode(byte);
           else {
             overflowed = true;
-            collectionCapped = true;
+            limitsReached.add("run_bytes");
           }
         } else {
           if (!overflowed) consider(run);
@@ -1486,6 +1499,7 @@ const projectStringPool = async (
     classLikeTokens: [...tokens].sort(),
     classLikeTokenCount: tokens.size,
     printableRunCount: runCount,
-    collectionCapped,
+    collectionCapped: limitsReached.size > 0,
+    limitsReached: [...limitsReached],
   };
 };

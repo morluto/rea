@@ -165,10 +165,13 @@ describe("CLI advertised input schemas", () => {
               : "./selected",
           ),
         };
-        expect(validate(input)).toBe(count === 16);
+        // WASM path count is admitted by the workflow's selected
+        // max_artifact_paths budget; JavaScript recovery retains its own cap.
+        const accepted = command === "inspect-wasm-artifact" || count === 16;
+        expect(validate(input)).toBe(accepted);
         expect(
           parserSchema(cli, command, "options")?.safeParse(input).success,
-        ).toBe(count === 16);
+        ).toBe(accepted);
       }
     }
     const scenario = await advertisedSchema(cli, "capture-native-ui-scenario");
@@ -700,15 +703,27 @@ describe("reference-source outline-depth input schema", () => {
       [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
     ] as const;
     for (const [token, expected] of parsedValues) {
-      const parsed = parser?.safeParse({ outlineDepth: token });
+      const parsed = parser?.safeParse({
+        outlineDepth: token,
+        detail: "summary",
+      });
       expect(parsed?.success).toBe(true);
       if (parsed === undefined || !parsed.success)
         throw new Error(`Expected outline-depth token ${token} to parse`);
-      expect(parsed.data).toMatchObject({ outlineDepth: expected });
+      expect(parsed.data).toMatchObject({
+        detail: "summary",
+        outlineDepth: expected,
+      });
     }
     for (const token of ["", "-1", "9007199254740992"]) {
-      expect(parser?.safeParse({ outlineDepth: token }).success).toBe(false);
+      expect(
+        parser?.safeParse({ outlineDepth: token, detail: "summary" }).success,
+      ).toBe(false);
     }
+    expect(parser?.safeParse({ outlineDepth: "2" }).success).toBe(false);
+    expect(
+      parser?.safeParse({ outlineDepth: "2", detail: "full" }).success,
+    ).toBe(false);
 
     const ajv = new Ajv2020({ strict: false });
     const validate = ajv.compile({
@@ -716,13 +731,18 @@ describe("reference-source outline-depth input schema", () => {
       $schema: "https://json-schema.org/draft/2020-12/schema",
     });
     for (const [token] of parsedValues) {
-      const parsed = parser?.safeParse({ outlineDepth: token });
+      const parsed = parser?.safeParse({
+        outlineDepth: token,
+        detail: "summary",
+      });
       if (parsed === undefined || !parsed.success)
         throw new Error(`Expected outline-depth token ${token} to parse`);
       expect(validate(parsed.data)).toBe(true);
     }
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
+    expect(validate({ outlineDepth: 2 })).toBe(false);
+    expect(validate({ outlineDepth: 2, detail: "full" })).toBe(false);
   });
 });
 

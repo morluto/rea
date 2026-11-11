@@ -60,6 +60,48 @@ Evidence. `build_call_path.functions` also accepts retained references to the
 complete dossiers. Request `detail: "complete"` only when the record must travel
 inline.
 
+The `inspect_analysis_view` description gives common call shapes rather than an
+exhaustive second catalog of view families. Follow the producing tool's named
+view kind and selector handoff. A summary's `normalized_result.parent_evidence_id`
+names the complete parent, not the summary record itself. Preserve that ID and
+the source discriminator:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<parent digest>"
+  },
+  "view": {
+    "kind": "native",
+    "facet": "pseudocode",
+    "offset": 0,
+    "limit": 128
+  }
+}
+```
+
+The same source form works for a compatible inventory occurrence page with
+`view: {"kind":"inventory","collection":"occurrences","offset":0,"limit":64}`,
+a saved network record page with
+`view: {"kind":"capture","detail":"preview","offset":0,"limit":20}`, or a
+managed method page with
+`view: {"kind":"managed-members","collection":"methods","offset":0,"limit":64}`.
+`view: {"kind":"summary"}` has no facet. These are examples, not all supported
+families; use the producer and its guide for collection-specific fields and
+selection. The full input schema exposes accepted variants, while the default
+compact profile can omit nested shapes and parameter descriptions. Refreshing
+the same compact catalog does not restore those missing shapes; do not invent
+selectors from an opaque object declaration.
+
+Text pages use UTF-16 code units; row pages count the selected retained
+collection. Source coverage and retained-page coverage remain distinct. A
+source's null or unavailable collection stays unknown, while an exhausted
+partial inventory does not prove that unexamined branches contain no matches.
+Likewise, a returned text page does not establish the whole parent's length
+unless the result reports that extent or exhaustion. Paging reuses completed
+Evidence and does not establish current live state.
+
 Saved records from the pre-6.6 identity projection that omitted
 `relationship_coverage: null` from its digest remain incompatible, even when
 the serialized field is present. REA recognizes that exact previous commitment
@@ -148,7 +190,10 @@ returned: `pseudocode`, `native_api` and `native_value_flow` are unavailable
 with the decompiler's failure as the reason, while the listing-backed facets
 are collected as usual. These failed decompiler observations and workflows
 derived from them retain Evidence but skip snapshot reuse, so a later request
-can observe backend recovery; healthy dossiers keep their existing cache policy.
+can observe backend recovery. Ghidra function dossiers also skip snapshot reuse
+so each new operation honors its accepted value-flow budgets; completed source
+Evidence remains accessible through retained views and bundle export. Other
+healthy provider observations keep their existing cache policy.
 `procedure_pseudo_code` still fails for that function. Hopper's unavailable reference-kind metadata and reported unresolved
 calls still prevent equality conclusions for those dimensions. Analysis profiles
 version these declarations so older snapshots are not reused as current results.
@@ -573,12 +618,22 @@ batch-workload limit tracked in issue #5930.
 
 ### Error recovery and deadline ownership
 
-Initialization instructions and the static JavaScript tool description teach
-recovery before a host can discard a tool response. Invalid input calls should be corrected from the connected schema
+Initialization instructions retain the deadline distinction before a host can
+discard a tool response; detailed recovery stays with the failure that owns it.
+Invalid input calls should be corrected from the connected schema
 (refresh `tools/list` only if stale), not retried unchanged. REA's returned
 `provider_timeout` describes its server/provider deadline; provider-authored
 remediation names the applicable controls and preserves partial Evidence and
 cleanup uncertainty.
+
+An unresolved symbol lookup is a valid result, not a malformed request. It does
+not establish that a reference search completed or that the binary lacks the
+feature. Preserve the exact selector and the provider inventory's coverage.
+When remediation names an editable setting and its bounds, call
+`update_analysis_settings` directly if advertised; inspecting those same bounds
+first is optional. Explicit per-call values override runtime defaults, so fix
+the selected argument when remediation identifies it. Runtime updates apply to
+new work and cannot release retained cleanup resources.
 
 A host timeout without a REA result is different: execution and cleanup remain
 unknown. Increasing an advertised `analysis_timeout_ms` cannot fix a shorter
@@ -1871,8 +1926,10 @@ occurrence fields, except Godot PCK source paths, which
 <!-- END:compare-artifacts:compared-format-metadata-kinds -->
 
 Every occurrence records `entry_kind`, `executable` and `encrypted`. A
-different entry kind, `encrypted` value or occurrence limitation text is a
-`metadata` difference, and a different `executable` value is an `executable`
+different entry kind or `encrypted` value is a `metadata` difference, and a
+different `executable` value is an `executable` difference. Occurrence and node
+limitation text describes diagnostic caveats, which remain in the source
+inventories; changing those caveats alone does not create a `metadata`
 difference. A symlink's own permission bits never mark it `executable`,
 because running a symlink runs its target. When either side's content is
 unavailable, `compare_artifacts` lists the differences that it can still

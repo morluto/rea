@@ -82,13 +82,13 @@ implement every current source-map extension.
 One owned Node subprocess decodes the map. Its private request directory is
 removed before success is returned. Only this child's inherited `NODE_OPTIONS`
 is removed; explicit V8 flags set a 192 MiB old-generation and 8 MiB semi-space
-budget, one V8 worker and `decode_timeout_ms` (default 20000). The codec heap, map budget, and reply budget have no runtime override. Reported actual V8 heap limits
+budget, one V8 worker and `decode_timeout_ms` (default 20000). These are the defaults: select `source_map_limits.codec_heap_mib` for a different heap request. Reported actual V8 heap limits
 are checked. These are heap limits, not an aggregate process RSS limit. When
 REA runs on Bun, the subprocess is Bun, which ignores these V8 flags: `runtime`
 records `id: "bun"`, the Bun version, its Node.js compatibility version and a
 null `v8_heap_limit_bytes`. On Windows, the codec's owned Job Object then
-limits its committed memory to 704 MiB, the 192 MiB budget plus a 512 MiB
-reserve for Bun itself; `process_memory_limit_bytes` records that limit, the
+limits its committed memory to the selected codec heap request plus a 512 MiB
+reserve for Bun itself (704 MiB with the default request); `process_memory_limit_bytes` records that limit, the
 limitations state it, and reaching it returns `resource_constraint` with
 `codec_process_memory_limit_bytes`. Elsewhere Bun has no enforced codec limit:
 `process_memory_limit_bytes` is null and the limitations state that no codec
@@ -102,15 +102,142 @@ run token while process release is unconfirmed, and the directory until removal
 succeeds. A later successful retry settles every error bound to that command;
 historical failure diagnostics remain available.
 
-Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply and a shared
+Complete evidence defaults to an 8 MiB map, 32 MiB codec reply and a shared
 262144-record decoder budget. Generated rows, mapping segments, leaf maps,
 source and name declarations, `sourcesContent` entries and indexed sections all
 consume this budget. Generated rows and mapping segments also each have a
-262144 limit; indexed maps allow at most 64 nested section levels. Those budgets and the
-192 MiB codec heap have no runtime override. Exceeding a budget returns an explicit
+262144 limit; indexed maps default to 64 nested section levels. Select per-call
+`source_map_limits` to change these admissions. Exceeding a budget returns an explicit
 failure, without partial results. The existing 32 MiB manifest and 16 MiB selected
 script boundaries also apply. No global toolchain or browser configuration changes
 are made.
+
+## Compact point delivery and retained source text
+
+Summary delivery is useful for large point answers. Complete output can answer
+a small-map task with fewer calls. The
+[delivery qualification](../../verification/source-location-delivery.md)
+records measured task costs and first-use discovery tradeoffs.
+
+Complete delivery remains the default and includes raw map text and embedded source
+content. Select `detail: "summary"` in MCP, or `--detail summary` with
+`--evidence_output /analysis/source-point.json` in CLI, to retain the same complete
+Evidence and return body-free point metadata. Summary includes source/map/manifest
+identity, requested and matched generated positions, original source positions,
+content digests and sizes, match count, runtime qualifications and limitations.
+MCP returns the summary Evidence directly; its `normalized_result.parent_evidence_id`
+identifies the complete parent. CLI returns `{ summary: <Evidence>, evidence_bundle:
+{ path, bytes } }`; read `summary.normalized_result.parent_evidence_id` and use the
+published bundle path for later views. The receipt byte count describes the written
+complete Evidence bundle.
+Delivery selection does not enter that parent's analysis parameters or change its ID.
+
+Summary returns the first metadata page (up to 64 matches and 1 MiB), with explicit
+`coverage.total`, `coverage.next_offset` and `coverage.exhausted`. Every equal-position
+alternative remains in the parent, including duplicate reported names, distinct
+indexed-section/source indexes and generated-only segments. Page exhaustion describes
+the retained lookup alternatives; execution and deployment authenticity remain unknown.
+For another page, call `inspect_analysis_view` with the same retained parent:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "<parent_evidence_id>"
+  },
+  "view": {
+    "kind": "source-location",
+    "collection": "matches",
+    "offset": 64,
+    "limit": 64
+  }
+}
+```
+
+Source text is explicit. Select `collection: "source-text"`, an original
+`match_index` from the metadata page, and UTF-16 `offset`/`limit` (default 0/1024).
+For a snippet around the mapped point, use its `original_position.offset` when
+known. The result preserves content digest/size and total code units, returns only
+the selected text, and reports text-page coverage. Unretained or generated-only
+content returns `item: null` and unavailable coverage. An offset splitting a
+surrogate pair is rejected; a page never splits a complete Unicode character.
+
+Both collections accept `max_bytes` (default 1048576), independently of their
+row/code-unit limit and MCP response limits. A byte refusal names the allowance
+and retained parent: select a smaller page or increase `max_bytes`, then retry
+without decoding again. A large individual identity may require a larger view
+allowance or complete export. Complete map text and diagnostics remain in the parent.
+An optional `view` can accompany `detail: "summary"` on the initial trace, returning
+that selected page immediately. `view` with complete delivery is rejected before
+artifact acquisition. Summary also refuses before acquisition when session retention
+or the CLI Evidence output is unavailable.
+
+These views read retained facts even after the original map is removed. CLI can read
+the saved parent with `inspect-analysis-view` and an `evidence-file` source pointing
+to the written bundle; select its `evidence_id` when the bundle has multiple records.
+MCP can export the complete session with `export_evidence_bundle`. A complete MCP
+response that exceeds transport admission retains its parent and supplies a
+`source-location` matches continuation.
+
+## Selecting budgets and recovering the same map
+
+Both `trace_web_source_location` and `analyze_web_bundle` accept an optional
+`source_map_limits` object. Omitted fields retain the defaults above and stay
+omitted in Evidence parameters. An update applies on the next call without a
+REA restart. Failure text names the exact field, effective value, supported
+range and next action; increasing a deadline does not change any of these
+budgets.
+
+| Field              | Default  | Scope                                                                                 |
+| ------------------ | -------- | ------------------------------------------------------------------------------------- |
+| `map_bytes`        | 8388608  | Local selected map admission, enforced before reading and again by the codec          |
+| `output_bytes`     | 33554432 | Complete local request/reply or aggregate fetched-map representation                  |
+| `decoded_rows`     | 262144   | Generated rows before upstream allocation                                             |
+| `decoded_segments` | 262144   | Mapping segments before upstream allocation                                           |
+| `decoded_records`  | 262144   | Shared structural work across leaves, declarations, rows, segments and sections       |
+| `section_depth`    | 64       | Indexed-section nesting                                                               |
+| `codec_heap_mib`   | 192      | Local codec old-generation request; process-memory enforcement remains host dependent |
+| `fetch_bytes`      | 67108864 | Aggregate response bytes and, independently, resolved-identity bytes                  |
+
+The local 8 MiB admission covers the pinned 4,284,329-byte main map and 5,529,840-byte
+DateSelect map from Actual Budget without an admission retry. This is an artifact
+compatibility allowance, not a context or latency optimization: complete Evidence
+retains raw map text, and those two measured replies estimate 1.59 and 2.23 million
+tokens. A smaller admission refuses the map; it does not compact successful
+Evidence. MCP retains complete Evidence before encoding; an oversized response
+returns its retained reference for `export_evidence_bundle`, or callers can use
+complete CLI JSON. Select opt-in compact delivery above to keep complete Evidence accessible while returning only point metadata or an explicitly selected text page.
+Browser collection keeps its separate conservative defaults; see the
+[calibration record](../../verification/source-map-budget-calibration.md).
+
+Local tracing accepts all listed fields except `fetch_bytes`. Bundle fetching
+accepts all except `map_bytes` and `codec_heap_mib`: it uses its existing
+inspection process rather than launching the local codec. Unsupported fields
+are rejected rather than silently ignored. Byte fields are bounded below
+Node's single-string representation ceiling, record fields by the signed
+32-bit decoder coordinate range, section depth by the same supported count range and shared structural admission,
+and heap requests by the existing 128..16384 MiB worker envelope. These bounds
+remain independent; a larger map can require a larger encoded request budget
+and codec heap, and the outer MCP client still owns its receive buffer/deadline.
+
+For example, a valid 10 MiB selected local map can be retried with:
+
+```json
+{
+  "source_map_limits": { "map_bytes": 16777216 }
+}
+```
+
+Keep the original manifest/map/point selection in that retry. The CLI spelling
+is `--source-map-bytes 8388608`; the other local flags are
+`--source-map-output-bytes`, `--source-map-decoded-rows`,
+`--source-map-decoded-segments`, `--source-map-decoded-records`,
+`--source-map-section-depth` and `--source-map-codec-heap-mib`.
+`analyze-web-bundle` instead offers `--source-map-fetch-bytes` and the shared
+output/record/depth flags. Raising only `decoded_records` does not raise the
+independent row or segment budgets. Failed local decoding returns no partial
+point evidence; completed browser map observations retain their existing
+partial/unknown semantics. Wait for retained cleanup to settle before retrying.
 
 ## Verification
 
@@ -130,10 +257,10 @@ its `original_sources` declaration, including repeated source URLs across indexe
 sections. Imports are deduplicated within each declaration. Older observations
 may omit the index; their edge declaration identity remains unknown.
 
-Browser collection accepts up to 64 MiB of map responses per inspection and
+Browser collection defaults to 64 MiB of map responses per inspection and
 preflights indexed sections, sources, names, generated rows and mapping segments
 against a 262144-record decode budget before upstream flattening. Indexed maps
-are limited to 64 nested levels. These structural limits bound decoded object
+default to 64 nested levels. These structural limits bound decoded object
 growth while preserving large embedded `sourcesContent` strings within the
 response-byte budget. It also bounds the expanded inline evidence to 32 MiB
 across the inspection, checking resolved source identities and mapping rows
