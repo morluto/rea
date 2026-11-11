@@ -51,7 +51,6 @@ export const ADB_DEVICE_STATES = [
   "detached",
 ] as const;
 export const adbDeviceStateSchema = z.enum(ADB_DEVICE_STATES);
-export type AdbDeviceState = (typeof ADB_DEVICE_STATES)[number];
 
 const keyStringSchema = z.string().min(1).max(256);
 const keyPattern = /^[A-Za-z0-9._\x2d]+$/u;
