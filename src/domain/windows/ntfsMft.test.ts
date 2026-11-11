@@ -143,6 +143,28 @@ describe("parseMftImage", () => {
     );
   });
 
+  it.each([
+    [48, 4],
+    [49, 3],
+    [508, 3],
+  ])(
+    "rejects a malformed update sequence array at %i with %i entries",
+    (offset, count) => {
+      const bytes = recordOf();
+      const view = new DataView(bytes.buffer);
+      view.setUint16(4, offset, true);
+      view.setUint16(6, count, true);
+
+      const parsed = parseMftImage(bytes);
+      if (!parsed.ok) throw new Error(parsed.error.message);
+      expect(parsed.value.records[0]?.fixups).toMatchObject({
+        malformed: true,
+        verifiedSectors: 0,
+      });
+      expect(parsed.value.metadata.fixup_unverified_record_count).toBe(1);
+    },
+  );
+
   it("reports an array that covers fewer sectors than the record has", () => {
     // A 4 KiB record holds eight sectors; a three-entry array leaves five unverified.
     const parsed = parseMftImage(
