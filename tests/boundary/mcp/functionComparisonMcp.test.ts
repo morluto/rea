@@ -51,6 +51,7 @@ it.each([
       value.referenced_names = [
         { address: "rom:0xa000", source_address: site, value: "helper" },
       ];
+      value.swift_string_literal_omissions = [];
       value.swift_string_literals = [
         {
           source_address: site,
