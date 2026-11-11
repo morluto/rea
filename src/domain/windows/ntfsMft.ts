@@ -118,6 +118,22 @@ export interface MftRecord extends MftAttributeScan {
   readonly fixups: MftRecordFixups;
 }
 
+/** Producer-owned identity validity; base/extension ownership is a separate relation. */
+export const hasVerifiedMftRecordIdentity = (
+  record: Pick<
+    MftRecord,
+    | "sequenceNumber"
+    | "extentValid"
+    | "recordNumberMatchesSlot"
+    | "fixups"
+    | "totalBytes"
+  >,
+): boolean =>
+  record.sequenceNumber !== 0 &&
+  record.extentValid &&
+  record.recordNumberMatchesSlot !== false &&
+  record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES === record.totalBytes;
+
 export interface MftInventory {
   readonly metadata: MftMetadata;
   /** The record size the stream declared, or the fixed default when it did not. */
@@ -463,11 +479,6 @@ const resolveMftAttributeLists = (
     decoded.set(index, record);
     return ok(record);
   };
-  const verifiedIdentity = (record: MftRecord): boolean =>
-    record.sequenceNumber !== 0 &&
-    record.extentValid &&
-    record.recordNumberMatchesSlot !== false &&
-    record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES === record.totalBytes;
 
   return records.map((base): MftRecord => {
     if (
@@ -484,7 +495,7 @@ const resolveMftAttributeLists = (
       seenEntries = new Set<number>(),
       seenAttributes = new Set<number>();
     const queue: MftAttributeListEntry[] = [];
-    const baseVerified = verifiedIdentity(base);
+    const baseVerified = hasVerifiedMftRecordIdentity(base);
     let complete = baseVerified && base.attributeCoverage === "complete";
     if (!complete) incompleteRecords.add(base.index);
     const enqueueList = (attribute: MftAttribute): void => {
@@ -512,7 +523,8 @@ const resolveMftAttributeLists = (
       const selected = selectRecord(entry.reference.recordNumber);
       if (!selected.ok) return selected.error;
       const target = selected.value;
-      if (!verifiedIdentity(target)) return unresolved("unverified-record");
+      if (!hasVerifiedMftRecordIdentity(target))
+        return unresolved("unverified-record");
       if (target.sequenceNumber !== entry.reference.sequenceNumber)
         return unresolved("sequence-mismatch");
       if (
