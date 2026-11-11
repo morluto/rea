@@ -23,7 +23,13 @@ import {
   SessionObservations,
   trackProcess,
 } from "../../desktop/DesktopSessionObservations.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
+import { inspectAptRepositories } from "../../desktop/AptRepositoryInventory.js";
+import { VENDOR_A } from "../../domain/desktop/aptKeys.fixture.js";
+import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import * as captureFailures from "./DesktopCaptureFailure.js";
@@ -1127,6 +1133,165 @@ it.for([{ retrySucceeds: true }, { retrySucceeds: false }])(
       descriptor.allow();
       await Promise.all([...retainedStores].map((store) => store.close()));
       await descriptor.failure.owner.close();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it.for([
+  { completion: "completed", cancel: false, typedReason: false },
+  { completion: "completed", cancel: true, typedReason: false },
+  { completion: "completed", cancel: true, typedReason: true },
+  { completion: "failed", cancel: true, typedReason: false },
+] as const)(
+  "preserves capture admission after actual keyring cleanup ($completion, cancel: $cancel, typed reason: $typedReason)",
+  async ({ completion, cancel, typedReason }) => {
+    const { root, home, environment } = await fixture();
+    const source = "https://vendor.example/repo stable/main amd64 Packages";
+    const sources = join(root, "vendor.list");
+    const key = join(root, "vendor.gpg");
+    await writeFile(key, VENDOR_A.key);
+    await writeFile(
+      sources,
+      `deb [signed-by=${key}] https://vendor.example/repo stable main\n`,
+    );
+    await writeFile(
+      join(root, "vendor.example_repo_InRelease"),
+      "inert release bytes",
+    );
+    const targets = [
+      `Description: ${source}`,
+      `Sourcesentry: ${sources}:1`,
+      "Repo-URI: https://vendor.example/repo/",
+      "Release: stable",
+      "Component: main",
+      "Base-URI: https://vendor.example/repo/",
+      `Filename: ${join(root, "Packages")}`,
+    ].join("\n");
+    const output = join(root, "capture-keyring");
+    const controller = new AbortController();
+    const reason = typedReason
+      ? new AnalysisInputError("caller", { userMessage: "stop" })
+      : { stop: "keyring cleanup" };
+    const physical = Object.assign(
+      new Error("recording verification query failed"),
+      { code: "EIO" },
+    );
+    const captured = captureFixture();
+    let keyringWritten = false;
+    let keyringRemoved = false;
+    let privateRoot: PrivateRuntimeRoot | undefined;
+    let projectedFailure: AnalysisError | undefined;
+    const create = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+    vi.spyOn(PrivateRuntimeRoot, "create").mockImplementationOnce(
+      async (options) => {
+        const owned = await create(options);
+        privateRoot = owned;
+        const close = owned.close.bind(owned);
+        vi.spyOn(owned, "close").mockImplementationOnce(async () => {
+          expect(controller.signal.aborted).toBe(false);
+          expect(keyringWritten).toBe(true);
+          await close();
+          await expect(readdir(owned.path)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          keyringRemoved = true;
+          if (cancel) controller.abort(reason);
+        });
+        return owned;
+      },
+    );
+    const queries: string[] = [];
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockImplementation(
+      async (_request, signal) => {
+        const apt = await inspectAptRepositories(
+          { sources: [source], origins: ["Vendor"] },
+          {
+            apt: { lists: root, trusted: key, trustedParts: root },
+            runQuery: async (command, argv) => {
+              queries.push(command);
+              if (command === "apt-get")
+                return { stdout: targets, exitCode: 0 };
+              if (command !== "gpgv")
+                throw new Error(`Unexpected command ${command}`);
+              const keyring = argv[argv.indexOf("--keyring") + 1];
+              expect((await readFile(keyring!)).equals(VENDOR_A.key)).toBe(
+                true,
+              );
+              keyringWritten = true;
+              if (completion === "failed") throw physical;
+              return { stdout: "[GNUPG:] NEWSIG\n", exitCode: 2 };
+            },
+          },
+          signal,
+        );
+        return {
+          ok: true,
+          value: {
+            inventory: {
+              ...captured.application,
+              argv: [process.execPath],
+              working_directory: home,
+              state_directories: [],
+            },
+            limitations: apt.limitations,
+            signingKeys: apt.keys,
+          },
+        };
+      },
+    );
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    const session = vi
+      .spyOn(desktopSession, "runDesktopSession")
+      .mockResolvedValue({
+        session: captured.session,
+        unreleased: undefined,
+        unreadableWindowSamples: 0,
+      });
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        { ...request(output), executable: process.execPath },
+        host(environment),
+        controller.signal,
+      );
+      expect(queries).toEqual(["apt-get", "gpgv"]);
+      expect(keyringWritten).toBe(true);
+      expect(keyringRemoved).toBe(true);
+      if (!cancel) {
+        expect(session).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+          operation: "capture_desktop_application",
+        });
+        return;
+      }
+      expect(controller.signal.reason).toBe(reason);
+      expect(session).not.toHaveBeenCalled();
+      if (completion === "failed") {
+        expect(result).toMatchObject({ code: "execution_failure" });
+        expect(projectedFailure?.cause).toBe(physical);
+        expect(projectedFailure?.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+      } else {
+        expect(result).toMatchObject({ code: "cancelled" });
+        expect(projectedFailure).toBeInstanceOf(AnalysisCancelledError);
+        expect(projectedFailure?.cause).toBe(reason);
+      }
+    } finally {
+      await privateRoot?.close();
       vi.restoreAllMocks();
     }
   },
