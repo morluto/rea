@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { clientRegistrationSource } from "./ClientRegistrationSource.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
@@ -111,15 +112,7 @@ export const parseClientRegistrationLauncher = (
   const { dialect, profile } = target;
   if (profile.connection.kind === "unavailable")
     return err(new ConfigurationError(profile.connection.reason));
-  if (profile.connection.kind === "cline") {
-    const row = clientConfigurationRecordSchema.safeParse(value);
-    if (row.success && Object.hasOwn(row.data, "transport")) {
-      const transport = clientConfigurationRecordSchema.safeParse(
-        row.data.transport,
-      );
-      if (transport.success) value = transport.data;
-    }
-  }
+  value = clientRegistrationSource(value, profile).connection ?? value;
   const parsed =
     dialect === "opencode" ||
     dialect === "opencode_v2" ||
@@ -209,6 +202,13 @@ export const parseClientRegistrationPolicy = (
     if (!entry.success) return err(registrationError(entry.error));
     value = entry.data;
   }
+  const source = clientRegistrationSource(value, client.registrationProfile);
+  if (source.nested)
+    value = {
+      ...source.source,
+      command: source.connection?.command,
+      args: source.connection?.args,
+    };
   const parsed = registrationSchema.safeParse(value);
   if (!parsed.success) return err(registrationError(parsed.error));
   const registration = parsed.data;
@@ -235,6 +235,8 @@ export const clientRegistrationSourceFacts = (
 ): Result<
   {
     readonly source: Record<string, unknown> | undefined;
+    readonly connection: Record<string, unknown> | undefined;
+    readonly nested: boolean;
     readonly connectionFields: ReadonlySet<string>;
   },
   ConfigurationError
@@ -243,8 +245,8 @@ export const clientRegistrationSourceFacts = (
   const connection = profile.connection;
   if (connection.kind === "unavailable")
     return err(new ConfigurationError(connection.reason));
-  const parsed = clientConfigurationRecordSchema.safeParse(previous);
-  const source = parsed.success ? parsed.data : undefined;
+  const parsed = clientRegistrationSource(previous, profile);
+  const { source } = parsed;
   const fields = new Set(
     Object.keys(clientRegistrationLauncherEntry(target.dialect, command)),
   );
@@ -282,7 +284,7 @@ export const clientRegistrationSourceFacts = (
         : connection.fields)
       fields.add(field);
   }
-  return ok({ source, connectionFields: fields });
+  return ok({ ...parsed, connectionFields: fields });
 };
 
 /** Explicit launcher replacement preserves policy and native environment, while
@@ -294,7 +296,7 @@ export const replaceClientRegistrationLauncher = (
   previous: unknown,
   inherited?: unknown,
 ): Result<Record<string, unknown>, ConfigurationError> => {
-  const { dialect, profile } = target;
+  const { dialect } = target;
   const facts = clientRegistrationSourceFacts(target, command, previous);
   if (!facts.ok) return facts;
   const { source, connectionFields: launcherConnectionKeys } = facts.value;
@@ -360,33 +362,37 @@ export const replaceClientRegistrationLauncher = (
   )
     delete defaults.enabled;
   const launcher = clientRegistrationLauncherEntry(dialect, command);
-  if (profile.connection.kind === "cline" && source !== undefined) {
-    const nested = clientConfigurationRecordSchema.safeParse(source.transport);
-    if (nested.success) {
-      for (const key of Object.keys(launcher)) delete defaults[key];
-      const retainedTransport = Object.fromEntries(
-        Object.entries(nested.data).filter(
-          ([key]) =>
-            key !== "type" && key !== "url" && !Object.hasOwn(launcher, key),
-        ),
-      );
-      return ok({
-        ...defaults,
+  if (facts.value.nested)
+    for (const key of Object.keys(launcher)) delete defaults[key];
+  return ok(
+    writeRegistrationConnection(
+      facts.value,
+      { ...defaults, ...retained },
+      launcher,
+    ),
+  );
+};
+
+const writeRegistrationConnection = (
+  facts: ReturnType<typeof clientRegistrationSource>,
+  retained: Record<string, unknown>,
+  fields: Record<string, unknown>,
+): Record<string, unknown> =>
+  facts.nested
+    ? {
         ...retained,
         transport: {
-          ...retainedTransport,
+          ...Object.fromEntries(
+            Object.entries(facts.connection ?? {}).filter(
+              ([key]) =>
+                key !== "type" && key !== "url" && !Object.hasOwn(fields, key),
+            ),
+          ),
           type: "stdio",
-          ...launcher,
+          ...fields,
         },
-      });
-    }
-  }
-  return ok({
-    ...defaults,
-    ...retained,
-    ...launcher,
-  });
-};
+      }
+    : { ...retained, ...fields };
 
 /** Whether a rea setup repair for this target preserves the row's
  * `enable: false` instead of dropping it. Shared registration doubles as
@@ -424,15 +430,32 @@ export const refreshClientRegistration = (
     equivalentClientRegistrationCommands(priorCommand, command)
       ? priorCommand
       : command;
-  const registration = {
-    ...clientRegistrationEntry(dialect, launcher, environment),
-    ...Object.fromEntries(
-      Object.entries(existing).filter(
-        ([key]) =>
-          !facts.value.connectionFields.has(key) && !managedPolicyKeys.has(key),
+  const defaults = clientRegistrationEntry(dialect, launcher, environment);
+  const fields = facts.value.nested
+    ? {
+        ...clientRegistrationLauncherEntry(dialect, launcher),
+        ...(Object.keys(environment).length === 0
+          ? {}
+          : { env: { ...environment } }),
+      }
+    : clientRegistrationLauncherEntry(dialect, launcher);
+  if (facts.value.nested)
+    for (const key of Object.keys(fields)) delete defaults[key];
+  const registration = writeRegistrationConnection(
+    facts.value,
+    {
+      ...defaults,
+      ...Object.fromEntries(
+        Object.entries(existing).filter(
+          ([key]) =>
+            !facts.value.connectionFields.has(key) &&
+            (!managedPolicyKeys.has(key) ||
+              (facts.value.nested && key === "env")),
+        ),
       ),
-    ),
-  };
+    },
+    fields,
+  );
   if (
     setupPreservesDisabledActivation(client, dialect) &&
     existing.enable === false

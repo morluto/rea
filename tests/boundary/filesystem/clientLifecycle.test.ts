@@ -55,6 +55,7 @@ describe("client configuration filesystem lifecycle", () => {
       "codex",
       "cursor",
       "codebuddy",
+      "cline",
       "gemini_cli",
       "windsurf",
       "devin",
