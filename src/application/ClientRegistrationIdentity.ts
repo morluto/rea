@@ -13,6 +13,7 @@ import {
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   compareExistingFileIdentities,
+  hasParentPathSegment,
   inspectFileIdentity,
 } from "../filesystem/fileIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -155,6 +156,38 @@ const directEntrypointIdentity = (
     : "unknown";
 };
 
+/**
+ * Require the same canonical launch location before reusing or preferring a PATH
+ * alias. Hardlinks share an inode (so ownership is "owned") yet resolve relative
+ * ESM imports under the alias directory instead of the package's scripts directory.
+ */
+const sameCanonicalLaunchLocation = (
+  candidate: string,
+  selected: string,
+  checkNodeScriptPath: boolean,
+): boolean => {
+  if (candidate === selected) return true;
+  if (
+    process.platform !== "win32" &&
+    javaScriptRuntime(process.versions).id === "bun" &&
+    [candidate, selected].some(hasParentPathSegment)
+  )
+    return false;
+  const candidateSnapshot = inspectFileIdentity(candidate);
+  const selectedSnapshot = inspectFileIdentity(selected);
+  if (
+    candidateSnapshot.realpath === undefined ||
+    selectedSnapshot.realpath === undefined ||
+    candidateSnapshot.realpath !== selectedSnapshot.realpath
+  )
+    return false;
+  if (!checkNodeScriptPath) return true;
+  const scriptPath = normalizeEntrypointPath(candidate, "node");
+  if (scriptPath === undefined) return false;
+  if (scriptPath === candidate) return true;
+  return inspectFileIdentity(scriptPath).realpath === selectedSnapshot.realpath;
+};
+
 /** Preserve a manager-owned executable alias only when it selects the same file. */
 const sameFileExecutableAlias = (
   selected: string,
@@ -166,6 +199,14 @@ const sameFileExecutableAlias = (
     if (!isAbsolute(directory)) continue;
     const candidate = absoluteCallerPath(`${directory}/${name}`);
     if (identify(candidate, selected) !== "owned") continue;
+    if (
+      !sameCanonicalLaunchLocation(
+        candidate,
+        selected,
+        identify === directEntrypointIdentity,
+      )
+    )
+      continue;
     try {
       accessSync(candidate, constants.X_OK);
       return candidate;
@@ -226,7 +267,14 @@ export const equivalentClientRegistrationCommands = (
   return (
     prior.entrypoint !== undefined &&
     prior.identity === "owned" &&
-    prior.launch === requestedFacts.launch
+    prior.launch === requestedFacts.launch &&
+    sameCanonicalLaunchLocation(
+      prior.entrypoint,
+      current,
+      prior.launch === "direct",
+    ) &&
+    (prior.launch !== "runtime_script" ||
+      sameCanonicalLaunchLocation(previous[0] ?? "", requested[0] ?? "", false))
   );
 };
 

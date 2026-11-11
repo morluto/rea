@@ -1,5 +1,6 @@
 import {
   access,
+  link,
   mkdir,
   readFile,
   realpath,
@@ -13,6 +14,7 @@ import { expect, it } from "vitest";
 import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
+  equivalentClientRegistrationCommands,
   registrationRuntimePath,
 } from "../../../src/application/ClientRegistrationIdentity.js";
 import { readClientRegistrationInspections } from "../../../src/application/ClientRegistrationStatus.js";
@@ -268,5 +270,55 @@ it.skipIf(process.platform === "win32")(
         environment: { PATH: foreign },
       }),
     ).toEqual([process.execPath, entrypoint, "mcp"]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps canonical entrypoint and runtime instead of selecting hardlinked PATH aliases",
+  async () => {
+    const root = await createTestTempDirectory("rea-hardlink-path-alias-");
+    const runtime = javaScriptRuntime(process.versions).id;
+    const scriptsDir = join(root, "pkg", "scripts");
+    const binDir = join(root, "bin");
+    const runtimeDir = join(root, "runtime");
+    await mkdir(scriptsDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    await mkdir(runtimeDir, { recursive: true });
+    const script = join(scriptsDir, "rea.mjs");
+    const hardlinkedRea = join(binDir, "rea");
+    const runtimeExecutable = join(runtimeDir, runtime);
+    const hardlinkedRuntime = join(binDir, runtime);
+    await writeFile(script, "#!/usr/bin/env node\n", { mode: 0o700 });
+    await link(script, hardlinkedRea);
+    await writeFile(runtimeExecutable, "runtime binary\n", { mode: 0o700 });
+    await link(runtimeExecutable, hardlinkedRuntime);
+
+    expect(
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: script,
+        environment: { PATH: binDir },
+      }),
+    ).toEqual([process.execPath, script, "mcp"]);
+    expect(
+      registrationRuntimePath(
+        runtimeExecutable,
+        runtime,
+        { PATH: binDir },
+        "linux",
+      ),
+    ).toBe(runtimeExecutable);
+    expect(
+      classifyClientRegistrationCommand(
+        [process.execPath, hardlinkedRea, "mcp"],
+        script,
+      ),
+    ).toBe("owned");
+    expect(
+      equivalentClientRegistrationCommands(
+        [process.execPath, hardlinkedRea, "mcp"],
+        [process.execPath, script, "mcp"],
+      ),
+    ).toBe(false);
   },
 );

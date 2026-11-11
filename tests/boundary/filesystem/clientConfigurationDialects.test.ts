@@ -1,6 +1,7 @@
 import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
+  equivalentClientRegistrationCommands,
 } from "../../../src/application/ClientRegistrationIdentity.js";
 import { link, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
@@ -720,6 +721,15 @@ describe("client registration command ownership", () => {
     ]) {
       expect(classifyClientRegistrationCommand(command, script)).toBe("owned");
     }
+    expect(
+      equivalentClientRegistrationCommands([hardlink, "mcp"], [script, "mcp"]),
+    ).toBe(false);
+    expect(
+      equivalentClientRegistrationCommands(
+        [process.execPath, hardlink, "mcp"],
+        [process.execPath, script, "mcp"],
+      ),
+    ).toBe(false);
   });
 
   it.skipIf(process.platform === "win32").each([
