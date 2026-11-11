@@ -2,6 +2,7 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import canonicalize from "canonicalize";
 
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -130,7 +131,9 @@ describe("analysis snapshots: persistence", () => {
       writeAnalysisSnapshot(snapshot, path, false, resources),
     );
     if (!written.ok) throw written.error;
-    expect((await readFile(path, "utf8")).endsWith("\n")).toBe(true);
+    const encoded = await readFile(path, "utf8");
+    // RFC 8785 bytes are a storage contract, independent of snapshot decoding.
+    expect(encoded).toBe(`${canonicalize(snapshot)}\n`);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     const roundTrip = await readAnalysisSnapshot(path);
     if (!roundTrip.ok) throw roundTrip.error;

@@ -403,6 +403,209 @@ it("retains the snapshot root until its failed descriptor owner confirms release
   await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it.each([false, true])(
+  "retains completed signature facts when private-root cleanup fails: %s",
+  async (cleanupFails) => {
+    const target = await createTarget("same");
+    const resources = new ArtifactResourceScope();
+    const unrelated = new ArtifactResourceScope();
+    const facts = signatureInspectionFixture();
+    const root = await createRoot(cleanupFails ? 1 : 0);
+    try {
+      const result = await withSignatureTarget(
+        target,
+        resources,
+        async () => ok(facts),
+        undefined,
+        async () => root,
+      );
+      if (!cleanupFails) {
+        expect(result).toEqual(ok(facts));
+        await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+        return;
+      }
+      if (result.ok) throw new Error("Expected root cleanup failure");
+      expect(result.error).toBeInstanceOf(ProviderCleanupError);
+      if (!(result.error instanceof ProviderCleanupError))
+        throw new Error("Expected retained cleanup owner");
+      expect(result.error.partialObservation).toBe(facts);
+      expect(result.error.completedObservation).toBe(facts);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      expect((await stat(root.path)).isDirectory()).toBe(true);
+      const peer = await withSignatureTarget(
+        target,
+        unrelated,
+        async () => ok(facts),
+        undefined,
+        createRoot,
+      );
+      expect(peer).toEqual(ok(facts));
+      await unrelated.close();
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      await resources.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupResources).toEqual([]);
+      expect(result.error.partialObservation).toBe(facts);
+      expect(result.error.completedObservation).toBe(facts);
+      await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await unrelated.close();
+      await resources.close();
+    }
+  },
+);
+
+it("retains cancellation during failed cleanup retry without losing ownership", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during cleanup retry" };
+  const root = await createRoot();
+  let attempts = 0;
+  const create = async () => ({
+    path: root.path,
+    async close() {
+      attempts += 1;
+      if (attempts === 2) controller.abort(reason);
+      if (attempts <= 2) throw new Error("controlled root close failure");
+      await root.close();
+    },
+  });
+  try {
+    const first = await withSignatureTarget(
+      target,
+      resources,
+      async () => ok(signatureInspectionFixture()),
+      undefined,
+      create,
+    );
+    if (first.ok) throw new Error("Expected retained root");
+    const second = await withSignatureTarget(
+      target,
+      resources,
+      unusedInspection,
+      controller.signal,
+      create,
+    );
+    if (second.ok) throw new Error("Expected failed cleanup retry");
+    expect(second.error.cleanupIncomplete).toBe(true);
+    expect(second.error.cleanupResources).toContain(root.path);
+    expect(second.error.cleanupPrimary?.secondaryFailures).toContainEqual(
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    );
+    await resources.close();
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(second.error.cleanupIncomplete).toBe(false);
+    await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await resources.close();
+  }
+});
+
+it("retains late cancellation when creating the signature root fails", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during root creation" };
+  const physical = Object.assign(new Error("denied root creation"), {
+    code: "EACCES",
+  });
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw physical;
+    },
+  );
+  if (result.ok) throw new Error("Expected root creation failure");
+  expect(result.error.cause).toBe(physical);
+  expect(result.error.secondaryFailures).toHaveLength(1);
+  expect(result.error.secondaryFailures[0]).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+  expect(result.error.cleanupIncomplete).toBe(false);
+  await resources.close();
+});
+
+it("does not adopt a typed caller abort reason as a root-creation failure", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = new ProviderCleanupError("foreign", ["unowned"], {});
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw reason;
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+  expect(result.error.cleanupResources).not.toContain("unowned");
+  await resources.close();
+});
+
+it.each([false, true])(
+  "retains late cancellation after a signature failure while root cleanup fails: %s",
+  async (cleanupFails) => {
+    const target = await createTarget("same");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { caller: "cancelled during root cleanup" };
+    const physical = new AnalysisOutputError(
+      "inspect_signature",
+      "inspection failed",
+    );
+    const root = await createRoot(cleanupFails ? 1 : 0);
+    try {
+      const result = await withSignatureTarget(
+        target,
+        resources,
+        async () => err(physical),
+        controller.signal,
+        async () => ({
+          path: root.path,
+          async close() {
+            try {
+              await root.close();
+            } finally {
+              controller.abort(reason);
+            }
+          },
+        }),
+      );
+      if (result.ok) throw new Error("Expected inspection failure");
+      expect(physical.secondaryFailures).toHaveLength(1);
+      expect(physical.secondaryFailures[0]).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      await resources.close();
+      expect(resolvedAnalysisError(result.error)).toBe(physical);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
 const opaqueReasons = [
   null,
   0,

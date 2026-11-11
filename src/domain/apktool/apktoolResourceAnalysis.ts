@@ -201,7 +201,7 @@ export const stringTableSchema = z.strictObject({
   status: z
     .enum(["present", "missing", "oversized", "malformed", "skipped"])
     .describe(
-      "Table availability: present, missing from APK, oversized, malformed XML, or skipped due to limits",
+      "Table availability in the decoded workspace: present, missing at the selected path, oversized, malformed XML, or skipped due to limits",
     ),
   strings: z.array(
     z.strictObject({
@@ -280,7 +280,7 @@ export const apktoolResultSchemas = {
       .array(stringTableSchema)
       .optional()
       .describe(
-        "Selected table facts, included when locales is supplied or string_tables_only is true",
+        "Selected decoded table facts, included when locales is supplied, string_tables_only is true, or an explicit string page or budget is requested. Empty when included with include_strings false.",
       ),
     decoded_file_count: z.int().nonnegative(),
     coverage: z.enum(["complete", "partial"]),

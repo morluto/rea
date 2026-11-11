@@ -424,7 +424,7 @@ const selectedRequireSourcesAt = (
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
       pending.push(
         ...inheritLoaderSourceContext(current, [
-          loaderMemberSource(current, node),
+          loaderMemberSource(current, node, state.parentsByNode),
         ]),
       );
     } else if (t.isIdentifier(node)) {
@@ -591,6 +591,9 @@ const selectedRequireSourcesAt = (
             returned.references.map((reference) => ({
               node: reference.node,
               path: reference.projection,
+              // The immediate invocation produces this value before the
+              // receiving call can apply opaque effects to it.
+              readAt: node,
             })),
           ),
         );
@@ -1087,6 +1090,7 @@ const inheritLoaderSourceContext = (
 const loaderMemberSource = (
   current: ModuleObjectSource,
   member: t.MemberExpression | t.OptionalMemberExpression,
+  parents: WeakMap<t.Node, t.Node>,
 ): ModuleObjectSource => ({
   node: member.object,
   readAt: current.readAt ?? member,
@@ -1094,7 +1098,17 @@ const loaderMemberSource = (
     current.readAt === undefined
       ? semanticShiftCapturedSelections(current.capturedSelections, 1)
       : semanticNormalizeCapturedSelections([
-          { at: member, depth: 1 },
+          {
+            // A later consumer must not time a read that already fed an
+            // earlier assignment. `box.load = box.load || null` reads
+            // `box.load` before that write.
+            at:
+              current.path.length === 0 &&
+              !memberFeedsEarlierAssignment(member, current.readAt, parents)
+                ? current.readAt
+                : member,
+            depth: 1,
+          },
           ...(semanticShiftCapturedSelections(current.capturedSelections, 1) ??
             []),
         ]),
@@ -1103,6 +1117,30 @@ const loaderMemberSource = (
     ...current.path,
   ],
 });
+
+/** True when this member is an input of an assignment that already ran. */
+const memberFeedsEarlierAssignment = (
+  member: t.Node,
+  readAt: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  let assignment: t.AssignmentExpression | undefined;
+  let parent = parents.get(member);
+  while (parent !== undefined && parent !== readAt) {
+    if (t.isAssignmentExpression(parent)) {
+      let cursor: t.Node | undefined = member;
+      while (cursor !== undefined && cursor !== parent) {
+        const next = parents.get(cursor);
+        if (next === parent && parent.right === cursor) assignment = parent;
+        cursor = next;
+      }
+    }
+    // An assignment inside a function runs with that function, not before it.
+    if (t.isFunction(parent)) return false;
+    parent = parents.get(parent);
+  }
+  return assignment !== undefined;
+};
 
 const projectedLoaderSources = (
   current: ModuleObjectSource,
@@ -1282,7 +1320,9 @@ const hasCommonJsModuleSource = (
       continue;
     }
     if (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) {
-      enqueue(loaderMemberSource({ ...next, path }, value));
+      enqueue(
+        loaderMemberSource({ ...next, path }, value, state.parentsByNode),
+      );
       continue;
     }
     if (

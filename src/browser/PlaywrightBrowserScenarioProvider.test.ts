@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
+import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
@@ -187,7 +188,10 @@ class FakeSession implements BrowserScenarioSessionPort {
   async perform(_action: BrowserScenarioAction, signal?: AbortSignal) {
     this.performCalls += 1;
     this.onPerform?.();
-    if (signal?.aborted === true) throw new Error("request cancelled");
+    if (signal?.aborted === true)
+      throw new AnalysisCancelledError("capture_browser_scenario", {
+        cause: signal.reason,
+      });
     if (this.failures.action !== undefined) throw this.failures.action;
   }
 
@@ -376,6 +380,90 @@ it("compares retained network observations despite a failed subresource", async 
     expect(comparison.steps[0]?.status).toBe(expected);
   }
 });
+
+it.each(
+  ["physical", "cancelled"].flatMap((outcome) =>
+    [false, true].map((cleanupFails) => ({ outcome, cleanupFails })),
+  ),
+)(
+  "retains actual action rejection precedence for $outcome with cleanup failure=$cleanupFails",
+  async ({ outcome, cleanupFails }) => {
+    const caller = new AbortController();
+    const reason = { caller: "after the action boundary settled" };
+    const physical = new Error("physical page wait failure");
+    const page = {
+      waitForTimeout: () => {
+        if (outcome === "physical") return Promise.reject(physical);
+        caller.abort(reason);
+        return Promise.resolve();
+      },
+    };
+    const session = new FakeSession("launch");
+    let observed: unknown;
+    session.perform = (action, signal) => {
+      const operation = Reflect.apply(
+        PlaywrightScenarioSession.prototype.perform,
+        { opened: { page }, storage: undefined },
+        [action, signal],
+      ) as Promise<void>;
+      void operation.catch((cause: unknown) => {
+        observed = cause;
+        if (outcome === "physical") caller.abort(reason);
+      });
+      return operation;
+    };
+    let denied = cleanupFails;
+    session.close = async () => {
+      session.closeCalls += 1;
+      if (denied) throw new Error("controlled cleanup failure");
+      return "terminated-owned-process";
+    };
+    const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+    try {
+      const result = await provider.captureScenario(scenario({ actions: 2 }), {
+        signal: caller.signal,
+      });
+      if (result.ok)
+        throw new Error(
+          "Expected cancellation with retained action observations",
+        );
+      if (outcome === "physical") expect(observed).toBe(physical);
+      else expect(observed).toBeInstanceOf(AnalysisCancelledError);
+      const partial = result.error.partialObservation;
+      if (
+        partial === undefined ||
+        !("kind" in partial) ||
+        partial.kind !== "browser-scenario-observation"
+      )
+        throw new Error("Expected retained browser scenario observations");
+      const { capture } = partial;
+      expect(capture.steps[1]).toMatchObject({
+        status: outcome === "physical" ? "failed" : "cancelled",
+        ...(outcome === "physical" ? { error: physical.message } : {}),
+      });
+      expect(capture.steps[2]).toMatchObject({
+        status: "cancelled",
+        error:
+          outcome === "physical"
+            ? "not executed after an earlier action failure"
+            : "not executed after scenario request cancellation",
+      });
+      expect(session.captureCalls).toBe(1);
+      expect(session.closeCalls).toBe(1);
+      denied = false;
+      await provider.close();
+      let primary = result.error;
+      while (primary.cleanupPrimary !== undefined)
+        primary = primary.cleanupPrimary;
+      expect(primary).toMatchObject({ _tag: "AnalysisCancelledError" });
+      expect(primary.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      denied = false;
+      await provider.close();
+    }
+  },
+);
 
 describe("PlaywrightBrowserScenarioProvider", () => {
   it("reports response-body provenance uncertainty without marking event coverage missing", async () => {
