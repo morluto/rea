@@ -79,7 +79,3 @@ export const hostFileKind = async (path: string): Promise<boolean | null> => {
       : null;
   }
 };
-
-/** Whether a host path names a regular file, following links; false when the check could not tell. */
-export const isHostFile = async (path: string): Promise<boolean> =>
-  (await hostFileKind(path)) === true;

@@ -29,7 +29,7 @@ import {
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { hostCloseFailure, isHostFile, isRefusedRead } from "./HostFileRead.js";
+import { hostCloseFailure, hostFileKind, isRefusedRead } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
@@ -177,7 +177,7 @@ export const inspectLibraryPackages = async (
     {
       dependencies: (path, expected) =>
         elfDependencies(path, signal, policy, expected),
-      isFile: isHostFile,
+      isFile: hostFileKind,
     },
     policy.libraries,
   );

@@ -102,6 +102,32 @@ describe("parseLinkerCache", () => {
 });
 
 describe("libraryClosure", () => {
+  it("treats a probe that could not tell as a candidate instead of an absence", async () => {
+    // A RUNPATH candidate under a denied parent cannot be ruled out as the
+    // loaded object, so it must not be skipped in favour of a later cache hit.
+    const unprobed = await libraryClosure(
+      {
+        path: "/app/bin/app",
+        dependencies: elf(["libcore.so"], [], ["/denied"]),
+      },
+      [],
+      {
+        dependencies: async (path: string) =>
+          path === "/app/bin/app"
+            ? err({ kind: "unreadable" as const, identity: null, reason: "missing" })
+            : ok(elf([], [])),
+        isFile: async (path: string) =>
+          path === "/denied/libcore.so" ? null : false,
+      },
+      10,
+    );
+    expect(unprobed.libraries).toEqual([
+      { soname: "libcore.so", path: "/denied/libcore.so" },
+    ]);
+    expect(unprobed.missing).toEqual([]);
+    expect(unprobed.unreadable).toEqual([]);
+  });
+
   it("walks DT_NEEDED through RPATH and the cache for the executable's machine", async () => {
     const closure = await libraryClosure(
       typora,

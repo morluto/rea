@@ -111,7 +111,9 @@ async function* libraryCandidates(
   if (!soname.includes("/"))
     for (const directory of directories) {
       const candidate = posix.join(directory, soname);
-      if (await host.isFile(candidate)) yield candidate;
+      // A probe that could not tell is a candidate that might load, not an
+      // absent one: the linker tries it before any later directory or cache hit.
+      if ((await host.isFile(candidate)) !== false) yield candidate;
     }
   yield* cachedPaths(cache, soname, machine);
 }
@@ -122,7 +124,7 @@ export interface LibraryWalkHost {
     path: string,
     expected: ElfLibraryIdentity,
   ) => Promise<Result<ElfDependencies, ElfDependenciesFailure>>;
-  readonly isFile: (path: string) => Promise<boolean>;
+  readonly isFile: (path: string) => Promise<boolean | null>;
 }
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
