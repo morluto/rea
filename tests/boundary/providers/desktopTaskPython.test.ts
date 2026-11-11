@@ -148,7 +148,8 @@ async def run():
             verify_task = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
             await verify_task
         except (RuntimeError, asyncio.CancelledError) as error:
-            first_error = str(error) + " ".join(getattr(error, "__notes__", ()))
+            first_error = type(error).__name__ + ": " + str(error) + " ".join(getattr(error, "__notes__", ()))
+            answers.update(scenario.get("retry_answers") or {})
         if scenario.get("reload_verifier"):
             module = load_verifier()
     if scenario.get("parallel_retry"):
@@ -194,6 +195,7 @@ const runVerifier = async (
   computer: {
     readonly readers?: readonly DesktopTaskReader[];
     readonly answers?: Readonly<Record<string, unknown>>;
+    readonly retryAnswers?: Readonly<Record<string, unknown>>;
     readonly exec?: boolean;
     readonly cleanupFailures?: number;
     readonly retry?: boolean;
@@ -233,6 +235,7 @@ const runVerifier = async (
         saves,
         durations,
         answers: computer.answers,
+        retry_answers: computer.retryAnswers,
         exec: computer.exec ?? true,
         cleanup_failures: computer.cleanupFailures,
         retry: computer.retry,
@@ -591,6 +594,25 @@ it("keeps cleanup owned when verification is cancelled during final cleanup", as
     String(request_id).startsWith("rea-reader-cleanup-"),
   );
   expect(cleanups).toHaveLength(2);
+});
+
+it("retains reader failure when cancellation interrupts its final cleanup", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: { [READERS[0]!.id]: "not a reader answer" },
+    retryAnswers: ANSWERS,
+    cancelCleanup: true,
+    retry: true,
+    reloadVerifier: true,
+  });
+  expect(output.first_error).toMatch(/^CancelledError:/u);
+  expect(output.first_error).toContain("reader runner did not answer");
+  expect(output.first_error).toContain("Reader cleanup remains owned");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(2);
+  expect(output.pending_readers).toBe(0);
 });
 
 it("does not adopt another active verifier's reader lease", async () => {

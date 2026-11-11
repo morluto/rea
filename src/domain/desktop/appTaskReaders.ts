@@ -443,6 +443,9 @@ async def _reader_views(env_url, card):
             except BaseException as error:
                 _PENDING_READERS[token]["abandoned"] = True
                 if failure is not None:
+                    if isinstance(error, asyncio.CancelledError):
+                        error.add_note(f"Reader cleanup remains owned for {lease['path']}; reader failure: {type(failure).__name__}: {failure}")
+                        raise error from failure
                     failure.add_note(f"Reader cleanup remains owned for {lease['path']}: {type(error).__name__}: {error}")
                     raise failure from error
                 error.add_note(f"Reader cleanup remains owned for {lease['path']}")
