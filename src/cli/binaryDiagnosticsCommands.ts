@@ -12,6 +12,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createDwarfUnitsService,
   createNativeInitializersService,
   createElfUnwindRangesService,
   createAppleIpsService,
@@ -39,6 +40,7 @@ import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectWindowsShortcutInputSchema } from "../domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
+import { inspectDwarfUnitsInputSchema } from "../domain/native/dwarfUnits.js";
 import { inspectNativeInitializersInputSchema } from "../domain/native/nativeInitializers.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 import { inspectElfUnwindRangesInputSchema } from "../domain/native/elfUnwindRanges.js";
@@ -99,6 +101,56 @@ export const registerBinaryDiagnosticsCommands = (
         );
       }),
   });
+  cli.command(CLI_COMMANDS.inspectDwarfUnits, {
+    description: "Inspect DWARF compile units without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local ELF, Mach-O, or PE image, or a DWARF file inside a .dSYM bundle",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectDwarfUnitsInputSchema.shape.max_file_bytes,
+      ),
+      offset: cliDecimalField(inspectDwarfUnitsInputSchema.shape.offset),
+      limit: cliDecimalField(inspectDwarfUnitsInputSchema.shape.limit),
+      architecture: machoSliceArchitectureSchema
+        .optional()
+        .describe(
+          "CPU family of the slice to read from a universal Mach-O; required for universal files",
+        ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const dwarf = createDwarfUnitsService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectDwarfUnits,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                dwarf.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    offset: options.offset,
+                    limit: options.limit,
+                    ...(options.architecture === undefined
+                      ? {}
+                      : { architecture: options.architecture }),
+                  },
+                  { signal },
+                ),
+              dwarf,
+              "rea-dwarf-units",
+              "inspect_dwarf_units",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+
   cli.command(CLI_COMMANDS.inspectNativeInitializers, {
     description:
       "List ELF and Mach-O initializer and finalizer functions without executing the image",

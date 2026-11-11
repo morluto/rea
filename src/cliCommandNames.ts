@@ -84,6 +84,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectNativeExports: "inspect-native-exports",
   inspectDevicetree: "inspect-devicetree",
   inspectElfNotes: "inspect-elf-notes",
+  inspectDwarfUnits: "inspect-dwarf-units",
   inspectNativeInitializers: "inspect-native-initializers",
   inspectElfUnwindRanges: "inspect-elf-unwind-ranges",
   inspectAppleIps: "inspect-apple-ips",

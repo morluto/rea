@@ -250,6 +250,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_windows_shortcut", { path: nul }],
   ["inspect_native_exports", { path: nul }],
   ["inspect_elf_notes", { path: nul }],
+  ["inspect_dwarf_units", { path: nul }],
   ["inspect_native_initializers", { path: nul }],
   ["inspect_elf_unwind_ranges", { path: nul }],
   ["inspect_apple_ips", { path: nul }],

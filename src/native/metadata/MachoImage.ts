@@ -26,7 +26,9 @@ import {
 } from "../../domain/apple/machoLoadCommands.js";
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
-export const readMachoImage = (bytes: Buffer): BinaryContainer => {
+export const readMachoImage = (
+  bytes: Buffer,
+): Extract<BinaryContainer, { format: "macho" }> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, bytes.length);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
   if (parsed.value === null)
@@ -167,6 +169,7 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
   ]);
   return {
     format: "macho",
+    macho_cpu_type: table.identity.cpuType,
     macho_chained_fixups: chainedFixups,
     architecture: names.get(cpu) ?? `macho-cpu-${cpu}`,
     bits,
@@ -217,9 +220,14 @@ const machoImageSection = ({
     fileDelta >= 0n &&
     fileDelta <= segmentFileSize &&
     sectionSize <= segmentFileSize - fileDelta;
+  const declaredRange = declaredFileRange(
+    fileBytes,
+    sectionOffset,
+    sectionSize,
+  );
   const range = unmapped
     ? { offset: 0, size: 0, file_backed: false }
-    : declaredFileRange(fileBytes, sectionOffset, sectionSize);
+    : declaredRange;
   const fileBacked =
     range.file_backed && !zeroFill && inSegmentMemory && inSegmentFile;
   const readOnly =
@@ -243,6 +251,7 @@ const machoImageSection = ({
     },
     ...range,
     file_backed: fileBacked,
+    on_disk: declaredRange.file_backed && !zeroFill && inSegmentFile,
     read_only: readOnly,
     compressed: false,
   };

@@ -18,6 +18,8 @@ import { WindowsShortcutService } from "../application/binaryDiagnostics/Windows
 import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
+import { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
+import { DwarfUnitsProvider } from "../native/dwarf/DwarfUnitsProvider.js";
 import { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
 import { NativeInitializersProvider } from "../native/initializers/NativeInitializersProvider.js";
 import { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
@@ -62,6 +64,9 @@ export const createNativeExportsService = (): NativeExportsService =>
 export const createElfNotesService = (): ElfNotesService =>
   new ElfNotesService(new ElfNotesProvider());
 
+/** Portable DWARF compile-unit inspection with no engine or debug package. */
+export const createDwarfUnitsService = (): DwarfUnitsService =>
+  new DwarfUnitsService(new DwarfUnitsProvider());
 /** Portable ELF and Mach-O initializer and finalizer listing with no engine. */
 export const createNativeInitializersService = (): NativeInitializersService =>
   new NativeInitializersService(new NativeInitializersProvider());

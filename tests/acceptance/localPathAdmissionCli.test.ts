@@ -16,6 +16,7 @@ const fileCommands = [
   "decode-signal-recording",
   "inspect-model-artifact",
   "inspect-elf-notes",
+  "inspect-dwarf-units",
   "inspect-native-initializers",
   "inspect-elf-unwind-ranges",
   "inspect-kernel-module",

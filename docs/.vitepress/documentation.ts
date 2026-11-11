@@ -554,6 +554,11 @@ export const documentationSections = [
         route: "/devicetree",
       },
       {
+        text: "DWARF compile units",
+        source: "guides/native/dwarf-units.md",
+        route: "/dwarf-units",
+      },
+      {
         text: "Electron fuse state",
         source: "electron-fuses.md",
         route: "/electron-fuses",

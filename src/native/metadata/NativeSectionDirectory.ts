@@ -87,6 +87,11 @@ export interface NativeSectionDirectory {
   readonly elf_os_abi: number | null;
   readonly flags: number;
   readonly section_names_limitation?: string;
+  /** Raw COFF symbol table declarations, present only for PE. */
+  readonly pe_symbol_table?: {
+    readonly offset: number;
+    readonly count: number;
+  };
   readonly programs: readonly ElfProgramDeclaration[];
   readonly sections: readonly NativeSection[];
 }
@@ -365,6 +370,8 @@ export function* readPeSectionDirectory(
   const {
     sectionCount: count,
     optionalHeaderSize: optionalSize,
+    symbolTableOffset,
+    symbolCount,
     machine,
     characteristics,
   } = parsedCoff.value;
@@ -419,6 +426,7 @@ export function* readPeSectionDirectory(
   }
   return {
     format: "pe",
+    pe_symbol_table: { offset: symbolTableOffset, count: symbolCount },
     elf_os_abi: null,
     bits,
     little: true,

@@ -6,6 +6,8 @@ it("retains raw COFF declarations from a borrowed record without admission polic
   const record = source.subarray(7, 27);
   record.writeUInt16LE(0xffff, 0);
   record.writeUInt16LE(0x1234, 2);
+  record.writeUInt32LE(0xfedcba98, 8);
+  record.writeUInt32LE(0x76543210, 12);
   record.writeUInt16LE(0xfedc, 16);
   record.writeUInt16LE(0x89ab, 18);
   const before = Buffer.from(source);
@@ -14,6 +16,8 @@ it("retains raw COFF declarations from a borrowed record without admission polic
     value: {
       machine: 0xffff,
       sectionCount: 0x1234,
+      symbolTableOffset: 0xfedcba98,
+      symbolCount: 0x76543210,
       optionalHeaderSize: 0xfedc,
       characteristics: 0x89ab,
     },
