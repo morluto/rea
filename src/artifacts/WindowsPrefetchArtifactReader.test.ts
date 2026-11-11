@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 
+import { prefetchMetadataSchema } from "../domain/artifactFormatMetadata.js";
 import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -179,4 +180,32 @@ it("inventories a .pf file as windows-prefetch end to end", async () => {
       limitation.startsWith("Windows Prefetch inventory"),
     ),
   ).toBe(true);
+});
+
+it("rejects a name hash that is not eight lowercase hex digits", async () => {
+  // A persisted or client-supplied inventory parses `format_metadata` through
+  // this schema, so a value the producer never emits must fail at the boundary
+  // rather than propagate as a four-byte path hash.
+  const facts = {
+    kind: "windows-prefetch",
+    version: "23",
+    file_bytes: 1,
+    declared_file_bytes: null,
+    executable_name: null,
+    run_count: null,
+    run_time_slots: null,
+  } as const;
+  expect(
+    prefetchMetadataSchema.parse({
+      ...facts,
+      executable_path_hash: "1a2b3c4d",
+    }),
+  ).toMatchObject({ executable_path_hash: "1a2b3c4d" });
+  expect(
+    prefetchMetadataSchema.parse({ ...facts, executable_path_hash: null }),
+  ).toMatchObject({ executable_path_hash: null });
+  for (const invalid of ["not-a-hash", "1A2B3C4D", "1a2b3c4", "1a2b3c4d5"])
+    expect(() =>
+      prefetchMetadataSchema.parse({ ...facts, executable_path_hash: invalid }),
+    ).toThrow();
 });

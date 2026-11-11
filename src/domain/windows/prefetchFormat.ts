@@ -3,7 +3,8 @@ import { err, ok, type Result } from "../result.js";
 /**
  * An uncompressed Prefetch file starts with a little-endian DWORD generation
  * and the four-byte "SCCA" signature. 17 is Windows XP/2003, 23 Windows
- * Vista/7; 26 and 30/31 are Windows 8+ files, which are MAM-compressed.
+ * Vista/7. v26 keeps the uncompressed layout on Windows 8/8.1; MAM wrapping
+ * arrives with v30/31 (Windows 10+).
  */
 const SUPPORTED_VERSIONS = ["17", "23", "26", "30", "31"] as const;
 export type PrefetchVersion = (typeof SUPPORTED_VERSIONS)[number];

@@ -341,7 +341,10 @@ export const prefetchMetadataSchema = z.strictObject({
   file_bytes: offset,
   declared_file_bytes: uint32.nullable(),
   executable_name: z.string().nullable(),
-  executable_path_hash: z.string().nullable(),
+  executable_path_hash: z
+    .string()
+    .regex(/^[0-9a-f]{8}$/u)
+    .nullable(),
   run_count: uint32.nullable(),
   run_time_slots: uint32.nullable(),
 });

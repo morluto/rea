@@ -39,8 +39,11 @@ The last-run timestamp value, the volumes and the read-ahead file list are not
 decoded, and the inventory says so in its limitation instead of reporting empty
 values. A run count records how often the system prefetched the program; it does
 not establish that a user intended to run it or that the program completed.
-Windows 8+ generations (26, 30, 31) are MAM-compressed as a whole and are
-identified without being decoded.
+Windows 8/8.1 v26 files keep the uncompressed generation DWORD plus `SCCA`
+layout; MAM wrapping was introduced with v30/31 on Windows 10+, so those
+generations arrive as MAM containers rather than as this prefix. Generations the
+reader does not parse are identified from the prefix and then refused, without
+being decoded.
 
 ## Limits
 
