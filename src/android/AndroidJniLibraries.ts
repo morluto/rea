@@ -93,7 +93,7 @@ const noteUnbundledSplitLibraries = async (input: {
   const splitTypes = facts.value.required_split_types;
   if (splitTypes === "unknown") {
     input.inventory.unknowns.push(
-      "The manifest declares required split types as a resource reference rather than a literal; native libraries may live in splits rather than in this APK.",
+      "The manifest's required split types are present but not readable as a literal (a resource reference, or a repeated or unreadable <manifest> element); native libraries may live in splits rather than in this APK.",
     );
   } else if (splitTypes !== null && splitTypes.length > 0) {
     input.inventory.unknowns.push(
@@ -101,7 +101,7 @@ const noteUnbundledSplitLibraries = async (input: {
     );
   } else if (facts.value.is_split_required === "unknown") {
     input.inventory.unknowns.push(
-      "The manifest's split declaration is present but not readable as a literal (a resource reference, or an unreadable <manifest>/<application> element); native libraries may live in splits rather than in this APK.",
+      "The manifest's split declaration is present but not readable as a literal (a resource reference, or a repeated or unreadable <manifest>/<application> element); native libraries may live in splits rather than in this APK.",
     );
   } else if (facts.value.is_split_required === true) {
     input.inventory.unknowns.push(
