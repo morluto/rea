@@ -88,14 +88,26 @@ export const readerViewsOfBytes = async (
   if (readers.length > 0) await processWorkerCleanup.retry();
   const absent: string[] = [];
   for (const reader of readers) {
-    const file = await bytesOf(reader);
-    if (file.kind === "absent") continue;
+    let file: ReaderFileBytes;
+    try {
+      file = await bytesOf(reader);
+    } catch (cause: unknown) {
+      throw readerFailure(cause, { views, absent });
+    }
+    if (file.kind === "absent") {
+      absent.push(reader.id);
+      continue;
+    }
     if (file.kind === "error") {
       views.set(reader.id, { format: null, view: null, error: file.error });
       continue;
     }
     // The runner nests below this owner; leave room for temporary Unix sockets.
-    const folder = await mkdtemp(join(tmpdir(), "rea-"));
+    const folder = await mkdtemp(join(tmpdir(), "rea-")).catch(
+      (cause: unknown) => {
+        throw readerFailure(cause, { views, absent });
+      },
+    );
     let failure: { readonly cause: unknown } | undefined;
     try {
       const path = join(folder, reader.file.split("/").at(-1) ?? "file");

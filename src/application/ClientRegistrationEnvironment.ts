@@ -195,7 +195,10 @@ export const recordedProviderSettings = (
   owns?: OwnedProviderSetting,
   observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
-  const names = Object.keys(selected).sort(compareUnicodeCodePoints);
+  const selection = mergeEnvironmentOverrides({}, selected, platform);
+  const names = Object.keys(selection).sort(compareUnicodeCodePoints);
+  const identity = (name: string): string =>
+    platform === "win32" ? name.toUpperCase() : name;
   if (names.length === 0) return undefined;
   const details = clientRegistrationEnvironmentDetails(
     parsed,
@@ -214,24 +217,28 @@ export const recordedProviderSettings = (
     platform,
   );
   for (const name of names) {
-    const value = recorded[name];
-    if (value !== undefined && expressions[name] === undefined)
+    const value = recorded[identity(name)];
+    if (value !== undefined && expressions[identity(name)] === undefined)
       observe?.(name, value);
   }
   const facts = {
     unrecorded: names.filter(
-      (name) => recorded[name] === undefined && expressions[name] === undefined,
+      (name) =>
+        recorded[identity(name)] === undefined &&
+        expressions[identity(name)] === undefined,
     ),
     differing: names.filter(
       (name) =>
-        expressions[name] === undefined &&
-        recorded[name] !== undefined &&
-        recorded[name] !== selected[name],
+        expressions[identity(name)] === undefined &&
+        recorded[identity(name)] !== undefined &&
+        recorded[identity(name)] !== selection[name],
     ),
-    unresolved: names.filter((name) => expressions[name] !== undefined),
+    unresolved: names.filter(
+      (name) => expressions[identity(name)] !== undefined,
+    ),
   };
   const owned = names.filter((name) => {
-    const value = recorded[name];
+    const value = recorded[identity(name)];
     return value !== undefined && owns?.(name, value) === true;
   });
   return facts.unrecorded.length +

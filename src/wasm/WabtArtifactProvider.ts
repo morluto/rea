@@ -40,6 +40,8 @@ import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.j
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   wasmArtifactSchema,
+  WABT_SOURCE_COMMIT,
+  WABT_VERSION,
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   wasmResourceLimits,
   type InspectWasmArtifactInput,
@@ -58,8 +60,6 @@ import {
 import { WabtRuntime } from "./WabtRuntime.js";
 import {
   WABT_PROVIDER_IDENTITY,
-  WABT_SOURCE_COMMIT,
-  WABT_VERSION,
   admitWabtVersion,
   wabtReleaseLine,
 } from "./WabtRelease.js";

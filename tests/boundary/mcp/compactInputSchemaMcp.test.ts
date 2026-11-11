@@ -835,3 +835,41 @@ it("keeps root detail guidance so callers can choose bounded summaries", async (
   );
   expect(detailGuidance(compactTools)).toEqual(expected);
 });
+
+it("advertises portable bundle name spelling and length through the SDK", async () => {
+  const contract = toolContract("export_environment_bundle");
+  const server = fullServer();
+  server.registerTool(
+    contract.name,
+    toolRegistrationOptions(contract),
+    async () => ({ content: [] }),
+  );
+  const tool = (await listToolsThroughTransport(server)).find(
+    ({ name }) => name === contract.name,
+  );
+  expect(tool).toBeDefined();
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const validate = ajv.compile(tool!.inputSchema);
+  const base = {
+    source: { kind: "evidence-file", path: "/capture.json" },
+    output_directory: "/bundle",
+  };
+  for (const [name, accepted] of [
+    [undefined, true],
+    ["replay-2", true],
+    ["123-replay", true],
+    ["a".repeat(63), true],
+    ["a".repeat(64), false],
+    ["../escape", false],
+    ["Uppercase", false],
+    ["two--hyphens", false],
+  ] as const) {
+    const input = { ...base, ...(name === undefined ? {} : { name }) };
+    expect(validate(input), JSON.stringify(input)).toBe(accepted);
+    expect(contract.inputSchema.safeParse(input).success).toBe(accepted);
+  }
+  for (const name of ["con", "123", "0xffffffff"])
+    expect(contract.inputSchema.safeParse({ ...base, name }).success).toBe(
+      false,
+    );
+});
