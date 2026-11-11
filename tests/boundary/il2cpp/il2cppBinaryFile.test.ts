@@ -1956,3 +1956,29 @@ it.each([183, 62])(
     expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
   },
 );
+
+it.each([0x700, 0x704])(
+  "does not claim a unique module when a bind at %s may change a competing name pointer",
+  (slot) => {
+    const bytes = createIl2cppDyldBindFixture(0n, slot);
+    const duplicate = createIl2cppBinaryFixture({ duplicateModule: true });
+    duplicate.copy(bytes, 0x700, 0x700, 0x718);
+    if (slot === 0x700) bytes.writeBigUInt64LE(0n, slot);
+    else bytes.writeUInt32LE(0, slot);
+    expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("does not claim a unique type table when a bound word may complete a competing table", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.copy(bytes, 0x700, 0x900, 0x920);
+  bytes.writeBigUInt64LE(0n, 0x700);
+  bytes.fill(0, 0x800, 0x880);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(() => linkWholeTable(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});

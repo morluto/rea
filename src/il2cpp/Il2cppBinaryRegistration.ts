@@ -23,6 +23,24 @@ import type { Il2cppCodeGenModule } from "./Il2cppBinaryFile.js";
 const TOTAL_NAME_OCCURRENCES = 65536;
 const SCAN_BYTES = 65536;
 
+/** An unresolved legacy write cannot disprove candidates matching untouched bytes. */
+const mayMatchUnresolvedPointer = (
+  image: NativeImage,
+  address: bigint,
+  raw: bigint,
+  candidates: Iterable<bigint>,
+): boolean => {
+  const fixups = image.machoPointerFixups;
+  if (fixups?.hasUnresolvedLegacyBytes(address, 8) !== true) return false;
+  let knownMask = 0n;
+  for (let byte = 0; byte < 8; byte++)
+    if (!fixups.hasUnresolvedLegacyBytes(address + BigInt(byte), 1))
+      knownMask |= 0xffn << BigInt(byte * 8);
+  for (const candidate of candidates)
+    if (((candidate ^ raw) & knownMask) === 0n) return true;
+  return false;
+};
+
 interface NameTrie {
   readonly next: Map<number, NameTrie>;
   readonly owners: number[];
@@ -142,13 +160,30 @@ export function* findModules(
       if ((at & 0xffff) < 8) yield;
       const offset = mapping.offset + at;
       const address = mapping.address + BigInt(at);
+      const raw = image.bytes.readBigUInt64LE(offset);
+      if (mayMatchUnresolvedPointer(image, address, raw, names.keys())) {
+        const count = readUInt32(image, address + 8n);
+        const plausibleCounts = counts.filter(
+          (expected) => count === "unknown" || count === expected,
+        );
+        if (plausibleCounts.length > 0) {
+          const pointers = readSlot(image, address + 16n);
+          if (
+            pointers === "unknown" ||
+            (typeof pointers === "bigint" &&
+              plausibleCounts.some((expected) =>
+                hasPointerArrayCoverage(image, pointers, expected),
+              ))
+          )
+            throw new Il2cppBinaryFormatFailure(
+              "code-gen-modules-not-found",
+              "A loader-owned module name pointer could match an additional module record",
+            );
+        }
+      }
       // Non-ELF images retain their stored bytes. Nominate before decoding so
       // unrelated partial fixups do not invalidate the module search.
-      if (
-        image.elfPointerOverlay === undefined &&
-        !names.has(image.bytes.readBigUInt64LE(offset))
-      )
-        continue;
+      if (image.elfPointerOverlay === undefined && !names.has(raw)) continue;
       const target = readPointer(image, address);
       if (target === null) continue;
       const indices = names.get(target);
@@ -292,6 +327,7 @@ function* findModuleArrayByCode(
   expected: ReadonlySet<bigint>,
 ): Generator<void, bigint | null> {
   const arrays = new Set<bigint>();
+  let unresolvedCandidate = false;
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     let runStart = start;
@@ -299,6 +335,15 @@ function* findModuleArrayByCode(
     for (let at = start; at + 8 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
+      if (
+        mayMatchUnresolvedPointer(
+          image,
+          mapping.address + BigInt(at),
+          raw,
+          expected,
+        )
+      )
+        unresolvedCandidate = true;
       const value =
         image.elfPointerOverlay !== undefined || expected.has(raw)
           ? readPointer(image, mapping.address + BigInt(at))
@@ -323,7 +368,7 @@ function* findModuleArrayByCode(
       }
     }
   }
-  if (arrays.size === 0) return null;
+  if (unresolvedCandidate || arrays.size === 0) return null;
   const referenced =
     image.container.architecture === "arm64"
       ? yield* arm64PageReferences(image, arrays)
@@ -618,31 +663,51 @@ function* findTypeTableByCode(
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     let runStart = -1;
     let startUnknown = false;
+    let possibleLength = 0;
+    let possibleUnknown = false;
     for (let at = start; at <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const address = mapping.address + BigInt(at);
       let endUnknown = at + 8 > mapping.size;
       if (!endUnknown) {
         const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
+        let state: "type" | "other" | "unknown";
         if (image.elfPointerOverlay === undefined && !rawTypeCandidate(raw)) {
-          if (runStart >= 0) endUnknown = unresolved(address);
+          const fixups = image.machoPointerFixups;
+          const possibleRecord =
+            raw !== 0n && (raw & 7n) === 0n && recordOffset(raw) >= 0;
+          state =
+            fixups?.hasUnresolvedLegacyBytes(address, 8) === true ||
+            (possibleRecord &&
+              (fixups?.hasUnresolvedLegacyBytes(raw + 8n, 4) === true ||
+                fixups?.hasUnresolvedLegacyBytes(raw, 8) === true))
+              ? "unknown"
+              : "other";
         } else {
           const slot = readSlot(image, address);
-          const state =
+          state =
             typeof slot === "bigint"
               ? recordState(slot)
               : slot === "unknown"
                 ? "unknown"
                 : "other";
-          if (state === "type") {
-            if (runStart < 0) {
-              runStart = at;
-              startUnknown = at === start || unresolved(address - 8n);
-            }
-            continue;
-          }
-          endUnknown = state === "unknown";
         }
+        if (state === "other") {
+          possibleLength = 0;
+          possibleUnknown = false;
+        } else {
+          possibleLength += 1;
+          possibleUnknown ||= state === "unknown";
+          if (possibleUnknown && possibleLength >= requiredTypes) return null;
+        }
+        if (state === "type") {
+          if (runStart < 0) {
+            runStart = at;
+            startUnknown = at === start || unresolved(address - 8n);
+          }
+          continue;
+        }
+        endUnknown = state === "unknown";
       }
       if (runStart >= 0 && (at - runStart) / 8 >= requiredTypes) {
         runs.set(
