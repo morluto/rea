@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.9.0",
   "base": "160d821ac9a0310afcb8d1fc427862dd6508add5",
-  "target": "d6c6b1553d50693ad0ad81cf387d8558450993ed",
+  "target": "166cba488a743f167060bcf679add036166b9399",
   "commits": [
     {
       "sha": "bc143125edd223b7e0d315d5ea7efdc270c29f9e",
@@ -36219,6 +36219,122 @@
         }
       ],
       "pullRequests": [10139]
+    },
+    {
+      "sha": "04c622f6e9e02f7413332d6f0093f27534ed43a0",
+      "subject": "fix(browser): preserve physical worker launch failures during cancellation (#10145)",
+      "body": "fix(browser): preserve physical worker launch failures during cancellation (#10145)",
+      "parents": ["d6c6b1553d50693ad0ad81cf387d8558450993ed"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10145]
+    },
+    {
+      "sha": "bbef46e7830c935ff7983f05d981a72b7b26e555",
+      "subject": "fix(hardening): recognize the __chk_fail FORTIFY handler import (#10036)",
+      "body": "fix(hardening): recognize the __chk_fail FORTIFY handler import (#10036)\n\n* fix(hardening): recognize the __chk_fail FORTIFY handler import\n\nglibc exports __chk_fail as the shared failure handler that most FORTIFY\nchecks funnel into, and its dynamic import is a positive sign that the\nbinary uses FORTIFY. The ELF FORTIFY matcher accepted __fortify_fail and\n__*_chk names, so an image whose only relevant import was __chk_fail was\nreported as fortify: unknown with no evidence location.\n\n* style(hardening): wrap the __chk_fail fixture call to the formatter's width\n\nformat:check fails on the current head because the new fixture call fits on one line at the file's previous width but exceeds oxfmt's 80-column limit with the longer fortifyName literal.\n\n---------\n\nCo-authored-by: 2SinceJuly <202121119+2SinceJuly@users.noreply.github.com>\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["04c622f6e9e02f7413332d6f0093f27534ed43a0"],
+      "authors": [
+        {
+          "name": "2SinceJuly",
+          "email": "hongjxiao@gmail.com",
+          "user": {
+            "login": "2SinceJuly",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "2SinceJuly",
+          "email": "202121119+2SinceJuly@users.noreply.github.com",
+          "user": {
+            "login": "2SinceJuly",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10036]
+    },
+    {
+      "sha": "0c9ae2f783d918fbe23f50009ce61e96664c95b2",
+      "subject": "fix(native): normalize the CPU names lipo prints for i386 slices (#10136)",
+      "body": "fix(native): normalize the CPU names lipo prints for i386 slices (#10136)\n\ncctools lipo prints CPU_TYPE_I386 and CPU_SUBTYPE_I386_ALL for i386 slices, so their CPU codes were unknown and every i386 slice carried unnormalized-text limitations.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["bbef46e7830c935ff7983f05d981a72b7b26e555"],
+      "authors": [
+        {
+          "name": "Rudy Mizrahi Celekli",
+          "email": "47457359+rudycelekli@users.noreply.github.com",
+          "user": {
+            "login": "rudycelekli",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10136]
+    },
+    {
+      "sha": "166cba488a743f167060bcf679add036166b9399",
+      "subject": "fix(adb): classify mDNS wireless serials as TCP (#10134)",
+      "body": "fix(adb): classify mDNS wireless serials as TCP (#10134)\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["0c9ae2f783d918fbe23f50009ce61e96664c95b2"],
+      "authors": [
+        {
+          "name": "Rudy Mizrahi Celekli",
+          "email": "47457359+rudycelekli@users.noreply.github.com",
+          "user": {
+            "login": "rudycelekli",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10134]
     }
   ],
   "pullRequests": [
@@ -54914,6 +55030,31 @@
       "issues": []
     },
     {
+      "number": 10036,
+      "title": "fix(hardening): recognize the __chk_fail FORTIFY handler import",
+      "url": "https://github.com/morluto/rea/pull/10036",
+      "author": {
+        "login": "2SinceJuly",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "bbef46e7830c935ff7983f05d981a72b7b26e555"
+      },
+      "issues": [
+        {
+          "number": 10025,
+          "url": "https://github.com/morluto/rea/issues/10025",
+          "author": {
+            "login": "coygeek",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
       "number": 10037,
       "title": "fix(browser): admit provider reports and preserve source evidence",
       "url": "https://github.com/morluto/rea/pull/10037",
@@ -55882,6 +56023,32 @@
       "issues": []
     },
     {
+      "number": 10134,
+      "title": "fix(adb): classify mDNS wireless serials as TCP",
+      "url": "https://github.com/morluto/rea/pull/10134",
+      "author": {
+        "login": "rudycelekli",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "166cba488a743f167060bcf679add036166b9399"
+      },
+      "issues": []
+    },
+    {
+      "number": 10136,
+      "title": "fix(native): normalize the CPU names lipo prints for i386 slices",
+      "url": "https://github.com/morluto/rea/pull/10136",
+      "author": {
+        "login": "rudycelekli",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "0c9ae2f783d918fbe23f50009ce61e96664c95b2"
+      },
+      "issues": []
+    },
+    {
       "number": 10139,
       "title": "fix(captures): keep escaped JSON strings flat in the capture parser",
       "url": "https://github.com/morluto/rea/pull/10139",
@@ -55916,6 +56083,19 @@
       },
       "mergeCommit": {
         "oid": "81b305bd1aeb778ec90e2066ba391a93c966ec0a"
+      },
+      "issues": []
+    },
+    {
+      "number": 10145,
+      "title": "fix(browser): preserve physical worker launch failures during cancellation",
+      "url": "https://github.com/morluto/rea/pull/10145",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "04c622f6e9e02f7413332d6f0093f27534ed43a0"
       },
       "issues": []
     }

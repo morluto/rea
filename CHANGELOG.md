@@ -61,6 +61,9 @@
 - Scope Hopper recovery to the caller lifetime and preserve Mach-O host-slice, Godot digest, browser-resource and selected-slice distinctions. [#9905](https://github.com/morluto/rea/pull/9905), [#10016](https://github.com/morluto/rea/pull/10016).
 - Retain partial OpenAPI Evidence, reject unrepresentable adb activity arguments, and preserve worker, Frida and owned-command failure/cancellation facts through cleanup. [#9908](https://github.com/morluto/rea/pull/9908), [#9918](https://github.com/morluto/rea/pull/9918), [#10055](https://github.com/morluto/rea/pull/10055), [#9963](https://github.com/morluto/rea/pull/9963), [#9964](https://github.com/morluto/rea/pull/9964).
 - Decode escaped HAR, qlog and Playwright JSON strings without retaining the fragmented strings that inflated decoder heap usage. [#10139](https://github.com/morluto/rea/pull/10139), [issue morluto/rea#10132](https://github.com/morluto/rea/issues/10132). Thanks @fcumaoglu, @mecrimino.
+- Preserve physical web-worker launch failures as the primary error when cancellation overlaps; retain cancellation separately from the exact launcher observation. [#10145](https://github.com/morluto/rea/pull/10145).
+- Classify adb wireless-debugging mDNS serials as TCP while preserving USB precedence and unknown device kind. [#10134](https://github.com/morluto/rea/pull/10134). Thanks @rudycelekli.
+- Normalize lipo’s i386 CPU spelling before Mach-O slice selection and recognize the `__chk_fail` FORTIFY handler import. [#10136](https://github.com/morluto/rea/pull/10136), [#10036](https://github.com/morluto/rea/pull/10036), [issue morluto/rea#10025](https://github.com/morluto/rea/issues/10025). Thanks @2SinceJuly, @coygeek, @rudycelekli.
 
 ### ⚠ BREAKING CHANGES
 
@@ -130,7 +133,7 @@
 - `inspect_ntfs_journal` omits detailed `mftMetadata.record_headers` by default and leaves continuation at the first omitted record. Select `mft_record_limit` from 1 to 32 when those details are needed; inventory counts and explicit coverage remain inline. [1a8a9b749a](https://github.com/morluto/rea/commit/1a8a9b749a86e4b065a6b3ee6b8bad3b2761bac6). Thanks @gensokyo-dev, @N0zoM1z0.
 - Desktop state directories now use `application.state_directories[].exists_at_start: null` plus `existence_error` when inspection fails (for example, access denial). Accept the tri-state field and preserve unknown instead of treating it as absence. [#9899](https://github.com/morluto/rea/pull/9899).
 
-Full contribution record: [1833 commits and 1060 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
+Full contribution record: [1837 commits and 1064 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
 
 ## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-25)
 
