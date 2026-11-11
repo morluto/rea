@@ -30,7 +30,8 @@ unchanged; sector fixups are restored only in a scratch record before attribute
 interpretation.
 
 `mftMetadata` reports aggregate inventory and fixup coverage, and at most 32
-record details. Names retain their individual parent references, namespaces,
+record details when requested with `mft_record_limit` / `--mftRecordLimit`
+(default 0, inventory counts only). Names retain their individual parent references, namespaces,
 FILETIMEs, sizes and flags; several names are not collapsed into a path. Standard
 information timestamps stay separate from filename timestamps. All 64-bit times
 and sizes use decimal strings. Resident attributes retain value spans;
@@ -50,7 +51,7 @@ source offsets, exact signed values, total and omitted counts, and
 
 Follow `nextFileOffset` with MCP `start_file_offset` or CLI `--startFileOffset`.
 Decoding starts exactly there; preceding bytes are not examined. For another
-MFT detail page, pass `mftMetadata.next_record_header_index` as MCP
+MFT detail page, select a limit from 1 to 32 and pass `mftMetadata.next_record_header_index` as MCP
 `mft_record_start` or CLI `--mftRecordStart`. MFT pages and journal pages are
 independent. Use the journal byte length as its starting offset when only MFT
 details are needed. A `null` continuation means that view has no further page.
