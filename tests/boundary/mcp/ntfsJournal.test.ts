@@ -123,6 +123,30 @@ mcpTest(
       nextFileOffset: null,
     });
 
+    const pageCli = await serveCli([
+      "inspect-ntfs-journal",
+      mftPath,
+      journalPath,
+      "--mftRecordStart=32",
+      "--mftRecordLimit=1",
+      "--startFileOffset=224",
+      "--json",
+    ]);
+    expect(pageCli.exitCode, pageCli.stdout).toBe(0);
+    const page = ntfsJournalResultSchema.parse(
+      parseEvidence(JSON.parse(pageCli.stdout)).normalized_result,
+    );
+    expect(page).toMatchObject({
+      rows: [],
+      mftMetadata: {
+        record_count: 33,
+        record_header_start_index: 32,
+        next_record_header_index: null,
+        record_headers: [{ index: 32, sequenceNumber: 2 }],
+      },
+    });
+    expect(page.mft.sha256).toBe(expected.mft.sha256);
+
     const reads = vi.spyOn(stableArtifact, "readStableArtifact");
     const parses = vi.spyOn(mftDecoder, "parseMftIndex");
     onTestFinished(() => {
@@ -147,29 +171,6 @@ mcpTest(
       expected,
     );
 
-    const pageCli = await serveCli([
-      "inspect-ntfs-journal",
-      mftPath,
-      journalPath,
-      "--mftRecordStart=32",
-      "--mftRecordLimit=1",
-      "--startFileOffset=224",
-      "--json",
-    ]);
-    expect(pageCli.exitCode, pageCli.stdout).toBe(0);
-    const page = ntfsJournalResultSchema.parse(
-      parseEvidence(JSON.parse(pageCli.stdout)).normalized_result,
-    );
-    expect(page).toMatchObject({
-      rows: [],
-      mftMetadata: {
-        record_count: 33,
-        record_header_start_index: 32,
-        next_record_header_index: null,
-        record_headers: [{ index: 32, sequenceNumber: 2 }],
-      },
-    });
-    expect(page.mft.sha256).toBe(expected.mft.sha256);
     const pageMcp = await client.callTool({
       name: "inspect_ntfs_journal",
       arguments: {

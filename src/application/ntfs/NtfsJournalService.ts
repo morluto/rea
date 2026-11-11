@@ -41,7 +41,12 @@ import {
   ntfsJournalResultSchema,
 } from "../../domain/windows/ntfsJournalQuery.js";
 import { composeNtfsJournalTimeline } from "../../domain/windows/ntfsJournalTimeline.js";
-import { parseMftIndex, type MftIndex } from "../../domain/windows/ntfsMft.js";
+import {
+  parseMftIndex,
+  selectMftMetadata,
+  type MftIndex,
+  type MftMetadata,
+} from "../../domain/windows/ntfsMft.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -163,6 +168,7 @@ const retainCompletedMft = (
   mft: NtfsAcquisition,
   image: MftIndex,
   failure: AnalysisError,
+  metadata: MftMetadata,
 ) => {
   const prior =
     failure.partialObservation ??
@@ -180,7 +186,7 @@ const retainCompletedMft = (
           path: input.mft_path,
           sha256: mft.snapshot.sha256,
           bytes: mft.snapshot.bytes.length,
-          metadata: image.metadata,
+          metadata,
         },
         journal_observation: prior ?? null,
       },
@@ -267,7 +273,7 @@ const inspectAdmittedJournal = async (
   }
   const parsed =
     retained === undefined
-      ? parseMftIndex(mft.value.snapshot.bytes)
+      ? parseMftIndex(mft.value.snapshot.bytes, 0, 0)
       : ok(retained.image);
   if (!parsed.ok)
     return err(
@@ -279,6 +285,12 @@ const inspectAdmittedJournal = async (
       }),
     );
 
+  const mftMetadata = selectMftMetadata(
+    mft.value.snapshot.bytes,
+    parsed.value,
+    input.mft_record_start,
+    input.mft_record_limit,
+  );
   const journal = await readAcquisition(
     input.journal_path,
     "journal_path",
@@ -288,11 +300,18 @@ const inspectAdmittedJournal = async (
   );
   if (!journal.ok) {
     if (!(journal.error instanceof AnalysisCancelledError)) cache.clear();
-    return retainCompletedMft(input, mft.value, parsed.value, journal.error);
+    return retainCompletedMft(
+      input,
+      mft.value,
+      parsed.value,
+      journal.error,
+      mftMetadata,
+    );
   }
   const prepared =
     retained ?? cache.retain(mft.value, journal.value, parsed.value);
   const result = ntfsJournalResultSchema.parse({
+    mftMetadata,
     mft: {
       path: input.mft_path,
       bytes: mft.value.snapshot.bytes.length,

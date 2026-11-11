@@ -4,8 +4,8 @@ import {
   MFT_DEFAULT_RECORD_BYTES,
   MFT_MAX_FILE_BYTES,
   createMftDecoder,
-  parseMftImage,
   parseMftIndex,
+  selectMftMetadata,
 } from "./ntfsMft.js";
 
 interface RecordOptions {
@@ -85,7 +85,7 @@ const streamOf = (...records: readonly Uint8Array[]): Uint8Array => {
 
 describe("MFT header facts", () => {
   it("inventories a clean record's header and verified fixups", () => {
-    const parsed = parseMftImage(streamOf(recordOf({ sequenceNumber: 5 })));
+    const parsed = parseMftIndex(streamOf(recordOf({ sequenceNumber: 5 })));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.metadata).toMatchObject({
@@ -121,7 +121,7 @@ describe("MFT header facts", () => {
   });
 
   it("identifies unrecognized flags without losing their source bits", () => {
-    const parsed = parseMftImage(recordOf({ flags: 0x8001 }));
+    const parsed = parseMftIndex(recordOf({ flags: 0x8001 }));
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(parsed.value.metadata.record_headers[0]?.flags).toEqual({
       raw: 0x8001,
@@ -142,7 +142,7 @@ describe("MFT header facts", () => {
     (offset, sequenceNumber) => {
       const record = recordOf({ sequenceNumber });
       new DataView(record.buffer).setUint16(20, offset, true);
-      const parsed = parseMftImage(record);
+      const parsed = parseMftIndex(record);
       if (!parsed.ok) throw new Error(parsed.error.message);
       expect(parsed.value.records[0]?.extentValid).toBe(false);
       expect(parsed.value.limitations.join(" ")).toContain("inconsistent");
@@ -154,7 +154,7 @@ describe("MFT header facts", () => {
     (sequenceNumber) => {
       const bytes = streamOf(recordOf(), recordOf({ sequenceNumber }));
       new DataView(bytes.buffer).setUint32(1024 + 44, 0, true);
-      const parsed = parseMftImage(bytes);
+      const parsed = parseMftIndex(bytes);
       if (!parsed.ok) throw new Error(parsed.error.message);
       expect(parsed.value.records[1]).toMatchObject({
         index: 1,
@@ -174,7 +174,7 @@ describe("MFT header facts", () => {
   );
 
   it("keeps the inline header window separate from the parsed record count", () => {
-    const parsed = parseMftImage(
+    const parsed = parseMftIndex(
       streamOf(...Array.from({ length: 33 }, () => recordOf())),
     );
     if (!parsed.ok) throw new Error(parsed.error.message);
@@ -202,7 +202,7 @@ describe("MFT header facts", () => {
   it("preserves a log sequence number above the safe integer range", () => {
     const record = recordOf();
     new DataView(record.buffer).setBigUint64(8, 9007199254740993n, true);
-    const parsed = parseMftImage(record);
+    const parsed = parseMftIndex(record);
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(parsed.value.records[0]?.logFileSequenceNumber).toBe(
       "9007199254740993",
@@ -214,7 +214,7 @@ describe("MFT header facts", () => {
     const newRecord = recordOf();
     new DataView(newRecord.buffer).setUint32(44, 1, true);
 
-    const parsed = parseMftImage(streamOf(oldRecord, newRecord));
+    const parsed = parseMftIndex(streamOf(oldRecord, newRecord));
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(parsed.value.records).toMatchObject([
       {
@@ -234,7 +234,7 @@ describe("MFT fixup coverage", () => {
   it.each([0, 0xffff])(
     "leaves reserved USA sequence %i unverified",
     (sequenceNumber) => {
-      const parsed = parseMftImage(recordOf({ sequenceNumber }));
+      const parsed = parseMftIndex(recordOf({ sequenceNumber }));
       if (!parsed.ok) throw new Error(parsed.error.message);
       expect(parsed.value.records[0]?.fixups).toMatchObject({
         sequenceNumber,
@@ -269,9 +269,9 @@ describe("MFT resident names", () => {
     view.setUint32(520, 0xffff_ffff, true);
     const original = bytes.slice();
 
-    const parsed = parseMftImage(bytes);
+    const parsed = parseMftIndex(bytes);
     if (!parsed.ok) throw new Error(parsed.error.message);
-    expect(parsed.value.records[0]).toMatchObject({
+    expect(parsed.value.metadata.record_headers[0]).toMatchObject({
       fileNameCoverage: "complete",
       fileNames: [
         {
@@ -303,7 +303,7 @@ describe("MFT resident names", () => {
     }
     view.setUint32(264, 0xffffffff, true);
     view.setUint32(24, 272, true);
-    const parsed = parseMftImage(bytes);
+    const parsed = parseMftIndex(bytes);
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(parsed.value.metadata.record_headers[0]).toMatchObject({
       fileNameCoverage: "complete",
@@ -329,7 +329,7 @@ describe("MFT resident names", () => {
 
 describe("MFT fixup failures", () => {
   it("keeps a record whose sector trailer is not the sequence number, and reports it", () => {
-    const parsed = parseMftImage(
+    const parsed = parseMftIndex(
       streamOf(recordOf(), recordOf({ sequenceNumber: 9, corruptSector: 1 })),
     );
     expect(parsed.ok).toBe(true);
@@ -346,7 +346,7 @@ describe("MFT fixup failures", () => {
   });
 
   it("treats a missing update sequence array as unverified rather than clean", () => {
-    const parsed = parseMftImage(streamOf(recordOf({ usaEntries: 0 })));
+    const parsed = parseMftIndex(streamOf(recordOf({ usaEntries: 0 })));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.records[0]?.fixups).toMatchObject({
@@ -373,7 +373,7 @@ describe("MFT fixup failures", () => {
       view.setUint16(4, offset, true);
       view.setUint16(6, count, true);
 
-      const parsed = parseMftImage(bytes);
+      const parsed = parseMftIndex(bytes);
       if (!parsed.ok) throw new Error(parsed.error.message);
       expect(parsed.value.records[0]?.fixups).toMatchObject({
         malformed: true,
@@ -384,7 +384,7 @@ describe("MFT fixup failures", () => {
   );
 
   it("counts uncovered sectors independently of a mismatched trailer", () => {
-    const parsed = parseMftImage(
+    const parsed = parseMftIndex(
       recordOf({ recordBytes: 4096, usaEntries: 3, corruptSector: 0 }),
     );
     if (!parsed.ok) throw new Error(parsed.error.message);
@@ -399,7 +399,7 @@ describe("MFT fixup failures", () => {
 
   it("reports an array that covers fewer sectors than the record has", () => {
     // A 4 KiB record holds eight sectors; a three-entry array leaves five unverified.
-    const parsed = parseMftImage(
+    const parsed = parseMftIndex(
       streamOf(recordOf({ recordBytes: 4096, usaEntries: 3 })),
     );
     expect(parsed.ok).toBe(true);
@@ -416,7 +416,7 @@ describe("MFT fixup failures", () => {
 
 describe("MFT record slots", () => {
   it("distinguishes extension records from base records", () => {
-    const parsed = parseMftImage(
+    const parsed = parseMftIndex(
       streamOf(
         recordOf(),
         recordOf({
@@ -438,7 +438,7 @@ describe("MFT record slots", () => {
   });
 
   it("names directory records without losing the in-use flag", () => {
-    const parsed = parseMftImage(streamOf(recordOf({ flags: 0x0003 })));
+    const parsed = parseMftIndex(streamOf(recordOf({ flags: 0x0003 })));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.records[0]).toMatchObject({
@@ -457,7 +457,7 @@ describe("MFT record slots", () => {
       recordOf(),
     );
     stream.set(Buffer.from("BAAD", "latin1"), MFT_DEFAULT_RECORD_BYTES);
-    const parsed = parseMftImage(stream);
+    const parsed = parseMftIndex(stream);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.metadata.record_count).toBe(2);
@@ -475,7 +475,7 @@ describe("MFT record slots", () => {
   it("keeps a trailing partial record out of the inventory", () => {
     const stream = new Uint8Array(1024 + 300);
     stream.set(recordOf(), 0);
-    const parsed = parseMftImage(stream);
+    const parsed = parseMftIndex(stream);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.metadata.record_count).toBe(1);
@@ -488,7 +488,7 @@ describe("MFT record slots", () => {
   it("falls back to the default record size when record 0 declares none", () => {
     const record = recordOf();
     new DataView(record.buffer).setUint32(28, 0, true);
-    const parsed = parseMftImage(record);
+    const parsed = parseMftIndex(record);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.recordBytes).toBe(MFT_DEFAULT_RECORD_BYTES);
@@ -498,7 +498,7 @@ describe("MFT record slots", () => {
   });
 
   it("reads a 4 KiB record at its declared size", () => {
-    const parsed = parseMftImage(streamOf(recordOf({ recordBytes: 4096 })));
+    const parsed = parseMftIndex(streamOf(recordOf({ recordBytes: 4096 })));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.recordBytes).toBe(4096);
@@ -506,9 +506,9 @@ describe("MFT record slots", () => {
   });
 });
 
-describe("parseMftImage refusals and limits", () => {
+describe("parseMftIndex refusals and limits", () => {
   it("refuses a file shorter than one record header", () => {
-    const parsed = parseMftImage(new Uint8Array(32));
+    const parsed = parseMftIndex(new Uint8Array(32));
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.error.message).toMatch(
@@ -517,7 +517,7 @@ describe("parseMftImage refusals and limits", () => {
   });
 
   it("refuses bytes that do not start with the FILE signature", () => {
-    const parsed = parseMftImage(Buffer.alloc(2048, 0x41));
+    const parsed = parseMftIndex(Buffer.alloc(2048, 0x41));
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.error.message).toMatch(
@@ -562,7 +562,7 @@ describe("parseMftImage refusals and limits", () => {
   it("returns the same inventory without retaining all the decoded records", () => {
     const bytes = streamOf(...Array.from({ length: 33 }, () => recordOf()));
     const decoder = createMftDecoder(bytes.length);
-    const parsed = parseMftImage(bytes);
+    const parsed = parseMftIndex(bytes);
     if (!decoder.ok || !parsed.ok) throw new Error("invalid fixture");
     expect(decoder.value.write(bytes).ok).toBe(true);
     const inventory = decoder.value.finish();
@@ -570,12 +570,9 @@ describe("parseMftImage refusals and limits", () => {
     expect(inventory.value).not.toHaveProperty("records");
     expect(inventory.value.metadata).toEqual(parsed.value.metadata);
     expect(inventory.value.limitations).toEqual(parsed.value.limitations);
-    const indexed = parseMftIndex(bytes);
-    if (!indexed.ok) throw new Error(indexed.error.message);
-    expect(indexed.value.metadata).toEqual(parsed.value.metadata);
-    expect(indexed.value.records).toHaveLength(33);
-    expect(indexed.value.records[32]).not.toHaveProperty("attributes");
-    expect(indexed.value.records[32]).not.toHaveProperty("fileNames");
+    expect(parsed.value.records).toHaveLength(33);
+    expect(parsed.value.records[32]).not.toHaveProperty("attributes");
+    expect(parsed.value.records[32]).not.toHaveProperty("fileNames");
   });
 
   it("decodes the same stream through the chunked decoder", () => {
@@ -592,4 +589,47 @@ describe("parseMftImage refusals and limits", () => {
     expect(image.value.metadata.record_count).toBe(2);
     expect(image.value.metadata.directory_record_count).toBe(1);
   });
+});
+
+it("selects bounded details by source slot from the existing index, including sparse slots", () => {
+  const bytes = streamOf(
+    ...Array.from({ length: 40 }, (_, slot) =>
+      slot === 33 ? new Uint8Array(1024) : recordOf(),
+    ),
+  );
+  const original = bytes.slice();
+  const indexed = parseMftIndex(bytes, 0, 0);
+  if (!indexed.ok) throw new Error(indexed.error.message);
+  expect(indexed.value.records).toHaveLength(39);
+  expect(selectMftMetadata(bytes, indexed.value, 0, 0)).toMatchObject({
+    record_count: 39,
+    record_headers: [],
+    omitted_record_headers: 39,
+    next_record_header_index: 0,
+  });
+  const page = selectMftMetadata(bytes, indexed.value, 32, 2);
+  expect(
+    page.record_headers.map(({ index, fileOffset }) => [index, fileOffset]),
+  ).toEqual([
+    [32, 32768],
+    [34, 34816],
+  ]);
+  expect(page).toMatchObject({
+    omitted_record_headers: 37,
+    record_header_start_index: 32,
+    next_record_header_index: 35,
+  });
+  expect(
+    selectMftMetadata(bytes, indexed.value, 33, 1).record_headers[0]?.index,
+  ).toBe(34);
+  expect(selectMftMetadata(bytes, indexed.value, 39, 32)).toMatchObject({
+    record_headers: [{ index: 39 }],
+    next_record_header_index: null,
+  });
+  expect(selectMftMetadata(bytes, indexed.value, 40, 1)).toMatchObject({
+    record_headers: [],
+    next_record_header_index: null,
+  });
+  expect(bytes).toEqual(original);
+  expect(indexed.value.metadata.record_headers).toEqual([]);
 });
