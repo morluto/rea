@@ -262,6 +262,11 @@ in the bundle differs from what the export writes for it. A reset
 relaunches the app, and REA waits until the computer is ready again before
 answering, sending progress notifications while it waits.
 
+Re-export bundles whose generated verifier uses an older evaluator before
+witnessing them with current REA. The verifier must match the current export
+exactly; re-exporting uses the existing capture Evidence and task inputs,
+which remain unchanged.
+
 Only a check that fails on what the app's view shows counts as a failure. A
 check that fails because its file or table could not be read, such as an
 SQLite file locked past the reader's wait, or because what it looks for may

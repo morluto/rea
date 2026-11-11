@@ -82,7 +82,6 @@ export const observeOwnedProcessGroups = async (
       host,
       signal,
     );
-    const uncertainGroups = new Set<number>();
     const candidateProcesses = observationRows.filter((process) => {
       if (retainedPids.has(process.pid)) return true;
       const identity = firstIdentities.get(process.pid);
@@ -93,15 +92,8 @@ export const observeOwnedProcessGroups = async (
           groupIds.includes(identity.relation.processGroupId)
         )
           return true;
-        if (
-          groupIds.includes(process.processGroupId) &&
-          identity.relation?.state !== "observed"
-        )
-          uncertainGroups.add(process.processGroupId);
         return groupIds.includes(process.processGroupId);
       }
-      if (groupIds.includes(process.processGroupId))
-        uncertainGroups.add(process.processGroupId);
       return groupIds.includes(process.processGroupId);
     });
     const facts = await readProcessOwnershipFacts(
@@ -119,24 +111,26 @@ export const observeOwnedProcessGroups = async (
       scopeFacts: facts,
     });
     const observations = new Map<number, ProcessGroupObservation>(
-      groupIds.map((groupId) => [
-        groupId,
-        uncertainGroups.has(groupId)
-          ? {
-              state: "unverifiable",
-              reason: "native process-group membership could not be verified",
-            }
-          : { state: "empty" },
-      ]),
+      groupIds.map((groupId) => [groupId, { state: "empty" }]),
     );
     for (const fact of facts) {
-      if (fact.identityAfter.state === "absent") continue;
+      if (processIdentityHasExited(fact.identityAfter)) continue;
+      // An initial unreadable membership remains uncertain only while the
+      // final native fact does not establish that this candidate has exited.
+      if (
+        groupIds.includes(fact.process.processGroupId) &&
+        (fact.identityBefore.state !== "readable" ||
+          fact.identityBefore.relation?.state !== "observed")
+      )
+        observations.set(fact.process.processGroupId, {
+          state: "unverifiable",
+          reason: "native process-group membership could not be verified",
+        });
       const nativeGroupId =
         fact.identityAfter.state === "readable" &&
         fact.identityAfter.relation?.state === "observed"
           ? fact.identityAfter.relation.processGroupId
           : undefined;
-      if (processIdentityHasExited(fact.identityAfter)) continue;
       const candidateGroups = groupIds.filter(
         (groupId) =>
           nativeGroupId === groupId ||

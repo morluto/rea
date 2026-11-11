@@ -180,8 +180,9 @@ const parsePyzParts = (
 
 /**
  * Marshal back-references let one stored row appear many times, so a small
- * table can name far more bytes than it holds. Each genuine entry stores its
- * own name inline, so the expanded names can never exceed the table itself.
+ * table can name far more bytes than it holds. Inline one-byte Unicode names
+ * can double in UTF-8; UTF-8 marshal names do not expand. Allow that decoding
+ * expansion while bounding the total names repeated by back-references.
  */
 const pyzEntries = (
   value: MarshalValue,
@@ -193,16 +194,17 @@ const pyzEntries = (
       pyInstallerFailure("format", "PYZ table of contents is not a list"),
     );
   const entries: PyzEntry[] = [];
+  const nameByteBudget = tableBytes * 2;
   let nameBytes = 0;
   for (const item of value) {
     const entry = onePyzEntry(item, payloadEnd, entries.length);
     if (!entry.ok) return entry;
     nameBytes += Buffer.byteLength(entry.value.name, "utf8");
-    if (nameBytes > tableBytes)
+    if (nameBytes > nameByteBudget)
       return err(
         pyInstallerFailure(
           "limit",
-          `PYZ table entry names expand past the ${String(tableBytes)}-byte table that stores them`,
+          `PYZ table entry names expand past the ${String(nameByteBudget)}-byte decoded-name budget`,
         ),
       );
     entries.push(entry.value);

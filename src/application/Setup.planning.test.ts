@@ -252,6 +252,7 @@ describe("setup workflow", () => {
       {
         client: "cursor",
         config_path: "/cursor.json",
+        command_identity: "unknown",
         command: [process.execPath, "./rea.mjs", "mcp"],
         state: "stale",
         remediation: "Run rea setup to refresh this registration.",
@@ -590,6 +591,7 @@ describe("setup workflow lifecycle and provider planning", () => {
       {
         client: "codex",
         config_path: "/codex.toml",
+        command_identity: "owned",
         command: ["rea", "mcp"],
         state: "aligned",
         remediation: null,
