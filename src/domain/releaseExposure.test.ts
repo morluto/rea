@@ -397,7 +397,7 @@ describe("release exposure unread fuse images", () => {
     expect(statusOf(included, "electron.run_as_node")).toBe("not_observed");
   });
 
-  it("does not treat a packaged native image as an absent fuse", () => {
+  it("does not treat a packaged native image as an absent fuse, even once the host was read", () => {
     const packaged = scan({
       omitted: [
         {
@@ -436,7 +436,7 @@ describe("release exposure unread fuse images", () => {
         ),
         "electron.run_as_node",
       ),
-    ).toBe("not_observed");
+    ).toBe("unknown");
   });
 
   it("does not treat a partial desktop layout list as an absent fuse", () => {

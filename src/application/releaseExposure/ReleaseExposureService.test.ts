@@ -1016,7 +1016,7 @@ describe("ReleaseExposureService packaged native images", () => {
     expect((await runAsNode(service))?.status).toBe("unknown");
   });
 
-  it("keeps safe fuses decided past a packaged image once the hinted executable was read", async () => {
+  it("keeps safe fuses unknown past a packaged image even once the hinted executable was read", async () => {
     const { service, desktop, electronFuses } = owners({
       ...directoryScan(["/work/app/MyApp.exe"]),
       omitted: [{ subject: PACKAGED_NATIVE_IMAGES, count: 1, reason: "x" }],
@@ -1025,7 +1025,35 @@ describe("ReleaseExposureService packaged native images", () => {
     electronFuses.inspect.mockResolvedValue(
       ok(evidence(fuseReport([slice(0)]))),
     );
-    expect((await runAsNode(service))?.status).toBe("not_observed");
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("keeps a selected carrier's safe fuses unknown past its packaged native member", async () => {
+    const carrier = { path: "/work/app", format: "mach-o" as const };
+    const carrierScan = scan({
+      target: {
+        selected_path: "/work/app",
+        kind: "executable",
+        format: "mach-o",
+        sha256: SHA,
+      },
+      native_images: [carrier],
+      fuse_candidates: [{ path: carrier.path, role: "native-image" }],
+    });
+    const decided = owners(carrierScan);
+    decided.electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(decided.service))?.status).toBe("not_observed");
+
+    const { service, electronFuses } = owners({
+      ...carrierScan,
+      omitted: [{ subject: PACKAGED_NATIVE_IMAGES, count: 1, reason: "x" }],
+    });
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
   });
 });
 

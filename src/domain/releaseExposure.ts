@@ -575,6 +575,15 @@ export const nativeImagesMayBeUnread = (scan: ReleaseExposureScan): boolean =>
       item.count > 0,
   );
 
+/**
+ * Whether a native image stored inside a package went unread. No fuse reader
+ * opens it, so reading a host on disk does not settle its fuses.
+ */
+const packagedNativeImagesUnread = (scan: ReleaseExposureScan): boolean =>
+  scan.omitted.some(
+    (item) => item.subject === PACKAGED_NATIVE_IMAGES && item.count > 0,
+  );
+
 const fuseCheck = (
   id: keyof typeof FUSE_SUBJECTS,
   scan: ReleaseExposureScan,
@@ -602,6 +611,7 @@ const fuseCheck = (
   );
   const partialFuseSample =
     owners.electron_layouts_complete === false ||
+    packagedNativeImagesUnread(scan) ||
     (nativeImagesMayBeUnread(scan) &&
       owners.electron_executable_included !== true);
   let status: Status;
