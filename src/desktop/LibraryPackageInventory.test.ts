@@ -10,6 +10,99 @@ import { inspectLibraryPackages } from "./LibraryPackageInventory.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
+it.skipIf(process.platform === "win32")(
+  "retains a compatible candidate's package when its declared header size is invalid",
+  async () => {
+    const root = await createTestTempDirectory("rea-library-header-");
+    const bin = join(root, "bin"),
+      libraries = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(libraries)]);
+    const executable = join(bin, "app"),
+      library = join(libraries, "libchoice.so");
+    const candidate = elfImage({ needed: ["libunknown.so"] });
+    candidate.writeUInt16LE(0, 52);
+    await Promise.all([
+      writeFile(
+        executable,
+        elfImage({ needed: ["libchoice.so"], runpath: libraries }),
+      ),
+      writeFile(library, candidate),
+    ]);
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .map((path) => `native-owner: ${path}`)
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(result).toEqual({
+      library_packages: ["native-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+      library_packages_reason: expect.stringContaining(
+        "invalid ELF header size",
+      ),
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "queries ownership only for the compatible library selected after a foreign RPATH candidate",
+  async () => {
+    const root = await createTestTempDirectory("rea-library-architecture-");
+    const bin = join(root, "bin"),
+      foreign = join(root, "foreign"),
+      native = join(root, "native");
+    await Promise.all([mkdir(bin), mkdir(foreign), mkdir(native)]);
+    const executable = join(bin, "app");
+    const rejected = join(foreign, "libchoice.so"),
+      selected = join(native, "libchoice.so");
+    await Promise.all([
+      writeFile(
+        executable,
+        elfImage({ needed: ["libchoice.so"], runpath: `${foreign}:${native}` }),
+      ),
+      writeFile(rejected, elfImage({ machine: 62, needed: ["libdecoy.so"] })),
+      writeFile(selected, elfImage({})),
+    ]);
+    const queried: string[] = [];
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .map(
+              (path) =>
+                `${path === selected ? "native-owner" : "foreign-owner"}: ${path}`,
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(result).toEqual({
+      library_packages: ["native-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+    expect(queried).toContain(selected);
+    expect(queried).not.toContain(rejected);
+  },
+);
+
 describe.skipIf(
   process.platform !== "linux" || !existsSync("/var/lib/dpkg/status"),
 )("inspectLibraryPackages on a Debian host", () => {
