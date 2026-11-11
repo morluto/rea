@@ -16,7 +16,6 @@ import {
   semanticStableBindingInitializedBeforeRead,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import {
@@ -284,7 +283,7 @@ const readBundledAliasInitializer = (
   );
   if (binding === undefined || visitedBindings.has(binding.bindingId))
     return undefined;
-  if (visitedBindings.size >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+  if (visitedBindings.size >= state.precision.alias_selections) {
     state.valueResourceLimits.add("alias-selections");
     return undefined;
   }

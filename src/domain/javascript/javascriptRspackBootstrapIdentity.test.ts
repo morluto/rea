@@ -2041,6 +2041,11 @@ describe("Electron member-write generator, intrinsic, prototype, and constructor
       }
       const local = new Box(e.ipcRenderer);
       local.send = () => 0;
+      const replaced = Object.fromEntries([
+        ["ipc", e.ipcRenderer],
+        ["ipc", {}],
+      ]);
+      replaced.ipc.send = () => 0;
       e.ipcRenderer.send("FRESH_IDENTITIES_PRESERVED");
     `);
     expect(preserved.electron.ipc).toEqual([
@@ -2056,6 +2061,16 @@ describe("Electron member-write generator, intrinsic, prototype, and constructor
       const entries = Object.entries(e);
       entries[0][1].send = () => 0;
       e.ipcRenderer.send("ENTRIES_VALUE_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const replaced = Object.fromEntries([
+        ["ipc", {}],
+        ["ipc", e.ipcRenderer],
+      ]);
+      replaced.ipc.send = () => 0;
+      e.ipcRenderer.send("FROM_ENTRIES_LAST_WINS");
     `);
 
     expectNoDirectElectron(`

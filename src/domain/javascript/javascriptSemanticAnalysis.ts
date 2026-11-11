@@ -1,4 +1,5 @@
 import {
+  JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
   resolveJavaScriptSemanticPrecision,
   type JavaScriptSemanticPrecisionInput,
 } from "./javascriptSemanticPrecision.js";
@@ -125,10 +126,7 @@ import {
   semanticCoverage,
   RETURNED_REFERENCE_WIDENING_LIMITATION,
 } from "./javascriptSemanticCoverage.js";
-import {
-  SEMANTIC_ALIAS_SELECTION_LIMIT,
-  semanticResourceLimitReason,
-} from "./javascriptSemanticResourceLimits.js";
+import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
   javaScriptRuntimeContext,
   javaScriptProgramStrictness,
@@ -3327,6 +3325,7 @@ const enqueueObjectValuesElementSources = (
     for (const seg of selectArrayFromInputSegments(
       elementSegment,
       staticKeys.length,
+      ctx.state.precision.alias_selections,
     )) {
       if (typeof seg === "number") {
         const key = staticKeys[seg];
@@ -3341,7 +3340,7 @@ const enqueueObjectValuesElementSources = (
       } else if (
         seg !== null &&
         typeof seg === "object" &&
-        staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
+        staticKeys.length <= ctx.state.precision.alias_selections
       ) {
         for (let idx = seg.startIndex ?? 0; idx < staticKeys.length; idx += 1)
           if (!seg.excludedKeys.includes(String(idx)))
@@ -3354,7 +3353,7 @@ const enqueueObjectValuesElementSources = (
             });
       } else if (
         seg === null &&
-        staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
+        staticKeys.length <= ctx.state.precision.alias_selections
       ) {
         for (const key of staticKeys)
           ctx.pending.push({
@@ -3382,7 +3381,11 @@ const enqueueObjectValuesElementSources = (
     resolvedTarget?.captureAt ?? callNode,
   );
   if (denseLen !== undefined) {
-    for (const seg of selectArrayFromInputSegments(elementSegment, denseLen))
+    for (const seg of selectArrayFromInputSegments(
+      elementSegment,
+      denseLen,
+      ctx.state.precision.alias_selections,
+    ))
       ctx.pending.push({
         ...current,
         node: target,
@@ -3483,6 +3486,16 @@ const enqueueFromEntriesSources = (
     semanticKnownArrayIterationAt(unwrapped, ctx.state) &&
     !unwrapped.elements.some((el) => el !== null && t.isSpreadElement(el))
   ) {
+    // Object.fromEntries keeps the last value for a repeated key. A later
+    // static match overwrites earlier values of that key, including values
+    // reached through an unknown key. Unknown keys after the last static
+    // match may still overwrite it.
+    let definiteValue: t.Expression | undefined;
+    const maybeValues: t.Expression[] = [];
+    const keyMatches = (key: string): boolean =>
+      semanticAliasSelectionChoices(firstKey!).some((choice) =>
+        semanticPropertyPathKeyMatches(choice, key),
+      );
     for (const entry of unwrapped.elements) {
       if (entry === null || !t.isExpression(entry)) continue;
       const pair = unwrapJavaScriptExpression(entry).node;
@@ -3498,18 +3511,13 @@ const enqueueFromEntriesSources = (
             ? (ctx.interop.staticString(kNode) ??
               semanticStaticPropertyKey(kNode, true))
             : null;
-        if (
-          kStatic === null ||
-          semanticAliasSelectionChoices(firstKey!).some((choice) =>
-            semanticPropertyPathKeyMatches(choice, kStatic),
-          )
-        )
-          ctx.pending.push({
-            ...current,
-            node: vNode,
-            suffix: remaining,
-            readAt: current.readAt ?? callNode,
-          });
+        if (kStatic !== null && keyMatches(kStatic)) {
+          definiteValue = vNode;
+          maybeValues.length = 0;
+          continue;
+        }
+        if (kStatic !== null) continue;
+        maybeValues.push(vNode);
       } else {
         ctx.pending.push({
           ...current,
@@ -3519,6 +3527,16 @@ const enqueueFromEntriesSources = (
         });
       }
     }
+    for (const node of [
+      ...(definiteValue === undefined ? [] : [definiteValue]),
+      ...maybeValues,
+    ])
+      ctx.pending.push({
+        ...current,
+        node,
+        suffix: remaining,
+        readAt: current.readAt ?? callNode,
+      });
     return;
   }
   const nextSuffix: JavaScriptSemanticPropertyPath = [null, 1, ...remaining];
@@ -5077,7 +5095,11 @@ const enqueueNonIdentifierMemberWriteSources = (
             ? denseArrayLen
             : arrayLike?.knownLength;
           const inputSegments = positional
-            ? selectArrayFromInputSegments(current.suffix[0]!, knownLength)
+            ? selectArrayFromInputSegments(
+                current.suffix[0]!,
+                knownLength,
+                state.precision.alias_selections,
+              )
             : [null];
           const slotContext: InvocationSlotContext = {
             callSite: node,
@@ -5782,13 +5804,11 @@ const nonIterableArrayLikeFacts = (
 const selectArrayFromInputSegments = (
   segment: JavaScriptSemanticPropertyPath[number],
   knownLength: number | undefined,
+  aliasSelectionLimit: number = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.alias_selections,
 ): readonly JavaScriptSemanticPropertyPath[number][] => {
   if (knownLength !== undefined && knownLength <= 0) return [];
   if (segment === null) {
-    if (
-      knownLength !== undefined &&
-      knownLength <= SEMANTIC_ALIAS_SELECTION_LIMIT
-    ) {
+    if (knownLength !== undefined && knownLength <= aliasSelectionLimit) {
       const indices: number[] = [];
       for (let idx = 0; idx < knownLength; idx += 1) indices.push(idx);
       return indices;
@@ -5798,10 +5818,7 @@ const selectArrayFromInputSegments = (
   if (typeof segment === "object") {
     const startIndex = segment.startIndex ?? 0;
     if (knownLength !== undefined && startIndex >= knownLength) return [];
-    if (
-      knownLength !== undefined &&
-      knownLength <= SEMANTIC_ALIAS_SELECTION_LIMIT
-    ) {
+    if (knownLength !== undefined && knownLength <= aliasSelectionLimit) {
       const indices: number[] = [];
       for (let idx = startIndex; idx < knownLength; idx += 1) {
         if (!segment.excludedKeys.includes(String(idx))) indices.push(idx);
@@ -6451,7 +6468,7 @@ const electronMemberWriteExports = (
       )
     )
       return;
-    if (!widened && selections >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (!widened && selections >= state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       widened = true;
       for (
