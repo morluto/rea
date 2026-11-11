@@ -1,9 +1,10 @@
 /**
  * Numeric `REA_` limits that are not runtime analysis settings.
  *
- * The static check in `scripts/verify/rea-numeric-limits.mjs` fails when a
- * numeric `REA_` limit in `src` is absent from both this list and
- * `ANALYSIS_SETTINGS`. `restart-only` is the durable exception. `per-call`
+ * The static check in `scripts/verify/rea-numeric-limits.mjs` checks recognized
+ * TypeScript reads against this list and `ANALYSIS_SETTINGS`. External readers
+ * and generated controls declare separate behavioral witnesses, which the
+ * Node-only check cannot verify. `restart-only` is the durable exception. `per-call`
  * names a limit still read from the launch environment on each use; the
  * runtime migration deletes that entry instead of leaving it here.
  *
@@ -15,6 +16,14 @@ export interface NumericLimitRegistryEntry {
   readonly policy: "restart-only" | "per-call";
   readonly read: "startup" | "per-call" | "construction";
   readonly reason: string;
+  /** Read outside the TypeScript scan or generated into a bridge; execution needs its behavioral witness. */
+  readonly provenance?: {
+    readonly kind: "external-reader" | "generated-control";
+    readonly source: string;
+    readonly witness: string;
+    readonly generator?: string;
+    readonly generatorWitness?: string;
+  };
 }
 
 export const NUMERIC_LIMIT_REGISTRY = [
@@ -66,6 +75,11 @@ export const NUMERIC_LIMIT_REGISTRY = [
     read: "startup",
     reason:
       "The Linux private-display adapter reads this watch from the process environment when that helper starts. A running adapter does not observe a value stored only in the REA process.",
+    provenance: {
+      kind: "external-reader",
+      source: "scripts/hopper-demo-x11.py",
+      witness: "tests/boundary/providers/hopper/linuxPrivateDisplay.test.ts",
+    },
   },
   {
     name: "REA_JADX_ACTIVE_PROCESSOR_COUNT",
@@ -171,6 +185,13 @@ export const NUMERIC_LIMIT_REGISTRY = [
     read: "startup",
     reason:
       "Fixed 30-second value written into the Hopper bridge helper from HOPPER_SHUTDOWN_TIMEOUT_MS. It is not a caller-selected launch setting.",
+    provenance: {
+      kind: "generated-control",
+      source: "bridge/hopper_bridge.py",
+      generator: "src/hopper/BridgeLauncher.ts",
+      generatorWitness: "src/hopper/bridgeBootstrapLimit.test.ts",
+      witness: "tests/boundary/providers/hopper/hopperBridgeReconnect.test.ts",
+    },
   },
   {
     name: "REA_SWIFTC_COMPILE_TIMEOUT_MS",

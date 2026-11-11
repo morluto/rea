@@ -20,6 +20,8 @@ const options = {
 it("leaves an unset ceiling out of the Hopper bootstrap", () => {
   const source = bridgeBootstrapSource(session, options, true, "/target");
   expect(source).not.toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+  // The reconnect control is a fixed 30-second bridge value, not a launch setting.
+  expect(source).toContain("REA_RECONNECT_TIMEOUT_SECONDS = 30\n");
   expect(source).toContain("exec(compile");
 });
 
