@@ -8,6 +8,8 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   parseRegexMatchingDeadline,
@@ -161,9 +163,27 @@ it.each([
     throw new Error(
       `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
     );
-  expect(config.value.regexMatchingDeadline).toEqual(
-    DEFAULT_REGEX_MATCHING_DEADLINE,
+  expect(
+    config.value.invalidRuntimeSeeds?.["regex.matching_deadline_ms"]?.settings,
+  ).toEqual([
+    expect.objectContaining({ setting: REGEX_MATCHING_DEADLINE_SETTING }),
+  ]);
+  const live = runtimeAnalysisConfig(config.value);
+  expect(() => live.regexMatchingDeadline.deadlineMs).toThrow(
+    ConfigurationError,
   );
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "regex.matching_deadline_ms": 250 },
+      },
+      () => ({
+        deadlineMs: live.regexMatchingDeadline.deadlineMs,
+        source: live.regexMatchingDeadline.source,
+      }),
+    ),
+  ).toEqual({ deadlineMs: 250, source: "runtime" });
   expect(() =>
     resolveRegexMatchingDeadline({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
   ).toThrow(ConfigurationError);

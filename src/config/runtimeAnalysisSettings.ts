@@ -1,6 +1,9 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
-import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
-import type { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  currentAnalysisOperationSnapshot,
+  currentAnalysisSettingOverride,
+} from "../domain/analysisOperationSnapshot.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
 import {
@@ -26,122 +29,153 @@ import {
   type NativeMatchingAllowance,
 } from "./nativeMatchingAllowance.js";
 
-/** Typed views read the enclosing operation snapshot, never the ambient environment. */
+/**
+ * Typed views read the enclosing operation snapshot, never the ambient
+ * environment. A malformed launch seed is rejected here unless that snapshot
+ * supplies an override. Resetting the override reveals the same seed.
+ */
 export const runtimeAnalysisConfig = (
   config: AppConfig,
   read?: AnalysisSettingsReader,
 ): AppConfig => {
-  if (read === undefined) return config;
   const deadline = config.regexMatchingDeadline;
   const heap = config.regexWorkerHeapRequest;
   const scan = config.hopperCallerScanBudget;
   const bridge = config.bridgeMaxRequestBytes;
+  const overrides = () =>
+    (read === undefined
+      ? currentAnalysisOperationSnapshot()?.overrides
+      : read().overrides) ?? {};
+  const admit = (id: keyof NonNullable<AppConfig["invalidRuntimeSeeds"]>) => {
+    const error = config.invalidRuntimeSeeds?.[id];
+    if (error !== undefined) throw error;
+  };
   return {
     ...config,
     get ghidraStartupTimeoutMs() {
       return (
-        read().overrides["ghidra.startup_timeout_ms"] ??
-        config.ghidraStartupTimeoutMs
+        overrides()["ghidra.startup_timeout_ms"] ??
+        (admit("ghidra.startup_timeout_ms"), config.ghidraStartupTimeoutMs)
       );
     },
     get hopperStartupTimeoutMs() {
       return (
-        read().overrides["hopper.startup_timeout_ms"] ??
-        config.hopperStartupTimeoutMs
+        overrides()["hopper.startup_timeout_ms"] ??
+        (admit("hopper.startup_timeout_ms"), config.hopperStartupTimeoutMs)
       );
     },
     get hopperStartupTimeoutSource() {
-      return read().overrides["hopper.startup_timeout_ms"] === undefined
-        ? config.hopperStartupTimeoutSource
-        : "runtime";
+      if (overrides()["hopper.startup_timeout_ms"] !== undefined)
+        return "runtime";
+      admit("hopper.startup_timeout_ms");
+      return config.hopperStartupTimeoutSource;
     },
     get ghidraDecompileTimeoutSeconds() {
-      const value = read().overrides["ghidra.decompile_timeout_seconds"];
-      return value === undefined
-        ? config.ghidraDecompileTimeoutSeconds
-        : value === null
-          ? undefined
-          : value;
+      const value = overrides()["ghidra.decompile_timeout_seconds"];
+      if (value !== undefined) return value === null ? undefined : value;
+      admit("ghidra.decompile_timeout_seconds");
+      return config.ghidraDecompileTimeoutSeconds;
     },
     get ghidraDecompileMaxPayloadMiB() {
-      const value = read().overrides["ghidra.decompile_max_payload_mib"];
-      return value === undefined
-        ? config.ghidraDecompileMaxPayloadMiB
-        : value === null
-          ? undefined
-          : value;
+      const value = overrides()["ghidra.decompile_max_payload_mib"];
+      if (value !== undefined) return value === null ? undefined : value;
+      admit("ghidra.decompile_max_payload_mib");
+      return config.ghidraDecompileMaxPayloadMiB;
     },
     get ghidraValueFlowMaxOperations() {
       return (
-        read().overrides["ghidra.value_flow_max_operations"] ??
+        overrides()["ghidra.value_flow_max_operations"] ??
+        (admit("ghidra.value_flow_max_operations"),
         config.ghidraValueFlowMaxOperations ??
-        DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS
+          DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS)
       );
     },
     get ghidraValueFlowMaxInputsPerOperation() {
       return (
-        read().overrides["ghidra.value_flow_max_inputs_per_operation"] ??
+        overrides()["ghidra.value_flow_max_inputs_per_operation"] ??
+        (admit("ghidra.value_flow_max_inputs_per_operation"),
         config.ghidraValueFlowMaxInputsPerOperation ??
-        DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION
+          DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION)
       );
     },
     get ghidraValueFlowMaxEdges() {
       return (
-        read().overrides["ghidra.value_flow_max_edges"] ??
-        config.ghidraValueFlowMaxEdges ??
-        DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES
+        overrides()["ghidra.value_flow_max_edges"] ??
+        (admit("ghidra.value_flow_max_edges"),
+        config.ghidraValueFlowMaxEdges ?? DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES)
       );
     },
     regexMatchingDeadline: {
       get deadlineMs() {
         return (
-          read().overrides["regex.matching_deadline_ms"] ?? deadline.deadlineMs
+          overrides()["regex.matching_deadline_ms"] ??
+          (admit("regex.matching_deadline_ms"), deadline.deadlineMs)
         );
       },
       get source() {
-        return read().overrides["regex.matching_deadline_ms"] === undefined
-          ? deadline.source
-          : "runtime";
+        if (overrides()["regex.matching_deadline_ms"] !== undefined)
+          return "runtime";
+        admit("regex.matching_deadline_ms");
+        return deadline.source;
       },
     },
     regexWorkerHeapRequest: {
       get heapMiB() {
         return (
-          read().overrides["regex.worker_heap_request_mib"] ?? heap.heapMiB
+          overrides()["regex.worker_heap_request_mib"] ??
+          (admit("regex.worker_heap_request_mib"), heap.heapMiB)
         );
       },
       get source() {
-        return read().overrides["regex.worker_heap_request_mib"] === undefined
-          ? heap.source
-          : "runtime";
+        if (overrides()["regex.worker_heap_request_mib"] !== undefined)
+          return "runtime";
+        admit("regex.worker_heap_request_mib");
+        return heap.source;
       },
     },
     hopperCallerScanBudget: {
       ...scan,
       get milliseconds() {
         return (
-          read().overrides["hopper.caller_scan_budget_ms"] ?? scan.milliseconds
+          overrides()["hopper.caller_scan_budget_ms"] ??
+          (admit("hopper.caller_scan_budget_ms"), scan.milliseconds)
         );
       },
       get source() {
-        return read().overrides["hopper.caller_scan_budget_ms"] === undefined
-          ? scan.source
-          : "runtime";
+        if (overrides()["hopper.caller_scan_budget_ms"] !== undefined)
+          return "runtime";
+        admit("hopper.caller_scan_budget_ms");
+        return scan.source;
       },
     },
     bridgeMaxRequestBytes: {
       get maximumBytes() {
         return (
-          read().overrides["bridge.max_request_bytes"] ?? bridge.maximumBytes
+          overrides()["bridge.max_request_bytes"] ??
+          (admit("bridge.max_request_bytes"), bridge.maximumBytes)
         );
       },
       get source() {
-        return read().overrides["bridge.max_request_bytes"] === undefined
-          ? bridge.source
-          : "runtime";
+        if (overrides()["bridge.max_request_bytes"] !== undefined)
+          return "runtime";
+        admit("bridge.max_request_bytes");
+        return bridge.source;
       },
     },
   };
+};
+
+/** Capability text may describe the built-in default. The operation still admits the seed. */
+export const capabilityLimit = <Value>(
+  read: () => Value,
+  fallback: Value,
+): Value => {
+  try {
+    return read();
+  } catch (cause) {
+    if (cause instanceof ConfigurationError) return fallback;
+    throw cause;
+  }
 };
 export const runtimeAsarHeaderAdmission = (
   environment: Readonly<Record<string, string | undefined>>,

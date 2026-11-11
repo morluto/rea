@@ -2168,6 +2168,8 @@ export class GdbSessionManager {
       return Promise.reject(new Error(message));
     }
     const token = session.nextToken++;
+    const acceptedDeadline = this.#commandDeadline;
+    const acceptedOutput = this.#commandOutput;
     return new Promise<GdbCommandResult>((resolve, reject) => {
       let abortListener!: () => void;
       const cleanup = (): void => {
@@ -2191,12 +2193,12 @@ export class GdbSessionManager {
         };
         const timeout = new AnalysisTimeoutError(
           operation,
-          this.#commandTimeoutMs,
+          acceptedDeadline.value,
           {
             cause: new Error(`GDB MI command timed out: ${command}`),
             ...configurableDeadlineGuidance(
               "The GDB MI command",
-              this.#commandDeadline,
+              acceptedDeadline,
             ),
           },
         );
@@ -2215,8 +2217,8 @@ export class GdbSessionManager {
           subjectUnavailableReason:
             "The active GDB inferior identity is not established by the debugger session identifier.",
           limitations: [
-            `The GDB command exceeded its ${String(this.#commandDeadline.value)} ms deadline (deadlineExpired). ${debuggerAdmissionRecovery(this.#commandDeadline)} Retained MI and stream records are partial and command completion is unknown.`,
-            ...gdbRetainedOutputLimitations(partial, this.#commandOutput),
+            `The GDB command exceeded its ${String(acceptedDeadline.value)} ms deadline (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Retained MI and stream records are partial and command completion is unknown.`,
+            ...gdbRetainedOutputLimitations(partial, acceptedOutput),
             "Cleanup of the owned GDB process was requested because output correlation could no longer be guaranteed.",
             "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
           ],
@@ -2227,7 +2229,7 @@ export class GdbSessionManager {
             operation === "start_gdb_session"
           ) {
             pending.reject(
-              new AnalysisTimeoutError(operation, this.#commandTimeoutMs, {
+              new AnalysisTimeoutError(operation, acceptedDeadline.value, {
                 cause: timeout,
                 cleanup: { reason: stopped.reason, resources: [session.id] },
                 partialObservation: evidence,
@@ -2251,14 +2253,10 @@ export class GdbSessionManager {
                     partialObservation: evidence,
                   },
                 )
-              : new GdbCommandTimeoutError(
-                  partial,
-                  evidence,
-                  this.#commandDeadline,
-                ),
+              : new GdbCommandTimeoutError(partial, evidence, acceptedDeadline),
           );
         });
-      }, this.#commandTimeoutMs);
+      }, acceptedDeadline.value);
       // Cleanup bounds its own wait, so a late reply must not hold the host open.
       if (session.cleanupStarted) timer.unref();
       pending = {

@@ -112,9 +112,14 @@ export const parseConfig = (
   const parsed = parseEnvironment(nativeAnalysisEnvironment(environment));
   if (!parsed.ok) return parsed;
   const env = parsed.value;
+  const invalidRuntimeSeeds: Partial<
+    Record<AnalysisSettingId, ConfigurationError>
+  > = {};
   const admitted = (id: AnalysisSettingId): number | null | undefined => {
     const result = launchAnalysisSetting(id, environment);
-    return result.ok ? result.value.value : undefined;
+    if (result.ok) return result.value.value;
+    invalidRuntimeSeeds[id] = result.error;
+    return undefined;
   };
   const ghidraStartup = admitted("ghidra.startup_timeout_ms");
   const hopperStartup = admitted("hopper.startup_timeout_ms");
@@ -256,5 +261,6 @@ export const parseConfig = (
             heapMiB: regexHeap,
             source: "setting",
           },
+    invalidRuntimeSeeds,
   });
 };

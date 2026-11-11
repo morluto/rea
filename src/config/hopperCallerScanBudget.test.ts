@@ -11,6 +11,9 @@ import {
   type HopperCallerScanFacts,
 } from "../domain/native/hopperCallerReconciliation.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   HOPPER_CALLER_SCAN_BUDGET_SETTING,
   hopperCallerScanLimit,
@@ -52,6 +55,24 @@ it("records the default caller-scan budget and forwards an explicit setting", ()
       UNRELATED: "dropped",
     }),
   ).toEqual({ [HOPPER_CALLER_SCAN_BUDGET_SETTING]: "250" });
+});
+
+it("rejects a malformed caller-scan seed unless an override is active", () => {
+  const parsed = parseConfig({ [HOPPER_CALLER_SCAN_BUDGET_SETTING]: "0" });
+  if (!parsed.ok) throw new Error("runtime seed rejected startup");
+  const live = runtimeAnalysisConfig(parsed.value);
+  expect(() => live.hopperCallerScanBudget.milliseconds).toThrow(
+    ConfigurationError,
+  );
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "hopper.caller_scan_budget_ms": 250 },
+      },
+      () => live.hopperCallerScanBudget.milliseconds,
+    ),
+  ).toBe(250);
 });
 
 it("explains the time budget and that fixed byte allowances have no override", () => {

@@ -96,6 +96,28 @@ const resourceConstraintRecoveryFrom = (
   };
 };
 
+/**
+ * Re-attribute a resource refusal to another operation. Recovery and the
+ * structured setting limit travel with it; a new error that keeps only the
+ * sentence drops the setting, source, and effective value.
+ */
+export const reattributedResourceConstraint = (
+  operation: string,
+  error: AnalysisResourceConstraintError,
+  options?: AnalysisErrorOptions,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    error.resource,
+    error.reason,
+    error.reportedLimits,
+    {
+      ...options,
+      ...resourceConstraintRecovery(error),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
+    },
+  );
+
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,

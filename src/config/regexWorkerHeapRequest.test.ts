@@ -8,6 +8,8 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexWorkerHeapError } from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   parseRegexWorkerHeapRequest,
@@ -176,9 +178,26 @@ it.each([
     throw new Error(
       `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
     );
-  expect(config.value.regexWorkerHeapRequest).toEqual(
-    DEFAULT_REGEX_WORKER_HEAP_REQUEST,
-  );
+  expect(
+    config.value.invalidRuntimeSeeds?.["regex.worker_heap_request_mib"]
+      ?.settings,
+  ).toEqual([
+    expect.objectContaining({ setting: REGEX_WORKER_HEAP_REQUEST_SETTING }),
+  ]);
+  const live = runtimeAnalysisConfig(config.value);
+  expect(() => live.regexWorkerHeapRequest.heapMiB).toThrow(ConfigurationError);
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "regex.worker_heap_request_mib": 256 },
+      },
+      () => ({
+        heapMiB: live.regexWorkerHeapRequest.heapMiB,
+        source: live.regexWorkerHeapRequest.source,
+      }),
+    ),
+  ).toEqual({ heapMiB: 256, source: "runtime" });
   expect(() =>
     resolveRegexWorkerHeapRequest({
       REA_REGEX_WORKER_HEAP_REQUEST_MIB: value,
