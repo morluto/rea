@@ -119,8 +119,10 @@ export class WindowsPrefetchArtifactReader implements ArtifactReader {
     );
     const parsed = parsePrefetchFile(bytes);
     if (!parsed.ok)
+      // An intact variant this reader does not decode is unavailable, not
+      // malformed; only a genuine decode failure is a format failure.
       throw new ArtifactReaderFailure(
-        parsed.error.kind === "unsupported" ? "format" : parsed.error.kind,
+        parsed.error.kind === "unsupported" ? "unavailable" : parsed.error.kind,
         parsed.error.message,
       );
     const metadata = parsed.value;

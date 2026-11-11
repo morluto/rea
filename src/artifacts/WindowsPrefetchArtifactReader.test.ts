@@ -85,6 +85,7 @@ it("identifies a Windows 8+ generation it does not parse", async () => {
   const reader = await readerFor(prefetchFixture({ version: "26" }));
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
+      reason: "unavailable",
       message: expect.stringContaining("v26") as unknown,
     });
   } finally {
@@ -98,6 +99,7 @@ it("refuses a MAM container without calling it corrupt", async () => {
   );
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
+      reason: "unavailable",
       message: expect.stringContaining("MAM") as unknown,
     });
   } finally {
