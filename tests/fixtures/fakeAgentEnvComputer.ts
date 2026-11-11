@@ -769,10 +769,21 @@ export const fakeAgentEnvRunner = async (
       } catch {
         return [];
       }
-      return (await readFile(path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as unknown);
+      const text = (await readFile(path, "utf8")).trim();
+      // The helper creates the file before the append finishes. A torn last
+      // line is not a record yet; a completed line still has to parse.
+      if (text.length === 0) return [];
+      const lines = text.split("\n");
+      const records: unknown[] = [];
+      for (const [index, line] of lines.entries()) {
+        try {
+          records.push(JSON.parse(line) as unknown);
+        } catch (error) {
+          if (index === lines.length - 1) break;
+          throw error;
+        }
+      }
+      return records;
     },
   };
 };
