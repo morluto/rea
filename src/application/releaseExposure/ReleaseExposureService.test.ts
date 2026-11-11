@@ -2566,6 +2566,12 @@ describe("ReleaseExposureService Go linker file operands", () => {
     ["-extldflags '-Wl,--dynamic-list=exports.list'", "exports.list"],
     ["-s -w -extldflags=-Wl,-Map=private-link.map", "private-link.map"],
     ["-extldflags '-Wl,-Map,private-link.map'", "private-link.map"],
+    ["-extldflags=-Wl,--just-symbols=private.syms", "private.syms"],
+    ["-extldflags '-Wl,--just-symbols,private.syms'", "private.syms"],
+    [
+      "-extldflags '-Xlinker --just-symbols -Xlinker private.syms'",
+      "private.syms",
+    ],
   ])("reads the linker file operand in %s as a path", async (value, path) => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");

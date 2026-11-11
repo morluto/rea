@@ -1110,10 +1110,11 @@ const GO_COMPILER_PATH_FLAG =
  * section or segment address. `-rpath` and `-rpath-link` take a runtime or
  * link-time library search directory. `--version-script`, `--dynamic-list` and
  * `--retain-symbols-file` read a file, as `--script` does, and `-Map` writes
- * the linker map to one.
+ * the linker map to one. `--just-symbols` reads a symbol file; it is the long
+ * spelling of `-R`, but only `-R` turns into `-rpath` for a directory.
  */
 const LINKER_PATH_FLAG =
-  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILRT]|-{1,2}(?:dynamic-linker|dynamic-list|library-path|Map|retain-symbols-file|rpath|rpath-link|script|version-script)(?==|$))=?(.*)$/su;
+  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILRT]|-{1,2}(?:dynamic-linker|dynamic-list|just-symbols|library-path|Map|retain-symbols-file|rpath|rpath-link|script|version-script)(?==|$))=?(.*)$/su;
 type NativeImageFormat = ReleaseExposureNativeImage["format"];
 /**
  * A runtime search path the image's loader expands, which names no directory
