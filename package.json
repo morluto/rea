@@ -110,6 +110,9 @@
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     ".codex-plugin/mcp.json",
+    ".cursor-plugin/plugin.json",
+    ".cursor-plugin/skills",
+    "mcp.json",
     "scripts/plugin-mcp-launcher.mjs",
     "npm-shrinkwrap.json"
   ],
@@ -294,7 +297,7 @@
     "docs:preview": "vitepress preview docs",
     "docs:generate": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts npm run docs:prepare",
     "docs:check": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run docs:check:built && npm run test:local -- tests/conformance/readmeConsistency.test.ts",
-    "docs:check:built": "node scripts/generate-package-metadata.mjs --check && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/generate-completion-ledger.mjs --check && node scripts/check-doc-facts.mjs && node scripts/generate-error-schema.mjs --check && npm run licenses:check",
+    "docs:check:built": "node scripts/generate-package-metadata.mjs --check && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-cursor-plugin-skill.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/generate-completion-ledger.mjs --check && node scripts/check-doc-facts.mjs && node scripts/generate-error-schema.mjs --check && npm run licenses:check",
     "docs:error-schema": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run artifacts:error-schema",
     "prepack": "node scripts/prepack.mjs",
     "prepare": "node scripts/prepare.mjs",

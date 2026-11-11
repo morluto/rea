@@ -1,5 +1,5 @@
-import { FIXUP_SECTOR_BYTES, type MftRecord } from "./ntfsMft.js";
-import type { UsnRecordV2 } from "./ntfsUsnJournal.js";
+import { hasVerifiedMftRecordIdentity, type MftRecord } from "./ntfsMft.js";
+import type { UsnRecord } from "./ntfsUsnJournal.js";
 
 type RecordIdentity = Pick<
   MftRecord,
@@ -16,7 +16,10 @@ type CorrelatableRecord = RecordIdentity &
     | "totalBytes"
     | "extentValid"
   >;
-type JournalReferences = Pick<UsnRecordV2, "fileReference" | "parentReference">;
+type JournalReferences = Pick<
+  UsnRecord,
+  "fileReference" | "parentReference"
+> & { readonly referenceBytes?: 8 | 16 };
 
 export type MftJournalMatch =
   | { readonly kind: "matched"; readonly record: RecordIdentity }
@@ -37,12 +40,9 @@ export const createUsnMftCorrelator = (
     // logical MFT stream. Extension records do not identify separate files.
     if (
       record.baseRecordReference !== null ||
-      record.sequenceNumber === 0 ||
-      !record.extentValid ||
-      record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES !== record.totalBytes
+      !hasVerifiedMftRecordIdentity(record)
     )
       continue;
-    if (record.recordNumberMatchesSlot === false) continue;
 
     const reference =
       (BigInt(record.sequenceNumber) << 48n) | BigInt(record.index);
@@ -65,8 +65,11 @@ export const createUsnMftCorrelator = (
     return { kind: "matched", record };
   };
 
-  return (entry) => ({
-    file: lookup(entry.fileReference),
-    parent: lookup(entry.parentReference),
-  });
+  return (entry) =>
+    entry.referenceBytes === 16
+      ? { file: { kind: "unresolved" }, parent: { kind: "unresolved" } }
+      : {
+          file: lookup(entry.fileReference),
+          parent: lookup(entry.parentReference),
+        };
 };

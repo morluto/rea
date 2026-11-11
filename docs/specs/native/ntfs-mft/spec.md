@@ -1,8 +1,8 @@
 # NTFS $MFT and USN Journal inspection
 
 This specification records an implementation increment and its original problem
-statement. For current behavior and limitations, see the artifact inventory
-guide.
+statement. For current behavior and limitations, see the
+[NTFS workflow guide](../../../guides/native/ntfs-metadata.md).
 
 ## Problem and outcome
 
@@ -36,7 +36,19 @@ its own.
   scanning attributes. The domain decoder retains resident `$FILE_NAME`
   names, namespaces, parent references and source offsets. Report incomplete
   coverage when the walk cannot finish or an attribute list may refer to
-  extensions. The inventory does not yet expose the individual names.
+  extensions. The first 32 record samples expose individual names, parent
+  references, namespaces, FILETIME values, sizes and attribute bits. Keep each
+  name attribute separate, including multiple names for one record.
+
+- Resolve a selected base record's resident attribute lists only within the
+  supplied MFT. Require full sequence/slot identity, verified fixups, base
+  ownership and exact attribute type/name/ID/VCN. Preserve physical and linked
+  facts separately, including each source offset.
+- Share at most 32 additional record decodes per detail page, and deliver at
+  most 32 reference results per base. Preserve discovered-entry omissions,
+  unavailable list values, ambiguity and partial record facts. Visit list source
+  identities once, including cyclic graphs. Nonresident volume payload recovery
+  remains outside the acquired-metadata boundary.
 
 ## Acceptance
 
@@ -57,15 +69,18 @@ file has a 64 MiB working-set admission limit. Follow `nextFileOffset` as
 `start_file_offset` on MCP or `--startFileOffset` on CLI and compare the two
 input digests between pages.
 
-USN V2 results preserve the full record reference, sequence number,
-source offset, FILETIME, name and raw flags. Older and newer record layouts
-are reported as unsupported. Padding, malformed records and truncation
-appear as coverage rows. Record order follows the acquisition, and the
-results do not establish which journal history is absent due to wrap or a
-partial acquisition.
+USN V2, V3 and V4 records are supported. V3/V4 opaque IDs remain unresolved
+against MFT references; V4 delivers bounded extent samples with omission counts.
+Both the journal events and the MFT metadata have independent continuation
+positions. Padding, malformed records and truncation appear as coverage rows.
+Record order follows the acquisition, and history completeness remains unknown.
 
-The CLI and MCP workflow tests use synthesized acquisitions. Verification
-with real `$MFT` and journal files from a Windows host remains pending.
+Automated CLI/MCP workflow tests use synthesized acquisitions. Real Windows 11 MFT
+records were inspected through the packaged Linux CLI; see the
+[verification record](../../../verification/ntfs-metadata-2026-11-11.md).
+Paired V2 streams from a public NTFS volume fixture also passed CLI/MCP
+verification against an independent parser. The fixture's original acquisition
+environment and Windows-host execution remain unverified.
 
 ## Page reuse lifetime
 

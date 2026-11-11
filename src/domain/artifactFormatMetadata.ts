@@ -1,3 +1,10 @@
+import {
+  ntfsFileReferenceSchema,
+  ntfsFileNameSchema,
+  ntfsAttributeSchema,
+  ntfsAttributeIssueSchema,
+  ntfsAttributeListResolutionSchema,
+} from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
 import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
 
@@ -300,10 +307,6 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   last_line: offset,
 });
 
-const ntfsFileReferenceSchema = z.strictObject({
-  recordNumber: offset,
-  sequenceNumber: offset,
-});
 const ntfsRecordHeaderSchema = z.strictObject({
   index: offset,
   fileOffset: offset,
@@ -325,6 +328,12 @@ const ntfsRecordHeaderSchema = z.strictObject({
   logFileSequenceNumber: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
   firstAttributeOffset: offset,
   nextAttributeId: offset,
+  fileNames: z.array(ntfsFileNameSchema).exactOptional(),
+  attributes: z.array(ntfsAttributeSchema).exactOptional(),
+  attributeCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeIssue: ntfsAttributeIssueSchema.nullable().exactOptional(),
+  fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeListResolution: ntfsAttributeListResolutionSchema.exactOptional(),
   fixups: z.strictObject({
     sequenceNumber: offset,
     entries: offset,
@@ -348,8 +357,11 @@ export const ntfsMftMetadataSchema = z.strictObject({
   truncated_tail_bytes: offset,
   record_headers: z.array(ntfsRecordHeaderSchema).max(MFT_INLINE_HEADER_LIMIT),
   omitted_record_headers: offset,
+  record_header_start_index: offset.exactOptional(),
+  next_record_header_index: offset.nullable().exactOptional(),
   file_name_count: offset.exactOptional(),
   file_name_incomplete_record_count: offset.exactOptional(),
+  attribute_incomplete_record_count: offset.exactOptional(),
 });
 
 /**

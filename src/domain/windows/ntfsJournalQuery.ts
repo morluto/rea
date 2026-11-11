@@ -1,3 +1,6 @@
+import { MFT_INLINE_HEADER_LIMIT } from "./ntfsMft.js";
+import { ntfsMftMetadataSchema } from "../artifactFormatMetadata.js";
+import { USN_INLINE_EXTENT_LIMIT } from "./ntfsUsnJournal.js";
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
@@ -30,6 +33,19 @@ export const ntfsJournalInputSchema = z.strictObject({
       "Begin decoding exactly at this source offset, normally the prior nextFileOffset for unchanged input digests. Earlier bytes are not examined.",
     ),
   max_rows: ntfsJournalRowLimitSchema,
+  mft_record_limit: z
+    .int()
+    .min(0)
+    .max(MFT_INLINE_HEADER_LIMIT)
+    .default(0)
+    .describe(
+      "MFT record details to include (0–32). Default 0 returns inventory counts. Detail pages share a 32-additional-record budget for extension metadata, with up to 32 attribute-list reference results per base record and explicit partial coverage.",
+    ),
+  mft_record_start: offset
+    .default(0)
+    .describe(
+      "First MFT stream slot in the requested detail page; use next_record_header_index with unchanged acquisition digests.",
+    ),
 });
 
 const sourceSchema = z.strictObject({
@@ -71,28 +87,50 @@ const signedDecimal = z.string().regex(/^(?:0|-?[1-9][0-9]*)$/u);
 export const ntfsJournalResultSchema = z.strictObject({
   mft: sourceSchema,
   journal: sourceSchema,
+  mftMetadata: ntfsMftMetadataSchema,
   rows: z.array(
     z.discriminatedUnion("kind", [
       z.strictObject({
         kind: z.literal("event"),
         event: z.strictObject({
+          majorVersion: z.union([z.literal(2), z.literal(3), z.literal(4)]),
+          referenceBytes: z.union([z.literal(8), z.literal(16)]),
           fileOffset: offset,
           recordBytes: offset,
           fileReference: unsignedDecimal,
           parentReference: unsignedDecimal,
           usn: signedDecimal,
-          timestampFileTime: unsignedDecimal,
+          timestampFileTime: unsignedDecimal.nullable(),
           reasonFlags: offset,
           sourceFlags: offset,
-          securityId: offset,
-          fileAttributes: offset,
-          name: z.string(),
+          securityId: offset.nullable(),
+          fileAttributes: offset.nullable(),
+          name: z.string().nullable(),
+          remainingExtents: offset.exactOptional(),
+          extentSize: offset.exactOptional(),
+          extentCount: offset.exactOptional(),
+          omittedExtents: offset.exactOptional(),
+          extentSample: z
+            .array(
+              z.strictObject({
+                fileOffset: offset,
+                offset: signedDecimal,
+                length: signedDecimal,
+              }),
+            )
+            .max(USN_INLINE_EXTENT_LIMIT)
+            .exactOptional(),
           mft: z.strictObject({ file: matchSchema, parent: matchSchema }),
         }),
       }),
       z.strictObject({ kind: z.literal("coverage"), issue: issueSchema }),
     ]),
   ),
+  historyCompleteness: z
+    .literal("unknown")
+    .describe(
+      "Acquired bytes alone do not establish absent history, journal wrap, or missing captures.",
+    ),
   nextFileOffset: offset.nullable(),
   mftLimitations: z.array(z.string()),
 });

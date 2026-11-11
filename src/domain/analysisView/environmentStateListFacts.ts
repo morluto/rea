@@ -72,7 +72,7 @@ export const listFacts = (
         counted.some(
           ([, value]) => recordedItemCount(value) !== items.length,
         ) ||
-        Object.keys(parent).some((name) => continues(name, parent[name]))
+        hasContinuation(parent, plan.pointer)
       )
         return;
       const ids = items.map((item) => scalarText(ownMember(item, field)) ?? "");
@@ -150,3 +150,15 @@ const continues = (name: string, value: JsonValue | undefined): boolean =>
   value !== null &&
   value !== false &&
   value !== "";
+
+/** Continuation facts in the envelope or its sibling paging objects, never inside the list payload. */
+const hasContinuation = (parent: JsonObject, listPointer: string): boolean => {
+  const root = pointerTokens(listPointer)[0];
+  return Object.entries(parent).some(
+    ([name, value]) =>
+      continues(name, value) ||
+      (name !== root &&
+        isObject(value) &&
+        Object.entries(value).some(([inner, flag]) => continues(inner, flag))),
+  );
+};
