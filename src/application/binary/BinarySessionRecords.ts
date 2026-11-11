@@ -570,7 +570,14 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown | null, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("record_evidence_with_unknown"));
-    const recorded = this.#records.recordEvidenceWithUnknown(evidence, input);
+    // The mutation record carries the same session attribution as the sibling
+    // recordUnknown/updateUnknown paths; otherwise this atomic workflow is the
+    // one place an exported record has no provider selection.
+    const recorded = this.#records.recordEvidenceWithUnknown(
+      evidence,
+      input,
+      this.activeAnalysisBinding()?.providerSelection,
+    );
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
   }

@@ -239,6 +239,32 @@ it("attributes an imported bundle to the recording session's provider selection"
   }
 });
 
+it("attributes the atomic Evidence-and-Unknown mutation record", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    const recorded = session.recordEvidenceWithUnknown(
+      observation("atomic_unknown"),
+      unknownInput,
+    );
+    if (!recorded.ok) throw recorded.error;
+    const mutation = session
+      .exportEvidenceBundle()
+      .records.filter((record) => record.operation === "record_unknown");
+    // The atomic path synthesizes its mutation record rather than taking one
+    // from the caller, so it is the one write that can miss attribution.
+    expect(mutation).toHaveLength(1);
+    expect(mutation[0]?.provider_selection).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
 it("admits record Evidence before attributing it to the session", async () => {
   const [target] = await createBinarySessionTargets();
   // A session with no authentication allowance must refuse a mutable record

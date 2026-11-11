@@ -159,6 +159,7 @@ export class InvestigationRecords
   recordEvidenceWithUnknown(
     evidence: Evidence,
     input: RecordUnknownInput,
+    providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown | null, AnalysisError> {
     const admitted = admitInvestigationAuthentication(
       input,
@@ -169,10 +170,14 @@ export class InvestigationRecords
     return this.#evidence.recordWithUnknown(
       evidence,
       input,
-      unknownMutationEvidence(undefined, {
-        operation: "record_unknown",
-        input,
-      }),
+      unknownMutationEvidence(
+        undefined,
+        {
+          operation: "record_unknown",
+          input,
+        },
+        providerSelection,
+      ),
     );
   }
 
