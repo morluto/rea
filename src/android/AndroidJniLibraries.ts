@@ -101,7 +101,7 @@ const noteUnbundledSplitLibraries = async (input: {
     );
   } else if (facts.value.is_split_required === "unknown") {
     input.inventory.unknowns.push(
-      "The manifest's split declaration is present but not readable as a literal (a resource reference, or an unreadable <application> element); native libraries may live in splits rather than in this APK.",
+      "The manifest's split declaration is present but not readable as a literal (a resource reference, or an unreadable <manifest>/<application> element); native libraries may live in splits rather than in this APK.",
     );
   } else if (facts.value.is_split_required === true) {
     input.inventory.unknowns.push(

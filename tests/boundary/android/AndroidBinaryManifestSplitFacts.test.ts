@@ -133,9 +133,11 @@ it("treats an undersized start-element header as unreadable rather than empty", 
   }
   expect(starts).toHaveLength(1);
   bytes.writeUInt16LE(12, starts[0]! + 2);
+  // The root is unreadable, so its declarations are unknown rather than absent;
+  // the document is still an admitted binary manifest.
   expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
-    ok: false,
-    error: { kind: "malformed" },
+    ok: true,
+    value: { required_split_types: "unknown", is_split_required: "unknown" },
   });
 });
 
@@ -191,8 +193,8 @@ it("treats an attribute table that starts inside the node extension as malformed
   expect(starts).toHaveLength(1);
   bytes.writeUInt16LE(0, starts[0]! + 24);
   expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
-    ok: false,
-    error: { kind: "malformed" },
+    ok: true,
+    value: { required_split_types: "unknown", is_split_required: "unknown" },
   });
 });
 
@@ -388,9 +390,11 @@ it("treats an undersized start-element header as unreadable rather than empty", 
   }
   expect(starts).toHaveLength(1);
   bytes.writeUInt16LE(12, starts[0]! + 2);
+  // The root is unreadable, so its declarations are unknown rather than absent;
+  // the document is still an admitted binary manifest.
   expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
-    ok: false,
-    error: { kind: "malformed" },
+    ok: true,
+    value: { required_split_types: "unknown", is_split_required: "unknown" },
   });
 });
 
@@ -446,8 +450,8 @@ it("treats an attribute table that starts inside the node extension as malformed
   expect(starts).toHaveLength(1);
   bytes.writeUInt16LE(0, starts[0]! + 24);
   expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
-    ok: false,
-    error: { kind: "malformed" },
+    ok: true,
+    value: { required_split_types: "unknown", is_split_required: "unknown" },
   });
 });
 
@@ -563,5 +567,56 @@ it("rejects a start element whose chunk cannot hold its attribute extension", ()
   expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
     ok: false,
     error: { kind: "malformed" },
+  });
+});
+
+it("rejects a start element whose header size is not the 16-byte node header", () => {
+  // attrExt is read at fixed offsets from the node, so a padded header would
+  // decode the root but read a real isSplitRequired row four bytes late.
+  const bytes = Buffer.from(
+    binaryManifestFixture({
+      attributes: [
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          booleanValue: true,
+        }),
+      ],
+    }),
+  );
+  const starts: number[] = [];
+  for (let at = 8; at + 8 <= bytes.length; at++)
+    if (bytes.readUInt16LE(at) === 0x0102 && bytes.readUInt16LE(at + 2) === 16)
+      starts.push(at);
+  expect(starts).toHaveLength(1);
+  bytes.writeUInt16LE(20, starts[0]! + 2);
+  expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
+    ok: true,
+    value: { is_split_required: "unknown" },
+  });
+});
+
+it("reports an unreadable element name as unknown rather than absent", () => {
+  // A name string index outside the pool leaves the element with no name, so
+  // the split flag it carries cannot be read but must not read as absent.
+  const bytes = Buffer.from(
+    binaryManifestFixture({
+      attributes: [],
+      application: [
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          booleanValue: true,
+        }),
+      ],
+    }),
+  );
+  const startElement = Buffer.from([0x02, 0x01, 0x10, 0x00]);
+  const root = bytes.indexOf(startElement, 8);
+  const application = bytes.indexOf(startElement, root + 1);
+  expect(application).toBeGreaterThan(0);
+  // attrExt.name sits 20 bytes into the node.
+  bytes.writeUInt32LE(0xffff, application + 20);
+  expect(readAndroidBinaryManifestSplitFacts(bytes)).toMatchObject({
+    ok: true,
+    value: { is_split_required: "unknown" },
   });
 });

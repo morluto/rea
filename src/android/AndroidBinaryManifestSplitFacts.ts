@@ -212,10 +212,11 @@ const readStartElement = (
   headerSize: number,
   chunkSize: number,
 ): StartElement | null => {
-  // A start element begins with the common 16-byte ResXMLNode header; a chunk
-  // that advertises less than that places the name and attribute base outside
-  // its own header, so its declarations can only be read as absent.
-  if (headerSize < RES_XML_NODE_HEADER) return null;
+  // A start element begins with the common 16-byte ResXMLNode header, and the
+  // attrExt below is read at fixed offsets from it. A chunk that advertises any
+  // other header size places the name and attribute table elsewhere, so its
+  // declarations can only be read as absent.
+  if (headerSize !== RES_XML_NODE_HEADER) return null;
   // The name and the whole attrExt must sit inside this chunk, or the reads
   // below reconstruct a cut-off root from the member's trailing bytes.
   if (RES_XML_NODE_HEADER + RES_XML_ATTR_EXT > chunkSize) return null;
@@ -311,10 +312,10 @@ export const readAndroidBinaryManifestSplitFacts = (
     }
     let manifest: StartElement | undefined;
     let application: StartElement | undefined;
-    // An unreadable <application> can still carry the split flag, so a
-    // malformed one is remembered and reported as a limitation below instead
-    // of reading as an absent declaration.
-    let unreadableApplication = false;
+    // An unreadable element, or one whose name string is out of range, can
+    // still carry the split declarations, so it is remembered and reported as a
+    // limitation below instead of reading as an absent declaration.
+    let unreadableElement = false;
     // A bundle-built base APK may declare isSplitRequired on <application>
     // instead of the root, so both elements are retained and read below.
     const scanned = walkChunks(reader, declared, (chunk) => {
@@ -327,13 +328,18 @@ export const readAndroidBinaryManifestSplitFacts = (
         chunk.headerSize,
         chunk.chunkSize,
       );
-      if (element === null) unreadableApplication = true;
-      else if (element.name === "manifest") manifest = element;
+      if (element === null || element.name === null) {
+        unreadableElement = true;
+        return true;
+      }
+      if (element.name === "manifest") manifest = element;
       else if (element.name === "application") application = element;
       return true;
     });
     if (!scanned.ok) return scanned;
-    if (manifest === undefined)
+    // A root that is present but unreadable still establishes that this is a
+    // binary manifest; its declarations are unknown, not absent.
+    if (manifest === undefined && !unreadableElement)
       return err({
         kind: "malformed",
         message: "The binary manifest has no <manifest> start element.",
@@ -342,7 +348,7 @@ export const readAndroidBinaryManifestSplitFacts = (
       element.attributes.filter(
         (attribute) => attribute.namespace === ANDROID_NS,
       );
-    const manifestAndroid = androidOf(manifest);
+    const manifestAndroid = manifest === undefined ? [] : androidOf(manifest);
     // The root owns the split-type declarations; isSplitRequired falls back to
     // <application>, which is where a bundle-generated base APK carries it.
     const android =
@@ -356,7 +362,10 @@ export const readAndroidBinaryManifestSplitFacts = (
     // A canonical resource ID identifies the framework attribute whether or not
     // its namespace and name strings survived; only the spelling fallback needs
     // them, so it stays restricted to the Android namespace.
-    const all = [...manifest.attributes, ...(application?.attributes ?? [])];
+    const all = [
+      ...(manifest?.attributes ?? []),
+      ...(application?.attributes ?? []),
+    ];
     const find = (resourceId: number, name: string) =>
       all.find((attribute) => attribute.resourceId === resourceId) ??
       all.find(
@@ -374,7 +383,7 @@ export const readAndroidBinaryManifestSplitFacts = (
     // reference can resolve to true at install time.
     const isSplitRequired: boolean | "unknown" | null =
       requiredFlag === undefined
-        ? unreadableApplication
+        ? unreadableElement
           ? "unknown"
           : null
         : requiredFlag.dataType === TYPE_INT_BOOLEAN
@@ -388,13 +397,17 @@ export const readAndroidBinaryManifestSplitFacts = (
             : "unknown";
     const requiredValue =
       requiredSplitTypes === undefined ? null : toValue(requiredSplitTypes);
+    const requiredTypes =
+      requiredValue === null
+        ? requiredSplitTypes === undefined
+          ? null
+          : "unknown"
+        : splitTypes(requiredValue);
     return ok({
+      // An unreadable element can carry either declaration, and the roots that
+      // remain readable do not establish that they are absent.
       required_split_types:
-        requiredValue === null
-          ? requiredSplitTypes === undefined
-            ? null
-            : "unknown"
-          : splitTypes(requiredValue),
+        requiredTypes === null && unreadableElement ? "unknown" : requiredTypes,
       split_name: splitName === undefined ? null : toValue(splitName),
       is_split_required: isSplitRequired,
     });
