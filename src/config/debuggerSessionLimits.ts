@@ -133,14 +133,11 @@ export const debuggerMaxCommandOutputBytesSchema = positiveDecimalIntegerSchema(
 );
 
 /** Schemas startup validation spreads. The setting names are not restated. */
+/** Restart-only debugger caps. Runtime deadline and output are parsed per call. */
 export const debuggerSessionLimitEnvironmentShape = {
-  [DEBUGGER_COMMAND_DEADLINE_SETTING]:
-    debuggerCommandDeadlineMsSchema.optional(),
   [DEBUGGER_MAX_SESSIONS_SETTING]: debuggerMaxSessionsSchema.optional(),
   [DEBUGGER_MAX_PENDING_COMMANDS_SETTING]:
     debuggerMaxPendingCommandsSchema.optional(),
-  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
-    debuggerMaxCommandOutputBytesSchema.optional(),
 };
 
 export interface DebuggerSessionLimits {
@@ -234,6 +231,32 @@ export const parseDebuggerSessionLimits = (
     maxPendingCommands: maxPendingCommands.value,
     maxCommandOutputBytes: maxCommandOutputBytes.value,
   });
+};
+
+const RUNTIME_DEBUGGER_SETTINGS = new Set<string>([
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+]);
+
+/**
+ * Session and pending caps still fail construction. An invalid runtime deadline
+ * or output cap does not: the next command reads the snapshot or the launch seed.
+ */
+export const debuggerConstructionLimits = (
+  environment: Readonly<Record<string, string | undefined>>,
+): DebuggerSessionLimits => {
+  const parsed = parseDebuggerSessionLimits(environment);
+  if (parsed.ok) return parsed.value;
+  const blockers = parsed.error.settings.filter(
+    (setting) => !RUNTIME_DEBUGGER_SETTINGS.has(setting.setting),
+  );
+  if (blockers.length > 0) throw parsed.error;
+  const startup = { ...environment };
+  delete startup[DEBUGGER_COMMAND_DEADLINE_SETTING];
+  delete startup[DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING];
+  const again = parseDebuggerSessionLimits(startup);
+  if (!again.ok) throw again.error;
+  return again.value;
 };
 
 /** Refuse an invalid launch cap instead of falling back to the default. */

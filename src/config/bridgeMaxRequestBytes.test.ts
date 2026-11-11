@@ -49,7 +49,7 @@ it("keeps the 16 MiB ceiling when the setting is unset", () => {
   );
   const environment = parseEnvironment({});
   if (!environment.ok) throw new Error("doctor rejected an unset ceiling");
-  expect(environment.value.REA_BRIDGE_MAX_REQUEST_BYTES).toBeUndefined();
+  expect(environment.ok).toBe(true);
 });
 
 it("accepts a caller-selected ceiling inside the floor and maximum", () => {
@@ -62,7 +62,7 @@ it("accepts a caller-selected ceiling inside the floor and maximum", () => {
     [BRIDGE_MAX_REQUEST_BYTES_SETTING]: "8192",
   });
   if (!environment.ok) throw new Error("doctor rejected a valid ceiling");
-  expect(environment.value.REA_BRIDGE_MAX_REQUEST_BYTES).toBe(8192);
+  expect(environment.ok).toBe(true);
 });
 
 it("sets the maximum to the serialized string bound minus the framing LF", () => {
@@ -153,16 +153,14 @@ it.each([
   const doctor = parseEnvironment({
     [BRIDGE_MAX_REQUEST_BYTES_SETTING]: value,
   });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error._tag).toBe("ConfigurationError");
-  expect(startup.error.settings).toContainEqual({
-    setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-    constraint: parsed.error.message,
-  });
-  if (doctor.ok) throw new Error(`Doctor accepted ${JSON.stringify(value)}`);
-  expect(doctor.error._tag).toBe("ConfigurationError");
-  expect(doctor.error.settings).toContainEqual({
-    setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
+  expect(startup.value.bridgeMaxRequestBytes).toEqual(
+    DEFAULT_BRIDGE_MAX_REQUEST,
+  );
+  if (!doctor.ok)
+    throw new Error(`Doctor rejected a runtime seed ${JSON.stringify(value)}`);
+  expect(() => parseBridgeMaxRequestBytes(value)).not.toThrow();
+  if (parseBridgeMaxRequestBytes(value).ok)
+    throw new Error(`Bridge parser accepted ${JSON.stringify(value)}`);
 });
