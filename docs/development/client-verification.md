@@ -45,6 +45,24 @@ and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5a
 
 <a id="llamacpp"></a>
 
+## Cline
+
+Verified 2026-11-11 on Linux (Fedora 45) against Cline CLI 3.0.74 and REA `main` at
+`9924bf344`, using `npm run verify:cline-client` with `REA_VERIFY_CLINE_COMMAND=cline`.
+The lane builds an isolated `HOME`, lets `rea setup --client cline` write
+`~/.cline/data/settings/cline_mcp_settings.json`, asserts that Cline's own CLI lists
+the server (`cline --data-dir <lab> config mcp` reports `rea [stdio]`), and then
+spawns the exact `command`/`args` from that file and completes an MCP `initialize`
+plus `tools/list` (254 tools on the tested build). The receipt records the client
+version, configuration path and process lineage.
+
+Not covered by the lane: a model-driven tool call inside Cline. Cline's provider
+configuration (`providers.json`) is versioned and auth-shaped, and the CLI ignores
+`OPENAI_BASE_URL`, so the loopback model fixture cannot drive it without depending
+on that private schema. The IDE extension is not covered either: its MCP settings are
+UI-managed and live under editor-specific `globalStorage` roots, which `rea setup`
+does not write in this release.
+
 ## llama.cpp
 
 The [manual stdio connection](../getting-started/client-configuration.md#llamacpp) was checked on
