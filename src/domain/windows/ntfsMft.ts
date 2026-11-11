@@ -2,6 +2,7 @@ import {
   decodeMftFileReference,
   readMftAttributes,
   type MftAttributeScan,
+  type MftAttributeListResolution,
   type MftFileReference,
 } from "./ntfsMftAttributes.js";
 export type { MftFileReference, MftFileName } from "./ntfsMftAttributes.js";
@@ -80,6 +81,8 @@ export interface MftRecordFixups {
 }
 
 export interface MftRecord extends MftAttributeScan {
+  /** Derived links from a base record's attribute lists into this same acquisition. */
+  readonly attributeListResolution?: MftAttributeListResolution;
   /** Zero-based ordinal of this record in the stream. */
   readonly index: number;
   /** File offset where the record starts. */
@@ -120,7 +123,10 @@ export interface MftInventory {
 }
 
 /** Journal joins need identity headers, without retaining every attribute payload. */
-export type MftRecordHeader = Omit<MftRecord, keyof MftAttributeScan>;
+export type MftRecordHeader = Omit<
+  MftRecord,
+  keyof MftAttributeScan | "attributeListResolution"
+>;
 export interface MftIndex extends MftInventory {
   readonly records: readonly MftRecordHeader[];
 }
@@ -228,6 +234,7 @@ export const parseMftIndex = (
       attributes: _attributes,
       attributeCoverage: _coverage,
       attributeIssue: _issue,
+      attributeListResolution: _resolution,
       ...header
     }) => records.push(header),
     { startRecord, recordLimit },
