@@ -49,5 +49,20 @@ Inventory tests cover the root occurrence's metadata and the coverage status
 when a fixup fails, and classification tests cover several file names for the
 same bytes.
 
-Pending verification with real `$MFT` files written by a Windows host. USN
-journal records and correlation remain future steps.
+The paired acquisition workflow is available through
+`rea inspect-ntfs-journal ./mft ./journal --maxRows 50 --json` and MCP
+`inspect_ntfs_journal` with `mft_path` and `journal_path`. Select an acquired
+logical MFT stream and the journal data stream from the same volume. Each
+file has a 64 MiB working-set admission limit. Follow `nextFileOffset` as
+`start_file_offset` on MCP or `--startFileOffset` on CLI and compare the two
+input digests between pages.
+
+USN V2 results preserve the full record reference, sequence number,
+source offset, FILETIME, name and raw flags. Older and newer record layouts
+are reported as unsupported. Padding, malformed records and truncation
+appear as coverage rows. Record order follows the acquisition, and the
+results do not establish which journal history is absent due to wrap or a
+partial acquisition.
+
+The CLI and MCP workflow tests use synthesized acquisitions. Verification
+with real `$MFT` and journal files from a Windows host remains pending.
