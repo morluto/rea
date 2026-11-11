@@ -186,6 +186,9 @@ const PATH_SCOPES = {
   // Four-host installed-package matrix and the Windows curated lane.
   package: [
     ...WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+    // The launcher's real cmd.exe behavior tests run in windows-curated.
+    "tools/windows/**",
+    "tests/test_windows_quicktools.py",
     // Both host compilers must be exercised when their installation, options,
     // or entrypoints change; Linux's accelerated checker cannot stand in for Go.
     "scripts/run-typescript.*",

@@ -16,11 +16,7 @@ public `rea` command documented in `docs/windows-quicktools.md`.
 - UTF-8 output (`chcp 65001`), bilingual labels, no external dependencies
   beyond `node.exe` and the packaged `scripts/rea.mjs` entry.
 - Discovery order: `node.exe` from PATH, then the entry at
-  `%APPDATA%
-  pm
-  ode_modules
-  ea-agents\scripts
-  ea.mjs`, then the
+  `%APPDATA%\npm\node_modules\rea-agents\scripts\rea.mjs`, then the
   repository checkout two levels above `tools/windows/`. A `.cmd` shim
   fallback is intentionally absent: CALL would re-parse reconstructed
   arguments.
