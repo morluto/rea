@@ -297,6 +297,11 @@ error for a Windows ChangeTime setting carries `update_mode` on
 configuration, so `pending_restart` is omitted. The removed field names
 are listed in the changelog.
 
+An inspected setting whose launch value is invalid and which has no runtime
+override likewise omits `pending_restart`: it has no accepted configured value
+to classify. Setting a valid runtime override reports `pending_restart: false`;
+resetting it restores the invalid launch state and the omission.
+
 `scope` and `applies_at` describe a continuing caller, such as an MCP
 connection. A one-shot invocation, such as a CLI command, has released its
 provider session and exited its runtime before its caller reads the failure,

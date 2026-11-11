@@ -246,6 +246,7 @@ it.each(["0", "2147483648"])(
       });
       expect(invalid.settings[0]).not.toHaveProperty("value");
       expect(invalid.settings[0]).not.toHaveProperty("launch_value");
+      expect(invalid.settings[0]).not.toHaveProperty("pending_restart");
       const repaired = await call("update_analysis_settings", {
         changes: [
           { setting: "jadx.operation_timeout_ms", action: "set", value: 42000 },
@@ -253,7 +254,7 @@ it.each(["0", "2147483648"])(
       });
       expect(repaired.isError).not.toBe(true);
       expect(repaired.structuredContent).toMatchObject({
-        settings: [{ value: 42000, source: "runtime" }],
+        settings: [{ value: 42000, source: "runtime", pending_restart: false }],
         changes: [{ new_value: 42000 }],
       });
       const reset = await call("update_analysis_settings", {
@@ -376,6 +377,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
       },
     });
     expect(inspected.settings[0]).not.toHaveProperty("value");
+    expect(inspected.settings[0]).not.toHaveProperty("pending_restart");
     const refused = await invalid.call("match_native_functions", request);
     expect(refused.isError).toBe(true);
     const text = refused.content.find((item) => item.type === "text");
@@ -403,6 +405,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
         {
           source: "runtime",
           value: 100663296,
+          pending_restart: false,
           configuration_error: inspected.settings[0]!.configuration_error,
         },
       ],

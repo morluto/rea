@@ -49,7 +49,12 @@ const descriptor = z.strictObject({
   maximum: z.number(),
   applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
   update_mode: z.enum(["runtime", "restart"]),
-  pending_restart: z.boolean(),
+  pending_restart: z
+    .boolean()
+    .optional()
+    .describe(
+      "Whether an accepted configuration is waiting for restart. Omitted when the launch value is invalid and there is no accepted runtime override.",
+    ),
   provider: z.string(),
   operations: z.array(z.string()),
   environment: z.string().optional(),
