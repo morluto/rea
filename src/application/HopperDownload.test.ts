@@ -112,3 +112,29 @@ it("does not treat an AbortError body failure as cancellation when the caller di
     downloadHopperPackage("https://fixture.invalid/archive"),
   ).rejects.toMatchObject({ name: "AbortError", code: DOMException.ABORT_ERR });
 });
+
+it("preserves an independent body failure when the caller also aborts", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "stop download" };
+  const failure = new DOMException(
+    "independent response failure",
+    "AbortError",
+  );
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(stream) {
+            controller.abort(reason);
+            stream.error(failure);
+          },
+        }),
+      ),
+  );
+  await expect(
+    downloadHopperPackage("https://fixture.invalid/archive", {
+      signal: controller.signal,
+    }),
+  ).rejects.toBe(failure);
+});

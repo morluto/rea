@@ -240,6 +240,7 @@ const isSubstitutedFetchBodyAbort = (
   signal: AbortSignal,
 ): boolean =>
   signal.aborted &&
+  !signal.reason &&
   cause !== signal.reason &&
   cause instanceof DOMException &&
   cause.name === "AbortError" &&
