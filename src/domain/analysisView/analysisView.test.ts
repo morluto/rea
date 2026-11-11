@@ -67,6 +67,19 @@ const nativeParent = (
   artifact: { path: "/fixtures/example.exe", sha256: "a".repeat(64) },
 });
 
+it("returns input errors for malformed parent Evidence identifiers before projection", () => {
+  for (const evidenceId of [`xx_${"a".repeat(64)}`, "ev_bad"])
+    expect(
+      projectAnalysisView(
+        { ...nativeParent(), evidenceId },
+        { kind: "summary" },
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  expect(projectAnalysisView(nativeParent(), { kind: "summary" }).ok).toBe(
+    true,
+  );
+});
+
 it("projects native procedure and bounded assembly and high-pcode with exact parent identity", () => {
   const parent = nativeParent();
   const procedure = projectAnalysisView(parent, {
