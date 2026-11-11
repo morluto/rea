@@ -1,5 +1,18 @@
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import {
+  ARM64_32_HOST_SUBTYPE_PREFERENCE,
+  ARM64_HOST_SUBTYPE_PREFERENCE,
+  machoCpuSubtypeBase,
+  X86_64_HOST_SUBTYPE_PREFERENCE,
+  X86_HOST_SUBTYPE_PREFERENCE,
+} from "../domain/apple/machoCpuIdentity.js";
 import type { LipoArchitecture } from "./parsers/lipo.js";
+
+/** Apple tool names for the domain-owned host subtype preference. */
+const preferredSubtypes = <Subtype extends number>(
+  order: readonly Subtype[],
+  names: { readonly [Key in Subtype]: string },
+): { readonly subtype: Subtype; readonly name: string }[] =>
+  order.map((subtype) => ({ subtype, name: names[subtype] }));
 
 interface MachoArchitecturePolicy {
   readonly cpuType: number;
@@ -14,24 +27,31 @@ interface MachoArchitecturePolicy {
 export const MACHO_ARCHITECTURE_POLICIES: Readonly<
   Record<string, MachoArchitecturePolicy>
 > = {
-  x86: { cpuType: 7, subtypes: [{ subtype: 3, name: "i386" }] },
+  x86: {
+    cpuType: 7,
+    subtypes: preferredSubtypes(X86_HOST_SUBTYPE_PREFERENCE, { 3: "i386" }),
+  },
   x86_64: {
     cpuType: 0x01000007,
-    subtypes: [{ subtype: 3, name: "x86_64" }],
+    subtypes: preferredSubtypes(X86_64_HOST_SUBTYPE_PREFERENCE, {
+      3: "x86_64",
+    }),
   },
   arm: { cpuType: 12, subtypes: [], variantName: /^arm$/u },
   arm64: {
     cpuType: 0x0100000c,
-    subtypes: [
-      { subtype: 0, name: "arm64" },
-      { subtype: 2, name: "arm64e" },
-      { subtype: 1, name: "arm64v8" },
-    ],
+    subtypes: preferredSubtypes(ARM64_HOST_SUBTYPE_PREFERENCE, {
+      0: "arm64",
+      2: "arm64e",
+      1: "arm64v8",
+    }),
     variantName: /^arm64e\.[A-Za-z0-9_]+$/u,
   },
   arm64_32: {
     cpuType: 0x0200000c,
-    subtypes: [{ subtype: 1, name: "arm64_32" }],
+    subtypes: preferredSubtypes(ARM64_32_HOST_SUBTYPE_PREFERENCE, {
+      1: "arm64_32",
+    }),
   },
 };
 

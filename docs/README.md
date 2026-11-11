@@ -21,6 +21,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
+- [Acquired NTFS metadata and change journals](guides/native/ntfs-metadata.md)
 
 ## JavaScript and Electron
 
