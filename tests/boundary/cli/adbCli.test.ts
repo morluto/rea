@@ -397,7 +397,13 @@ it("retains safe structured constraints for ADB selectors", async () => {
       expected: "regex",
     },
     {
-      argv: ["start-adb-activity", "S", "x", "--component", "a".repeat(513)],
+      argv: [
+        "start-adb-activity",
+        "S",
+        "x",
+        "--component",
+        `${"a".repeat(256)}/${"b".repeat(256)}`,
+      ],
       path: "component",
       maximum: 512,
     },
