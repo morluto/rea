@@ -278,7 +278,8 @@ it actually enforced. Metadata includes `agent_editable: true`,
 `scope: "rea-runtime"`, `update_mode`, and `pending_restart`. `update_mode`
 is `runtime` when `update_analysis_settings` can change the active value,
 `restart` when this process keeps the value it started with, and `parameter`
-when this call supplied the value. An explicit `analysis_timeout_ms`,
+when the budget is adjustable through a per-call argument. Its `source` records
+whether the reported value came from a request or a default. An explicit `analysis_timeout_ms`,
 `max_heap_mb`, or `command_timeout_ms`, plus artifact reader limits and
 web-network capture budgets, use `parameter`. `pending_restart` is false when
 that reported value is the one this process is using. Optional
@@ -313,7 +314,8 @@ the caller chooses that environment value or per-call `parameter` for the new
 invocation; `update_mode: "runtime"` and `pending_restart: false` mean the
 reported value is active in this process. `update_mode: "restart"` means
 `update_analysis_settings` does not change it. `update_mode: "parameter"` means
-this call supplied the value. A producer keeps guidance that holds only while its caller retains the
+the budget is adjustable through a per-call argument; `source` identifies where
+the reported value came from. A producer keeps guidance that holds only while its caller retains the
 session, such as "the Ghidra session remains usable" or a same-session runtime
 update, in `continuingCallerGuidance`; the shared presentation adds it only for
 a continuing caller. The producer's own message and remediation must stay true

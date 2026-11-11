@@ -228,8 +228,19 @@ it.each(["0", "2147483648"])(
         call("inspect_analysis_settings", {
           settings: ["jadx.operation_timeout_ms"],
         });
+      const response = await inspect();
+      const tool = (await client.listTools()).tools.find(
+        (entry) => entry.name === "inspect_analysis_settings",
+      );
+      expect(tool?.outputSchema).toBeDefined();
+      const ajv = new Ajv2020({ strict: false });
+      const validate = ajv.compile(tool!.outputSchema as AnySchema);
+      expect(
+        validate(response.structuredContent),
+        JSON.stringify(validate.errors),
+      ).toBe(true);
       const invalid = analysisSettingsResultSchema.parse(
-        (await inspect()).structuredContent,
+        response.structuredContent,
       );
       expect(invalid).toMatchObject({
         settings: [
