@@ -305,16 +305,25 @@ it.skipIf(rizin === undefined)(
     expect(arm32.stderr).toBe("");
 
     // Every width that this Rizin's arch plugins declare is one REA admits,
-    // so a build with another width fails here rather than losing it.
+    // so a build with another width fails here rather than losing it. La
+    // prints a feature column, the widths and the plugin name: 0.9.1 has five
+    // feature letters and one space (`adAeI 16 32 64   arm`), 0.7.4 four and
+    // two (`adAe  16 32 64   arm`). Laj is not valid JSON in either version.
     const { lines: plugins } = await runRizin({ command: "La" }, THUMB_RETURNS);
     const declared = new Map(
       plugins.flatMap((line) => {
-        const match = /^\S{5} ([\d ]+?)\s{2,}(\S+)/u.exec(line);
+        const match = /^\S{4,5}\s+(\d+(?: \d+)*)\s{2,}(\S+)/u.exec(line);
         return match === null
           ? []
           : [[match[2]!, match[1]!.split(" ").map(Number)] as const];
       }),
     );
+    // A La layout that this parser does not read fails here, not as an empty
+    // list of widths.
+    expect(
+      declared.size,
+      `parsed no arch plugins from La:\n${plugins.join("\n")}`,
+    ).toBeGreaterThan(0);
     expect(declared.get("arm")).toEqual([16, 32, 64]);
     const admitted = new Set<number>(
       rizinInputSchema.shape.asm_bits.unwrap().values,
