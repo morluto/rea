@@ -74,6 +74,9 @@ const streamOf = (...records: readonly Uint8Array[]): Uint8Array => {
   let offset = 0;
   for (const record of records) {
     stream.set(record, offset);
+    const view = new DataView(stream.buffer, offset, record.length);
+    if (view.getUint16(4, true) >= 48)
+      view.setUint32(44, offset / record.length, true);
     offset += record.length;
   }
   return stream;
@@ -135,6 +138,21 @@ describe("MFT header facts", () => {
       expect(parsed.value.limitations.join(" ")).toContain("inconsistent");
     },
   );
+
+  it("reports a declared record number that contradicts its stream position", () => {
+    const bytes = streamOf(recordOf(), recordOf());
+    new DataView(bytes.buffer).setUint32(1024 + 44, 0, true);
+    const parsed = parseMftImage(bytes);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.records[1]).toMatchObject({
+      index: 1,
+      declaredRecordNumber: 0,
+      recordNumberMatchesSlot: false,
+    });
+    expect(parsed.value.limitations.join(" ")).toContain(
+      "disagrees with their stream slot",
+    );
+  });
 
   it("keeps the inline header window separate from the parsed record count", () => {
     const parsed = parseMftImage(

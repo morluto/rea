@@ -15,6 +15,7 @@ import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInv
 const recordBytes = (options: {
   readonly sequenceNumber?: number;
   readonly flags?: number;
+  readonly index?: number;
 }): Buffer => {
   const record = Buffer.alloc(MFT_DEFAULT_RECORD_BYTES);
   record.write("FILE", 0, "latin1");
@@ -26,6 +27,7 @@ const recordBytes = (options: {
   record.writeUInt16LE(0xa5a5, 52);
   record.writeUInt16LE(sequenceNumber, 16);
   record.writeUInt16LE(1, 18);
+  record.writeUInt32LE(options.index ?? 0, 44);
   record.writeUInt16LE(56, 20);
   record.writeUInt16LE(options.flags ?? 0x0001, 22);
   record.writeUInt32LE(64, 24);
@@ -47,7 +49,10 @@ it("reports a $MFT stream's record headers as the root occurrence", async () => 
   const inventory = await scanCanonicalArtifactInventory(
     await writeMft(
       "$MFT",
-      Buffer.concat([recordBytes({}), recordBytes({ flags: 0x0003 })]),
+      Buffer.concat([
+        recordBytes({}),
+        recordBytes({ flags: 0x0003, index: 1 }),
+      ]),
     ),
   );
   expect(inventory.manifest.root_format).toBe("ntfs-mft");

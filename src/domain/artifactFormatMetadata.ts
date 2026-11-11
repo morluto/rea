@@ -321,6 +321,7 @@ const ntfsRecordHeaderSchema = z.strictObject({
   extentValid: z.boolean(),
   baseRecordReference: ntfsFileReferenceSchema.nullable(),
   declaredRecordNumber: offset.nullable(),
+  recordNumberMatchesSlot: z.boolean().nullable(),
   logFileSequenceNumber: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
   firstAttributeOffset: offset,
   nextAttributeId: offset,
