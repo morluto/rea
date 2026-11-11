@@ -195,6 +195,15 @@ export const withSignatureTarget = async (
       return result;
     });
   } catch (cause: unknown) {
+    const primary = signatureReadFailure(target, cause);
+    const outcome = signal?.aborted
+      ? analysisErrorWithCancellation(
+          cause === signal.reason ? undefined : primary,
+          new AnalysisCancelledError("inspect_signature", {
+            cause: signal.reason,
+          }),
+        )
+      : primary;
     const retained =
       cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
         ? cause.cleanup
@@ -207,12 +216,9 @@ export const withSignatureTarget = async (
         "retry",
       );
       bindArtifactFileCleanup(cause, failure);
-      return combineCleanupFailure(
-        err(signatureReadFailure(target, cause)),
-        failure,
-      );
+      return combineCleanupFailure(err(outcome), failure);
     }
-    return err(signatureReadFailure(target, cause));
+    return err(outcome);
   }
 };
 
