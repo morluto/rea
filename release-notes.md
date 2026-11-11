@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **process:** own sampling failures at adapter boundaries ([#10141](https://github.com/morluto/rea/issues/10141))
 * **process:** retain inspection cancellation and cleanup ownership ([#10113](https://github.com/morluto/rea/issues/10113))
 * **desktop:** Internal desktop readers must report cancellation with AnalysisCancelledError or ArtifactReaderFailure instead of throwing an arbitrary caller cancellation reason.
 * **cli:** own MCP client registration boundaries ([#10102](https://github.com/morluto/rea/issues/10102))
@@ -1684,6 +1685,7 @@
 * **plist:** centralize binary layout and offset ownership ([13fba27](https://github.com/morluto/rea/commit/13fba271e6e14bf6235379564eb9d32aee7049d5))
 * **plist:** unify number source association ([ded6542](https://github.com/morluto/rea/commit/ded6542d93a05321b582934c804a91b76a32a0b8))
 * **png:** share IHDR interpretation ([729684a](https://github.com/morluto/rea/commit/729684af9aacd93f4ad35e3378b371e05eb68def))
+* **process:** own sampling failures at adapter boundaries ([#10141](https://github.com/morluto/rea/issues/10141)) ([81b305b](https://github.com/morluto/rea/commit/81b305bd1aeb778ec90e2066ba391a93c966ec0a))
 * **process:** remove unused worker PID state ([f68b261](https://github.com/morluto/rea/commit/f68b261db4e2c5f1b15ef652c676b8bec23fd8a0))
 * **process:** share comparison dimension projections ([ec40c10](https://github.com/morluto/rea/commit/ec40c10749b5c4091fb08bc28c6f3f38c2a6968e))
 * **process:** share stable file identity checks ([081f2e2](https://github.com/morluto/rea/commit/081f2e2559db4802ffdb8783f6bc8d6803eb8c3d))
