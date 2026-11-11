@@ -233,6 +233,17 @@ describe("FAT Mach-O slice selection", () => {
     });
   });
 
+  it("refuses a capability-variant set that repeats a subtype", () => {
+    const bytes = fat([0x0100000c, 0x0100000c, 0x0100000c]);
+    withSubtype(bytes, 0, 0x81000002);
+    withSubtype(bytes, 1, 0x81000002);
+    withSubtype(bytes, 2, 0x80000002);
+    expect(parseExecutableHeader(bytes, "arm64")).toEqual({
+      ok: false,
+      error: "FAT binary declares several arm64 slices; no slice was selected",
+    });
+  });
+
   it("refuses identical host subtypes instead of a foreign family", () => {
     expect(
       parseExecutableHeader(fat([0x0100000c, 0x0100000c, 0x01000007]), "arm64"),

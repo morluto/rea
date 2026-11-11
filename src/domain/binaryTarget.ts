@@ -362,12 +362,17 @@ const selectHostFatSlice = (
   if (first === undefined) return { ambiguous: true };
   if (winners.length === 1) return { slice: first, ambiguous: false };
   const base = machoCpuSubtypeBase(first.cpuSubtype);
-  const capabilityVariants =
-    winners.every((slice) => machoCpuSubtypeBase(slice.cpuSubtype) === base) &&
-    winners.some((slice) => slice.cpuSubtype !== first.cpuSubtype);
-  return capabilityVariants
-    ? { slice: first, ambiguous: false }
-    : { ambiguous: true };
+  if (winners.some((slice) => machoCpuSubtypeBase(slice.cpuSubtype) !== base))
+    return { ambiguous: true };
+  // A repeated full subtype is still ambiguous, even beside a distinct
+  // capability variant of the same base.
+  const subtypes = new Set<number>();
+  for (const slice of winners) {
+    if (subtypes.has(slice.cpuSubtype)) return { ambiguous: true };
+    subtypes.add(slice.cpuSubtype);
+  }
+  if (subtypes.size < 2) return { ambiguous: true };
+  return { slice: first, ambiguous: false };
 };
 
 const fatSliceIdentityError = (
