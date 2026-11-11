@@ -469,9 +469,7 @@ const readCurrentFrames = async (
     context.asarHeaderAdmission,
     context.signal,
   );
-  const main = inventory.frames[0];
-  if (main === undefined || inventory.parents.get(main.frame_id) !== null)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  selectedMainFrame(inventory, state.mainFrameId);
   return { ...inventory, generations };
 };
 
@@ -564,16 +562,6 @@ const assertStableMainFrame = async (
     context.signal,
   );
   seedFrameDocuments(result, generations, documents, state);
-  const afterPath = await mainFilePath(
-    result,
-    context.asarHeaderAdmission,
-    context.signal,
-  );
-
-  if (afterPath === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  if (state.navigationDuringCapture || afterPath !== expectedPath)
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
   const completeness = new CdpCaptureCompleteness();
   const inventory = await captureFrames(
     result,
@@ -582,7 +570,9 @@ const assertStableMainFrame = async (
     context.signal,
   );
   const { frames } = inventory;
+  const main = selectedMainFrame(inventory, state.mainFrameId);
   if (
+    main.file_path !== expectedPath ||
     state.navigationDuringCapture ||
     (state.mainFrameId !== undefined &&
       (generations.get(state.mainFrameId) ?? 0) !==
@@ -791,19 +781,17 @@ const captureDom = async (
   };
 };
 
-const mainFilePath = async (
-  result: unknown,
-  asarHeaderAdmission: AsarHeaderAdmission,
-  signal?: AbortSignal,
-): Promise<string | undefined> => {
-  const frameTree = recordValue(requiredRecord(result).frameTree);
-  const frame = recordValue(frameTree?.frame);
-  return await authorizedElectronFile(
-    cdpStringValue(frame?.url) ?? "",
-    signal,
-    "inspect_electron_page",
-    asarHeaderAdmission,
-  );
+/** Every tree read must retain the selected root independently of its URL. */
+const selectedMainFrame = (
+  inventory: ElectronFrameInventory,
+  selectedId: string | undefined,
+): ElectronPageInspection["frames"][number] => {
+  const main = inventory.frames[0];
+  if (main === undefined || inventory.parents.get(main.frame_id) !== null)
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  if (selectedId !== undefined && main.frame_id !== selectedId)
+    throw new BrowserObservationError("inspect_web_page", "target_changed");
+  return main;
 };
 
 const throwIfElectronInspectionCancelled = (signal?: AbortSignal): void => {

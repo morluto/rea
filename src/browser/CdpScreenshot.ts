@@ -82,6 +82,7 @@ export const captureCdpScreenshot = async (
     beforeFacts.origin === null ||
     mainFrame.frameId === null ||
     mainFrame.identityIssue !== null ||
+    mainFrame.loaderIssue !== null ||
     mainFrame.parentRelation !== "root"
   )
     throw new BrowserObservationError(
@@ -159,7 +160,27 @@ export const captureCdpScreenshot = async (
   if (navigation.invalidIdentity || afterObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const afterUrl = afterFacts.url;
-  if (navigation.changed || afterUrl !== beforeUrl || afterUrl === undefined)
+  const afterFrame = cdpFrameRecordFacts(
+    recordValue(recordValue(recordValue(after)?.frameTree)?.frame),
+  );
+  if (
+    afterFrame.identityIssue !== null ||
+    afterFrame.parentRelation !== "root" ||
+    afterFrame.loaderIssue !== null
+  )
+    throw new BrowserObservationError(
+      "capture_web_screenshot",
+      "protocol_error",
+    );
+  if (
+    navigation.changed ||
+    afterUrl !== beforeUrl ||
+    afterUrl === undefined ||
+    afterFrame.frameId !== mainFrame.frameId ||
+    (mainFrame.loaderId !== undefined &&
+      mainFrame.loaderId !== "" &&
+      afterFrame.loaderId !== mainFrame.loaderId)
+  )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   await context.progress?.report({
     phase: "browser_observation",

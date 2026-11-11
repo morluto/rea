@@ -837,3 +837,43 @@ it.each([
     }
   },
 );
+
+it.each([2, 3])(
+  "refuses a tree-first main frame identity replacement at read %s",
+  async (stage) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-root-identity-"));
+    temporary.push(root);
+    const main = join(root, "main.html");
+    await writeFile(main, "main");
+    const mainUrl = pathToFileURL(main).href;
+    let reads = 0;
+    const connection = {
+      onEvent: () => () => {},
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          reads += 1;
+          return {
+            frameTree: {
+              frame: {
+                id: reads >= stage ? "replacement-main" : "initial-main",
+                url: mainUrl,
+                loaderId: "same-url-document",
+              },
+            },
+          };
+        }
+        if (method === "Page.getResourceTree")
+          return { frameTree: { resources: [] } };
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    await expect(
+      inspectRaceConnection(connection, mainUrl),
+    ).rejects.toMatchObject({
+      reason: "target_changed",
+    });
+  },
+);

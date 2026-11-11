@@ -74,7 +74,7 @@ export const discoverWebMcp = async (
     context.sessionId,
     context.signal,
   );
-  const initialUrl = requiredDiscoveryFrameUrl(frameTree, origins);
+  const initialFrame = requiredDiscoveryFrame(frameTree, origins);
   const frameUrls = new Map<string, FrameScopeFrame>();
   const tools = new Map<string, WebMcpDiscovery["tools"]["items"][number]>();
   const frameScope = {
@@ -109,13 +109,13 @@ export const discoverWebMcp = async (
       resolvedTransientFrames: frameScope.resolvedTransientFrames,
     });
   });
-  await context.progress?.report({
-    phase: "browser_observation",
-    completed: 1,
-    total: 2,
-    message: "Enabling passive WebMCP discovery",
-  });
   try {
+    await context.progress?.report({
+      phase: "browser_observation",
+      completed: 1,
+      total: 2,
+      message: "Enabling passive WebMCP discovery",
+    });
     const enabled = await optionalCdpCommand(
       context,
       "WebMCP.enable",
@@ -132,7 +132,7 @@ export const discoverWebMcp = async (
         "discover_webmcp_tools",
         context.signal,
       );
-    await assertStableAuthorizedFrame(context, initialUrl, origins);
+    await assertStableAuthorizedFrame(context, initialFrame, origins);
     if (frameScope.transientFrames.size > 0)
       completeness.attachLimited("webmcp_tools");
     return buildWebMcpResult({
@@ -367,7 +367,7 @@ const removeFrame = (
 
 const assertStableAuthorizedFrame = async (
   context: DiscoveryContext,
-  initialUrl: string | undefined,
+  initial: ReturnType<typeof requiredDiscoveryFrame>,
   origins: ReadonlySet<string>,
 ): Promise<void> => {
   const finalTree = await context.connection.send(
@@ -376,15 +376,21 @@ const assertStableAuthorizedFrame = async (
     context.sessionId,
     context.signal,
   );
-  const finalUrl = requiredDiscoveryFrameUrl(finalTree, origins);
-  if (finalUrl !== initialUrl)
+  const final = requiredDiscoveryFrame(finalTree, origins);
+  if (
+    final.url !== initial.url ||
+    final.frameId !== initial.frameId ||
+    (initial.loaderId !== undefined &&
+      initial.loaderId !== "" &&
+      final.loaderId !== initial.loaderId)
+  )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
 };
 
-const requiredDiscoveryFrameUrl = (
+const requiredDiscoveryFrame = (
   result: unknown,
   origins: ReadonlySet<string>,
-): string => {
+) => {
   const observed = observeMainFrameUrl(result);
   const facts = classifyCdpFrameUrl(observed, origins);
   if (facts.scope === "outside_policy" || facts.scope === "unsupported")
@@ -393,7 +399,24 @@ const requiredDiscoveryFrameUrl = (
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   if (facts.url === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  return observed.url;
+  const frame = cdpFrameRecordFacts(
+    recordValue(recordValue(recordValue(result)?.frameTree)?.frame),
+  );
+  if (
+    frame.frameId === null ||
+    frame.identityIssue !== null ||
+    frame.parentRelation !== "root" ||
+    frame.loaderIssue !== null
+  )
+    throw new BrowserObservationError(
+      "discover_webmcp_tools",
+      "protocol_error",
+    );
+  return {
+    url: observed.url,
+    frameId: frame.frameId,
+    loaderId: frame.loaderId,
+  };
 };
 
 interface WebMcpIngestOptions {
