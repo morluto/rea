@@ -64,11 +64,17 @@ const packageMapTarget = (root, specifier) => {
     throw new Error(
       `Cannot resolve package import ${JSON.stringify(specifier)}: this boundary check supports exact string mappings only; use a relative source import for conditional, array, pattern, or undeclared mappings.`,
     );
-  const source = target
-    .replace(/^\.\//u, "")
-    .replace(/^dist\//u, "src/")
-    .replace(/\.(?:js|mjs|cjs)$/u, ".ts");
-  if (!target.startsWith("./") || !source.startsWith("src/"))
+  const source = target.startsWith("./")
+    ? repositoryPath(
+        root,
+        fileURLToPath(
+          new URL(target, pathToFileURL(resolve(root, "package.json"))),
+        ),
+      )
+        .replace(/^dist\//u, "src/")
+        .replace(/\.(?:js|mjs|cjs)$/u, ".ts")
+    : undefined;
+  if (source === undefined || !source.startsWith("src/"))
     throw new Error(
       `Cannot resolve package import ${JSON.stringify(specifier)} to a source owner from ${JSON.stringify(target)}; use a relative source import for this boundary check.`,
     );

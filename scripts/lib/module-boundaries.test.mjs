@@ -119,3 +119,58 @@ for (const [name, specifier, imports] of [
     }
   });
 }
+
+for (const target of [
+  "./dist/composition/worker.js",
+  "./dist/%63omposition/worker.js",
+  "./%64ist/composition/worker.js",
+]) {
+  await test(`checks the URL-normalized source owner of ${target}`, async () => {
+    const root = await fixture();
+    try {
+      await writeFile(
+        join(root, "package.json"),
+        JSON.stringify({ imports: { "#worker": target } }),
+      );
+      await mkdir(join(root, "src/application"), { recursive: true });
+      const file = "src/application/probe.ts";
+      await writeFile(join(root, file), 'import "#worker";\n');
+      const resolved = spawnSync(
+        process.execPath,
+        [
+          "--experimental-import-meta-resolve",
+          "--input-type=module",
+          "-e",
+          "console.log(import.meta.resolve(process.argv[1], process.argv[2]))",
+          "#worker",
+          pathToFileURL(join(root, file)).href,
+        ],
+        { encoding: "utf8" },
+      );
+      if (resolved.error !== undefined) throw resolved.error;
+      assert.equal(resolved.status, 0, resolved.stderr);
+      assert.equal(
+        fileURLToPath(resolved.stdout.trim()),
+        join(root, "dist/composition/worker.js"),
+      );
+      const checked = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(
+            new URL("../verify-module-boundaries.mjs", import.meta.url),
+          ),
+          file,
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      if (checked.error !== undefined) throw checked.error;
+      assert.equal(checked.status, 1, checked.stdout);
+      assert.match(
+        checked.stderr,
+        /application-composition: #worker resolves to src\/composition\/worker.ts/u,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
