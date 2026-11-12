@@ -638,6 +638,16 @@ const lipoNameMatches = (reported: string, observed: MachoSlice): boolean => {
       machoCpuSubtypeBase(observed.fat_cpu_subtype ?? observed.cpu_subtype)
     );
   if (reported === machoArchitectureFamily(observed.architecture)) return true;
+  // cctools names a CPU it cannot name by its codes, without the capability byte.
+  const unnamed = /^\(cputype \((\d+)\) cpusubtype \((\d+)\)\)$/u.exec(
+    reported,
+  );
+  if (unnamed !== null)
+    return (
+      Number(unnamed[1]) === (observed.fat_cpu_type ?? observed.cpu_type) &&
+      Number(unnamed[2]) ===
+        machoCpuSubtypeBase(observed.fat_cpu_subtype ?? observed.cpu_subtype)
+    );
   // Retain lipo's capability-variant spelling; physical identity is checked separately.
   return (
     machoArchitectureFamily(observed.architecture) === "arm64e" &&

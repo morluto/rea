@@ -347,9 +347,17 @@ const ownCpuCode = (
   name: string,
 ): number | undefined => (Object.hasOwn(codes, name) ? codes[name] : undefined);
 
+/**
+ * cctools lipo prints a CPU it cannot name as `cputype (N)` and
+ * `cpusubtype cpusubtype (N)`, the subtype without its capability byte.
+ */
+const UNNAMED_CPU_TYPE = /^\((\d+)\)$/u;
+const UNNAMED_CPU_SUBTYPE = /^cpusubtype \((\d+)\)$/u;
+
 const cpuTypeCode = (value: string | undefined): number | null => {
   if (value === undefined) return null;
-  const numeric = unsigned32(value);
+  const numeric =
+    unsigned32(value) ?? unsigned32(UNNAMED_CPU_TYPE.exec(value)?.[1] ?? "");
   return numeric ?? ownCpuCode(CPU_TYPES, value) ?? null;
 };
 
@@ -385,7 +393,10 @@ const cpuSubtypeCode = (
 /** The subtype bits a lipo record names, without its capability byte. */
 const cpuSubtypeBase = (value: string | undefined): number | null => {
   if (value === undefined) return null;
-  const subtype = unsigned32(value) ?? ownCpuCode(CPU_SUBTYPES, value);
+  const subtype =
+    unsigned32(value) ??
+    unsigned32(UNNAMED_CPU_SUBTYPE.exec(value)?.[1] ?? "") ??
+    ownCpuCode(CPU_SUBTYPES, value);
   return subtype === undefined ? null : machoCpuSubtypeBase(subtype);
 };
 

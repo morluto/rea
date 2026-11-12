@@ -413,3 +413,24 @@ describe("lipo FAT operand framing", () => {
     expect(parseLipoOutput(output, path)).toEqual(parseLipoOutput(output));
   });
 });
+
+it("reads the codes lipo prints for a CPU it cannot name", () => {
+  const [architecture] = parseLipoOutput(`fat_magic 0xcafebabe
+nfat_arch 1
+architecture (cputype (16777228) cpusubtype (12))
+    cputype (16777228)
+    cpusubtype cpusubtype (12)
+    capabilities PTR_AUTH_VERSION USERSPACE 0
+    offset 163840
+    size 88672
+    align 2^14 (16384)
+`).architectures;
+  expect(architecture).toMatchObject({
+    name: "(cputype (16777228) cpusubtype (12))",
+    cpu_type: "(16777228)",
+    cpu_subtype: "cpusubtype (12)",
+    cpu_type_code: 0x0100000c,
+    cpu_subtype_code: null,
+    cpu_subtype_base: 12,
+  });
+});

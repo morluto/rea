@@ -259,6 +259,12 @@ describe("artifact Mach-O arm64e variant slices", () => {
       ARM64E_X1,
       " cputype CPU_TYPE_ARM64\n cpusubtype unknown arm64 cpusubtype",
     ],
+    // Xcode 26.4 lipo on macOS 27 cannot name this slice and prints its codes.
+    [
+      "(cputype (16777228) cpusubtype (12))",
+      ARM64E_X1,
+      " cputype (16777228)\n cpusubtype cpusubtype (12)\n capabilities PTR_AUTH_VERSION USERSPACE 0",
+    ],
   ])(
     "accepts lipo's %s name for the FAT arm64e slice",
     async (name, fatCpu, cpu) => {
@@ -272,6 +278,22 @@ describe("artifact Mach-O arm64e variant slices", () => {
         ["slices/x86_64", 4096],
         [`slices/${name}`, 8192],
       ]);
+    },
+  );
+
+  it.each([
+    ["a different cpusubtype", "(cputype (16777228) cpusubtype (2))", "8192"],
+    ["a different cputype", "(cputype (16777223) cpusubtype (12))", "8192"],
+  ])(
+    "rejects lipo's numeric slice name for %s",
+    async (_label, name, offset) => {
+      await expect(
+        variantSlices(
+          ARM64E_X1,
+          (size) =>
+            `architecture ${name}\n cputype (16777228)\n cpusubtype cpusubtype (12)\n offset ${offset}\n size ${String(size)}\n align 2^12 (4096)\n`,
+        ),
+      ).rejects.toMatchObject({ reason: "integrity" });
     },
   );
 
