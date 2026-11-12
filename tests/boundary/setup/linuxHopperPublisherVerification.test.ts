@@ -735,6 +735,57 @@ linux(
 );
 
 linux(
+  "rejects an RPM header whose launcher digest differs from the feed",
+  async () => {
+    // RPM reads the launcher digest from the package header through its own
+    // branch, so the signed-but-mismatched case has to be exercised there:
+    // a green DEB check says nothing about it.
+    const f = await fixture("arch");
+    admitFixturePublisher(f.fingerprint);
+    const headerDigest = "b".repeat(64);
+    const original = nativeCommands.execFileOutput;
+    const native = vi
+      .spyOn(nativeCommands, "execFileOutput")
+      .mockImplementation(async (command, arguments_, options) => {
+        if (command !== "rpm") return original(command, arguments_, options);
+        expect(arguments_).toContain("-qp");
+        return {
+          stdout: `8\n/opt/hopper/bin/Hopper\t${headerDigest}\n`,
+          stderr: "",
+          stdoutBytes: 0,
+          stderrBytes: 0,
+        };
+      });
+    try {
+      expect(
+        await f.publisher.verifyArchive(
+          "rpm",
+          f.release,
+          f.archive,
+          undefined,
+          f.publicKey,
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          reason: "integrity",
+          message: expect.stringContaining(f.release.main_exe_hash),
+          launcherDigestMismatch: {
+            packageFamily: "rpm",
+            releaseVersion: f.release.version,
+            declaredSha256: f.release.main_exe_hash,
+            observedSha256: headerDigest,
+          },
+        },
+      });
+    } finally {
+      native.mockRestore();
+      await f.publisher.close();
+    }
+  },
+);
+
+linux(
   "retains a failed publication lease until its real socket owner closes",
   async () => {
     const f = await fixture();
