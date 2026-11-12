@@ -553,6 +553,36 @@ it("reports required split types as an inventory unknown instead of a bare compl
   );
 });
 
+it("keeps a bounded split-type listing from reading as the complete set", async () => {
+  // The literal is one string-pool entry, so nothing earlier bounds its token
+  // count. The diagnostic lists only the retained prefix and states how many
+  // more the declaration holds, so the unknown stays actionable without
+  // expanding the manifest into an unbounded join.
+  const declared = Array.from(
+    { length: 200 },
+    (_, index) => `part${String(index)}`,
+  );
+  const source = await fixture([
+    [
+      "AndroidManifest.xml",
+      binaryManifestFixture({
+        attributes: [
+          {
+            namespace: ANDROID_NS,
+            name: "requiredSplitTypes",
+            stringValue: declared.join(","),
+          },
+        ],
+      }),
+    ],
+  ]);
+  const result = await read(source);
+  const unknowns = result.inventory.unknowns.join("\n");
+  expect(unknowns).toContain(
+    `requires split APKs (${declared.slice(0, 64).join(", ")}, and 136 more)`,
+  );
+});
+
 it("cancels a manifest read through the same finalization path as the scan", async () => {
   const bytes = jniElfFixture().bytes;
   const source = await fixture([

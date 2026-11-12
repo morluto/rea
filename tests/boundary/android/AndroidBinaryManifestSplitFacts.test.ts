@@ -29,7 +29,11 @@ it("reads required split types from the binary <manifest> element", () => {
   expect(facts).toEqual({
     ok: true,
     value: {
-      required_split_types: ["base__abi", "base__density"],
+      required_split_types: {
+        types: ["base__abi", "base__density"],
+        declared_count: 2,
+        truncated: false,
+      },
       split_name: null,
       is_split_required: null,
     },
@@ -50,7 +54,33 @@ it("finds a split attribute by its resource ID rather than its name", () => {
       ],
     }),
   );
-  expect(facts.ok && facts.value.required_split_types).toEqual(["base__abi"]);
+  expect(facts.ok && facts.value.required_split_types).toMatchObject({
+    types: ["base__abi"],
+    declared_count: 1,
+    truncated: false,
+  });
+});
+
+it("bounds retained split types and reports the declaration's full count", () => {
+  // A near-1 MiB literal of short comma-separated values is one string-pool
+  // entry, so nothing earlier bounds how many tokens it can retain. Keep a
+  // fixed prefix and report the count the declaration states.
+  const declared = Array.from({ length: 200 }, (_, index) => `part${String(index)}`);
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: declared.join(","),
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok && facts.value.required_split_types).toMatchObject({
+    types: declared.slice(0, 64),
+    declared_count: 200,
+    truncated: true,
+  });
 });
 
 it("reads an isSplitRequired boolean and ignores non-Android namespaces", () => {

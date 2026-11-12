@@ -4,10 +4,28 @@ import {
 } from "../native/metadata/BinaryContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
 
+/**
+ * Split types are retained as declared comma-separated tokens. A literal can
+ * hold one per string-pool byte, so the number retained is bounded and the
+ * declaration reports its complete count alongside them.
+ */
+export interface AndroidBinaryManifestSplitTypeList {
+  readonly types: readonly string[];
+  readonly declared_count: number;
+  readonly truncated: boolean;
+}
+
 /** Split declarations the binary manifest owns; a base APK's libraries may live in these splits. */
 export interface AndroidBinaryManifestSplitFacts {
-  /** `null` when the declaration is absent; `unknown` when it is present but not a literal. */
-  readonly required_split_types: readonly string[] | "unknown" | null;
+  /**
+   * `null` when the declaration is absent; `unknown` when it is present but not
+   * a literal. A list keeps its first `MAXIMUM_REQUIRED_SPLIT_TYPES` tokens and
+   * reports the full count, so a bounded declaration is not read as complete.
+   */
+  readonly required_split_types:
+    | AndroidBinaryManifestSplitTypeList
+    | "unknown"
+    | null;
   readonly split_name: string | null;
   /** `null` when the declaration is absent; `unknown` when it is present but not a literal. */
   readonly is_split_required: boolean | "unknown" | null;
@@ -25,6 +43,8 @@ const RES_XML_START_ELEMENT_TYPE = 0x0102;
 const ANDROID_NS = "http://schemas.android.com/apk/res/android";
 const MAXIMUM_STRING_BYTES = 1024 * 1024;
 const MAXIMUM_STRINGS = 100_000;
+/** Retained split-type tokens; one joined literal can otherwise become a million strings. */
+const MAXIMUM_REQUIRED_SPLIT_TYPES = 64;
 const UTF8_FLAG = 0x100;
 const ATTRIBUTE_ROWS = 20;
 const RES_XML_NODE_HEADER = 16;
@@ -138,11 +158,21 @@ const readStringPool = (
   return ok(strings);
 };
 
-const splitTypes = (value: string): readonly string[] =>
-  value
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+const splitTypes = (value: string): AndroidBinaryManifestSplitTypeList => {
+  const types: string[] = [];
+  let declaredCount = 0;
+  for (const part of value.split(","))
+    if (part.trim().length > 0) {
+      declaredCount += 1;
+      if (types.length < MAXIMUM_REQUIRED_SPLIT_TYPES)
+        types.push(part.trim());
+    }
+  return {
+    types,
+    declared_count: declaredCount,
+    truncated: declaredCount > types.length,
+  };
+};
 
 interface Chunk {
   readonly type: number;

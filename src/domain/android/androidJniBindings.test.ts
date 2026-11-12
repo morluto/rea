@@ -382,6 +382,33 @@ it("keeps an explicit empty library selection complete despite an inventory unkn
   });
 });
 
+it("keeps an omitted library-path filter partial despite an inventory unknown", () => {
+  // An omitted filter is the documented include-all default, not a selection
+  // that excluded every split library: an unexamined `arm64-v8a` archive can
+  // still hold this binding, so claiming `unmatched` with complete coverage
+  // would report an absolute answer the gap does not support.
+  const result = projectAndroidJniBindings({
+    apk: { path: "/selected/app.apk", sha256: "a".repeat(64) },
+    selection: { abis: ["arm64-v8a"] },
+    inventory: inventory(),
+    libraries: [],
+    libraryInventory: {
+      status: "partial",
+      examined_entries: 0,
+      selected_libraries: 0,
+      unknowns: [
+        "a split-required manifest leaves the library inventory unknown",
+      ],
+    },
+  });
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  expect(result.value.bindings[0]).toMatchObject({
+    abi: "arm64-v8a",
+    status: "unknown",
+    coverage: "partial",
+  });
+});
+
 it("keeps a nonempty library-path selection partial despite an inventory unknown", () => {
   // The named path can still sit inside the unexamined inventory, so the gap
   // keeps the binding unknown rather than claiming complete coverage.
