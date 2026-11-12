@@ -120,6 +120,65 @@ describe("parseAdbDevicesOutput", () => {
       },
     ]);
   });
+
+  it("parses transports adb reports without a serial number", () => {
+    // The placeholder is 18 chars; adb pads the serial column to 22, so five
+    // spaces precede the state. It contains spaces, so it never matches
+    // DEVICE_LINE's single \\S+ token on its own.
+    const output = [
+      "List of devices attached",
+      "(no serial number)     device transport_id:1",
+      "(no serial number)     device usb:1-1 product:raven model:Pixel_6 transport_id:2",
+      "emulator-5554          device transport_id:3",
+      "",
+    ].join("\n");
+    const { devices, unparsedLines } = parseAdbDevicesOutput(output);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
+    expect(devices).toHaveLength(3);
+    expect(devices[0]).toMatchObject({
+      serial: "",
+      state: "device",
+      transport: "unknown",
+      kind: "unknown",
+      kind_basis: "none",
+      product: null,
+      model: null,
+      device: null,
+    });
+    expect(devices[1]).toMatchObject({
+      serial: "",
+      state: "device",
+      transport: "usb",
+      kind: "physical",
+      kind_basis: "usb_transport",
+      product: "raven",
+      model: "Pixel_6",
+      device: null,
+    });
+    expect(devices[2]).toMatchObject({
+      serial: "emulator-5554",
+      state: "device",
+      transport: "tcp",
+      kind: "emulator",
+      kind_basis: "emulator_serial_prefix",
+    });
+  });
+
+  it("parses the no-serial placeholder in the short tab-separated form", () => {
+    const output = [
+      "List of devices attached",
+      "(no serial number)\tdevice transport_id:1",
+      "",
+    ].join("\n");
+    const { devices, unparsedLines } = parseAdbDevicesOutput(output);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
+    expect(devices).toHaveLength(1);
+    expect(devices[0]).toMatchObject({
+      serial: "",
+      state: "device",
+      transport: "unknown",
+    });
+  });
 });
 
 describe("ADB daemon startup notices", () => {

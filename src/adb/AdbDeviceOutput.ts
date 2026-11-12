@@ -23,6 +23,9 @@ import { parseAdbTransportIdentity } from "../domain/adb/adbTransportIdentity.js
 
 const DEVICE_LINE = /^(\S+)\s+(.*)$/u;
 
+/** adb substitutes this literal when a transport cannot report a serial. */
+const NO_SERIAL_PLACEHOLDER = "(no serial number)";
+
 /**
  * adb prints a wireless-debugging transport's serial as the mDNS instance
  * `<instance>._adb._tcp` or `<instance>._adb-tls-connect._tcp`. That serial
@@ -88,11 +91,27 @@ export const parseAdbDevicesOutput = (
     }
     if (line === "" || line.startsWith("List of devices attached")) continue;
     if (line.startsWith("* daemon")) continue;
-    const match = DEVICE_LINE.exec(line);
+    // adb substitutes "(no serial number)" for a transport that cannot report
+    // a serial. The placeholder contains spaces, so it never matches DEVICE_LINE's
+    // single \S+ token; treat it as a device with an empty serial and parse the
+    // state from the remainder after the placeholder and its padding.
+    let serial: string;
+    let remainder: string;
+    if (line.startsWith(NO_SERIAL_PLACEHOLDER)) {
+      serial = "";
+      remainder = line.slice(NO_SERIAL_PLACEHOLDER.length);
+    } else {
+      const match = DEVICE_LINE.exec(line);
+      if (match === null) {
+        if (rawLine.trim() !== "") unparsed.add(rawLine);
+        continue;
+      }
+      serial = match[1]!;
+      remainder = match[2]!;
+    }
+    remainder = remainder.trimStart();
     const state = ADB_DEVICE_STATES.find((candidate) => {
-      const remainder = match?.[2];
-      if (remainder === undefined || !remainder.startsWith(candidate))
-        return false;
+      if (!remainder.startsWith(candidate)) return false;
       const next = remainder[candidate.length];
       // adb prints no-permissions as `no permissions[ (reason)]; see [URL]` and
       // omits the reason on a host where it finds no udev problem to name,
@@ -103,12 +122,11 @@ export const parseAdbDevicesOutput = (
         (candidate === "no permissions" && next === ";")
       );
     });
-    if (match === null || state === undefined) {
+    if (state === undefined) {
       if (rawLine.trim() !== "") unparsed.add(rawLine);
       continue;
     }
-    const serial = match[1]!;
-    const remainder = match[2]!.slice(state.length);
+    remainder = remainder.slice(state.length);
     const usb = metadataValue(remainder, "usb");
     // AOSP appends the authoritative field last; earlier metadata may contain
     // the same spelling. Keep the exact source token before decimal admission.
