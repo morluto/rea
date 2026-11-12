@@ -5,6 +5,7 @@ import {
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 export const REGEX_MATCHING_DEADLINE_SETTING = "REA_REGEX_MATCHING_DEADLINE_MS";
@@ -57,6 +58,9 @@ export const parseRegexMatchingDeadline = (
 export const resolveRegexMatchingDeadline = (
   environment: Readonly<Record<string, string | undefined>>,
 ): RegexMatchingDeadline => {
+  const override = currentAnalysisSettingOverride("regex.matching_deadline_ms");
+  if (override !== undefined)
+    return { deadlineMs: override, source: "runtime" };
   const parsed = parseRegexMatchingDeadline(
     environment[REGEX_MATCHING_DEADLINE_SETTING],
   );
@@ -64,12 +68,25 @@ export const resolveRegexMatchingDeadline = (
   return parsed.value;
 };
 
-/** How to read and change the effective supervised matching deadline. */
+const regexMatchingDeadlineFacts = (deadline: RegexMatchingDeadline): string =>
+  `The effective ${REGEX_MATCHING_DEADLINE_SETTING} value is ${String(deadline.deadlineMs)} ms (source ${deadline.source}; default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms, floor 1 ms, maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms).`;
+
+/** Recovery after this REA process has exited. The next invocation reads the launch seed. */
 export const regexMatchingDeadlineRecovery = (
   deadline: RegexMatchingDeadline,
 ): string =>
   [
-    `The effective ${REGEX_MATCHING_DEADLINE_SETTING} value is ${String(deadline.deadlineMs)} ms (source ${deadline.source}; default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms, floor 1 ms, maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms).`,
-    `Set ${REGEX_MATCHING_DEADLINE_SETTING} in the environment that starts REA to a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)}, then restart REA. In a running MCP server, use update_analysis_settings with setting regex.matching_deadline_ms and action set instead; the new value applies to new work without a REA restart.`,
+    regexMatchingDeadlineFacts(deadline),
+    `Set ${REGEX_MATCHING_DEADLINE_SETTING} in the environment that starts the next REA invocation. It must be a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)}.`,
+    "The worker old-generation heap does not raise this deadline.",
+  ].join(" ");
+
+/** Recovery while the same REA session can still call update_analysis_settings. */
+export const regexMatchingDeadlineContinuingRecovery = (
+  deadline: RegexMatchingDeadline,
+): string =>
+  [
+    regexMatchingDeadlineFacts(deadline),
+    `Call update_analysis_settings with setting regex.matching_deadline_ms. It applies to the next match in this session. The launch seed remains ${REGEX_MATCHING_DEADLINE_SETTING}.`,
     "The worker old-generation heap does not raise this deadline.",
   ].join(" ");

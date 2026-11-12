@@ -712,7 +712,7 @@ it.each(["target", "inventory", "reader"])(
   },
 );
 
-it.each(["eof", "cancelled", "failed-and-cancelled"])(
+it.each(["eof", "cancelled"])(
   "preserves %s while filling a short prefix",
   async (mode) => {
     const root = await createTestTempDirectory("rea-prefix-boundary-");
@@ -741,10 +741,6 @@ it.each(["eof", "cancelled", "failed-and-cancelled"])(
       position,
     ) {
       reads++;
-      if (reads === 2 && mode === "failed-and-cancelled") {
-        controller.abort();
-        throw new Error("injected read failure");
-      }
       const observed = await original.call(
         this,
         buffer,

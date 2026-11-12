@@ -729,8 +729,7 @@ describe("wide state value validation", () => {
     expect(store.replace(document).ok).toBe(true);
     const retained = store.snapshot().rea_state.entities[0]?.fields.caller_wide;
     if (!Array.isArray(retained)) throw new Error("Expected the wide value");
-    expect(retained).toHaveLength(wide.length);
-    expect(retained.at(-1)).toBe(wide.at(-1));
+    expect(retained).toEqual(wide);
     const retainedObject =
       store.snapshot().rea_state.entities[0]?.fields.caller_wide_object;
     expect(retainedObject).toEqual(wideObject);

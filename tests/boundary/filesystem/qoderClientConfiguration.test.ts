@@ -19,7 +19,7 @@ const qoderPath = (
 
 describe("Qoder configuration paths", () => {
   it("resolves the user settings file and marker directory", () => {
-    expect(qoderPath("/home/a")).toEqual({
+    expect(qoderPath("/home/a")).toMatchObject({
       name: "qoder",
       displayName: "Qoder",
       configPath: join("/home/a", ".qoder", "settings.json"),

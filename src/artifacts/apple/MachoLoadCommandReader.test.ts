@@ -1865,12 +1865,12 @@ describe("Mach-O load command reader failures", () => {
   });
 
   it("accepts FAT tables up to 128 records that name a Mach-O CPU", async () => {
-    const slices = Array.from({ length: 24 }, () => ({
+    const slices = Array.from({ length: 128 }, () => ({
       cpu: CPU.arm64,
       bytes: machoImage({}),
     }));
     const facts = await read(fatImage(slices));
-    expect(facts.status === "parsed" && facts.slices).toHaveLength(24);
+    expect(facts.status === "parsed" && facts.slices).toHaveLength(128);
     // An empty table is not a Java class file, whose major version is nonzero.
     for (const magic of [
       [0xca, 0xfe, 0xba, 0xbe],

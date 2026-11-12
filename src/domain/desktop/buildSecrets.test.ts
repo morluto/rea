@@ -188,6 +188,18 @@ describe("build secrets in escaped text", () => {
         [{ handle: "xml", value: marked }],
       ),
     ).toBe('<p title="<secret:xml>">');
+    const xmlValue = 'e-a&b<c>d"-Fake';
+    const xmlSecrets = [{ handle: "xml", value: xmlValue }];
+    for (const encoded of [
+      "e-a&amp;b&lt;c>d&quot;-Fake",
+      "e-a&amp;b&lt;c&gt;d&quot;-Fake",
+    ]) {
+      const document = `<p title="${encoded}">`;
+      expect(secretsIn(Buffer.from(document), xmlSecrets)).toEqual(["xml"]);
+      expect(redactSecrets(document, xmlSecrets)).toBe(
+        '<p title="<secret:xml>">',
+      );
+    }
     expect(redactSecrets("text… unrelated", secrets)).toBe("text… unrelated");
     const quoted = 'e-say"hi"\\now-Fake';
     expect(

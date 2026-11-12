@@ -332,7 +332,7 @@ class MarshalReader {
   readonly #codeKeys = new WeakMap<CodeNode, string>();
   readonly #codeIdentities = new WeakMap<CodeNode, number>();
   readonly #codeEquality = new WeakMap<CodeNode, CodeEquality>();
-  /** Python hashability per code object. False while that check is in progress. */
+  /** Completed Python hashability checks per code object. */
   readonly #codeHashable = new WeakMap<CodeNode, boolean>();
   /** Tuples whose items are still being read; CPython cannot hash them yet. */
   readonly #readingTuples = new WeakSet<MarshalValue>();
@@ -436,13 +436,19 @@ class MarshalReader {
         };
       case TYPE_INTERNED:
       case TYPE_UNICODE:
-        return this.utf8(this.nonNegativeInt32("Marshal string length"), false);
+        return this.string(
+          this.nonNegativeInt32("Marshal string length"),
+          "utf8",
+        );
       case TYPE_ASCII:
       case TYPE_ASCII_INTERNED:
-        return this.utf8(this.nonNegativeInt32("Marshal string length"), true);
+        return this.string(
+          this.nonNegativeInt32("Marshal string length"),
+          "latin1",
+        );
       case TYPE_SHORT_ASCII:
       case TYPE_SHORT_ASCII_INTERNED:
-        return this.utf8(this.u8(), true);
+        return this.string(this.u8(), "latin1");
       case TYPE_TUPLE:
         return this.sequenceValue(
           "tuple",
@@ -1309,13 +1315,70 @@ class MarshalReader {
   #isCodeHashable(node: CodeNode): boolean {
     const known = this.#codeHashable.get(node);
     if (known !== undefined) return known;
-    this.#codeHashable.set(node, false);
-    const material =
-      this.#codeEquality.get(node) ??
-      malformed("Code object is missing equality material.");
-    const hashable = this.#equalityKey(material.constsTuple, "hash") !== null;
-    this.#codeHashable.set(node, hashable);
-    return hashable;
+    const frames: { value: MarshalValue; finish: boolean }[] = [
+      { value: { kind: "code", value: node }, finish: false },
+    ];
+    const gray = new Set<MarshalValue | CodeNode>();
+    const complete = new Set<MarshalValue>();
+    const reject = (): false => {
+      this.#codeHashable.set(node, false);
+      return false;
+    };
+    while (frames.length > 0) {
+      this.#takeKeyStep();
+      const frame = frames.pop()!;
+      const value = frame.value;
+      const identity = value.kind === "code" ? value.value : value;
+      if (frame.finish) {
+        gray.delete(identity);
+        if (value.kind === "code") {
+          const material =
+            this.#codeEquality.get(value.value) ??
+            malformed("Code object is missing equality material.");
+          // Child code checks are now complete, so the existing tuple key
+          // walker preserves its equality and expansion budgets without recursion.
+          const hashable =
+            this.#equalityKey(material.constsTuple, "hash") !== null;
+          this.#codeHashable.set(value.value, hashable);
+          if (!hashable) return reject();
+        } else complete.add(value);
+        continue;
+      }
+      if (value.kind === "code") {
+        const cached = this.#codeHashable.get(value.value);
+        if (cached === false) return reject();
+        if (cached === true) continue;
+      } else {
+        const cached = this.#keyCache.get(value);
+        if (cached === null) return reject();
+        if (cached !== undefined || complete.has(value)) continue;
+      }
+      if (
+        gray.has(identity) ||
+        this.#readingTuples.has(value) ||
+        value.kind === "list" ||
+        value.kind === "set" ||
+        value.kind === "dict" ||
+        value.kind === "null"
+      )
+        return reject();
+      const children =
+        value.kind === "code"
+          ? [
+              (
+                this.#codeEquality.get(value.value) ??
+                malformed("Code object is missing equality material.")
+              ).constsTuple,
+            ]
+          : value.kind === "tuple" || value.kind === "frozenset"
+            ? value.items
+            : [];
+      gray.add(identity);
+      frames.push({ value, finish: true });
+      for (let index = children.length - 1; index >= 0; index -= 1)
+        frames.push({ value: children[index]!, finish: false });
+    }
+    return true;
   }
 
   #codeIdentity(node: CodeNode): number {
@@ -1492,17 +1555,20 @@ class MarshalReader {
     );
   }
 
-  utf8(length: number, ascii: boolean): MarshalValue {
+  string(length: number, encoding: "latin1" | "utf8"): MarshalValue {
     const bytes = this.blob(length);
-    if (ascii) {
-      if (bytes.some((byte) => byte > 0x7f))
-        malformed("Marshal ASCII string contains a non-ASCII byte.");
+    if (encoding === "latin1") {
+      // CPython reads the ASCII-tagged forms as one-byte Unicode, even when
+      // high bytes appear. Identity must agree with the UTF-8 string form.
+      const value = bytes.toString("latin1");
       return {
         kind: "str",
-        value: bytes.toString("latin1"),
+        value,
         previewEnd: Math.min(length, PYTHON_PYC_CONST_PREVIEW_LIMIT),
         bytes: length,
-        raw: bytes,
+        raw: bytes.some((byte) => byte > 0x7f)
+          ? Buffer.from(value, "utf8")
+          : bytes,
       };
     }
     const decoded = decodeMarshalUtf8(bytes, PYTHON_PYC_CONST_PREVIEW_LIMIT);

@@ -1,3 +1,9 @@
+import { readNativeProcessIdentityMap } from "./ProcessOwnershipObservation.js";
+import {
+  readProcessRunToken,
+  readProcessRunTokens,
+} from "./ProcessRunTokenObservations.js";
+import { ExecFileOutputCancelledError } from "./ExecFileOutput.js";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeFile } from "node:fs/promises";
@@ -10,13 +16,18 @@ const fixture = vi.hoisted(() => {
   let started: Promise<void>;
   let stopped: Promise<void>;
   let gate: Promise<void>;
-  let mode: "failure" | "abort" | "cleanup";
+  let mode: "failure" | "abort" | "cleanup" | "abort-error";
   let failRemoval = false;
   let calls = 0;
   const compilerFailure = new Error("controlled compiler failure");
+  const compilerAbortError = new DOMException(
+    "independent compiler failure",
+    "AbortError",
+  );
   return {
     compilerFailure,
-    configure(selected: "failure" | "abort" | "cleanup") {
+    compilerAbortError,
+    configure(selected: "failure" | "abort" | "cleanup" | "abort-error") {
       failRemoval = selected === "cleanup";
       mode = selected;
       calls = 0;
@@ -60,7 +71,9 @@ const fixture = vi.hoisted(() => {
         options.signal?.addEventListener("abort", aborted, { once: true });
         start();
         await gate;
-        if (mode !== "failure") throw options.signal?.reason;
+        if (mode === "abort-error") throw compilerAbortError;
+        if (mode !== "failure")
+          throw new ExecFileOutputCancelledError(options.signal?.reason);
         throw compilerFailure;
       }
       const output = args[args.indexOf("-o") + 1];
@@ -89,7 +102,7 @@ import {
   DarwinProcessOwnershipInspectionError,
 } from "./DarwinProcessRunTokenReader.js";
 
-it.each(["failure", "abort", "cleanup"] as const)(
+it.each(["failure", "abort", "cleanup", "abort-error"] as const)(
   "handles a %s outcome for a waiter joining retirement",
   async (mode) => {
     fixture.configure(mode);
@@ -117,10 +130,16 @@ it.each(["failure", "abort", "cleanup"] as const)(
       await expect(first).rejects.toMatchObject({
         cause: expect.objectContaining({ message: "first caller left" }),
       });
-    else await expect(first).rejects.toThrow("first caller left");
-    if (mode === "failure") {
+    else
+      await expect(first).rejects.toMatchObject({
+        reason: expect.objectContaining({ message: "first caller left" }),
+      });
+    if (mode === "failure" || mode === "abort-error") {
       await expect(second).rejects.toMatchObject({
-        cause: fixture.compilerFailure,
+        cause:
+          mode === "failure"
+            ? fixture.compilerFailure
+            : fixture.compilerAbortError,
       });
       expect(fixture.calls).toBe(1);
     } else if (mode === "cleanup") {
@@ -133,6 +152,42 @@ it.each(["failure", "abort", "cleanup"] as const)(
         throw new Error("expected cleanup owner");
       expect(failure.cleanupFailure?.cleanupIncomplete).toBe(true);
       expect(fixture.calls).toBe(1);
+      const rows = [
+        {
+          pid: 42,
+          parentPid: 1,
+          processGroupId: 42,
+          state: "S",
+          command: "fixture",
+        },
+      ];
+      const fail = async (): Promise<never> => {
+        throw failure;
+      };
+      const host = {
+        listProcesses: async () => rows,
+        environment: fail,
+        runTokens: fail,
+        processIdentities: fail,
+        signalGroup: () => {
+          throw new Error("Unexpected signal");
+        },
+      };
+      const batch = async () => {
+        for await (const _row of readProcessRunTokens(host, rows)) {
+          throw new Error(
+            "Retained inspector must not produce unavailable rows",
+          );
+        }
+      };
+      const observations = await Promise.all(
+        [
+          readNativeProcessIdentityMap(rows, host),
+          readProcessRunToken(host, 42),
+          batch(),
+        ].map((pending) => pending.catch((cause: unknown) => cause)),
+      );
+      for (const observation of observations) expect(observation).toBe(failure);
       await failure.cleanupOwner?.close();
       expect(failure.cleanupFailure?.cleanupIncomplete).toBe(false);
     } else {
