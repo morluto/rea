@@ -3,6 +3,7 @@ import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { Result } from "../domain/result.js";
+import { declaredBrowserStorageSeedMark } from "./declaredBrowserStorageSeed.js";
 import {
   optionalCdpCommand,
   type CdpOptionalCommandGap,
@@ -154,7 +155,9 @@ const storageItems = async (
     if (!Array.isArray(entry)) return [];
     const key = cdpStringValue(entry[0]);
     const value = cdpStringValue(entry[1]);
-    return key === undefined ? [] : [{ key, value }];
+    return key === undefined || key === declaredBrowserStorageSeedMark
+      ? []
+      : [{ key, value }];
   });
   return {
     items,
