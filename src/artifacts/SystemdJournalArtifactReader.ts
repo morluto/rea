@@ -42,7 +42,11 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
   #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#source = new ArtifactFileSource(path, "systemd journal file", admitted);
+    this.#source = new ArtifactFileSource(
+      path,
+      "systemd journal file",
+      admitted,
+    );
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {

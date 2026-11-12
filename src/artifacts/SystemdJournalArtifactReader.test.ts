@@ -16,25 +16,28 @@ interface ObjectSpec {
 }
 
 /** A minimal, structurally valid journal: fixed header plus aligned objects. */
-const journalBytes = (options: {
-  readonly objects?: readonly ObjectSpec[];
-  readonly headerSize?: number;
-  readonly nObjects?: number;
-  readonly state?: number;
-  readonly incompatibleFlags?: number;
-  readonly compatibleFlags?: number;
-  readonly tailBytes?: number;
-} = {}): Buffer => {
+const journalBytes = (
+  options: {
+    readonly objects?: readonly ObjectSpec[];
+    readonly headerSize?: number;
+    readonly nObjects?: number;
+    readonly state?: number;
+    readonly incompatibleFlags?: number;
+    readonly compatibleFlags?: number;
+    readonly tailBytes?: number;
+  } = {},
+): Buffer => {
   const objects = options.objects ?? [];
   const bodySize = objects.reduce(
     (total, object) => total + Math.min(object.size, 64),
     0,
   );
   /** The object area begins after the declared header, which may exceed 272. */
-  const objectStart = Math.max(HEADER_BYTES, options.headerSize ?? HEADER_BYTES);
-  const file = Buffer.alloc(
-    objectStart + bodySize + (options.tailBytes ?? 0),
+  const objectStart = Math.max(
+    HEADER_BYTES,
+    options.headerSize ?? HEADER_BYTES,
   );
+  const file = Buffer.alloc(objectStart + bodySize + (options.tailBytes ?? 0));
   file.write("LPKSHHRH", 0, "latin1");
   file.writeUInt32LE(options.compatibleFlags ?? 0, 8);
   file.writeUInt32LE(options.incompatibleFlags ?? 0, 12);
@@ -120,7 +123,12 @@ it("stops the object chain at an object whose declared size overruns the file", 
   const inventory = await scanCanonicalArtifactInventory(
     await writeJournal(
       "truncated.journal",
-      journalBytes({ objects: [{ type: 1, size: 64 }, { type: 3, size: 4096 }] }),
+      journalBytes({
+        objects: [
+          { type: 1, size: 64 },
+          { type: 3, size: 4096 },
+        ],
+      }),
     ),
   );
   expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
@@ -129,7 +137,9 @@ it("stops the object chain at an object whose declared size overruns the file", 
     truncated_object_count: 1,
     trailing_bytes: 64,
   });
-  expect(inventory.limitations.join(" ")).toMatch(/declared size does not fit/iu);
+  expect(inventory.limitations.join(" ")).toMatch(
+    /declared size does not fit/iu,
+  );
 });
 
 it("reports a tail too short to hold an object header", async () => {

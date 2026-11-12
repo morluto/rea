@@ -205,8 +205,9 @@ const flagNames = (
 
 const hasJournalSignature = (prefix: Uint8Array): boolean =>
   prefix.length >= JOURNAL_SIGNATURE_BYTES &&
-  Buffer.from(prefix.subarray(0, JOURNAL_SIGNATURE_BYTES)).toString("latin1") ===
-    JOURNAL_SIGNATURE;
+  Buffer.from(prefix.subarray(0, JOURNAL_SIGNATURE_BYTES)).toString(
+    "latin1",
+  ) === JOURNAL_SIGNATURE;
 
 /** Recognize a journal header without requiring its object area to verify. */
 export const hasSystemdJournalHeader = (prefix: Uint8Array): boolean => {
@@ -252,11 +253,15 @@ const readHeaderFacts = (
       JOURNAL_STATES.get(view.getUint8(HEADER.state)) ??
       `unknown-${String(view.getUint8(HEADER.state))}`,
     file_id: formatId128(bytes.subarray(HEADER.fileId, HEADER.fileId + 16)),
-    machine_id: formatId128(bytes.subarray(HEADER.machineId, HEADER.machineId + 16)),
+    machine_id: formatId128(
+      bytes.subarray(HEADER.machineId, HEADER.machineId + 16),
+    ),
     tail_entry_boot_id: formatId128(
       bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
     ),
-    seqnum_id: formatId128(bytes.subarray(HEADER.seqnumId, HEADER.seqnumId + 16)),
+    seqnum_id: formatId128(
+      bytes.subarray(HEADER.seqnumId, HEADER.seqnumId + 16),
+    ),
     header_size: readUint64(view, HEADER.headerSize),
     arena_size: readUint64(view, HEADER.arenaSize),
     data_hash_table_offset: readUint64(view, HEADER.dataHashTableOffset),
@@ -358,7 +363,8 @@ const scanJournal = (
       if (!OBJECT_TYPES.has(rawType & OBJECT_TYPE_MASK)) unknownTypeCount += 1;
       if (object.compressed) compressedCount += 1;
       if (index >= window.startObject) {
-        if (objectHeaders.length < window.objectLimit) objectHeaders.push(object);
+        if (objectHeaders.length < window.objectLimit)
+          objectHeaders.push(object);
         else nextObjectHeaderIndex ??= index;
       }
 
