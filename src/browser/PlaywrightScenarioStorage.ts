@@ -93,6 +93,45 @@ type StorageSeed = {
   session: [string, string][];
 };
 
+export type DeclaredBrowserStorageSeed = {
+  readonly origin: string;
+  readonly local: readonly (readonly [string, string])[];
+  readonly session: readonly (readonly [string, string])[];
+};
+
+/**
+ * Playwright serializes this function into every document in the scenario
+ * context. It runs after document creation and before that document's scripts,
+ * including a popup opened later. Page-session auto-attach does not pause a
+ * `window.open` target, so this is the pre-script seed for that document.
+ */
+export const applyDeclaredBrowserStorageSeeds = (
+  seeds: readonly DeclaredBrowserStorageSeed[],
+): void => {
+  const host = globalThis as {
+    location?: { origin?: string };
+    localStorage?: { setItem(name: string, value: string): void };
+    sessionStorage?: { setItem(name: string, value: string): void };
+  };
+  let origin = "";
+  try {
+    origin = host.location?.origin ?? "";
+  } catch {
+    return;
+  }
+  if (origin === "" || origin === "null") return;
+  const seed = seeds.find((item) => item.origin === origin);
+  if (seed === undefined) return;
+  try {
+    for (const [name, value] of seed.local)
+      host.localStorage?.setItem(name, value);
+    for (const [name, value] of seed.session)
+      host.sessionStorage?.setItem(name, value);
+  } catch {
+    return;
+  }
+};
+
 interface StorageTarget {
   readonly parentId: string | undefined;
   readonly topLevelTargetId: string;
@@ -142,6 +181,7 @@ export class PlaywrightScenarioStorage {
   #cleanupCompleted = false;
   #loadingStopped = false;
   #popupSeedCoverageUnknown = false;
+  #popupSeedsInstalled = false;
   #failure: BrowserObservationError | undefined;
   #closePromise: Promise<PlaywrightScenarioStorageCleanup> | undefined;
   #detachPromise: Promise<void> | undefined;
@@ -246,6 +286,8 @@ export class PlaywrightScenarioStorage {
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
+    await this.installDocumentSeedScript(context);
+    if (this.#closed) return;
     const rootInfo = targetInfoResponse.parse(
       await withScenarioCommandDeadline(
         () => this.cdp.send("Target.getTargetInfo"),
@@ -274,6 +316,20 @@ export class PlaywrightScenarioStorage {
     await ready;
   }
 
+  private async installDocumentSeedScript(
+    context: BrowserContext,
+  ): Promise<void> {
+    const seeds = [...this.#seeds].map(([origin, seed]) => ({
+      origin,
+      local: seed.local,
+      session: seed.session,
+    }));
+    if (seeds.length === 0 || typeof context.addInitScript !== "function")
+      return;
+    await context.addInitScript(applyDeclaredBrowserStorageSeeds, seeds);
+    this.#popupSeedsInstalled = true;
+  }
+
   private addSeeds(
     blocks: BrowserScenario["storage"]["local_storage"],
     kind: "local" | "session",
@@ -297,10 +353,12 @@ export class PlaywrightScenarioStorage {
     page.on("close", detached);
     context.on("close", detached);
     browser?.on("disconnected", detached);
-    // Discovery is later than the first popup script. It cannot establish
-    // that root-session instrumentation controlled this top-level context.
+    // Without the context init script, discovery is later than the first
+    // popup script and cannot establish that page-session instrumentation
+    // controlled that top-level document.
     const popup = (opened: Page): void => {
-      if (opened !== page) this.#popupSeedCoverageUnknown = true;
+      if (opened !== page && !this.#popupSeedsInstalled)
+        this.#popupSeedCoverageUnknown = true;
     };
     if (this.ownsContext) context.on("page", popup);
     else page.on("popup", popup);

@@ -1,10 +1,15 @@
 import { EventEmitter } from "node:events";
+import vm from "node:vm";
 
 import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
-import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
+import {
+  applyDeclaredBrowserStorageSeeds,
+  type DeclaredBrowserStorageSeed,
+  PlaywrightScenarioStorage,
+} from "./PlaywrightScenarioStorage.js";
 
 class FakeCdp extends EventEmitter {
   readonly calls: { readonly method: string; readonly params?: unknown }[] = [];
@@ -366,6 +371,112 @@ it.each(["launch", "connect"] as const)(
     expect(owner?.limitations()).toHaveLength(1);
     expect(contextApi.listenerCount("page")).toBe(0);
     expect(page.listenerCount("popup")).toBe(0);
+  },
+);
+
+const applySeeds = (
+  origin: string,
+  seeds: readonly DeclaredBrowserStorageSeed[],
+  fail: "local" | "session" | undefined = undefined,
+): { local: Map<string, string>; session: Map<string, string> } => {
+  const local = new Map<string, string>();
+  const session = new Map<string, string>();
+  const context = vm.createContext({
+    location: { origin },
+    localStorage: {
+      setItem(name: string, value: string) {
+        if (fail === "local") throw new Error("local storage denied");
+        local.set(name, value);
+      },
+    },
+    sessionStorage: {
+      setItem(name: string, value: string) {
+        if (fail === "session") throw new Error("session storage denied");
+        session.set(name, value);
+      },
+    },
+  });
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify(seeds)})`,
+    context,
+  );
+  return { local, session };
+};
+
+it("writes declared local and session seeds only for the document origin", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+    {
+      origin: "http://root.example",
+      local: [["probe", "root-local"]],
+      session: [["probe", "root-session"]],
+    },
+  ];
+  expect(applySeeds("http://child.example", seeds)).toEqual({
+    local: new Map([["probe", "seed-local"]]),
+    session: new Map([["probe", "seed-session"]]),
+  });
+  expect(applySeeds("http://other.example", seeds)).toEqual({
+    local: new Map(),
+    session: new Map(),
+  });
+  expect(applySeeds("null", seeds)).toEqual({
+    local: new Map(),
+    session: new Map(),
+  });
+  expect(applySeeds("http://child.example", seeds, "session")).toEqual({
+    local: new Map([["probe", "seed-local"]]),
+    session: new Map(),
+  });
+});
+
+it.each(["launch", "connect"] as const)(
+  "seeds later popup documents before their scripts in %s mode",
+  async (mode) => {
+    const cdp = new FakeCdp();
+    const { page, contextApi } = fixture(cdp);
+    const installed: {
+      script: unknown;
+      seeds: readonly DeclaredBrowserStorageSeed[];
+    }[] = [];
+    Object.assign(contextApi, {
+      addInitScript: async (
+        script: unknown,
+        seeds: readonly DeclaredBrowserStorageSeed[],
+      ) => {
+        installed.push({ script, seeds });
+      },
+    });
+    const input = browserScenarioSchema.parse({
+      ...scenario(),
+      ...(mode === "connect"
+        ? {
+            browser: {
+              mode: "connect",
+              cdp_endpoint: "http://127.0.0.1:9222",
+              target_id: "root-target",
+            },
+          }
+        : {}),
+    });
+    const owner = await createInitializedStorage(contextApi, page, input);
+    expect(installed).toHaveLength(1);
+    expect(installed[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
+    expect(installed[0]?.seeds).toEqual([
+      {
+        origin: "https://storage.example.test",
+        local: [["local-seed", "local-value"]],
+        session: [["session-seed", "session-value"]],
+      },
+    ]);
+    if (mode === "connect") page.emit("popup", new EventEmitter());
+    else contextApi.emit("page", new EventEmitter());
+    expect(owner?.limitations()).toEqual([]);
+    await owner?.close();
   },
 );
 
