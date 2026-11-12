@@ -113,7 +113,7 @@ export const inspectAppleIpsInputSchema = z.strictObject({
   join_path: absoluteLocalPathStringSchema
     .optional()
     .describe(
-      "Optional Mach-O executable or dSYM whose slice LC_UUID matches report images; unsigned images never join",
+      "Optional Mach-O executable or dSYM matched by slice LC_UUID and architecture; shared-cache images remain unjoined",
     ),
   max_join_bytes: z
     .number()

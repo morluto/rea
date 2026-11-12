@@ -3,15 +3,16 @@
 Run REA, connect your selected agents, and check the tools needed for your task.
 Setup previews configuration changes and asks for approval before applying them.
 
-| Task                               | Section                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Connect an agent                   | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
-| Install a Claude Code/Codex plugin | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
-| Run unreleased code                | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
-| Diagnose one task                  | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
-| Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
-| Update or remove REA               | [Maintenance](#diagnose-update-and-remove)                                                                          |
-| Resolve a client-specific problem  | [Client configuration](client-configuration.md)                                                                     |
+| Task                                  | Section                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
+| Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
+| Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                           |
+| Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
+| Diagnose one task                     | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
+| Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
+| Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                          |
+| Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                     |
 
 ## Start setup
 
@@ -481,6 +482,12 @@ updated stops the remaining removals. Uninstall reports each candidate
 their individual `actions` alongside its aggregate status and detail,
 including earlier removals when a later file fails. The paths name
 the discovered configuration candidates, not resolved physical file identities.
+If resource cleanup remains incomplete, uninstall reports a failed
+`uninstall_cleanup` item alongside the completed removals, with a structured
+`cleanup` observation naming the outstanding resources. An embedded host retains
+the exact cleanup owners: retrying that host's `close()` updates previously
+returned cleanup observations when release is confirmed. A new CLI invocation
+does not inherit those owners; inspect the reported resources before proceeding.
 For JSON clients, uninstall removes every repeated `rea` member in the effective
 server table only when each registration is REA-owned. An unowned earlier
 member, or an unowned OpenCode V1 entry that removing V2 would expose, stops
@@ -676,6 +683,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Codex              | `codex`          |
 | Cursor             | `cursor`         |
 | CodeBuddy          | `codebuddy`      |
+| Cline CLI          | `cline`          |
 | Gemini CLI         | `gemini_cli`     |
 | Windsurf           | `windsurf`       |
 | Devin              | `devin`          |
@@ -1240,17 +1248,35 @@ installation remains unavailable on Windows. Setup never installs Ghidra,
 Java, or Python. It preserves valid detected Ghidra/JDK settings in agent
 registrations. See [Windows Ghidra P0](../providers/windows-ghidra-p0.md) for provider diagnostics.
 
-The separate `rea mcp add` builtin delegates most clients to Incur's package-runner
-child launcher. Run that acquisition from a trusted directory; prefer managed
-`rea setup` when supported. That child launcher can fail on Windows with `MCP_ADD_FAILED: spawn npx ENOENT`
-before registering a client. REA's setup path is unaffected. For a client supported
-by setup, review `rea setup --client opencode --skill=false --dry-run --json`
-(substitute its client ID), then use the same scoped command without `--dry-run`
-and approve the displayed plan. Non-interactive application additionally needs
-`--yes`. This configures setup's user-level client location; it does not replace
-`mcp add --no-global`, arbitrary `--command` registrations, or unsupported clients.
-The builtin launcher defect remains pending a dependency fix; a successful setup
-run does not verify that `mcp add` works on Windows.
+`rea mcp add` registers the selected server launcher directly in client settings.
+It does not acquire a package or start the server. Omit `--command` to register
+the runtime and REA entrypoint currently executing the CLI. Use `--agent` to
+select clients; repeat it for a mixed selection. With no selection, REA uses
+detected user-level clients and Amp; if none of the other supported clients are
+detected, it selects their full registration catalog and Amp.
+
+REA preserves existing environment overrides, client policy, peer servers and
+unrelated settings. A changed existing file gets a private backup; an identical
+repeat keeps the file and creates no new backup. The result reports exact
+`command` and `args`, each selected client's effective scope, and configured,
+unchanged, failed or not-started outcomes. A partial failure returns a nonzero
+status while retaining successful client outcomes and recovery paths.
+
+`--no-global` writes only project-level settings. A selection containing Amp or
+another client without project storage fails before any writes; select those
+clients in a separate global registration. Managed `rea setup` remains available
+for its supported clients and additional setup tasks. Registration preserves
+Windows launcher paths and arguments as data. Windows ACL privacy cannot be
+verified through POSIX mode bits; Fx results distinguish requested Windows modes
+from verified POSIX modes. Controlled source tests do not establish real Windows
+client behavior.
+
+`rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
+executable position is refused before any settings change; configure remote MCP
+transport in the client's own settings. Earlier delegated registration could
+interpret a URL as remote transport for some clients while storing it as an
+executable for Amp. That inconsistent URL interpretation and package acquisition
+are removed. Launcher arguments that happen to contain URLs remain arguments.
 
 When `GHIDRA_INSTALL_DIR` is unset, doctor and the Ghidra provider also search
 `PATH` for `ghidra` or `ghidraRun`, resolve the selected launcher through its
@@ -1843,7 +1869,10 @@ The repository's single-plugin marketplaces are declared in
 `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
 Both select an exact `rea-agents` npm version instead of mutable source-checkout
 contents. Release Please updates their selectors alongside the plugin manifests.
-No plugin-only publication or generated skill files committed to Git are needed.
+Claude Code and Codex do not need plugin-only publication or generated skill
+files committed to Git. The Cursor Marketplace plugin is the exception in
+[Cursor Marketplace](#cursor-marketplace): its skill copy is committed because
+that install is a Git checkout.
 The qualified release archive contains a runtime-only manifest and
 `npm-shrinkwrap.json` plus bundled runtime dependencies, including PTY packages
 for each supported OS and CPU; development dependencies and development-only overrides
@@ -1884,7 +1913,8 @@ only the registrations and skill locations that `rea setup` manages, so for a
 plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
 `missing` and recommend `rea setup`. Do not follow that remediation. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
-Code, `codex plugin list` in Codex).
+Code, `codex plugin list` in Codex, Cursor's plugin settings for a Marketplace
+install).
 
 For analysis engines, ask the connected server: have the agent call
 `binary_session` and read `result.tool_availability`, which reports what the
@@ -1906,6 +1936,66 @@ If your installed plugin is older, use the version in its manifest instead.
 That report describes the terminal's environment, not the plugin server's.
 The server inherits the client's environment, so a setting such as
 `GHIDRA_INSTALL_DIR` that exists only in your terminal does not reach it.
+
+### Cursor Marketplace
+
+Cursor's Marketplace installs this public repository as one plugin. The
+install includes both the `reverse-engineer-anything` skill and the `rea` MCP
+server. REA does not publish an MCP-only "Add to Cursor" install link, because
+that link would register the server without the skill.
+
+The manifest is `.cursor-plugin/plugin.json`. Cursor discovers `mcp.json` at
+the repository root and the skill directory named by `skills`. The committed
+skill is `.cursor-plugin/skills/reverse-engineer-anything`, a copy of the
+authored skill at `.agents/skills/reverse-engineer-anything`.
+`node scripts/generate-cursor-plugin-skill.mjs --check` fails when that copy
+drifts, including in `npm run docs:check` and package prepack. Marketplace
+installs are a Git checkout and do not contain `dist/`. The server entry
+therefore runs the published package instead of a local build:
+
+<!-- x-release-please-start-version -->
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@6.8.0", "mcp"]
+    }
+  }
+}
+```
+
+<!-- x-release-please-end -->
+
+Release Please updates that pin with `.cursor-plugin/plugin.json` and
+`package.json`. The skill text can describe capabilities newer than the pinned
+server until the next release; follow the connected server's tool list. The
+same pin is what `rea doctor --provider <id>` should use when you inspect an
+engine from a terminal, as shown above.
+
+A Marketplace install gives you:
+
+- the `reverse-engineer-anything` skill and its references
+- an `rea` MCP server launched with `npx -y rea-agents@<pinned version> mcp`
+  (Cursor shows it as `plugin-rea-rea`)
+- the shared plugin logo at `assets/rea-plugin.png`
+
+It does not install analysis engines, put `rea` on `PATH`, or write
+`~/.cursor/mcp.json`. `rea setup --client cursor` remains the direct
+registration path and still writes that file plus the setup-owned skill. Use
+the Marketplace plugin or that registration, not both, so Cursor does not
+start two `rea` servers.
+
+Node.js and npm must be available to Cursor. The plugin does not install them.
+Restart Cursor after the plugin is listed. If tools stay missing, read the
+plugin server's launch error. `rea doctor --client cursor` does not see
+Marketplace state and can report `missing`; do not run setup to repair a
+plugin-only install.
+
+Publishing the listing is a separate maintainer step at
+[cursor.com/marketplace/publish](https://cursor.com/marketplace/publish).
+This repository change does not submit the plugin.
 
 ## MCP Registry
 

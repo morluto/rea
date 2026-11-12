@@ -14,9 +14,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import { CaptureFile } from "./DesktopCaptureOutput.js";
+import { CaptureFile, prepareOutputDirectory } from "./DesktopCaptureOutput.js";
 
 const evidence = { id: "evidence" } as unknown as Evidence;
+
+it.each(["", "/child"])(
+  "refuses an output path blocked by a regular file (%s)",
+  async (suffix) => {
+    const root = await createTestTempDirectory("desktop-output-file-");
+    const file = join(root, "existing");
+    await writeFile(file, "keep");
+    await expect(prepareOutputDirectory(`${file}${suffix}`)).resolves.toEqual({
+      refusal: "not_a_directory",
+    });
+    expect(await readFile(file, "utf8")).toBe("keep");
+  },
+);
 
 describe("CaptureFile", () => {
   it("publishes through its partial file and leaves nothing to discard", async () => {

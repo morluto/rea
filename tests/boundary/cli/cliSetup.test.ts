@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   access,
   lstat,
@@ -10,9 +11,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { spawn } from "@lydell/node-pty";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { parse as parseToml } from "smol-toml";
 
@@ -20,7 +20,18 @@ import type { SetupResult } from "../../../src/application/SetupTypes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
-const execute = promisify(execFile);
+const execute = async (
+  command: string,
+  arguments_: readonly string[],
+  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv },
+) => {
+  const commands = await createVerifierCommands();
+  onTestFinished(() => commands.close());
+  return withVerifierCleanup(
+    () => commands.exec(command, arguments_, { ...options, timeout: 15_000 }),
+    [() => commands.close()],
+  );
+};
 const decisionMarker = "REA_SETUP_DECISION:";
 const isolatedSetupEnvironment = (home: string) => ({
   HOME: home,

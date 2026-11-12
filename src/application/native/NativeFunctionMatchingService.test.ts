@@ -187,6 +187,40 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
   }
 });
 
+it.each(["literals-only", "omissions-only", "paired", "unsupported"])(
+  "admits Swift literal facts and their coverage together (%s)",
+  async (coverage) => {
+    const detail = nativeMatchingDetails("1", "0x10", "0102", true)[0]!;
+    const dossier = functionDossierSchema.parse(detail.normalized_result);
+    delete dossier.swift_string_literals;
+    delete dossier.swift_string_literal_omissions;
+    const observed = createEvidence(
+      nativeMatchingTarget("1"),
+      nativeMatchingProvider,
+      {
+        operation: "analyze_function",
+        parameters: { procedure: "0x10" },
+        result: {
+          ...dossier,
+          ...(coverage === "literals-only" || coverage === "paired"
+            ? { swift_string_literals: [] }
+            : {}),
+          ...(coverage === "omissions-only" || coverage === "paired"
+            ? { swift_string_literal_omissions: [] }
+            : {}),
+        },
+      },
+    );
+    const result = await matchNativeFunctions({
+      left: nativeMatchingInventory("1", [{ address: "0x10", value: "main" }]),
+      right: nativeMatchingInventory("2", [{ address: "0x20", value: "main" }]),
+      left_observations: [observed],
+    });
+    expect(result.ok).toBe(coverage === "paired" || coverage === "unsupported");
+    if (!result.ok) expect(result.error._tag).toBe("EvidenceIntegrityError");
+  },
+);
+
 it.each(["", "ram:"])(
   "keeps informative %s CFG/call/string fingerprints as unresolved candidates and refuses incomplete structural observations",
   async (space) => {
@@ -985,7 +1019,7 @@ it("enforces the caller-resolved representation allowance and names its setting"
   ).toBe(15_000);
 });
 
-it("keeps duplicate candidate storage linear and emits every input occurrence exactly once", async () => {
+it("emits every occurrence of duplicate candidates exactly once on both sides", async () => {
   const entries = Array.from({ length: 1000 }, (_, i) => ({
     address: `0x${i.toString(16)}`,
     value: "same",
@@ -995,11 +1029,13 @@ it("keeps duplicate candidate storage linear and emits every input occurrence ex
     right: nativeMatchingInventory("2", entries),
   });
   expect(report.matches).toHaveLength(1);
-  expect(report.matches[0]?.left).toHaveLength(1000);
-  expect(report.matches[0]?.right).toHaveLength(1000);
-  expect(new Set(report.matches[0]?.left.map((x) => x.function_id)).size).toBe(
-    1000,
-  );
+  for (const side of ["left", "right"] as const) {
+    const members = report.matches[0]?.[side];
+    expect(members).toHaveLength(1000);
+    expect(new Set(members?.map((member) => member.function_id)).size).toBe(
+      1000,
+    );
+  }
 });
 
 it("normalizes accepted body range address spaces before matching byte coverage", async () => {

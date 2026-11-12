@@ -12,7 +12,6 @@ import {
 import { dirname, isAbsolute, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
-import { clientRegistrationCommandText } from "../dist/cli/clientRegistrationCommandText.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
@@ -53,28 +52,20 @@ const isDirectRegistration = async (command, cli) =>
   (await realpath(command[1])) === (await realpath(cli));
 
 const verifyMcpAdd = async ({ commands, cli, environment, npxLog, home }) => {
-  await commands.run(cli, ["mcp", "add"], environment);
+  await commands.run(cli, ["mcp", "add", "--agent", "amp"], environment);
   const settings = JSON.parse(
     await readFile(join(home, ".config", "amp", "settings.json"), "utf8"),
   );
   const registration = settings?.["amp.mcpServers"]?.rea;
   if (!Array.isArray(registration?.args))
-    throw new Error("Incur mcp add did not write the native Amp registration");
+    throw new Error("REA mcp add did not write the native Amp registration");
   const command = [registration.command, ...registration.args];
   if (!(await isDirectRegistration(command, cli)))
     throw new Error(
-      "Incur mcp add did not register the selected absolute runtime and REA script",
+      "REA mcp add did not register the selected absolute runtime and REA script",
     );
-  // Amp consumes the same command through Incur's parser. Check the delegated
-  // helper receives that command as one argument, without flattening its argv.
-  deepStrictEqual(JSON.parse(await readFile(npxLog, "utf8")), [
-    "add-mcp",
-    clientRegistrationCommandText(command),
-    "--name",
-    "rea",
-    "-y",
-    "-g",
-  ]);
+  if (await pathExists(npxLog))
+    throw new Error("Native MCP registration invoked an external installer");
 };
 
 const verifySetupPlan = async ({

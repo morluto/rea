@@ -740,6 +740,7 @@ const inspectJavaRuntime = async (
       failure.message,
       failure.diagnostics,
       failure.kind,
+      failure.inspectionFailure,
     );
   }
 };

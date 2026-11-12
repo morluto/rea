@@ -1,4 +1,5 @@
 import { OwnedCommandFailure } from "../../../../src/process/OwnedCommand.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { createHash } from "node:crypto";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import { EventEmitter } from "node:events";
@@ -30,6 +31,7 @@ import {
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
+import { fat } from "../../../../src/domain/binaryTarget.fixture.js";
 import {
   inspectPlistSchema,
   inspectSignatureSchema,
@@ -91,6 +93,13 @@ const inspectionFixture = async (high = false) => {
       ],
     }),
   );
+  return nativeMachoTargetForFile(path);
+};
+
+const architectureTargetFixture = async () => {
+  const root = await createTestTempDirectory("rea-native-architectures-");
+  const path = join(root, "fixture");
+  await writeFile(path, fat([0x01000007, 0x0100000c]));
   return nativeMachoTargetForFile(path);
 };
 
@@ -538,7 +547,7 @@ describe("native owned cancellation boundary", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controller = new AbortController();
       const cancellationReason = {
@@ -653,7 +662,7 @@ describe("native cancellation cleanup provenance", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controllers = [new AbortController(), new AbortController()];
       const cancellationReason = { source: "mixed native owner retry" };
@@ -790,7 +799,7 @@ describe("native returned cleanup ownership", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controller = new AbortController();
       const cancellationReason = { source: "native cleanup retry regression" };
@@ -934,7 +943,7 @@ describe("native late cancellation with cleanup", () => {
       launcher,
     );
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
     try {
       const pending = client.execute(
@@ -1130,7 +1139,7 @@ describe("native command cleanup lifecycle", () => {
       },
     };
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
 
     const execution = client.execute("list_architectures", {});
@@ -1216,7 +1225,7 @@ describe("native command failure projection", () => {
       retryCleanup: async () => failures,
     };
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
     try {
       const result = await client.execute("list_architectures", {});
@@ -1268,7 +1277,7 @@ describe("native command failure projection", () => {
       },
     };
     const result = await new NativeMacOSProvider({}, runner, "darwin")
-      .createClient(machoTarget("/private/fixture"))
+      .createClient(await architectureTargetFixture())
       .execute("list_architectures", {});
 
     expect(result.ok).toBe(false);
@@ -1309,7 +1318,7 @@ describe("native command failure projection", () => {
         },
       };
       const result = await new NativeMacOSProvider({}, runner, "darwin")
-        .createClient(machoTarget("/private/fixture"))
+        .createClient(await architectureTargetFixture())
         .execute("list_architectures", {});
 
       expect(result.ok).toBe(false);
@@ -1429,7 +1438,7 @@ describe("native macOS provider inspection", () => {
     const app = join(directory, "Fixture.app");
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
-    await writeFile(executable, "fixture");
+    await writeFile(executable, fat([0x01000007, 0x0100000c]));
     await writeFixturePlist(join(app, "Contents/Info.plist"));
     const externalPlist = join(directory, "Outside.plist");
     await writeFixturePlist(externalPlist);
@@ -1697,7 +1706,7 @@ describe("native macOS provider failures and parsing", () => {
       {},
       new FailingRunner("unavailable"),
       "darwin",
-    ).createClient(machoTarget("/fixture"));
+    ).createClient(await architectureTargetFixture());
     const unavailableResult = await unavailable.execute(
       "list_architectures",
       {},
@@ -1714,7 +1723,7 @@ describe("native macOS provider failures and parsing", () => {
       {},
       new FixtureRunner({ lipo: "malformed" }),
       "darwin",
-    ).createClient(machoTarget("/fixture"));
+    ).createClient(await architectureTargetFixture());
     const malformedResult = await malformed.execute("list_architectures", {});
     expect(!malformedResult.ok && malformedResult.error._tag).toBe(
       "AnalysisOutputError",
@@ -1728,7 +1737,7 @@ describe("native macOS provider failures and parsing", () => {
         {},
         new FailingRunner(reason),
         "darwin",
-      ).createClient(machoTarget("/fixture"));
+      ).createClient(await architectureTargetFixture());
       const result = await client.execute("list_architectures", {});
       expect(!result.ok && result.error._tag).toBe(tag);
     }
@@ -1975,11 +1984,11 @@ it("retains an owned preparation cleanup marker when the command deadline expire
       symbols: ["fixture"],
     });
     if (result.ok) throw new Error("Expected preparation timeout");
-    expect(result.error).toMatchObject({
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(primaryAnalysisError(result.error)).toMatchObject({
       _tag: "AnalysisTimeoutError",
-      cleanupIncomplete: true,
+      cause: failure,
     });
-    expect(result.error.cause).toBe(reason);
     marker.resolveCleanup();
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
@@ -2018,12 +2027,12 @@ it("reports the selected command deadline when preparation times out", async () 
       native_command_timeout_ms: 1_500,
     });
     if (result.ok) throw new Error("Expected preparation timeout");
-    expect(result.error).toMatchObject({
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(primaryAnalysisError(result.error)).toMatchObject({
       _tag: "AnalysisTimeoutError",
-      cleanupIncomplete: true,
+      cause: failure,
     });
-    expect(result.error.cause).toBe(reason);
-    const projected = projectAnalysisError(result.error);
+    const projected = projectAnalysisError(primaryAnalysisError(result.error));
     expect(projected.message).toContain("of 1500 ms");
     expect(projected.message).toContain("native_command_timeout_ms");
     expect(projected.remediation.action).toContain("above 1500");
