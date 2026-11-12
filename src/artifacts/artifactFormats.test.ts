@@ -44,7 +44,8 @@ type FormatsWithReaders =
   | "dfuse"
   | "esp-flash-image"
   | "fit"
-  | "ntfs-mft";
+  | "ntfs-mft"
+  | "systemd-journal";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;

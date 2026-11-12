@@ -84,6 +84,7 @@ export const liveBinaryTargetSummaryVariants = [
       "dfuse",
       "fit",
       "ntfs-mft",
+      "systemd-journal",
     ]),
     architecture: z.null(),
   }),
