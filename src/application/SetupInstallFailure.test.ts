@@ -159,7 +159,28 @@ describe("Linux Hopper launcher digest mismatch", () => {
     if (result.status !== "failed") throw new Error("expected failure");
     expect(result.launcherDigestMismatch).toEqual(forged);
     expect(result.remediation).toContain("release 2.1.02K31m;");
-    expect([...result.remediation].some((c) => c >= "\u0080" && c <= "\u009f")).toBe(false);
+    expect(
+      [...result.remediation].some((c) => c >= "\u0080" && c <= "\u009f"),
+    ).toBe(false);
+  });
+
+  it("strips bidi controls from the rendered release version", () => {
+    // A right-to-left override reorders the text that follows it, so a feed
+    // version carrying one could render a release name that differs from the
+    // value the check compared. The raw fact is still reported unchanged.
+    const forged = { ...mismatch, releaseVersion: "2.1.0\u202e40.1.2" };
+    const result = setupInstallFailure("integrity", {
+      platform: "linux",
+      launcherDigestMismatch: forged,
+    });
+    if (result.status !== "failed") throw new Error("expected failure");
+    expect(result.launcherDigestMismatch).toEqual(forged);
+    expect(result.remediation).toContain("release 2.1.040.1.2;");
+    expect(
+      [...result.remediation].some((c) =>
+        /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/u.test(c),
+      ),
+    ).toBe(false);
   });
 
   it("keeps the generic recovery for an integrity failure without package facts", () => {
