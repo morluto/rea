@@ -180,6 +180,38 @@ const isBooleanSchema = (schema: unknown): boolean =>
   isObject(schema) &&
   (schema.type === "boolean" || isBooleanLiteralSchema(schema));
 
+/**
+ * Remove every instance default below a schema, not only the one this keyword
+ * carries. A default nested in a property belongs to the group that declares
+ * it; outside that group a client that fills nested defaults would send an
+ * object a strict sibling refuses.
+ */
+const omitNestedDefaults = (schema: unknown): unknown => {
+  if (Array.isArray(schema)) return schema.map(omitNestedDefaults);
+  if (!isObject(schema)) return schema;
+  return Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key]) => key !== "default")
+      .map(([key, value]) => [
+        key,
+        schemaMaps.has(key) && isObject(value)
+          ? Object.fromEntries(
+              Object.entries(value).map(([name, child]) => [
+                name,
+                omitNestedDefaults(child),
+              ]),
+            )
+          : schemaArrays.has(key) && Array.isArray(value)
+            ? value.map(omitNestedDefaults)
+            : schemaChildren.has(key)
+              ? Array.isArray(value)
+                ? value.map(omitNestedDefaults)
+                : omitNestedDefaults(value)
+              : value,
+      ]),
+  );
+};
+
 const preserveSharedDefault = (
   schema: Record<string, unknown>,
   branches: readonly unknown[],
@@ -599,14 +631,19 @@ const flattenRootObjectUnion = (
   const required = sharedRequiredProperties(branches);
   // A default lifted out of an input group can make a client send a field
   // rejected by another strict group. Keep it only when every group owns the
-  // property and supplies the same default.
+  // property and supplies the same default. A property some group omits takes
+  // its nested defaults too: filling only the inner property would otherwise
+  // still send an object that sibling group refuses. A default the nested
+  // property carries inside a group that does accept the parent stays, so
+  // callers keep that guidance.
   for (const [name, schemas] of variants) {
-    const defaults = branches.map((branch) => {
-      const property = isObject(branch.properties)
-        ? branch.properties[name]
-        : undefined;
-      return isObject(property) ? property.default : undefined;
-    });
+    const properties = branches.map((branch) =>
+      isObject(branch.properties) ? branch.properties[name] : undefined,
+    );
+    const ownedByEveryGroup = properties.every(isObject);
+    const defaults = properties.map((property) =>
+      isObject(property) ? property.default : undefined,
+    );
     if (
       defaults.every(
         (value) => value !== undefined && isDeepStrictEqual(value, defaults[0]),
@@ -615,11 +652,13 @@ const flattenRootObjectUnion = (
       continue;
     const withoutDefaults: unknown[] = [];
     for (const schema of schemas) {
-      let withoutDefault = schema;
-      if (isObject(schema) && Object.hasOwn(schema, "default")) {
-        const { default: _default, ...rest } = schema;
-        withoutDefault = rest;
-      }
+      const withoutDefault = ownedByEveryGroup
+        ? isObject(schema) && Object.hasOwn(schema, "default")
+          ? Object.fromEntries(
+              Object.entries(schema).filter(([key]) => key !== "default"),
+            )
+          : schema
+        : omitNestedDefaults(schema);
       if (
         !withoutDefaults.some((known) =>
           isDeepStrictEqual(known, withoutDefault),
