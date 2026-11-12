@@ -382,6 +382,34 @@ it("keeps an explicit empty library selection complete despite an inventory unkn
   });
 });
 
+it("keeps a nonempty library-path selection partial despite an inventory unknown", () => {
+  // The named path can still sit inside the unexamined inventory, so the gap
+  // keeps the binding unknown rather than claiming complete coverage.
+  const result = projectAndroidJniBindings({
+    apk: { path: "/selected/app.apk", sha256: "a".repeat(64) },
+    selection: {
+      library_paths: ["lib/arm64-v8a/missing.so"],
+      abis: ["arm64-v8a"],
+    },
+    inventory: inventory(),
+    libraries: [],
+    libraryInventory: {
+      status: "partial",
+      examined_entries: 0,
+      selected_libraries: 0,
+      unknowns: [
+        "a split-required manifest leaves the library inventory unknown",
+      ],
+    },
+  });
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  expect(result.value.bindings[0]).toMatchObject({
+    abi: "arm64-v8a",
+    status: "unknown",
+    coverage: "partial",
+  });
+});
+
 it("preserves selected native declarations when no library establishes an ABI", () => {
   const report = project([], inventory());
   expect(report.bindings).toEqual([]);

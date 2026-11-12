@@ -440,3 +440,39 @@ it("treats a repeated root's declarations as ambiguous instead of last-one-wins"
     },
   });
 });
+
+it("treats a duplicated split attribute as ambiguous instead of first-one-wins", () => {
+  // The same framework attribute declared twice leaves no single row
+  // authoritative; keeping the first would report complete JNI coverage from a
+  // value a later declaration contradicts.
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          booleanValue: false,
+        }),
+        android("isSplitRequired", {
+          resourceId: 0x0101064d,
+          booleanValue: true,
+        }),
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: "base__abi",
+        }),
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: "base__abi,base__density",
+        }),
+      ],
+    }),
+  );
+  expect(facts).toEqual({
+    ok: true,
+    value: {
+      required_split_types: "unknown",
+      split_name: null,
+      is_split_required: "unknown",
+    },
+  });
+});

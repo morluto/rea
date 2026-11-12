@@ -384,12 +384,29 @@ export const readAndroidBinaryManifestSplitFacts = (
       ...(manifest?.attributes ?? []),
       ...(application?.attributes ?? []),
     ];
-    const find = (resourceId: number, name: string) =>
-      all.find((attribute) => attribute.resourceId === resourceId) ??
-      all.find(
-        (attribute) =>
-          attribute.namespace === ANDROID_NS && attribute.name === name,
+    // A duplicate declaration leaves no single value authoritative, so the
+    // caller treats the field as ambiguous rather than trusting the first row.
+    // The framework ID wins over spelling, and an attribute the ID names inside
+    // the Android namespace wins over one it names outside it, so the duplicate
+    // count covers exactly the declarations the value came from.
+    const find = (resourceId: number, name: string) => {
+      const identified = all.filter(
+        (attribute) => attribute.resourceId === resourceId,
       );
+      const androidIdentified = identified.filter(
+        (attribute) => attribute.namespace === ANDROID_NS,
+      );
+      const matches =
+        identified.length > 0
+          ? androidIdentified.length > 0
+            ? androidIdentified
+            : identified
+          : all.filter(
+              (attribute) =>
+                attribute.namespace === ANDROID_NS && attribute.name === name,
+            );
+      return { attribute: matches[0], duplicate: matches.length > 1 };
+    };
     const requiredSplitTypes = find(
       REQUIRED_SPLIT_TYPES_ID,
       "requiredSplitTypes",
@@ -401,40 +418,50 @@ export const readAndroidBinaryManifestSplitFacts = (
     // reference can resolve to true at install time. A repeated root or
     // <application> is unknown for the same reason: no single element is
     // authoritative, so neither an absent nor a false reading is established.
+    // A field declared more than once is ambiguous for the same reason a
+    // repeated root is: no single row establishes the value the installer sees.
+    const elementsAmbiguous = unreadableElement || repeatedElement;
+    const flagAmbiguous = elementsAmbiguous || requiredFlag.duplicate;
+    const typesAmbiguous = elementsAmbiguous || requiredSplitTypes.duplicate;
+    const requiredFlagAttribute = requiredFlag.attribute;
     const isSplitRequired: boolean | "unknown" | null =
-      requiredFlag === undefined
-        ? unreadableElement || repeatedElement
+      requiredFlagAttribute === undefined
+        ? flagAmbiguous
           ? "unknown"
           : null
-        : requiredFlag.dataType === TYPE_INT_BOOLEAN
-          ? repeatedElement
+        : requiredFlagAttribute.dataType === TYPE_INT_BOOLEAN
+          ? flagAmbiguous
             ? "unknown"
-            : requiredFlag.data !== 0
-          : requiredFlag.dataType === TYPE_STRING
-            ? repeatedElement
+            : requiredFlagAttribute.data !== 0
+          : requiredFlagAttribute.dataType === TYPE_STRING
+            ? flagAmbiguous
               ? "unknown"
-              : (strings[requiredFlag.data] ?? null) === "true"
+              : (strings[requiredFlagAttribute.data] ?? null) === "true"
                 ? true
-                : (strings[requiredFlag.data] ?? null) === "false"
+                : (strings[requiredFlagAttribute.data] ?? null) === "false"
                   ? false
                   : "unknown"
             : "unknown";
+    const requiredSplitTypesAttribute = requiredSplitTypes.attribute;
     const requiredValue =
-      requiredSplitTypes === undefined ? null : toValue(requiredSplitTypes);
+      requiredSplitTypesAttribute === undefined
+        ? null
+        : toValue(requiredSplitTypesAttribute);
     const requiredTypes =
       requiredValue === null
-        ? requiredSplitTypes === undefined
+        ? requiredSplitTypesAttribute === undefined
           ? null
           : "unknown"
-        : splitTypes(requiredValue);
+        : typesAmbiguous
+          ? "unknown"
+          : splitTypes(requiredValue);
     return ok({
       // An unreadable element can carry either declaration, and the roots that
       // remain readable do not establish that they are absent.
       required_split_types:
-        requiredTypes === null && (unreadableElement || repeatedElement)
-          ? "unknown"
-          : requiredTypes,
-      split_name: splitName === undefined ? null : toValue(splitName),
+        requiredTypes === null && elementsAmbiguous ? "unknown" : requiredTypes,
+      split_name:
+        splitName.attribute === undefined ? null : toValue(splitName.attribute),
       is_split_required: isSplitRequired,
     });
   } catch (cause: unknown) {
