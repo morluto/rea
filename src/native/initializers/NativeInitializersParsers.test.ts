@@ -1029,11 +1029,12 @@ describe("ELF section lookups", () => {
   it("resolves a full slot budget against a near-maximal section table in one pass", async () => {
     const base = elf64PieInitializers();
     const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
+    const sectionCount = 0xffff;
     const payload = Buffer.alloc(slots * 8);
     for (let slot = 0; slot < slots; slot += 1)
       payload.writeBigUInt64LE(0x100n, slot * 8);
     // Allocated, unnamed sections that cover every slot and target address.
-    const extra = Buffer.alloc((0xffff - 12) * 64);
+    const extra = Buffer.alloc((sectionCount - 12) * 64);
     for (let at = 0; at < extra.length; at += 64) {
       extra.writeUInt32LE(1, at + 4);
       extra.writeBigUInt64LE(2n, at + 8);
@@ -1045,8 +1046,11 @@ describe("ELF section lookups", () => {
       base.subarray(0x800, 0x800 + 12 * 64),
       extra,
     ]);
-    bytes.writeBigUInt64LE(BigInt(base.length + payload.length), 40);
-    bytes.writeUInt16LE(0xffff, 60);
+    const sectionTable = base.length + payload.length;
+    bytes.writeBigUInt64LE(BigInt(sectionTable), 40);
+    // Extended section numbering stores the count in section zero's sh_size.
+    bytes.writeUInt16LE(0, 60);
+    bytes.writeBigUInt64LE(BigInt(sectionCount), sectionTable + 32);
     // The single PT_LOAD maps the whole file; DT_INIT_ARRAY moves to the payload.
     bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 32);
     bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
