@@ -81,15 +81,33 @@ export const readHostFile = async (
   }
 };
 
+/**
+ * Whether a host path names a regular file, following links. A failed check
+ * says whether search of that folder is refused: a denial means the linker
+ * cannot use the folder either, a transient failure does not.
+ */
+export type HostFileProbe =
+  | { readonly kind: "file"; readonly isFile: boolean }
+  | { readonly kind: "unknown"; readonly deniedSearch: boolean };
+
+/** Codes whose failure means this folder cannot be searched at all. */
+const DENIED_SEARCH_CODES = new Set(["EACCES", "EPERM"]);
+
+/** The host file at `path`, with why a check could not tell it. */
+export const probeHostFile = async (path: string): Promise<HostFileProbe> => {
+  try {
+    return { kind: "file", isFile: (await stat(path)).isFile() };
+  } catch (cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException).code ?? "";
+    // Only a missing name establishes that no file is there.
+    return code === "ENOENT" || code === "ENOTDIR"
+      ? { kind: "file", isFile: false }
+      : { kind: "unknown", deniedSearch: DENIED_SEARCH_CODES.has(code) };
+  }
+};
+
 /** Whether a host path names a regular file, following links; null when the check could not tell, such as a denied parent folder. */
 export const hostFileKind = async (path: string): Promise<boolean | null> => {
-  try {
-    return (await stat(path)).isFile();
-  } catch (cause: unknown) {
-    // Only a missing name establishes that no file is there.
-    return (cause as NodeJS.ErrnoException).code === "ENOENT" ||
-      (cause as NodeJS.ErrnoException).code === "ENOTDIR"
-      ? false
-      : null;
-  }
+  const probe = await probeHostFile(path);
+  return probe.kind === "file" ? probe.isFile : null;
 };

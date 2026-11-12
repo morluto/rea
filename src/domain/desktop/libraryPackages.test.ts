@@ -73,7 +73,10 @@ const host = (
       ? err({ kind: "unreadable" as const, ...image })
       : ok(image);
   },
-  isFile: async (path: string) => path in images,
+  isFile: async (path: string) => ({
+    kind: "file" as const,
+    isFile: path in images,
+  }),
 });
 
 const typora = {
@@ -123,7 +126,12 @@ describe("libraryClosure", () => {
                   reason: "EACCES",
                 }),
         isFile: async (path: string) =>
-          path === "/denied/libcore.so" ? null : path === "/native/libcore.so",
+          path === "/denied/libcore.so"
+            ? { kind: "unknown" as const, deniedSearch: true }
+            : {
+                kind: "file" as const,
+                isFile: path === "/native/libcore.so",
+              },
       },
       10,
     );
@@ -153,7 +161,10 @@ describe("libraryClosure", () => {
                 identity: null,
                 reason: "EACCES",
               }),
-        isFile: async () => null,
+        isFile: async () => ({
+          kind: "unknown" as const,
+          deniedSearch: true,
+        }),
       },
       10,
     );
@@ -162,6 +173,38 @@ describe("libraryClosure", () => {
       missing: [],
       unreadable: [{ path: "/denied/libcore.so", reason: "EACCES" }],
       truncated: false,
+    });
+  });
+
+  it("keeps a transiently unprobed candidate ahead of the linker cache", async () => {
+    // A search directory that failed transiently may still be the one the
+    // linker loads from, so its candidate keeps search order.
+    const closure = await libraryClosure(
+      {
+        path: "/app/bin/app",
+        dependencies: elf(["libcore.so"], [], ["/volatile"]),
+      },
+      parseLinkerCache(LINKER_CACHE),
+      {
+        dependencies: async (path: string) =>
+          path === "/app/bin/app"
+            ? ok(elf(["libcore.so"], [], ["/volatile"]))
+            : path === "/volatile/libcore.so"
+              ? ok(elf([]))
+              : err({
+                  kind: "unreadable" as const,
+                  identity: null,
+                  reason: "missing",
+                }),
+        isFile: async (path: string) =>
+          path === "/volatile/libcore.so"
+            ? { kind: "unknown" as const, deniedSearch: false }
+            : { kind: "file" as const, isFile: true },
+      },
+      10,
+    );
+    expect(closure).toMatchObject({
+      libraries: [{ soname: "libcore.so", path: "/volatile/libcore.so" }],
     });
   });
 

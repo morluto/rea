@@ -147,7 +147,11 @@ const candidateKeys = async (
   ];
 };
 
-/** The index's signed release beside it in apt's lists folder: InRelease, or Release.gpg with the Release it signs; null when a check could not tell. */
+/**
+ * The index's signed release beside it in apt's lists folder: InRelease, or
+ * Release.gpg with the Release it signs; null when no release representation
+ * could be established because a check could not tell.
+ */
 const signedRelease = async (
   target: AptIndexTarget,
 ): Promise<readonly string[] | null | undefined> => {
@@ -156,8 +160,9 @@ const signedRelease = async (
     aptListFileName(target.baseUri),
   );
   const inRelease = await hostFileKind(`${prefix}InRelease`);
-  if (inRelease === null) return null;
   if (inRelease) return [`${prefix}InRelease`];
+  // An InRelease that could not be probed does not rule out the detached pair,
+  // so keep looking rather than losing a signature apt still holds.
   const signed = await hostFileKind(`${prefix}Release.gpg`);
   if (!signed && signed !== null) return undefined;
   const release = await hostFileKind(`${prefix}Release`);

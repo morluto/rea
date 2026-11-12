@@ -112,24 +112,37 @@ async function* libraryCandidates(
   if (!soname.includes("/"))
     for (const directory of directories) {
       const candidate = posix.join(directory, soname);
-      const kind = await host.isFile(candidate);
-      if (kind === true) yield { path: candidate, unprobed: false };
+      const probe = await host.isFile(candidate);
+      if (probe.kind === "file") {
+        if (probe.isFile) yield { path: candidate, unprobed: false };
+      }
       // A denied folder cannot be searched by the linker either, so this is not
       // the object it loads. It is only evidence that the soname may be there.
-      else if (kind === null) unprobed.push(candidate);
+      else if (probe.deniedSearch) unprobed.push(candidate);
+      // Any other failed check may be transient, so the candidate keeps its
+      // search position instead of falling behind every cache entry.
+      else yield { path: candidate, unprobed: false };
     }
   for (const path of cachedPaths(cache, soname, machine))
     yield { path, unprobed: false };
   for (const path of unprobed) yield { path, unprobed: true };
 }
 
+/** What a host check of one candidate path established. */
+export type LibraryFileProbe =
+  | { readonly kind: "file"; readonly isFile: boolean }
+  | {
+      readonly kind: "unknown";
+      /** The check refused search of the folder, rather than failing transiently. */
+      readonly deniedSearch: boolean;
+    };
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {
   readonly dependencies: (
     path: string,
     expected: ElfLibraryIdentity,
   ) => Promise<Result<ElfDependencies, ElfDependenciesFailure>>;
-  readonly isFile: (path: string) => Promise<boolean | null>;
+  readonly isFile: (path: string) => Promise<LibraryFileProbe>;
 }
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
