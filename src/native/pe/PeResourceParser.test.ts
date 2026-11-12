@@ -1,3 +1,5 @@
+import { dosMz, nonPeWindowsMz } from "../../domain/binaryTarget.fixture.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
@@ -347,8 +349,13 @@ describe("PE header admission and bounded traversal", () => {
   it("allows cancellation while traversing resource entries", async () => {
     const controller = new AbortController();
     const parsing = parse(peResourceFixture().bytes, 4096, controller.signal);
-    controller.abort();
-    await expect(parsing).rejects.toThrow();
+    const reason = { caller: "during PE resource traversal" };
+    controller.abort(reason);
+    const failure = await parsing.catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    expect(failure).toMatchObject({ reason: "cancelled" });
+    if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+    expect(failure.cause).toBe(reason);
   });
 });
 
@@ -773,3 +780,12 @@ it("keeps raw name probing separate from full resource-name alignment admission"
     message: expect.stringMatching(/unaligned.*resource name/iu),
   });
 });
+
+it.each(["DOS", "NE", "LE", "LX"] as const)(
+  "leaves %s targets outside the opportunistic PE resource probe",
+  async (format) => {
+    const bytes = format === "DOS" ? dosMz(1024) : nonPeWindowsMz(format);
+    await expect(probeSeaName(bytes)).resolves.toBe(false);
+    await expect(payloadsOf(bytes)).resolves.toEqual([]);
+  },
+);

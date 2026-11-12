@@ -53,6 +53,17 @@ describe("Antigravity CLI configuration paths", () => {
       format: "json",
       evidencePath: join("/home/a", ".gemini", "antigravity-cli"),
       registrationGroup: "antigravity",
+      registrationProfile: {
+        nativeClient: "antigravity_cli",
+        connection: {
+          kind: "flat",
+          fields: ["serverUrl", "url"],
+          stdio: [
+            { kind: "present", field: "serverUrl" },
+            { kind: "present", field: "url" },
+          ],
+        },
+      },
     });
     expect(antigravityCliPath("/home/a")?.configPath).toBe(
       antigravityIdePath("/home/a")?.configPath,

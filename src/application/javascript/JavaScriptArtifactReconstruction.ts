@@ -1,6 +1,7 @@
 import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
+import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
@@ -181,15 +182,24 @@ export const reconstructJavaScriptArtifact = async (
           ? {}
           : { fileNodes: input.max_semantic_nodes_per_file }),
       });
+      const heap = selectedAnalysisSetting(
+        input.max_heap_mb,
+        overrides?.["javascript.max_heap_mb"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
+      );
+      const timeout = selectedAnalysisSetting(
+        input.analysis_timeout_ms,
+        overrides?.["javascript.analysis_timeout_ms"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+      );
       const sourceLimits = {
-        heapMb:
-          input.max_heap_mb ??
-          overrides?.["javascript.max_heap_mb"] ??
-          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
-        timeoutMs:
-          input.analysis_timeout_ms ??
-          overrides?.["javascript.analysis_timeout_ms"] ??
-          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+        ...(input.semantic_precision === undefined
+          ? {}
+          : { semanticPrecision: input.semantic_precision }),
+        heapMb: heap.value,
+        heapSource: heap.source,
+        timeoutMs: timeout.value,
+        timeoutSource: timeout.source,
       };
       const preloads = await discoverJavaScriptPreloadPaths(
         files,

@@ -238,3 +238,53 @@ it("refuses string_literals view when unrequested and projects filtered/truncate
     ],
   });
 });
+
+it.each(["dependencies", "settings"] as const)(
+  "distinguishes unavailable Go %s from decoded empty records",
+  (collection) => {
+    for (const available of [false, true]) {
+      const input = parent();
+      const result = projectAnalysisView(
+        {
+          ...input,
+          normalizedResult: {
+            ...report,
+            build_info: available
+              ? {
+                  header_offset: 0,
+                  encoding: "inline",
+                  go_version: null,
+                  go_version_bytes_base64: "",
+                  module_text: null,
+                  module_bytes_base64: "",
+                  version_location: { offset: 32, bytes: 0 },
+                  module_location: { offset: 32, bytes: 0 },
+                  module: {
+                    path: null,
+                    main: null,
+                    dependencies: [],
+                    settings: [],
+                    unparsed_lines: [],
+                    unparsed_line_bytes_base64: [],
+                    complete: true,
+                  },
+                }
+              : null,
+          },
+        },
+        { kind: "go", collection, offset: 3, limit: 1 },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toEqual({
+        status: available ? "empty" : "unavailable",
+        examined: 0,
+        total: available ? 0 : null,
+        next_offset: null,
+        exhausted: available,
+      });
+      expect(result.value).toMatchObject({
+        source_coverage: { build_info_available: available },
+      });
+    }
+  },
+);

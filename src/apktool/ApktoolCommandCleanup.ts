@@ -1,4 +1,8 @@
 import {
+  bindProcessInspectionCancellations,
+  processInspectionFailure,
+} from "../providers/OwnedCommandCleanup.js";
+import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
@@ -10,7 +14,9 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { processInspectionCleanupFailures } from "../process/ProcessInspectionCleanup.js";
+import { describeValidationFailure } from "../domain/validationFailure.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 
 interface CommandOwner {
@@ -58,26 +64,47 @@ export class ApktoolCommandCleanup {
   ): AnalysisError {
     const retained: CommandOwner[] = [];
     const command = cause instanceof OwnedCommandFailure ? cause : undefined;
-    const preparation =
-      command?.preparationFailure ??
-      (cause instanceof DarwinProcessOwnershipInspectionError
-        ? cause
-        : undefined);
-    if (preparation?.cleanupFailure !== undefined) {
-      const cleanup = preparation.cleanupFailure;
-      retained.push(
-        this.#retain(
+    for (const preparation of processInspectionCleanupFailures(
+      processInspectionFailure(cause),
+    )) {
+      if (preparation instanceof RegularFileCleanupFailure) {
+        const cleanup = new ProviderCleanupError(
+          "apktool",
+          [preparation.path],
+          { reason: describeValidationFailure(preparation.cleanupCause) },
+          { operation, cause: preparation },
+        );
+        const retainedOwner = this.#retain(
+          cleanup,
+          () => preparation.owner.close(),
+          root,
+        );
+        cleanup.bindCleanupResourceOwner(retainedOwner.lease);
+        retainedOwner.lease.bindCleanupError(cleanup);
+        retained.push(retainedOwner);
+      } else {
+        const cleanup =
+          preparation.cleanupFailure ??
+          new ProviderCleanupError(
+            "apktool",
+            ["process ownership inspection"],
+            { reason: preparation.message },
+            { operation, cause: preparation },
+          );
+        const owner = preparation.cleanupOwner;
+        const retainedOwner = this.#retain(
           cleanup,
           async () => {
-            if (!cleanup.cleanupIncomplete) return;
-            if (preparation.cleanupOwner === undefined) throw cleanup;
-            await preparation.cleanupOwner.close();
-            if (cleanup.cleanupIncomplete) throw cleanup;
+            if (owner === undefined) throw cleanup;
+            await owner.close();
           },
           root,
-        ),
-      );
+        );
+        retainedOwner.lease.bindCleanupError(cleanup);
+        retained.push(retainedOwner);
+      }
     }
+
     if (
       command !== undefined &&
       (command.cleanupOwner !== undefined || command.cleanupFailure !== null)
@@ -104,7 +131,8 @@ export class ApktoolCommandCleanup {
       retainedOwner.lease.bindCleanupError(cleanup);
       retained.push(retainedOwner);
     }
-    if (retained.length === 0) return primary;
+    if (retained.length === 0)
+      return bindProcessInspectionCancellations(cause, primary, operation);
     const cleanup = new ProviderCleanupError(
       "apktool",
       retained.flatMap((owner) => owner.cleanup.cleanupResources),
@@ -112,11 +140,15 @@ export class ApktoolCommandCleanup {
       { operation, cause },
     );
     this.#bind(cleanup, retained);
-    return analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
+    return bindProcessInspectionCancellations(
+      cause,
+      analysisErrorWithCleanupFailure(
+        primary,
+        cleanup,
+        operation,
+      ).bindCleanupDependencies([primary, cleanup]),
       operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    );
   }
 
   #retain(

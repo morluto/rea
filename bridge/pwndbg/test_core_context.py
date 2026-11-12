@@ -14,7 +14,7 @@ BRIDGE = Path(__file__).with_name("core_context.py")
 
 
 class CoreContextTests(unittest.TestCase):
-    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian", objfile="recorded-executable"):
+    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian", objfile="recorded-executable", output_bytes=16384):
         commands, reads, queries = [], [], []
         state = {"executable": None, "symbols": None, "connection": None}
         gdb = types.ModuleType("gdb")
@@ -63,7 +63,7 @@ class CoreContextTests(unittest.TestCase):
             plugin.write_text("")
             request = stage / "request.json"
             reply = stage / "reply.json"
-            request.write_text(json.dumps({"gdbinit": str(plugin), "architecture": architecture, "snapshot_path": str(root / "object.snapshot"), "reply_path": str(reply)}))
+            request.write_text(json.dumps({"gdbinit": str(plugin), "architecture": architecture, "snapshot_path": str(root / "object.snapshot"), "reply_path": str(reply), "producer_limits": {"output_bytes": output_bytes}}))
             with patch.dict(sys.modules, modules), patch.dict(os.environ, REA_CORE_CONTEXT_REQUEST=str(request)):
                 runpy.run_path(str(BRIDGE))
             result = json.loads(reply.read_text())
@@ -104,14 +104,15 @@ class CoreContextTests(unittest.TestCase):
         self.assertEqual(reads, [])
         self.assertEqual(queries, [])
 
-    def test_output_limit_message_separates_the_words_and_names_the_limit(self):
-        result, _, reads, queries = self.inspect(objfile="m" * (64 * 1024 * 1024))
+    def test_selected_output_limit_reports_recovery_and_accepts_more_headroom(self):
+        result, _, reads, queries = self.inspect(objfile="m" * 2048, output_bytes=1024)
         self.assertFalse(result["ok"])
         self.assertEqual(result["reason"], "output-limit")
-        self.assertNotIn("exceeds64", result["message"])
-        self.assertIn("64 MiB", result["message"])
+        self.assertIn("producer_limits.output_bytes=1024", result["message"])
         self.assertEqual(reads, [])
         self.assertEqual(queries, ["maps"])
+        recovered, _, _, _ = self.inspect(objfile="m" * 2048, output_bytes=4096)
+        self.assertTrue(recovered["ok"], recovered)
 
     def test_wrong_connection_or_remaining_symbols_never_queries_mappings(self):
         for options in [{"connection": "native"}, {"symbols": "unexpected-symbols"}]:

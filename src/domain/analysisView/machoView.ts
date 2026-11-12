@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isMachOFormat } from "../binaryTargetTypes.js";
+import { machoSliceEncryptionViewSchema } from "../apple/machoEncryption.js";
 import {
   inspectMachoSchema,
   retainedInspectMachoSchema,
@@ -56,7 +57,7 @@ export const machoViewRows = {
   imports: exactRows(shape.imports.shape.items),
   exports: exactRows(shape.exports.shape.items),
   segments: exactRows(shape.segments.shape.items),
-  encryption: exactRows(shape.encryption.shape.items),
+  encryption: z.array(machoSliceEncryptionViewSchema),
   provenance: exactRows(shape.provenance),
 };
 
@@ -90,7 +91,7 @@ export const machoSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
-type MachoReport = z.output<typeof inspectMachoSchema>;
+type MachoReport = z.output<typeof retainedInspectMachoSchema>;
 
 /** Admit a well-formed report whose recorded subject, if any, is a Mach-O. */
 const parseMachoReport = (

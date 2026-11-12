@@ -33,6 +33,7 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import * as stableFileHash from "../../../../src/filesystem/StableFileHash.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
+import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import {
   fakeKunaCalls,
   setFakeKunaBehavior,
@@ -633,7 +634,7 @@ it("keeps hash cleanup aggregates pending through retained staging removal", asy
     .mockRejectedValue(persistentCloseCause);
   let stagingPath: string | undefined;
   let retainedPath: string | undefined;
-  let buildFailure: ProviderCleanupError | undefined;
+  let buildFailure: AnalysisError | undefined;
   const aggregates: ProviderCleanupError[] = [];
   try {
     const built = await cache.build({
@@ -641,8 +642,7 @@ it("keeps hash cleanup aggregates pending through retained staging removal", asy
       ...(await target("program")),
     });
     if (built.ok) throw new Error("Expected the retained hash close to fail");
-    expect(built.error).toBeInstanceOf(ProviderCleanupError);
-    if (!(built.error instanceof ProviderCleanupError)) throw built.error;
+    expect(built.error.cleanupIncomplete).toBe(true);
     buildFailure = built.error;
 
     const [staging] = await entries(cacheRoot, "staging");
