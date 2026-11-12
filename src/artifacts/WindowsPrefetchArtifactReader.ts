@@ -145,13 +145,18 @@ export class WindowsPrefetchArtifactReader implements ArtifactReader {
       assertActive,
     );
     const parsed = parsePrefetchFile(bytes);
-    if (!parsed.ok)
+    if (!parsed.ok) {
+      // Bytes read before the source changed are not this file's contents, so
+      // verify identity first: a carrier replaced mid-read is an integrity
+      // failure, not a stable malformed input.
+      await this.#source.read(signal);
       // An intact variant this reader does not decode is unavailable, not
       // malformed; only a genuine decode failure is a format failure.
       throw new ArtifactReaderFailure(
         parsed.error.kind === "unsupported" ? "unavailable" : parsed.error.kind,
         parsed.error.message,
       );
+    }
     const metadata = parsed.value;
     // Accept the source identity before exposing any parsed fact, so a carrier
     // that changed after the read cannot leave metadata from an unverified file.

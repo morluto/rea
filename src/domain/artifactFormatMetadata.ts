@@ -7,7 +7,11 @@ import {
 } from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
 import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
-import { prefetchFileBytesSchema } from "./windows/prefetchFormat.js";
+import {
+  PREFETCH_RUN_COUNT_BYTES,
+  PREFETCH_RUN_TIME_BYTES,
+  prefetchFileBytesSchema,
+} from "./windows/prefetchFormat.js";
 
 import { jsonRecordSchema } from "./jsonRecord.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -401,28 +405,42 @@ export type FitMetadata = z.infer<typeof fitMetadataSchema>;
  * the file leaves absent stay null; last-run times and the read-ahead list are
  * not decoded by this reader and are not reported as empty.
  */
-export const prefetchMetadataSchema = z.strictObject({
-  kind: z.literal("windows-prefetch"),
-  version: z.enum(["17", "23"]),
-  file_bytes: prefetchFileBytesSchema,
-  declared_file_bytes: uint32,
-  // Bound to what the reader emits: a NUL-terminated UTF-16LE name inside the
-  // 60-byte header field, so 1-30 code units and no embedded NUL. A malformed or
-  // external value cannot become a valid forensic identity.
-  executable_name: z
-    .string()
-    .min(1)
-    .max(30)
-    .refine((name) => !name.includes("\u0000"))
-    .nullable(),
-  // A successful parse always holds the complete 84-byte header, so the hash
-  // word is reachable and renders as eight hex digits, zero included.
-  executable_path_hash: z.string().regex(/^[0-9a-f]{8}$/u),
-  run_count: uint32.nullable(),
-  // The single last-run FILETIME this reader decodes is either reachable or
-  // not; the metrics array holds more slots but their times are not decoded.
-  run_time_slots: z.literal(1).nullable(),
-});
+export const prefetchMetadataSchema = z
+  .strictObject({
+    kind: z.literal("windows-prefetch"),
+    version: z.enum(["17", "23"]),
+    file_bytes: prefetchFileBytesSchema,
+    declared_file_bytes: uint32,
+    // Bound to what the reader emits: a NUL-terminated UTF-16LE name inside the
+    // 60-byte header field, so 1-30 code units and no embedded NUL. A malformed or
+    // external value cannot become a valid forensic identity.
+    executable_name: z
+      .string()
+      .min(1)
+      .max(30)
+      .refine((name) => !name.includes("\u0000"))
+      .nullable(),
+    // A successful parse always holds the complete 84-byte header, so the hash
+    // word is reachable and renders as eight hex digits, zero included.
+    executable_path_hash: z.string().regex(/^[0-9a-f]{8}$/u),
+    run_count: uint32.nullable(),
+    // The single last-run FILETIME this reader decodes is either reachable or
+    // not; the metrics array holds more slots but their times are not decoded.
+    run_time_slots: z.literal(1).nullable(),
+  })
+  // Members are reachable only once the bytes reach them, so run facts a capture
+  // this small cannot report are impossible Evidence rather than unknown ones.
+  .refine(
+    (facts) =>
+      facts.run_count === null || facts.file_bytes >= PREFETCH_RUN_COUNT_BYTES,
+    { path: ["run_count"] },
+  )
+  .refine(
+    (facts) =>
+      facts.run_time_slots === null ||
+      facts.file_bytes >= PREFETCH_RUN_TIME_BYTES[facts.version],
+    { path: ["run_time_slots"] },
+  );
 export type PrefetchMetadataFacts = z.infer<typeof prefetchMetadataSchema>;
 
 /**

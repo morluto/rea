@@ -42,6 +42,18 @@ const RUN_COUNT_OFFSET = 0x98;
 /** One FILETIME slot occupies eight bytes; its value is not decoded. */
 const RUN_TIME_SLOT_BYTES = 8;
 
+/**
+ * Smallest capture that can report each run fact: the run count needs its DWORD
+ * whole, and the last-run FILETIME is generation-specific.
+ */
+export const PREFETCH_RUN_COUNT_BYTES = RUN_COUNT_OFFSET + 4;
+export const PREFETCH_RUN_TIME_BYTES: Readonly<
+  Record<ParsedPrefetchVersion, number>
+> = {
+  "17": RUN_TIME_OFFSETS["17"] + RUN_TIME_SLOT_BYTES,
+  "23": RUN_TIME_OFFSETS["23"] + RUN_TIME_SLOT_BYTES,
+};
+
 /** Refuse to hold a whole Prefetch file above this size. */
 export const PREFETCH_MAX_FILE_BYTES = 64 * 1024 * 1024;
 
@@ -216,11 +228,11 @@ export const parsePrefetchFile = (
   // The last-run FILETIME sits at a generation-specific offset, so a capture
   // that ends inside the metrics array has no run time to report yet.
   const runTimeSlots: 1 | null =
-    end >= RUN_TIME_OFFSETS[version] + RUN_TIME_SLOT_BYTES ? 1 : null;
+    end >= PREFETCH_RUN_TIME_BYTES[version] ? 1 : null;
   // The run count sits at the same offset in both generations; only its
   // presence depends on the file reaching the end of the file-information
   // block.
-  if (end < RUN_COUNT_OFFSET + 4)
+  if (end < PREFETCH_RUN_COUNT_BYTES)
     limitations.push(
       "The file ends before the run count field, so the recorded run total is unknown.",
     );

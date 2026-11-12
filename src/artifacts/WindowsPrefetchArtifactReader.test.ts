@@ -291,6 +291,65 @@ it("rejects Prefetch sizes the parser cannot report", async () => {
     ).toThrow();
 });
 
+it("rejects run facts a capture this small could not report", async () => {
+  // A capture reports the last-run FILETIME only from 128 bytes (v17) or 136
+  // (v23), and the run count only from 156. Members are reachable only once the
+  // bytes reach them, so these combinations are impossible Evidence even though
+  // each member alone is in range.
+  const facts = {
+    kind: "windows-prefetch",
+    version: "23",
+    file_bytes: 84,
+    declared_file_bytes: 0,
+    executable_name: null,
+    executable_path_hash: "1a2b3c4d",
+    run_count: null,
+    run_time_slots: null,
+  } as const;
+  expect(prefetchMetadataSchema.parse(facts)).toMatchObject(facts);
+  for (const impossible of [
+    { run_count: 7 },
+    { run_time_slots: 1 },
+    { run_count: 7, run_time_slots: 1 },
+  ])
+    expect(() =>
+      prefetchMetadataSchema.parse({ ...facts, ...impossible }),
+    ).toThrow();
+  // Each fact becomes possible exactly at the byte the parser can reach it.
+  for (const [version, fullFileBytes] of [
+    ["17", 128],
+    ["23", 136],
+  ] as const) {
+    expect(() =>
+      prefetchMetadataSchema.parse({
+        ...facts,
+        version,
+        file_bytes: fullFileBytes - 1,
+        run_time_slots: 1,
+      }),
+    ).toThrow();
+    expect(
+      prefetchMetadataSchema.parse({
+        ...facts,
+        version,
+        file_bytes: fullFileBytes,
+        run_time_slots: 1,
+      }),
+    ).toMatchObject({ run_time_slots: 1 });
+  }
+  expect(() =>
+    prefetchMetadataSchema.parse({ ...facts, file_bytes: 155, run_count: 7 }),
+  ).toThrow();
+  expect(
+    prefetchMetadataSchema.parse({
+      ...facts,
+      file_bytes: 156,
+      run_count: 7,
+      run_time_slots: 1,
+    }),
+  ).toMatchObject({ run_count: 7, run_time_slots: 1 });
+});
+
 it("rejects a name hash that is not eight lowercase hex digits", async () => {
   // A persisted or client-supplied inventory parses `format_metadata` through
   // this schema, so a value the producer never emits must fail at the boundary
@@ -410,6 +469,35 @@ it("verifies the source before publishing header facts", async () => {
     expect(reader.formatMetadata()).toMatchObject({
       kind: "windows-prefetch",
       executable_name: "GOOGLE.EXE",
+    });
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("reports a source that changed during the read as an integrity failure", async () => {
+  // Bytes read before the source changed are not this file's contents, so a
+  // capture that no longer parses must not be reported as stable malformed
+  // input when the carrier itself moved.
+  const reader = await readerFor(
+    prefetchFixture({ version: "23" }).subarray(0, 60),
+  );
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(function (this: ArtifactFileSource, signal) {
+      return read.call(this, signal);
+    })
+    .mockRejectedValueOnce(
+      new ArtifactReaderFailure("integrity", "source identity changed"),
+    );
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      message: expect.stringContaining("identity changed") as unknown,
     });
   } finally {
     spy.mockRestore();
