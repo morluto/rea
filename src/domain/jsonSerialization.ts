@@ -18,9 +18,37 @@ export const jsonStringCodeUnits = (value: string): number => {
   return length;
 };
 
+/**
+ * C1 controls and the bidi format characters that `JSON.stringify` leaves
+ * literal. A document written for a terminal reader must not carry them: they
+ * can erase or reorder the text around a value the producer did not choose for
+ * display, such as a feed-reported release version.
+ */
+const TERMINAL_UNSAFE =
+  /[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+const escapeTerminalControls = (encoded: string): string =>
+  encoded.replace(
+    TERMINAL_UNSAFE,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+
 /** Encode ordinary JSON as bounded string parts without a document-sized allocation. */
 export function* jsonParts(value: unknown, pretty = false): Generator<string> {
   yield* encodeValue(value, pretty, false);
+}
+
+/**
+ * The same document as `jsonParts`, with C1 and bidi controls escaped so a
+ * terminal reader renders every value literally. Piped output keeps the exact
+ * bytes, since a script consumes the code points rather than their appearance.
+ */
+export function* terminalJsonParts(
+  value: unknown,
+  pretty = false,
+): Generator<string> {
+  for (const part of jsonParts(value, pretty))
+    yield escapeTerminalControls(part);
 }
 
 /** Exact UTF-8 bytes of ordinary JSON without allocating the whole document. */

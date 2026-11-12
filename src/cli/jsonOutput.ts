@@ -1,6 +1,10 @@
 import type { Writable } from "node:stream";
 
-import { bufferedJsonParts, jsonParts } from "../domain/jsonSerialization.js";
+import {
+  bufferedJsonParts,
+  jsonParts,
+  terminalJsonParts,
+} from "../domain/jsonSerialization.js";
 
 type JsonOutputFormat = "json" | "jsonl";
 
@@ -64,13 +68,17 @@ export function* jsonOutputParts(
   format: JsonOutputFormat,
   pretty = true,
 ): Generator<string> {
+  // `pretty` is true only when the destination is a terminal reader, so it
+  // selects the escaping: a terminal must not receive C1 or bidi controls
+  // literally, while a pipe keeps the exact code points a script consumes.
+  const encode = pretty ? terminalJsonParts : jsonParts;
   if (format === "jsonl" && Array.isArray(value)) {
     for (const item of value) {
-      yield* jsonParts(item);
+      yield* encode(item);
       yield "\n";
     }
     return;
   }
-  yield* jsonParts(value, pretty && format === "json");
+  yield* encode(value, pretty && format === "json");
   yield "\n";
 }

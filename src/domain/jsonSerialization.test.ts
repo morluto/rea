@@ -8,6 +8,7 @@ import {
   jsonByteLength,
   jsonTextCodeUnits,
   equalJsonText,
+  terminalJsonParts,
 } from "./jsonSerialization.js";
 
 /** Compact and pretty streamed JSON must equal native JSON. */
@@ -134,5 +135,30 @@ describe("JSON text equality without whole-document strings", () => {
     expect(equalJsonText(left, right)).toBe(
       JSON.stringify(left) === JSON.stringify(right),
     );
+  });
+});
+
+describe("terminal JSON representation", () => {
+  it("escapes C1 controls and bidi overrides a terminal would act on", () => {
+    // JSON.stringify leaves these code points literal, so a feed-chosen release
+    // version could erase or reorder the line it appears on.
+    const value = { release: "2.1.0\u009b2K\u202eevil" };
+    expect([...terminalJsonParts(value)].join("")).toBe(
+      '{"release":"2.1.0\\u009b2K\\u202eevil"}',
+    );
+  });
+
+  it("leaves ordinary JSON identical to the pipe representation", () => {
+    const value = { name: "GOOGLE.EXE", count: 7, nested: ["a", null] };
+    expect([...terminalJsonParts(value, true)].join("")).toBe(
+      JSON.stringify(value, null, 2),
+    );
+  });
+
+  it("keeps a long string split across parts escaped as one document", () => {
+    const value = "safe".repeat(4000) + "\u202e" + "tail".repeat(2000);
+    const text = [...terminalJsonParts(value)].join("");
+    expect(text).not.toContain("\u202e");
+    expect(JSON.parse(text)).toBe(value);
   });
 });
