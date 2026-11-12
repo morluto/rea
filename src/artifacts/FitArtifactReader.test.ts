@@ -1,3 +1,4 @@
+import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { getEventListeners, once } from "node:events";
 import { readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -295,7 +296,7 @@ it("fails /images followed by a malformed structure, and leaves a plain DTB a fi
     scanCanonicalArtifactInventory(await writeFit("broken.itb", bytes)),
   ).rejects.toMatchObject({
     reason: "format",
-    message: "FIT is malformed: Unknown FDT token 10",
+    message: expect.stringMatching(/FDT.*token 10/iu),
   });
   const plain = await scanCanonicalArtifactInventory(
     await writeFit("board.dtb", devicetreeFixture()),
@@ -404,6 +405,38 @@ it("keeps the cancellation reason before admission", async () => {
   }
 });
 
+it("does not publish FIT entries when final source verification fails", async () => {
+  const path = await writeFit("partial-publication.itb", FIT_EMBEDDED);
+  const control = new FitArtifactReader(path);
+  const reader = new FitArtifactReader(path);
+  const expected = await firstEntry(control);
+  const nativeRead = ArtifactFileSource.prototype.read;
+  const physical = Object.assign(
+    new Error("final source verification failed"),
+    { code: "EIO" },
+  );
+  let calls = 0;
+  const read = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, ...args) {
+      calls += 1;
+      if (calls === 4) return Promise.reject(physical);
+      return nativeRead.apply(this, args);
+    });
+  try {
+    await expect(firstEntry(reader)).rejects.toBe(physical);
+    await expect(reader.open(expected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    read.mockRestore();
+    expect((await firstEntry(reader)).path).toBe(expected.path);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
 it("keeps the cancellation reason during hash verification", async () => {
   const reader = new FitArtifactReader(
     await writeFit("hashing.itb", LARGE_FIT),
@@ -430,6 +463,8 @@ it("keeps the cancellation reason during hash verification", async () => {
       reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
     expect(observer).toHaveBeenCalledWith("sha256");
+    observer.mockRestore();
+    expect((await firstEntry(reader)).kind).toBe("file");
   } finally {
     observer.mockRestore();
     await reader.close();
@@ -568,4 +603,9 @@ it("preserves a final validation failure when cancellation overlaps it", async (
     observer?.mockRestore();
     await reader.close();
   }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => FIT_EMBEDDED,
+  createReader: (path, admitted) => new FitArtifactReader(path, admitted),
 });

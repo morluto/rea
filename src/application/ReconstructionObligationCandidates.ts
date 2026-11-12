@@ -202,25 +202,25 @@ const deriveProcessCandidate = (
   }
   const { record: evidence, capture } = parsed.value;
   const observedCases: ReconstructionObligation["observed_cases"] = [
-    {
-      kind: capture.exit.code === 0 ? "positive" : "negative",
-      evidence_id: evidence.evidence_id,
-      location: "/normalized_result/exit",
-    },
+    ...(capture.exit.reason !== "exited" ||
+    (capture.exit.signal !== null && capture.exit.signal !== 0) ||
+    capture.exit.code === null
+      ? []
+      : [
+          {
+            kind:
+              capture.exit.code === 0
+                ? ("positive" as const)
+                : ("negative" as const),
+            evidence_id: evidence.evidence_id,
+            location: "/normalized_result/exit",
+          },
+        ]),
     {
       kind: "teardown",
       evidence_id: evidence.evidence_id,
       location: "/normalized_result/settlement",
     },
-    ...(capture.exit.signal !== null || capture.exit.reason !== "exited"
-      ? [
-          {
-            kind: "cancellation" as const,
-            evidence_id: evidence.evidence_id,
-            location: "/normalized_result/exit",
-          },
-        ]
-      : []),
   ];
   if (capture.manifest.executable_sha256 === null) {
     limitations.add(

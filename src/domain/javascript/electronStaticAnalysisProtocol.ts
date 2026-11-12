@@ -7,6 +7,7 @@ import type {
 } from "./electronStaticAnalysisTypes.js";
 import {
   boundedExpression,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
@@ -87,7 +88,12 @@ export const inspectElectronProtocolNode = (
     : INTERCEPTORS.has(target.api)
       ? "interceptor"
       : undefined;
-  if (role !== undefined && !handlerKnownMissing(node))
+  // handle installs its own native callback and invokes the supplied handler
+  // only when a request arrives; a missing handler does not prevent registration.
+  if (
+    role !== undefined &&
+    (target.api === "handle" || !handlerKnownMissing(node))
+  )
     addProtocol(context, {
       node,
       api: target.api,
@@ -97,7 +103,7 @@ export const inspectElectronProtocolNode = (
     });
 };
 
-/** Electron requires the callback, so a call without one installs nothing. */
+/** Legacy native registration APIs require a callback before installing it. */
 const handlerKnownMissing = (
   node: t.CallExpression | t.OptionalCallExpression,
 ): boolean => {
@@ -264,6 +270,7 @@ const addProtocol = (
   const scheme = schemeValue(context, input.scheme, located);
   if (scheme.status === "dynamic") context.accumulator.unknownFindings += 1;
   const finding: ElectronProtocolFinding = {
+    ...electronCandidateAuthority(input.node.callee, context),
     api: input.api,
     role: input.role,
     scheme,

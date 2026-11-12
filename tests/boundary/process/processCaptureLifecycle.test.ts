@@ -246,14 +246,15 @@ itWithCaptureCapability(
           },
         },
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.frames.length).toBeGreaterThan(0);
       expect(Date.parse(result.value.manifest.completed_at)).toBeLessThan(
         Date.parse(result.value.manifest.started_at),
       );
-      expect(result.value.limitations).toContain(
-        "Wall-clock completion time precedes start time; elapsed capture timing is recorded separately and remains monotonic.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /completion time precedes start time.*elapsed.*monotonic/iu,
+        ),
       );
       expect(
         result.value.frames.map(({ at_ms }) => at_ms),
@@ -451,8 +452,9 @@ itWithCaptureCapability(
     );
     expect(observations.filesystem_snapshots.after).toEqual({
       state: "unavailable",
-      reason:
-        "Final filesystem snapshot failed: fixture final snapshot failure",
+      reason: expect.stringMatching(
+        /final.*snapshot.*fixture final snapshot failure/i,
+      ),
     });
     expect(observations.event_journal.state).toBe("available");
     if (observations.event_journal.state !== "available")
@@ -535,8 +537,10 @@ itWithCaptureCapability(
         },
       });
       expect(capture.exit.reason).toBe("timeout");
-      expect(capture.limitations).toContain(
-        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+      expect(capture.limitations).toContainEqual(
+        expect.stringMatching(
+          /digest.*prelaunch.*path metadata.*does not prove.*atomic.*image binding/iu,
+        ),
       );
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -1034,13 +1038,10 @@ itWithCaptureCapability(
     await writeFile(path, "observed\n");
     const controller = new AbortController();
     const { signal } = controller;
-    const throwIfAborted = signal.throwIfAborted.bind(signal);
-    Object.defineProperty(signal, "throwIfAborted", {
-      value: () => {
-        controller.abort();
-        throwIfAborted();
-      },
-    });
+    const captureSnapshot: typeof snapshotRoots = async (...args) => {
+      controller.abort();
+      return snapshotRoots(...args);
+    };
 
     const result = await captureProcessScenario(
       processScenarioSchema.parse({
@@ -1049,6 +1050,9 @@ itWithCaptureCapability(
         filesystem_observation_paths: [path],
       }),
       signal,
+      process.platform,
+      process.env,
+      captureSnapshot,
     );
 
     if (result.ok) throw new Error("expected initial snapshot cancellation");

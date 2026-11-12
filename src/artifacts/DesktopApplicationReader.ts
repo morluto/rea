@@ -1,5 +1,5 @@
 import { desktopPathConventions } from "../domain/nativeConvention.js";
-import { isAbsolute } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import {
   DirectoryArtifactReader,
   DirectoryArtifactRootFailure,
@@ -236,6 +236,7 @@ const scanDirectory = async (
   const files: DesktopFile[] = [];
   const omissions: DesktopOmission[] = [];
   const unityWitnessRoots = new Set<string>();
+  const rootName = basename(root.canonical_path);
   const budget: DesktopReadBudget = {
     bytes: 0,
     maximum: input.max_probe_bytes,
@@ -299,9 +300,12 @@ const scanDirectory = async (
       entries++;
       abortIfNeeded(signal);
       const conventions =
-        entry.kind === "file" ? pathConventions(entry.path) : undefined;
+        entry.kind === "file"
+          ? pathConventions(entry.path, rootName)
+          : undefined;
       // Reserve the row and every repeated path before retaining them: each
-      // convention fact copies the path and its probes copy the local path.
+      // convention fact copies at most the path and its probes copy the
+      // local path.
       reserve(
         RETAINED_ROW_BYTES +
           retainedTextBytes(entry.path) +
@@ -487,10 +491,19 @@ const fileRow = (
   };
 };
 
-/** Path-convention facts of one file; each repeats the path as its value. */
-const pathConventions = (path: string) => {
-  const conventions = desktopPathConventions(path);
+/** Path-convention facts of one file; each value repeats at most the path. */
+const pathConventions = (path: string, rootName: string) => {
+  const conventions = desktopPathConventions(path, rootName);
   const facts: DesktopFact[] = [];
+  if (
+    conventions.unityIl2cppBackupAssembly &&
+    conventions.unityIl2cppBackupDirectory !== null
+  )
+    facts.push({
+      kind: "unity-il2cpp-backup-convention",
+      offset: null,
+      value: { backup_directory: conventions.unityIl2cppBackupDirectory },
+    });
   if (conventions.electronArchive)
     facts.push({ kind: "electron-asar-convention", offset: null, value: path });
   if (conventions.unrealContainer)

@@ -2,8 +2,26 @@ import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { wabtFailure } from "./WabtFailures.js";
-import { WABT_LIMITS } from "./WabtRelease.js";
+import { WASM_RESOURCE_DEFAULTS } from "../domain/wasm/wasmArtifact.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+
+it.each(["configuration", "artifact"] as const)(
+  "keeps host allocation failure distinct from %s readiness and byte admission",
+  (phase) => {
+    const cause = Object.assign(new Error("Allocation failed"), {
+      code: "ENOMEM",
+    });
+    const failure = projectAnalysisError(
+      wabtFailure(cause, phase, "/module.wasm"),
+    );
+    expect(failure).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { resource: "memory" },
+    });
+    expect(failure.remediation.action).not.toContain("REA_WABT_BIN_DIRECTORY");
+  },
+);
 
 it.each(["configuration", "producer"] as const)(
   "retains timeout recovery under %s cleanup failure without making cleanup retryable",
@@ -34,7 +52,8 @@ it.each(["configuration", "producer"] as const)(
               limit: {
                 setting: "wasm.command_timeout_ms",
                 effective_value: 1234,
-                rea_restart_required: false,
+                update_mode: "runtime",
+                pending_restart: false,
               },
             },
             recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
@@ -97,10 +116,29 @@ it.each([1234, 2_147_483_647])(
           parameter: "command_timeout_ms",
           applies_at: "next_operation",
           agent_editable: true,
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
         },
       },
       recovery: { kind: "inspect_timeout_state", timeout_ms: commandTimeoutMs },
+    });
+    expect(
+      projectAnalysisError(
+        wabtFailure(
+          new OwnedCommandFailure("timeout", "deadline"),
+          "producer",
+          "/module.wasm",
+          { commandTimeoutMs, commandTimeoutSource: "request" },
+        ),
+      ),
+    ).toMatchObject({
+      details: {
+        limit: {
+          source: "request",
+          update_mode: "parameter",
+          effective_value: commandTimeoutMs,
+        },
+      },
     });
   },
 );
@@ -127,6 +165,7 @@ it.each([
       executable_path: "/tools/wasm2wat",
       tool: "wasm2wat",
       expected_version: "1.0.42" as const,
+      accepted_releases: "WABT >=1.0.42 <1.1.0 (verified with 1.0.42)",
     };
     const failure = wabtFailure(cause, "configuration", "/selected.wasm", {
       commandTimeoutMs: 1234,
@@ -171,7 +210,7 @@ it.each([
 );
 
 it.each([false, true])(
-  "preserves the file-size boundary with cleanup=%s when an input exceeds its fixed allowance",
+  "preserves the file-size boundary with cleanup=%s when an input exceeds its allowance",
   (cleanup) => {
     const cause = new ArtifactReaderFailure(
       "limit",
@@ -194,11 +233,13 @@ it.each([false, true])(
       retryable: false,
       details: {
         resource: "file-size",
-        reported_limits: { maximum_input_bytes: WABT_LIMITS.inputBytes },
+        reported_limits: {
+          maximum_input_bytes: WASM_RESOURCE_DEFAULTS.inputBytes,
+        },
       },
     });
     if (!cleanup) {
-      expect(projected.remediation.action).toContain("input byte allowance");
+      expect(projected.remediation.action).toContain("max_input_bytes");
       expect(projected.remediation.action).not.toContain("evidence reply");
     }
     expect(

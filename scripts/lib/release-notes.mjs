@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
 
@@ -347,13 +348,20 @@ export function verifyReleaseNotes(raw, text, body) {
     if (!prose.includes(`### ${heading}\n`))
       errors.push(`Missing ${heading} section`);
   if (body !== undefined) {
-    const bodyNotes = selectedReleaseNotes(body, inventory.version)
-      .replace(
-        /\n---\nThis PR was generated with \[Release Please\][\s\S]*$/u,
-        "",
-      )
-      .trim();
-    if (bodyNotes !== notes)
+    // Use the publisher's parser: finding a heading alone does not establish
+    // that Release Please will extract notes from its PR envelope.
+    const { PullRequestBody } = createRequire(import.meta.url)(
+      "release-please/build/src/util/pull-request-body.js",
+    );
+    const releases = PullRequestBody.parse(body)?.releaseData ?? [];
+    if (
+      releases.length !== 1 ||
+      releases[0].version?.toString() !== inventory.version
+    )
+      errors.push(
+        `Release Please cannot extract ${inventory.version} notes from the PR body; keep Author readiness and other metadata outside the notes delimiters`,
+      );
+    else if (releases[0].notes.trim() !== notes)
       errors.push("Release PR body differs from CHANGELOG.md");
   }
   if (errors.length) throw new Error(errors.join("\n"));
@@ -373,6 +381,8 @@ const VERSION_ONLY_PLUGIN_METADATA = new Set([
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   ".codex-plugin/mcp.json",
+  ".cursor-plugin/plugin.json",
+  "mcp.json",
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
 ]);
@@ -395,9 +405,14 @@ function pluginMetadataWithoutVersions(path, text) {
   }
   if ("version" in manifest) manifest.version = "";
   const launch = manifest.mcpServers?.rea?.args;
-  // Only the scalar pinned version is release-owned; the launcher owns the
-  // fixed package name and the executable/path remain product behavior.
-  if (Array.isArray(launch) && typeof launch[1] === "string") launch[1] = "";
+  // Only the scalar pinned version is release-owned. Blank that version and
+  // keep a package name such as rea-agents@ so a renamed package still counts
+  // as a product change. The executable and path remain product behavior.
+  if (Array.isArray(launch) && typeof launch[1] === "string")
+    launch[1] = launch[1].replace(
+      /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/u,
+      "",
+    );
   return JSON.stringify(manifest);
 }
 
@@ -476,7 +491,8 @@ export async function verifyInventoryHistory(run, raw, source) {
       "package-lock.json",
       "server.json",
       "src/generatedPackageMetadata.ts",
-      "docs/installation.md",
+      "docs/installation.md", // Historical releases before documentation organization.
+      "docs/getting-started/installation.md",
       `docs/releases/${inventory.version}.contributions.json`,
     ]);
     const paths = (

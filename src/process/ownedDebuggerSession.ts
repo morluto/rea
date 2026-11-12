@@ -1,43 +1,80 @@
 import { readFile } from "node:fs/promises";
 
-import type { DebuggerAdmissionLimit } from "../config/debuggerSessionLimits.js";
+import {
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+  type DebuggerAdmissionLimit,
+} from "../config/debuggerSessionLimits.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import type { AnalysisSettingId } from "../domain/analysisSettings.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
+import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
   | { readonly status: "stopped" | "already_exited" }
   | { readonly status: "incomplete"; readonly reason: string };
 
+const RUNTIME_DEBUGGER_SETTINGS = {
+  [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
+  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
+    "debugger.max_command_output_bytes",
+} as const satisfies Partial<Record<string, AnalysisSettingId>>;
+
+const runtimeDebuggerSetting = (
+  admission: DebuggerAdmissionLimit,
+): AnalysisSettingId | undefined =>
+  RUNTIME_DEBUGGER_SETTINGS[
+    admission.setting as keyof typeof RUNTIME_DEBUGGER_SETTINGS
+  ];
+
+/** Structured limit for a debugger budget that update_analysis_settings can change. */
+export const debuggerAnalysisLimit = (admission: DebuggerAdmissionLimit) => {
+  const setting = runtimeDebuggerSetting(admission);
+  return setting === undefined
+    ? undefined
+    : analysisSettingLimit(setting, admission.value, admission.source);
+};
+
 /** Structured facts a limit error exposes. The sentence is display text. */
 export const debuggerAdmissionDiagnostics = (
   admission: DebuggerAdmissionLimit,
-): {
-  readonly setting: string;
-  readonly effective_value: number;
-  readonly source: DebuggerAdmissionLimit["source"];
-  readonly default_value: number;
-  readonly minimum: number;
-  readonly maximum: number;
-  readonly unit: DebuggerAdmissionLimit["unit"];
-  readonly restart_required: true;
-} => ({
-  setting: admission.setting,
-  effective_value: admission.value,
-  source: admission.source,
-  default_value: admission.defaultValue,
-  minimum: admission.minimum,
-  maximum: admission.maximum,
-  unit: admission.unit,
-  restart_required: true,
-});
+) => {
+  const analysisSetting = runtimeDebuggerSetting(admission);
+  const update_mode = analysisSetting === undefined ? "restart" : "runtime";
+  return {
+    setting: admission.setting,
+    effective_value: admission.value,
+    source: admission.source,
+    default_value: admission.defaultValue,
+    minimum: admission.minimum,
+    maximum: admission.maximum,
+    unit: admission.unit,
+    update_mode,
+    pending_restart: false as const,
+    ...(analysisSetting === undefined
+      ? {}
+      : { analysis_setting: analysisSetting }),
+  };
+};
 
-/** Name the setting, the effective value, its source, the range, and a restart. */
+/** Name the setting, the effective value, its source, and the range. */
 export const debuggerAdmissionRecovery = (
   admission: DebuggerAdmissionLimit,
-): string =>
-  `The effective ${admission.setting} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+): string => {
+  const facts = debuggerAdmissionDiagnostics(admission);
+  const identity =
+    facts.analysis_setting === undefined
+      ? admission.setting
+      : `${facts.analysis_setting} (launch seed ${admission.setting})`;
+  const change =
+    facts.update_mode === "runtime"
+      ? `It can be changed at runtime with update_analysis_settings.`
+      : `Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+  return `The effective ${identity} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). ${change}`;
+};
 
 /** Fixed startup deadline. Distinct from the shared command deadline setting. */
 export const fixedDeadlineGuidance = (
@@ -58,10 +95,12 @@ export const configurableDeadlineGuidance = (
   readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
 } => {
   const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
   return {
     userMessage: `${what} reached its ${String(admission.value)} ms deadline (deadlineExpired). ${recovery}`,
     remediationAction: recovery,
     diagnostics: debuggerAdmissionDiagnostics(admission),
+    ...(limit === undefined ? {} : { limit }),
   };
 };
 
@@ -76,6 +115,7 @@ export const debuggerResourceConstraintError = (
 ): AnalysisResourceConstraintError => {
   const facts = debuggerAdmissionDiagnostics(admission);
   const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
   return new AnalysisResourceConstraintError(
     operation,
     resource,
@@ -84,6 +124,7 @@ export const debuggerResourceConstraintError = (
     {
       remediationAction: `${remediation} ${recovery}`,
       diagnostics: facts,
+      ...(limit === undefined ? {} : { limit }),
     },
   );
 };
@@ -364,42 +405,58 @@ export const stopOwnedDebuggerProcess = async (
   );
 };
 
+/** What closing all sessions needs from a session it may have to retain. */
+interface RetainableDebuggerSession {
+  readonly id: string;
+  readonly launched: {
+    readonly process: { readonly pid?: number | undefined };
+  };
+  readonly supervisor: { ref(): void; unref(): void };
+}
+
 /**
  * Stop every owned session and retain failed sessions for possible recovery.
  * Callers must block replacement admission and drain in-flight starts until
  * this settles; incomplete cleanup leaves the old owner in the map for retry.
+ *
+ * Closing all sessions means their owner is finishing, so a retained session
+ * stops holding the host's event loop, as a supervised provider does after
+ * incomplete cleanup. Ownership in this process is unchanged, and a retry
+ * restores the references.
  */
 export const closeOwnedDebuggerSessions = async <
-  Session extends { id: string },
+  Session extends RetainableDebuggerSession,
 >(
   sessions: Map<string, Session>,
   stop: (session: Session) => Promise<OwnedDebuggerStopResult>,
   debuggerName: string,
 ): Promise<void> => {
+  const entries = [...sessions.entries()];
+  for (const [, session] of entries) session.supervisor.ref();
   const results = await Promise.allSettled(
-    [...sessions.entries()].map(async ([key, session]) => ({
-      key,
-      session,
-      result: await stop(session),
-    })),
+    entries.map(async ([, session]) => stop(session)),
   );
   const failures: Error[] = [];
-  for (const settled of results) {
+  const retained: Session[] = [];
+  for (const [index, settled] of results.entries()) {
+    const [key, session] = entries[index]!;
     if (settled.status === "rejected") {
       failures.push(
         settled.reason instanceof Error
           ? settled.reason
           : new Error(String(settled.reason)),
       );
-      continue;
-    }
-    const { key, session, result } = settled.value;
-    if (result.status === "incomplete") failures.push(new Error(result.reason));
-    else if (sessions.get(key) === session) sessions.delete(key);
+      retained.push(session);
+    } else if (settled.value.status === "incomplete") {
+      failures.push(new Error(settled.value.reason));
+      retained.push(session);
+    } else if (sessions.get(key) === session) sessions.delete(key);
   }
-  if (failures.length > 0)
-    throw new AggregateError(
-      failures,
-      `One or more owned ${debuggerName} processes did not stop cleanly`,
-    );
+  if (failures.length === 0) return;
+  for (const session of retained) session.supervisor.unref();
+  throw new OwnedDebuggerCleanupError(
+    failures,
+    `One or more owned ${debuggerName} processes did not stop cleanly`,
+    retained.flatMap(({ launched }) => launched.process.pid ?? []),
+  );
 };

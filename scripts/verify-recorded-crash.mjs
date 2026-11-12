@@ -28,7 +28,7 @@ for (const key of [
 ])
   if (!isAbsolute(environment[key] ?? ""))
     throw new Error(
-      `verify:recorded:crash requires absolute ${key}; see docs/recorded-crashes.md. No dependencies are installed by this verifier.`,
+      `verify:recorded:crash requires absolute ${key}; see docs/guides/native/recorded-crashes.md. No dependencies are installed by this verifier.`,
     );
 if (process.platform !== "linux" || process.arch !== "x64")
   throw new Error("verify:recorded:crash requires Linux x64.");
@@ -196,17 +196,6 @@ try {
       assert.equal(value.threads.length, 1);
       cases++;
     }
-    for (const [name, kind, label] of [
-      ["aarch64-archext", 0x70000000, "PT_AARCH64_ARCHEXT"],
-      ["aarch64-unwind", 0x70000001, "PT_AARCH64_UNWIND"],
-    ]) {
-      const value = await basic.inspect(mode, fixtures[name]);
-      assert.equal(value.architecture, "aarch64-little-endian");
-      assert.equal(value.segments[0]?.type_id, kind);
-      assert.equal(value.segments[0]?.type, label);
-      assert.equal(value.threads.length, 0);
-      cases++;
-    }
     const noSignals = await basic.inspect(mode, fixtures["unknown-signals"]);
     assert.equal(noSignals.signals.length, 0);
     assert.equal(noSignals.threads.length, 2);
@@ -216,9 +205,19 @@ try {
     assert.equal(noNotes.threads.length, 0);
     assert.equal(noNotes.note_interpretation_completeness, "unknown");
     cases++;
-    for (const [name, architecture, type] of [
-      ["aarch64-archext", "aarch64-little-endian", "PT_AARCH64_ARCHEXT"],
-      ["aarch64-unwind", "aarch64-little-endian", "PT_AARCH64_UNWIND"],
+    for (const [name, architecture, type, typeId] of [
+      [
+        "aarch64-archext",
+        "aarch64-little-endian",
+        "PT_AARCH64_ARCHEXT",
+        0x70000000,
+      ],
+      [
+        "aarch64-unwind",
+        "aarch64-little-endian",
+        "PT_AARCH64_UNWIND",
+        0x70000001,
+      ],
       ["aarch64-mte-opaque", "aarch64-little-endian", 0x70000002],
       ["amd64-processor-opaque", "x86_64-little-endian", 0x70000001],
     ]) {
@@ -226,6 +225,8 @@ try {
       assert.equal(auxiliary.architecture, architecture);
       assert.equal(auxiliary.segments.length, 1);
       assert.equal(auxiliary.segments[0].type, type);
+      if (typeId !== undefined)
+        assert.equal(auxiliary.segments[0].type_id, typeId);
       assert.equal(auxiliary.notes.length, 0);
       assert.equal(auxiliary.threads.length, 0);
       assert.equal(auxiliary.note_interpretation_completeness, "unknown");

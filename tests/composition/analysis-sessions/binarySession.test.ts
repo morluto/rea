@@ -309,7 +309,13 @@ it("reports an external cleanup blocker until its exact owner confirms release",
       (_value, error) => error,
     );
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
-    expect(await session.open(target)).toEqual(err(failure));
+    expect(await session.open(target)).toEqual({
+      ok: false,
+      error: failure,
+      targetAtCompletion: null,
+      providerIdAtCompletion: null,
+      selection: { kind: "none" },
+    });
     await session.close({ cleanupRetry: { operation: "close_binary" } });
     expect(released).toBe(false);
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
@@ -522,7 +528,6 @@ it("keeps an externally mutated session unbound until cleanup is retried", async
   );
 
   expect(closeAttempts).toBe(1);
-  expect(mutation.ok).toBe(false);
   if (mutation.ok) throw new Error("Expected cleanup failure");
   expect(mutation.error).toBeInstanceOf(ProviderCleanupError);
   expect(mutation.error.cleanupIncomplete).toBe(true);
@@ -1451,22 +1456,6 @@ describe("typed unavailability without dispatching", () => {
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
-  it("keeps the active client when a switch fails", async () => {
-    const [first, second] = await createBinarySessionTargets();
-    let created = 0;
-    const session = createTestBinarySession(() => client(created++ === 1));
-    expect((await session.open(first)).ok).toBe(true);
-    expect((await session.open(second)).ok).toBe(false);
-    expect(await session.status()).toMatchObject({
-      open: true,
-      sha256:
-        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
-      architecture: null,
-    });
-    expect(JSON.stringify(await session.status())).toContain("first.hop");
-    expect(created).toBe(3);
-  });
-
   it("orders calls between queued transitions without deadlocking", async () => {
     const [first, second] = await createBinarySessionTargets();
     const clients: ControllableAnalysisClient[] = [];
@@ -1794,6 +1783,13 @@ describe("cancellation during client transitions", () => {
     expect(clients[1]?.closed).toBe(1);
     expect(clients[0]?.closed).toBe(1);
     expect(clients[2]?.closed).toBe(0);
+    expect(await session.status()).toMatchObject({
+      open: true,
+      sha256:
+        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+      architecture: null,
+    });
+    expect(clients).toHaveLength(3);
     expect(JSON.stringify(await session.status())).toContain("first.hop");
     await session.close();
     await session.close();
@@ -1862,7 +1858,13 @@ describe("no replacement start", () => {
     });
     expect((await session.open(first)).ok).toBe(true);
 
-    expect(await session.open(second)).toEqual(err(cleanupError));
+    expect(await session.open(second)).toEqual({
+      ok: false,
+      error: cleanupError,
+      targetAtCompletion: null,
+      providerIdAtCompletion: null,
+      selection: { kind: "none" },
+    });
     expect(created).toBe(1);
     expect(await session.status()).toMatchObject({ open: false });
   });
@@ -1921,7 +1923,13 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   );
   expect(result).toEqual(resultOk(err(failure)));
   expect(session.activeTarget()).toBeUndefined();
-  expect(await session.open(target)).toEqual(err(failure));
+  expect(await session.open(target)).toEqual({
+    ok: false,
+    error: failure,
+    targetAtCompletion: null,
+    providerIdAtCompletion: null,
+    selection: { kind: "none" },
+  });
   const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
   expect(
     await session.withAdmittedExternalMutation(

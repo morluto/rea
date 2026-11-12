@@ -27,7 +27,10 @@ export type ApkV1BlockError =
       readonly resource:
         | "v1-block-certificates"
         | "v1-signer-infos"
-        | "asn1-elements";
+        | "asn1-elements"
+        | "asn1-depth"
+        | "oid-bytes"
+        | "oid-arc-bytes";
       readonly limit: number;
     };
 
@@ -98,11 +101,14 @@ class ApkBerReader {
       return this.#reader.read(at, limit, depth);
     } catch (cause: unknown) {
       if (!(cause instanceof Asn1BerFailure)) throw cause;
-      if (cause.kind === "budget-exceeded")
+      if (cause.constraint !== null)
         throw new BlockFailure({
           kind: "budget-exceeded",
-          resource: "asn1-elements",
-          limit: MAX_ASN1_ELEMENTS,
+          resource:
+            cause.constraint.resource === "nodes"
+              ? "asn1-elements"
+              : "asn1-depth",
+          limit: cause.constraint.limit,
         });
       throw malformed(cause.message);
     }
@@ -155,6 +161,13 @@ const expectOctetString = (
 const oidText = (content: Uint8Array): string => {
   const decoded = decodeAsn1Oid(content, { bytes: 64, arcBytes: 64 });
   if (decoded.ok) return decoded.value;
+  if (decoded.error.kind === "byte-limit" || decoded.error.kind === "arc-limit")
+    throw new BlockFailure({
+      kind: "budget-exceeded",
+      resource:
+        decoded.error.kind === "byte-limit" ? "oid-bytes" : "oid-arc-bytes",
+      limit: decoded.error.limit,
+    });
   if (decoded.error.kind === "truncated")
     throw malformed("object identifier is truncated");
   throw malformed(`object identifier of ${String(content.length)} bytes`);
@@ -187,6 +200,13 @@ const integerIdentityContents = (bytes: Uint8Array): Uint8Array => {
   }
   return start === 0 ? bytes : bytes.subarray(start);
 };
+
+/** Optional identity interpretation may remain unknown while raw certificate identity survives. */
+const unavailableIdentityInterpretation = (cause: unknown): boolean =>
+  cause instanceof BlockFailure &&
+  (cause.error.kind === "malformed-pkcs7" ||
+    cause.error.resource === "oid-bytes" ||
+    cause.error.resource === "oid-arc-bytes");
 
 /**
  * RFC 5280 §7.1: RDN order matters; attributes in one SET do not. This
@@ -237,8 +257,7 @@ const directoryNameKey = (name: Asn1BerNode): string | null => {
     }
     return JSON.stringify(rdns);
   } catch (cause) {
-    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
-      return null;
+    if (unavailableIdentityInterpretation(cause)) return null;
     throw cause;
   }
 };
@@ -298,8 +317,7 @@ const certificateIdentity = (
       subjectKeyIdentifier,
     };
   } catch (cause: unknown) {
-    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
-      return null;
+    if (unavailableIdentityInterpretation(cause)) return null;
     throw cause;
   }
 };

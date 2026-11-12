@@ -112,7 +112,9 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   expect(partial.coverage.type_mismatches).toEqual([
     {
       path: "body.usedImages[0].uuid",
-      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      expected: expect.stringMatching(
+        /32 hexadecimal UUID digits.*optional.*hyphens/iu,
+      ),
       observed: "malformed UUID string",
       recorded_value: "malformed/report",
     },

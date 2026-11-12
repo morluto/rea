@@ -41,6 +41,13 @@ export const batchDecompileItemSchema = z.discriminatedUnion("status", [
   z.object({
     address: batchSelectorSchema,
     procedure: batchProcedureIdentitySchema,
+    status: z.literal("unavailable"),
+    reason: z.literal("no_pseudocode"),
+    limitations: batchItemLimitationsSchema,
+  }),
+  z.object({
+    address: batchSelectorSchema,
+    procedure: batchProcedureIdentitySchema,
     status: z.literal("error"),
     error: analysisErrorProjectionSchema,
     limitations: batchItemLimitationsSchema,
