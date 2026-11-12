@@ -25,6 +25,7 @@ import {
 } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
 import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
+import * as regularFile from "../../../src/filesystem/RegularFile.js";
 
 // Complete the real I/O, then cancel while its caller is still awaiting it.
 const cancelAfterNextStat = (
@@ -777,3 +778,64 @@ it("refuses to complete a paused iNES inventory after reader close", async () =>
     await handle.close();
   }
 });
+
+it.each(["close", "cancel"] as const)(
+  "refuses a region when %s follows completed source validation",
+  async (action) => {
+    const root = await createTestTempDirectory("rea-ines-open-retirement-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    const controller = new AbortController();
+    const reason = new Error("caller cancelled after source validation");
+    let closing: Promise<void> | undefined;
+    let stream: Readable | undefined;
+    let completion: Promise<unknown> | undefined;
+    let restore = () => {};
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const original = regularFile.assertStableRegularFileIdentity;
+      const validation = vi
+        .spyOn(regularFile, "assertStableRegularFileIdentity")
+        .mockImplementationOnce(async (...args) => {
+          await original(...args);
+          // Let #verifySource complete its final state check, then retire the
+          // reader/caller before the awaiting open operation resumes.
+          queueMicrotask(() =>
+            queueMicrotask(() => {
+              if (action === "close") closing = reader.close();
+              else controller.abort(reason);
+            }),
+          );
+        });
+      restore = () => validation.mockRestore();
+      const opened = reader
+        .open(entries[0]!, controller.signal)
+        .then((value) => {
+          stream = value;
+          completion = finished(value, { cleanup: true }).catch(
+            (cause: unknown) => cause,
+          );
+          return value;
+        });
+      await expect(opened).rejects.toMatchObject(
+        action === "close"
+          ? { reason: "unavailable" }
+          : { reason: "cancelled", cause: reason },
+      );
+      await expect(handle.stat()).resolves.toBeDefined();
+    } finally {
+      restore();
+      stream?.destroy();
+      await completion;
+      await closing;
+      await reader.close();
+      await handle.close();
+    }
+  },
+);

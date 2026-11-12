@@ -107,6 +107,7 @@ export class InesArtifactReader implements ArtifactReader {
         "iNES region does not match this reader's inventory",
       );
     await this.#verifySource(signal);
+    this.#assertOpen(signal);
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
     if (offset === null || size === null || size <= 0)
