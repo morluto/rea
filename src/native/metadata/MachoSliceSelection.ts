@@ -9,6 +9,7 @@ import {
   type MachoSliceArchitecture,
   type MachoTargetSelection,
 } from "../../domain/apple/machoTargetSelection.js";
+import { machoHostSubtypeRank } from "../../domain/apple/machoCpuIdentity.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
@@ -67,15 +68,28 @@ export const selectNativeImage = (
   const matches = fat.slices.filter(
     ({ cpuType }) => cpuType === MACHO_CPU_TYPES[architecture],
   );
-  const [slice] = matches;
-  if (slice === undefined || matches.length > 1)
+  if (matches.length === 0)
     return err({
       kind: "architecture",
-      message:
-        slice === undefined
-          ? `Universal Mach-O holds ${available}, not ${architecture}.`
-          : `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
+      message: `Universal Mach-O holds ${available}, not ${architecture}.`,
     });
+  if (matches.length > 1) {
+    // Several slices share this CPU family (e.g. arm64 and arm64e). Pick the
+    // host-preferred one; a genuine tie stays ambiguous.
+    const ranked = matches.map((s) => ({
+      slice: s,
+      rank: machoHostSubtypeRank(s.cpuType, s.cpuSubtype),
+    }));
+    const bestRank = Math.min(...ranked.map(({ rank }) => rank));
+    const best = ranked.filter(({ rank }) => rank === bestRank);
+    if (best.length !== 1)
+      return err({
+        kind: "architecture",
+        message: `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
+      });
+    matches.splice(0, matches.length, best[0].slice);
+  }
+  const [slice] = matches;
   const selected = readUniversalMachoSlice(bytes, fat, slice);
   if (!selected.ok) return selected;
   return ok({
