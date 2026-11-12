@@ -14,6 +14,8 @@ import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRoo
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { admitWabtVersion, WABT_ACCEPTED_RANGE } from "./WabtRelease.js";
 
 // Admission must not outrun the `1.0.x` banners wasmArtifactSchema accepts.
@@ -88,6 +90,8 @@ const outcomeModes = [
   "snapshot-close-failure",
   "snapshot-read-failure-late-abort",
   "malformed",
+  "malformed-close",
+  "malformed-close-failure",
   "timeout",
   "cancelled",
   "cancelled-close",
@@ -112,6 +116,8 @@ const failureTags: Readonly<Record<Exclude<OutcomeMode, "success">, string>> = {
   "changed-snapshot": "AnalysisArtifactChangedError",
   cleanup: "ProviderAdapterError",
   malformed: "AnalysisOutputError",
+  "malformed-close": "AnalysisOutputError",
+  "malformed-close-failure": "ProviderAdapterError",
   "malformed-wat": "AnalysisOutputError",
   "wat-warning": "AnalysisOutputError",
 };
@@ -220,6 +226,150 @@ const createWabtArtifactFixture = async () => {
   );
   return { selectedRoot, path, bytes, dump };
 };
+
+it.each(["stdout", "stderr"] as const)(
+  "rejects malformed UTF-8 in WABT %s while retaining literal replacement characters",
+  async (stream) => {
+    const fixture = await createWabtArtifactFixture();
+    let malformed = true;
+    const provider = new WabtArtifactProvider(
+      { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+      (input) => {
+        const version = input.arguments[0] === "--version";
+        const decoder = !version && input.command.includes("wasm2wat");
+        const stdout = version
+          ? "1.0.42\n"
+          : input.command.includes("objdump")
+            ? fixture.dump
+            : decoder
+              ? '(module (import "env" "literal\ufffd" (func)) (@custom "test" "payload"))\n'
+              : "";
+        const stderr = decoder ? "module.wasm: warning: literal\ufffd\n" : "";
+        const output = { stdout, stderr };
+        const bytes = Object.fromEntries(
+          Object.entries(output).map(([name, text]) => {
+            const encoded = Buffer.from(text);
+            const replacement = encoded.indexOf(Buffer.from("\ufffd"));
+            return [
+              name,
+              decoder && malformed && name === stream
+                ? Buffer.concat([
+                    encoded.subarray(0, replacement),
+                    Buffer.from([0xff]),
+                    encoded.subarray(replacement + 3),
+                  ])
+                : encoded,
+            ];
+          }),
+        );
+        return spawnOwnedProviderProcess({
+          ...input,
+          hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+          command: process.execPath,
+          arguments: [
+            "-e",
+            `process.stdout.write(Buffer.from(${JSON.stringify([...bytes.stdout!])})); process.stderr.write(Buffer.from(${JSON.stringify([...bytes.stderr!])}));`,
+          ],
+        });
+      },
+    );
+    try {
+      const input = { path: fixture.path, glue_paths: [], candidate_paths: [] };
+      const rejected = await provider.inspect(input);
+      expect(rejected).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          diagnostics: { tool: "wasm2wat", invalid_utf8_streams: [stream] },
+          capturedOutput: {
+            [stream]: expect.stringContaining("\ufffd"),
+            exit_code: 0,
+            signal: null,
+            truncated: false,
+          },
+          partialObservation: {
+            normalized_result: {
+              artifact: {
+                path: fixture.path,
+                sha256: createHash("sha256")
+                  .update(fixture.bytes)
+                  .digest("hex"),
+                bytes: fixture.bytes.length,
+              },
+              validation: "valid",
+            },
+          },
+        },
+      });
+      malformed = false;
+      const corrected = await provider.inspect(input);
+      if (!corrected.ok) throw corrected.error;
+      expect(wasmArtifactSchema.parse(corrected.value.result)).toMatchObject({
+        interface: { entries: [{ name: "literal\ufffd" }] },
+        custom_section_warnings: [
+          { tool: "wasm2wat", text: "module.wasm: warning: literal\ufffd\n" },
+        ],
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it("preserves physical validation rejection when its diagnostics contain malformed UTF-8", async () => {
+  const fixture = await createWabtArtifactFixture();
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+    (input) => {
+      const version = input.arguments[0] === "--version";
+      return spawnOwnedProviderProcess({
+        ...input,
+        hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+        command: process.execPath,
+        arguments: [
+          "-e",
+          version
+            ? 'process.stdout.write("1.0.42\\n")'
+            : "process.stderr.write(Buffer.from([105,110,118,97,108,105,100,32,255])); process.exitCode = 7;",
+        ],
+      });
+    },
+  );
+  try {
+    const result = await provider.inspect({
+      path: fixture.path,
+      glue_paths: [],
+      candidate_paths: [],
+    });
+    if (result.ok) throw new Error("Expected validation rejection");
+    expect(result.error.capturedOutput).toEqual({
+      stdout: "",
+      stderr: "invalid \ufffd",
+      exit_code: 7,
+      signal: null,
+      truncated: false,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        partialObservation: {
+          normalized_result: {
+            artifact: {
+              path: fixture.path,
+              sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
+              bytes: fixture.bytes.length,
+            },
+            validation: "rejected-by-selected-profile",
+            exit_code: 7,
+          },
+        },
+      },
+    });
+  } finally {
+    await provider.close();
+  }
+});
 
 it.each([
   "max_input_bytes",
@@ -503,20 +653,27 @@ const assertModeOutcome = (
     });
 };
 
-const assertValidationCleanupRecovery = async (
+const assertFailedInspectionCleanupRecovery = async (
   provider: WabtArtifactProvider,
   result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
   cleanupAttempts: () => number,
+  mode: OutcomeMode,
 ): Promise<void> => {
   expect(result).toMatchObject({ error: { cleanupIncomplete: true } });
   await provider.close();
   expect(cleanupAttempts()).toBe(2);
-  if (result.ok) throw new Error("Expected validation failure");
+  if (result.ok) throw new Error("Expected inspection failure");
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
+    code:
+      mode === "invalid-close-failure"
+        ? "invalid_request"
+        : "unreadable_output",
     details: {
-      captured_output: { stderr: "module.wasm: invalid bytes\n" },
+      captured_output:
+        mode === "invalid-close-failure"
+          ? { stderr: "module.wasm: invalid bytes\n" }
+          : { stdout: "unexpected producer output" },
       cleanup_history: expect.any(Object),
     },
   });
@@ -994,7 +1151,7 @@ const launchWabtOutcome = async (
   const stdout = version
     ? "1.0.42\n"
     : input.command.includes("objdump")
-      ? mode === "malformed"
+      ? mode === "malformed" || mode.startsWith("malformed-close")
         ? "unexpected producer output"
         : dump
       : input.command.includes("wasm2wat")
@@ -1066,7 +1223,15 @@ it("enforces a selected command deadline and completes a corrected retry after c
   if (timed.ok) throw new Error("Selected 20 ms deadline was not enforced");
   expect(projectAnalysisError(timed.error)).toMatchObject({
     code: "provider_timeout",
-    details: { timeout_ms: 20 },
+    details: {
+      timeout_ms: 20,
+      limit: {
+        setting: "wasm.command_timeout_ms",
+        effective_value: 20,
+        source: "request",
+        update_mode: "parameter",
+      },
+    },
     remediation: { action: expect.stringContaining("command_timeout_ms") },
   });
   expect(timed.error.cleanupIncomplete).toBe(false);
@@ -1153,9 +1318,38 @@ const assertSnapshotCleanupOutcome = async (
   }
 };
 
+const assertFailedInspectionCancellation = (
+  mode: OutcomeMode,
+  result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
+  cancellationReason: unknown,
+): void => {
+  if (
+    [
+      "invalid-close",
+      "invalid-close-failure",
+      "malformed-close",
+      "malformed-close-failure",
+    ].includes(mode)
+  ) {
+    if (result.ok) throw new Error("Expected retained inspection failure");
+    const primary = primaryAnalysisError(result.error);
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]).toBeInstanceOf(AnalysisCancelledError);
+    expect(primary.secondaryFailures[0]?.cause).toBe(cancellationReason);
+    expect(primary.partialObservation).toBeDefined();
+    expect(primary.capturedOutput).toMatchObject(
+      mode.startsWith("invalid")
+        ? { stderr: "module.wasm: invalid bytes\n" }
+        : { stdout: "unexpected producer output" },
+    );
+  }
+};
+
 const runOwnedArtifactOutcome = async (
   mode: OutcomeMode,
-  cancellationReason: unknown = "authored finalization cancellation",
+  cancellationReason: unknown = {
+    source: "authored finalization cancellation",
+  },
 ): Promise<void> => {
   const { selectedRoot, path, bytes, dump } = await createWabtArtifactFixture();
   let runtimePath = "";
@@ -1204,12 +1398,22 @@ const runOwnedArtifactOutcome = async (
             if (++cleanupAttempts === 1)
               throw new Error("Source-owned cleanup uncertainty");
           }
-          if (mode === "invalid-close-failure" && ++cleanupAttempts === 1)
-            throw new Error("Source-owned cleanup uncertainty");
+          if (
+            mode === "invalid-close-failure" ||
+            mode === "malformed-close-failure"
+          ) {
+            controller.abort(cancellationReason);
+            if (++cleanupAttempts === 1)
+              throw new Error("Source-owned cleanup uncertainty");
+          }
           if (mode === "cleanup" && ++cleanupAttempts <= 2)
             throw new Error("Source-owned cleanup uncertainty");
           await root.close();
-          if (mode === "cancelled-close" || mode === "invalid-close")
+          if (
+            mode === "cancelled-close" ||
+            mode === "invalid-close" ||
+            mode === "malformed-close"
+          )
             controller.abort(cancellationReason);
         },
       };
@@ -1256,12 +1460,14 @@ const runOwnedArtifactOutcome = async (
       cleanupAttempts: () => cleanupAttempts,
       cancellationReason: controller.signal.reason,
     });
-  if (mode === "invalid-close-failure")
-    await assertValidationCleanupRecovery(
+  if (mode === "invalid-close-failure" || mode === "malformed-close-failure")
+    await assertFailedInspectionCleanupRecovery(
       provider,
       result,
       () => cleanupAttempts,
+      mode,
     );
+  assertFailedInspectionCancellation(mode, result, controller.signal.reason);
   await assertSnapshotCleanupOutcome(mode, result, provider, runtimePath);
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);

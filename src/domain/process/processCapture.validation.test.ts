@@ -9,6 +9,7 @@ import {
 import type { UnverifiedProcessCapture } from "./processCapture.js";
 import {
   processCaptureSchema,
+  processFilesystemSnapshotSchema,
   partialProcessCaptureObservationSchema,
 } from "./processCapture.js";
 import {
@@ -21,6 +22,39 @@ import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
 import type { FilesystemCoverage } from "./processCaptureCoverage.js";
 
 expectTypeOf<UnverifiedProcessCapture>().not.toExtend<ProcessCapture>();
+
+it.each(["reports", "\ufffd"])(
+  "requires stored target bytes instead of deriving them from symlink text %j",
+  (text) => {
+    const snapshot = {
+      files: [
+        {
+          path: "root_0:link",
+          type: "symlink",
+          mode: 0o120777,
+          size: Buffer.byteLength(text),
+          sha256: null,
+          symlink_target: text,
+        },
+      ],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyCapture().truncation_details.filesystem_before,
+    };
+    expect(processFilesystemSnapshotSchema.safeParse(snapshot).success).toBe(
+      false,
+    );
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...snapshot,
+        files: snapshot.files.map((file) => ({
+          ...file,
+          symlink_target_hex: Buffer.from(text).toString("hex"),
+        })),
+      }).success,
+    ).toBe(true);
+  },
+);
 
 /** Name every rejected field reported by the production parser. */
 const rejectedPaths = (input: unknown): readonly string[] => {
@@ -238,6 +272,7 @@ it("binds unfollowed coverage to observed symlink metadata without inventing an 
     size: 7,
     sha256: null,
     symlink_target: "reports",
+    symlink_target_hex: "7265706f727473",
   };
   const effect = {
     path: link.path,

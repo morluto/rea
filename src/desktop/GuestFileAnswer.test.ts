@@ -1,18 +1,54 @@
 import { describe, expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { readHomeFiles } from "./ComputerHomeFiles.js";
 import {
   AgentEnvComputer,
   GUEST_FILE_ANSWER_COPIES,
   GUEST_FILE_ANSWER_SOURCE,
   guestFileAnswerBytes,
-  guestFileAnswerCeiling,
   guestFileAnswerRefusal,
   guestFileAnswerWorkingBytes,
   retainGuestFiles,
 } from "./AgentEnvComputer.js";
 
 describe("guest file answers", () => {
+  it.each([true, false])(
+    "uses only the named data-object metadata for file identity (present: %s)",
+    async (present) => {
+      const files = await readHomeFiles(
+        async () => ({
+          result: {
+            parts: [
+              {
+                kind: "file",
+                file: { bytes: Buffer.from("source bytes").toString("base64") },
+                metadata: {
+                  "urn:unrelated": { path: "other.txt" },
+                  ...(present
+                    ? {
+                        "urn:agentenv:data-objects/v1": {
+                          path: "selected.txt",
+                        },
+                      }
+                    : {}),
+                },
+              },
+            ],
+          },
+        }),
+        (text) => text,
+        ["selected.txt"],
+      );
+      expect(files).toEqual([
+        {
+          path: present ? "selected.txt" : undefined,
+          bytes: Buffer.from("source bytes"),
+        },
+      ]);
+    },
+  );
+
   it("counts base64, the envelope, and the copies held while the answer is parsed", () => {
     expect(guestFileAnswerBytes(3, 1)).toBeGreaterThan(3);
     expect(guestFileAnswerBytes(3, 2)).toBeGreaterThan(
