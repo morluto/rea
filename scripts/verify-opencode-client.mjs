@@ -101,6 +101,9 @@ await withVerifierCleanup(async () => {
       // directories are redirected into the lab. Clear caller OpenCode
       // configuration overrides so an inherited OPENCODE_CONFIG path or
       // OPENCODE_CONFIG_CONTENT payload cannot join the lab's selected layers.
+      // Pin an unscoped, full REA catalog so inherited REA_MCP_TOOL_FAMILIES
+      // or REA_MCP_TOOL_CATALOG_PROFILE=hot-cold cannot hide analysis tools
+      // the fixture requires on the first model request.
       ...process.env,
       HOME: account,
       USERPROFILE: account,
@@ -120,6 +123,8 @@ await withVerifierCleanup(async () => {
       // packages through the `plugins` configuration and the redirected
       // configuration directory instead.
       ...(dialect === "v1" ? { OPENCODE_PURE: "true" } : {}),
+      REA_MCP_TOOL_FAMILIES: undefined,
+      REA_MCP_TOOL_CATALOG_PROFILE: "full",
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
