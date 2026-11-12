@@ -7,11 +7,18 @@ function prefersMarkdown(accept) {
       const [type, ...parameters] = range.trim().split(";");
       const quality = parameters
         .map((value) => value.trim())
-        .find((value) => value.startsWith("q="));
-      const q = quality === undefined ? 1 : Number(quality.slice(2));
+        .find((value) => value.startsWith("q="))
+        ?.slice(2);
+      // HTTP weights allow up to three decimal digits (RFC 9110 §12.4.2).
+      const q =
+        quality === undefined
+          ? 1
+          : /^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$/.test(quality)
+            ? Number(quality)
+            : 0;
       return {
         type: type.trim(),
-        q: Number.isFinite(q) && q >= 0 && q <= 1 ? q : 0,
+        q,
       };
     });
   const quality = (type) => {
