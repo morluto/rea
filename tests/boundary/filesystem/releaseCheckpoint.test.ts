@@ -37,9 +37,11 @@ const pluginManifest = (version: string, launch = version) => ({
 const codexServerConfig = (version: string, launch = version) => ({
   mcpServers: {
     rea: {
-      command: "npx",
-      args: ["-y", `rea-agents@${launch}`, "mcp"],
-      cwd: "/tmp",
+      command: "node",
+      args: [
+        "${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+        launch,
+      ],
       startup_timeout_sec: 30,
     },
   },
@@ -639,8 +641,7 @@ it.each([
   {
     path: ".codex-plugin/mcp.json",
     manifest: codexServerConfig("6.0.0", "5.1.0"),
-    failure:
-      "launches rea-agents@5.1.0; release branch requires rea-agents@6.0.0",
+    failure: "launches version 5.1.0; release branch requires 6.0.0",
   },
 ])("reads the release pin from $path", async ({ path, manifest, failure }) => {
   const f = await fixture();

@@ -32,11 +32,10 @@
       ],
       "mcpServers": {
         "rea": {
-          "command": "npx",
+          "command": "node",
           "args": [
-            "-y",
-            "rea-agents@6.9.0",
-            "mcp"
+            "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+            "6.9.0"
           ]
         }
       },

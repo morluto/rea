@@ -1862,24 +1862,26 @@ verifies the package version and runs its bundled runtime in the same process,
 preserving stdio and REA's provider/worker cleanup. Marketplace installs instead
 use the repository checkout: Claude Code reads the local marketplace entry,
 Codex reads `.codex-plugin/plugin.json` with the committed
-`.cursor-plugin/skills` tree, and both launch `npx -y rea-agents@<version> mcp`
-so a Git checkout does not need a local build. The client must have a supported
-standalone `node` (and `npx` for marketplace launches) on its PATH. The existing
-release skill generator also pins CLI recovery commands to the same version.
+`.cursor-plugin/skills` tree, and both launch MCP through
+`scripts/plugin-published-mcp-launcher.mjs`, which runs
+`npx -y rea-agents@<version> mcp` with `cwd` set to the OS temporary directory
+so the unbuilt checkout `package.json` is never selected. The client must have a
+supported standalone `node` and `npx` on its PATH. The existing release skill
+generator also pins CLI recovery commands to the same version.
 
 The repository's single-plugin marketplaces are declared in
 `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
 Both select the local repository checkout (`./`) so marketplace clients that
 resolve Git sources can list and install the plugin. The Claude Code entry uses
 `strict: false` with an explicit committed skill path
-(`.cursor-plugin/skills/reverse-engineer-anything`), icon, and an `npx`
-`rea-agents@<version> mcp` server pin that works without a local build. The
-Codex / agents marketplace entry uses a local path source and reads
-`.codex-plugin/plugin.json`, which points at the same committed skill tree and
-the same published package pin. Release Please updates the Claude marketplace
-version and server pin alongside the plugin manifests. The npm package still
-ships Claude's `.claude-plugin/plugin.json` with generated `./skills` and the
-bundled launcher for package-based installs.
+(`.cursor-plugin/skills/reverse-engineer-anything`), icon, and the published
+launcher under `${CLAUDE_PLUGIN_ROOT}`. The Codex / agents marketplace entry
+uses a local path source and reads `.codex-plugin/plugin.json`, which points at
+the same committed skill tree and the same published launcher under
+`${PLUGIN_ROOT}`. Release Please updates the Claude marketplace version and
+server pin alongside the plugin manifests. The npm package still ships Claude's
+`.claude-plugin/plugin.json` with generated `./skills` and the bundled launcher
+for package-based installs.
 The qualified release archive contains a runtime-only manifest and
 `npm-shrinkwrap.json` plus bundled runtime dependencies, including PTY packages
 for each supported OS and CPU; development dependencies and development-only overrides

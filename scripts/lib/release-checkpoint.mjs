@@ -25,9 +25,11 @@ const codexPluginManifestSchema = versionSchema.extend({
 const codexServerConfigSchema = z.object({
   mcpServers: z.object({
     rea: z.object({
-      command: z.literal("npx"),
-      args: z.tuple([z.literal("-y"), z.string(), z.literal("mcp")]),
-      cwd: z.literal("/tmp"),
+      command: z.literal("node"),
+      args: z.tuple([
+        z.literal("${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs"),
+        z.string(),
+      ]),
       startup_timeout_sec: z.number().int().positive(),
     }),
   }),
@@ -244,7 +246,7 @@ async function validateCandidate(git, sha, version, commits) {
         ".codex-plugin/mcp.json",
         codexServerConfigSchema,
       );
-      packagePins.push([
+      launcherPins.push([
         ".codex-plugin/mcp.json",
         server.mcpServers.rea.args[1],
       ]);
@@ -288,7 +290,8 @@ async function validateCandidate(git, sha, version, commits) {
     }
   }
   // Claude's npm plugin launcher checks a scalar pin against its own package.
-  // Codex and Cursor Marketplace checkouts launch the published package pin.
+  // Codex marketplace checkouts launch through the published-package launcher
+  // pin; Cursor Marketplace still uses the rea-agents@VERSION npx pin.
   // Compare manifest versions first so a wholly stale candidate reports the
   // shared version authority before these package specifiers.
   for (const [location, launched] of launcherPins) {

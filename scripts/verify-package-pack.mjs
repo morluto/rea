@@ -242,17 +242,15 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       packedManifest.version,
     ];
     const expectedCodexArgs = [
-      "-y",
-      `${packedManifest.name}@${packedManifest.version}`,
-      "mcp",
+      "${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+      packedManifest.version,
     ];
     if (
       manifest.version !== packedManifest.version ||
       (path.startsWith(".codex")
         ? manifest.skills !== ".cursor-plugin/skills" ||
           manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
-          serverConfig.mcpServers?.rea?.command !== "npx" ||
-          serverConfig.mcpServers?.rea?.cwd !== "/tmp" ||
+          serverConfig.mcpServers?.rea?.command !== "node" ||
           serverConfig.mcpServers?.rea?.startup_timeout_sec !== 30 ||
           JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
             JSON.stringify(expectedCodexArgs)
@@ -313,6 +311,10 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     throw new Error("Packaged Codex MCP server declaration is missing");
   if (!packedFiles.includes("package/scripts/plugin-mcp-launcher.mjs"))
     throw new Error("Packaged plugin launcher is missing");
+  if (
+    !packedFiles.includes("package/scripts/plugin-published-mcp-launcher.mjs")
+  )
+    throw new Error("Packaged published-package plugin launcher is missing");
   if (
     skill.includes(`${packedManifest.name}@latest`) ||
     !skill.includes(`${packedManifest.name}@${packedManifest.version}`)

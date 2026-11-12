@@ -25,6 +25,10 @@ const pluginManifests = [
 const pluginServerConfig = ".codex-plugin/mcp.json";
 const cursorPluginManifest = ".cursor-plugin/plugin.json";
 const cursorPluginServer = "mcp.json";
+const publishedLauncherArgs = (rootPlaceholder: string, version: string) => [
+  `${rootPlaceholder}/scripts/plugin-published-mcp-launcher.mjs`,
+  version,
+];
 const releaseExtraFiles = [
   ...versionedDocumentation.map(({ path }) => ({
     type: "generic",
@@ -216,8 +220,8 @@ describe("plugin manifests", () => {
           skills: ["./.cursor-plugin/skills/reverse-engineer-anything"],
           mcpServers: {
             rea: {
-              command: "npx",
-              args: ["-y", `rea-agents@${pkg.version}`, "mcp"],
+              command: "node",
+              args: publishedLauncherArgs("${CLAUDE_PLUGIN_ROOT}", pkg.version),
             },
           },
           icon: "./assets/rea-plugin.png",
@@ -330,8 +334,8 @@ describe("plugin release pins", () => {
     expect(updatedJson.get(pluginServerConfig)).toMatchObject({
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", `rea-agents@${nextVersion}`, "mcp"],
+          command: "node",
+          args: publishedLauncherArgs("${PLUGIN_ROOT}", nextVersion),
           startup_timeout_sec: 30,
         },
       },
@@ -356,8 +360,8 @@ describe("plugin release pins", () => {
           version: nextVersion,
           mcpServers: {
             rea: {
-              command: "npx",
-              args: ["-y", `rea-agents@${nextVersion}`, "mcp"],
+              command: "node",
+              args: publishedLauncherArgs("${CLAUDE_PLUGIN_ROOT}", nextVersion),
             },
           },
         },
@@ -373,9 +377,8 @@ describe("plugin release pins", () => {
     expect(await readJson(pluginServerConfig)).toMatchObject({
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", `rea-agents@${packageJson.version}`, "mcp"],
-          cwd: "/tmp",
+          command: "node",
+          args: publishedLauncherArgs("${PLUGIN_ROOT}", packageJson.version),
         },
       },
     });

@@ -71,8 +71,11 @@ const claudeMarketplace = (
       skills,
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", `rea-agents@${version}`, "mcp"],
+          command: "node",
+          args: [
+            "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+            version,
+          ],
         },
       },
       icon: "./assets/rea-plugin.png",
@@ -94,13 +97,16 @@ const pluginMarketplaceFor = (path: string, version: string) =>
     ? claudeMarketplace(version)
     : agentsMarketplace();
 
-const pluginServer = (version: string, command = "npx") => ({
+const pluginServer = (version: string, command = "node") => ({
   mcpServers: {
     rea: {
       command,
       args:
-        command === "npx"
-          ? ["-y", `rea-agents@${version}`, "mcp"]
+        command === "node"
+          ? [
+              "${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+              version,
+            ]
           : ["./scripts/plugin-mcp-launcher.mjs", version],
       startup_timeout_sec: 30,
     },

@@ -395,8 +395,8 @@ function pluginMetadataWithoutVersions(path, text) {
     if (Array.isArray(manifest.plugins))
       for (const plugin of manifest.plugins) {
         if (plugin?.name !== "rea") continue;
-        // Claude marketplace pins an entry version and an npx package@VERSION
-        // launch. Codex/agents marketplace uses a versionless local path.
+        // Claude marketplace pins an entry version and a published-launcher
+        // version argument. Codex/agents marketplace uses a versionless local path.
         if (typeof plugin.version === "string") plugin.version = "";
         const launch = plugin.mcpServers?.rea?.args;
         if (Array.isArray(launch) && typeof launch[1] === "string")
